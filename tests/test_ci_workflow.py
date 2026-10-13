@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import re
+import shlex
+from copy import deepcopy
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -188,3 +192,106 @@ def test_ci_and_production_use_the_same_python() -> None:
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "actions/setup-python" not in ci
     assert "astral-sh/setup-uv" in ci
+    assert_ci_uses_repository_python(yaml.safe_load(ci))
+
+
+def assert_ci_uses_repository_python(document: object, location: str = "ci") -> None:
+    """Check every workflow/job/step, including env and action inputs."""
+    if isinstance(document, dict):
+        for key, value in document.items():
+            here = f"{location}.{key}"
+            assert key not in {"UV_PYTHON", "UV_PYTHON_PREFERENCE", "python-version", "python-version-file"}, (
+                f"{here}: interpreter override bypasses .python-version"
+            )
+            if key == "uses" and isinstance(value, str):
+                assert "setup-python" not in value.lower(), f"{here}: alternate interpreter source"
+            if key == "run" and isinstance(value, str):
+                assert not re.search(r"\bUV_PYTHON(?:_PREFERENCE)?\s*=", value), (
+                    f"{here}: interpreter override in shell environment"
+                )
+                assert_no_uv_interpreter_flags(value, here)
+            assert_ci_uses_repository_python(value, here)
+    elif isinstance(document, list):
+        for i, value in enumerate(document):
+            assert_ci_uses_repository_python(value, f"{location}[{i}]")
+
+
+def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
+    # Keep quoted/multiline arguments intact while separating shell commands;
+    # e.g. Go's `-p 1` and pytest's plugin `-p` are not uv interpreter flags.
+    lexer = shlex.shlex(script.replace("\\\n", ""), posix=True, punctuation_chars=";&|()\n")
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    command: list[str] = []
+    for token in [*lexer, "\n"]:
+        if not set(token) <= set(";&|()\n"):
+            command.append(token)
+            continue
+        # shlex consumes the newline at the end of a comment; inspect every
+        # uv occurrence so a later command cannot hide behind an earlier one.
+        for uv in (i for i, word in enumerate(command) if Path(word).name == "uv"):
+            args = command[uv + 1:]
+            # After `uv run` reaches its executable, subsequent options belong
+            # to that executable. Account for uv options that consume a value.
+            if "run" in args:
+                i = args.index("run") + 1
+                value_options = {
+                    "--project", "--directory", "--package", "--group", "--extra",
+                    "--with", "--with-editable", "--with-requirements", "--index",
+                    "--default-index", "--index-url", "--extra-index-url",
+                    "--find-links", "--config-file", "--cache-dir",
+                }
+                while i < len(args) and args[i].startswith("-") and args[i] != "--":
+                    i += 2 if args[i] in value_options else 1
+                args = args[:i]
+            assert not any(
+                arg.split("=", 1)[0] in {"--python", "--python-preference", "--no-config"}
+                or arg.startswith("-p") for arg in args
+            ), f"{location}: uv interpreter/config override: {args}"
+        command = []
+
+
+@pytest.mark.parametrize("scope", ["workflow", "job", "step"])
+@pytest.mark.parametrize("variable", ["UV_PYTHON", "UV_PYTHON_PREFERENCE"])
+def test_ci_python_env_override_mutations_are_detected(scope: str, variable: str) -> None:
+    original = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    mutated = deepcopy(original)
+    job = mutated["jobs"]["lint"]
+    target = {"workflow": mutated, "job": job, "step": job["steps"][0]}[scope]
+    target.setdefault("env", {})[variable] = "3.11" if variable == "UV_PYTHON" else "only-system"
+    with pytest.raises(AssertionError, match="interpreter override"):
+        assert_ci_uses_repository_python(mutated)
+    assert_ci_uses_repository_python(original)
+
+
+@pytest.mark.parametrize("run", [
+    "uv sync --python 3.11", "uv run --python=3.11 pytest", "uv run -p 3.11 pytest",
+    "uv run -p3.11 pytest", "uv --no-config run pytest", "uv run --no-config pytest",
+    "uv run --project . --python 3.11 pytest", "uv run \\\n  --python 3.11 pytest",
+    "UV_PYTHON=3.11 uv sync", 'echo "UV_PYTHON_PREFERENCE=only-system" >> "$GITHUB_ENV"',
+    "uv run pytest # initial check\nuv run --python 3.11 pytest",
+])
+def test_ci_python_command_override_mutations_are_detected(run: str) -> None:
+    mutated = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    mutated["jobs"]["lint"]["steps"].append({"run": run})
+    with pytest.raises(AssertionError, match="override"):
+        assert_ci_uses_repository_python(mutated)
+
+
+@pytest.mark.parametrize("step", [
+    {"uses": "actions/setup-python@v6", "with": {"python-version": "3.11"}},
+    {"uses": "astral-sh/setup-uv@v7", "with": {"python-version": "3.11"}},
+    {"uses": "astral-sh/setup-uv@v7", "with": {"python-version-file": "another-pin"}},
+])
+def test_ci_alternate_python_source_mutations_are_detected(step: dict[str, object]) -> None:
+    mutated = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    mutated["jobs"]["lint"]["steps"].append(step)
+    with pytest.raises(AssertionError, match="interpreter"):
+        assert_ci_uses_repository_python(mutated)
+
+
+def test_ci_python_check_allows_unrelated_command_flags() -> None:
+    assert_ci_uses_repository_python({"jobs": {"example": {"steps": [{"run": (
+        "uv run --no-sync python -c 'print(\"--python\")'\n"
+        "go test -p 1 ./...\nuv run pytest -p no:cacheprovider\n"
+    )}]}}})

@@ -4,22 +4,8 @@ set -euo pipefail
 
 scenario="${TMPDIR}/scenario.json"
 statuses="${TMPDIR}/statuses.json"
-# Bash builtins keep logging cheap across all 180 polls. Escape JSON strings
-# rather than shell-quoting them, so Python can read each invocation as an array.
-{
-  printf '['
-  separator=''
-  for arg in "$@"; do
-    arg=${arg//\\/\\\\}
-    arg=${arg//\"/\\\"}
-    arg=${arg//$'\n'/\\n}
-    arg=${arg//$'\r'/\\r}
-    arg=${arg//$'\t'/\\t}
-    printf '%s"%s"' "${separator}" "${arg}"
-    separator=,
-  done
-  printf ']\n'
-} >> "${TMPDIR}/gh-calls.jsonl"
+source "${TMPDIR}/record-event.sh"
+record_event gh "$@"
 
 command=$1
 subcommand=${2:-}
@@ -43,7 +29,7 @@ if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
     ci.yml)
       # Resolve the scenario's placeholder only after the real step commits.
       jq --arg sha "$(git rev-parse HEAD)" \
-        '(.runs[] | select(.headSha == "$GENERATED_SHA") | .headSha) = $sha' \
+        '(.polls[][] | select(.headSha == "$GENERATED_SHA") | .headSha) = $sha' \
         "${scenario}" > "${scenario}.new"
       # Use cat rather than mv so the harness only needs the workflow's tools.
       cat "${scenario}.new" > "${scenario}"
@@ -58,8 +44,20 @@ if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
     *) echo "Unexpected workflow: ${third}" >&2; exit 1 ;;
   esac
 elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
+  poll=0
+  if [ -f "${TMPDIR}/poll-count" ]; then read -r poll < "${TMPDIR}/poll-count"; fi
+  poll=$((poll + 1))
+  printf '%s\n' "${poll}" > "${TMPDIR}/poll-count"
   # Apply the caller's actual jq expression, including its headSha selection.
-  jq -c ".runs | ${filter}" "${scenario}"
+  # Once the sequence ends, repeat its last answer (also covers all 180 polls).
+  answer=$(jq -c --argjson index "$((poll - 1))" \
+    ".polls[([\$index, (.polls | length) - 1] | min)] | ${filter}" "${scenario}")
+  main_sha=''
+  if [ -n "${answer}" ]; then
+    main_sha=$("${REAL_GIT}" --git-dir="${TMPDIR}/origin.git" rev-parse refs/heads/main)
+  fi
+  record_event poll "${poll}" "${answer}" "${main_sha}"
+  printf '%s\n' "${answer}"
 elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
   if [ ! -f "${statuses}" ]; then printf '[]' > "${statuses}"; fi
   url="${GITHUB_API_URL}/${endpoint}"

@@ -10,6 +10,26 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+# External commands in the extracted step. Shell builtins/functions (echo,
+# test/[ /[[, trap, cleanup_branch, etc.) need no executable. The allowlisted
+# PATH also makes a newly introduced, unlisted command fail rather than escape.
+PUBLICATION_COMMANDS = {
+    "bash": "real", "git": "wrapped", "jq": "real", "cat": "real",
+    "date": "real", "seq": "real", "mktemp": "real", "gh": "fake", "sleep": "fake",
+}
+
+
+def publication_prerequisites() -> dict[str, str]:
+    commands = {
+        name: shutil.which(name) for name, kind in PUBLICATION_COMMANDS.items() if kind != "fake"
+    }
+    missing = [name for name, path in commands.items() if path is None]
+    if missing:
+        reason = f"Price-refresh publication tests require on PATH: {', '.join(missing)}"
+        if "GITHUB_ACTIONS" in os.environ or "CI" in os.environ:
+            pytest.fail(reason)
+        pytest.skip(reason)
+    return {name: path for name, path in commands.items() if path is not None}
 
 
 @pytest.fixture
@@ -29,6 +49,17 @@ def remove_publication_guard(script: str, guard: str) -> str:
     """Negative controls change only the in-memory script, never the workflow."""
     if guard == "conclusion":
         before, after = 'if [ "${conclusion}" = "success" ]; then', "if true; then"
+    elif guard in {"completion", "accept_pending"}:
+        before, after = 'if [ "${status}" = "completed" ]; then', "if true; then"
+        if guard == "accept_pending":
+            script = remove_publication_guard(script, "conclusion")
+    elif guard == "late_bridge":
+        start = script.index('ci_url="${GITHUB_SERVER_URL}')
+        end = script.index("push_log=$(mktemp)", start)
+        bridge = script[start:end]
+        script = script[:start] + script[end:]
+        after_push = script.index("# GITHUB_TOKEN pushes do not start")
+        return script[:after_push] + bridge + script[after_push:]
     elif guard == "head_sha":
         before, after = r'map(select(.headSha == \"${SNAPSHOT_SHA}\"))', "."
     elif guard == "main_moved":
@@ -74,7 +105,11 @@ class PublicationRepo:
 
     @property
     def calls(self) -> list[list[str]]:
-        log = self.root / "gh-calls.jsonl"
+        return [event[1:] for event in self.events if event[0] == "gh"]
+
+    @property
+    def events(self) -> list[list[str]]:
+        log = self.root / "events.jsonl"
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     @property
@@ -87,15 +122,17 @@ class PublicationRepo:
     def run(
         self, *, conclusion: str = "success", wrong_sha: bool = False,
         move_main: str | None = None, changed: bool = True, mutation: str | None = None,
+        run_states: list[tuple[str, str | None]] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if changed:
             snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
             snapshot.write_text('{"generated": true}\n')
             self.git("add", str(snapshot))
-        scenario: dict[str, object] = {"runs": [{
+        states = run_states if run_states is not None else [("completed", conclusion)]
+        scenario: dict[str, object] = {"polls": [[{
             "databaseId": 1234, "headSha": self.base if wrong_sha else "$GENERATED_SHA",
-            "status": "completed", "conclusion": conclusion,
-        }]}
+            "status": status, "conclusion": outcome,
+        }] for status, outcome in states]}
         if move_main:
             peer = self.root / "peer"
             self.git("clone", "-q", str(self.root / "origin.git"), str(peer))
@@ -133,10 +170,8 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     git_exec_path = ""
-    for name in ("bash", "git", "jq", "cat", "date", "seq", "mktemp"):
-        executable = shutil.which(name)
-        if executable is None:
-            pytest.skip(f"Price-refresh publication tests require {name} on PATH")
+    commands = publication_prerequisites()
+    for name, executable in commands.items():
         if name == "git":
             # macOS /usr/bin/git is an Xcode launcher; resolve the real binary
             # before stripping the environment to avoid repeated tool discovery.
@@ -146,15 +181,17 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
             real_git = Path(git_exec_path) / "git"
             if real_git.is_file():
                 executable = str(real_git.resolve())
-        (bin_dir / name).symlink_to(executable)
+            commands[name] = executable
+        else:
+            (bin_dir / name).symlink_to(executable)
     # An allowlisted PATH prevents accidentally calling a real gh or another
     # network client if the workflow changes. Git only permits local transports.
-    gh = bin_dir / "gh"
-    fake_gh = (ROOT / "tests/fixtures/refresh_publish_gh.sh").read_text()
-    gh.write_text(
-        f"#!{(bin_dir / 'bash').resolve()}\n" + fake_gh.split("\n", 1)[1]
-    )
-    gh.chmod(0o700)
+    for name in ("gh", "git"):
+        path = bin_dir / name
+        fixture = (ROOT / f"tests/fixtures/refresh_publish_{name}.sh").read_text()
+        path.write_text(f"#!{commands['bash']}\n" + fixture.split("\n", 1)[1])
+        path.chmod(0o700)
+    shutil.copyfile(ROOT / "tests/fixtures/refresh_publish_events.sh", tmp_path / "record-event.sh")
     sleep = bin_dir / "sleep"
     sleep.write_text(f"#!{(bin_dir / 'bash').resolve()}\nexit 0\n")
     sleep.chmod(0o700)
@@ -165,6 +202,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_TEMPLATE_DIR": str(empty), "GIT_ALLOW_PROTOCOL": "file",
         "GIT_EXEC_PATH": git_exec_path,
+        "REAL_GIT": commands["git"],
         "GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "core.hooksPath",
         "GIT_CONFIG_VALUE_0": str(empty), "GIT_CONFIG_KEY_1": "commit.gpgsign",
         "GIT_CONFIG_VALUE_1": "false", "GIT_AUTHOR_NAME": "Test",
@@ -198,6 +236,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
     repo.git("commit", "-qm", "Base main", "--allow-empty")
     repo.base = repo.generated
     repo.git("push", "-q", "origin", "main")
+    (tmp_path / "events.jsonl").write_text("")  # Exclude fixture setup's seed push.
     env["GITHUB_SHA"] = repo.base
     for name in ("spike-summary.txt", "refresh-summary.txt"):
         (tmp_path / name).write_text("Fixture generated price changes\n")
@@ -225,6 +264,38 @@ def assert_snapshot_published(repo: PublicationRepo, result: subprocess.Complete
         f'target_url={repo.env["GITHUB_SERVER_URL"]}/{repo.env["GITHUB_REPOSITORY"]}/actions/runs/1234'
         in call for call in posts
     )
+    assert_status_bridge_precedes_main_push(repo)
+
+
+def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
+    events = repo.events
+    pushes = [i for i, event in enumerate(events)
+              if event[0] == "git" and "HEAD:refs/heads/main" in event]
+    assert len(pushes) == 1, "Expected exactly one generated main push"
+    posts = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "POST" in event]
+    gets = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "--method" not in event]
+    assert len(posts) == len(gets) == 4, "Every required status needs POST and verification"
+    assert all(post < get < pushes[0] for post, get in zip(posts, gets, strict=True)), (
+        "All status POSTs and verifications must precede the main push"
+    )
+
+
+def assert_ci_completed_before_publication(
+    repo: PublicationRepo, states: list[tuple[str, str | None]],
+) -> None:
+    polls = [(i, event) for i, event in enumerate(repo.events) if event[0] == "poll"]
+    answers = [json.loads(event[2]) for _, event in polls]
+    successful_completions = [i for (i, _), answer in zip(polls, answers, strict=True)
+                              if answer["status"] == "completed" and answer["conclusion"] == "success"]
+    for i, event in enumerate(repo.events):
+        if event[:2] == ["gh", "api"] or (event[0] == "git" and "HEAD:refs/heads/main" in event):
+            assert any(completed < i for completed in successful_completions), (
+                "Publication occurred before the completed successful CI answer"
+            )
+    assert [(answer["status"], answer["conclusion"]) for answer in answers] == states, (
+        "Must keep polling until CI completes"
+    )
+    assert all(event[3] == repo.base for _, event in polls), "Main changed before CI completed"
 
 
 def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
@@ -271,6 +342,73 @@ def test_publication_does_nothing_without_staged_changes(publication_repo: Publi
     assert result.returncode == 0, result.stdout + result.stderr
     assert publication_repo.main == publication_repo.generated == publication_repo.base
     assert publication_repo.calls == []
+    assert publication_repo.events == []  # Includes even no-op pushes.
+
+
+@pytest.mark.parametrize("conclusion", ["success", "failure"])
+def test_publication_waits_for_completed_ci(publication_repo: PublicationRepo, conclusion: str) -> None:
+    states = [("in_progress", None), ("in_progress", None), ("completed", conclusion)]
+    result = publication_repo.run(run_states=states)
+    assert_ci_completed_before_publication(publication_repo, states)
+    if conclusion == "success":
+        assert_snapshot_published(publication_repo, result)
+    else:
+        assert_snapshot_withheld(publication_repo, result)
+
+
+@pytest.mark.parametrize("mutation", ["completion", "accept_pending"])
+def test_pending_ci_mutations_are_detected(publication_repo: PublicationRepo, mutation: str) -> None:
+    states = [("in_progress", None), ("in_progress", None), ("completed", "success")]
+    result = publication_repo.run(run_states=states, mutation=mutation)
+    message = "Must keep polling" if mutation == "completion" else "Publication occurred before"
+    with pytest.raises(AssertionError, match=message):
+        assert_ci_completed_before_publication(publication_repo, states)
+    if mutation == "completion":
+        assert_snapshot_withheld(publication_repo, result)  # Incorrectly rejects a pending run.
+    else:
+        assert_snapshot_published(publication_repo, result)  # Incorrectly accepts a pending run.
+
+
+def test_status_bridge_order_mutation_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(mutation="late_bridge")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.generated != publication_repo.base
+    with pytest.raises(AssertionError, match="must precede the main push"):
+        assert_snapshot_published(publication_repo, result)
+
+
+@pytest.mark.parametrize("missing", [name for name, kind in PUBLICATION_COMMANDS.items() if kind != "fake"])
+@pytest.mark.parametrize("ci_marker", [None, "CI", "GITHUB_ACTIONS"])
+def test_missing_publication_tools_fail_in_ci(
+    monkeypatch: pytest.MonkeyPatch, missing: str, ci_marker: str | None,
+) -> None:
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    if ci_marker:
+        monkeypatch.setenv(ci_marker, "true")
+    monkeypatch.setattr(shutil, "which", lambda name: None if name == missing else f"/fixture/{name}")
+    expected = pytest.fail.Exception if ci_marker else pytest.skip.Exception
+    assert_prerequisite_outcome(expected, missing)
+
+
+def assert_prerequisite_outcome(expected: type[BaseException], missing: str) -> None:
+    # An unexpected pytest.skip must become a failure, not silently skip the
+    # test of this very policy (pytest.raises alone would let it escape).
+    try:
+        with pytest.raises(expected, match=f"require on PATH: {missing}"):
+            publication_prerequisites()
+    except pytest.skip.Exception as exc:
+        raise AssertionError("CI prerequisites must fail instead of skipping") from exc
+
+
+def test_missing_tool_skip_in_ci_mutation_is_detected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(shutil, "which", lambda name: None if name == "jq" else f"/fixture/{name}")
+    expected = pytest.fail.Exception
+    # Mutate the failure action into the old unconditional skip behavior.
+    monkeypatch.setattr(pytest, "fail", pytest.skip)
+    with pytest.raises(AssertionError, match="CI prerequisites must fail instead of skipping"):
+        assert_prerequisite_outcome(expected, "jq")
 
 
 @pytest.mark.parametrize("guard", ["conclusion", "head_sha", "main_moved"])
