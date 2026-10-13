@@ -211,16 +211,31 @@ def assert_ci_uses_repository_python(document: object, location: str = "ci") -> 
                 )
                 assert_no_uv_interpreter_flags(value, here)
                 assert ".python-version" not in value, f"{here}: rewrites the interpreter pin"
-                assert not re.search(r"\buv(?:\s+-\S+)*\s+python\s+pin\b", value), f"{here}: re-pins the interpreter"
             assert_ci_uses_repository_python(value, here)
     elif isinstance(document, list):
         for i, value in enumerate(document):
             assert_ci_uses_repository_python(value, f"{location}[{i}]")
 
 
+# Deny by default: these are the only uv forms ci.yml uses. Any other uv/uvx
+# invocation (uvx, uv tool run, uv python pin, interpreter or config options)
+# must be classified here on purpose before CI may use it.
+UV_RUN_TOOLS = frozenset({"python", "pytest", "mypy", "ruff", "coverage"})
+
+
+def uv_invocation_allowed(args: list[str]) -> bool:
+    if args[:2] == ["sync", "--frozen"]:
+        return args[2:] in ([], ["--no-dev"])
+    if args[:1] == ["run"]:
+        rest = args[1:]
+        if rest[:1] == ["--no-sync"]:
+            rest = rest[1:]
+        return bool(rest) and rest[0] in UV_RUN_TOOLS
+    return False
+
+
 def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
-    # Keep quoted/multiline arguments intact while separating shell commands;
-    # e.g. Go's `-p 1` and pytest's plugin `-p` are not uv interpreter flags.
+    # Keep quoted/multiline arguments intact while separating shell commands.
     lexer = shlex.shlex(script.replace("\\\n", ""), posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -229,40 +244,14 @@ def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
         if not set(token) <= set(";&|()\n"):
             command.append(token)
             continue
-        # shlex consumes the newline at the end of a comment; inspect every
-        # uv occurrence so a later command cannot hide behind an earlier one.
-        for uv in (i for i, word in enumerate(command) if Path(word).name in {"uv", "uvx"}):
-            args = command[uv + 1:]
-            if Path(command[uv]).name == "uvx":
-                # uvx options precede the tool name; later options are the tool's.
-                # Skip option values so `--from ruff --python 3.11 ruff` is seen.
-                uvx_value_options = {
-                    "--from", "--with", "--with-editable", "--with-requirements",
-                    "--python", "-p", "--python-preference", "--index", "--default-index",
-                    "--index-url", "--extra-index-url", "--find-links", "--config-file",
-                    "--cache-dir", "--directory", "--project",
-                }
-                end = 0
-                while end < len(args) and args[end].startswith("-") and args[end] != "--":
-                    end += 2 if args[end] in uvx_value_options else 1
-                args = args[:end]
-            # After `uv run` reaches its executable, subsequent options belong
-            # to that executable. Account for uv options that consume a value.
-            if "run" in args:
-                i = args.index("run") + 1
-                value_options = {
-                    "--project", "--directory", "--package", "--group", "--extra",
-                    "--with", "--with-editable", "--with-requirements", "--index",
-                    "--default-index", "--index-url", "--extra-index-url",
-                    "--find-links", "--config-file", "--cache-dir",
-                }
-                while i < len(args) and args[i].startswith("-") and args[i] != "--":
-                    i += 2 if args[i] in value_options else 1
-                args = args[:i]
-            assert not any(
-                arg.split("=", 1)[0] in {"--python", "--python-preference", "--no-config"}
-                or arg.startswith("-p") for arg in args
-            ), f"{location}: uv interpreter/config override: {args}"
+        for i, word in enumerate(command):
+            name = Path(word).name
+            if name == "uvx":
+                raise AssertionError(f"{location}: uvx is not an allowed CI form: {command}")
+            if name == "uv":
+                assert uv_invocation_allowed(command[i + 1:]), (
+                    f"{location}: uv form not on the CI allowlist: {command[i:]}"
+                )
         command = []
 
 
@@ -289,7 +278,7 @@ def test_ci_python_env_override_mutations_are_detected(scope: str, variable: str
 def test_ci_python_command_override_mutations_are_detected(run: str) -> None:
     mutated = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     mutated["jobs"]["lint"]["steps"].append({"run": run})
-    with pytest.raises(AssertionError, match="override"):
+    with pytest.raises(AssertionError, match="override|allowlist"):
         assert_ci_uses_repository_python(mutated)
 
 
@@ -319,6 +308,12 @@ def test_ci_python_check_allows_unrelated_command_flags() -> None:
     "uvx --from ruff --python 3.11 ruff check .",
     "uvx --with x --python 3.11 ruff",
     "uv --quiet python pin 3.11",
+    "uvx -w x --python 3.11 ruff",
+    "uv tool run --from ruff --python 3.11 ruff",
+    "uv --directory . python pin 3.11",
+    "uv run -w x --python 3.11 pytest",
+    "uv run --env-file .env --python 3.11 pytest",
+    "uv sync --frozen --python 3.11",
 ])
 def test_ci_python_pin_bypass_mutations_are_detected(command: str) -> None:
     mutated = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
@@ -327,5 +322,7 @@ def test_ci_python_pin_bypass_mutations_are_detected(command: str) -> None:
         assert_ci_uses_repository_python(mutated)
 
 
-def test_uvx_tool_options_are_not_interpreter_flags() -> None:
-    assert_no_uv_interpreter_flags("uvx ruff check -p some/path", "ci")
+def test_uv_run_tool_options_are_not_interpreter_flags() -> None:
+    # Options after the tool belong to the tool (pytest -p plugins, ruff -p...).
+    assert_no_uv_interpreter_flags("uv run pytest -p no:cacheprovider", "ci")
+    assert_no_uv_interpreter_flags("uv run --no-sync python -c 'print(1)'", "ci")
