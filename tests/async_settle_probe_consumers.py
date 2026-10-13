@@ -33,6 +33,15 @@ CONSUMERS = {
     "delivery reconciliation and fingerprints": "changes",
     "retirement discovery": "changes",
     "all-traffic coverage": "changes",
+    "fleet freshness/release input": "changes",
+    "fleet freshness/release decision": "unchanged",
+    "client telemetry evaluator input": "changes",
+    "client telemetry freshness fields": "unchanged",
+    "client telemetry canary fields": "unchanged",
+    "client telemetry freshness/canary decision": "unchanged",
+    "calibration publication inputs": "unchanged",
+    "calibration report (without attempt join)": "unchanged",
+    "calibration publication decision": "unchanged",
     "synthetic samples": "unchanged",
     "status components": "unchanged",
     "history": "unchanged",
@@ -60,7 +69,8 @@ class ActivityDatabase:
     Compound columns round-trip as JSON; predicates and limits remain real SQL.
     """
 
-    def __init__(self, payload):
+    def __init__(self, payload, query_log):
+        self.query_log = query_log
         self.connection = sqlite3.connect(":memory:")
         self.connection.row_factory = sqlite3.Row
         self.compound = {k for k, value in payload.items() if isinstance(value, (dict, list))}
@@ -107,28 +117,64 @@ class ActivityDatabase:
                 ],
             )
 
-    def query(self, request):
-        sql = request.content.decode().replace(" FINAL", "").replace("FORMAT JSON", "")
+    def replace_table(self, name, rows):
+        """Raw source fixture or actual evaluator output, never invented coverage."""
+        self.connection.execute(f'DROP TABLE IF EXISTS {name}')
+        self.connection.execute(
+            f'CREATE TABLE {name} (' + ', '.join('"' + k + '"' for k in rows[0]) + ')'
+        )
+        for row in rows:
+            self.connection.execute(
+                f'INSERT INTO {name} VALUES (' + ','.join('?' for _ in row) + ')',
+                [json.dumps(v) if isinstance(v, (dict, list)) else v for v in row.values()],
+            )
+
+    def select(self, sql, params=None):
+        self.query_log.append(sql)
+        sql = sql.replace(" FINAL", "").replace("FORMAT JSONEachRow", "").replace("FORMAT JSON", "")
+        sql = re.sub(r"\btr\.", "", sql)
         sql = re.sub(r"parseDateTime64BestEffort\((\{\w+:String\}), 3\)", r"\1", sql)
         sql = re.sub(r"\{(\w+):\w+\}", r":\1", sql)
-        params = {k.removeprefix("param_"): v for k, v in request.url.params.items()}
-        rows = [dict(row) for row in self.connection.execute(sql, params)]
+        sql = re.sub(r"toDateTime(?:64)?\('([^']+)'(?:, 3)?, 'UTC'\)",
+                     lambda m: "'" + dt.datetime.fromisoformat(m[1]).replace(tzinfo=dt.UTC).isoformat() + "'", sql)
+        sql = sql.replace("toDateTime64(bucket_start, 3, 'UTC') + INTERVAL 6 HOUR",
+                          "shift_hours(bucket_start, 6)")
+        sql = re.sub(r"now\(\) - INTERVAL (\d+) HOUR", r"shift_hours(now(), -\1)", sql)
+        # SELECT * EXCEPT is column projection only; no predicate rewriting.
+        match = re.search(r"SELECT \* EXCEPT (\([^)]+\)|\w+)\s+FROM (\w+)", sql)
+        if match:
+            excluded = {x.strip() for x in match[1].strip('()').split(',')}
+            fields = [r[1] for r in self.connection.execute(f'PRAGMA table_info({match[2]})')]
+            sql = sql[:match.start()] + 'SELECT ' + ', '.join('"' + k + '"' for k in fields if k not in excluded) + ' FROM ' + match[2] + sql[match.end():]
+        rows = [dict(row) for row in self.connection.execute(sql, params or {})]
         for row in rows:
-            for key in self.compound & row.keys():
-                row[key] = json.loads(row[key])
-        return httpx.Response(200, json={"data": rows})
+            for key, value in row.items():
+                if key in self.compound or key.endswith('_hist'):
+                    row[key] = json.loads(value)
+        return rows
+
+    def query_bytes(self, sql):
+        return '\n'.join(json.dumps(row) for row in self.select(sql)).encode()
+
+    def query(self, request):
+        params = {k.removeprefix("param_"): v for k, v in request.url.params.items()}
+        return httpx.Response(200, json={"data": self.select(request.content.decode(), params)})
 
 
-def consumer_snapshots(monkeypatch):
+def consumer_snapshots(monkeypatch, query_log):
+    from clickhouse import build_public_snapshots as public_builder
+    from clickhouse import calibrate_client_availability as calibration
     from clickhouse import ingest_operational_outbox as worker
     from clickhouse.archive_daily import ClickHouseDailyExporter, SourceFingerprint, archive_day
     from clickhouse.build_public_snapshots import build_snapshots
+    from clickhouse.check_client_telemetry_freshness import evaluate as evaluate_telemetry
+    from clickhouse.check_fleet_analytics_freshness import evaluate as evaluate_fleet
     from clickhouse.operational_fingerprint import canonical_fingerprint
-    from clickhouse.rollup_client_events import aggregate_client_rollups
+    from clickhouse.rollup_client_events import aggregate_client_rollups, fetch_inputs
     from clickhouse.verify_spanner_delivery import verify_delivery
     from tests.test_clickhouse_archive import FakeExporter, MemoryStore
-    from tests.test_clickhouse_client_rollup import _counter, _coverage
-    from trusted_router.client_reliability import _all_traffic_section, _status_all_traffic
+    from tests.test_clickhouse_client_rollup import _counter
+    from trusted_router.client_reliability import client_observed_status_section
     from trusted_router.operational_analytics_freshness import analytics_status_from_reading
     from trusted_router.provider_ranking import build_ranks
     from trusted_router.storage_gcp import SpannerStore
@@ -144,18 +190,66 @@ def consumer_snapshots(monkeypatch):
     generation = _generation()
     generation.id = "gen-" + "e" * 32
     generation.synthetic = True
+    generation.client_source = "tr"
     generation.app = "TrustedRouter Synthetic"
     generation.workspace_id = "dedicated-probe"
     window_start = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
     generation.created_at = window_start.isoformat()
     payload = activity_payload(generation)
     cfg = Settings(environment="test")
-    database = ActivityDatabase(payload)
+    database = ActivityDatabase(payload, query_log)
+    class CountIf:
+        def __init__(self):
+            self.total = 0
+
+        def step(self, value):
+            self.total += bool(value)
+
+        def finalize(self):
+            return self.total
+
+    class MaxIf:
+        def __init__(self):
+            self.values = []
+
+        def step(self, value, condition):
+            if condition:
+                self.values.append(value)
+
+        def finalize(self):
+            return max(self.values) if self.values else None
+
+    database.connection.create_aggregate("countIf", 1, CountIf)
+    database.connection.create_aggregate("maxIf", 2, MaxIf)
+    database.connection.create_function("now", 0, lambda: now.isoformat())
+    database.connection.create_function("shift_hours", 2, lambda text, hours: (
+        dt.datetime.fromisoformat(text) + dt.timedelta(hours=hours)).isoformat())
+    for func, minutes in (("toStartOfMinute", 1), ("toStartOfFiveMinutes", 5),
+                          ("toStartOfHour", 60), ("toStartOfDay", 1440)):
+        def floor(text, minutes=minutes):
+            timestamp = dt.datetime.fromisoformat(text.replace('Z', '+00:00'))
+            midnight = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+            return (midnight + dt.timedelta(minutes=((timestamp.hour * 60 + timestamp.minute) // minutes) * minutes)).isoformat()
+        database.connection.create_function(func, 1, floor)
+    # Raw client source fixtures are identical before/after. No cohort SDK
+    # telemetry is invented. Both shipped rollup SELECTs execute locally.
+    database.replace_table("client_minute_counters", [_counter(
+        activity_payload(_generation())["tenant_id"], requests=1, first_attempt_success=1,
+        bucket_start=window_start.isoformat(), received_at=window_start.isoformat(),
+        event_id="ordinary-event", ingest_version=1, sdk_version="1.0",
+        total_ms_hist={"lt200": 1}, first_event_ms_hist={"lt100": 1})])
+    database.connection.execute("CREATE TABLE client_request_events (created_at, synthetic)")
+    monkeypatch.setattr(public_builder, "_query", lambda password, sql: database.query_bytes(sql).decode())
     store = InMemoryStore()
     from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
 
     ordinary = _generation()
     ordinary.created_at = generation.created_at
+    ordinary.client_source = "tr"
+    ordinary_payload = activity_payload(ordinary)
+    # Two real baseline activity rows establish the coverage denominator.
+    database.add(ordinary_payload)
+    database.add(dict(ordinary_payload, generation_id="ordinary-second"))
     store.generation_store.add(ordinary)
     store.record_synthetic_probe_sample(
         SyntheticProbeSample(
@@ -249,30 +343,37 @@ def consumer_snapshots(monkeypatch):
         status_result = status.status_snapshot(samples, now=now, settings=cfg)
         database.replace_benchmarks(benchmarks)
         benchmark_rows = database.client.benchmark_samples()
-        public = build_snapshots(
-            benchmark_rows, generated_at=now.isoformat(), status_samples=samples
-        )
-        cov = [_coverage("ordinary", requests=2)]
-        cov += [
-            _coverage(activity_payload(g)["tenant_id"], requests=1, synthetic=int(g.synthetic))
-            for g in generations
-        ]
-        for coverage in cov:
-            coverage["bucket_start"] = window_start.isoformat()
+        counters, cov = fetch_inputs(SimpleNamespace(query=database.query_bytes), start=window_start, end=now + dt.timedelta(seconds=1))
         client = aggregate_client_rollups(
-            [
-                _counter(
-                    "ordinary", requests=1, first_attempt_success=1, bucket_start=window_start.isoformat(), total_ms_hist={"lt200": 1}, first_event_ms_hist={"lt100": 1}
-                )
-            ],
-            cov,
-            period="5m",
-            period_start=window_start,
-            computed_at=now,
+            counters, cov, period="5m", period_start=window_start, computed_at=now,
         )
-        all_traffic = _status_all_traffic(
-            _all_traffic_section({"24h": [r for r in client if r["scope"] == "fleet_all"]})
+        client += aggregate_client_rollups(
+            counters, cov, period="hour", period_start=window_start.replace(minute=0), computed_at=now,
         )
+        database.replace_table("client_availability_rollups", client)
+        public = build_snapshots(
+            benchmark_rows, generated_at=now.isoformat(), status_samples=samples,
+            client_reliability_rows=public_builder._client_reliability_rows("", now=now),
+            client_reliability_all_traffic_rows=public_builder._client_reliability_rows("", now=now, scope="fleet_all"),
+            client_reliability_signals=public_builder._client_reliability_signals("", now=now),
+        )
+        client_section = client_observed_status_section(public["client_reliability"], now=now)
+        analytics = analytics_status_from_reading(operational.operational_analytics_outbox_freshness(), now=now)
+        start = window_start.replace(hour=0, minute=0)
+        end = start + dt.timedelta(days=1)
+        # Shipped activity/counter/canary queries run. The ClickHouse ARRAY JOIN
+        # is not executed here: the report's attempt-join output is out of scope.
+        # Synthetic input comes from the real local sample/rollup store, not a
+        # manufactured exclusion; the remote synthetic SELECT is not exercised.
+        cal_inputs = {
+            "counter_rows": database.select(calibration.counter_query(start=start, end=end)),
+            "activity_rows": database.select(calibration.activity_success_query(start=start, end=end)),
+            "canary_rows": database.select(calibration.canary_query(start=start, end=end)),
+            "synthetic_rows": [dataclasses.asdict(r) for r in store.synthetic_rollups(period="5m")],
+        }
+        cal_report = calibration.build_calibration_report(**cal_inputs, attempt_rows=[], start=start, end=end)
+        verdict = calibration.build_publication_verdict(**cal_inputs, start=start, end=end)
+        assert verdict == cal_report["publication"]
         # Archive I/O is fake; canonical payload, fingerprints and archive planner are real.
         hashes = [
             int(canonical_fingerprint(event.row, surface="activity")[:16], 16)
@@ -349,16 +450,25 @@ def consumer_snapshots(monkeypatch):
             ),
             "operational outbox": queued,
             "delivery heartbeat": json.loads(bodies[-1])["last_delivery_at"],
-            "public analytics freshness": analytics_status_from_reading(
-                operational.operational_analytics_outbox_freshness(), now=now
-            ),
+            "public analytics freshness": analytics,
+            "fleet freshness/release input": {"analytics": analytics},
+            "fleet freshness/release decision": evaluate_fleet({"analytics": analytics}, now=now),
+            "client telemetry evaluator input": {"client_observed": client_section},
+            "client telemetry freshness fields": public["client_reliability"]["freshness"],
+            "client telemetry canary fields": client_section["canary"],
+            "client telemetry freshness/canary decision": evaluate_telemetry(
+                {"client_observed": client_section}, now=now, max_age_seconds=3600,
+                max_canary_age_seconds=3600, min_canary_24h=200),
+            "calibration publication inputs": cal_inputs,
+            "calibration report (without attempt join)": {k: v for k, v in cal_report.items() if k != "gateway_request_id_join"},
+            "calibration publication decision": verdict,
             "archive": archived.rows,
             "delivery repair": repairs.durable_repaired,
             "delivery reconciliation and fingerprints": (verified, hashes),
             "retirement discovery": notices.run_retirement_notice_pass(
                 notice_settings, now=now, analytics=database.client, email_service=notice_email
             ).workspaces,
-            "all-traffic coverage": all_traffic,
+            "all-traffic coverage": client_section["all_traffic"],
             "synthetic samples": samples,
             "status components": status_result["components"],
             "history": status.history_payload(samples, "daily"),

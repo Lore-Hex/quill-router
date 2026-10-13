@@ -93,22 +93,21 @@ def test_settings_bound_probe_volume(field: str, value: int) -> None:
 
 
 
-def seed(store: InMemoryStore, path: Path, label: str = "") -> dict[str, Any]:
-    names = provisioning.cohort_names(label)
+def seed(store: InMemoryStore, path: Path) -> dict[str, Any]:
+    names = provisioning.cohort_names()
     result = provision(store, **{k: names[k] for k in ("email", "workspace_name", "key_name", "funding_event_id")},
                        funding_microdollars=100_000_000, target_shards=1, apply=True, key_output_file=path)
     return result
 
 
-def test_provision_dry_run_and_labels(capsys: Any) -> None:
+def test_provision_dry_run_fixed_identity(capsys: Any) -> None:
     store = InMemoryStore()
-    assert provisioning.main(["--label", "second"], store=store) == 0
+    assert provisioning.main([], store=store) == 0
     result = json.loads(capsys.readouterr().out)
-    assert result["secret_name"] == provisioning.SECRET_NAME + "-second"
-    assert result["email"] == "async-settle-shadow-probe-second@trustedrouter.internal"
+    assert result["secret_name"] == provisioning.SECRET_NAME
+    assert result["email"] == "async-settle-shadow-probe@trustedrouter.internal"
     assert result["funding_microdollars"] == 100_000_000
     assert store.find_user_by_email(result["email"]) is None
-    assert provisioning.cohort_names()["funding_event_id"] != provisioning.cohort_names("second")["funding_event_id"]
 
 
 def test_provision_apply_keeps_key_file_private_and_funding_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any, caplog: Any) -> None:

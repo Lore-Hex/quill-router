@@ -30,17 +30,13 @@ from trusted_router.storage_models import CreditProvenance
 SECRET_NAME = "trustedrouter-async-settle-shadow-probe-api-key"  # noqa: S105 - secret resource name
 
 
-def cohort_names(label: str = "") -> dict[str, str]:
-    if label and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", label) is None:
-        raise ValueError("label must contain 1 to 32 lowercase letters, digits or hyphens")
-    suffix = f"-{label}" if label else ""
-    title = f" {label}" if label else ""
+def cohort_names() -> dict[str, str]:
     return {
-        "email": f"async-settle-shadow-probe{suffix}@trustedrouter.internal",
-        "workspace_name": f"TrustedRouter Async Settle Shadow Probe{title}",
-        "key_name": f"Async settle shadow probe{title}",
-        "funding_event_id": f"async_settle_shadow_probe_workspace_funding_v1{suffix}",
-        "secret_name": SECRET_NAME + suffix,
+        "email": "async-settle-shadow-probe@trustedrouter.internal",
+        "workspace_name": "TrustedRouter Async Settle Shadow Probe",
+        "key_name": "Async settle shadow probe",
+        "funding_event_id": "async_settle_shadow_probe_workspace_funding_v1",
+        "secret_name": SECRET_NAME,
     }
 
 
@@ -67,9 +63,9 @@ def _validate_workspace(store: Any, workspace_id: str, target_shards: int = 1) -
             raise ValueError("probe key must be ordinary local inference without app attribution")
 
 
-def validate(store: Any, raw_key: str, *, label: str = "", target_shards: int = 1) -> dict[str, Any]:
+def validate(store: Any, raw_key: str, *, target_shards: int = 1) -> dict[str, Any]:
     try:
-        names = cohort_names(label)
+        names = cohort_names()
         if not raw_key or any(char.isspace() for char in raw_key):
             raise ValueError("invalid credential")
         result = validate_synthetic_monitor_key(
@@ -176,7 +172,7 @@ def _apply_with_credential(store: Any, names: dict[str, str], funding: int, raw:
         if (registered is None or registered.hash != keys[0].hash
                 or registered.workspace_id != workspace.id or registered.disabled):
             raise MissingCredential()
-        validate(store, raw, label=names["email"].removeprefix("async-settle-shadow-probe").split("@")[0].removeprefix("-"))
+        validate(store, raw)
     elif registered is not None:
         raise ValueError("credential already belongs to a key")
     # From here on keep the file on EVERY failure, including uncertain commits.
@@ -217,7 +213,6 @@ def _apply_with_credential(store: Any, names: dict[str, str], funding: int, raw:
 
 def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--label", default="")
     parser.add_argument("--fund-usd", default="100")
     parser.add_argument("--target-shards", type=int, default=1,
                         help="expected existing shard count (validation only; never reshards)")
@@ -227,7 +222,7 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
     mode.add_argument("--validate", action="store_true", help="read the key from stdin; no writes")
     args = parser.parse_args(argv)
     try:
-        names = cohort_names(args.label)
+        names = cohort_names()
         if not 1 <= args.target_shards <= 64:
             raise ValueError("invalid target shards")
         if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-clickhouse":
@@ -241,7 +236,7 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
             if typed is None or getattr(typed, "request_record_write_mode", "legacy") != "typed":
                 raise ValueError("apply requires typed local settlement storage")
         if args.validate:
-            result = validate(active, sys.stdin.read(), label=args.label, target_shards=args.target_shards)
+            result = validate(active, sys.stdin.read(), target_shards=args.target_shards)
         elif args.apply:
             if args.target_shards != 1:
                 raise ValueError("apply requires one shard")

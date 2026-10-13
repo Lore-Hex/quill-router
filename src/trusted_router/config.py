@@ -355,7 +355,11 @@ def validate_shadow_probe_key(settings: Any, key: str) -> None:
             from sentry_sdk.utils import Dsn
             dsn = Dsn(value)
             credentials.extend((dsn.public_key, dsn.secret_key or ""))
-        elif name in {"attribution_cookie_key", "byok_envelope_key_b64", "adyen_hmac_key"}:
+        elif name == "byok_envelope_key_b64":
+            # The same URL-safe decoder used by byok_crypto and key_management.
+            from trusted_router.byok_crypto import _unb64
+            credentials.append(_unb64(value).decode("utf-8", errors="replace"))
+        elif name in {"attribution_cookie_key", "adyen_hmac_key"}:
             decoded = bytes.fromhex(value) if name == "adyen_hmac_key" else base64.b64decode(value, validate=True)
             credentials.append(decoded.decode("utf-8", errors="replace"))
     if key and (any(char.isspace() for char in key) or any(

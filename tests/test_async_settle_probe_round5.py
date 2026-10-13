@@ -308,11 +308,10 @@ def test_sole_owner_membership_every_state(state, tmp_path, monkeypatch, typed):
             p.validate(store, path.read_text())
 
 
-@pytest.mark.parametrize("race", ["two-files", "same-file", "two-labels"])
+@pytest.mark.parametrize("race", ["two-files", "same-file"])
 def test_concurrent_apply_reconciles_created_key(race, tmp_path, monkeypatch, typed):
     store = InMemoryStore()
     paths = [tmp_path / "a", tmp_path / ("b" if race == "two-files" else "a")]
-    labels = ["a", "b"] if race == "two-labels" else ["", ""]
     for path in set(paths):
         path.write_text(new_api_key())
         path.chmod(0o600)
@@ -333,7 +332,7 @@ def test_concurrent_apply_reconciles_created_key(race, tmp_path, monkeypatch, ty
         def apply(index):
             try:
                 return p.apply_cohort(
-                    store, p.cohort_names(labels[index]), 100_000_000, paths[index]
+                    store, p.cohort_names(), 100_000_000, paths[index]
                 )
             except p.ConcurrentProvisioning:
                 return None
@@ -355,12 +354,12 @@ def test_concurrent_apply_reconciles_created_key(race, tmp_path, monkeypatch, ty
     for index, result in enumerate(results):
         path = paths[index] if result else tmp_path / ("retry-" + str(index))
         workspace = store.list_workspaces_for_user(
-            store.find_user_by_email(p.cohort_names(labels[index])["email"]).id
+            store.find_user_by_email(p.cohort_names()["email"]).id
         )[0]
         active = [key for key in store.list_keys(workspace.id) if not key.disabled]
         if active and result is None:
             continue  # The other caller owns this workspace's surviving key.
-        retry = p.apply_cohort(store, p.cohort_names(labels[index]), 100_000_000, path)
+        retry = p.apply_cohort(store, p.cohort_names(), 100_000_000, path)
         assert store.get_key_by_raw(path.read_text()).hash == retry["key_id"]
 
 
@@ -477,11 +476,23 @@ def test_real_generation_consumer_inventory(monkeypatch):
     coverage all include it. It does not feed synthetic samples, status
     components, history, SLOs/burn rates, failure streaks, remediator, provider
     benchmarks/analytics, rankings/leaderboards, route health, drift,
-    client-event rollups or primary fleet coverage.
+    client-event rollups or primary fleet coverage. Fleet evaluation receives a
+    changed delivery age but keeps its durable-outbox verdict. Client telemetry
+    receives changed all-traffic coverage; freshness, canary and decision stay
+    unchanged. Calibration publication inputs and verdict stay unchanged under
+    the shipped synthetic-excluding activity SELECT. The calibration ARRAY JOIN
+    and remote synthetic SELECT are not exercised (local sample store instead).
     """
     from tests.async_settle_probe_consumers import CONSUMERS, consumer_snapshots
 
-    before, after = consumer_snapshots(monkeypatch)
+    query_log = []
+    before, after = consumer_snapshots(monkeypatch, query_log)
+    # Source execution is part of the evidence contract, even if hand-built
+    # replacement inputs would happen to produce identical output values.
+    coverage_queries = [q for q in query_log if "synthetic, count() AS requests" in q]
+    assert len(coverage_queries) == 2, "coverage must come from the shipped fetch_inputs SELECT"
+    assert sum("AND synthetic = 0" in q and "AS successes" in q for q in query_log) == 2
+    assert sum("AS canary_last_received_at" in q for q in query_log) == 2
     assert before.keys() == after.keys() == CONSUMERS.keys()
     for consumer, expected in CONSUMERS.items():
         assert ("changes" if before[consumer] != after[consumer] else "unchanged") == expected, (
@@ -489,10 +500,12 @@ def test_real_generation_consumer_inventory(monkeypatch):
         )
     assert before["public analytics freshness"]["seconds_since_last_delivery"] is None
     assert isinstance(after["public analytics freshness"]["seconds_since_last_delivery"], (int, float))
-    assert (
-        after["all-traffic coverage"]["windows"]["24h"]["coverage"]
-        <= before["all-traffic coverage"]["windows"]["24h"]["coverage"]
-    )
+    assert before["all-traffic coverage"]["windows"]["24h"]["coverage"] == 0.5
+    assert after["all-traffic coverage"]["windows"]["24h"]["coverage"] == pytest.approx(1 / 3, abs=0.0001)
+    assert before["fleet freshness/release decision"] == after["fleet freshness/release decision"] == []
+    assert before["client telemetry freshness/canary decision"]
+    assert not after["calibration publication decision"]["ready_to_publish"]
+    assert before["calibration publication inputs"]["activity_rows"]
 
 
 @pytest.mark.parametrize('field,encoding', [
@@ -624,3 +637,61 @@ def test_stale_concurrent_success_is_rejected_by_validation(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="validation failed"):
         p.validate(store, path.read_text())
     assert store.credit_money_snapshot(first["workspace_id"])[0] == 100_000_000  # Funded once.
+
+
+@pytest.mark.parametrize('boundary', ['startup', 'mounted'])
+@pytest.mark.parametrize('colliding', [False, True])
+@pytest.mark.parametrize('character', ['\u083e', '\u083f'])
+@pytest.mark.asyncio
+async def test_byok_urlsafe_runtime_encoding(boundary, colliding, character, tmp_path, monkeypatch):
+    import base64
+
+    from trusted_router.byok_crypto import _unb64, _wrapping_key
+    from trusted_router.config import Settings
+    from trusted_router.key_management import key_wrapper_for
+    from trusted_router.synthetic import cli, shadow_probe
+
+    # Valid UTF-8 and exactly 32 decoded bytes, with URL-safe-only alphabet.
+    decoded = character + 'x' * 29
+    encoded = base64.urlsafe_b64encode(decoded.encode()).decode()
+    assert ('-' if character == '\u083e' else '_') in encoded
+    settings = Settings(environment='test', byok_envelope_key_b64=encoded)
+    assert _unb64(encoded) == _wrapping_key(settings) == decoded.encode()
+    assert key_wrapper_for(settings) is not None
+    key = decoded if colliding else new_api_key()
+    if boundary == 'startup':
+        if colliding:
+            with pytest.raises(ValueError, match='distinct'):
+                Settings(environment='test', byok_envelope_key_b64=encoded,
+                         async_settle_shadow_probe_api_key=key)
+        else:
+            assert Settings(environment='test', byok_envelope_key_b64=encoded,
+                            async_settle_shadow_probe_api_key=key)
+        return
+    path = tmp_path / 'mounted'
+    path.write_text(key)
+    path.chmod(0o600)
+    monkeypatch.setenv('TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE', str(path))
+    monkeypatch.delenv('TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY', raising=False)
+    monkeypatch.setattr(cli, 'get_settings', lambda: settings)
+    calls = []
+
+    class LocalClient:
+        def __init__(self, **kwargs):
+            assert not colliding, 'colliding BYOK credential reached HTTP setup'
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    async def local_pass(cfg, **kwargs):
+        assert cfg.async_settle_shadow_probe_api_key == key
+        calls.append(key)
+        return []
+
+    monkeypatch.setattr(cli.httpx, 'AsyncClient', LocalClient)
+    monkeypatch.setattr(shadow_probe, 'run_pass', local_pass)
+    assert await cli.run_shadow_probe(once=True, generation_ids_out=tmp_path / 'ids') == (2 if colliding else 0)
+    assert bool(calls) is not colliding
