@@ -79,7 +79,9 @@ type Record struct {
 	Drain       string `json:"drain,omitempty"`
 	SnapshotSeq int64  `json:"snap,omitempty"`
 	// Boot is the boot binding a refund's or a release's disposition record
-	// carries (§4.9), from the authorization's envelope.
+	// carries (§4.9), from the authorization's envelope; and a hold's first
+	// heartbeat record's, the owner's statement of it, which the hold's row
+	// keeps for a reap of the hold to state.
 	Boot []byte `json:"boot,omitempty"`
 	// First marks a hold's first heartbeat record, which carries Basis, what
 	// a reap of the hold needs to build its full record (the request's terms
@@ -201,7 +203,7 @@ func (r Record) Validate() error {
 		tick: r.TickNumber != 0 || !r.TickAt.IsZero(), snapshot: r.Snapshot != nil, ckpt: r.Checkpoint != nil,
 		holds: len(r.Holds) > 0, manifest: r.Manifest != nil}
 	want := map[Kind]has{
-		Heartbeat:  {owner: true, auth: true, snapshot: true, basis: got.basis},
+		Heartbeat:  {owner: true, auth: true, snapshot: true, basis: got.basis, boot: got.boot && r.First},
 		Settle:     {owner: true, auth: true, digest: true},
 		Refund:     {owner: true, auth: true, boot: true},
 		Reap:       {owner: true, auth: true, digest: true, snap: true},
@@ -405,19 +407,3 @@ func (d *HoldsHasher) Add(held HeldHold) ([]byte, error) {
 
 // Sum is the digest of the holds taken.
 func (d *HoldsHasher) Sum() []byte { return d.h.Sum(nil) }
-
-// BootInBasis is the boot binding the basis a hold's first heartbeat brings
-// states: the basis is the gateway's terms for a reap of the hold (§4.9),
-// opaque here but for this one field, "boot", the authorization's boot
-// binding, which the owner holds a basis to (a basis stating another is
-// refused) and which a reap's full record and its pending work read. A
-// basis that is not of that shape, or states none, yields none.
-func BootInBasis(basis []byte) []byte {
-	var terms struct {
-		Boot []byte `json:"boot"`
-	}
-	if len(basis) == 0 || json.Unmarshal(basis, &terms) != nil {
-		return nil
-	}
-	return terms.Boot
-}

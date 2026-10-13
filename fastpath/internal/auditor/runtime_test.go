@@ -1438,16 +1438,17 @@ func TestADrainOverdueIsToldThoughItsBoundaryIsNotStored(t *testing.T) {
 	}
 }
 
-// TestAReapStatesTheBootBindingTheBasisCarries: a hold whose first
-// heartbeat's basis carries the boot binding is reaped with a full record
-// that states it, so the pending work can do the reap's work.
-func TestAReapStatesTheBootBindingTheBasisCarries(t *testing.T) {
+// TestAReapStatesTheBootBindingTheOwnerStated: a hold whose first
+// heartbeat record states the authorization's boot binding is reaped with
+// a full record that states it, which the pending work reads, so the
+// reap's work can be done.
+func TestAReapStatesTheBootBindingTheOwnerStated(t *testing.T) {
 	f := newRuntimeFixture(t)
 	ctx := context.Background()
 	var clock time.Time
 	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
 	first := hb(1, "a", 1, 10)
-	first.Basis = []byte(`{"boot":"Ym9vdC0x","model":"m"}`)
+	first.Boot = []byte("boot-1")
 	handleAll(rt, on(t, f.ref, first), on(t, f.ref, settle(2, "b", 40, 0)))
 	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
 		t.Fatalf("the draining write: %v %v", ok, err)
@@ -1463,21 +1464,8 @@ func TestAReapStatesTheBootBindingTheBasisCarries(t *testing.T) {
 	}
 	tickAt(row.FenceTime.Time.Add(2 * time.Second))
 	round(rt)
-	// The hold's row as a member before this change stored it: no boot
-	// binding, the basis alone; the reap states the basis's.
-	if _, err := f.db.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-		n, err := txn.Update(ctx, spanner.Statement{
-			SQL:    "UPDATE tr_lease_hold SET boot_binding = NULL WHERE workspace_id = @w AND lease_id = @l",
-			Params: map[string]any{"w": f.ref.Workspace, "l": f.ref.LeaseID}})
-		if err == nil && n != 1 {
-			return fmt.Errorf("%d hold rows", n)
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if l := f.loaded(); len(l.Holds) != 1 || len(l.Holds[0].Boot) != 0 {
-		t.Fatalf("the hold's row before the reap: %+v", l.Holds)
+	if l := f.loaded(); len(l.Holds) != 1 || !bytes.Equal(l.Holds[0].Boot, []byte("boot-1")) {
+		t.Fatalf("the hold's row: %+v", l.Holds)
 	}
 	late := row.Expiry
 	if deadline.After(late) {

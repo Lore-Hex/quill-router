@@ -650,24 +650,22 @@ func TestTheFirstFaultStands(t *testing.T) {
 	}
 }
 
-// TestAHoldsRowStatesTheBootBindingItsBasisCarries: a hold the heartbeats
-// alone made has the boot binding its first heartbeat's basis carries on
-// its row, which a reap's full record states; a basis that carries none
-// leaves the row's empty, and a basis that is not terms is kept as it is.
-func TestAHoldsRowStatesTheBootBindingItsBasisCarries(t *testing.T) {
+// TestAHoldsRowStatesTheBootBindingTheOwnerStated: a hold the heartbeats
+// alone made has on its row the boot binding its first heartbeat record
+// states, the owner's statement of the authorization's; a later heartbeat
+// states none and changes none, and a first that states none leaves the
+// row's empty.
+func TestAHoldsRowStatesTheBootBindingTheOwnerStated(t *testing.T) {
 	l := load(t, "open")
 	first := hb(1, "a", 1, 1)
-	first.Basis = []byte(`{"boot":"Ym9vdC0x","model":"m"}`)
-	second := hb(2, "b", 1, 1)
-	second.Basis = []byte(`{"model":"m"}`)
-	apply(t, l, Applied, first, second, hb(3, "c", 1, 1), hb(4, "a", 2, 2))
+	first.Boot = []byte("boot-1")
+	apply(t, l, Applied, first, hb(2, "b", 1, 1), hb(3, "a", 2, 2))
 	req := l.Request()
 	got := map[string][]byte{}
 	for _, h := range req.PutHolds {
 		got[h.AuthorizationID] = h.Boot
 	}
-	if !bytes.Equal(got["a"], []byte("boot-1")) || len(got["b"]) != 0 || len(got["c"]) != 0 ||
-		!bytes.Equal(req.PutHolds[0].ReapBasis, first.Basis) {
-		t.Fatalf("the holds' boot bindings: %q", got)
+	if !bytes.Equal(got["a"], []byte("boot-1")) || len(got["b"]) != 0 || req.PutHolds[0].RunningCharge.Int64 != 2 {
+		t.Fatalf("the holds' boot bindings: %q, %+v", got, req.PutHolds)
 	}
 }

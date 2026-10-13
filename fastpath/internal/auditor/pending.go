@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -244,24 +243,6 @@ func bootOf(body []byte) []byte {
 	return full.Boot
 }
 
-// reapBootOf is a reap's full record's boot binding: the one it states, or
-// the one its basis states, for a record built from a hold whose row
-// carried none (the basis is the owner's to hold to the authorization's
-// boot, record.BootInBasis). A settle's full record is the enclave's and
-// states its own, or none.
-func reapBootOf(body []byte) []byte {
-	if boot := bootOf(body); len(boot) > 0 {
-		return boot
-	}
-	var full struct {
-		Basis []byte `json:"basis"`
-	}
-	if json.Unmarshal(body, &full) != nil {
-		return nil
-	}
-	return record.BootInBasis(full.Basis)
-}
-
 // Do does a pack's work, and reports whether the pack is done. A settle's or
 // a reap's staged full record is read first, for its records and its boot
 // binding, which a refund's or a release's work carries itself. Then every
@@ -298,11 +279,7 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 		}
 		w.body = r.Body
 		if len(w.boot) == 0 {
-			if w.Kind == "reap" {
-				w.boot = reapBootOf(r.Body)
-			} else {
-				w.boot = bootOf(r.Body)
-			}
+			w.boot = bootOf(r.Body)
 		}
 	}
 	for _, w := range winners {

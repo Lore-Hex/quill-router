@@ -321,3 +321,26 @@ func TestHoldsDigestIgnoresTheirOrder(t *testing.T) {
 		t.Fatalf("a hand-off the format carries has no digest: %v", err)
 	}
 }
+
+// TestAFirstHeartbeatMayStateTheBootBinding: the owner states the
+// authorization's boot binding on a hold's first heartbeat record, and on
+// no later one.
+func TestAFirstHeartbeatMayStateTheBootBinding(t *testing.T) {
+	first := Record{Version: Version, Lease: "l", Epoch: 1, Seq: 1, Kind: Heartbeat, Auth: "a", Estimate: 10,
+		Snapshot: &Snapshot{GatewaySeq: 1, Hash: make([]byte, DigestSize), Usage: []byte(`{"tokens":1}`), Running: 1,
+			Deadline: time.Unix(0, 0).UTC()}, First: true, Basis: []byte("terms"), Boot: []byte("boot-1")}
+	if err := first.Validate(); err != nil {
+		t.Fatalf("a first heartbeat stating the boot binding: %v", err)
+	}
+	later := first
+	later.Seq, later.First, later.Basis = 2, false, nil
+	later.Snapshot = &Snapshot{GatewaySeq: 2, Hash: make([]byte, DigestSize), Usage: []byte(`{"tokens":2}`), Running: 2,
+		Deadline: time.Unix(0, 0).UTC()}
+	if err := later.Validate(); err == nil {
+		t.Fatal("a later heartbeat stating the boot binding was valid")
+	}
+	later.Boot = nil
+	if err := later.Validate(); err != nil {
+		t.Fatalf("a later heartbeat stating none: %v", err)
+	}
+}

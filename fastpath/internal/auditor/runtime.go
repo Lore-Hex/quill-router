@@ -504,15 +504,9 @@ func (rt *Runtime) reap(ctx context.Context, h *held, hold store.HoldRow, at tim
 	if hold.RunningCharge.Valid {
 		charge = min(hold.RunningCharge.Int64, hold.Estimate)
 	}
-	// The full record states the hold's boot binding: the row's, or the
-	// one its basis carries, for a hold the heartbeats alone made.
-	boot := hold.Boot
-	if len(boot) == 0 {
-		boot = record.BootInBasis(hold.ReapBasis)
-	}
 	full := encoded(reapRecord{V: 1, Lease: h.ref.LeaseID, Auth: hold.AuthorizationID, Estimate: hold.Estimate,
 		Charge: charge, At: at, GatewaySeq: hold.SnapshotSeq.Int64, Hash: hold.SnapshotHash, Usage: hold.SnapshotUsage,
-		OwnerSeq: hold.SnapshotOwnerSeq.Int64, Basis: hold.ReapBasis, Boot: boot})
+		OwnerSeq: hold.SnapshotOwnerSeq.Int64, Basis: hold.ReapBasis, Boot: hold.Boot})
 	wctx, cancel := context.WithTimeout(ctx, rt.cfg.Wait)
 	_, err := rt.cfg.Records.Publish(hold.AuthorizationID, settlelog.FullRecord, full).Wait(wctx)
 	cancel()
