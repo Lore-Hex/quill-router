@@ -135,10 +135,11 @@ type Config struct {
 // Watcher keeps what one look needs of the last: when each pending pack
 // was first seen, and what was booked when the stage began.
 type Watcher struct {
-	cfg      Config
-	start    int64
-	firstSaw map[string]time.Time
-	misses   int
+	cfg        Config
+	lastFailed []string
+	start      int64
+	firstSaw   map[string]time.Time
+	misses     int
 }
 
 // New is a watch, reading what is booked as the stage begins, within
@@ -255,6 +256,9 @@ func (w *Watcher) Look(ctx context.Context) (Reading, []string) {
 		}
 		a.apply(&r)
 	}
+	// What this look could not read is recorded whatever it makes of the
+	// rest: Sees reads it first.
+	w.lastFailed = failed
 	if past := w.cfg.Ceilings.Past(r); len(past) > 0 {
 		return r, past
 	}
@@ -267,6 +271,22 @@ func (w *Watcher) Look(ctx context.Context) (Reading, []string) {
 	}
 	w.misses = 0
 	return r, nil
+}
+
+// Sees is one look that must read everything: it returns what the look
+// could not read, as an error, or the ceilings already past, as a stop, so
+// a stage is started only under a watch that sees all of it (P1's run
+// starts its load after it). A look that read everything and found
+// nothing past returns nil, nil.
+func (w *Watcher) Sees(ctx context.Context) (past []string, err error) {
+	w.lastFailed = nil
+	_, why := w.Look(ctx)
+	if len(w.lastFailed) > 0 {
+		// A read that failed is the answer, whatever the look made of it:
+		// with one miss allowed, the look would call it a stop.
+		return nil, fmt.Errorf("watch: the first look could not read: %s", strings.Join(w.lastFailed, "; "))
+	}
+	return why, nil
 }
 
 // overdue counts the packs pending longer than the ceiling allows, by when

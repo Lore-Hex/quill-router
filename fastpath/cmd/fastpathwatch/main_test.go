@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -362,4 +365,256 @@ func TestAWatchStoppedAsItOpensExitsZero(t *testing.T) {
 	if code, err := run(context.Background(), args, &bytes.Buffer{}, d); code != 1 || err == nil {
 		t.Fatalf("opening that fails: exit %d, %v", code, err)
 	}
+}
+
+// TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt: with -run, the load
+// starts only after the watch's first look, is stopped past a ceiling with
+// the workspace turned off after it, and when it ends on its own the watch
+// ends too, exiting as the load did; a watch that cannot see never starts
+// it.
+func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
+	ws, _, d := stage(t, sources{cpu: 0.1})
+	marker := filepath.Join(t.TempDir(), "started")
+	// The load ends on its own: exit 0, the workspace left on.
+	code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c",
+		"touch "+marker+"; sleep 0.3; exit 0"), &bytes.Buffer{}, d)
+	if code != 0 || err != nil {
+		t.Fatalf("a load that ended: exit %d, %v", code, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("the load never started")
+	}
+	if !enabled(t, ws) {
+		t.Fatal("the workspace was turned off by a load that ended")
+	}
+	// The load fails: exit 1, naming it.
+	if code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "exit 7"),
+		&bytes.Buffer{}, d); code != 1 || err == nil || !strings.Contains(err.Error(), "exit status 7") {
+		t.Fatalf("a load that failed: exit %d, %v", code, err)
+	}
+	// A ceiling passed once the load runs: the load is told to stop, exits,
+	// and the workspace is turned off after it.
+	hot := d
+	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return &warming{cool: 1}, s, closeAll, nil
+	}
+	var out bytes.Buffer
+	code, err = run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c",
+		"trap 'sleep 0.2; exit 0' TERM; while :; do sleep 0.1; done"), &out, hot)
+	if code != stopped || err != nil {
+		t.Fatalf("a load stopped past a ceiling: exit %d, %v %s", code, err, out.String())
+	}
+	var answer map[string]any
+	if err := json.Unmarshal(out.Bytes(), &answer); err != nil || answer["load"] != "exited" ||
+		answer["revoked_leases"] != float64(1) {
+		t.Fatalf("the answer: %v %v", answer, err)
+	}
+	if enabled(t, ws) {
+		t.Fatal("the workspace is still enabled after the stop")
+	}
+	// A ceiling past before any load: the stage stops, exit 3, and the
+	// load never starts.
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
+		t.Fatal(err)
+	}
+	already := d
+	already.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return sources{cpu: 0.5}, s, closeAll, nil
+	}
+	none := filepath.Join(t.TempDir(), "none")
+	out.Reset()
+	code, err = run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "touch "+none), &out, already)
+	if code != stopped || err != nil || strings.Contains(out.String(), `"load"`) {
+		t.Fatalf("a ceiling past before the load: exit %d, %v %s", code, err, out.String())
+	}
+	if _, err := os.Stat(none); err == nil {
+		t.Fatal("the load started under a ceiling already past")
+	}
+	if enabled(t, ws) {
+		t.Fatal("the workspace is still enabled after a stop before the load")
+	}
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
+		t.Fatal(err)
+	}
+	// A watch whose first look cannot read everything, though its spend
+	// baseline read, never starts the load: exit 1, naming the read.
+	partial := d
+	partial.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return noCPU{sources{cpu: 0.1}}, s, closeAll, nil
+	}
+	unseen := filepath.Join(t.TempDir(), "unseen")
+	if code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "touch "+unseen),
+		&bytes.Buffer{}, partial); code != 1 || err == nil || !strings.Contains(err.Error(), "could not read") {
+		t.Fatalf("a watch whose first look cannot read the CPU: exit %d, %v", code, err)
+	}
+	if _, err := os.Stat(unseen); err == nil {
+		t.Fatal("the load started under a watch that could not read the CPU")
+	}
+	// A load that ignores the stop is killed, before the workspace is
+	// turned off, and is gone, not a zombie, once the command returns; and
+	// so is one the watch's own stop leaves running. The load says when it
+	// ignores the stop, and the CPU runs hot only then: a stop sent before
+	// the shell set its trap would end it. The command's term hook sees
+	// the load's PID, and the workspace still on as it is told to stop.
+	armed := filepath.Join(t.TempDir(), "armed")
+	stubborn := "trap '' TERM; touch " + armed + "; while :; do sleep 0.1; done"
+	// The command's term and kill hooks see the load's PID and, at each,
+	// the workspace still enabled: the turn-off comes after the load is
+	// gone, which gone confirms once the command returns.
+	var told, killed int
+	observing := func(base deps) deps {
+		o := base
+		o.term = func(pid int) error {
+			told = pid
+			if !enabled(t, ws) {
+				t.Error("the workspace was turned off before the load was told to stop")
+			}
+			return base.term(pid)
+		}
+		o.kill = func(pid int) error {
+			killed = pid
+			if !enabled(t, ws) {
+				t.Error("the workspace was turned off before the load that would not stop was killed")
+			}
+			if syscall.Kill(pid, 0) != nil {
+				t.Error("the load was already gone as it was killed")
+			}
+			return base.kill(pid)
+		}
+		return o
+	}
+	gone := func(what string) {
+		t.Helper()
+		if told == 0 || killed != told {
+			t.Fatalf("%s: the load was told to stop as %d and killed as %d", what, told, killed)
+		}
+		if err := syscall.Kill(told, 0); !errors.Is(err, syscall.ESRCH) {
+			t.Fatalf("%s: the load %d is still there once the command returned: %v", what, told, err)
+		}
+	}
+	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return &warming{cool: 1, armed: armed}, s, closeAll, nil
+	}
+	out.Reset()
+	code, err = run(context.Background(), append(slices.Clone(flags), "-workspace", ws, "-stop-wait", "300ms", "-run",
+		"sh", "-c", stubborn), &out, observing(hot))
+	if code != stopped || err != nil || !strings.Contains(out.String(), "killed") {
+		t.Fatalf("a load that will not stop: exit %d, %v %s", code, err, out.String())
+	}
+	gone("a load that will not stop")
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(armed)
+	told, killed = 0, 0
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			if _, err := os.Stat(armed); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		cancel()
+	}()
+	out.Reset()
+	code, err = run(ctx, append(slices.Clone(flags), "-workspace", ws, "-stop-wait", "300ms", "-run", "sh", "-c",
+		stubborn), &out, observing(d))
+	if code != 0 || err != nil || !strings.Contains(out.String(), "killed") {
+		t.Fatalf("a watch stopped first over a load that will not stop: exit %d, %v %s", code, err, out.String())
+	}
+	gone("a watch stopped first")
+	if !enabled(t, ws) {
+		t.Fatal("the workspace was turned off by a watch stopped first")
+	}
+	// With one miss allowed, a first look that cannot read is still exit 1
+	// and no load, not a stop; and so is one that cannot read a backlog
+	// while the CPU it did read is past the ceiling.
+	for _, c := range []struct {
+		what string
+		src  watch.Sources
+	}{
+		{"the first look cannot read the CPU", noCPU{sources{cpu: 0.1}}},
+		{"the first look cannot read a backlog, and the CPU is past the ceiling", noBacklog{sources{cpu: 0.5}}},
+	} {
+		blindish := d
+		blindish.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+			_, s, closeAll, _ := d.open(context.Background(), target{})
+			return c.src, s, closeAll, nil
+		}
+		unseenOnce := filepath.Join(t.TempDir(), "unseen-once")
+		if code, err := run(context.Background(), append(slices.Clone(flags), "-workspace", ws, "-misses", "1", "-run",
+			"sh", "-c", "touch "+unseenOnce), &out, blindish); code != 1 || err == nil || !strings.Contains(err.Error(), "could not read") {
+			t.Fatalf("one miss allowed, %s: exit %d, %v", c.what, code, err)
+		}
+		if _, err := os.Stat(unseenOnce); err == nil {
+			t.Fatalf("one miss allowed, %s: the load started", c.what)
+		}
+		if !enabled(t, ws) {
+			t.Fatalf("one miss allowed, %s: the workspace was turned off", c.what)
+		}
+	}
+	// A watch that cannot open never starts the load.
+	blind := d
+	blind.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		return nil, nil, nil, errors.New("no Monitoring")
+	}
+	never := filepath.Join(t.TempDir(), "never")
+	if code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "touch "+never),
+		&bytes.Buffer{}, blind); code != 1 || err == nil {
+		t.Fatalf("a watch that cannot open: exit %d, %v", code, err)
+	}
+	if _, err := os.Stat(never); err == nil {
+		t.Fatal("the load started under a watch that cannot see")
+	}
+	// -run with no command, or beside -stop-pid, is usage.
+	for _, args := range [][]string{append(slices.Clone(flags), "-workspace", ws, "-run"),
+		append(slices.Clone(flags), "-workspace", ws, "-run", "-stop-pid", "4242", "sh")} {
+		if code, _ := run(context.Background(), args, &bytes.Buffer{}, d); code != 2 {
+			t.Fatalf("%q: exit %d", args, code)
+		}
+	}
+}
+
+// noCPU is a source whose CPU read fails, the rest reading as src does.
+type noCPU struct{ sources }
+
+func (noCPU) SpannerCPU(context.Context) (float64, error) { return 0, errors.New("no Monitoring") }
+
+// warming is a source whose CPU reads under the ceiling for its first cool
+// looks, and past it after, once the file armed exists if one is named:
+// the stage is fine as its load starts, and not once it runs.
+type warming struct {
+	sources
+	mu    sync.Mutex
+	cool  int
+	armed string
+	looks int
+}
+
+func (w *warming) SpannerCPU(context.Context) (float64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.looks++
+	if w.looks <= w.cool {
+		return 0.1, nil
+	}
+	if w.armed != "" {
+		if _, err := os.Stat(w.armed); err != nil {
+			return 0.1, nil
+		}
+	}
+	return 0.5, nil
+}
+
+// noBacklog is a source whose backlog reads fail, the rest reading as src
+// does.
+type noBacklog struct{ sources }
+
+func (noBacklog) Undelivered(context.Context, string) (int64, error) {
+	return 0, errors.New("no Monitoring")
 }
