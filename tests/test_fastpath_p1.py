@@ -164,3 +164,17 @@ def test_node_ships_its_journal_to_cloud_logging() -> None:
         "--also-install", "/etc/google-cloud-ops-agent/config.yaml <<AGENT", "systemctl restart google-cloud-ops-agent",
         'release="$(', 'if [ -z "$release" ]', "systemctl enable --now fastpath")]
     assert order == sorted(order), order
+
+
+def test_the_unit_states_holds_boot_bindings_once_every_auditor_reads_them() -> None:
+    """The owner states a hold's boot binding on its first heartbeat record
+    only behind -hold-boot, since an auditor from before the field refuses
+    the record; at P1 the two nodes are replaced together by the apply, so
+    the release that reads the field is the one whose unit passes the flag
+    (docs/runbooks/fastpath-deploy.md)."""
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    main = (ROOT / "fastpath" / "cmd" / "fastpath" / "main.go").read_text(encoding="utf-8")
+    assert '"hold-boot"' in main
+    assert re.search(r"^\s*-hold-boot\s*$", script, re.M)
+    deploy = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text(encoding="utf-8")
+    assert "-hold-boot" in deploy and "reader deploys first" in deploy
