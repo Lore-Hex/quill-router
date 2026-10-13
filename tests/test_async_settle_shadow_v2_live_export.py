@@ -39,7 +39,6 @@ from trusted_router.async_settle_shadow_v2_contract import COMPARED_FULL
 from trusted_router.async_settle_shadow_v2_export import (
     DAY_KINDS,
     MemoryPort,
-    NativePort,
     OriginalObject,
     OriginalRow,
     digest,
@@ -448,10 +447,7 @@ def test_export_preserves_bytes_pages_conflicts_and_failure_siblings():
     assert conflict.gaps[0]['reason'] == 'conflicting_originals'
 
 
-def test_export_native_seams_fail_closed_and_invalid_bytes_are_retained():
-    native = export_day(NativePort(), DAY, completed_at_us=START,
-        object_keys=(f'publisher-traces/{DAY}/boot/1',))
-    assert len(native.gaps) == len(DAY_KINDS) + 1
+def test_export_invalid_bytes_are_retained():
     row = OriginalRow(DAY + '/bad', b'\xff', {})
     invalid = export_day(MemoryPort({DAY_KINDS[0]: (row,)}, {}, ()), DAY,
         completed_at_us=START, object_keys=())

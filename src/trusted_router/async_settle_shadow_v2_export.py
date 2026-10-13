@@ -3,14 +3,16 @@
 The port owns bounded reads and records each page, including an empty terminal
 page. Object keys must be supplied by an independent finite plan, never LIST.
 Accounting is a supplemental file, not a new evidence/acknowledgement schema.
-NativeV2RangeRead and NativeGenerationRead remain explicit unavailable seams.
+Native readers live in async_settle_shadow_v2_export_native, loaded only by the CLI.
 """
 from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from trusted_router.async_settle_shadow_v2_a1_evidence import KINDS
@@ -43,6 +45,7 @@ class OriginalObject:
     key: str
     body: bytes
     generation: str
+    metageneration: str | None = None
 
 
 class StoragePort(Protocol):
@@ -118,21 +121,45 @@ class MemoryPort:
             yield from candidates
 
 
-class NativePort:
-    """Unavailable until reviewed readers expose metadata (see the source map).
+class SpoolArray:
+    """Append-only JSON fragments; iteration holds one record, never a day."""
+    def __init__(self, path: Path) -> None:
+        self.path, self.count = path, 0
+        path.touch(exist_ok=False)
 
-    No new SQL or network fallback is hidden here. Existing DAY_SQL is v1-only;
-    existing GCSAttachments.get drops generation. A partial native export must
-    remain a gap, not silently delegate to either incompatible reader.
-    """
-    def __init__(self) -> None:
-        self.pages: list[dict[str, Any]] = []
+    def append(self, value: Any) -> None:
+        with self.path.open('a', encoding='utf-8') as target:
+            json.dump(value, target, ensure_ascii=True, separators=(',', ':'))
+            target.write('\n')
+        self.count += 1
 
-    def rows(self, kind: str, day: str) -> Iterator[OriginalRow]:
-        raise NotImplementedError('NativeV2RangeRead')
+    def __len__(self) -> int:
+        return self.count
 
-    def objects(self, prefix: str) -> Iterator[OriginalObject]:
-        raise NotImplementedError('NativeGenerationRead')
+    def __iter__(self) -> Iterator[Any]:
+        with self.path.open(encoding='utf-8') as source:
+            for line in source:
+                yield json.loads(line)
+
+
+def spool_transport(path: Path, value: Mapping[str, Any]) -> None:
+    with path.open('x', encoding='utf-8') as target:
+        target.write('{')
+        for index, (name, member) in enumerate(sorted(value.items())):
+            if index:
+                target.write(',')
+            target.write(json.dumps(name) + ':')
+            if isinstance(member, SpoolArray):
+                target.write('[')
+                with member.path.open(encoding='utf-8') as source:
+                    for ordinal, line in enumerate(source):
+                        if ordinal:
+                            target.write(',')
+                        target.write(line.rstrip('\n'))
+                target.write(']')
+            else:
+                json.dump(member, target, ensure_ascii=True, separators=(',', ':'), sort_keys=True)
+        target.write('}')
 
 
 @dataclass(frozen=True)
@@ -142,11 +169,12 @@ class Export:
     gaps: tuple[dict[str, Any], ...]
     # Contains even non-UTF8/oversize originals rejected by the JSON transport.
     originals: tuple[tuple[str, bytes], ...]
+    transport_path: Path | None = None
 
 
 def export_day(port: StoragePort, day: str, *, completed_at_us: int,
                object_keys: tuple[str, ...], supplied: Mapping[str, Any] | None = None,
-               max_objects: int = 10000) -> Export:
+               max_objects: int = 10000, spool_dir: Path | None = None) -> Export:
     """Export one explicitly selected day. Supplied tool/collector files stay raw.
 
     `supplied` uses loader transport members (proof, preimages, ledgers, etc.).
@@ -156,6 +184,16 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
     diagnostics is the separately reviewed ExportAccountingBinding seam.
     """
     bounds(day)
+    native = bool(getattr(port, 'native', False))
+    if native and spool_dir is None:
+        raise ValueError('native_export_requires_spool')
+    if spool_dir is not None:
+        spool_dir.mkdir(exist_ok=False)
+        # Persist the finite plan BEFORE the first source operation.
+        (spool_dir / 'plan.json').write_bytes(canonical(dict(day=day,
+            ranges=[dict(kind=k, start=bounds(day)[0], end=bounds(day)[1]) for k in DAY_KINDS],
+            object_keys=list(object_keys), max_objects=max_objects,
+            generations=getattr(port, 'object_plan', {}), resources=getattr(port, 'resources', {}))))
     if not 1 <= max_objects <= 10000 or len(object_keys) != len(set(object_keys)):
         raise ValueError('finite export bound')
     if len(object_keys) > max_objects or completed_at_us < 0:
@@ -167,10 +205,14 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
     value.update(policy_version='shadow-v2', contract_revision='a1', days=[day],
                  completed_at_us=completed_at_us, rows=[], attachments=[])
     value['preimages'] = list(value.get('preimages', []))
+    if spool_dir is not None:
+        value['rows'] = SpoolArray(spool_dir / 'rows.jsonl')
+        value['attachments'] = SpoolArray(spool_dir / 'attachments.jsonl')
     gaps: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
     originals: list[tuple[str, bytes]] = []
-    seen: dict[tuple[str, str], bytes] = {}
+    seen: dict[tuple[str, str], str] = {}
+    pass_snapshot: Any = None
     start_page = len(port.pages)
 
     def gap(key: str, reason: str) -> None:
@@ -179,14 +221,22 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
     def retain(kind: str, key: str, raw: bytes, metadata: Mapping[str, Any], member: str) -> None:
         index = len(entries)
         path = 'originals/' + f'{index:05}' + '-' + digest(raw)
-        originals.append((path, raw))
+        if spool_dir is None:
+            originals.append((path, raw))
+        else:
+            destination = spool_dir / path
+            destination.parent.mkdir(exist_ok=True)
+            with destination.open('xb') as target:
+                target.write(raw)
         entries.append(dict(kind=kind, key=key, bytes=len(raw), sha256=digest(raw),
-            key_bytes=len(kind.encode()) + len(key.encode()), metadata=dict(metadata),
+            key_bytes=len(kind.encode()) + len(key.encode()),
+            key_sha256=digest(canonical([kind, key])), key_sha256_encoding='canonical-json-kind-key',
+            metadata=dict(metadata),
             original=path, ordinal=index))
         previous = seen.get((kind, key))
         if previous is not None:
-            gap(key, 'conflicting_originals' if previous != raw else 'duplicate_original')
-        seen[kind, key] = raw
+            gap(key, 'conflicting_originals' if previous != digest(raw) else 'duplicate_original')
+        seen[kind, key] = digest(raw)
         try:
             text = raw.decode('utf-8')
         except UnicodeError:
@@ -194,6 +244,7 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
             return
         if len(raw) > 262144:
             gap(key, 'original_exceeds_FILE_REF_bound')
+            return
         value[member].append(dict(kind=kind, id=key, raw=text))
 
     for attachment in supplied_attachments:
@@ -206,8 +257,10 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
         read_count = 0
         page_at = len(port.pages)
         previous = ''
+        iterator = None
         try:
-            for row in port.rows(kind, day):
+            iterator = port.rows(kind, day)
+            for row in iterator:
                 low, high = bounds(day)
                 if not low <= row.key < high or row.key < previous:
                     gap(kind + '/' + row.key, 'range_or_order_violation')
@@ -234,11 +287,22 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
                             or not 0 <= page.get('count', -1) <= page.get('page_size', 0)
                             or not 0 < page.get('deadline_ms', 0) <= 200
                             or page.get('priority') != 'LOW' or page.get('retries') != 0
-                            or bool(page.get('complete')) != (index == len(pages) - 1)):
+                            or not page.get('snapshot')
+                            or (pass_snapshot is not None and page.get('snapshot') != pass_snapshot)
+                            or bool(page.get('complete')) != (index == len(pages) - 1)
+                            or bool(page.get('complete')) != (page.get('count', 0) < page.get('page_size', 0))):
                         gap(kind + '/' + day, 'page_coverage_invalid')
+                    pass_snapshot = page.get('snapshot')
                     cursor = page.get('last') or cursor
         except Exception as exc:
             gap(kind + '/' + day, type(exc).__name__ + ':' + ('NativeV2RangeRead' if isinstance(exc, NotImplementedError) else 'read_failed'))
+        finally:
+            try:
+                close = getattr(iterator, 'close', None)
+                if close is not None:
+                    close()
+            except Exception as exc:
+                gap(kind + '/' + day, type(exc).__name__ + ':cleanup_failed')
     # One exact planned key per call: failure cannot erase its later siblings.
     for key in object_keys:
         if len(entries) >= max_objects:
@@ -254,7 +318,7 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
                 count += 1
                 if obj.key != key:
                     gap(obj.key, 'object_outside_exact_plan')
-                retain(OBJECT_KINDS[prefix], obj.key, obj.body, {'generation': obj.generation}, 'attachments')
+                retain(OBJECT_KINDS[prefix], obj.key, obj.body, {'generation': obj.generation, 'metageneration': obj.metageneration}, 'attachments')
                 if not obj.generation:
                     gap(key, 'object_generation_absent')
                 if len(entries) > max_objects:
@@ -285,19 +349,40 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
 
     paginate('entries', entries)
     paginate('reads', port.pages[start_page:])
-    paginate('plan', list(object_keys))
+    paginate('plan', [*[dict(source='rows', kind=k, day=day,
+        start=bounds(day)[0], end=bounds(day)[1]) for k in DAY_KINDS],
+        *[dict(source='object', key=k, generation=getattr(port, 'object_plan', {}).get(k)) for k in object_keys]])
     paginate('gaps', list(gaps))
     total = len(value['rows']) + len(value['attachments']) + len(value.get('ledgers', [])) + len(value['preimages']) + len(accounting_files) + 2
     if total > 10000:
         gap('transport', 'combined_loader_object_bound_exhausted')
         paginate('final-gaps', [gaps[-1]])
-    accounting = canonical(dict(format='shadow-v2-live-export-round1', day=day,
+    accounting = canonical(dict(format='shadow-v2-live-export-a3-n', day=day,
         scope='declared day ranges and independently supplied exact object keys',
         complete=not gaps, passes=1, details=details,
         source_body_bytes=sum(e['bytes'] for e in entries),
         source_key_bytes=sum(e['key_bytes'] for e in entries),
         source_operations=len(port.pages)-start_page, gap_count=len(gaps),
-        native=False, entry_count=len(entries)))
+        native=native, resources=getattr(port, 'resources', {}), entry_count=len(entries),
+        operations=dict(native_rpcs=sum(p.get('native_rpcs', 0) for p in port.pages[start_page:]),
+            pages=sum(p.get('source') == 'rows' for p in port.pages[start_page:]),
+            rows=sum(p.get('count', 0) for p in port.pages[start_page:] if p.get('source') == 'rows'),
+            objects=sum(p.get('count', 0) for p in port.pages[start_page:] if p.get('source') == 'object'),
+            body_bytes=sum(p.get('body_bytes', 0) for p in port.pages[start_page:]),
+            elapsed_us=sum(p.get('elapsed_us', 0) for p in port.pages[start_page:])),
+        buffer=dict(body_limit=262144, json_record_limit=6*262144+16384, spool_io_buffer_bytes=8192,
+                    retained_bodies=1 if spool_dir else len(originals),
+                    metadata_entry_limit=max_objects + 200, streaming=spool_dir is not None)))
     value['preimages'].extend([*accounting_files,
         dict(name='export/accounting.json', raw=accounting.decode())])
+    if spool_dir is not None:
+        (spool_dir / 'accounting.json').write_bytes(accounting)
+        # Sidecar source pages are individually addressable by the next packager.
+        for item in accounting_files:
+            destination = spool_dir / item['name']
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(item['raw'])
+        transport_path = spool_dir / 'bundle.json'
+        spool_transport(transport_path, value)
+        return Export(b'', accounting, tuple(gaps), (), transport_path)
     return Export(canonical(value), accounting, tuple(gaps), tuple(originals))
