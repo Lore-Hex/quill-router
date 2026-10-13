@@ -56,12 +56,19 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
               *, replay: bool = False, original_page: dict[str, Any] | None = None,
               original_locator: dict[str, Any] | None = None,
               original_decision: dict[str, Any] | None = None,
-              finalized_event: Callable[[bytes], None] | None = None) -> dict[str, Any]:
+              finalized_event: Callable[[bytes], None] | None = None,
+              finish_obligation: Callable[[Reservation, dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """Return additive metadata only after the exact fitted slot is finalized.
 
     No mutation of caller additions or billing DTOs. A replay records its own
     report obligation and never calls the signer or reconstructs prices.
     """
+    def finish(reservation: Reservation, event: dict[str, Any]) -> None:
+        if finish_obligation is not None:
+            finish_obligation(reservation, event)
+        else:
+            require(port.fold_counts(reservation.day, receipt_bucket(event)), "counter_overflow")
+            port.complete(reservation)
     reservation = None
     prepared = None
     finalized = False
@@ -86,8 +93,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
             require(event["identity"] == committed_identity(inputs.identity), "authorization_link_gap")
             require(port.finalize(reservation, event) == raw, "original_receipt_digest_gap")
             finalized = True
-            port.complete(reservation)
-            port.fold_counts(reservation.day, receipt_bucket(event))
+            finish(reservation, event)
             return {}
         prepared = prepare_authorization(reservation, identity=committed_identity(inputs.identity),
             revision=inputs.revision, dimensions=inputs.dimensions, facts=inputs.facts,
@@ -124,8 +130,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
             prepared = type(prepared)(prepared.decision, EVENT.serialize(event), event)
         require(port.finalize(reservation, event) == prepared.body, "original_receipt_digest_gap")
         finalized = True
-        port.complete(reservation)
-        port.fold_counts(reservation.day, receipt_bucket(event))
+        finish(reservation, event)
         if finalized_event is not None:
             finalized_event(prepared.body)
         return metadata
@@ -142,8 +147,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                 } else "missing_context"
                 event = EVENT.parse(unresolved_authorization(prepared, reason))
                 if port.finalize(reservation, event) is not None:
-                    port.complete(reservation)
-                    port.fold_counts(reservation.day, receipt_bucket(event))
+                    finish(reservation, event)
             except Exception:  # noqa: S110 - the journal keeps the unfinished slot
                 pass
         return {}

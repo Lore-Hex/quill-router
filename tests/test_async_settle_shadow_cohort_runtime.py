@@ -151,6 +151,7 @@ def test_marker_absence_records_unresolved_without_response_fields(monkeypatch):
             route_type='chat.completions', stream=False, requested_parameters=[])
         shell.authorize_http(req, body, ctx.authorization, value, [endpoint()], typed=True, federated=False, replay=False)
         assert value == before
+        shell.join()
         event = EVENT.parse(service.journal.pages[0].slots[0].body)
         assert event['diagnostic']['reason'] == 'header_absent'
         assert service.counters[day_at(NOW*1000000)]['authorize_attempts'] == 1
@@ -165,7 +166,7 @@ def test_capture_is_reserved_unparsed_then_one_final_a_and_sample(monkeypatch):
         ctx = context()
         capture, size = shell.capture_terminal(request([('X-TR-Settlement-Shadow', fixture('terminal_compared_full')[0]['header'])]),
             ctx.body, ctx.authorization, 'settle')
-        assert capture is not None and capture.prediction is not None
+        assert capture is not None and capture.prediction is None
         assert service.journal.slot(capture.reservation).body is None
         assert service.journal.freeze(capture.reservation.day) == []
         capture.endpoint = endpoint()
@@ -210,6 +211,7 @@ def test_guard_refusal_inline_c_and_missing_header_worker_c(monkeypatch):
         shell.tokens = 0
         cap, _ = shell.capture_terminal(request(), ctx.body, ctx.authorization, 'refund')
         assert cap is None
+        shell.join()
         event = EVENT.parse(service.journal.pages[0].slots[0].body)
         assert event['partition'] == 'C' and event['diagnostic']['reason'] == 'rate_limit'
         shell.tokens = 10
@@ -304,6 +306,7 @@ def test_runtime_replay_links_original_without_fact_mapping(monkeypatch):
         route_type='chat.completions', stream=False, requested_parameters=[])
     try:
         shell.authorize_http(req, body, ctx.authorization, additions(), [endpoint()], typed=True, federated=False, replay=False)
+        shell.join()
         monkeypatch.setattr(module, 'map_requested_facts', lambda **_: (_ for _ in ()).throw(AssertionError('refreeze')))
         second = {}
         shell.authorize_http(req, body, ctx.authorization, second, [endpoint()], typed=True, federated=False, replay=True)
@@ -460,7 +463,9 @@ def test_compact_fact_overflow_finalizes_one_c_inline(monkeypatch):
     ctx.body.route_type = 'x'*129
     try:
         cap, size = shell.capture_terminal(request(), ctx.body, ctx.authorization, 'settle')
-        assert cap is None and size == 0 and shell.pending == 0
+        assert cap is None and size == 0
+        shell.join()
+        assert shell.pending == 0
         event = EVENT.parse(service.journal.pages[0].slots[0].body)
         assert event['partition'] == 'C' and event['diagnostic']['reason'] == 'local_work_overflow'
         assert service.counters[day_at(NOW*1000000)]['settle_attempts'] == 1
@@ -510,9 +515,221 @@ def test_shared_guard_refusals_each_finalize_one_c(monkeypatch, full):
         ctx = context()
         cap, size = shell.capture_terminal(request(), ctx.body, ctx.authorization, 'refund')
         assert cap is None and size == 0
+        shell.join()
         event = EVENT.parse(service.journal.pages[0].slots[0].body)
         assert event['partition'] == 'C' and event['diagnostic']['reason'] == 'queue_full'
-        assert service.counters[day_at(NOW*1000000)]['refund_attempts'] == 1
+        assert service.counters[day_at(NOW*1000000)]['refund_attempts'] == 0
         assert service.port.lost.is_set()
     finally:
+        shell.close()
+
+
+@pytest.mark.parametrize('lock_name', ['guard', 'queue', 'port', 'cleanup'])
+def test_terminal_lock_handshake_returns_before_exact_lock_release(monkeypatch, lock_name):
+    from trusted_router.services import async_settle_shadow_cohort_runtime as module
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    ctx = context()
+    real = {'guard': shell.guard, 'queue': shell.queue.mutex,
+            'port': service.lock, 'cleanup': shell.guard}[lock_name]
+    held, release, done = threading.Event(), threading.Event(), threading.Event()
+    attempts, result, money = [], [], []
+    class Handshake:
+        def acquire(self, *args, **kwargs):
+            if threading.current_thread().name == 'request-handshake':
+                attempts.append((args, kwargs))
+                assert kwargs == {'blocking': False}
+            return real.acquire(*args, **kwargs)
+        def release(self):
+            real.release()
+    if lock_name in {'guard', 'cleanup'}:
+        shell.guard = Handshake()
+    elif lock_name == 'queue':
+        shell.queue.mutex = Handshake()
+    else:
+        service.lock = Handshake()
+    def holder():
+        with real:
+            held.set()
+            assert release.wait(10)
+    owner = threading.Thread(target=holder)
+    if lock_name != 'cleanup':
+        owner.start()
+        assert held.wait(10)
+    else:
+        def broken(body):
+            owner.start()
+            assert held.wait(10)
+            raise ValueError('compact failure after admission')
+        monkeypatch.setattr(module, 'compact_terminal_facts', broken)
+    def callback():
+        money.append(1)
+        return b'committed money response'
+    def caller():
+        try:
+            result.append(shell.terminal(request(), ctx.body, ctx.authorization, 'settle', callback))
+        finally:
+            done.set()
+    caller_thread = threading.Thread(target=caller, name='request-handshake')
+    try:
+        caller_thread.start()
+        assert done.wait(10), 'request must return while the exact lock is still held'
+        assert not release.is_set() and attempts
+        assert result == [b'committed money response'] and money == [1]
+        assert service.port.lost.is_set()
+        assert all(not slot.completion_requested for page in service.journal.pages for slot in page.slots)
+    finally:
+        release.set()
+        owner.join(10)
+        caller_thread.join(10)
+        # Restore the real worker locks before it drains queued obligations.
+        if lock_name in {'guard', 'cleanup'}:
+            shell.guard = real
+        elif lock_name == 'queue':
+            shell.queue.mutex = real
+        else:
+            service.lock = real
+        shell.join()
+        shell.close()
+
+
+@pytest.mark.parametrize('failure', ['full', 'stopped'])
+def test_refused_dispatch_retains_one_final_c_without_completion(monkeypatch, failure):
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    entered, release = threading.Event(), threading.Event()
+    def block():
+        entered.set()
+        assert release.wait(10)
+    shell.dispatch(block)
+    assert entered.wait(10)
+    try:
+        if failure == 'full':
+            for _ in range(32):
+                shell.queue.put_nowait((lambda: None, ()))
+        else:
+            shell.close()
+            release.set()
+            shell.worker.join(10)
+            assert not shell.worker.is_alive()
+        ctx = context()
+        calls = []
+        assert shell.terminal(request(), ctx.body, ctx.authorization, 'refund',
+                              lambda: calls.append(1) or b'ok') == b'ok'
+        assert calls == [1]
+        slots = [slot for page in service.journal.pages for slot in page.slots]
+        assert len(slots) == 1 and EVENT.parse(slots[0].body)['partition'] == 'C'
+        assert not slots[0].completion_requested and service.port.lost.is_set()
+        assert service.journal.days[slots[0].reservation.day].hwm == 0
+    finally:
+        release.set()
+        shell.join()
+        shell.close()
+
+
+def test_observed_exclusion_worker_has_no_eligible_demand_or_prediction(monkeypatch):
+    from trusted_router.detached_jws import b64encode, canonical
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    ctx = context()
+    value = copy.deepcopy(fixture('terminal_compared_full')[0]['object'])
+    value['observed']['service_tier'] = 'unsupported'
+    value.update(terminal=None, payload_hash=None, go_error='unsupported_observed')
+    try:
+        cap, size = shell.capture_terminal(request([('X-TR-Settlement-Shadow', b64encode(canonical(value)))]),
+            ctx.body, ctx.authorization, 'settle')
+        cap.endpoint = endpoint()
+        shell.process(cap)
+        event = EVENT.parse(service.journal.slot(cap.reservation).body)
+        assert cap.verified.comparison.observed_eligible is False
+        assert (event['partition'], event['eligibility'], event['prediction']) == ('C', 'excluded', None)
+        counter = service.counters[cap.reservation.day]
+        assert counter['eligible_demand'] == 0 and counter['C'] == 1
+        assert all(counter['admission_observer']['prediction_'+label] == 0 for label in ('yes', 'no', 'unknown'))
+        shell.release(size)
+    finally:
+        shell.close()
+
+
+@pytest.mark.parametrize('condition', ['fresh', 'nonmember', 'disabled_policy', 'money_async',
+    'missing_capability', 'duplicate_capability', 'unusable_capability', 'unresolved', 'failed_exposure', 'replay'])
+def test_nonce_echo_exact_erratum_conditions(monkeypatch, condition):
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    ctx = context()
+    body = GatewayAuthorizeRequest(api_key_hash='key-v1', model=ctx.authorization.model_id,
+        route_type='chat.completions', stream=False, requested_parameters=[])
+    marker = ('X-TR-Settlement-Shadow-Policy', 'shadow-v2')
+    headers = [marker]
+    if condition == 'nonmember':
+        shell.settings._async_settle_shadow_workspace_ids = frozenset({'other'})
+    elif condition == 'disabled_policy':
+        shell.settings.async_settle_shadow_policy = ''
+    elif condition == 'money_async':
+        shell.settings.async_settle_enabled = True
+    elif condition == 'missing_capability':
+        headers = []
+    elif condition == 'duplicate_capability':
+        headers = [marker, marker]
+    elif condition == 'unusable_capability':
+        headers = [(marker[0], 'shadow-v1')]
+    elif condition == 'unresolved':
+        body.requested_parameters = None
+    elif condition == 'failed_exposure':
+        monkeypatch.setattr(service.port, 'finalize', lambda *_: None)
+    values = additions()
+    try:
+        shell.authorize_http(request(headers), body, ctx.authorization, values, [endpoint()],
+            typed=True, federated=False, replay=condition == 'replay')
+        shell.join()
+        assert ('invocation_nonce' in values) is (condition == 'fresh')
+        if condition == 'fresh':
+            from trusted_router.async_settle_shadow_binding import verify_binding
+            binding = verify_binding(values['billing_shadow_binding'], [shell.signer.trusted], NOW)
+            assert values['invocation_nonce'] == binding.invocation_nonce == ctx.authorization.invocation_nonce
+        else:
+            assert 'billing_shadow_binding' not in values
+    finally:
+        shell.close()
+
+
+def test_request_threads_never_fold_and_capture_never_validates_contract(monkeypatch):
+    import sys
+
+    from trusted_router.async_settle_shadow_v2_schema import Schema
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    ctx = context()
+    entered, release = threading.Event(), threading.Event()
+    shell.dispatch(lambda: (entered.set(), release.wait(10)))
+    assert entered.wait(10)
+    calls = []
+    codes = {Schema.__call__.__code__: 'contract', type(service.port).fold_counts.__code__: 'fold'}
+    def recorder(frame, event, arg):
+        if event == 'call' and frame.f_code in codes:
+            calls.append(codes[frame.f_code])
+    try:
+        sys.setprofile(recorder)
+        cap, size = shell.capture_terminal(request(), ctx.body, ctx.authorization, 'settle')
+        sys.setprofile(None)
+        assert calls == []
+        body = GatewayAuthorizeRequest(api_key_hash='key-v1', model=ctx.authorization.model_id,
+            route_type='chat.completions', stream=False, requested_parameters=[])
+        sys.setprofile(recorder)
+        values = additions()
+        calls.clear()
+        shell.authorize_http(request([('X-TR-Settlement-Shadow-Policy', 'shadow-v2')]), body,
+            ctx.authorization, values, [endpoint()], typed=True, federated=False, replay=False)
+        sys.setprofile(None)
+        assert 'fold' not in calls
+        # Named remaining seam: the unchanged P3 finalize API mandates EVENT
+        # validation/serialization before byte exposure. Do not bypass it.
+        assert 'contract' in calls, 'P3_FINALIZE_VALIDATION seam changed; reassess the no-validation requirement'
+        assert all(not slot.completion_requested for page in service.journal.pages for slot in page.slots)
+        assert service.journal.days[cap.reservation.day].hwm == 0
+        shell.release(size)
+    finally:
+        sys.setprofile(None)
+        release.set()
+        shell.join()
         shell.close()

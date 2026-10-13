@@ -160,6 +160,11 @@ def verify_terminal(headers: tuple[str, ...], context: Context, keys: Sequence[T
                      if compared.binding_verified else None)
         proof_day = day_at(issued_us) if issued_us is not None else None
         eligible = "eligible" if compared.binding_verified and compared.verified_streamed is not None else "unknown"
+        if compared.observed_eligible is False:
+            # The retained comparator establishes exclusion only after binding,
+            # snapshot, stream and raw/body agreement; identity failures remain unknown.
+            eligible = ("excluded" if compared.binding_verified and compared.raw_matches_body
+                        and not compared.reasons.intersection({"identity", "usage_estimated"}) else "unknown")
         unknown = VerifiedTerminal("C", eligible, "compared" if compared.payload_hash else "none",
                                    "eligible_coverage_gap", compared, proof_day, issued_us)
         if not (compared.binding_verified and compared.raw_matches_body):

@@ -190,7 +190,7 @@ def test_binding_bytes_and_finalize_before_exposure(monkeypatch: Any) -> None:
     finally:
         legacy.executor.shutdown()
     port, result = issued()
-    assert port.calls == ['reserve', 'finalize', 'complete', 'fold']
+    assert port.calls == ['reserve', 'finalize', 'fold', 'complete']
     assert result['billing_shadow_binding'] == old['billing_shadow_binding']
     assert additions()['billing_snapshot'] == old['billing_snapshot']
     slot = port.journal.pages[0].slots[0]
@@ -445,24 +445,83 @@ def test_retry_rules_call_retained_contract() -> None:
     assert sample_retry(sample, retry) == 'winner_polarity'
 
 
+HOOKS = {'_v2_authorize_hook', '_v2_settle_hook', '_v2_refund_hook', '_v2_capture_hook', '_v2_install_hook'}
+
+
+def assert_cohort_tree(source: str, expected: set[str]) -> None:
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    hooks = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in HOOKS}
+    assert set(hooks) == expected
+    for name, hook in hooks.items():
+        guard = hook.body[0]
+        assert isinstance(guard, ast.If), name
+        assert isinstance(guard.test, ast.UnaryOp) and isinstance(guard.test.op, ast.Not), name
+        call = guard.test.operand
+        assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'in_v2_cohort', name
+        assert len(call.args) == 4 and not call.keywords, name
+        assert len(guard.body) == 1 and isinstance(guard.body[0], ast.Return) and not guard.orelse, name
+        result = guard.body[0].value
+        if name in {'_v2_settle_hook', '_v2_refund_hook'}:
+            assert isinstance(result, ast.Call) and isinstance(result.func, ast.Name) and result.func.id == 'callback'
+            assert not result.args and not result.keywords
+        else:
+            assert isinstance(result, ast.Constant) and result.value is None
+    for node in ast.walk(tree):
+        # Includes plain/from/aliased imports, dotted module access, getattr,
+        # direct app-state access and string-key app-state access. No diff filter.
+        reference = (isinstance(node, ast.Import) and any('shadow_cohort' in n.name for n in node.names)
+            or isinstance(node, ast.ImportFrom) and ('shadow_cohort' in (node.module or '')
+                or any('shadow_cohort' in n.name for n in node.names))
+            or isinstance(node, ast.Attribute) and 'shadow_cohort' in node.attr
+            or isinstance(node, ast.Name) and 'shadow_cohort' in node.id
+            or isinstance(node, ast.Constant) and isinstance(node.value, str) and 'shadow_cohort' in node.value)
+        if reference:
+            parent = node
+            while parent in parents and parent not in hooks.values():
+                parent = parents[parent]
+            assert parent in hooks.values(), ('unguarded package reference', node.lineno)
+
+
 def test_every_request_path_import_is_cohort_gated() -> None:
     root = Path(__file__).parents[1]/'src/trusted_router'
-    found = []
     for path in (root/'routes').rglob('*.py'):
-        tree = ast.parse(path.read_text())
-        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module and 'shadow_cohort' in node.module:
-                current = node
-                guarded = False
-                while current in parents:
-                    current = parents[current]
-                    if isinstance(current, ast.If) and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                            and n.func.id == 'in_v2_cohort' for n in ast.walk(current.test)):
-                        guarded = True
-                assert guarded, (path, node.lineno)
-                found.extend(alias.name for alias in node.names)
-    assert sorted(found) == ['authorize_http', 'capture_prices', 'capture_prices', 'terminal_http', 'terminal_http']
+        expected = HOOKS - {'_v2_install_hook'} if path == root/'routes/internal/gateway.py' else set()
+        assert_cohort_tree(path.read_text(), expected)
+    assert_cohort_tree((root/'main.py').read_text(), {'_v2_install_hook'})
+
+
+def gateway_source() -> str:
+    return (Path(__file__).parents[1]/'src/trusted_router/routes/internal/gateway.py').read_text()
+
+
+def test_kills_gate_false_disjunct() -> None:
+    source = gateway_source().replace('if not in_v2_cohort(', 'if True or not in_v2_cohort(', 1)
+    compile(source, '<gate_false_disjunct>', 'exec')
+    with pytest.raises(AssertionError):
+        assert_cohort_tree(source, HOOKS - {'_v2_install_hook'})
+
+
+def test_kills_new_unguarded_call() -> None:
+    source = gateway_source() + '\ndef unguarded(request):\n    request.app.state.async_settle_shadow_cohort.terminal()\n'
+    compile(source, '<new_unguarded_call>', 'exec')
+    with pytest.raises(AssertionError):
+        assert_cohort_tree(source, HOOKS - {'_v2_install_hook'})
+
+
+def test_kills_alias_import_bypass() -> None:
+    source = gateway_source() + '\nimport trusted_router.services.async_settle_shadow_cohort_runtime as alias\nalias.authorize_http()\n'
+    compile(source, '<alias_import_bypass>', 'exec')
+    with pytest.raises(AssertionError):
+        assert_cohort_tree(source, HOOKS - {'_v2_install_hook'})
+
+
+def test_kills_live_unguarded_authorize_call() -> None:
+    source = gateway_source().replace('    async_additions: dict[str, Any] = {}',
+        '    async_request.app.state.async_settle_shadow_cohort.authorize_http()\n    async_additions: dict[str, Any] = {}')
+    compile(source, '<live_unguarded_authorize_call>', 'exec')
+    with pytest.raises(AssertionError):
+        assert_cohort_tree(source, HOOKS - {'_v2_install_hook'})
 
 
 def test_zero_certificate_issuance_calls() -> None:
@@ -664,3 +723,16 @@ def test_traced_core_branches(monkeypatch: Any) -> None:
         _case_exact_authorize_event_fit(target)
     for confirmed in (False, True):
         _case_refund_requires_actual_confirmed_booking(confirmed)
+
+
+def test_p4a_files_pass_unchanged_per_file_import_guard():
+    from tests.shadow_v2_import_guard import validate_live_imports
+    root = Path(__file__).parents[1]
+    tree = ast.parse((root/'tests/test_async_settle_shadow_v2_evidence.py').read_text())
+    check = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'test_no_runtime_imports_or_calls_to_new_modules')
+    allowed = ast.literal_eval(check.body[0].value)
+    allowed.update(ast.literal_eval(check.body[1].value.args[0]))
+    new = {p.stem for p in (root/'src').rglob('async_settle_shadow_v2_*.py')}
+    for name in ('async_settle_shadow_cohort.py', 'services/async_settle_shadow_cohort.py',
+                 'services/async_settle_shadow_cohort_runtime.py'):
+        validate_live_imports((root/'src/trusted_router'/name).read_text(), allowed[name], new)

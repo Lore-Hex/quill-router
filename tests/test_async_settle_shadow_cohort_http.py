@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 from tests.test_async_settle_shadow import NOW
 from tests.test_async_settle_shadow_cohort import fixture
@@ -16,13 +17,52 @@ from tests.test_async_settle_shadow_cohort_runtime import installed
 from tests.test_async_settle_shadow_http import pin_clocks
 from tests.test_async_settle_ticket import endpoint, runtime
 from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_store
-from tests.test_settle_outbox_drain import _client
+from tests.test_settle_outbox_drain import _client as fresh_client
 from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_shadow_compare import Booking
 from trusted_router.async_settle_shadow_v2_evidence import EVENT
 from trusted_router.catalog_data import Model
 from trusted_router.detached_jws import b64encode, canonical
 from trusted_router.routes.internal import gateway
+
+
+@pytest.fixture(scope="module", autouse=True)
+def shared_http_app():
+    global _client
+    app = None
+    retained_settings = None
+    state = None
+    def client(cfg):
+        nonlocal app, retained_settings, state
+        if app is None:
+            # Start with emission off; the explicit installed runtime below owns
+            # observation. Avoid creating an abandoned second runtime per app.
+            pin = cfg.async_settle_shadow_policy
+            cfg.async_settle_shadow_policy = ''
+            initial = fresh_client(cfg)
+            cfg.async_settle_shadow_policy = pin
+            app, retained_settings = initial.app, cfg
+            state = dict(app.state._state)
+            return initial
+        retained_settings.__dict__.clear()
+        retained_settings.__dict__.update(copy.deepcopy(cfg.__dict__))
+        retained_settings.__pydantic_private__ = copy.deepcopy(cfg.__pydantic_private__)
+        app.state._state.clear()
+        app.state._state.update(state)
+        from tests.test_async_settle_shadow_cohort_differential import reset_app_ingress
+        reset_app_ingress(app)
+        # The request settings dependency closes over the retained object.
+        cfg.__dict__ = retained_settings.__dict__
+        cfg.__pydantic_private__ = retained_settings.__pydantic_private__
+        return TestClient(app)
+    _client = client
+    yield
+    _client = fresh_client
+    if state and state.get('async_settle_shadow'):
+        state['async_settle_shadow'].executor.shutdown()
+
+
+_client = fresh_client
 
 
 def enclave_handoff(adapter, route, streamed):
@@ -86,6 +126,7 @@ def probe(monkeypatch, adapter, route, streamed, *, marker=True, kind='settle', 
         cfg.async_settle_shadow_policy = active_pin
         response = client.post('/v1/internal/gateway/authorize', json=payload, headers=headers)
         assert response.status_code == 200, response.text
+        shell.join()
         data = response.json()['data']
         stripped = response.json()
         for field in ('billing_shadow_policy', 'billing_shadow_binding', 'invocation_nonce'):
@@ -149,7 +190,7 @@ def probe(monkeypatch, adapter, route, streamed, *, marker=True, kind='settle', 
             terminal = dict(authorization_id=data['authorization_id'], error_status=502, streamed=True)
         outcome = client.post('/v1/internal/gateway/'+kind, json=terminal, headers=terminal_headers)
         assert outcome.status_code == 200, outcome.text
-        shell.executor.shutdown(wait=True)
+        shell.join()
         actual_terminal = saved_money()
         restore_money(authorized)
         cfg.async_settle_shadow_policy = ''

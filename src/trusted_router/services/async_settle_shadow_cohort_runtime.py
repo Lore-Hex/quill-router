@@ -6,9 +6,9 @@ import datetime as dt
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeVar, cast
+from queue import Empty, Full, Queue
+from typing import Any, TypeVar
 
 from trusted_router.async_settle_shadow_binding import ShadowSigner
 from trusted_router.async_settle_shadow_cohort import (
@@ -34,7 +34,6 @@ from trusted_router.billing_snapshot import Eligibility, exclusion
 from trusted_router.config import Settings
 from trusted_router.detached_jws import canonical
 from trusted_router.schemas import GatewaySettleRequest
-from trusted_router.services.async_settle_shadow import Runtime as LegacyRuntime
 from trusted_router.services.async_settle_shadow_admission import unknown
 from trusted_router.services.async_settle_shadow_cohort import (
     AuthorizeInput,
@@ -47,6 +46,13 @@ from trusted_router.storage_gcp_shadow_observation import Budget
 from trusted_router.storage_models import GatewayAuthorization, generation_id_for_authorization
 
 T = TypeVar("T")
+
+# Fail installation if the pinned feature contract changes without updating the
+# literal request projection below. Preserve the strict import allowlist.
+assert set(FEATURES + DEPENDENT) == {
+    "custom_model", "user_model", "native_batch", "fusion", "polyphemus", "liberty",
+    "tool_cost", "search_cost", "image_cost", "video_cost", "request_fee", "private_tier_basis",
+}
 
 
 def receipt_dimensions(adapter: str | None, route: str | None, streamed: bool | None) -> dict[str, Any]:
@@ -125,7 +131,11 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
             route=requested.route_type, streamed=requested.streamed, service_tier=requested.service_tier,
             app_markup=requested.app_markup, custom_markup=requested.custom_markup,
             receipt_requested=body.inference_receipt, receipt_fee=requested.receipt_fee,
-            commercial_program="partner" if requested.partner else "ordinary", features={k: bool(getattr(requested, k)) for k in FEATURES + DEPENDENT},
+            commercial_program="partner" if requested.partner else "ordinary", features=dict(custom_model=requested.custom_model, user_model=requested.user_model,
+                native_batch=requested.native_batch, fusion=requested.fusion, polyphemus=requested.polyphemus,
+                liberty=requested.liberty, tool_cost=requested.tool_cost, search_cost=requested.search_cost,
+                image_cost=requested.image_cost, video_cost=requested.video_cost,
+                request_fee=bool(requested.request_fee), private_tier_basis=requested.private_tier_basis),
             unknown_features=[]))
         reason = exclusion(requested)
         if body.inference_receipt:
@@ -141,11 +151,19 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
 
 def compact_terminal_facts(body: GatewaySettleRequest) -> GatewaySettleRequest:
     """Retain only bounded comparator inputs, never request extras or metadata."""
-    names = ("authorization_id", "route_type", "streamed", "usage_estimated", "service_tier",
-             "actual_input_tokens", "actual_output_tokens", "input_tokens", "output_tokens",
-             "cache_read_input_tokens", "cache_creation_input_tokens", "reasoning_tokens",
-             "additional_cost_microdollars")
-    values = {name: getattr(body, name) for name in names}
+    values: dict[str, Any] = dict(authorization_id=body.authorization_id,
+        route_type=body.route_type,
+        streamed=body.streamed,
+        usage_estimated=body.usage_estimated,
+        service_tier=body.service_tier,
+        actual_input_tokens=body.actual_input_tokens,
+        actual_output_tokens=body.actual_output_tokens,
+        input_tokens=body.input_tokens,
+        output_tokens=body.output_tokens,
+        cache_read_input_tokens=body.cache_read_input_tokens,
+        cache_creation_input_tokens=body.cache_creation_input_tokens,
+        reasoning_tokens=body.reasoning_tokens,
+        additional_cost_microdollars=body.additional_cost_microdollars)
     require(all(len(v) <= 128 for v in values.values() if isinstance(v, str)), "identity")
     require(all(0 <= v < 1 << 63 for v in values.values() if type(v) is int), "integer")
     return GatewaySettleRequest.model_construct(**values)
@@ -246,17 +264,35 @@ def retry_completion_backing(original: dict[str, Any], later: dict[str, Any]) ->
             == (later["booking"]["outcome"], later["classification"]), "retry_original_gap")
 
 
+class WorkerQueue(Queue[tuple[Callable[..., Any], tuple[Any, ...]]]):
+    """Queue.put_nowait normally waits for its mutex; this port never does."""
+
+    def put_nowait(self, item: tuple[Callable[..., Any], tuple[Any, ...]]) -> None:
+        if not self.mutex.acquire(blocking=False):
+            raise Full
+        try:
+            if self._qsize() >= self.maxsize:
+                raise Full
+            self._put(item)
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
+        finally:
+            self.mutex.release()
+
+
 class Runtime:
     def __init__(self, settings: Settings, async_runtime: Any, port: Port, booking_store: Any, *, typed: bool) -> None:
         self.settings, self.async_runtime, self.port, self.booking_store = settings, async_runtime, port, booking_store
         self.typed = typed
         self.signer = ShadowSigner(async_runtime.signer) if async_runtime.signer else None
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-compare")
+        self.queue = WorkerQueue(32)
+        self.worker = threading.Thread(target=self.drain, name="shadow-v2-compare", daemon=True)
         self.guard = self.lock = threading.RLock()
         # Reserve the bounded replay-decision cache inside the shared byte cap.
         self.tokens, self.refilled, self.pending, self.queued_bytes = 10., time.monotonic(), 0, 32*4096
         self.stopped = False
         self.decisions: dict[str, bytes] = {}
+        self.worker.start()  # install-time prestart; no request can start a thread
 
     def authorize_http(self, request: Any, body: Any, auth: GatewayAuthorization, additions: dict[str, Any],
                        endpoints: list[Any], *, typed: bool, federated: bool, replay: bool) -> None:
@@ -291,7 +327,7 @@ class Runtime:
             fields = authorize(self.settings, capability,
                 self.port, inputs, additions, self.signer, replay=replay,
                 original_decision=original, original_locator=original["receipt_locator"] if original else None,
-                finalized_event=retain if not replay else None)
+                finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize)
             additions.update(compared_handoff_fields(fields, auth))
         except Exception:
             self.port.lost.set()
@@ -302,9 +338,17 @@ class Runtime:
         try:
             if self.stopped:
                 return "queue_full"
-            # Reuse the existing rate/burst/task/byte guard. Its inner RLock is
-            # already owned, so the request thread never waits for contention.
-            return LegacyRuntime.admit(cast(Any, self), size)
+            now = time.monotonic()
+            self.tokens = min(10., self.tokens + max(0., now-self.refilled)*2)
+            self.refilled = now
+            if self.tokens < 1:
+                return "rate_limit"
+            if self.pending >= 32 or self.queued_bytes + size > 256*1024:
+                return "queue_full"
+            self.tokens -= 1
+            self.pending += 1
+            self.queued_bytes += size
+            return None
         finally:
             self.guard.release()
 
@@ -319,7 +363,7 @@ class Runtime:
         refused = self.admit(size)
         if refused:
             capture = Capture(reservation, auth, body, kind, (), None)
-            self.finish(capture, VerifiedTerminal("C", "unknown", "none", refused), Booking(), None)
+            self.finish(capture, VerifiedTerminal("C", "unknown", "none", refused), Booking(), None, defer=True)
             self.port.lost.set()
             return None, 0
         try:
@@ -336,14 +380,8 @@ class Runtime:
             self.release(size)
             self.port.lost.set()
             capture = Capture(reservation, auth, body, kind, (), None)
-            self.finish(capture, VerifiedTerminal("C", "unknown", "none", "local_work_overflow"), Booking(), None)
+            self.finish(capture, VerifiedTerminal("C", "unknown", "none", "local_work_overflow"), Booking(), None, defer=True)
             return None, 0
-        # Reserve prediction basis at receipt time, even if comparison/booking later fails.
-        try:
-            capture.prediction = self.port.capture_prediction(auth.workspace_id, reservation.observed_us)
-        except Exception:
-            self.release(size)
-            raise
         return capture, size
 
     def terminal(self, request: Any, body: Any, auth: GatewayAuthorization, kind: str,
@@ -361,16 +399,80 @@ class Runtime:
             _CAPTURE.reset(token)
             if capture is not None:
                 capture.router_us = max(0, int((time.monotonic()-capture.started)*1000000))
-                try:
-                    self.executor.submit(self.work, capture, size)
-                except Exception:
+                if not self.dispatch(self.work, capture, size):
                     self.port.lost.set()
+                    try:
+                        self.finish(capture, VerifiedTerminal("C", "unknown", "none", "queue_full"),
+                                    Booking(), None, defer=True)
+                    except Exception:
+                        self.port.lost.set()
                     self.release(size)
 
+    def dispatch(self, action: Callable[..., Any], *args: Any) -> bool:
+        if self.stopped or not self.worker.is_alive():
+            return False
+        try:
+            self.queue.put_nowait((action, args))
+            return True
+        except Full:
+            return False
+
+    def drain(self) -> None:
+        while True:
+            try:
+                action, args = self.queue.get(timeout=.05)
+            except Empty:
+                if self.stopped:
+                    return
+                continue
+            try:
+                action(*args)
+            except Exception:
+                self.port.lost.set()
+            finally:
+                self.queue.task_done()
+
+    def defer_authorize(self, reservation: Reservation, event: dict[str, Any]) -> None:
+        self.defer_fold(reservation, event, (), None)
+
+    def defer_fold(self, reservation: Reservation, event: dict[str, Any],
+                   rows: tuple[Row, ...], prediction: dict[str, Any] | None) -> None:
+        # EVENT's fixed 4096-byte maximum is charged alongside terminal work
+        # and the retained decision cache, including the currently running item.
+        size = 4096
+        if self.admit(size):
+            self.port.lost.set()
+            return
+        if not self.dispatch(self.fold_work, reservation, event, rows, prediction, size):
+            # Finalized but not completed: P3's HWM/close barrier retains the debt.
+            self.port.lost.set()
+            self.release(size)
+
+    def fold_work(self, reservation: Reservation, event: dict[str, Any],
+                  rows: tuple[Row, ...], prediction: dict[str, Any] | None, size: int) -> None:
+        try:
+            self.fold_complete(reservation, event, rows, prediction)
+        finally:
+            self.release(size)
+
+    def fold_complete(self, reservation: Reservation, event: dict[str, Any],
+                      rows: tuple[Row, ...], prediction: dict[str, Any] | None) -> None:
+        require(fold_final_counts(self.port, reservation.day, event), "counter_overflow")
+        if prediction is not None:
+            with self.port.service.lock:
+                self.port.service.counters[reservation.day]["admission_observer"]["prediction_"+prediction["prediction"]] += 1
+        require(self.port.complete(reservation, rows), "unfinished_slot")
+
     def release(self, size: int) -> None:
-        with self.guard:
+        if not self.guard.acquire(blocking=False):
+            # Do not forget unresolved accounting or reclaim bytes without ownership.
+            self.port.lost.set()
+            return
+        try:
             self.pending -= 1
             self.queued_bytes -= size
+        finally:
+            self.guard.release()
 
     def work(self, capture: Capture, size: int) -> None:
         try:
@@ -387,6 +489,10 @@ class Runtime:
             self.release(size)
 
     def process(self, capture: Capture) -> None:
+        if capture.finalized:
+            return
+        if capture.prediction is None:
+            capture.prediction = self.port.capture_prediction(capture.authorization.workspace_id, capture.reservation.observed_us)
         auth = capture.authorization
         try:
             booking = self.booking_store.booking(auth.id, time.monotonic()+1)
@@ -429,7 +535,7 @@ class Runtime:
                         return pending
         return self.port.service.store.read(row.kind, row.key, Budget(time.monotonic()+1, time.monotonic))
 
-    def finish(self, capture: Capture, verified: VerifiedTerminal, booking: Booking, ctx: Context | None) -> None:
+    def finish(self, capture: Capture, verified: VerifiedTerminal, booking: Booking, ctx: Context | None, *, defer: bool = False) -> None:
         """Finalize the reserved attempt exactly once, then fold its class and E."""
         if capture.finalized:
             return
@@ -487,19 +593,22 @@ class Runtime:
         raw = self.port.finalize(reservation, event)
         require(raw is not None, "unfinished_slot")
         capture.finalized = True
-        require(fold_final_counts(self.port, reservation.day, event), "counter_overflow")
-        if prediction is not None:
-            with self.port.service.lock:
-                self.port.service.counters[reservation.day]["admission_observer"]["prediction_"+prediction["prediction"]] += 1
-        self.port.complete(reservation, rows)
+        if defer:
+            self.defer_fold(reservation, event, rows, prediction)
+        else:
+            self.fold_complete(reservation, event, rows, prediction)
 
     def start(self) -> None:
-        # Start the dedicated worker during lifespan startup, before HTTP traffic.
-        self.executor.submit(lambda: None)
+        # Already prestarted by install, including applications without lifespan.
+        pass
 
     def close(self) -> None:
         self.stopped = True
-        self.executor.shutdown(wait=False, cancel_futures=False)
+
+    def join(self) -> None:
+        """Test/shutdown drain only; never called on the request path."""
+        self.queue.join()
+
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
