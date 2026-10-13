@@ -403,7 +403,7 @@ func TestTheFirstTerminalWins(t *testing.T) {
 }
 
 func TestHeartbeatValidity(t *testing.T) {
-	f := newFixture(t, 1000, func(e int64) int64 { return e / 10 })
+	f := newFixture(t, 1000, func(e int64) int64 { return e / 10 }, func(c *Config) { c.StateHoldBoot = true })
 	ctx := context.Background()
 	a := f.admit(t, 500, true)
 	if b := f.lease.Books(); b.Buffer != 0 {
@@ -465,7 +465,8 @@ func TestHeartbeatValidity(t *testing.T) {
 		t.Fatalf("the heartbeat records: %+v", recs)
 	}
 	// The first states the authorization's boot binding, the owner's
-	// statement of it for the hold's row and a reap; a later one none.
+	// statement of it for the hold's row and a reap, once every auditor
+	// reads the field (StateHoldBoot); a later one none.
 	if !bytes.Equal(recs[0].Boot, boot) || len(recs[1].Boot) != 0 {
 		t.Fatalf("the heartbeat records' boot bindings: %q, %q", recs[0].Boot, recs[1].Boot)
 	}
@@ -1227,5 +1228,23 @@ func TestARecordTooLargeIsNotNumbered(t *testing.T) {
 	}
 	if _, err := f.lease.Refund(ctx, big.Auth); err != nil {
 		t.Fatalf("the refund of the longest boot binding: %v", err)
+	}
+}
+
+// TestTheBootBindingIsStatedOnlyOnceEveryAuditorReadsIt: until
+// StateHoldBoot, a first heartbeat record carries no boot binding, since an
+// auditor from before the field refuses a heartbeat record that carries
+// one; the record is otherwise the same.
+func TestTheBootBindingIsStatedOnlyOnceEveryAuditorReadsIt(t *testing.T) {
+	f := newFixture(t, 1000, func(e int64) int64 { return e / 10 })
+	ctx := context.Background()
+	a := f.admit(t, 500, true)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	recs := f.log.records(t, "lease-1")
+	if len(recs) != 1 || !recs[0].First || string(recs[0].Basis) != "terms" || len(recs[0].Boot) != 0 {
+		t.Fatalf("the first heartbeat record before every auditor reads the field: %+v", recs)
 	}
 }

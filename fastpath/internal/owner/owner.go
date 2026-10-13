@@ -66,6 +66,12 @@ type Config struct {
 	// switch turning off makes no hold, and it asks for no lease for one
 	// that is not.
 	Enabled func(workspace string) bool
+	// StateHoldBoot has the owner state a hold's boot binding on the hold's
+	// first heartbeat record, for the hold's row and a reap of the hold.
+	// Off until every auditor reads the field: an auditor from before it
+	// refuses a heartbeat record that carries it (docs/runbooks/
+	// fastpath-deploy.md).
+	StateHoldBoot bool
 
 	// Spanner is the store an owner renews its leases in and writes their
 	// shortfalls and draining to, nil for one that writes nothing there.

@@ -141,3 +141,15 @@ a gap is not open, so `node` says done while the lease is held. One left
 past the bound above is stopped at a gap or unreadable: it is a page to a
 person, and the lease is noted with its workspace and ID for the archive
 rebuild.
+
+## A record field the auditors must read first
+
+A new field on a settle-log record is refused by an auditor from before
+it, which then marks the lease stopped at a gap. So a field is stated by
+the owner only once every auditor member runs a reader that takes it: the
+reader deploys first, on every node, and the owner's statement is turned
+on after, by its flag. The first such field is the hold's boot binding on
+its first heartbeat record, `-hold-boot`: off by default, passed to the
+unit once both nodes run a release that reads it. At P1 the two nodes are
+replaced together, so the release that reads the field is the one whose
+unit passes the flag.
