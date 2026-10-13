@@ -423,7 +423,7 @@ def test_unresolved_prior_graph_is_never_authority(round9_originals: Any, name: 
     result = round9_render(canonical(value), ports)
     assert 'artifact_gap' in result.gaps and 'positive_seed_gap' in result.gaps
     assert result.report.clock_start_us is None
-    assert any('prior_gate_original_graph_unavailable' in f.detail for f in result.failures)
+    assert any('prior_gate_original_graph:' in f.detail for f in result.failures)
 
 
 @pytest.mark.parametrize('scope', ['fleet', 'region'])
@@ -562,3 +562,154 @@ def test_shutdown_population_requires_original_proof_commitment(round9_originals
     assert load(damaged, ports).shutdown is None
     result = round9_render(damaged, ports)
     assert result.gate_report['timing']['handoff_us']['count'] is None
+
+
+@pytest.mark.parametrize('name', ['transport', 'pre', 'fleet'])
+@pytest.mark.parametrize('damage', ['wrong-stage', 'wrong-revision', 'wrong-cohort', 'wrong-policy',
+    'missing-ledger', 'detail-absent', 'detail-altered', 'detail-reordered', 'preimage-root', 'completion-envelope'])
+def test_prior_original_graph_damage(round9_originals: Any, name: str, damage: str) -> None:
+    import json
+    from dataclasses import replace
+
+    from tests.shadow_v2_gate_a2_fixture import alter_prior_inventory, transport
+    from trusted_router import async_settle_shadow_v2_a1_evidence as a1
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    original, _, ports, _ = round9_originals
+    envelope = json.loads(getattr(original, name))
+    files = {p.name: p.raw for p in original.preimages}
+    by_hash = {file_digest(raw): raw for raw in files.values()}
+    report = json.loads(by_hash[envelope['coverage_sha256']])
+    if damage in ('wrong-stage', 'completion-envelope'):
+        envelope.update(gate='post-flip') if damage == 'wrong-stage' else envelope.update(completed_at_us=0)
+        candidate = replace(original, **{name: canonical(envelope)})
+    elif damage in ('wrong-revision', 'wrong-cohort', 'wrong-policy'):
+        def change(raw: bytes) -> bytes:
+            proof = json.loads(raw)
+            if damage == 'wrong-revision':
+                proof['source_shas']['router'] = 'b' * 40
+            elif damage == 'wrong-cohort':
+                proof['cohort_seed_policy_sha256'] = '0' * 64
+            else:
+                proof['policy_version'] = 'shadow-v1'
+                return canonical(proof)
+            return a1.PROOF_MANIFEST.serialize(proof)
+        if damage == 'wrong-policy':
+            # An undecodable proof remains original input; inventory commits it.
+            digest = report['proof_manifest_sha256']
+            files = {path: (change(raw) if file_digest(raw) == digest else raw) for path, raw in files.items()}
+            candidate = replace(original, preimages=tuple(Preimage(k, v) for k, v in files.items()))
+        else:
+            candidate = alter_prior_inventory(original, name, lambda path: path == 'proof_manifest', change)
+    elif damage == 'preimage-root':
+        def change(raw: bytes) -> bytes:
+            manifest = json.loads(raw)
+            manifest['counter_root'] = '0' * 64
+            return a1.MANIFEST.serialize(manifest)
+        candidate = alter_prior_inventory(original, name,
+            lambda path: path.startswith('rows/' + a1.p1.KINDS[5] + '/'), change)
+    else:
+        if damage == 'missing-ledger':
+            from tests.shadow_v2_gate_a2_fixture import prior_inventory_entries
+            leaves = prior_inventory_entries(report, by_hash)
+            refs = [ref for leaf in leaves for ref in a2.INPUT_LEAF.parse(by_hash[leaf['bundle']['sha256']])['keys']]
+            digest = next(ref['sha256'] for ref in refs if ref['path'].startswith('ledgers/'))
+        else:
+            digest = report['writers']['tail_sha256']
+        raw = by_hash[digest]
+        if damage == 'detail-altered':
+            page = json.loads(raw)
+            page['entries'][0]['revision'] = 'b' * 40
+            replacement = canonical(page)
+        elif damage == 'detail-reordered':
+            page = json.loads(raw)
+            page['entries'].reverse()
+            replacement = canonical(page)
+            assert replacement != raw
+        else:
+            replacement = None
+        files = {path: (replacement if file_digest(value) == digest else value)
+                 for path, value in files.items() if replacement is not None or file_digest(value) != digest}
+        candidate = replace(original, preimages=tuple(Preimage(k, v) for k, v in files.items()))
+    result = round9_render(transport(candidate), ports)
+    assert 'artifact_gap' in result.gaps and 'positive_seed_gap' in result.gaps
+    assert any(f.gap == 'artifact_gap' and f.subject == a2.O('prior_gate', name) for f in result.failures)
+
+
+def test_prior_fabricated_pass_over_blocked_report(round9_originals: Any) -> None:
+    from dataclasses import replace
+
+    from tests.shadow_v2_gate_a2_fixture import original_prior_chain, transport
+    from trusted_router import async_settle_shadow_v2_a1_evidence as a1
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    original, _, ports, _ = round9_originals
+    prior, prior_ports, _ = original_prior_chain()
+    loaded = load(transport(prior), prior_ports)
+    blocked = evaluate(replace(loaded, budget=None), prior_ports, gate='fleet-budgets')
+    assert blocked.verdict == 'BLOCKED'
+    output, artifacts = render(blocked)
+    envelope = a1.GATE_OUTPUT.parse(output)
+    envelope.update(verdict='PASS', gaps=[])
+    files = {p.name: p.raw for p in original.preimages}
+    for raw in artifacts:
+        files['prior-artifacts/' + file_digest(raw)] = raw
+    candidate = replace(original, fleet=canonical(envelope), preimages=tuple(Preimage(k, v) for k, v in files.items()))
+    result = round9_render(transport(candidate), ports)
+    assert 'positive_seed_gap' in result.gaps
+
+
+def test_prior_fleet_requires_own_predecessor(round9_originals: Any) -> None:
+    from tests.shadow_v2_gate_a2_fixture import alter_prior_inventory, transport
+    original, _, ports, _ = round9_originals
+    candidate = alter_prior_inventory(original, 'fleet', lambda path: path == 'prior-gates/pre', lambda raw: b'{}')
+    result = round9_render(transport(candidate), ports)
+    assert 'boot_prerequisite_gap' in result.gaps
+
+
+def test_prior_budget_linkage(round9_originals: Any) -> None:
+    import json
+
+    from tests.shadow_v2_gate_a2_fixture import alter_prior_inventory, transport
+    original, _, ports, _ = round9_originals
+    def change(raw: bytes) -> bytes:
+        value = json.loads(raw)
+        value['pre_budget_sha256'] = '0' * 64
+        return canonical(value)
+    candidate = alter_prior_inventory(original, 'fleet', lambda path: path == 'proof_manifest', change)
+    result = round9_render(transport(candidate), ports)
+    assert 'boot_prerequisite_gap' in result.gaps
+
+
+@pytest.mark.parametrize('name,replacement', [('transport', 'pre'), ('pre', 'transport'), ('fleet', 'pre')])
+def test_prior_wrong_stage_valid_graph(round9_originals: Any, name: str, replacement: str) -> None:
+    from dataclasses import replace
+
+    from tests.shadow_v2_gate_a2_fixture import transport
+    original, _, ports, _ = round9_originals
+    candidate = replace(original, **{name: getattr(original, replacement)})
+    result = round9_render(transport(candidate), ports)
+    assert 'positive_seed_gap' in result.gaps
+
+
+def test_prior_budget_linkage_to_current_approval(round9_originals: Any) -> None:
+    import json
+    from dataclasses import replace
+
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from trusted_router.async_settle_shadow_v2_gate_bundle import decode_bundle
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    original, _, ports, _ = round9_originals
+    proof = json.loads(original.proof)
+    proof['pre_budget_sha256'] = '0' * 64
+    candidate = replace(original, proof=canonical(proof))
+    ctx = decode_bundle(load(transport(candidate), ports), ports, 'shadow-serving')
+    # Even though all prior artifacts are authentic, they belong to a different
+    # approval and must never enter the current prerequisite/clock authority set.
+    assert 'fleet' not in ctx.gates
+    result = round9_render(transport(candidate), ports)
+    assert 'positive_seed_gap' in result.gaps

@@ -196,7 +196,7 @@ pytestmark = pytest.mark.timeout(method='signal')
 
 @pytest.fixture(scope='module')
 def positive_results(passing: Bundle) -> dict[str, Any]:
-    return {stage: evaluate(passing, ports(), gate=stage) for stage in ('shadow-serving', 'pre-flip')}
+    return {stage: evaluate(passing, ports(passing), gate=stage) for stage in ('shadow-serving', 'pre-flip')}
 
 
 # The same 58 predicates have traced original-byte witnesses; retain this
@@ -204,7 +204,7 @@ def positive_results(passing: Bundle) -> dict[str, Any]:
 @exhaustive
 @pytest.mark.parametrize('gap', GAPS)
 def test_gap_negative(passing: Bundle, gap: str) -> None:
-    result = evaluate(damage(passing, gap), ports())
+    result = evaluate(damage(passing, gap), ports(passing))
     assert result.verdict == 'BLOCKED'
     assert gap in result.gaps, (gap, result.gaps)
     assert any(f.gap == gap for f in result.failures)
@@ -248,7 +248,7 @@ def test_lossless_more_than_128_subjects() -> None:
 
 def test_evaluates_later_rules_after_failure(passing: Bundle) -> None:
     bad = damage(damage(passing, 'policy_version_gap'), 'external_proofs_missing')
-    result = evaluate(bad, ports())
+    result = evaluate(bad, ports(passing))
     assert {'policy_version_gap', 'evidence_schema_gap', 'external_proofs_missing'} <= set(result.gaps)
 
 
@@ -257,7 +257,7 @@ def test_missing_verifier_is_artifact_gap(passing: Bundle) -> None:
 
 
 def test_internal_pass_and_render(passing: Bundle) -> None:
-    result = evaluate(passing, ports(), gate='shadow-serving')
+    result = evaluate(passing, ports(passing), gate='shadow-serving')
     assert result.verdict == 'PASS' and result.gaps == ()
     assert result.report.writers[1].prediction_state == 'not_exercised'
     assert result.report.writers[1].unknown_ratio is None
@@ -267,33 +267,35 @@ def test_internal_pass_and_render(passing: Bundle) -> None:
 
 
 def test_bootstrap_uses_original_time_and_excludes_serving(passing: Bundle) -> None:
-    result = evaluate(passing, ports(), gate='shadow-serving')
+    result = evaluate(passing, ports(passing), gate='shadow-serving')
     assert result.report.clock_start_us == START + 2000000
     assert result.report.elapsed_seconds == 18
     assert result.completed_at_us != result.report.clock_start_us
-    assert evaluate(replace(passing, serving=None), ports(), gate='shadow-serving').report.clock_start_us == START + 2000000
+    assert evaluate(replace(passing, serving=None), ports(passing), gate='shadow-serving').report.clock_start_us == START + 2000000
 
 
 @pytest.mark.parametrize('name', ['transport', 'fleet'])
 @pytest.mark.parametrize('offset', [-1, 0, 1])
 def test_seed_strict_prerequisite_boundary(passing: Bundle, name: str, offset: int) -> None:
-    prerequisite = json.loads(getattr(passing, name))
-    prerequisite['completed_at_us'] = START + 2000000 + offset
-    result = evaluate(replace(passing, **{name: canonical(prerequisite)}), ports(), gate='shadow-serving')
+    from tests.shadow_v2_gate_a2_fixture import rerender_prior
+    candidate = rerender_prior(passing, name, START + 2000000 + offset)
+    result = evaluate(candidate, ports(passing), gate='shadow-serving')
     assert ('positive_seed_gap' in result.gaps) == (offset >= 0)
 
 
 def test_fleet_bootstrap_does_not_require_seed(passing: Bundle) -> None:
-    result = evaluate(damage(passing, 'positive_seed_gap'), ports(), gate='fleet-budgets')
+    result = evaluate(damage(passing, 'positive_seed_gap'), ports(passing), gate='fleet-budgets')
     assert result.verdict == 'PASS'
 
 
 @pytest.mark.parametrize('seconds', [604799, 604800, 604801])
 def test_clock_exact_seven_day_boundary(passing: Bundle, seconds: int) -> None:
-    ctx = decode_bundle(passing, ports(), 'pre-flip')
+    ctx = decode_bundle(passing, ports(passing), 'pre-flip')
     ctx.verified.add(passing.signatures[0].object_id)
     end = START + 2000000 + seconds * 1000000
-    ctx.bundle = replace(ctx.bundle, completed_at_us=end)
+    assert ctx.bundle.inventory is not None
+    ctx.bundle = replace(ctx.bundle, completed_at_us=end, inventory=replace(ctx.bundle.inventory,
+        boots=tuple(replace(b, end_us=end) for b in ctx.bundle.inventory.boots)))
     from trusted_router.async_settle_shadow_v2_gate_inputs import Key
     from trusted_router.async_settle_shadow_v2_schema import day_at
     template = next(v for v in ctx.rows.values() if 'disabled_flag_intervals' in v)
@@ -301,6 +303,8 @@ def test_clock_exact_seven_day_boundary(passing: Bundle, seconds: int) -> None:
         day = day_at(day_index * 86400000000)
         value = json.loads(canonical(template))
         value['day'] = day
+        for writer in value['router_writers'].values():
+            writer['lifetime'] = dict(start_us=max(START, day_index * 86400000000), end_us=min(end, (day_index + 1) * 86400000000))
         value['disabled_flag_intervals'][0]['interval'] = dict(start_us=max(START, day_index * 86400000000), end_us=min(end, (day_index + 1) * 86400000000))
         ctx.rows[Key(p1.KINDS[5], day + '/manifest-v2')] = value
     ctx.bundle = replace(ctx.bundle, days=tuple(v['day'] for v in ctx.rows.values() if 'disabled_flag_intervals' in v))
@@ -312,7 +316,7 @@ def test_clock_exact_seven_day_boundary(passing: Bundle, seconds: int) -> None:
 def test_gap_day_cannot_be_backfilled(passing: Bundle) -> None:
     bad = change_row(passing, p1.KINDS[5], lambda m: m.update(complete=False,
         gaps=[dict(interval=dict(start_us=START + 10000000, end_us=START + 11000000), reason='writer_closure_gap')]))
-    result = evaluate(bad, ports(), gate='shadow-serving')
+    result = evaluate(bad, ports(passing), gate='shadow-serving')
     assert result.report.clock_start_us is None
     assert result.report.gap_timestamps_us == (START + 10000000,)
 
@@ -325,29 +329,29 @@ def test_total_over_json_domain(value: Any) -> None:
 
 
 def test_no_unknown_zero_after_schema_damage(passing: Bundle) -> None:
-    result = evaluate(damage(passing, 'evidence_schema_gap'), ports())
+    result = evaluate(damage(passing, 'evidence_schema_gap'), ports(passing))
     assert result.report.comparator_covered is None
     assert result.report.admission_demand is None
     missing = replace(passing, rows=tuple(row for row in passing.rows if row.key.kind != p1.KINDS[3]))
-    result = evaluate(missing, ports())
+    result = evaluate(missing, ports(passing))
     assert result.report.comparator_covered is None
     assert result.report.admission_covered is None
     assert result.report.admission_demand is None
 
 
 def test_different_boot_close_result_is_rejected(passing: Bundle) -> None:
-    result = evaluate(change_row(passing, a1.KINDS[-1], lambda v: v.update(boot='foreign')), ports())
+    result = evaluate(change_row(passing, a1.KINDS[-1], lambda v: v.update(boot='foreign')), ports(passing))
     assert 'close_result_identity_gap' in result.gaps
 
 
 def test_writer_closure_cannot_discharge_authorization(passing: Bundle) -> None:
     bad = change_row(passing, p1.KINDS[2], lambda p: (p['events'].pop(), p.update(last_seq=p['first_seq'])))
-    assert 'authorization_horizon_gap' in evaluate(bad, ports()).gaps
+    assert 'authorization_horizon_gap' in evaluate(bad, ports(passing)).gaps
 
 
 def test_changed_contract_revision(passing: Bundle) -> None:
     bad = change_row(passing, a1.KINDS[-1], lambda v: v.update(contract_revision='a2'))
-    assert 'policy_version_gap' in evaluate(bad, ports()).gaps
+    assert 'policy_version_gap' in evaluate(bad, ports(passing)).gaps
 
 
 def terminal_c(bundle: Bundle) -> Bundle:
@@ -374,25 +378,25 @@ def late_publisher(bundle: Bundle) -> Bundle:
 
 
 def test_nonzero_c_with_reconciled_counts_still_blocks(passing: Bundle) -> None:
-    assert 'observed_partition_gap' in evaluate(terminal_c(passing), ports()).gaps
+    assert 'observed_partition_gap' in evaluate(terminal_c(passing), ports(passing)).gaps
 
 
 def test_nonzero_e_requires_known_prediction(passing: Bundle) -> None:
-    assert 'prediction_demand_gap' in evaluate(all_unknown(passing), ports()).gaps
+    assert 'prediction_demand_gap' in evaluate(all_unknown(passing), ports(passing)).gaps
 
 
 def test_two_percent_unknown_is_independent(passing: Bundle) -> None:
-    assert 'prediction_unknown_gap' in evaluate(all_unknown(passing), ports()).gaps
+    assert 'prediction_unknown_gap' in evaluate(all_unknown(passing), ports(passing)).gaps
 
 
 def test_late_landed_health_is_not_timely_publication(passing: Bundle) -> None:
-    result = evaluate(late_publisher(passing), ports())
+    result = evaluate(late_publisher(passing), ports(passing))
     assert 'publisher_budget_gap' in result.gaps
     assert 'shadow_health_gap' not in result.gaps
 
 
 def test_reader_success_cannot_erase_publisher_failure(passing: Bundle) -> None:
-    result = evaluate(late_publisher(passing), ports())
+    result = evaluate(late_publisher(passing), ports(passing))
     assert 'observer_budget_gap' in result.gaps
     assert 'shadow_health_gap' not in result.gaps
 
@@ -406,11 +410,11 @@ def test_foreign_close_result_with_consistent_key_still_blocks(passing: Bundle) 
             value['boot'] = 'foreign'
             row = Row(Key(row.key.kind, value['day'] + '/foreign'), canonical(value))
         rows.append(row)
-    assert 'close_result_identity_gap' in evaluate(replace(passing, rows=tuple(rows)), ports()).gaps
+    assert 'close_result_identity_gap' in evaluate(replace(passing, rows=tuple(rows)), ports(passing)).gaps
 
 
 def test_digest_without_preimage_cannot_pass(passing: Bundle) -> None:
-    result = evaluate(replace(passing, preimages=()), ports(), gate='shadow-serving')
+    result = evaluate(replace(passing, preimages=()), ports(passing), gate='shadow-serving')
     assert result.verdict == 'BLOCKED' and 'artifact_gap' in result.gaps
 
 
@@ -422,40 +426,26 @@ def test_gap_inventory_matches_design_table() -> None:
     assert inventory == set(GAPS)
 
 
-def test_post_flip_delegates_retained_outcomes(passing: Bundle, tmp_path: Any) -> None:
-    from scripts.async_settle import pilot_enablement as pilot
-    from tests.shadow_v2_gate_fixture_generator import pre_enable_bundle
-    data = pre_enable_bundle(tmp_path)
-    def artifact(path: Any, name: str, value: Any) -> dict[str, Any]:
-        import hashlib
-        raw = canonical(value)
-        target = path / name
-        target.write_bytes(raw)
-        return dict(path=str(target), sha256=hashlib.sha256(raw).hexdigest())
-    data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
-        TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
-    data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
-    data.update(rollback=artifact(tmp_path, 'rollback.json', dict(status='PASS', states=[
-        'admission_on', 'pending', 'admission_off', 'drained', 'protection_off'])),
-        outbox=[dict(authorization_id='a', intent_kind='settle', workspace_id=pilot.PILOT,
-            status='done', created_at=100, terminal_at=102, async_version=1)],
-        handoff={'a.settle': dict(region='us-central1', handoff_us=3000)}, observed_peak_concurrency=4)
-    assert passing.external
-    candidate = replace(passing, external=replace(passing.external, post_input=data))
-    assert evaluate(candidate, ports(), gate='post-flip').verdict == 'PASS'
-    data['outbox'][0]['terminal_at'] = None
-    assert 'pilot_prerequisite_gap' in evaluate(candidate, ports(), gate='post-flip').gaps
+def test_post_flip_delegates_retained_outcomes(tmp_path: Any) -> None:
+    from tests.shadow_v2_gate_a2_fixture import real_fixture, transport
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    original, bound, _ = real_fixture(tmp_path, seconds=20, pilot_stage='post-flip')
+    candidate = load(transport(original), bound)
+    assert evaluate(candidate, bound, gate='post-flip').verdict == 'PASS'
+    assert candidate.external and candidate.external.post_input
+    candidate.external.post_input['outbox'][0]['terminal_at'] = None
+    assert 'pilot_prerequisite_gap' in evaluate(candidate, bound, gate='post-flip').gaps
 
 
 def test_pre_enable_does_not_invent_observer_demand(passing: Bundle) -> None:
-    result = evaluate(passing, ports(), gate='fleet-budgets-pre')
+    result = evaluate(passing, ports(passing), gate='fleet-budgets-pre')
     assert result.verdict == 'PASS'
     assert result.report.clock_start_us is None
 
 
 def test_plan_is_manifest_inventory_reference_derived(passing: Bundle) -> None:
     from trusted_router.async_settle_shadow_v2_gate_export import derive
-    context = decode_bundle(passing, ports(), 'pre-flip')
+    context = decode_bundle(passing, ports(passing), 'pre-flip')
     export = derive(context)
     assert export.source_gets == len(export.keys) + len(export.ranges)
     assert export.operations == export.source_gets
@@ -470,7 +460,7 @@ def test_open_obligation_export_requires_forward_inventory(passing: Bundle) -> N
     from trusted_router.async_settle_shadow_v2_gate_export import derive
     candidate = change_row(passing, p1.KINDS[2], lambda p: (p['events'].pop(), p.update(last_seq=p['first_seq'])))
     with pytest.raises(ValueError, match='authorization_horizon_gap'):
-        derive(decode_bundle(candidate, ports(), 'pre-flip'))
+        derive(decode_bundle(candidate, ports(passing), 'pre-flip'))
 
 
 def test_real_certificate_and_original_receipt_ports() -> None:
@@ -502,7 +492,7 @@ def test_real_certificate_and_original_receipt_ports() -> None:
 
 def test_recovered_checkpoint_has_no_evidence_loss(tmp_path: Any) -> None:
     value = build(tmp_path, recovered_checkpoint=True)
-    result = evaluate(value, ports(), gate='shadow-serving')
+    result = evaluate(value, ports(value), gate='shadow-serving')
     assert result.verdict == 'PASS'
     assert result.report.writers[0].checkpoint_failures == 1
     assert result.report.writers[0].checkpoint_recoveries == 1
@@ -528,12 +518,12 @@ def test_completion_reuses_contextual_contract(name: str) -> None:
 def test_all_required_peak_sources_and_missing_component(passing: Bundle) -> None:
     from trusted_router.async_settle_shadow_v2_gate_inputs import Budget
     assert isinstance(passing.budget, Budget)
-    result = evaluate(passing, ports(), gate='fleet-budgets-pre')
+    result = evaluate(passing, ports(passing), gate='fleet-budgets-pre')
     raw, _ = render(result)
     assert json.loads(raw)['verdict'] == 'PASS'
     assert result.gate_report['fleet_peaks']['cpu_percent'] == dict(numerator=20, denominator=1)
     assert result.gate_report['fleet_peaks']['configured_reads_per_second'] == dict(numerator=13, denominator=4)
-    assert result.gate_report['fleet_peaks']['reads_per_second'] == dict(numerator=13, denominator=4)
+    assert result.gate_report['fleet_peaks']['reads_per_second'] == dict(numerator=5, denominator=4)
     assert result.gate_report['fleet_peaks']['export_operations_per_second'] == dict(numerator=2, denominator=5)
     assert result.gate_report['publisher']['peaks']['export_operations_per_second'] is None
     assert_missing_peak(passing, 'publication_operations_per_second')
@@ -544,7 +534,7 @@ def assert_missing_peak(passing: Bundle, field: str) -> None:
     source = passing.budget.load_segments[0]
     bad = replace(passing, budget=replace(passing.budget,
         projected_load_segments=({**source, 'peaks': {**source['peaks'], field: None}}, *passing.budget.load_segments[1:])))
-    blocked = evaluate(bad, ports(), gate='fleet-budgets-pre')
+    blocked = evaluate(bad, ports(passing), gate='fleet-budgets-pre')
     assert blocked.gate_report['fleet_peaks'][field] is None
     assert blocked.gate_report['rules']['G7'] == 'unevaluable'
     assert json.loads(render(blocked)[0])['verdict'] == 'BLOCKED'
@@ -668,11 +658,11 @@ def test_all_failure_populations(rule, passing: Bundle, positive_results: dict[s
 @pytest.mark.parametrize('reason', [r.name for r in FAILURE_RULES if r.rule == 'G9' and r.name != 'missing_support'])
 def test_reset_subject_support_routing(passing: Bundle, reason: str) -> None:
     good = with_reset(passing, reason)
-    result = evaluate(good, ports(), gate='shadow-serving')
+    result = evaluate(good, ports(passing), gate='shadow-serving')
     own = [f for f in result.failures if f.gap == reason]
     assert len(own) == 1 and own[0].subject['scope'] == 'reset'
     bad = replace(good, reset_support=replace(good.reset_support, support_files={}))
-    result = evaluate(bad, ports(), gate='shadow-serving')
+    result = evaluate(bad, ports(passing), gate='shadow-serving')
     assert reason not in result.gaps
     unsupported = [f for f in result.failures if f.gap == 'missing_support']
     assert unsupported[0].subject == own[0].subject
@@ -685,7 +675,7 @@ def test_reset_history_and_writer_first_times(passing: Bundle) -> None:
     bundle = with_reset(passing, 'hash', START + 1)
     bundle = change_row(bundle, p1.KINDS[5], lambda m: m.update(complete=False, gaps=[dict(
         interval=dict(start_us=START + 3, end_us=START + 4), reason='observation_missing')]))
-    result = evaluate(bundle, ports(), gate='shadow-serving')
+    result = evaluate(bundle, ports(passing), gate='shadow-serving')
     raw, attachments = render(result)
     assert json.loads(raw)['verdict'] == 'BLOCKED'
     history = [e for page in result.detail_streams['reset_history'] for e in page['entries']]
@@ -790,14 +780,14 @@ def test_overflow_propagates_and_rule_states(passing: Bundle) -> None:
     assert total([]) == 0
     assert all(v is None for v in stat([INT64 + 1]).values())
     assert deltas([INT64 + 1])['count'] is None
-    ctx = decode_bundle(passing, ports(), 'shadow-serving')
+    ctx = decode_bundle(passing, ports(passing), 'shadow-serving')
     counters = [dict(c) for c in ctx.kind(p1.KINDS[3])]
     counters[0]['A'], counters[1]['A'] = INT64, 1
     observed = counts(ctx, counters, [e for _, e in ctx.events()], ('G4', 'G5'))
     assert observed['partition']['A'] is observed['partition']['T'] is None
     assert observed['comparator']['compared'] is None
     assert observed['comparator']['coverage']['state'] == 'unevaluable'
-    result = evaluate(damage(passing, 'eligible_coverage_gap'), ports(), gate='shadow-serving')
+    result = evaluate(damage(passing, 'eligible_coverage_gap'), ports(passing), gate='shadow-serving')
     assert result.gate_report['rules']['G5'] == 'unevaluable'
     assert result.gate_report['rules']['G11'] == 'not_required'
     assert result.gate_report['rules']['G6'] == 'pass'
@@ -809,7 +799,7 @@ def test_regional_metric_partitions_and_hterm(passing: Bundle) -> None:
     assert passing.inventory
     bundle = replace(passing, inventory=replace(passing.inventory,
         boots=tuple(replace(b, region='region-two') if b.boot == 'boot1' else b for b in passing.inventory.boots)))
-    result = evaluate(bundle, ports(), gate='shadow-serving')
+    result = evaluate(bundle, ports(passing), gate='shadow-serving')
     render(result)
     regions = [r for page in result.detail_streams['regions'] for r in page['entries']]
     assert {r['region'] for r in regions} == {'us-central1', 'region-two'}
@@ -829,7 +819,7 @@ def test_reset_history_uses_common_64_entry_pages(passing: Bundle) -> None:
         bundle = with_reset(bundle, 'hash', START + index + 1)
         resets.extend(bundle.reset_support.resets)
     bundle = replace(bundle, reset_support=replace(bundle.reset_support, resets=tuple(reversed(resets))))
-    result = evaluate(bundle, ports(), gate='shadow-serving')
+    result = evaluate(bundle, ports(passing), gate='shadow-serving')
     render(result)
     assert result.gate_report['reset_history']['count'] == 65
     assert [len(page['entries']) for page in result.detail_streams['reset_history']] == [64, 1]
@@ -870,7 +860,7 @@ def test_peak_rationals_preserve_binary64(passing: Bundle) -> None:
     from fractions import Fraction
     assert passing.budget
     bundle = replace(passing, budget=replace(passing.budget, cpu_peak=0.1))
-    result = evaluate(bundle, ports(), gate='shadow-serving')
+    result = evaluate(bundle, ports(passing), gate='shadow-serving')
     expected = Fraction(0.1)
     assert result.gate_report['fleet_peaks']['cpu_percent'] == dict(numerator=expected.numerator, denominator=expected.denominator)
     assert result.gate_report['fleet_peaks']['cpu_percent'] != dict(numerator=1, denominator=10)
@@ -883,7 +873,7 @@ def test_unenumerable_reset_preserves_its_named_fallback(passing: Bundle, reason
     assert passing.reset_support
     bad = replace(passing, reset_support=replace(passing.reset_support,
         resets=(dict(at_us=START + 1, revision='invalid', reason=reason),)))
-    result = evaluate(bad, ports(), gate='shadow-serving')
+    result = evaluate(bad, ports(passing), gate='shadow-serving')
     assert [f.subject for f in result.failures if f.gap == reason] == [N()]
     assert {'artifact_gap', 'missing_support', reason} <= set(result.gaps)
     assert result.gate_report['complete'] is False
@@ -911,7 +901,7 @@ def test_required_aggregate_availability_at_each_residence(passing: Bundle, monk
             return result
         monkeypatch.setattr(reports, 'counts', incomplete_counts)
         rule = 'G5'
-    result = evaluate(passing, ports(), gate='shadow-serving')
+    result = evaluate(passing, ports(passing), gate='shadow-serving')
     assert result.gate_report['rules'][rule] == 'unevaluable'
     assert result.gate_report['complete'] is False
     assert 'artifact_gap' in result.gaps
@@ -925,11 +915,11 @@ def test_external_stage_and_release_package_scope_are_retained(passing: Bundle) 
     proof = passing.external.proofs[0]
     scoped = replace(passing.external, proofs=(replace(proof, stage='post-flip'),),
         required_stages={'pre-flip': (proof.name,)})
-    ctx = decode_bundle(replace(passing, external=scoped), ports(), 'pre-flip')
+    ctx = decode_bundle(replace(passing, external=scoped), ports(passing), 'pre-flip')
     external(ctx)
     assert any(i.gap == 'external_proofs_missing' and i.subject.wire == P('pre-flip', proof.name)
                for i in ctx.issues)
     deferred = replace(scoped, required_stages={'post-flip': (proof.name,)})
-    ctx = decode_bundle(replace(passing, external=deferred), ports(), 'pre-flip')
+    ctx = decode_bundle(replace(passing, external=deferred), ports(passing), 'pre-flip')
     external(ctx)
     assert not any(i.gap == 'external_proofs_missing' for i in ctx.issues)

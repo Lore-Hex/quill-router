@@ -132,3 +132,123 @@ def test_v2_tools_render_the_shared_original_byte_result(cli_original: Any, tmp_
     assert capsys.readouterr().out.encode() == expected + b'\n'
     assert (tmp_path / 'gate-output/output.json').read_bytes() == expected
     assert (tmp_path / 'gate-output/report.json').read_bytes() == attachments[0]
+
+
+@pytest.mark.parametrize('proof', [None, '', '{}', '{', 'null', '{"ledger_root":null}'])
+@pytest.mark.parametrize('tool', ['report', 'pilot'])
+def test_unavailable_commitment_value_and_one_line(cli_original: Any, tmp_path: Path,
+        monkeypatch: Any, capsys: Any, proof: Any, tool: str) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput, render
+    original, ports, _ = cli_original
+    data = json.loads(transport(original))
+    data['proof'] = proof
+    raw = canonical(data)
+    value = render(evaluate(load(raw, ports), ports, gate='shadow-serving'))
+    assert isinstance(value, UnavailableGateOutput)
+    assert value.condition == 'proof_manifest_absent_or_undecodable'
+    path = tmp_path / 'unavailable.json'
+    path.write_bytes(raw)
+    monkeypatch.setattr(shadow_report, 'shadow_v2_ports', lambda *args, **kwargs: ports)
+    argv = [tool] + (['shadow-serving'] if tool == 'pilot' else [])
+    argv += ['--policy', 'shadow-v2', '--bundle', str(path)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    with pytest.raises(SystemExit) as exc:
+        (shadow_report.main if tool == 'report' else pilot_enablement.main)()
+    assert exc.value.code != 0
+    stdout = capsys.readouterr().out
+    assert stdout == json.dumps(value.diagnostic(), sort_keys=True, separators=(',', ':')) + '\n'
+    assert not (tmp_path / 'gate-output').exists()
+
+
+@pytest.mark.parametrize('field', ['rows', 'attachments', 'preimages', 'ledgers', 'transport', 'pre', 'fleet'])
+def test_generated_damaged_inputs_always_render(cli_original: Any, field: str) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput, render
+    original, ports, _ = cli_original
+    data = json.loads(transport(original))
+    # Retain the report's proof commitment while independently deleting each
+    # evidence population, including all scope sources except the proof roster.
+    data[field] = [] if isinstance(data[field], list) else None
+    rendered = render(evaluate(load(canonical(data), ports), ports, gate='shadow-serving'))
+    assert not isinstance(rendered, UnavailableGateOutput)
+    output, attachments = rendered
+    assert json.loads(output)['verdict'] == 'BLOCKED'
+    assert len(attachments) > 0
+
+
+@pytest.mark.parametrize('tool', ['report', 'pilot'])
+def test_unavailable_scope_artifacts_value_and_one_line(cli_original: Any, tmp_path: Path,
+        monkeypatch: Any, capsys: Any, tool: str) -> None:
+    from trusted_router import async_settle_shadow_v2_a1_evidence as a1
+    from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput, render
+    original, ports, _ = cli_original
+    proof = a1.PROOF_MANIFEST.parse(original.proof)
+    proof.update(rosters_by_day={}, instance_regions_by_day={})
+    raw = canonical(dict(policy_version='shadow-v2', contract_revision='a1', proof=a1.PROOF_MANIFEST.serialize(proof).decode()))
+    value = render(evaluate(load(raw, ports), ports))
+    assert isinstance(value, UnavailableGateOutput)
+    assert value.condition == 'observation_scope_artifacts_absent_or_undecodable'
+    path = tmp_path / 'unavailable.json'
+    path.write_bytes(raw)
+    monkeypatch.setattr(shadow_report, 'shadow_v2_ports', lambda *args, **kwargs: ports)
+    argv = [tool] + (['pre-flip'] if tool == 'pilot' else [])
+    argv += ['--policy', 'shadow-v2', '--bundle', str(path)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    with pytest.raises(SystemExit) as exc:
+        (shadow_report.main if tool == 'report' else pilot_enablement.main)()
+    assert exc.value.code != 0
+    assert capsys.readouterr().out == json.dumps(value.diagnostic(), sort_keys=True, separators=(',', ':')) + '\n'
+    assert not (tmp_path / 'gate-output').exists()
+
+
+@pytest.mark.parametrize('field', ['rows', 'attachments', 'preimages', 'ledgers'])
+@pytest.mark.parametrize('value', [None, 3, [None], [{'raw': 'x'}]])
+def test_damaged_sibling_never_erases_original_proof(cli_original: Any, field: str, value: Any) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput, render
+    original, ports, _ = cli_original
+    data = json.loads(transport(original))
+    data[field] = value
+    loaded = load(canonical(data), ports)
+    assert loaded.proof == original.proof
+    rendered = render(evaluate(loaded, ports, gate='shadow-serving'))
+    assert not isinstance(rendered, UnavailableGateOutput)
+    assert json.loads(rendered[0])['verdict'] == 'BLOCKED'
+
+
+@pytest.mark.parametrize('tool', ['report', 'pilot'])
+@pytest.mark.parametrize('damage', ['bundle-missing', 'release-missing', 'release-unapproved', 'keys-missing', 'keys-invalid'])
+def test_tool_input_damage_has_one_result(cli_original: Any, tmp_path: Path, monkeypatch: Any,
+        capsys: Any, tool: str, damage: str) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    original, _, _ = cli_original
+    path = tmp_path / 'bundle.json'
+    if damage != 'bundle-missing':
+        path.write_bytes(transport(original))
+    argv = [tool] + (['transport'] if tool == 'pilot' else [])
+    argv += ['--policy', 'shadow-v2', '--bundle', str(path)]
+    if tool == 'report':
+        argv += ['--gate', 'transport']
+    if damage.startswith('release'):
+        argv += ['--release-plan', str(tmp_path / 'release.json')]
+        if damage == 'release-missing':
+            argv += ['--release-plan-sha256', '0' * 64]
+    if damage.startswith('keys'):
+        key = tmp_path / 'keys.json'
+        if damage == 'keys-invalid':
+            key.write_text('{}')
+        argv += ['--binding-keys', str(key)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    with pytest.raises(SystemExit) as exc:
+        (shadow_report.main if tool == 'report' else pilot_enablement.main)()
+    assert exc.value.code != 0
+    stdout = capsys.readouterr().out
+    assert len(stdout.splitlines()) == 1
+    result = json.loads(stdout)
+    if damage == 'bundle-missing':
+        assert result['condition'] == 'proof_manifest_absent_or_undecodable'
+        assert not (tmp_path / 'gate-output').exists()
+    else:
+        assert result['verdict'] == 'BLOCKED'
+        assert (tmp_path / 'gate-output/report.json').exists()

@@ -213,7 +213,7 @@ def commit_originals(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
     return replace(current, rows=tuple(rows), proof=raw_proof)
 
 
-def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None = None, empty_segment: bool = False, variant: str | None = None, churn: bool = False) -> tuple[Bundle, Any, dict[str, Any]]:
+def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None = None, empty_segment: bool = False, variant: str | None = None, churn: bool = False, start_us: int | None = None, chain: bool = True, traffic: bool = True, recovered_checkpoint: bool = False) -> tuple[Bundle, Any, dict[str, Any]]:
     """Complete small original-byte fixture, with real retained function outputs.
 
     The release authority is a test trust root separate from the export. Every
@@ -230,8 +230,10 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
         REV,
         START,
         build,
-        ports,
         pre_enable_bundle,
+    )
+    from tests.shadow_v2_gate_fixture_generator import (
+        base_ports as ports,
     )
     from trusted_router.async_settle_shadow_evidence import Counters
     from trusted_router.async_settle_shadow_v2_gate_inputs import (
@@ -246,7 +248,9 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
         MEASUREMENTS_PATH,
     )
 
-    bundle = build(tmp_path, churn=churn, seconds=seconds, original_sources=True,
+    anchor = 1791243800000000  # Shared reviewed approval, independent of observation start.
+    START = START if start_us is None else start_us
+    bundle = build(tmp_path, churn=churn, seconds=seconds, original_sources=True, start_us=START, traffic=traffic, recovered_checkpoint=recovered_checkpoint,
         overlapping=variant == 'simultaneous_capacity_gap', health_damage=variant)
     assert bundle.inventory and bundle.budget
     end = bundle.completed_at_us
@@ -288,9 +292,9 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
 
     pre_input = pre_enable_bundle(tmp_path)
     # Dormant measurement ends before the first shadow writer starts.
-    pre_input.update(started_at_us=START - 60000001, flushed_at_us=START - 1)
+    pre_input.update(started_at_us=anchor - 60000001, flushed_at_us=anchor - 1)
     for row in pre_input['serving']:
-        row['intervals'] = [dict(day=day_at(START - 1), started_at_us=START - 60000001, flushed_at_us=START - 1)]
+        row['intervals'] = [dict(day=day_at(anchor - 1), started_at_us=anchor - 60000001, flushed_at_us=anchor - 1)]
     dependencies = []
     for key in ('deployment', 'monitoring', 'read_health'):
         value = json.loads(Path(pre_input[key]['path']).read_bytes())
@@ -304,7 +308,7 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
     pre_retained, pre_call = delegated('pilot_enablement.fleet_budgets_pre', pre_input, dependencies, 'budgets/pre')
     pre_output = json.loads(pre_call.output)
     assert pre_output['status'] == 'PASS'
-    completed_pre = ref('budgets/pre-completed.json', canonical(pre_output | dict(completed_at_us=START - 1)))
+    completed_pre = ref('budgets/pre-completed.json', canonical(pre_output | dict(completed_at_us=anchor - 1)))
     serving = []
     for path, raw in artifacts.copy().items():
         if path.endswith('/serving.json'):
@@ -384,6 +388,17 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
             publication_operations_per_second=rat(Fraction(1, 2) if boot.role == 'router' else 0),
             trust_rows_per_second=rat(Fraction(1, 4) if boot.role == 'router' else 0),
             health_rows_per_second=rat(1 if boot.role == 'router' else 0))
+        if boot.role == 'router':
+            counter_value = next(a1.COUNTER.parse(row.raw) for row in bundle.rows
+                if row.key.kind == p1.KINDS[3] and row.key.id == day_at(left) + '/' + boot.boot)
+            obs, pub = counter_value['admission_observer'], counter_value['publisher']
+            duration = Fraction(right - left, 1000000)
+            counts = dict(reads_per_second=obs['workspace_reads'] + obs['health_reads'] + pub['claim_attempts'] + 3 * pub['scans'],
+                pending_rows_per_second=obs['workspace_reads'] * 1001,
+                trust_rows_per_second=obs['workspace_reads'], health_rows_per_second=obs['health_reads'],
+                claim_operations_per_second=pub['claim_attempts'], scan_operations_per_second=pub['scans'],
+                publication_operations_per_second=pub['publications'])
+            peaks.update({field: rat(count / duration) for field, count in counts.items()})
         segments.append(dict(day=day_at(left), boot=boot.boot, region=boot.region,
             start_us=left, end_us=right, role=boot.role, contender=boot.contender, workspace_count=1, peaks=peaks))
     if empty_segment:
@@ -416,10 +431,10 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
     pre_load = dict(**TAG, interval=dict(start_us=pre_input['started_at_us'], end_us=pre_input['flushed_at_us']),
         segments=stream(pre_segments, 'segments', 'details/pre-segments'),
         operations=stream([{**operation, 'at_us': pre_input['started_at_us']}], 'operations', 'details/pre-operations'),
-        limits=limit_ref, approval=approve(limit_ref, START - 1))
+        limits=limit_ref, approval=approve(limit_ref, anchor - 1))
     pre = dict(**TAG, stage='pre', retained=pre_retained,
         output=ref('budgets/pre/output.json', pre_call.output), pre_envelope_sha256=None,
-        approval=approve(pre_retained['payload'], START - 1), v2_load=pre_load)
+        approval=approve(pre_retained['payload'], anchor - 1), v2_load=pre_load)
     post = dict(**TAG, stage='post', retained=post_retained,
         output=ref('budgets/post/output.json', post_call.output), pre_envelope_sha256=sha256(pre),
         approval=approve(post_retained['payload']), v2_load=load)
@@ -457,6 +472,9 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
     if variant in RESET_VARIANTS:
         reset_input['resets'] = [dict(at_us=START + 1, revision=REV, reason=variant)]
     reset_retained, reset_call = delegated('shadow_report.collect_rollbacks', reset_input, [], 'resets/real')
+    policy = e.COHORT_SEED_POLICY.parse(artifacts['proof.cohort_seed_policy_sha256'])
+    policy['approval'] = approve(policy['configuration'], anchor - 1)
+    artifacts['proof.cohort_seed_policy_sha256'] = e.COHORT_SEED_POLICY.serialize(policy)
     history = []
     for reset in json.loads(reset_call.output)['resets']:
         support = stream([reset_retained['payload']], 'files', 'details/reset-support')
@@ -523,6 +541,10 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
         value['verifier'] = 'binding'
         signature_material.append(value)
     ref('loading/signatures.json', canonical(signature_material))
+    # The real delegated/shutdown streams replace seal()'s construction-only
+    # pages; retaining those obsolete pages would leave stale FILE_REFs.
+    artifacts = {path: raw for path, raw in artifacts.items()
+        if not path.startswith(('details/budget-dependencies/', 'details/shutdown/'))}
     trusted_pins = {path: r.file_digest(raw) for path, raw in artifacts.items() if not path.startswith('proof.')}
     plan_raw = canonical(dict(artifacts=trusted_pins, criteria=criteria, verifiers=verifier_pins, required=list(required)))
     plan_path = 'loading/release-plan.json'
@@ -530,9 +552,12 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
     release = ReleasePlan(plan_path, plan_raw, trusted_pins, criteria, verifier_pins, required)
     tool_ports = replace(tool_ports, release=release, measurements=parsers)
     bundle = commit_originals(bundle, artifacts)
+    bundle = replace(bundle, budget=replace(bundle.budget, pre_completed_us=anchor - 1))
     expected = dict(pre_input=pre_input, pre_output=pre_output, post_input=post_input,
         post_output=json.loads(post_call.output), reset_output=json.loads(reset_call.output),
         segments=segments, projected_segments=pre_segments, measurements=measured, rates=[asdict(rate) for rate in bundle.budget.rates])
+    if chain:
+        bundle, tool_ports = attach_prior_chain(bundle, tool_ports)
     return bundle, tool_ports, expected
 
 
@@ -719,3 +744,159 @@ def mutate_transport(raw: bytes, gap: str) -> bytes:
         end = start + len(fragment)
         replacement = canonical(after)
     return raw[:start] + replacement + raw[end:]
+
+
+def _build_original_prior_chain() -> tuple[Bundle, Any, dict[str, bytes]]:
+    """One real loader/evaluator/renderer execution per warm-up stage/session."""
+    import tempfile
+
+    START = 1791244800000000
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    path = Path(tempfile.mkdtemp(prefix='p5-prior-chain-'))
+    original, ports, _ = real_fixture(path, seconds=20, start_us=START - 20000000, chain=False, traffic=False)
+    # The final CLOSE_RESULT acknowledgment lands one second after the
+    # warm-up interval. Evaluation completion follows that original evidence.
+    original = replace(original, transport=None, pre=None, fleet=None, serving=None, completed_at_us=START + 1000000)
+    archived: dict[str, bytes] = {}
+    for name, stage in (('transport', 'transport'), ('pre', 'fleet-budgets-pre'), ('fleet', 'fleet-budgets')):
+        original = replace(original, preimages=(*original.preimages, *(Preimage(k, v) for k, v in archived.items())))
+        loaded = load(transport(original), ports)
+        result = evaluate(loaded, ports, gate=stage)
+        assert result.verdict == 'PASS', (stage, [(f.gap, f.detail) for f in result.failures])
+        output, attachments = render(result)
+        # Every input and output remains original bytes, keyed by content.
+        for raw in (output, *attachments, *(p.raw for p in original.preimages),
+                    *(row.raw for row in (*original.rows, *original.attachments)),
+                    *original.ledgers, original.proof):
+            assert raw is not None
+            archived['prior-artifacts/' + r.file_digest(raw)] = raw
+        original = replace(original, **{name: output})
+    return original, ports, archived
+
+
+def attach_prior_chain(bundle: Bundle, ports: Any) -> tuple[Bundle, Any]:
+    prior, prior_ports, archive = original_prior_chain()
+    assert ports.release and prior_ports.release
+    artifacts = {p.name: p.raw for p in bundle.preimages}
+    artifacts.update(archive)
+    plan = ports.release
+    approved = dict(plan.artifacts)
+    prior_plan = prior_ports.release.raw
+    path = 'prior-artifacts/' + r.file_digest(prior_plan)
+    approved[path] = r.file_digest(prior_plan)
+    raw_plan = canonical(dict(artifacts=approved, criteria=plan.criteria, verifiers=plan.verifiers, required=list(plan.required)))
+    artifacts[plan.path] = raw_plan
+    ports = replace(ports, release=replace(plan, artifacts=approved, raw=raw_plan))
+    return replace(bundle, transport=prior.transport, pre=prior.pre, fleet=prior.fleet, serving=None,
+        preimages=tuple(Preimage(k, v) for k, v in artifacts.items())), ports
+
+
+def rerender_prior(bundle: Bundle, name: str, completed_at_us: int) -> Bundle:
+    """Change a prior evaluation time through the real pipeline, not its envelope."""
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_prior import STAGES
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    original, ports, _ = original_prior_chain()
+    original = replace(original, completed_at_us=completed_at_us)
+    result = evaluate(load(transport(original), ports), ports, gate=STAGES[name])
+    assert result.verdict == 'PASS', result.gaps
+    output, attachments = render(result)
+    archive = {p.name: p.raw for p in bundle.preimages}
+    for raw in (output, *attachments):
+        archive['prior-artifacts/' + r.file_digest(raw)] = raw
+    return replace(bundle, **{name: output}, preimages=tuple(Preimage(k, v) for k, v in archive.items()))
+
+
+def alter_prior_inventory(bundle: Bundle, name: str, select: Any, change: Any) -> Bundle:
+    """Mutate one original prior input and recommit only its inventory ancestors.
+
+    Deliberately do not repair the evidence's semantic/preimage commitments.
+    This makes the outer report contract valid, isolating graph verification.
+    """
+    files = {p.name: p.raw for p in bundle.preimages}
+    by_hash = {r.file_digest(raw): raw for raw in files.values()}
+    envelope = a1.GATE_OUTPUT.parse(getattr(bundle, name))
+    report = e.GATE_REPORT.parse(by_hash[envelope['coverage_sha256']])
+    entries = prior_inventory_entries(report, by_hash)
+    changed = 0
+    for entry in entries:
+        leaf = e.INPUT_LEAF.parse(by_hash[entry['bundle']['sha256']])
+        for ref in leaf['keys']:
+            if not select(ref['path']):
+                continue
+            raw = change(by_hash[ref['sha256']])
+            changed += 1
+            previous_digest = ref['sha256']
+            ref.update(sha256=r.file_digest(raw), bytes=len(raw))
+            if ref['path'].startswith('rows/') and ref['path'].endswith('/' + previous_digest):
+                ref['path'] = ref['path'].rsplit('/', 1)[0] + '/' + ref['sha256']
+            files['prior-artifacts/' + r.file_digest(raw)] = raw
+            if ref['path'] == 'proof_manifest':
+                report['proof_manifest_sha256'] = r.file_digest(raw)
+                report['prerequisite_ledger_root'] = a1.PROOF_MANIFEST.parse(raw)['ledger_root']
+        leaf['keys'].sort(key=lambda ref: ref['path'])
+        entry.update(first_key=leaf['keys'][0]['path'], last_key=leaf['keys'][-1]['path'])
+        raw = e.INPUT_LEAF.serialize(leaf)
+        entry['bundle'].update(sha256=r.file_digest(raw), bytes=len(raw))
+        files['prior-artifacts/' + r.file_digest(raw)] = raw
+    assert changed == 1, changed
+    report['input_inventory'], pages = detail(entries, 'input_inventory')
+    for page in pages:
+        raw = canonical(page)
+        files['prior-artifacts/' + r.file_digest(raw)] = raw
+    raw = e.GATE_REPORT.serialize(report)
+    files['prior-artifacts/' + r.file_digest(raw)] = raw
+    envelope.update(coverage_sha256=sha256(report), proof_manifest_sha256=report['proof_manifest_sha256'],
+        prerequisite_ledger_root=report['prerequisite_ledger_root'])
+    return replace(bundle, **{name: a1.GATE_OUTPUT.serialize(envelope)},
+        preimages=tuple(Preimage(k, v) for k, v in files.items()))
+
+
+def prior_inventory_entries(report: Any, by_hash: Any) -> Any:
+    pages = []
+    tail = report['input_inventory']['tail_sha256']
+    while tail is not None:
+        page = r.STREAMS['input_inventory'][1].parse(by_hash[tail])
+        pages.append(page)
+        tail = page['previous_sha256']
+    pages.reverse()
+    r.validate_detail(report['input_inventory'], pages, stream='input_inventory')
+    return [entry for page in pages for entry in page['entries']]
+
+
+def original_prior_chain() -> tuple[Bundle, Any, dict[str, bytes]]:
+    """Content-keyed across xdist workers; only the lock owner evaluates stages."""
+    source_root = Path(__file__).parents[1]
+    sources = sorted((source_root / 'src/trusted_router').glob('async_settle_shadow_v2*.py'))
+    sources += [Path(__file__), source_root / 'tests/shadow_v2_gate_fixture_generator.py',
+                source_root / 'scripts/async_settle/shadow_report.py', source_root / 'scripts/async_settle/pilot_enablement.py']
+    key = r.file_digest(b''.join(path.read_bytes() for path in sources))
+    return _shared_prior_chain(key)
+
+
+@cache
+def _shared_prior_chain(key: str) -> tuple[Bundle, Any, dict[str, bytes]]:
+    import fcntl
+    import tempfile
+
+    from scripts.async_settle import shadow_report
+    from scripts.async_settle.async_settle_shadow_v2_gate_tools import read_release_plan
+    from tests.shadow_v2_gate_fixture_generator import base_ports
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    path = Path(tempfile.gettempdir()) / ('p5-chain-' + key + '.json')
+    with path.with_suffix('.lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not path.exists():
+            original, ports, archive = _build_original_prior_chain()
+            path.write_bytes(canonical(dict(bundle=transport(original).decode(),
+                release=ports.release.raw.decode(), archive={k: v.decode() for k, v in archive.items()})))
+            return original, ports, archive
+        data = json.loads(path.read_bytes())
+    plan_raw = data['release'].encode()
+    release = read_release_plan(plan_raw, r.file_digest(plan_raw))
+    base = base_ports()
+    ports = shadow_report.shadow_v2_ports(base.approvals[0].keyset, base.approvals[1].keyset, release=release)
+    return load(data['bundle'].encode(), ports), ports, {k: v.encode() for k, v in data['archive'].items()}

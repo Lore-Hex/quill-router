@@ -64,7 +64,7 @@ def fixture(file: str, *, a1_release: bool = True, name: str | None = None) -> d
 
 
 @cache
-def ports() -> Ports:
+def base_ports() -> Ports:
     import inspect
     wire = json.loads((ROOT / 'shadow_v1.json').read_bytes())
     token = wire['billing_shadow_binding']
@@ -92,6 +92,13 @@ def ports() -> Ports:
         legacy.shadow_v2_release_pins(), lambda path: release_files[path], pilot.roster_coverage)
 
 
+TYPED_PORTS: dict[bytes, Ports] = {}
+
+
+def ports(bundle: Bundle | None = None) -> Ports:
+    return TYPED_PORTS[bundle.proof] if bundle is not None and bundle.proof in TYPED_PORTS else base_ports()
+
+
 def pre_enable_bundle(tmp_path: Path) -> dict[str, Any]:
     """Small dormant v1 input; the actual retained function decides approval."""
     start, end = START, START + 60000000
@@ -116,8 +123,18 @@ def pre_enable_bundle(tmp_path: Path) -> dict[str, Any]:
         read_health=artifact('read-health.json', dict(started_at_us=start, flushed_at_us=end, regions={REGION: [.01, .02]})))
 
 
-def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_checkpoint: bool = False, original_sources: bool = False, overlapping: bool = False, health_damage: str | None = None) -> Bundle:
+def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_checkpoint: bool = False, original_sources: bool = False, overlapping: bool = False, health_damage: str | None = None, start_us: int = START, traffic: bool = True) -> Bundle:
     """Use seconds=604804 for a seven-day window with midnight/restart/idle days."""
+    if not original_sources:
+        from tests.shadow_v2_gate_a2_fixture import real_fixture, transport
+        from trusted_router.async_settle_shadow_v2_gate_loader import load
+        original, bound, _ = real_fixture(tmp_path, seconds=seconds, churn=churn, pilot_stage='pre-flip',
+            recovered_checkpoint=recovered_checkpoint, start_us=start_us)
+        loaded = load(transport(original), bound)
+        assert loaded.proof is not None
+        TYPED_PORTS[loaded.proof] = bound
+        return loaded
+    START = start_us
     end = START + seconds * 1000000
     # Long-lived first boot crosses midnight; subsequent independent boots restart
     # mid-day. Most days have zero terminal traffic but complete timers/closure.
@@ -207,6 +224,9 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
     obligation.update(status='terminal_reconciled', terminal_reference=locator)
     op = dict(**TAG, day=days[0], boot='boot0', page_seq=f'{1:020}', previous_sha256=None, entries=[obligation])
     attachments.append(Row(Key('authorization_obligation', f'obligations/{days[0]}/boot0/{1:020}'), joins.AUTHORIZATION_OBLIGATION_PAGE.serialize(op)))
+    if not traffic:
+        rows = []
+        attachments = []
     rate_segments = []
     for boot in routers:
         assert boot.end_us is not None
@@ -219,7 +239,7 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
             counter = fixture('counter')
             counter.update(day=day, boot=boot.boot, started_at_us=left, flushed_at_us=right)
             counter['admission_observer'].update(workspace_reads=max(1, duration // 4), health_reads=max(1, duration))
-            owns = boot.boot == 'boot0' and day == days[0]
+            owns = traffic and boot.boot == 'boot0' and day == days[0]
             if owns:
                 if recovered_checkpoint:
                     counter.update(checkpoint_attempts=2, checkpoint_failures=1, checkpoint_recoveries=1)
@@ -360,54 +380,15 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
             start_us=rate.start_us, end_us=rate.end_us, role='router', contender=True,
             workspace_count=1, peaks=observed))
     budget = replace(budget, load_segments=tuple(load_segments), projected_load_segments=tuple(load_segments))
-    def gate(name: str, at: int) -> bytes:
-        value = fixture('gate_outputs')
-        value.update(gate=name, verdict='PASS', gaps=[], completed_at_us=at, proof_manifest_sha256=sha256(proof), prerequisite_ledger_root=ledger_root)
-        return a1.GATE_OUTPUT.serialize(value)
     evidence = canonical({'fixture': 'offline external proof'})
     external = External((ExternalProof('fixture-ci', REV, REV, evidence, hashlib.sha256(evidence).hexdigest(), True),),
                         ('fixture-ci',), True, True, True, True)
-    if original_sources:
-        # Real-original callers generate their authoritative retained envelopes
-        # before the single final root pass; no typed placeholder graph is sealed.
-        from tests.shadow_v2_gate_a2_fixture import seal
-        return seal(Bundle(tuple(rows), proof_raw, tuple(ledgers), tuple(attachments), inventory, Cohort(1, True, REGION), budget,
-            external, ResetSupport((), {}), (Signature(sample_key, token, (key,), START // 1000000 + 2),),
-            gate('transport', START), gate('fleet-budgets', START), gate('fleet-budgets-pre', START - 1),
-            gate('shadow-serving', end), end, days), commit=False)
-    # Undefined payloads are supplied directly as typed inputs. Their original
-    # bytes are retained for hash checking, without defining a production codec.
-    material = {
-        'shutdown_inventory_sha256': canonical([asdict(b) for b in inventory.boots]),
-        'cohort_seed_policy_sha256': canonical(asdict(Cohort(1, True, REGION))),
-        'pre_budget_sha256': canonical(pre_result),
-        'post_budget_sha256': canonical(asdict(budget)),
-        'external_proofs_sha256': evidence,
-        'resolution_dag_sha256': canonical([]),
-        'evaluator_fixture_sha256': (ROOT / 'shadow_v1.json').read_bytes(),
-        'binding_fixture_sha256': (ROOT / 'shadow_v1.json').read_bytes(),
-        'wire_fixture_sha256': (ROOT / 'shadow_v2_a1/manifest.json').read_bytes(),
-        'ledger_root': canonical([hashlib.sha256(raw).hexdigest() for raw in ledgers]),
-    }
-    for field in proof:
-        if field.endswith(('_root', '_sha256')) and field not in material:
-            stream = field.removesuffix('_root').removesuffix('_sha256').replace('publisher_slot_trace', 'publisher_trace')
-            material[field] = canonical([hashlib.sha256(r.raw).hexdigest() for r in attachments
-                if r.key.kind == 'coverage' and json.loads(r.raw)['stream'] == stream])
-    preimages = [Preimage('proof.' + field, raw) for field, raw in material.items()]
-    for field, raw in material.items():
-        proof[field] = hashlib.sha256(raw).hexdigest()
-    proof_raw = a1.PROOF_MANIFEST.serialize(proof)
-    for index, row in enumerate(rows):
-        if row.key.kind == p1.KINDS[5]:
-            manifest = json.loads(row.raw)
-            manifest['proof_manifest_sha256'] = sha256(proof)
-            rows[index] = Row(row.key, a1.MANIFEST.serialize(manifest))
     from tests.shadow_v2_gate_a2_fixture import seal
-    return seal(Bundle(tuple(rows), proof_raw, tuple(ledgers), tuple(attachments), inventory, Cohort(1, True, REGION), budget,
-        external, ResetSupport((), {}), (Signature(sample_key, token, (key,), START // 1000000 + 2),),
-        gate('transport', START), gate('fleet-budgets', START), gate('fleet-budgets-pre', START - 1),
-        gate('shadow-serving', end), end, days, preimages=tuple(preimages)), commit=not original_sources)
+    # Prior gates are added only by the real loader/evaluator/renderer chain.
+    return seal(Bundle(tuple(rows), proof_raw, tuple(ledgers), tuple(attachments), inventory,
+        Cohort(1, True, REGION), budget, external, ResetSupport((), {}),
+        ((Signature(sample_key, token, (key,), START // 1000000 + 2),) if traffic else ()),
+        completed_at_us=end, days=days), commit=False)
 
 
 def change_row(bundle: Bundle, kind: str, change: Any, index: int = 0) -> Bundle:

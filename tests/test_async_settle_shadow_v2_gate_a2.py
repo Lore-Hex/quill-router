@@ -122,7 +122,7 @@ def test_ratio_states(numerator: Any, denominator: Any, required: bool, closed: 
 
 
 def test_render_calls_final_validator(passing: Bundle, monkeypatch: pytest.MonkeyPatch) -> None:
-    result = evaluate(passing, ports(), gate='shadow-serving')
+    result = evaluate(passing, ports(passing), gate='shadow-serving')
     calls = []
     def reject(*args: Any, **kwargs: Any) -> None:
         calls.append(args)
@@ -134,7 +134,7 @@ def test_render_calls_final_validator(passing: Bundle, monkeypatch: pytest.Monke
 
 
 def test_tally_cannot_disagree_with_evaluated_listing(passing: Bundle) -> None:
-    result = evaluate(passing, ports(), gate='pre-flip')
+    result = evaluate(passing, ports(passing), gate='pre-flip')
     report = copy.deepcopy(result.gate_report)
     assert report is not None
     report['failure_counts']['continuous_window_gap']['count'] += 1
@@ -143,7 +143,7 @@ def test_tally_cannot_disagree_with_evaluated_listing(passing: Bundle) -> None:
 
 
 def test_null_aggregate_does_not_render_as_zero(passing: Bundle) -> None:
-    result = evaluate(passing, ports(), gate='fleet-budgets-pre')
+    result = evaluate(passing, ports(passing), gate='fleet-budgets-pre')
     _, attachments = render(result)
     report = json.loads(attachments[0])
     assert report['admission']['E'] is None
@@ -153,7 +153,7 @@ def test_null_aggregate_does_not_render_as_zero(passing: Bundle) -> None:
 
 @pytest.mark.parametrize('mode', ['unbound', 'substituted', 'changed-keys'])
 def test_verifier_identity_and_keys_block(passing: Bundle, mode: str) -> None:
-    bound = ports()
+    bound = ports(passing)
     if mode == 'unbound':
         bound = replace(bound, approvals=())
     elif mode == 'substituted':
@@ -167,7 +167,7 @@ def test_verifier_identity_and_keys_block(passing: Bundle, mode: str) -> None:
 
 
 def test_unexercised_certificate_still_bound(passing: Bundle) -> None:
-    result = evaluate(passing, ports(), gate='shadow-serving')
+    result = evaluate(passing, ports(passing), gate='shadow-serving')
     assert result.gate_report is not None
     assert result.gate_report['verifiers']['certificate']['calls'] == 0
     assert result.gate_report['verifiers']['binding']['calls'] == 1
@@ -175,7 +175,7 @@ def test_unexercised_certificate_still_bound(passing: Bundle) -> None:
 
 def test_missing_preimage_never_accepts_digest(passing: Bundle) -> None:
     result = evaluate(replace(passing, preimages=tuple(p for p in passing.preimages
-        if p.name != 'proof.external_proofs_sha256')), ports(), gate='shadow-serving')
+        if p.name != 'proof.external_proofs_sha256')), ports(passing), gate='shadow-serving')
     assert result.verdict == 'BLOCKED' and 'artifact_gap' in result.gaps
     assert any(f.gap == 'artifact_gap' and f.subject == a2.O('a2_file', 'proof.external_proofs_sha256')
                and f.detail == 'A2 required original preimage absent' for f in result.failures)
@@ -193,14 +193,14 @@ def test_suppressed_call_is_not_a_transcript(passing: Bundle, monkeypatch: pytes
     def suppressed(ctx: Context, name: str, *args: Any, **kwargs: Any) -> Any:
         return v.approval(ctx, name).function(*args, **kwargs)
     monkeypatch.setattr(v, 'invoke', suppressed)
-    assert 'evidence_schema_gap' in evaluate(passing, ports(), gate='shadow-serving').gaps
+    assert 'evidence_schema_gap' in evaluate(passing, ports(passing), gate='shadow-serving').gaps
 
 
 def test_idle_router_region_does_not_need_seed(passing: Bundle) -> None:
     assert passing.inventory
     idle = replace(passing.inventory.boots[1], region='idle-region')
     bundle = replace(passing, inventory=replace(passing.inventory, boots=(passing.inventory.boots[0], idle, *passing.inventory.boots[2:])))
-    result = evaluate(bundle, ports(), gate='pre-flip')
+    result = evaluate(bundle, ports(passing), gate='pre-flip')
     assert not any(f.gap == 'regional_seed_gap' and f.subject == a2.V('idle-region') for f in result.failures)
 
 
@@ -208,7 +208,7 @@ def test_traffic_router_region_cannot_be_excused(passing: Bundle) -> None:
     assert passing.inventory
     active = replace(passing.inventory.boots[0], region='traffic-region')
     bundle = replace(passing, inventory=replace(passing.inventory, boots=(active, *passing.inventory.boots[1:])))
-    assert 'regional_seed_gap' in evaluate(bundle, ports(), gate='pre-flip').gaps
+    assert 'regional_seed_gap' in evaluate(bundle, ports(passing), gate='pre-flip').gaps
 
 
 def test_release_billing_fixture_is_not_a_file_ref() -> None:
@@ -220,7 +220,7 @@ def test_release_billing_fixture_is_not_a_file_ref() -> None:
 
 def test_release_files_are_checkout_inputs_outside_export_inventory(passing: Bundle) -> None:
     from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
-    result = evaluate(passing, ports(), gate='shadow-serving')
+    result = evaluate(passing, ports(passing), gate='shadow-serving')
     raw, _ = render(result)
     assert json.loads(raw)['verdict'] == 'PASS'
     assert result.gate_report is not None and result.gate_report['complete'] is True
@@ -235,7 +235,7 @@ def test_release_files_are_checkout_inputs_outside_export_inventory(passing: Bun
 def test_release_file_requires_checkout_and_both_pins(passing: Bundle, field: str, damage: str) -> None:
     from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
     from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
-    reader = ports().read_release_file
+    reader = ports(passing).read_release_file
     assert reader is not None
     path = RELEASE_FILES[field]
     def read(name: str) -> bytes:
@@ -245,7 +245,7 @@ def test_release_file_requires_checkout_and_both_pins(passing: Bundle, field: st
             if damage == 'changed':
                 return reader(name) + b'\n'
         return reader(name)
-    bound = replace(ports(), read_release_file=None if damage == 'unbound' else read)
+    bound = replace(ports(passing), read_release_file=None if damage == 'unbound' else read)
     if damage == 'pin':
         bound = replace(bound, approved_files={**bound.approved_files, field: '0' * 64})
     if damage == 'manifest':
@@ -262,7 +262,7 @@ def test_release_file_requires_checkout_and_both_pins(passing: Bundle, field: st
 def test_oversized_export_still_blocks(passing: Bundle) -> None:
     from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
     candidate = replace(passing, preimages=(*passing.preimages, Preimage('evidence/too-large', b'x' * 262145)))
-    result = evaluate(candidate, ports(), gate='shadow-serving')
+    result = evaluate(candidate, ports(passing), gate='shadow-serving')
     assert result.verdict == 'BLOCKED'
     assert result.gate_report is not None and result.gate_report['complete'] is False
     assert any(f.gap == 'artifact_gap' and f.detail.startswith('exported_file_ref_bound:') for f in result.failures)
@@ -373,7 +373,7 @@ def test_eight_worked_literal_vectors(vector: str, gap: str, diagnostic: Subject
 
 
 def test_render_rechecks_exact_unlisted_tally(passing: Bundle) -> None:
-    result = evaluate(passing, ports(), gate='pre-flip')
+    result = evaluate(passing, ports(passing), gate='pre-flip')
     assert result.gate_report is not None
     ctx = Context(Bundle(days=passing.days), None, 'pre-flip')
     for i in range(200):
@@ -396,7 +396,7 @@ def test_render_rechecks_exact_unlisted_tally(passing: Bundle) -> None:
 def test_missing_ledger_is_enumerated_from_inventory(passing: Bundle) -> None:
     from trusted_router.async_settle_shadow_v2_gate_preimages import preimages
     candidate = replace(passing, ledgers=())
-    ctx = decode_bundle(candidate, ports(), 'shadow-serving')
+    ctx = decode_bundle(candidate, ports(passing), 'shadow-serving')
     manifest = ctx.kind(p1.KINDS[5])[0]
     _, entries = preimages(ctx, manifest)
     assert passing.inventory is not None
@@ -433,7 +433,7 @@ def test_loader_derives_roster_cohort_and_shutdown_from_original_bytes(passing: 
     assert loaded.budget is None  # The older schema fixture has no approved loading port.
 
 
-@pytest.mark.parametrize('missing', ['reviews/', 'budgets/deployment.json', 'details/shutdown/', 'measurements/'])
+@pytest.mark.parametrize('missing', ['reviews/', 'budgets/deployment.json', 'details/shutdown-real/', 'measurements/'])
 def test_loader_requires_original_dependency_bytes(passing: Bundle, missing: str) -> None:
     candidate = replace(passing, preimages=tuple(p for p in passing.preimages if not p.name.startswith(missing)))
     loaded = loaded_fixture(candidate)
@@ -467,7 +467,7 @@ def test_loader_rejects_changed_retained_roster_pins(passing: Bundle) -> None:
 def test_missing_first_receipt_has_expected_root_entry(passing: Bundle) -> None:
     from trusted_router.async_settle_shadow_v2_gate_preimages import preimages
     candidate = replace(passing, rows=tuple(r for r in passing.rows if r.key.kind != p1.KINDS[2]))
-    ctx = decode_bundle(candidate, ports(), 'shadow-serving')
+    ctx = decode_bundle(candidate, ports(passing), 'shadow-serving')
     manifest = ctx.kind(p1.KINDS[5])[0]
     _, entries = preimages(ctx, manifest)
     assert entries['manifest.receipts_root'] == [dict(key=a2.L(passing.days[0], 'boot0', f'{1:020}'), bodies=[])]
@@ -482,7 +482,7 @@ def test_independent_inventory_day_must_match_manifest(passing: Bundle) -> None:
             value['day'] = '2026-01-01'
             source = Preimage(source.name, a2.INDEPENDENT_INVENTORY.serialize(value))
         sources.append(source)
-    ctx = decode_bundle(replace(passing, preimages=tuple(sources)), ports(), 'shadow-serving')
+    ctx = decode_bundle(replace(passing, preimages=tuple(sources)), ports(passing), 'shadow-serving')
     assert any(i.gap == 'evidence_schema_gap' and i.detail == 'A2 manifest/proof preimage validation failed' for i in ctx.issues)
 
 

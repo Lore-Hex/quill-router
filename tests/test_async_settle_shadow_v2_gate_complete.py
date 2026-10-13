@@ -223,11 +223,11 @@ def test_every_declared_file_ref_requires_exact_original_bytes(real: Any) -> Non
     from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
     original, _, _ = real
     files = {p.name: p.raw for p in original.preimages}
-    references: dict[str, Any] = {}
+    references: dict[tuple[str, str], Any] = {}
     def visit(value: Any) -> None:
         if type(value) is dict:
             if set(value) == set(a2.FILE_REF.fields):
-                references[value['path']] = value
+                references[value['path'], value['sha256']] = value
             for child in value.values():
                 visit(child)
         elif type(value) is list:
@@ -238,10 +238,14 @@ def test_every_declared_file_ref_requires_exact_original_bytes(real: Any) -> Non
             visit(retained_json(raw))
         except ValueError:
             pass
-    graph = PayloadGraph(files)
+    by_hash = {roots.file_digest(raw): raw for raw in files.values()}
     assert len(references) > 50
-    for path, reference in references.items():
-        expected = files[path]
+    for (path, digest), reference in references.items():
+        # Each archived report has its own inventory path namespace.
+        assert digest in by_hash, (path, digest)
+        expected = by_hash[digest]
+        files = {path: expected}
+        graph = PayloadGraph(files)
         assert graph.file(reference) == expected
         files[path] = expected + b'\n'
         with pytest.raises(ValueError, match='artifact_gap'):

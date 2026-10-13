@@ -21,8 +21,9 @@ UNDEFINED_PREIMAGES: tuple[str, ...] = ()
 MAX_BUNDLE_BYTES = 10000 * 262144
 
 
-def load(raw: bytes, ports: Ports | None = None) -> Bundle:
+def load(raw: bytes, ports: Ports | None = None, *, _recover: bool = True) -> Bundle:
     """Decode original row and A2 payload bytes, retaining fail-closed adaptation."""
+    value: Any = None
     try:
         # This is the finite transport containing many original files, not one
         # FILE_REF payload. Each child keeps its own contract byte bound.
@@ -179,4 +180,40 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
         graph.streams['loading_validation'] = validate_original_bytes(bundle, ports)
         return bundle
     except (ValueError, UnicodeError):
+        # A malformed sibling cannot erase a present original proof commitment.
+        # Recover only independently decodable transport children, with one
+        # bounded retry and a permanent G1 failure for the damaged container.
+        if _recover and type(value) is dict:
+            from dataclasses import replace
+
+            from trusted_router.detached_jws import canonical
+            repaired: dict[str, Any] = dict(policy_version='shadow-v2', contract_revision='a1')
+            remaining = 9999
+            for field in ('preimages', 'rows', 'attachments', 'ledgers'):
+                found = []
+                candidates = value.get(field)
+                for item in candidates if type(candidates) is list else []:
+                    if not remaining:
+                        break
+                    if field == 'ledgers':
+                        valid = type(item) is str
+                    else:
+                        fields = {'name', 'raw'} if field == 'preimages' else {'kind', 'id', 'raw'}
+                        valid = type(item) is dict and set(item) == fields and all(type(v) is str for v in item.values())
+                        if valid and field == 'preimages':
+                            try:
+                                a2.e.FILE_REF.fields['path'](item['name'])
+                            except ValueError:
+                                valid = False
+                    if valid:
+                        found.append(item)
+                        remaining -= 1
+                repaired[field] = found
+            for field in ('proof', 'transport', 'pre', 'fleet', 'serving'):
+                repaired[field] = value.get(field) if type(value.get(field)) is str else None
+            for field in ('days', 'window', 'completed_at_us'):
+                if field in value:
+                    repaired[field] = value[field]
+            recovered = load(canonical(repaired), ports, _recover=False)
+            return replace(recovered, undefined_preimages=(*recovered.undefined_preimages, 'invalid_or_cross_version_bundle'))
         return Bundle(undefined_preimages=('invalid_or_cross_version_bundle', *UNDEFINED_PREIMAGES))

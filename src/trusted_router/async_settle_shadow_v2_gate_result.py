@@ -137,11 +137,18 @@ class Result:
         return 'BLOCKED' if self.gaps else 'PASS'
 
 
-class UnavailableGateOutput(ValueError):
-    """Frozen non-null report commitments have no unavailable encoding."""
+@dataclass(frozen=True)
+class UnavailableGateOutput:
+    """A diagnostic value, never an envelope, report, or successful verdict."""
+    condition: str
+    error: str = 'unavailable_required_report_commitments'
+
+    def diagnostic(self) -> dict[str, str]:
+        return dict(error=self.error, condition=self.condition, status='BLOCKED', policy_version='shadow-v2')
 
 
-def render(result: Result) -> tuple[bytes, tuple[bytes, ...]]:
+
+def render(result: Result) -> tuple[bytes, tuple[bytes, ...]] | UnavailableGateOutput:
     """Emit the frozen envelope/report/flat streams, validating the final graph."""
     from trusted_router import async_settle_shadow_v2_a2_contract as contract
     from trusted_router import async_settle_shadow_v2_a2_evidence as a2
@@ -151,7 +158,8 @@ def render(result: Result) -> tuple[bytes, tuple[bytes, ...]]:
 
     report = result.gate_report
     if report is None:
-        raise UnavailableGateOutput('artifact_gap: unavailable_required_report_commitments')
+        return UnavailableGateOutput('proof_manifest_absent_or_undecodable' if result.prerequisite_ledger_root is None
+            else 'observation_scope_artifacts_absent_or_undecodable')
     tallies, prefix = listing(result.failures, tuple(report['days']))
     require(tallies == report['failure_counts'], 'evidence_schema_gap')
     streams = result.detail_streams

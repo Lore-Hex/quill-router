@@ -853,22 +853,48 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
     parser.add_argument('--release-plan', type=Path)
     parser.add_argument('--release-plan-sha256')
     args = parser.parse_args(argv)
+    from dataclasses import replace
+
     from scripts.async_settle.async_settle_shadow_v2_gate_tools import read_release_plan
+    damaged_inputs = []
     release = None
     if args.release_plan is not None:
-        if args.release_plan_sha256 is None:
-            parser.error('--release-plan requires its independently approved --release-plan-sha256')
-        release = read_release_plan(args.release_plan.read_bytes(), args.release_plan_sha256)
-    ports = shadow_v2_ports(args.certificate_keys.read_bytes() if args.certificate_keys else None,
-                            args.binding_keys.read_bytes() if args.binding_keys else None, release=release)
-    result = evaluate(load(args.bundle.read_bytes(), ports), ports, gate=args.gate)
+        try:
+            if args.release_plan_sha256 is None:
+                raise ValueError('release-plan approval digest absent')
+            release = read_release_plan(args.release_plan.read_bytes(), args.release_plan_sha256)
+        except (OSError, ValueError, TypeError, KeyError):
+            damaged_inputs.append('tool_input/release-plan')
+
+    def optional_bytes(path: Path | None, name: str) -> bytes | None:
+        if path is None:
+            return None
+        try:
+            return path.read_bytes()
+        except OSError:
+            damaged_inputs.append('tool_input/' + name)
+            return None
+
     try:
-        output, _attachments = render(result)
-    except ValueError as exc:
-        # A diagnostic, explicitly NOT a GATE_OUTPUT and never a v2 PASS.
-        print(json.dumps(dict(policy_version='shadow-v2', status='BLOCKED',
-            error=str(exc), gaps=result.gaps), indent=2))
-        raise SystemExit(1) from None
+        ports = shadow_v2_ports(optional_bytes(args.certificate_keys, 'certificate-keys'),
+            optional_bytes(args.binding_keys, 'binding-keys'), release=release)
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        damaged_inputs.append('tool_input/key-descriptors')
+        ports = shadow_v2_ports(None, None, release=release)
+    try:
+        original = args.bundle.read_bytes()
+    except OSError:
+        original = b''
+    bundle = load(original, ports)
+    if damaged_inputs:
+        bundle = replace(bundle, undefined_preimages=(*bundle.undefined_preimages, *damaged_inputs))
+    result = evaluate(bundle, ports, gate=args.gate)
+    from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput
+    rendered = render(result)
+    if isinstance(rendered, UnavailableGateOutput):
+        print(json.dumps(rendered.diagnostic(), sort_keys=True, separators=(',', ':')))
+        raise SystemExit(1)
+    output, _attachments = rendered
     destination = args.output_dir or args.bundle.parent / 'gate-output'
     destination.mkdir(parents=True, exist_ok=True)
     (destination / 'report.json').write_bytes(_attachments[0])

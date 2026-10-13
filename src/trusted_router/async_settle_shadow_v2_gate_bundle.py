@@ -157,12 +157,12 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
             continue
         try:
             value = a1.GATE_OUTPUT.parse(gate_raw)
-            expected = {'fleet': 'fleet-budgets', 'pre': 'fleet-budgets-pre', 'serving': 'shadow-serving'}.get(name, name)
-            require(value['gate'] == expected, 'artifact_gap')
             from trusted_router.async_settle_shadow_v2_gate_prior import verified_prior_gate
             verified_prior_gate(ctx, name, value)
         except ValueError as exc:
-            ctx.issue('artifact_gap', name + ': ' + str(exc))
+            ctx.issue('artifact_gap', name + ': ' + str(exc), Subject(wire=a2.O('prior_gate', name)))
+            from trusted_router.async_settle_shadow_v2_gate_prior import verified_prior_gate
+            verified_prior_gate(ctx, name, {})
     if ctx.proof is not None:
         raw_by_hash = {hashlib.sha256(row.raw).hexdigest(): row.raw for row in bundle.attachments}
         for item in ctx.proof['attachments']:

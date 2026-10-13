@@ -90,6 +90,21 @@ def window_for(ctx: Context) -> dict[str, int]:
     intervals = [(b.start_us, min(b.end_us or ctx.bundle.completed_at_us, ctx.bundle.completed_at_us))
                  for b in ctx.bundle.inventory.boots if b.role == 'router'] if ctx.bundle.inventory else []
     intervals = [(left, right) for left, right in intervals if left < right]
+    if not intervals:
+        # Damage to an approved source must not erase the diagnostic report's
+        # scope. These decoded lifetimes describe what was requested, and never
+        # establish clock coverage (clock() still requires independent boots).
+        rosters = list((ctx.proof or {}).get('rosters_by_day', {}).values())
+        rosters.extend(dict(router=m['router_writers']) for m in ctx.kind(p1.KINDS[5])
+                       if 'router_writers' in m)
+        intervals = [(w['lifetime']['start_us'], w['lifetime']['end_us'])
+                     for roster in rosters for w in roster.get('router', {}).values()
+                     if w['lifetime']['start_us'] < w['lifetime']['end_us']]
+        if not intervals and ctx.bundle.days:
+            import datetime as dt
+            left = (dt.date.fromisoformat(ctx.bundle.days[0]) - dt.date(1970, 1, 1)).days * 86400000000
+            right = (dt.date.fromisoformat(ctx.bundle.days[-1]) - dt.date(1970, 1, 1)).days * 86400000000 + 86400000000
+            intervals = [(left, right)]
     require(bool(intervals), 'artifact_gap: observation scope unavailable')
     left, right = min(v[0] for v in intervals), max(v[1] for v in intervals)
     if ctx.certified_end_us is not None:

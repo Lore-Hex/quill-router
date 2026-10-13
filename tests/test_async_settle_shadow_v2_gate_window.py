@@ -286,7 +286,7 @@ LONG_CASES = {'continuous_window_gap': ('continuous_window_gap',),
 
 @pytest.fixture(scope='module')
 def short_family(tmp_path_factory: Any, validation_cache: Any) -> Any:
-    original, ports, _ = real_fixture(tmp_path_factory.mktemp('short-originals'), pilot_stage='post-flip')
+    original, ports, _ = real_fixture(tmp_path_factory.mktemp('short-originals'), seconds=400, pilot_stage='post-flip')
     return transport(original), ports
 
 

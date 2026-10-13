@@ -106,6 +106,44 @@ def payloadgraph_shared_lookup_cache():
                     indexes.clear()
                 indexes[key] = json.dumps(graph._containers[id(schema)], separators=(',', ':'))
 
+    # Contract graph validators are pure. Memoize complete original-byte
+    # arguments, including ordering, absent keys and all dependency bytes.
+    # Ports, approvals and semantic evaluation remain outside this cache.
+    preimage_checks = contract.validate_preimages
+    output_checks = contract.validate_gate_output
+    graph_results: OrderedDict[Any, str | None] = OrderedDict()
+
+    def freeze(value):
+        if isinstance(value, dict):
+            return (type(value), tuple((k, freeze(v)) for k, v in sorted(value.items())))
+        if isinstance(value, (list, tuple)):
+            return (type(value), tuple(freeze(v) for v in value))
+        return (type(value), value)
+
+    def pure_check(function, args, kwargs):
+        key = (function, freeze(args), freeze(kwargs))
+        if key not in graph_results:
+            try:
+                function(*args, **kwargs)
+            except ValueError as exc:
+                graph_results[key] = str(exc)
+            else:
+                graph_results[key] = None
+            if len(graph_results) > 256:
+                graph_results.popitem(last=False)
+        else:
+            graph_results.move_to_end(key)
+        if graph_results[key] is not None:
+            raise ValueError(graph_results[key])
+
+    def checked_preimages(*args, **kwargs):
+        return pure_check(preimage_checks, args, kwargs)
+
+    def checked_output(*args, **kwargs):
+        return pure_check(output_checks, args, kwargs)
+
+    patch.setattr(contract, 'validate_preimages', checked_preimages)
+    patch.setattr(contract, 'validate_gate_output', checked_output)
     patch.setattr(Schema, '_validate', validated)
     patch.setattr(Schema, 'parse', parsed)
     patch.setattr(contract, '_object_bytes', object_bytes)
@@ -113,6 +151,7 @@ def payloadgraph_shared_lookup_cache():
     patch.setattr(payloads.PayloadGraph, 'detail', indexed)
     yield dict(schema=schema_result, objects=checked, lookups=looked_up, indexes=indexes, parse=schema_parse)
     patch.undo()
+    graph_results.clear()
     validations.clear()
     schema_result.cache_clear()
     checked.cache_clear()

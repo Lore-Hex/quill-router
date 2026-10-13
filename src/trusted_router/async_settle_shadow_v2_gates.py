@@ -268,6 +268,12 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
     if not isinstance(bundle, Bundle):
         bundle = Bundle(undefined_preimages=('bundle',))
     ctx = decode_bundle(bundle, ports, gate)
+    if not bundle.days and ctx.proof is not None:
+        from dataclasses import replace
+        days = tuple(sorted(ctx.proof['rosters_by_day']))
+        if days:
+            bundle = replace(bundle, days=days)
+            ctx.bundle = bundle
     needed = ('inventory', 'cohort', 'budget') if gate == 'fleet-budgets-pre' else ('inventory', 'cohort', 'budget', 'external', 'reset_support')
     for name in needed:
         if getattr(bundle, name) is None:
