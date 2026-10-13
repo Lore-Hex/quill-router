@@ -62,7 +62,10 @@ _AUTHORIZE_FRAMING = (
     len(canonical({**_AUTHORIZE_FIXED, **dict.fromkeys(_AUTHORIZE_VARIABLE)}))
     - len(canonical([None] * len(_AUTHORIZE_VARIABLE)))
 )
-_ESCAPED_JSON = r'[\x00-\x1f"\\]|[^\x00-\x7f]'
+# The canonical encoder alone defines which ASCII characters need escaping.
+_ESCAPED_JSON = '[' + re.escape(''.join(
+    chr(code) for code in range(128) if len(canonical(chr(code))) != len(chr(code)) + 2
+)) + r']|[^\x00-\x7f]'
 
 
 def event_size(value: Any) -> int:

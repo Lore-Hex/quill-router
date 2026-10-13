@@ -568,6 +568,9 @@ def test_complete_event_size_checked_after_coordinates() -> None:
 
 
 def _case_exact_authorize_event_fit(target: int) -> None:
+    from tests.test_async_settle_shadow_observation import fake_store
+    from trusted_router.services.async_settle_shadow_health import Service
+
     value = inputs()
     reserve = Reservation(day_at(value.observed_us), 'writer', 1, 1, value.observed_us)
     identity = committed_identity(value.identity)
@@ -593,6 +596,14 @@ def _case_exact_authorize_event_fit(target: int) -> None:
         server_facts=value.facts.object(), server_candidates=candidates, native_request=True,
         complete_candidates=True, complete_supported_context=True, reason=None)
     assert native == prepared
+    store, _ = fake_store()
+    store.wall = lambda: NOW
+    service = Service(config(), store)
+    service.journal = Journal(reserve.boot)
+    service.journal.grant(reserve.day, 100)
+    slot = service.port.reserve(value.observed_us)
+    assert slot == reserve
+    assert service.port.finalize(slot, native.event) == prepared.body == canonical(native.event)
     if target == 2048:
         assert len(prepared.body) == target and prepared.decision.eligibility == 'eligible'
     else:
@@ -879,6 +890,19 @@ def test_authorize_size_matches_p3_fixtures():
         for path in sorted((root / directory).rglob('*.json')):
             visit(json.loads(path.read_bytes()))
     assert sizes > accepted > 0
+
+
+def test_event_size_matches_canonical_strings() -> None:
+    from trusted_router.async_settle_shadow_cohort import event_size
+
+    chars = ''.join(chr(i) for i in range(128)) + 'é€😀\ud800'
+    for char in chars:
+        for value in (char, 'prefix' + char + 'suffix'):
+            assert event_size(value) == len(canonical(value)), repr(value)
+    mixed = (chars * 16)[:2048]
+    assert len(mixed) == 2048
+    for value in ('', mixed):
+        assert event_size(value) == len(canonical(value)), repr(value)
 
 
 @exhaustive
