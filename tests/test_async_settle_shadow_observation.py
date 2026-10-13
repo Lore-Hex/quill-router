@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from tests.fakes.spanner import FakeSpannerDatabase
+from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_sdk_retry import sdk_database as sdk_base
 from tests.test_async_settle_shadow_v2_contract import fixture as p1_fixture
 from tests.test_async_settle_shadow_v2_evidence import (  # noqa: F401 - grid fixture
@@ -79,7 +80,7 @@ def install_scheduler(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def deterministic_scheduler(monkeypatch):
+def deterministic_scheduler(monkeypatch, package_hygiene):  # noqa: F811
     created = []
     initialize = Service.__init__
     def tracked(service, *args, **kwargs):
@@ -998,7 +999,9 @@ def test_request_facade_threads_do_not_wait_for_flush(monkeypatch: Any) -> None:
         real_flush(*args)
     monkeypatch.setattr(svc.store, "flush", slow)
     with ThreadPoolExecutor(max_workers=9) as pool:
-        flushing = pool.submit(svc.flush, svc.store.clock()+4)
+        work = svc._flush(svc.store.clock()+4)
+        operation = next(work)
+        flushing = pool.submit(operation)
         entered.wait()
         try:
             reservations = list(pool.map(svc.port.reserve, [NOW_US+i for i in range(8)]))
@@ -1013,7 +1016,13 @@ def test_request_facade_threads_do_not_wait_for_flush(monkeypatch: Any) -> None:
                 assert svc.port.complete(r)
         finally:
             release.set()
-        flushing.result()
+        result = flushing.result()
+        try:
+            operation = work.send(result)
+            while True:
+                operation = work.send(operation())
+        except StopIteration:
+            pass
 
 
 @pytest.mark.asyncio
@@ -1048,7 +1057,7 @@ async def test_shutdown_fault_points(monkeypatch: Any, point: str) -> None:
         if point in ("before_first_flush", "during_commit", "before_closure"):
             raise UnknownCommit("kill during commit") if point == "during_commit" else RuntimeError("kill")
         real(pages, counter, closure, budget)
-        if point == "after_closure":
+        if point == "after_closure" and closure is not None:
             raise UnknownCommit("reply lost")
     monkeypatch.setattr(svc.store, "flush", fault)
     await svc.close()
@@ -1063,6 +1072,8 @@ async def test_unknown_final_close_miss_then_exact_late_landing(monkeypatch: Any
     retained = []
     real = svc.store.flush
     def lost(*args: Any) -> None:
+        if args[2] is None:
+            return real(*args)
         retained.append(args[:3])
         raise UnknownCommit("late close")
     monkeypatch.setattr(svc.store, "flush", lost)

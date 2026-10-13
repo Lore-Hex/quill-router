@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import NOW_US, maximum_rows
 from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
 

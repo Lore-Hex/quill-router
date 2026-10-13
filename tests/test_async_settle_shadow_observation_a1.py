@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import (
     NOW_US,
     deterministic_scheduler,  # noqa: F401
@@ -227,6 +228,8 @@ async def test_final_original_failure_permanently_vetoes_result(monkeypatch, fau
     real = svc.store.flush
     calls = []
     def flush(*args):
+        if args[2] is None:
+            return real(*args)
         calls.append(args)
         real(*args)
         if fault == "unknown":
@@ -271,23 +274,34 @@ def test_attempted_unknown_claim_is_failure(monkeypatch):
 
 
 def test_preclaim_lock_wait_rechecks_jitter(monkeypatch):
+    # The lifecycle lock is gone. Delay the worker in its executor, then verify
+    # its I/O eligibility check uses actual entry time without touching State.
+    from trusted_router.services.async_settle_shadow_health import publish_cycle
     svc = service()
     wall = [NOW_US]
     svc.store.wall = lambda: wall[0]/1e6
     calls = []
     monkeypatch.setattr(svc.store, "claim", lambda *a: calls.append(a))
+    entered, release = threading.Event(), threading.Event()
+    def block():
+        entered.set()
+        release.wait()
+    blocker = svc.publisher_executor.submit(block)
     try:
-        with svc.lock:
-            svc.schedule_cycle(NOW_US//2_000_000, NOW_US)
-            job = svc.publisher_executor.submit(svc.publish_cycle, NOW_US//2_000_000, NOW_US)
-            wall[0] += 300_000
-        job.result()
-        assert calls == []
-        counts = svc.counters["2026-10-12"]["publisher"]
-        validate_publisher_final(counts)
-        assert counts["missed_slots"] == 1
+        entered.wait()
+        svc.schedule_cycle(NOW_US//2_000_000, NOW_US)
+        job = svc.publisher_executor.submit(publish_cycle, svc.store, svc.journal.boot,
+            svc.settings.effective_serving_region, svc.settings.source_revision,
+            NOW_US//2_000_000, NOW_US, True, svc.last_claim_start)
+        wall[0] += 300_000
     finally:
-        svc.publisher_executor.shutdown()
+        release.set()
+    blocker.result()
+    svc.publisher_reply(job.result())
+    assert calls == []
+    counts = svc.counters["2026-10-12"]["publisher"]
+    validate_publisher_final(counts)
+    assert counts["missed_slots"] == 1
 
 
 def test_midnight_queued_cycle_owns_day_before_executor_start():
@@ -302,7 +316,10 @@ def test_midnight_queued_cycle_owns_day_before_executor_start():
     stamp = wall[0]
     with svc.lock:
         svc.schedule_cycle(stamp//2_000_000, stamp)
-        job = svc.publisher_executor.submit(svc.publish_cycle, stamp//2_000_000, stamp)
+        from trusted_router.services.async_settle_shadow_health import publish_cycle
+        job = svc.publisher_executor.submit(publish_cycle, svc.store, svc.journal.boot,
+            svc.settings.effective_serving_region, svc.settings.source_revision,
+            stamp//2_000_000, stamp, True, svc.last_claim_start)
     wall[0] += 3_000_000
     try:
         svc.flush(svc.store.clock()+4)
@@ -311,7 +328,7 @@ def test_midnight_queued_cycle_owns_day_before_executor_start():
         release.set()
         svc.publisher_executor.shutdown(wait=True)
     blocker.result()
-    job.result()
+    svc.publisher_reply(job.result())
     counts = svc.counters["2026-10-12"]["publisher"]
     validate_publisher_final(counts)
     assert counts["missed_slots"] == 1
@@ -660,6 +677,7 @@ async def test_observer_close_keeps_queued_failures_owned():
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
     svc = service()
+    svc.loop = asyncio.get_running_loop()
     observer = svc.observer
     observer.executor = ThreadPoolExecutor(max_workers=1)
     entered, release = threading.Event(), threading.Event()
@@ -755,7 +773,7 @@ async def test_close_result_separate_transaction_and_original_identity(monkeypat
     monkeypatch.setattr(svc.store.database, "run_in_transaction", transaction)
     await svc.close()
     assert not svc.unclosed
-    assert rows == [{COUNTER_KIND, CLOSURE_KIND}, {CLOSE_RESULT_KIND}]
+    assert rows == [{COUNTER_KIND}, {COUNTER_KIND, CLOSURE_KIND}, {CLOSE_RESULT_KIND}]
     result = next(row for (kind, _), row in svc.store.database.rows.items() if kind == CLOSE_RESULT_KIND)
     import json
     value = json.loads(result.body)

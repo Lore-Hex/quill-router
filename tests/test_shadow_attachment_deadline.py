@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation_a1 import basis
 from trusted_router.async_settle_shadow_attachments import Lane
 from trusted_router.storage_gcp_shadow_attachments import GCSAttachments

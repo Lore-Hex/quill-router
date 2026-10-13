@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Protocol
 
 from trusted_router.async_settle_shadow_v2_a1_health import HEALTH_BASIS_BATCH, PUBLISHER_TRACE_PAGE
@@ -100,6 +101,19 @@ class Lane:
             self.retired_through = max(self.retired_through, day)
 
     def step(self, budget: Any) -> None:
+        work = self.work(budget)
+        value = error = None
+        while True:
+            try:
+                operation = work.throw(error) if error is not None else work.send(value)
+            except StopIteration:
+                return
+            try:
+                value, error = operation(), None
+            except Exception as caught:
+                value, error = None, caught
+
+    def work(self, budget: Any) -> Generator[Callable[[], Any], Any, None]:
         with self.lock:
             now = budget.clock()
             if not self.queue or self.transport is None or now < self.next_operation:
@@ -117,10 +131,10 @@ class Lane:
         landed = False
         try:
             if operation == "put":
-                self.transport.put(item.key, item.body, timeout, deadline=deadline, clock=budget.clock)
+                (yield partial(self.transport.put, item.key, item.body, timeout, deadline=deadline, clock=budget.clock))
                 landed = True
             else:
-                found = self.transport.get(item.key, timeout, deadline=deadline, clock=budget.clock)
+                found = yield partial(self.transport.get, item.key, timeout, deadline=deadline, clock=budget.clock)
                 with self.lock:
                     self.operations["received_bytes"] += len(found or b"")
                 if found is not None:

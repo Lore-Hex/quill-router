@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import (
     NOW_US,
     deterministic_scheduler,  # noqa: F401
@@ -88,7 +89,8 @@ class HeldLock:
         self.release()
 
 
-def test_every_port_method_with_each_owned_lock_held(monkeypatch):
+@pytest.mark.parametrize("sealing", [False, True])
+def test_every_port_method_with_each_owned_lock_held(monkeypatch, sealing):
     svc = service()
     svc.observer.health = installed(health(), reply_at=svc.store.clock())
     svc.observer.install_workspace("ws", svc.store.clock(), Admission(0, 2))
@@ -124,6 +126,7 @@ def test_every_port_method_with_each_owned_lock_held(monkeypatch):
         "fold_counts": lambda: svc.port.fold_counts(day, bucket),
         "capture_prediction": lambda: svc.port.capture_prediction("ws", NOW_US),
     }
+    svc.journal.days[day].sealing = sealing
     import inspect
     assert {name for name, _ in inspect.getmembers(type(svc.port), inspect.isfunction)
             if not name.startswith("_")} == set(methods)
@@ -131,7 +134,7 @@ def test_every_port_method_with_each_owned_lock_held(monkeypatch):
     locks = [(obj, name) for obj in objects for name, value in vars(obj).items()
              if callable(getattr(value, "acquire", None)) and callable(getattr(value, "release", None))]
     assert {(type(obj).__name__, name) for obj, name in locks} == {
-        ("Service", "lock"), ("Service", "maintenance_lock"),
+        ("Service", "lock"),
         ("HealthObserver", "lock"), ("Lane", "lock")}
     from contextlib import contextmanager
     with ThreadPoolExecutor(max_workers=1) as worker:
@@ -165,6 +168,7 @@ def test_every_port_method_with_each_owned_lock_held(monkeypatch):
                         assert svc.port.lost.is_set(), method
         # The actual RLock is owned by the worker, exactly as in the reviewer
         # witness; an attempted blocking call fails before it could hang CI.
+        svc.journal.days[day].sealing = False
         with held(svc.bases, "lock") as gate:
             svc.basis_tokens = 10
             assert svc.port.capture_prediction("ws", NOW_US) is None

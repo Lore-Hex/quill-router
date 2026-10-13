@@ -1,5 +1,6 @@
 import pytest
 
+from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.shadow_v2_import_guard import validate_live_imports
 
 

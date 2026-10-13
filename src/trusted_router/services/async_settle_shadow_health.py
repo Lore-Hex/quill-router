@@ -7,11 +7,13 @@ import logging
 import math
 import signal
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 from typing import Any, TypeVar, cast
 
+from trusted_router import async_settle_shadow_lifecycle as lifecycle
 from trusted_router.async_settle_shadow_attachments import Lane, Transport
 from trusted_router.async_settle_shadow_evidence import HIST_BOUNDS, Counters
 from trusted_router.async_settle_shadow_health_state import (
@@ -72,14 +74,23 @@ class HealthObserver(Observer):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.owners: dict[str | None, tuple[str, int]] = {}
-        self.outcome = threading.local()
+        self.outcome = type("Outcome", (), {"owner": None})()
+        self.service: Service | None = None
         self.scheduled_owner: tuple[str, int] | None = None
         observer = self
         class Ticks(dict[str | None, float]):
             def __setitem__(self, key: str | None, value: float) -> None:
                 require(observer.scheduled_owner is not None, "observer_schedule_owner")
                 assert observer.scheduled_owner is not None
-                observer.owners[key] = observer.scheduled_owner
+                owner = observer.scheduled_owner
+                if observer.service is not None:
+                    svc = observer.service
+                    if not svc.state.days:
+                        svc.tick(owner[1])
+                    effects = svc.accept(lifecycle.ObserverEnqueued(owner[1], f"{key}:{value}"))
+                    if any(isinstance(e, lifecycle.Fault) for e in effects):
+                        raise _ObserverQuiesced
+                observer.owners[key] = owner
                 observer.scheduled_owner = None
                 super().__setitem__(key, value)
         self.inflight_ticks = Ticks()
@@ -90,6 +101,10 @@ class HealthObserver(Observer):
         if scheduled:
             stamp = int(self.evidence_wall()*1_000_000)
             owner = self.scheduled_owner = (day_at(stamp), stamp)
+            if self.service is not None:
+                self.service.assert_owner()
+                if any(d.day == owner[0] and (d.final or d.veto) for d in self.service.state.days):
+                    raise _ObserverQuiesced
         if owner is None:
             super()._count(field)
             return
@@ -100,26 +115,50 @@ class HealthObserver(Observer):
                       degraded_seconds=0., started_at_us=stamp)))
         bucket[field] = bucket.get(field, 0) + 1
 
-    def _owned(self, key: str | None, started: float, read: Callable[[], None]) -> None:
-        with self.lock:
-            self.outcome.owner = self.owners.get(key)
+    def _owned(self, key: str | None, started: float, read: Callable[[], Any]) -> None:
+        # The executor returns data only. Cache installs, evidence folding and
+        # owner release all execute in finish on the event-loop thread.
         try:
-            read()
-        finally:
-            with self.lock:
-                if self.inflight_ticks.get(key) == started:
-                    self.inflight_ticks.pop(key)
-                    owner = self.owners.pop(key, None)
-                    if owner is not None:
-                        bucket = self.daily_counts[owner[0]]
-                        bucket["max_consecutive_failures"] = max(bucket["max_consecutive_failures"], self.failures[key])
-                self.outcome.owner = None
+            value, error = read(), None
+        except Exception as caught:
+            value, error = None, caught
+        svc = self.service
+        if svc is not None and svc.loop is not None:
+            svc.loop.call_soon_threadsafe(self.finish, key, started, value, error)
+        else:
+            self.finish(key, started, value, error)
+
+    def finish(self, key: str | None, started: float, value: Any, error: Exception | None) -> None:
+        svc = self.service
+        if svc is not None:
+            svc.assert_owner()
+        with self.lock:
+            if self.inflight_ticks.get(key) != started:
+                return
+            self.outcome.owner = self.owners.get(key)
+            if error is not None:
+                self._failure(key, started, "read_failures")
+            elif key is None:
+                self.install_health(started, value)
+            else:
+                self.install_workspace(key, started, value)
+            if self.inflight_ticks.get(key) == started:
+                self.inflight_ticks.pop(key)
+                owner = self.owners.pop(key, None)
+                if owner is not None:
+                    bucket = self.daily_counts[owner[0]]
+                    bucket["max_consecutive_failures"] = max(bucket["max_consecutive_failures"], self.failures[key])
+                    if svc is not None:
+                        stamp = int(svc.store.wall()*1_000_000)
+                        svc.fold(stamp)
+                        svc.accept(lifecycle.ObserverFolded(stamp, owner[0], f"{key}:{started}"))
+            self.outcome.owner = None
 
     def _health(self, started: float) -> None:
-        self._owned(None, started, lambda: super(HealthObserver, self)._health(started))
+        self._owned(None, started, self.health_read)
 
     def _workspace(self, key: str, started: float) -> None:
-        self._owned(key, started, lambda: super(HealthObserver, self)._workspace(key, started))
+        self._owned(key, started, partial(self.read, key))
 
     async def run(self) -> None:
         enabled = self.enabled
@@ -203,6 +242,7 @@ class Port:
             svc, day = self.service, day_at(observed_us)
             require(svc.enabled() and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
+            require(not svc.journal.days[day].sealing, "closed_day")
             if terminal:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
                 svc.journal.terminal_permits[day] -= 1
@@ -210,13 +250,22 @@ class Port:
         return self.call(action)
 
     def finalize(self, reservation: Reservation, event: dict[str, Any]) -> bytes | None:
-        return self.call(lambda: self.service.journal.finalize(reservation, event))
+        def action() -> bytes:
+            require(not self.service.journal.days[reservation.day].sealing, "closed_day")
+            return self.service.journal.finalize(reservation, event)
+        return self.call(action)
 
     def complete(self, reservation: Reservation, rows: tuple[Row, ...] = ()) -> bool:
-        return bool(self.call(lambda: self.service.journal.complete(reservation, rows)))
+        def action() -> bool:
+            require(not self.service.journal.days[reservation.day].sealing, "closed_day")
+            return self.service.journal.complete(reservation, rows)
+        return bool(self.call(action))
 
     def complete_event(self, reservation: Reservation, original_page: Row, event: dict[str, Any]) -> bytes | None:
-        return self.call(lambda: self.service.journal.complete_event(reservation, original_page, event))
+        def action() -> bytes:
+            require(not self.service.journal.days[reservation.day].sealing, "closed_day")
+            return self.service.journal.complete_event(reservation, original_page, event)
+        return self.call(action)
 
     def capture_prediction(self, workspace: str, observed_us: int) -> dict[str, Any] | None:
         """P4 captures the prediction and its immutable basis at one cache instant."""
@@ -283,6 +332,87 @@ class Port:
         return bool(self.call(action))
 
 
+@dataclass(frozen=True)
+class WorkReply:
+    value: Any = None
+    error: Exception | None = None
+
+
+def maintain(operation: Callable[[], Any]) -> WorkReply:
+    """Evidence worker: evaluate captured I/O, returning data without State."""
+    try:
+        return WorkReply(operation())
+    except Exception as error:
+        return WorkReply(error=error)
+
+
+@dataclass(frozen=True)
+class PublisherReply:
+    trace: dict[str, Any]
+    rpc_durations: tuple[int, ...]
+    claimed: bool
+
+
+def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
+                  slot: int, claim_us: int, enabled: bool, last_claim_start: float) -> PublisherReply:
+    """Worker I/O only. All inputs are captured by the owner before submission."""
+    day = day_at(claim_us)
+    started = store.clock()
+    budget = Budget(started + CYCLE_SECONDS, store.clock)
+    claimed = False
+    attempted = False
+    outcome = "missed_slots"
+    unknown = False
+    value = None
+    ack_us = None
+    rpc_durations: list[int] = []
+    actual_us = claim_us
+    store.last_claim = None
+    def record(elapsed: int) -> None:
+        rpc_durations.append(elapsed)
+    def attempt() -> None:
+        nonlocal actual_us, attempted, outcome, claimed, value, ack_us
+        actual_us = int(store.wall()*1_000_000)
+        if (not enabled or actual_us // SLOT_US != slot
+                or actual_us % SLOT_US > JITTER_US or started-last_claim_start < 2):
+            return
+        budget.remaining(CYCLE_SECONDS)
+        attempted = True
+        outcome = "failures"
+        with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(
+                record):
+            if not store.claim(boot, slot, actual_us, budget):
+                outcome = "lost_claims"
+                return
+            claimed = True
+            value = store.observe(boot, region,
+                                       revision, slot, budget)
+            if not store.publish(value, budget):
+                return
+            budget.remaining(CYCLE_SECONDS)
+            ack_us = int(store.wall()*1_000_000)
+            outcome = "publications"
+    try:
+        attempt()
+    except Exception as error:
+        unknown = isinstance(error, UnknownCommit)
+    elapsed = max(0, round((store.clock()-started)*1_000_000))
+    late = attempted and elapsed > round(CYCLE_SECONDS*1_000_000)
+    if late:
+        outcome = "failures"
+    claim = store.last_claim
+    trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=boot,
+        slot=slot, claim_start_us=actual_us if attempted else None,
+        claim_at_ns=claim["claim_at_ns"] if claim else None,
+        observed_at_ns=value["observed_at_ns"] if value else None,
+        publisher_heartbeat_ns=value["publisher_heartbeat_ns"] if value else None,
+        body_sha256=sha256(value) if value else None, ack_at_us=ack_us,
+        cycle_us=elapsed if attempted else None,
+        outcome={"missed_slots": "missed", "lost_claims": "lost_claim", "publications": "published", "failures": "failed"}[outcome],
+        unknown_outcome=unknown, late_cycle=late, rpc_count=len(rpc_durations), rpc_elapsed_us=sum(rpc_durations))
+    return PublisherReply(trace, tuple(rpc_durations), claimed)
+
+
 class Service:
     def __init__(self, settings: Settings, store: ObservationStore, transport: Transport | None = None) -> None:
         self.settings, self.store = settings, store
@@ -298,11 +428,15 @@ class Service:
             cap=settings.async_settle_pilot_cap_micro, enabled=self.enabled, policy=POLICY,
             clock=store.clock, wall=store.wall)
         cast(Any, self.observer).lock = threading.RLock()
+        self.observer.service = self
         self.lock = threading.RLock()
-        self.maintenance_lock = threading.Lock()
+        self.owner_thread = threading.get_ident()
+        self._state = lifecycle.State()
+        self.loop: asyncio.AbstractEventLoop | None = None
         self.port = Port(self)
         self.close_failures: dict[str, int] = {}
         self.final_attempted: set[str] = set()
+        self.final_plans: dict[str, tuple[list[Row], Row, Row]] = {}
         self.final_veto: set[str] = set()
         self.handoff: tuple[str, list[Row], Row, Row] | None = None
         self.publishing: set[str] = set()
@@ -364,93 +498,67 @@ class Service:
         with self.lock:
             self.counters[day]["publisher"][name] += count
 
+    def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
+        self.assert_owner()
+        if not self.state.days:
+            enabled = self.contender() if publisher is None else publisher
+            days = []
+            for day in self.counters:
+                start = stamp if day == day_at(stamp) else self.counters[day]["started_at_us"]
+                slot = start//SLOT_US
+                days.append(lifecycle.Day(day, slot, slot-1, (start//lifecycle.DAY_US+1)*lifecycle.DAY_US//SLOT_US-1))
+            self._state = lifecycle.State(days=tuple(days), publisher_enabled=enabled)
+        return self.accept(lifecycle.Tick(stamp))
+
     def schedule_cycle(self, slot: int, claim_us: int) -> None:
-        # Called under the service lock BEFORE executor submission.
-        day = self.ensure_day(claim_us)
-        self.operation(day, "scheduled_slots")
-        self.publishing.add(day)
+        self.assert_owner()
+        self.tick(claim_us, publisher=True)
+        if any(slot in d.publishers for d in self.state.days):
+            self.publishing.add(day_at(claim_us))
 
     def publish_cycle(self, slot: int, claim_us: int) -> None:
-        day = day_at(claim_us)
-        with self.lock:
-            if day not in self.publishing:
-                self.schedule_cycle(slot, claim_us)
-        started = self.store.clock()
-        budget = Budget(started + CYCLE_SECONDS, self.store.clock)
-        attempted = False
-        outcome = "missed_slots"
-        unknown = False
-        value = None
-        ack_us = None
-        rpc_durations: list[int] = []
-        actual_us = claim_us
-        self.store.last_claim = None
-        def record(elapsed: int) -> None:
-            rpc_durations.append(elapsed)
-            self.histogram(day, "rpc_us", elapsed)
+        """Offline owner driver; executors call the module-level worker."""
+        self.assert_owner()
+        self.schedule_cycle(slot, claim_us)
+        reply = publish_cycle(self.store, self.journal.boot, self.settings.effective_serving_region,
+            self.settings.source_revision, slot, claim_us, self.enabled() and not self.stopped.is_set(),
+            self.last_claim_start)
+        if reply.trace["claim_start_us"] is not None:
+            self.last_claim_start = self.store.clock()
+        self.publisher_reply(reply)
+
+    def publisher_reply(self, reply: PublisherReply) -> None:
+        self.assert_owner()
+        trace = reply.trace
+        day, slot = trace["day"], trace["slot"]
         try:
-            with self.lock:
-                actual_us = int(self.store.wall()*1_000_000)
-                if (not self.enabled() or self.stopped.is_set() or actual_us // SLOT_US != slot
-                        or actual_us % SLOT_US > JITTER_US or self.store.clock()-self.last_claim_start < 2):
-                    return
-                budget.remaining(CYCLE_SECONDS)
-                self.operation(day, "claim_attempts")
-                self.last_claim_start = self.store.clock()
-                attempted = True
-            outcome = "failures"
-            with rpc_scope(budget.deadline, CYCLE_SECONDS, self.store.clock), observe_spanner_rpcs(
-                    record):
-                if not self.store.claim(self.journal.boot, slot, actual_us, budget):
-                    outcome = "lost_claims"
-                    return
-                self.operation(day, "claims")
-                self.operation(day, "scans")
-                value = self.store.observe(self.journal.boot, self.settings.effective_serving_region,
-                                           self.settings.source_revision, slot, budget)
-                if not self.enabled() or not self.store.publish(value, budget):
-                    return
-                budget.remaining(CYCLE_SECONDS)
-                ack_us = int(self.store.wall()*1_000_000)
-                outcome = "publications"
-        except Exception as error:
-            unknown = isinstance(error, UnknownCommit)
-        finally:
-            elapsed = max(0, round((self.store.clock()-started)*1_000_000))
-            late = attempted and elapsed > round(CYCLE_SECONDS*1_000_000)
-            if late:
-                outcome = "failures"
-            with self.lock:
-                self.operation(day, outcome)
-                if unknown:
-                    self.operation(day, "unknown_outcomes")
-                if late:
-                    self.operation(day, "late_cycles")
-                if attempted:
-                    self.histogram(day, "cycle_us", elapsed)
-                claim = self.store.last_claim
-                trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=self.journal.boot,
-                    slot=slot, claim_start_us=actual_us if attempted else None,
-                    claim_at_ns=claim["claim_at_ns"] if claim else None,
-                    observed_at_ns=value["observed_at_ns"] if value else None,
-                    publisher_heartbeat_ns=value["publisher_heartbeat_ns"] if value else None,
-                    body_sha256=sha256(value) if value else None, ack_at_us=ack_us,
-                    cycle_us=elapsed if attempted else None,
-                    outcome={"missed_slots": "missed", "lost_claims": "lost_claim", "publications": "published", "failures": "failed"}[outcome],
-                    unknown_outcome=unknown, late_cycle=late, rpc_count=len(rpc_durations), rpc_elapsed_us=sum(rpc_durations))
-                try:
-                    PUBLISHER_SLOT_TRACE(trace)
-                    self.traces.append(day, trace)
-                except ValueError:
-                    self.journal.loss(day)
-                finally:
-                    self.publishing.discard(day)
+            encoded = PUBLISHER_SLOT_TRACE.serialize(trace)
+        except ValueError:
+            encoded = b""
+            self.journal.loss(day)
+        effects = self.accept(lifecycle.SlotOutcome(int(self.store.wall()*1_000_000), slot,
+                             trace["outcome"], encoded))
+        if any(isinstance(e, lifecycle.Fault) for e in effects):
+            return
+        with self.lock:
+            for elapsed in reply.rpc_durations:
+                self.histogram(day, "rpc_us", elapsed)
+            if trace["cycle_us"] is not None:
+                self.histogram(day, "cycle_us", trace["cycle_us"])
+            for name, count in (("claims", reply.claimed), ("scans", reply.claimed),
+                                ("unknown_outcomes", trace["unknown_outcome"]), ("late_cycles", trace["late_cycle"])):
+                self.operation(day, name, int(count))
+            try:
+                self.traces.append(day, trace)
+            except ValueError:
+                self.journal.loss(day)
+            self.publishing.discard(day)
 
     def missed_slot(self, slot: int, *, scheduled: bool = False) -> None:
-        day = self.ensure_day(slot*SLOT_US)
         if not scheduled:
-            self.operation(day, "scheduled_slots")
-        self.operation(day, "missed_slots")
+            self.tick(slot*SLOT_US+JITTER_US+1, publisher=True)
+            return
+        day = self.ensure_day(slot*SLOT_US)
         trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=self.journal.boot,
             slot=slot, claim_start_us=None, claim_at_ns=None, observed_at_ns=None,
             publisher_heartbeat_ns=None, ack_at_us=None, cycle_us=None, body_sha256=None,
@@ -474,7 +582,13 @@ class Service:
                     self.journal.loss(current)
                 continue
             if day not in self.counters:
+                if self.state.days and not any(d.day == day for d in self.state.days):
+                    for current in self.journal.days:
+                        self.journal.loss(current)
+                    continue
                 self.ensure_day(int(values["started_at_us"]))
+            if any(d.day == day and d.final for d in self.state.days):
+                continue
             counter = self.counters[day]
             for key, value in values.items():
                 if key in counter["admission_observer"]:
@@ -515,19 +629,21 @@ class Service:
             self.traces.retire(day)
             self.journal.closed(day)
             self.final_attempted.discard(day)
+            self.final_plans.pop(day, None)
             self.counters.pop(day)
             self.legacy.days.pop(day, None)
             self.observer.acknowledge_daily_counts(day, day_at(self.folded_us))
 
-    def reconcile_work(self, budget: Budget) -> None:
+    def reconcile_work(self, budget: Budget) -> Generator[Callable[[], Any], Any, None]:
+        self.assert_owner()
         with self.lock:
             batches = list(self.journal.batches.items())
         cache: dict[tuple[str, str], Row | None] = {}
-        def read(kind: str, key: str) -> Row | None:
+        def read(kind: str, key: str) -> Generator[Callable[[], Any], Any, Row | None]:
             identity = (kind, key)
             if identity in cache:
                 return cache[identity]
-            value = self.store.read(kind, key, budget)
+            value = yield partial(self.store.read, kind, key, budget)
             # A later retained batch can create a previously absent reference.
             if value is not None:
                 cache[identity] = value
@@ -539,18 +655,18 @@ class Service:
             try:
                 if rows and reservation not in self.unknown_batches:
                     try:
-                        self.store.retain(rows, budget)
+                        (yield partial(self.store.retain, rows, budget))
                     except UnknownCommit:
                         with self.lock:
                             self.unknown_batches.add(reservation)
                             self.journal.failed(reservation.day, unknown=True)
                         return
-                page = read(PAGE_KIND, f"{reservation.day}/{reservation.boot}/{reservation.first_seq:020}")
+                page = yield from read(PAGE_KIND, f"{reservation.day}/{reservation.boot}/{reservation.first_seq:020}")
                 if page is None:
                     continue
                 durable = [page]
                 for row in rows:
-                    found = read(row.kind, row.key)
+                    found = yield from read(row.kind, row.key)
                     if found != row:
                         break
                     durable.append(found)
@@ -570,7 +686,7 @@ class Service:
                         if original is None:
                             continue  # No exact page coordinate: unresolved, never guessed/scanned.
                     if original is not None:
-                        found = read(original.kind, original.key)
+                        found = yield from read(original.kind, original.key)
                         if found != original:
                             continue
                         durable.append(found)
@@ -578,17 +694,17 @@ class Service:
                         kind = CERTIFICATE_KIND if event["proof_kind"] == "certificate" else SAMPLE_KIND
                         key = event["authorization_day"]+"/"+event["authorization_id"]
                         if not any(r.kind == kind and r.key == key for r in durable):
-                            found = read(kind, key)
+                            found = yield from read(kind, key)
                             if found is not None:
                                 durable.append(found)
                     if event.get("original_receipt") is not None:
                         locator = event["original_receipt"]
                         key = f'{locator["day"]}/{locator["boot"]}/{locator["first_seq"]}'
-                        found = read(PAGE_KIND, key)
+                        found = yield from read(PAGE_KIND, key)
                         if found is not None:
                             durable.append(found)
-                    if reservation in self.unknown_batches and not self.store.reconcile(
-                            list(rows), budget, writer_key=reservation.day+"/"+reservation.boot):
+                    if reservation in self.unknown_batches and not (yield partial(self.store.reconcile,
+                            list(rows), budget, writer_key=reservation.day+"/"+reservation.boot)):
                         continue
                     with self.lock:
                         if reservation in self.unknown_batches:
@@ -600,30 +716,145 @@ class Service:
                     self.journal.failed(reservation.day, unknown=False)
                 return
 
-    def flush(self, deadline: float) -> None:
-        # Maintenance is serialized independently of request-facing state.
-        with self.maintenance_lock:
-            self._flush(min(deadline, self.termination_deadline or deadline))
+    @property
+    def _state(self) -> lifecycle.State:
+        self.assert_owner()
+        return self.__state
 
-    def _flush(self, deadline: float) -> None:
+    @_state.setter
+    def _state(self, value: lifecycle.State) -> None:
+        self.assert_owner()
+        self.__state = value
+
+    @property
+    def state(self) -> lifecycle.State:
+        self.assert_owner()
+        return self._state
+
+    def assert_owner(self) -> None:
+        if threading.get_ident() != self.owner_thread:
+            raise RuntimeError("lifecycle_off_owner_thread")
+
+    def accept(self, event: lifecycle.Event) -> tuple[lifecycle.Effect, ...]:
+        self.assert_owner()
+        with self.lock:
+            before = self.state
+            self._state, effects = lifecycle.step(before, event)
+            for effect in effects:
+                if isinstance(effect, lifecycle.StartFinalClose):
+                    self.journal.days[effect.day].sealing = True
+            for d in self.state.days:
+                if d.closed or d.day <= self.journal.retired_through:
+                    continue
+                self.ensure_day(d.first_slot*SLOT_US)
+                previous = next((old for old in before.days if old.day == d.day), None)
+                old_traces = set(previous.traces) if previous is not None else set()
+                if not isinstance(event, lifecycle.SlotOutcome):
+                    for slot in d.traces:
+                        if slot not in old_traces:
+                            self.missed_slot(slot, scheduled=True)
+                values = self.counters[d.day]["publisher"]
+                values.update(scheduled_slots=d.scheduled+len(d.publishers), missed_slots=d.missed,
+                    claim_attempts=d.attempted, lost_claims=d.lost, publications=d.published, failures=d.failed)
+            for effect in effects:
+                if isinstance(effect, lifecycle.StartFinalClose):
+                    day = effect.day
+                    reason = self.closing_reason or ("shutdown" if self.state.shutdown else "utc_boundary")
+                    end_us = self.interval_end_us or event.stamp
+                    if reason == "utc_boundary":
+                        end_us = (next(d.last_slot for d in self.state.days if d.day == day)+1)*SLOT_US
+                    self.journal.checkpoint(day)
+                    counter = self.counter_row(day, event.stamp, closed=True)
+                    closure = self.closure_row(day, counter, end_us, reason)
+                    self.final_plans[day] = (self.journal.freeze(day), counter, closure)
+        return effects
+
+    def drive(self, work: Generator[Callable[[], Any], Any, None]) -> None:
+        self.assert_owner()
+        value = None
+        error = None
+        while True:
+            try:
+                operation = work.throw(error) if error is not None else work.send(value)
+            except StopIteration:
+                return
+            try:
+                value, error = operation(), None
+            except Exception as caught:
+                value, error = None, caught
+
+    async def drive_async(self, work: Generator[Callable[[], Any], Any, None]) -> None:
+        self.assert_owner()
+        loop = asyncio.get_running_loop()
+        value = None
+        error = None
+        while True:
+            try:
+                operation = work.throw(error) if error is not None else work.send(value)
+            except StopIteration:
+                return
+            reply = loop.create_future()
+            def deliver(result: Any, caught: Exception | None, reply: Any = reply) -> None:
+                if not reply.done():
+                    reply.set_result((result, caught))
+            def execute(operation: Any = operation, deliver: Any = deliver) -> None:
+                result = maintain(operation)
+                loop.call_soon_threadsafe(deliver, result.value, result.error)
+            self.evidence_executor.submit(execute)
+            value, error = await reply
+
+    def flush(self, deadline: float) -> None:
+        self.drive(self._flush(min(deadline, self.termination_deadline or deadline)))
+
+    def upload(self, lane: Lane, budget: Budget) -> Generator[Callable[[], Any], Any, None]:
+        self.assert_owner()
+        with self.lock:
+            objects = tuple(lane.queue)
+            for item in objects:
+                d = next((d for d in self.state.days if d.day == item.day), None)
+                if d is not None and item.key not in d.attachments:
+                    self.accept(lifecycle.AttachmentAdmitted(int(self.store.wall()*1_000_000), item.key, item.day))
+        if objects and not any(objects[0].key in d.attachments for d in self.state.days):
+            return  # No UploadAttachment effect was admitted for this object.
+        operations = lane.operations["put"]+lane.operations["get"]
+        yield from lane.work(budget)
+        if objects and operations != lane.operations["put"]+lane.operations["get"] and objects[0] in lane.queue:
+            self.accept(lifecycle.AttachmentSettled(int(self.store.wall()*1_000_000),
+                objects[0].day, objects[0].key, success=False))
+        with self.lock:
+            for item in objects:
+                if item not in lane.queue:
+                    d = next(d for d in self.state.days if d.day == item.day)
+                    drained = tuple(e["slot"] for e in lane.schema.parse(item.body)["entries"]) if lane.stream == "trace" else ()
+                    self.accept(lifecycle.AttachmentSettled(int(self.store.wall()*1_000_000), item.day, item.key, drained))
+
+    def _flush(self, deadline: float, *, finals_only: bool = False) -> Generator[Callable[[], Any], Any, None]:
+        self.assert_owner()
         budget = Budget(deadline, self.store.clock)
-        self.bases.step(budget)
-        self.traces.step(budget)
+        if self.closing_reason is not None and not self.state.shutdown:
+            if not self.state.days:
+                self.tick(int(self.store.wall()*1_000_000), publisher=False)
+            self.accept(lifecycle.ShutdownRequested(self.interval_end_us or int(self.store.wall()*1_000_000)))
+        if not self.state.shutdown:
+            effects = self.tick(int(self.store.wall()*1_000_000))
+            for effect in effects:
+                if isinstance(effect, lifecycle.StartPublisherCycle):
+                    self.submit_publisher(effect.slot, int(self.store.wall()*1_000_000))
+        yield from self.upload(self.bases, budget)
+        yield from self.upload(self.traces, budget)
         with self.lock:
             now_us = int(self.store.wall()*1_000_000)
             today = day_at(now_us)
-            if self.closing_reason is None:
-                self.ensure_day(now_us)
             self.fold(now_us)
             if self.port.lost.is_set():
                 for day in self.journal.days:
-                    if not self.journal.days[day].losses:
+                    if not self.journal.days[day].sealing and not self.journal.days[day].losses:
                         self.journal.loss(day)
             unknown = self.unknown
         if unknown is not None:
             day, pages, counter, closure = unknown
             try:
-                if not self.store.reconcile([*pages, counter, *([closure] if closure else [])], budget):
+                if not (yield partial(self.store.reconcile, [*pages, counter, *([closure] if closure else [])], budget)):
                     return
                 with self.lock:
                     self.journal.reconciled_commit(day)
@@ -634,17 +865,22 @@ class Service:
                 return
         if self.handoff is not None:
             day, pages, closure, result = self.handoff
-            if self.store.reconcile([result], budget):
+            if (yield partial(self.store.reconcile, [result], budget)):
                 with self.lock:
+                    self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, True))
                     self.acknowledged(day, pages, closure)
                     self.handoff = None
             else:
+                self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, None))
                 return
         with self.lock:
             days = sorted(self.counters)
         for day in days:
             with self.lock:
-                if day in self.final_attempted:
+                decision = next((d for d in self.state.days if d.day == day), None)
+                if decision is None or (not decision.final and not decision.flush):
+                    continue  # No StartFlush/StartFinalClose effect is outstanding.
+                if day in self.final_attempted or (finals_only and not decision.final):
                     continue
                 state = self.journal.days[day]
                 reason = self.closing_reason or ("utc_boundary" if day < today else None)
@@ -654,18 +890,16 @@ class Service:
                 if reason == "utc_boundary":
                     import datetime as dt
                     end_us = int(dt.datetime.combine(dt.date.fromisoformat(day)+dt.timedelta(days=1), dt.time(), dt.UTC).timestamp()*1_000_000)
-                with self.observer.lock:
-                    self.fold(now_us)
-                    observer_inflight = len(self.observer.inflight_ticks)
-                pages = self.journal.freeze(day)
-                closed = bool(reason and not self.bases.pending(day) and not self.traces.pending(day)
-                    and self.journal.can_close(day, inflight=self.inflight + (day in self.publishing)
-                    + observer_inflight,
-                    pending=self.pending, interval_end_us=end_us, folded_us=self.folded_us))
-                state.sealing = closed
-                self.journal.checkpoint(day)
-                counter = self.counter_row(day, now_us, closed=closed)
-                closure = self.closure_row(day, counter, end_us, reason) if closed and reason else None
+                if decision is not None and decision.final:
+                    pages, counter, final_closure = self.final_plans[day]
+                    closure = final_closure
+                else:
+                    with self.observer.lock:
+                        self.fold(now_us)
+                    pages = self.journal.freeze(day)
+                    self.journal.checkpoint(day)
+                    counter = self.counter_row(day, now_us, closed=False)
+                    closure = None
             started = self.store.clock()
             attempt_us = int(self.store.wall()*1_000_000)
             flush_remaining = max(0, int((deadline-started)*1_000_000))
@@ -675,7 +909,7 @@ class Service:
                 with self.lock:
                     self.final_attempted.add(day)
             try:
-                self.store.flush(pages, counter, closure, budget)
+                yield partial(self.store.flush, pages, counter, closure, budget)
                 elapsed = max(0, round((self.store.clock()-started)*1_000_000))
                 if closure is not None:
                     observed = int(self.store.wall()*1_000_000)
@@ -688,27 +922,50 @@ class Service:
                         shutdown_remaining_us=shutdown_remaining, handoff_attempt_limit=1))
                     validate_close_result(result.value(), closure.value(), termination_applies=self.termination_deadline is not None)
                     # Freeze only after the original reply. No readback path enters here.
+                    effects = self.accept(lifecycle.FinalReply(observed, day, "timely"))
+                    if not any(isinstance(e, lifecycle.StartCloseResult) for e in effects):
+                        return
                     self.last_closure_ack = result.value()
                     self.handoff = (day, pages, closure, result)
                     try:
-                        self.store.close_result(result, budget)
+                        yield partial(self.store.close_result, result, budget)
                     except Exception:
+                        self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, None))
                         return  # Exactly one write; later exact read can establish landing.
                     self.handoff = None
+                    self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, True))
                 with self.lock:
                     self.acknowledged(day, pages, closure)
-                self.reconcile_work(budget)
+                yield from self.reconcile_work(budget)
+                if closure is None:
+                    with self.lock:
+                        ready = bool(reason and not self.bases.pending(day) and not self.traces.pending(day)
+                            and self.journal.can_close(day, inflight=self.inflight + (day in self.publishing)
+                            + len(self.observer.inflight_ticks), pending=self.pending,
+                            interval_end_us=end_us, folded_us=self.folded_us))
+                        decision = next(d for d in self.state.days if d.day == day)
+                        drained = decision.traces if not self.traces.pending(day) else ()
+                        effects = self.accept(lifecycle.FlushReply(int(self.store.wall()*1_000_000), day, True, ready, drained))
+                    if any(isinstance(e, lifecycle.StartFinalClose) for e in effects):
+                        yield from self._flush(deadline, finals_only=True)
             except Exception as error:
                 with self.lock:
                     # An acknowledged close has already retired its day.
                     if day in self.journal.days:
                         uncertain = isinstance(error, UnknownCommit)
                         self.journal.failed(day, unknown=uncertain)
-                        if not uncertain:
+                        if not uncertain and closure is None:
                             self.journal.days[day].sealing = False
                         if uncertain:
                             self.unknown = (day, pages, counter, closure)
+                    if closure is None:
+                        self.accept(lifecycle.FlushReply(int(self.store.wall()*1_000_000), day, False))
                     if closure:
+                        decision = next(d for d in self.state.days if d.day == day)
+                        if decision.final_reply is None:
+                            self.accept(lifecycle.FinalReply(int(self.store.wall()*1_000_000), day,
+                                "unknown" if isinstance(error, UnknownCommit) else
+                                "late" if self.store.clock() >= deadline else "error"))
                         self.final_veto.add(day)
                         self.close_failures[day] = self.close_failures.get(day, 0) + 1
                         logger.warning("shadow_v2_final_close_failed day=%s boot=%s unknown=%s",
@@ -716,12 +973,19 @@ class Service:
                 return
 
     def maintain(self) -> None:
+        self.drive(self.maintenance())
+
+    def maintenance(self) -> Generator[Callable[[], Any], Any, None]:
+        self.assert_owner()
         deadline = self.store.clock()+FLUSH_SECONDS
         now_us = int(self.store.wall()*1_000_000)
+        day = day_at(now_us)
+        if day not in self.counters:
+            yield from self._flush(deadline)  # Drain older admitted days at capacity.
+            return
         with self.lock:
             if self.journal.stopped:
                 return
-            day = self.ensure_day(now_us)
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
             allocate = self.store.clock() >= self.next_allocate and (terminal or event)
@@ -729,7 +993,7 @@ class Service:
                 self.next_allocate = self.store.clock()+5
         if allocate:
             try:
-                self.store.allocate(day, terminal=terminal, event=event, budget=Budget(deadline, self.store.clock))
+                yield partial(self.store.allocate, day, terminal=terminal, event=event, budget=Budget(deadline, self.store.clock))
                 with self.lock:
                     if event:
                         self.journal.grant(day, RESERVATION_BLOCK)
@@ -738,31 +1002,44 @@ class Service:
             except Exception:
                 with self.lock:
                     self.counters[day]["diagnostics"]["cap_unavailable"] = self.counters[day]["diagnostics"].get("cap_unavailable", 0)+1
-        self.flush(deadline)
+        yield from self._flush(deadline)
+
+    def submit_publisher(self, slot: int, stamp: int) -> None:
+        self.assert_owner()
+        if not any(slot in d.publishers for d in self.state.days):
+            return
+        self.publishing.add(day_at(slot*SLOT_US))
+        args = (self.store, self.journal.boot, self.settings.effective_serving_region,
+                self.settings.source_revision, slot, stamp, self.enabled() and not self.stopped.is_set(),
+                self.last_claim_start)
+        self.last_claim_start = self.store.clock()
+        if self.loop is None:
+            self.publisher_reply(publish_cycle(*args))
+            return
+        loop = self.loop
+        reply = loop.create_future()
+        self.publisher_job = reply
+        def deliver(result: PublisherReply) -> None:
+            self.publisher_reply(result)
+            if not reply.done():
+                reply.set_result(None)
+        def execute() -> None:
+            result = publish_cycle(*args)
+            loop.call_soon_threadsafe(deliver, result)
+        self.publisher_executor.submit(execute)
 
     async def run(self) -> None:
-        loop = asyncio.get_running_loop()
+        self.assert_owner()
+        self.loop = asyncio.get_running_loop()
         while not self.stopped.is_set() and self.enabled():
             now = self.store.clock()
             now_us = int(self.store.wall()*1_000_000)
-            with self.lock:
-                self.ensure_day(now_us)
-            if self.contender():
-                busy = self.publisher_job is not None and not self.publisher_job.done()
-                slot, missed = self.slots.tick(now_us, busy=busy)
-                with self.lock:
-                    for missed_slot in range(now_us//SLOT_US - missed + (slot is None), now_us//SLOT_US + (slot is None)):
-                        self.missed_slot(missed_slot)
-                    if slot is not None:
-                        self.schedule_cycle(slot, now_us)
-                        try:
-                            self.publisher_job = loop.run_in_executor(self.publisher_executor, self.publish_cycle, slot, now_us)
-                        except RuntimeError:
-                            self.missed_slot(slot, scheduled=True)
-                            self.publishing.discard(day_at(now_us))
+            for effect in self.tick(now_us):
+                if isinstance(effect, lifecycle.StartPublisherCycle):
+                    self.submit_publisher(effect.slot, now_us)
             if now >= self.next_flush and (self.flush_job is None or self.flush_job.done()):
                 self.next_flush = now+5
-                self.flush_job = loop.run_in_executor(self.evidence_executor, self.maintain)
+                self.flush_job = self.loop.create_task(self.drive_async(self.maintenance()))
             await asyncio.sleep(.01)
         if not self.stopped.is_set():
             await self.close("opt_out", from_loop=True)
@@ -792,7 +1069,12 @@ class Service:
 
     def start(self) -> None:
         if self.enabled() and self.task is None:
+            self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
+            stamp = int(self.store.wall()*1_000_000)
+            for effect in self.tick(stamp):
+                if isinstance(effect, lifecycle.StartPublisherCycle):
+                    self.submit_publisher(effect.slot, stamp)
             self.observer.start()
             self.task = asyncio.create_task(self.run())
 
@@ -807,6 +1089,10 @@ class Service:
         deadline = min(deadline or self.store.clock()+9, self.termination_deadline or self.store.clock()+9)
         if reason == "shutdown":
             self.termination_deadline = deadline
+        stamp = int(self.store.wall()*1_000_000)
+        if not self.state.days:
+            self.tick(stamp, publisher=False)
+        self.accept(lifecycle.ShutdownRequested(stamp))
         self.stopped.set()
         self.slots.stopped = True
         with self.lock:
@@ -837,10 +1123,9 @@ class Service:
                 # At most three days; pages/reference reconciliation and closure
                 # need separate passes. Leave unresolved writers open on no progress.
                 for _ in range(6):
-                    before = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None, self.handoff is not None)
-                    await asyncio.shield(asyncio.get_running_loop().run_in_executor(
-                        self.evidence_executor, self.flush, min(deadline, self.store.clock()+FLUSH_SECONDS)))
-                    after = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None, self.handoff is not None)
+                    before = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None, self.handoff is not None, self.state)
+                    await asyncio.shield(self.drive_async(self._flush(min(deadline, self.store.clock()+FLUSH_SECONDS))))
+                    after = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None, self.handoff is not None, self.state)
                     if not self.journal.days:
                         break
                     if before == after:
