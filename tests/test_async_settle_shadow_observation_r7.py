@@ -12,6 +12,7 @@ import threading
 
 import pytest
 
+from tests.shadow_observation_dormancy import dormancy_runs  # noqa: F401
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import (
     NOW_US,
@@ -389,26 +390,25 @@ def test_completion_backs_original_unknown_booking(upgrade):
 
 
 @pytest.mark.parametrize("workspaces", ["", "ws"])
-def test_policy_empty_runtime_differential_against_main(workspaces):
-    import json
-    import os
-    import subprocess
-    import sys
+@pytest.mark.xdist_group("p3-dormancy")
+def test_policy_empty_outputs_identical_with_package_imports_blocked(workspaces, dormancy_runs):  # noqa: F811
+    normal, blocked, mutant = (dormancy_runs[workspaces, mode] for mode in ("normal", "blocked", "mutant"))
+    for result in (normal, blocked):
+        assert result.returncode == 0, result.stderr
+    assert normal.stdout.splitlines()[-1] == blocked.stdout.splitlines()[-1]
+    assert mutant.returncode != 0 and b"AssertionError: empty-policy v2 import" in mutant.stderr
+
+
+def test_dormancy_closed_module_names_match_source_inventory():
     from pathlib import Path
-    root = Path(__file__).parents[1]
-    baseline = json.loads((root/"tests/shadow_observation_dormancy_main.json").read_text())
-    assert baseline["revision"] == "6a398b5f"
-    env = dict(os.environ, PYTHONPATH=str(root/"src"), TR_ASYNC_SETTLE_SHADOW_POLICY="",
-        TR_ASYNC_SETTLE_SHADOW_WORKSPACES=workspaces, TR_ASYNC_SETTLE_ENABLED="false",
-        TR_STORAGE_BACKEND="memory", TR_ENVIRONMENT="test")
-    env.pop("P3_COMPUTED_LOADER_CONTROL", None)
-    command = [sys.executable, str(root/baseline["probe"])]
-    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)  # noqa: S603
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.splitlines()[-1]) == baseline["evidence" if workspaces else "empty_evidence"]
-    env["P3_COMPUTED_LOADER_CONTROL"] = "1"
-    mutant = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)  # noqa: S603
-    assert mutant.returncode != 0 and "AssertionError: empty-policy v2 import" in mutant.stderr
+
+    from tests.shadow_observation_dormancy import NAMES
+    root = Path("src/trusted_router")
+    package = {p.stem for p in root.glob("async_settle_shadow_v2_*.py")}
+    package |= {p.stem for pattern in ("*shadow_lifecycle.py", "*shadow_journal.py", "*shadow_health_state.py",
+        "*shadow_attachments.py", "*shadow_observation.py", "*shadow_io.py", "services/*shadow_health.py")
+        for p in root.glob(pattern)}
+    assert NAMES == package
 
 
 @pytest.mark.asyncio

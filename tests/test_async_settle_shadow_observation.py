@@ -6,11 +6,14 @@ import datetime as dt
 import itertools
 import time
 from contextlib import contextmanager
+from functools import lru_cache
 from typing import Any
 
 import pytest
 
 from tests.fakes.spanner import FakeSpannerDatabase
+from tests.shadow_observation_dormancy import dormancy_runs  # noqa: F401
+from tests.shadow_observation_fixtures import event_for
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_sdk_retry import sdk_database as sdk_base
 from tests.test_async_settle_shadow_v2_contract import fixture as p1_fixture
@@ -103,6 +106,11 @@ def deterministic_scheduler(monkeypatch, package_hygiene):  # noqa: F811
 
 
 def fixture(name: str) -> Any:
+    return copy.deepcopy(_fixture(name))
+
+
+@lru_cache
+def _fixture(name: str) -> Any:
     if name in {"counter", "closure", "controls", "health", "health_claim"}:
         import json
         from pathlib import Path
@@ -130,12 +138,6 @@ def sdk_database(monkeypatch: Any, shadow_deadline_clock: Any) -> Any:
     return db, clock, sleeps
 
 
-def event_for(reservation: Any) -> dict[str, Any]:
-    value = copy.deepcopy(next(v["object"] for v in fixture("receipt_pages") if v["schema"] == "AUTHORIZE_EVENT" and v["expected"] == "accept"))
-    value.update(seq=f"{reservation.event_seq:020}", event_at_us=reservation.observed_us,
-                 receipt_at_us=reservation.observed_us, authorization_day=reservation.day,
-                 receipt_locator=reservation.coordinates)
-    return value
 
 
 def journal() -> Journal:
@@ -465,6 +467,12 @@ def test_native_sdk_no_retry_shared_deadline(sdk_database: Any, fault: str) -> N
 
 
 def maximum_rows(boot: str = "b"*64) -> tuple[list[Row], Row, Row]:
+    pages, counter, closure = _maximum_rows(boot)
+    return list(pages), counter, closure
+
+
+@lru_cache
+def _maximum_rows(boot: str) -> tuple[list[Row], Row, Row]:
     import hashlib
 
     from tests.test_async_settle_shadow_v2_evidence import padded, page_with_events
@@ -675,52 +683,13 @@ def test_slot_boundary_ordinary_traced() -> None:
     assert slots.tick(NOW_US+8000000, busy=False) == (None, 0)
 
 
-def test_empty_policy_live_modules_absent_or_present() -> None:
+@pytest.mark.xdist_group("p3-dormancy")
+def test_empty_policy_live_modules_absent_or_present(dormancy_runs) -> None:  # noqa: F811
     import json
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    import trusted_router
-    roots = os.pathsep.join(str(Path(path).parent) for path in trusted_router.__path__)
-    root = Path(__file__).parents[1]
-    script = '''
-import asyncio, importlib.abc, json, sys
-from pathlib import Path
-names = {"async_settle_shadow_lifecycle", "async_settle_shadow_journal", "async_settle_shadow_health_state", "async_settle_shadow_health", "storage_gcp_shadow_observation", "storage_gcp_shadow_io", "storage_gcp_shadow_attachments", "async_settle_shadow_attachments"}
-names.update(p.stem for p in Path("src/trusted_router").glob("*shadow*v2*.py"))
-class Block(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname.rsplit(".", 1)[-1] in names:
-            raise AssertionError("dormant module imported")
-if sys.argv[1] == "absent":
-    sys.meta_path.insert(0, Block())
-from trusted_router import storage_gcp_io as shared_adapter
-shared_before = {k: id(v) for k,v in vars(shared_adapter).items()}
-import trusted_router.main as main
-assert {k: id(v) for k,v in vars(shared_adapter).items()} == shared_before
-assert not any(n.rsplit(".", 1)[-1] in names for n in sys.modules)
-def label(f): return f.__module__+"."+f.__qualname__
-a=main.app
-async def lifecycle():
-    await a.router._startup()
-    assert not any(n.rsplit(".", 1)[-1] in names for n in sys.modules)
-    assert not any("shadow_health" in repr(t.get_coro()) for t in asyncio.all_tasks())
-    assert {k: id(v) for k,v in vars(shared_adapter).items()} == shared_before
-    await a.router._shutdown()
-asyncio.run(lifecycle())
-print(json.dumps({"routes": [(getattr(r,"path",None),sorted(getattr(r,"methods",None) or [])) for r in a.routes],"startup":[label(f) for f in a.router.on_startup],"shutdown":[label(f) for f in a.router.on_shutdown],"lifespan":label(type(a.router.lifespan_context))},sort_keys=True))
-'''
-    results = []
-    for mode in ("present",):
-        result = subprocess.run([sys.executable, "-c", script, mode], cwd=root,  # noqa: S603
-            env={**os.environ, "PYTHONPATH": roots, "TR_ASYNC_SETTLE_SHADOW_POLICY": "",
-                 "TR_STORAGE_BACKEND": "memory", "TR_ENVIRONMENT": "test"},
-            capture_output=True, text=True, timeout=300)
+    for mode in ("normal", "blocked"):
+        result = dormancy_runs["ws", mode]
         assert result.returncode == 0, result.stderr
-        results.append(json.loads(result.stdout.splitlines()[-1]))
-    assert results[0]["routes"]
+        assert json.loads(result.stdout.splitlines()[-1])["routes"]
 
 
 def test_sentinel_and_aggregate_overflow_are_unknown() -> None:

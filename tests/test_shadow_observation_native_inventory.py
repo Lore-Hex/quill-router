@@ -1,8 +1,7 @@
 """Checked-in node inventory: native qualification cannot disappear by deletion."""
+import ast
+import itertools
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
@@ -11,13 +10,18 @@ from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 def test_owned_native_node_inventory():
     root = Path(__file__).parents[1]
     expected = json.loads((root/"tests/shadow_observation_native_nodes.json").read_text())
-    command = [sys.executable, "-m", "pytest", "--collect-only", "-q", "--noconftest", "--no-cov",
-        "-n", "0", "-o", "addopts=", "tests/conformance/test_shadow_observation_native.py",
-        "tests/test_shadow_attachment_deadline.py"]
-    result = subprocess.run(command, cwd=root, env={**os.environ, "PYTHONPATH": str(root/"src")},  # noqa: S603
-                            capture_output=True, text=True, timeout=60)
-    assert result.returncode == 0, result.stderr+result.stdout
-    collected = {line.strip() for line in result.stdout.splitlines() if "::test_" in line}
+    collected = set()
+    for filename in ("tests/conformance/test_shadow_observation_native.py", "tests/test_shadow_attachment_deadline.py"):
+        for node in ast.parse((root/filename).read_text()).body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("test_"):
+                continue
+            parameters = []
+            for decorator in reversed(node.decorator_list):
+                if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute) and decorator.func.attr == "parametrize":
+                    parameters.append(ast.literal_eval(decorator.args[1]))
+            for values in itertools.product(*parameters):
+                suffix = "["+"-".join(str(v) for v in values)+"]" if parameters else ""
+                collected.add(filename+"::"+node.name+suffix)
     owned = {node for node in collected if node.startswith("tests/conformance/test_shadow_observation_native.py::")
              or "::test_http_absolute_deadline_keeps_unknown[" in node
              or "::test_authenticated_native_cancellation[" in node}

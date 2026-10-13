@@ -5,8 +5,8 @@ loader primitives (importlib and submodules, pkgutil, runpy, zipimport, imp,
 builtins.__import__, __import__, eval, exec, compile and sys.modules access)
 are forbidden outright in guarded runtime files, including aliases. This does
 not prove absence of code that computes a loader through other unnamed means.
-The authoritative backstop is the runtime dormancy differential against main:
-it compares sys.modules and request outputs with the policy empty.
+The authoritative backstop is the self-relative runtime dormancy differential:
+it compares outputs with the package importable and blocked, with policy empty.
 """
 import ast
 

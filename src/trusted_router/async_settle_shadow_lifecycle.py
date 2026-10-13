@@ -117,6 +117,7 @@ class PolicyChanged:
 class ObserverEnqueued:
     stamp: int
     key: str
+    day: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,7 @@ class ObserverFolded:
     stamp: int
     day: str
     key: str
+    success: bool = True
 
 
 @dataclass(frozen=True)
@@ -393,7 +395,7 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
         return _progress(state, effects)
     identity = (day_name(event.slot*SLOT_US) if isinstance(event, SlotOutcome)
                 else (event.day or stamp_day) if isinstance(event, AttachmentAdmitted)
-                else stamp_day if isinstance(event, ObserverEnqueued) else event.day)
+                else (event.day or stamp_day) if isinstance(event, ObserverEnqueued) else event.day)
     d = next((d for d in state.days if d.day == identity), None)
     if d is None:
         return state, (Fault("gone_day"),)
@@ -444,9 +446,9 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
         d = replace(d, observers=d.observers | {event.key}, ready=False, observer_stamp=event.stamp,
                     observer_keys=(d.observer_keys if event.stamp == d.observer_stamp else frozenset()) | {event.key})
     elif isinstance(event, ObserverFolded):
-        if event.key not in d.observers or event.stamp < d.observer_stamp:
+        if type(event.success) is not bool or event.key not in d.observers or event.stamp < d.observer_stamp:
             return state, (Fault("unknown_observer"),)
-        d = replace(d, observers=d.observers-{event.key})
+        d = replace(d, observers=d.observers-{event.key}, veto=d.veto or not event.success)
     elif isinstance(event, AttachmentAdmitted):
         if (len(event.key) > 512 or len(d.attachments | d.attachment_keys) >= 8
                 or event.key in d.attachments or event.stamp < d.attachment_stamp

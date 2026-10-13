@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from trusted_router.async_settle_shadow_v2_a1_evidence import (
     CAP,
@@ -35,6 +36,7 @@ from trusted_router.async_settle_shadow_v2_evidence import (
     SAMPLE,
     TERMINAL_CAP,
 )
+from trusted_router.async_settle_shadow_v2_native import event_bytes
 from trusted_router.async_settle_shadow_v2_schema import (
     INT64,
     POLICY,
@@ -54,6 +56,7 @@ class Row:
     kind: str
     key: str
     body: bytes
+    _validated: bool = field(default=False, init=False, compare=False, repr=False)
 
     @classmethod
     def build(cls, kind: str, key: str, value: dict[str, Any]) -> Row:
@@ -65,14 +68,25 @@ class Row:
             schema = RETENTION if key == "retention-v2" else CAP if key.endswith("/cap-v2") else MANIFEST
         body = schema.serialize(value)
         row = cls(kind, key, body)
-        row.value()
+        if kind == COUNTER_KIND:
+            # serialize already performed the complete COUNTER schema check.
+            # validate_row adds only this key/type check for a counter.
+            require(type(kind) is str and type(key) is str and key == value["day"]+"/"+value["boot"], "evidence_identity_gap")
+            object.__setattr__(row, "_validated", True)
+        else:
+            row.value()
         return row
 
     def value(self) -> dict[str, Any]:
         """The sole stored-body parse boundary."""
+        # Frozen exact bytes/key/kind cannot invalidate a successful check.
+        # Cache only that fact, never a mutable decoded body or a second payload.
+        if self._validated:
+            return cast(dict[str, Any], json.loads(self.body))
         value = validate_row(self.kind, self.key, self.body)
         if self.kind == CLOSURE_KIND and value["final_event_seq"] == 0:
             require(value["receipt_chain_sha256"] == EMPTY_CHAIN, "empty_chain")
+        object.__setattr__(self, "_validated", True)
         return value
 
     @property
@@ -107,6 +121,7 @@ class Slot:
     body: bytes | None = None
     reconciled: bool = False
     completion_requested: bool = False
+    fold_registered: bool = False
     original_page: Row | None = None
 
 
@@ -250,7 +265,7 @@ class Journal:
     def finalize(self, reservation: Reservation, event: dict[str, Any]) -> bytes:
         """Immutable complete bytes, before exposing a locator or certificate."""
         slot = self.slot(reservation)
-        body = EVENT.serialize(event)
+        body = event_bytes(event)
         require(event["seq"] == f"{reservation.event_seq:020}" and event["event_at_us"] == reservation.observed_us,
                 "reservation_identity")
         if event["receipt_locator"] is not None:

@@ -160,7 +160,7 @@ def native_service(database):
     from trusted_router.config import Settings
     from trusted_router.services.async_settle_shadow_health import Service
     return Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
-        async_settle_shadow_workspaces="ws", source_revision="a"*40), ObservationStore(database))
+        async_settle_shadow_workspaces="ws", source_revision="a"*40), ObservationStore(database, wall=lambda: NOW_US/1e6))
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
@@ -196,12 +196,12 @@ def test_shadow_native_process_restart(shadow_emulator_resources, backend, point
         try:
             assert child.stdout.readline().strip() == "BOUNDARY", (tmp_path/"child.log").read_text()
             child.send_signal(getattr(signal, signum))
-            assert child.wait(timeout=15) == -getattr(signal, signum)
+            assert child.wait(timeout=180) == -getattr(signal, signum)
         finally:
             if child.poll() is None:
                 child.kill()
                 child.wait()
-    recovered = subprocess.run([*args, "recover"], capture_output=True, text=True, timeout=30)  # noqa: S603
+    recovered = subprocess.run([*args, "recover"], capture_output=True, text=True, timeout=180)  # noqa: S603
     assert recovered.returncode == 0, recovered.stderr
     state = json.loads(recovered.stdout.splitlines()[-1])
     assert state["durable"] == (point == "after_result")

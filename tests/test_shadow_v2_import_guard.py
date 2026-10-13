@@ -38,26 +38,24 @@ def test_exact_import_guard_negative_controls(extra):
         validate_live_imports(extra+source, allowed, names)
 
 
-def test_review_getattr_mutant_rejected_by_actual_dormancy_guard(monkeypatch):
+def test_review_getattr_mutant_rejected_by_actual_dormancy_guard():
+    import ast
     from pathlib import Path
 
-    from tests.test_async_settle_shadow_v2_evidence import (
-        test_no_runtime_imports_or_calls_to_new_modules,
-    )
-    test_no_runtime_imports_or_calls_to_new_modules()
-    source = Path("src/trusted_router/storage_gcp_shadow_attachments.py").resolve()
-    mutant = source.read_text() + '''
-def _review_dynamic_load(module_name):
-    import builtins
-    return getattr(builtins, "__import__")(module_name, fromlist=["*"])
-'''
-    compile(mutant, str(source), "exec")
-    read = Path.read_text
-    def overlay(path, *args, **kwargs):
-        return mutant if path.resolve() == source else read(path, *args, **kwargs)
-    monkeypatch.setattr(Path, "read_text", overlay)
-    with pytest.raises(AssertionError):
-        test_no_runtime_imports_or_calls_to_new_modules()
+    source = Path("tests/test_async_settle_shadow_v2_evidence.py").read_text()
+    function = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)
+                    and n.name == "test_no_runtime_imports_or_calls_to_new_modules")
+    allowed = ast.literal_eval(function.body[0].value)
+    root = Path("src/trusted_router")
+    names = {p.stem for p in root.glob("async_settle_shadow_v2_*.py")}
+    guarded = {**allowed, "storage_gcp_shadow_io.py": {}}
+    for name, permitted in guarded.items():
+        original = (root/name).read_text()
+        validate_live_imports(original, permitted, names, guarded=True)
+        mutant = original + '\ndef _review_dynamic_load(module_name):\n    import builtins\n    return getattr(builtins, "__import__")(module_name, fromlist=["*"])\n'
+        compile(mutant, name, "exec")
+        with pytest.raises(AssertionError):
+            validate_live_imports(mutant, permitted, names, guarded=True)
 
 
 @pytest.mark.parametrize("loader", ["importlib", "importlib.util", "pkgutil", "runpy", "zipimport", "imp"])

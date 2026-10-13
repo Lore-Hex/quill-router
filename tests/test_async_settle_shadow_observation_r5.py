@@ -120,7 +120,8 @@ def test_every_port_method_with_each_owned_lock_held(monkeypatch, sealing):
     methods = {
         "call": lambda: svc.port.call(lambda: True),
         "reserve": lambda: svc.port.reserve(NOW_US),
-        "finalize": lambda: svc.port.finalize(reservation, event),
+        "finalize": lambda: svc.port.finalize(reservation, event, fold_owed=True),
+        "fail_fold": lambda: svc.port.fail_fold(reservation),
         "complete": lambda: svc.port.complete(reservation),
         "complete_event": lambda: svc.port.complete_event(reservation, original_page, event),
         "fold_counts": lambda: svc.port.fold_counts(day, bucket),

@@ -36,20 +36,21 @@ from trusted_router.async_settle_shadow_journal import (
     Reservation,
     Row,
 )
-from trusted_router.async_settle_shadow_v2_a1_evidence import COUNTER, validate_close_result
+from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_result
 from trusted_router.async_settle_shadow_v2_a1_health import (
     PUBLISHER_OPERATIONS,
     PUBLISHER_SLOT_TRACE,
 )
 from trusted_router.async_settle_shadow_v2_evidence import (
-    BUCKET,
     CHECKPOINT_FIELDS,
     COUNTS,
     EVENT,
     RESERVATION_BLOCK,
 )
-from trusted_router.async_settle_shadow_v2_schema import POLICY, day_at, require, sha256
+from trusted_router.async_settle_shadow_v2_native import validate_bucket
+from trusted_router.async_settle_shadow_v2_schema import INT64, POLICY, day_at, require, sha256
 from trusted_router.config import Settings
+from trusted_router.detached_jws import canonical
 from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.storage_gcp_async_admission import read_admission
 from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
@@ -223,6 +224,9 @@ class Port:
     def __init__(self, service: Service) -> None:
         self.service = service
         self.lost = StickyLoss()
+        self.fold_cells: dict[str, tuple[Any, ...]] = {}
+        self.fold_obligations: dict[Reservation, str] = {}
+        self.fold_owners: set[Reservation] = set()
 
     def call(self, action: Callable[[], T]) -> T | None:
         svc = self.service
@@ -249,10 +253,19 @@ class Port:
             return svc.journal.reserve(observed_us)
         return self.call(action)
 
-    def finalize(self, reservation: Reservation, event: dict[str, Any]) -> bytes | None:
+    def finalize(self, reservation: Reservation, event: dict[str, Any], *, fold_owed: bool = False) -> bytes | None:
         def action() -> bytes:
             require(not self.service.journal.days[reservation.day].sealing, "closed_day")
-            return self.service.journal.finalize(reservation, event)
+            slot = self.service.journal.slot(reservation)
+            register = fold_owed and not slot.fold_registered
+            if register:
+                require(not self.service.journal.days[reservation.day].closing, "closed_day")
+                require(len(self.fold_obligations) < 32, "fold_capacity")
+            body = self.service.journal.finalize(reservation, event)
+            if register:
+                self.fold_obligations[reservation] = "pending"
+                slot.fold_registered = True
+            return body
         return self.call(action)
 
     def complete(self, reservation: Reservation, rows: tuple[Row, ...] = ()) -> bool:
@@ -289,45 +302,74 @@ class Port:
             return result
         return self.call(action)
 
-    def fold_counts(self, day: str, bucket: dict[str, Any]) -> bool:
+    def fold_counts(self, day: str, bucket: dict[str, Any], *, obligation: Reservation | None = None) -> bool:
         """Fold one P1 BUCKET delta atomically, including eligible demand.
 
         Unknown demand remains unknown; no cumulative field can be decremented.
         P4 supplies each attempt exactly once after its immutable result exists.
         """
         def action() -> bool:
-            BUCKET(bucket)
+            if obligation is not None:
+                require(obligation.day == day and self.fold_obligations.get(obligation) == "pending", "fold_obligation")
+            validate_bucket(bucket)
             svc = self.service
             require(not svc.journal.days[day].closed and not svc.journal.days[day].sealing, "closed_day")
-            body = copy.deepcopy(svc.counters[day])
-            target = next((v for v in body["buckets"] if (v["phase"], v["dimensions"]) ==
-                           (bucket["phase"], bucket["dimensions"])), None)
-            if target is None:
-                target = dict(phase=bucket["phase"], dimensions=copy.deepcopy(bucket["dimensions"]),
-                              **dict.fromkeys(COUNTS, 0), eligible_demand=0)
-                body["buckets"].append(target)
-            for key in COUNTS:
-                target[key] += bucket[key]
-                body[key] += bucket[key]
-            for obj in (target, body):
-                obj["eligible_demand"] = (None if obj["eligible_demand"] is None or bucket["eligible_demand"] is None
-                                          else obj["eligible_demand"] + bucket["eligible_demand"])
+            body = svc.counters[day]
+            cached = self.fold_cells[day]
+            require(cached[0] is body, "counter_identity")
+            _, index, legacy_index, size = cached
             dims = bucket["dimensions"]
-            legacy = next(v for v in body["counts"] if all(v[k] == ("unknown" if dims[k] is None and k != "streamed" else dims[k]) for k in dims))
-            for key in ("authorize_attempts", "authorize_fresh", "authorize_replay", "settle_attempts", "refund_attempts"):
-                legacy[key] += bucket[key]
-            terminals = bucket["settle_attempts"] + bucket["refund_attempts"]
-            legacy["observed_attempts"] += terminals
-            eligible = bucket["eligible_demand"] or 0
-            legacy["observed_eligible"] += eligible
-            legacy["observed_ineligible"] += bucket["B"]
-            legacy["observed_unknown"] += terminals - eligible - bucket["B"]
-            # Validate the prospective checkpoint without creating an attempt.
-            check = dict(body, sequence=max(1, body["sequence"]), checkpoint_seq=max(1, body["sequence"]),
-                         checkpoint_attempts=max(1, body["checkpoint_attempts"]),
-                         flushed_at_us=body["started_at_us"])
-            COUNTER(check)
-            svc.counters[day] = body
+            key = (bucket["phase"], dims["adapter"], dims["route_type"], dims["streamed"])
+            target = index.get(key)
+            fresh = target is None
+            if fresh:
+                require(len(index) < 144, "evidence_size")
+                target = dict(phase=bucket["phase"], dimensions=dict(dims),
+                              **dict.fromkeys(COUNTS, 0), eligible_demand=0)
+            legacy = legacy_index[(dims["adapter"] or "unknown", dims["route_type"] or "unknown", dims["streamed"])]
+            updates = []
+            for obj in (target, body):
+                values = {k: obj[k]+bucket[k] for k in COUNTS}
+                values["eligible_demand"] = (None if obj["eligible_demand"] is None or bucket["eligible_demand"] is None
+                                             else obj["eligible_demand"]+bucket["eligible_demand"])
+                updates.append((obj, values))
+            values = {k: legacy[k]+bucket[k] for k in ("authorize_attempts", "authorize_fresh", "authorize_replay", "settle_attempts", "refund_attempts")}
+            terminals, eligible = bucket["settle_attempts"]+bucket["refund_attempts"], bucket["eligible_demand"] or 0
+            values.update(observed_attempts=legacy["observed_attempts"]+terminals,
+                          observed_eligible=legacy["observed_eligible"]+eligible,
+                          observed_ineligible=legacy["observed_ineligible"]+bucket["B"],
+                          observed_unknown=legacy["observed_unknown"]+terminals-eligible-bucket["B"])
+            updates.append((legacy, values))
+            for obj, values in updates:
+                for k, value in values.items():
+                    require(value is None or 0 <= value <= INT64)
+                    size += len(str(value)) if value is not None else 4
+                    size -= len(str(obj[k])) if obj[k] is not None else 4
+            if fresh:
+                size += len(canonical(target)) + bool(index)
+            require(size <= 65536, "evidence_size")
+            # All checks precede mutation. Partition equations and bucket/root
+            # sums are additive; None demand is absorbing. No decrement occurs.
+            for obj, values in updates:
+                obj.update(values)
+            if fresh:
+                body["buckets"].append(target)
+                index[key] = target
+            self.fold_cells[day] = (body, index, legacy_index, size)
+            if obligation is not None:
+                self.fold_obligations[obligation] = "folded"
+            return True
+        result = bool(self.call(action))
+        if not result and obligation is not None:
+            self.fail_fold(obligation)
+        return result
+
+    def fail_fold(self, obligation: Reservation) -> bool:
+        """Non-waiting sticky failure; the owner folds it into the model."""
+        self.lost.set()
+        def action() -> bool:
+            require(self.fold_obligations.get(obligation) == "pending", "fold_obligation")
+            self.fold_obligations[obligation] = "failed"
             return True
         return bool(self.call(action))
 
@@ -517,11 +559,27 @@ class Service:
                     cycle_us=dict(bounds_us=list(HIST_BOUNDS), counts=[0]*9),
                     rpc_us=dict(bounds_us=list(HIST_BOUNDS), counts=[0]*9)))
             self.counters[day] = base
+            # Prepare fixed projections off the request path, once per day.
+            legacy_index = {(v["adapter"], v["route_type"], v["streamed"]): v for v in base["counts"]}
+            self.port.fold_cells[day] = (base, {}, legacy_index, len(canonical(base)))
         return day
+
+    def _counter_cells(self, day: str, target: Any, values: dict[Any, int]) -> None:
+        """Keep the fold byte budget coherent when maintenance changes cells."""
+        with self.lock:
+            body, index, legacy, size = self.port.fold_cells[day]
+            for key, value in values.items():
+                if isinstance(target, dict) and key not in target:
+                    size += len(canonical(key))+1+bool(target)+len(str(value))
+                else:
+                    size += len(str(value))-len(str(target[key]))
+                target[key] = value
+            self.port.fold_cells[day] = (body, index, legacy, size)
 
     def operation(self, day: str, name: str, count: int = 1) -> None:
         with self.lock:
-            self.counters[day]["publisher"][name] += count
+            target = self.counters[day]["publisher"]
+            self._counter_cells(day, target, {name: target[name]+count})
 
     def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
@@ -612,7 +670,8 @@ class Service:
     def histogram(self, day: str, name: str, elapsed: int) -> None:
         with self.lock:
             histogram = self.counters[day]["publisher"][name]
-            histogram["counts"][sum(elapsed > bound for bound in histogram["bounds_us"])] += 1
+            index = sum(elapsed > bound for bound in histogram["bounds_us"])
+            self._counter_cells(day, histogram["counts"], {index: histogram["counts"][index]+1})
 
     def fold(self, now_us: int) -> None:
         daily, overflow, _ = self.observer.snapshot_daily_counts()
@@ -632,7 +691,8 @@ class Service:
             counter = self.counters[day]
             for key, value in values.items():
                 if key in counter["admission_observer"]:
-                    counter["admission_observer"][key] = max(counter["admission_observer"][key], math.ceil(value))
+                    self._counter_cells(day, counter["admission_observer"],
+                        {key: max(counter["admission_observer"][key], math.ceil(value))})
             if overflow:
                 self.journal.loss(day)
         self.folded_us = now_us
@@ -671,6 +731,7 @@ class Service:
             self.final_attempted.discard(day)
             self.final_plans.pop(day, None)
             self.counters.pop(day)
+            self.port.fold_cells.pop(day, None)
             self.legacy.days.pop(day, None)
             self.observer.acknowledge_daily_counts(day, day_at(self.folded_us))
 
@@ -789,8 +850,8 @@ class Service:
                     continue
                 self.ensure_day(d.first_slot*SLOT_US)
                 values = self.counters[d.day]["publisher"]
-                values.update(scheduled_slots=d.scheduled+len(d.publishers), missed_slots=d.missed,
-                    claim_attempts=d.attempted, lost_claims=d.lost, publications=d.published, failures=d.failed)
+                self._counter_cells(d.day, values, dict(scheduled_slots=d.scheduled+len(d.publishers), missed_slots=d.missed,
+                    claim_attempts=d.attempted, lost_claims=d.lost, publications=d.published, failures=d.failed))
             for effect in effects:
                 if isinstance(effect, lifecycle.EmitTrace):
                     if trace is not None and effect.slot == trace["slot"]:
@@ -874,9 +935,35 @@ class Service:
                     drained = tuple(e["slot"] for e in lane.schema.parse(item.body)["entries"]) if lane.stream == "trace" else ()
                     self.accept(lifecycle.AttachmentSettled(int(self.store.wall()*1_000_000), item.day, item.key, drained))
 
+    def sync_fold_obligations(self) -> None:
+        """Owner-thread bridge; workers only mutate bounded Port records."""
+        self.assert_owner()
+        with self.lock:
+            if not self.port.fold_obligations:
+                return
+            stamp = int(self.store.wall()*1_000_000)
+            if not self.state.days:
+                self.tick(stamp, publisher=False)
+            for reservation, status in list(self.port.fold_obligations.items()):
+                key = f"fold:{reservation.boot}:{reservation.event_seq}"
+                if reservation not in self.port.fold_owners:
+                    effects = self.accept(lifecycle.ObserverEnqueued(stamp, key, reservation.day))
+                    if any(isinstance(e, lifecycle.Fault) for e in effects):
+                        self.port.lost.set()
+                        continue
+                    self.port.fold_owners.add(reservation)
+                if status != "pending":
+                    effects = self.accept(lifecycle.ObserverFolded(stamp, reservation.day, key, status == "folded"))
+                    if any(isinstance(e, lifecycle.Fault) for e in effects):
+                        self.port.lost.set()
+                        continue
+                    del self.port.fold_obligations[reservation]
+                    self.port.fold_owners.remove(reservation)
+
     def _flush(self, deadline: float, *, finals_only: bool = False) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
         budget = Budget(deadline, self.store.clock)
+        self.sync_fold_obligations()
         if self.closing_reason is not None and not self.state.shutdown:
             if not self.state.days:
                 self.tick(int(self.store.wall()*1_000_000), publisher=False)
@@ -988,7 +1075,8 @@ class Service:
                     with self.lock:
                         ready = bool(reason and not self.bases.pending(day) and not self.traces.pending(day)
                             and self.journal.can_close(day, inflight=self.inflight + (day in self.publishing)
-                            + len(self.observer.inflight_ticks), pending=self.pending,
+                            + len(self.observer.inflight_ticks)
+                            + sum(r.day == day for r in self.port.fold_obligations), pending=self.pending,
                             interval_end_us=end_us, folded_us=self.folded_us))
                         decision = next(d for d in self.state.days if d.day == day)
                         drained = decision.traces if not self.traces.pending(day) else ()
@@ -1048,7 +1136,8 @@ class Service:
                         self.journal.terminal_permits[day] = self.journal.terminal_permits.get(day, 0)+RESERVATION_BLOCK
             except Exception:
                 with self.lock:
-                    self.counters[day]["diagnostics"]["cap_unavailable"] = self.counters[day]["diagnostics"].get("cap_unavailable", 0)+1
+                    target = self.counters[day]["diagnostics"]
+                    self._counter_cells(day, target, {"cap_unavailable": target.get("cap_unavailable", 0)+1})
         yield from self._flush(deadline)
 
     def submit_publisher(self, slot: int, stamp: int) -> None:

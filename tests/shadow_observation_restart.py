@@ -6,13 +6,17 @@ import json
 import signal
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def main():
     from google.auth.credentials import AnonymousCredentials
     from google.cloud.spanner_v1 import Client
+    from shadow_observation_fixtures import NOW_US, event_for
 
-    from tests.test_async_settle_shadow_observation import NOW_US, event_for
     from trusted_router.async_settle_shadow_journal import CLOSE_RESULT_KIND, CLOSURE_KIND, Journal
     from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_result
     from trusted_router.config import Settings
