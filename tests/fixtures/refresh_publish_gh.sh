@@ -14,11 +14,17 @@ filter='.'
 method=GET
 endpoint=''
 fields=()
+workflow_arg=''
+branch_arg=''
+event_arg=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jq) filter=$2; shift ;;
     --method) method=$2; shift ;;
     -f) fields+=("$2"); shift ;;
+    --workflow) workflow_arg=$2; shift ;;
+    --branch) branch_arg=$2; shift ;;
+    --event) event_arg=$2; shift ;;
     repos/*/statuses/*) endpoint=$1 ;;
   esac
   shift
@@ -44,6 +50,11 @@ if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
     *) echo "Unexpected workflow: ${third}" >&2; exit 1 ;;
   esac
 elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
+  if [ "${workflow_arg}" != ci.yml ] || [ "${event_arg}" != workflow_dispatch ] || \
+     [ "${branch_arg}" != "automation/price-refresh-${GITHUB_RUN_ID}" ]; then
+    echo "Unexpected run selection: workflow=${workflow_arg} branch=${branch_arg} event=${event_arg}" >&2
+    exit 1
+  fi
   poll=0
   if [ -f "${TMPDIR}/poll-count" ]; then read -r poll < "${TMPDIR}/poll-count"; fi
   poll=$((poll + 1))
@@ -59,6 +70,7 @@ elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
   record_event poll "${poll}" "${answer}" "${main_sha}"
   printf '%s\n' "${answer}"
 elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
+  fault=$(jq -r '.status_fault // empty' "${scenario}")
   if [ ! -f "${statuses}" ]; then printf '[]' > "${statuses}"; fi
   url="${GITHUB_API_URL}/${endpoint}"
   if [ "${method}" = POST ]; then
@@ -69,9 +81,19 @@ elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
     ' -- "${fields[@]}" < "${statuses}" > "${statuses}.new"
     cat "${statuses}.new" > "${statuses}"
     # GitHub POST omits these fields; the SHA-scoped GET includes them.
-    jq -c '.[-1] | del(.sha, .creator)' "${statuses}"
+    if [ "${fault}" = post_url ]; then
+      jq -c '.[-1] | del(.sha, .creator) | .url = "https://api.github.invalid/elsewhere"' "${statuses}"
+    else
+      jq -c '.[-1] | del(.sha, .creator)' "${statuses}"
+    fi
   elif [ "${method}" = GET ]; then
-    jq -c --arg url "${url}" "map(select(.url == \$url)) | ${filter}" "${statuses}"
+    case "${fault}" in
+      get_empty) printf '\n' ;;
+      creator)
+        jq -c --arg url "${url}" \
+          "map(select(.url == \$url) | .creator.login = \"someone-else\") | ${filter}" "${statuses}" ;;
+      *) jq -c --arg url "${url}" "map(select(.url == \$url)) | ${filter}" "${statuses}" ;;
+    esac
   else
     echo "Unexpected status method: ${method}" >&2; exit 1
   fi

@@ -210,6 +210,8 @@ def assert_ci_uses_repository_python(document: object, location: str = "ci") -> 
                     f"{here}: interpreter override in shell environment"
                 )
                 assert_no_uv_interpreter_flags(value, here)
+                assert ".python-version" not in value, f"{here}: rewrites the interpreter pin"
+                assert not re.search(r"\buv\s+python\s+pin\b", value), f"{here}: re-pins the interpreter"
             assert_ci_uses_repository_python(value, here)
     elif isinstance(document, list):
         for i, value in enumerate(document):
@@ -229,8 +231,12 @@ def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
             continue
         # shlex consumes the newline at the end of a comment; inspect every
         # uv occurrence so a later command cannot hide behind an earlier one.
-        for uv in (i for i, word in enumerate(command) if Path(word).name == "uv"):
+        for uv in (i for i, word in enumerate(command) if Path(word).name in {"uv", "uvx"}):
             args = command[uv + 1:]
+            if Path(command[uv]).name == "uvx":
+                # uvx options precede the tool name; later options are the tool's.
+                end = next((i for i, arg in enumerate(args) if not arg.startswith("-")), len(args))
+                args = args[:end]
             # After `uv run` reaches its executable, subsequent options belong
             # to that executable. Account for uv options that consume a value.
             if "run" in args:
@@ -295,3 +301,19 @@ def test_ci_python_check_allows_unrelated_command_flags() -> None:
         "uv run --no-sync python -c 'print(\"--python\")'\n"
         "go test -p 1 ./...\nuv run pytest -p no:cacheprovider\n"
     )}]}}})
+
+
+@pytest.mark.parametrize("command", [
+    "uvx --python 3.11 ruff check .",
+    "uv python pin 3.11 && uv sync",
+    "echo 3.11 > .python-version && uv sync",
+])
+def test_ci_python_pin_bypass_mutations_are_detected(command: str) -> None:
+    mutated = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    mutated["jobs"]["lint"]["steps"].append({"run": command})
+    with pytest.raises(AssertionError):
+        assert_ci_uses_repository_python(mutated)
+
+
+def test_uvx_tool_options_are_not_interpreter_flags() -> None:
+    assert_no_uv_interpreter_flags("uvx ruff check -p some/path", "ci")

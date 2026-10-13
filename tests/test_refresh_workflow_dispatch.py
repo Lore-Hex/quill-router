@@ -26,7 +26,8 @@ def publication_prerequisites() -> dict[str, str]:
     missing = [name for name, path in commands.items() if path is None]
     if missing:
         reason = f"Price-refresh publication tests require on PATH: {', '.join(missing)}"
-        if "GITHUB_ACTIONS" in os.environ or "CI" in os.environ:
+        if any(os.environ.get(name, "").lower() not in {"", "0", "false"}
+               for name in ("GITHUB_ACTIONS", "CI")):
             pytest.fail(reason)
         pytest.skip(reason)
     return {name: path for name, path in commands.items() if path is not None}
@@ -68,6 +69,10 @@ def remove_publication_guard(script: str, guard: str) -> str:
         after = "if false; then"
         assert script.count(before) == 2
         return script.replace(before, after, 1)
+    elif guard == "poll_workflow":
+        before, after = "--workflow ci.yml \\", "--workflow deploy.yml \\"
+    elif guard == "poll_event":
+        before, after = "--event workflow_dispatch \\", "--event push \\"
     else:
         raise AssertionError(f"Unknown mutation: {guard}")
     assert script.count(before) == 1, f"Mutation target missing or ambiguous: {guard}"
@@ -123,6 +128,7 @@ class PublicationRepo:
         self, *, conclusion: str = "success", wrong_sha: bool = False,
         move_main: str | None = None, changed: bool = True, mutation: str | None = None,
         run_states: list[tuple[str, str | None]] | None = None,
+        status_fault: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if changed:
             snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
@@ -143,6 +149,8 @@ class PublicationRepo:
                 assert move_main == "backward"
                 self.moved = self.previous
             scenario["move_main"] = {"clone": str(peer), "sha": self.moved}
+        if status_fault:
+            scenario["status_fault"] = status_fault
         (self.root / "scenario.json").write_text(json.dumps(scenario))
         script = remove_publication_guard(self.script, mutation) if mutation else self.script
         # Relocate only the workflow's fixed scratch paths. Gate logic and all
@@ -265,6 +273,10 @@ def assert_snapshot_published(repo: PublicationRepo, result: subprocess.Complete
         in call for call in posts
     )
     assert_status_bridge_precedes_main_push(repo)
+    events = repo.events
+    push = next(i for i, e in enumerate(events) if e[0] == "git" and "HEAD:refs/heads/main" in e)
+    deploy = next(i for i, e in enumerate(events) if e[:4] == ["gh", "workflow", "run", "deploy.yml"])
+    assert push < deploy, "deploy.yml must be dispatched only after main is pushed"
 
 
 def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
@@ -548,3 +560,24 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
         workflow.index("- name: Refresh provider social cards")
     ]
     assert "continue-on-error" not in spike_gate
+
+
+@pytest.mark.parametrize("fault", ["creator", "post_url", "get_empty"])
+def test_publication_withholds_snapshot_when_status_verification_fails(
+    publication_repo: PublicationRepo, fault: str,
+) -> None:
+    # A status GitHub did not create as github-actions[bot], a POST response for
+    # another URL, or a status the SHA-scoped GET cannot find must stop the push.
+    result = publication_repo.run(status_fault=fault)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.base
+    assert not any(call[:3] == ["workflow", "run", "deploy.yml"] for call in publication_repo.calls)
+
+
+@pytest.mark.parametrize("mutation", ["poll_workflow", "poll_event"])
+def test_poll_must_select_the_exact_ci_dispatch(publication_repo: PublicationRepo, mutation: str) -> None:
+    # Polling another workflow or event could let an unrelated successful run
+    # gate publication; the fake gh only answers the exact ci.yml dispatch query.
+    result = publication_repo.run(mutation=mutation)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.base
