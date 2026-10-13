@@ -47,6 +47,16 @@ def _shard_tiers(store: Any, workspace_id: str) -> list[list[int | None]]:
         return [[None if v is None else int(v) for v in row] for row in rows]
 
 
+def _open_reservations(store: Any, workspace_id: str) -> int:
+    with store._database.snapshot() as snap:
+        rows = snap.execute_sql(
+            "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled=false",
+            params={"ws": workspace_id},
+            param_types={"ws": store._param_types.STRING},
+        )
+        return int(list(rows)[0][0])
+
+
 def provision(
     store: Any,
     *,
@@ -62,9 +72,14 @@ def provision(
     user = store.find_user_by_email(email)
     if user is None:
         raise ValueError(f"no user for {email}; the workspace is the operator's own, so the user must exist")
-    workspaces = [w for w in store.list_workspaces_for_user(user.id) if w.name == workspace_name]
+    # The operator's OWN workspace: a membership in another owner's
+    # workspace of the name is not it, and is never funded.
+    workspaces = [
+        w for w in store.list_workspaces_for_user(user.id)
+        if w.name == workspace_name and w.owner_user_id == user.id
+    ]
     if len(workspaces) > 1:
-        raise ValueError(f"{len(workspaces)} workspaces named {workspace_name!r}")
+        raise ValueError(f"{len(workspaces)} workspaces named {workspace_name!r} owned by {email}")
     workspace = workspaces[0] if workspaces else None
     result: dict[str, Any] = {
         "apply": apply,
@@ -78,9 +93,15 @@ def provision(
         "tier": tier,
     }
     if workspace is not None:
-        keys = [key for key in store.list_keys(workspace.id) if not key.disabled]
+        # Nothing but leases may spend from it: no key, disabled or not (a
+        # disabled key can be enabled again), and no synchronous request
+        # still open, whose settle would consume the funding.
+        keys = store.list_keys(workspace.id)
         if keys:
-            raise ValueError(f"workspace {workspace.id} has {len(keys)} active API keys; nothing but leases may spend from it")
+            raise ValueError(f"workspace {workspace.id} has {len(keys)} API keys; nothing but leases may spend from it")
+        open_holds = _open_reservations(store, workspace.id)
+        if open_holds:
+            raise ValueError(f"workspace {workspace.id} has {open_holds} unsettled reservations; wait for them to settle")
         result["shards_before"] = _shard_tiers(store, workspace.id)
     if not apply:
         return result
