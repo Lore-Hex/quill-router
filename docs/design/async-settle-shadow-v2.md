@@ -35,6 +35,24 @@ No code, deployment, money changes or Git writes belong to this authoring pass.
 > BEFORE/AFTER labels describe changes to the pre-amendment design; round-1
 > protocols survive only where explicitly labelled as alternatives.
 
+> **A2 ADD — Amendment A2, round 3, 2026-10-12, DESIGN TEXT ONLY; proposed, not activated.**
+> Round 3 closes only A2-R1–R3: failure identities/counting units, conflict-entry
+> preimages and report metric populations; the accepted round-2 decisions remain.
+> Closes the five P5 contract questions with an A2 report behind the unchanged
+> A1 gate envelope, all 58 exact failure counts/blocked days and bounded subject prefixes,
+> an offline verifier port, explicit digest preimages and bounded proof envelopes.
+> §§7.5/8 define the contract; §§7.1/10 select one combined A1+A2 fixture release
+> and exactly one enclave pin-only follow-up; §§11/12 add proof/cost obligations.
+> Round 2 adopts one dedicated eligible probe workspace (owner decision 2026-10-12),
+> splits P4a compared integration from deferred P4b exclusion issuance, and makes
+> `shadow-probe-workspace` a P6 prerequisite. No exclusion issuance is needed for
+> the first window. P1-A2 is pure/additive; P3/P4a/P4b depend on A1, not A2. Baseline and A1
+> behavior/bytes remain frozen; no DDL, index, money, wire, capability, enclave
+> behavior or request-path change. §14.3 verifies code claims in the supplied
+> read-only P1-A1 tree. No tests or production measurements were executed; local catalog arithmetic is labelled.
+> A2 BEFORE/AFTER passages supersede only the quoted text; A1 is not reopened.
+> The earlier A1 note's separate enclave pin is consolidated as specified below.
+
 ## 1. Evidence, authority and amendment scope
 
 **D-V2-1 — adopt revised A.** The normative policy ID is `shadow-v2`.
@@ -97,6 +115,10 @@ PR C/PR D/F1 appendices, measured-drain selection, key placement and money
 rollback rules are not amended. The old ticket and billing fixtures remain
 unchanged. V2 does not claim their historical implementation citations describe
 this checkout; §14 is the current-code claim ledger.
+
+A2 round 2: references to P4 in the precedence table mean P4a for compared
+integration and P4b for exclusion issuance/worker integration. P4b is deferred
+for the first eligible-only window; §10 gives the controlling dependencies.
 
 ### 1.2 Decision alternatives
 
@@ -268,7 +290,7 @@ consumes the availability budget.” **A1 AFTER (D-A1-A):** prediction validity 
 §3.1.1 observation freshness, not proof of publisher acknowledgement. A missed
 500 ms cycle bound consumes the publisher availability budget even when a landed
 row remains fresh enough for prediction. This is an explicit weakening of that
-sentence, requiring Joseph's Q-A1 approval before activation. It does not relax
+sentence; Joseph accepted the Q-A1 default on 2026-10-12 (§13). It does not relax
 observation completeness, money isolation, no-retry, load or certification
 requirements beyond the explicitly stated timestamp/availability changes below.
 The cycle ends at the original publisher's observed successful commit reply,
@@ -376,9 +398,9 @@ rows/s at I readers, associated read/write bytes and native RPC overhead, and a
 new missing-proof availability failure surface. A same-snapshot two-key read
 could avoid a second poll RPC, but requires a reviewed reader/fencing protocol:
 boot/slot/body binding, no eligibility before observed success, immutable same-slot
-proof, cache invalidation and missing-proof rejection. Q-A1 chooses whether
-preserving cycle-validity is worth that complexity and measurement burden. A1
-recommends freshness-only validity for its narrower claim, not because immediate
+proof, cache invalidation and missing-proof rejection. Q-A1's freshness-only
+default was accepted on 2026-10-12 (§13); this stronger alternative is not an
+activation dependency. A1's narrower claim does not assert that immediate
 completion evidence has been proved impossible.
 
 **Durable prediction inputs retained:** `basis_sha256` resolves to exact canonical
@@ -578,6 +600,35 @@ available server facts. Never call the money ticket signer API, add a money
 transaction field or synchronous evidence RPC. Missing facts mean unresolved,
 not ordinary defaults. This fixes the current projection collapse and cap ordering
 (C4–C5), without changing existing snapshot metadata for nonmembers.
+
+**A2 round 2 — first-window scope:** §§4.1/4.3 continue to specify the full
+exclusion path, but live certificate issuance/verification-worker integration is
+P4b and **DEFERRED**. P4a issues only an eligible v1 binding/snapshot under the
+existing v2 outer policy. A request that is not demonstrably eligible receives
+**no certificate and no eligible binding**; its decision/receipt remains durable
+and unresolved, each terminal attempt is C and blocks its UTC day (and any issue
+day required by G3). Do not omit it from T, invent B, suppress E, or treat missing
+issuance as an exclusion. Every attempted terminal still has one receipt.
+
+The dedicated §13 cohort must yield T=A and B=C=0 for its certified window. B
+from certificates is expected to be zero; no issuance is required by any of
+G1–G11 when B=0. G3 still reconciles every authorize, G4 proves the complete
+partition, G5 derives E independently, and all other gates run unchanged.
+Existing observed-binding exclusion semantics remain frozen for the general
+contract; an unexpected valid observed B in this eligible-only cohort is a
+cohort-policy defect (G1 evidence_schema_gap), not a seed or permission to certify
+this cohort. It cannot rescue an ineligible authorize without a valid binding.
+P4a must reject/unresolve unexpected certificate traffic as C; the deferred live
+worker is never replaced by claims-only acceptance. P5 retains the existing
+certificate verifier port/pin, with zero calls when there are no applicable proofs.
+
+Owner reports P2 already merged. Its inspected retention code branches on an
+actually present certificate; absent one, a binding/snapshot follows the compared
+path (`P2/enclave-go/internal/trustedrouter/async_settle_shadow_v2.go:162–193`).
+It echoes an exclusion only from retained exclusion state (`:217–238`). Thus
+P2 needs **no behavior change** for P4a or later P4b; the single combined fixture
+pin-only follow-up remains. Merged status is owner-supplied, not a Git/deployment
+verification by this author.
 
 ### 4.1 Certificate and exact qualifying reasons
 
@@ -801,6 +852,9 @@ boot/page/event or identity/sequence/key/body mismatch gives
 `original_receipt_digest_gap`; an absent page gives `original_receipt_missing`;
 oversized/schema-invalid backing gives `original_receipt_backing_gap`. Each
 leaves C and blocks closure (and preserves any required conflict/reset), never B.
+For A2 reporting these five original_receipt_* worker diagnostic subcodes are
+failures of `exclusion_proof_gap` on the affected terminal object; they are not
+additional GAP_NAME literals. The exact source diagnostic remains in raw evidence.
 The worker must not rebuild facts from the live catalog or accept digest-only
 backing. Missing durability after issuer death stays C/BLOCKED. Persist the exact
 signed locator in the verified certificate projection and terminal receipt;
@@ -838,14 +892,15 @@ Mixed versions:
 |---|---|
 | New enclave, old router | P2 sends v2 capability marker, tolerates absent v2 fields and uses old v1 behavior; v1 data never certifies v2 |
 | Old enclave, new dormant router | Policy gate empty: byte-identical baseline; no v2 emission |
-| Old enclave, v2-active router | No verified v2 capability: do not emit v2-only certificate; preserve legacy result, count protocol coverage gap; cannot certify |
-| New enclave, active new router | Full v2 protocol and per-boot marker/attested-image evidence required |
+| Old enclave, v2-active router | No verified v2 capability: no certifying v2 emission (including P4a compared policy); preserve legacy result, record unresolved C/protocol coverage gap; cannot certify |
+| New enclave, P4a-active router | Eligible binding/snapshot under v2 policy; all noneligible/missing-proof terminals C. No certificates issued. Full per-boot marker/attested-image evidence required |
+| New enclave, later P4b-active router | Adds certificate issuance and durable worker verification under §§4.1/4.3; excluded-traffic opt-in waits for P4b proofs/budgets. Same P2 protocol, no further enclave change or pin-only follow-up |
 
 Proposed marker: `X-TR-Settlement-Shadow-Policy: shadow-v2` on authorize only;
 optional response marker `billing_shadow_policy:"shadow-v2"`. It is a protocol
 capability, not opt-in or authentication. Shadow workspace ownership remains
 server-side. Deployment evidence pins build capability
-`shadow-v2-read-echo` before router `shadow-v2-emit`; an arbitrary caller marker
+`shadow-v2-read-echo` before P4a compared emission (and later P4b certificate emission); an arbitrary caller marker
 cannot bypass the reviewed serving-roster gate. Enclave must **land and deploy
 read/echo support before router emission**. No clock during mixed-policy rollout.
 Rejected: relying on old enclaves silently carrying unknown metadata, or excluding
@@ -1353,6 +1408,64 @@ variant inventory, including router-only additions, as its existing test does
 (A1-C9). No P2-A1 behavior package remains. If implementation discovers a wire
 change, that is a new reviewed amendment, not implied permission here.
 
+### 7.1.1 A2 ADD — one combined fixture release, one enclave pin
+
+**A2 BEFORE:** A1 described an independently pinned `shadow_v2_a1/` release and
+its own enclave pin-only follow-up. **A2 AFTER:** that release is not yet pinned
+in the enclave. Freeze its files/manifest as historical A1 bytes; P1-A2 creates
+a **new superseding release for the pin**, `shadow_v2_a2/`, containing exact
+copies of every A1 fixture file and its manifest under `a1/`, plus the new A2
+files below and a new top-level `manifest.json`. Do not edit/extend the frozen
+A1 manifest in place. The new manifest enumerates every nested file, variant,
+source A1 manifest hash and baseline wire manifest hash. Router and enclave copy
+identical bytes and independently pin **that one combined manifest SHA-256**.
+Keep the baseline P1 pin and A1 historical identity checks; add the combined pin.
+Perform exactly **one** enclave pin-only follow-up after P1-A2 release; do not
+land an intermediate A1-only enclave pin. No A2 wire/capability/schema consumer
+is added to enclave runtime. This changes release packaging, not A1 semantics.
+P3/P4a/P4b's code dependencies remain A1; P4a activation still waits for the combined
+fixture pin and baseline P2 deployment. No final A2 hash is invented here.
+
+P1-A2 adds exactly these **16** fixture files (one fewer than round 1; no
+index fixture/schema), with positive, negative, byte/count boundary
+and preimage variants in each file, not separate unlisted files:
+`gate_report.json`, `gate_outputs_a2.json`, `gate_failures.json`,
+`failure_pages.json`, `writer_reports.json`, `region_reports.json`,
+`input_inventory.json`, `root_preimages.json`,
+`independent_inventory.json`, `shutdown_inventory.json`, `cohort_seed_policy.json`,
+`budget_envelopes.json`, `external_proofs.json`, `resolution_dag.json`,
+`verifier_ports.json`, `delegated_payloads.json`. Add top-level `manifest.json`;
+all other release files are the byte-identical `a1/` copies just specified.
+No signed token or key is printed in this design. Existing fixture signing
+material remains confined to its already approved fixture files.
+
+P1-A2's pure implementation surface is proposed, not created by this amendment:
+`async_settle_shadow_v2_a2_evidence.py` owns all schemas defined in §7.5:
+GATE_REPORT, GAP_NAME, RATIO, STAT, RATIONAL, PEAKS, WRITER_REPORT, REGION_REPORT,
+FAILURE_SUBJECT, GATE_FAILURE, DETAIL, FAILURE_PAGE, WRITER_REPORT_PAGE,
+REGION_REPORT_PAGE, VERIFIER_USE, FILE_REF, APPROVAL, INPUT_LEAF,
+INPUT_INVENTORY_ENTRY, INDEPENDENT_INVENTORY, SHUTDOWN_INVENTORY, SHUTDOWN_ENTRY,
+COHORT_SEED_POLICY, DELEGATED_PAYLOAD, BUDGET_ENVELOPE, LOAD_EVIDENCE,
+LOAD_SEGMENT, EXPORT_OPERATION, EXTERNAL_PROOFS, EXTERNAL_REQUIREMENT, RESET_ENTRY,
+RESOLUTION_DAG, PROOF_RESULT, REVIEW_RECORD, SHUTDOWN_MEASUREMENT, ROOT_ENTRY_PAGE,
+ATTACHMENT_PAGE. ROOT_ENTRY aliases A1 COVERAGE_ENTRY; it is not a replacement.
+`async_settle_shadow_v2_a2_roots.py` adds exactly
+`file_digest(raw: bytes) -> str`,
+`entry_root(entries: Iterable[dict[str, Any]], *, stream: str) -> str`,
+`validate_detail(detail: dict[str, Any], pages: Iterable[dict[str, Any]],
+*, stream: str) -> None`;
+stream is a closed enum selecting the key/type rules above, not arbitrary code.
+`async_settle_shadow_v2_a2_contract.py` adds exactly
+`validate_gate_output(output, report, *, failures, writers, regions, inputs,
+reset_history, verifiers) -> None`,
+`validate_preimages(manifest, proof, *, artifacts, roots) -> None`,
+`display_failure(failure) -> str`; arguments are supplied validated JSON objects/
+byte iterables, no file/network access. It declares the two callable port types
+with §7.5.3 signatures, without importing binding/storage. Canonical-object
+hashing reuses the existing sha256 helper, never a fourth construction.
+P5 supplies evaluation and I/O adapters; P1-A2 does not implement G1–G11 or copy
+certificate, binding, retained-tool, A1 completion/health/obligation validators.
+
 ### 7.2 A1 ADD — existing evidence provenance and complete export accounting
 
 Normative types: `u`=exact nonnegative int64; `boot`=1–64 ASCII `[A-Za-z0-9_-]`;
@@ -1656,17 +1769,795 @@ A1 instead bounds one handoff attempt, permits recovery of its durable landing,
 and conservatively charges its unprovable reply. It never recovers a failed
 original final close.
 
+### 7.5 A2 ADD — offline gate report and complete failure contract
+
+**D-A2-1 through D-A2-5, design only.** P1-A2 `shadow-v2-contract-a2`
+adds an offline report interpretation to A1. Stored rows, A1 schemas/functions,
+baseline fixtures, signature purposes, wire and enclave behavior remain frozen.
+A2 objects have exactly `v=2, policy_version="shadow-v2",
+contract_revision="a2"`. The unchanged A1 GATE_OUTPUT is the outer envelope
+(`contract_revision="a1"`); `coverage_sha256` selects and commits the A2 report.
+Do not relabel stored rows or A1 GATE_OUTPUT as revision a2. A2's validator first
+calls A1's validator, then enforces the relationships below. A1's standalone
+acceptance of an object is not A2 certification.
+
+All schemas below are closed (no extra/default members), JSON-native, duplicate-
+key rejecting and bounded by **both** cardinality and serialized bytes. Reuse §7.2
+`u`, `boot`, `day`, `sha`, `rev`, `seq`, baseline `name` (1–128 ASCII), `boolean`,
+`DIMENSIONS` and `COUNTER_DIMENSIONS`; `s` is signed int64 in
+[-9,223,372,036,854,775,807, 9,223,372,036,854,775,807]. Nullable means explicit
+JSON null, never absence. All object hashes use `detached_jws.canonical` (sorted
+keys, compact separators, ASCII escaping, no NaN, no final LF). Source-file/row
+hashes instead include **every original byte**, including whitespace/final LF.
+These are proposed definitions, not a claim that the schemas exist (A2-S1–S8).
+
+#### 7.5.1 A2 ADD — Q1: the single GATE_REPORT
+
+`GATE_REPORT` ≤65,536 bytes has exactly the common A2 tags and these fields.
+Reserve ≤49,152 bytes for failure_counts and ≤16,384 for all remaining fields/
+wrappers together; both and the total are conjunctive. Maximum-value fixtures
+must establish fit; these are design limits, not measured serializer results:
+
+| Field | Exact type, bound and meaning |
+|---|---|
+| `gate`, `completed_at_us`, `proof_manifest_sha256`, `prerequisite_ledger_root` | Same enum/u/sha/sha as outer GATE_OUTPUT; exact equality required. |
+| `days` | Sorted unique day array, 1–32. Includes forward-join dates; `window` is INTERVAL for the requested observation window. |
+| `window` | Baseline INTERVAL; start < end. Supporting older reset history is not restricted to these dates. |
+| `rules` | Exactly keys G1…G11; each `pass\|fail\|unevaluable\|not_required`. Evaluate every rule; stage alone determines not_required by §8. Unevaluable required rules emit their named coverage failure; they cannot PASS. |
+| `comparator` | Exactly `{eligible,compared,exact,explained,mismatch,unevaluable,coverage}`. First six are nullable u; coverage is RATIO below. Counts include original and retry attempts, with unchanged comparator arithmetic. |
+| `admission` | Exactly `{E,Y,N,U,coverage}`: nullable u, u, u, u, RATIO; all four counts nullable. Independently derived E; Y+N+U=E is tested, never assumed. |
+| `partition` | Exactly `{T,A,B,C}` of nullable u, T=settle+refund. |
+| `attempts` | Exactly `{authorize_fresh,authorize_replay,terminal_original,terminal_retry,completion}` of nullable u. Authorize/replay/completion are not extra terminal predictions. |
+| `checkpoint` | Exactly `{attempts,failures,recoveries,unknown_commits,unreconciled_commits,irrecoverable_losses,evidence_loss}` of nullable u. Recovered failures remain in failures. |
+| `handoff` | Exactly `{expected,landed,attempts_lower,attempts_upper,failures_lower,failures_upper,unknown_reply_upper}` of nullable u; sum A1 HANDOFF_ACCOUNTING without claiming exact last-reply outcome. |
+| `publisher` | Exactly `{scheduled_slots,claim_attempts,claims,lost_claims,scans,publications,failures,unknown_outcomes,late_cycles,missed_slots}` of nullable u, plus `peaks` of PEAKS type. |
+| `fleet_peaks` | PEAKS. Simultaneous sweep and configured-cap projection remain separate; no historical-boot sum. |
+| `timing` | Fixed map of STAT objects for `authorize_shadow_us,handoff_prepare_us,router_settle_us,booking_confirm_us,comparator_us,evidence_write_us,workspace_age_us,health_age_us,publisher_cycle_us,publisher_slot_rpc_elapsed_us,close_us,handoff_us,drain_us`. |
+| `deltas` | Exactly `{count,null_count,min_micro,max_micro,bins}`: nullable u/u/s/s; bins has the eleven fixed keys `0,+1,-1,+2-10,-2-10,+11-100,-11-100,+101-1000,-101-1000,+>1000,->1000`, each nullable u. Retain signed booked-minus-frozen deltas, including mismatches. |
+| `null_counts` | Exactly `{eligibility,comparison,prediction,booking,timing,delta}` of nullable u. `timing` sums null observations over the thirteen named timing series; detailed null counts remain in each STAT. |
+| `first_seed_at_us`, `first_reset_at_us`, `first_gap_at_us`, `clock_start_us`, `elapsed_seconds` | Nullable u. First seed is the first qualifying original sample time; clock start obeys §8, not verification time. First reset includes retained history; first gap is earliest affected evidence time (day start for a day-wide gap). Unknown time is null, not completion time. |
+| `failure_counts` | Exactly all 58 GAP_NAME keys, each `{count:u,listed:u≤16,complete:boolean,day_counts:array(u,32)}`; array length equals days, position i counts assertions blocking days[i]. Exact distinct (gap,subject) totals; semantics in §7.5.2. Each value ≤768 bytes; the full map including names ≤49,152 bytes. |
+| `writers`, `regions`, `failures`, `input_inventory`, `reset_history` | DETAIL references below. All streams are complete except failures, which commits only the deterministic listed prefix; failure_counts commits the exact totals. No per-authorization maps in this object. |
+| `verifiers` | Exactly `{certificate,binding,retained_tools}`; certificate and binding are nullable VERIFIER_USE, retained_tools is a sorted array of ≤8 VERIFIER_USE entries. Null/missing required verifier blocks G1. |
+| `complete` | Boolean; true only after full evaluation, input closure, output-chain and exact-set checks. False always entails artifact_gap. |
+
+`RATIO` ≤256 bytes is exactly `{state,numerator,denominator}` with state
+`evaluated|not_exercised|unevaluable|not_required`, nullable u numerator/denominator.
+Evaluated has known denominator >0 and 0≤numerator≤denominator; comparator is
+A/E, admission is (Y+N)/E. `not_exercised` has 0/0 **only after** closed known E=0
+and the §5 conditions; unevaluable/not_required have both null. No float ratio.
+`STAT` ≤512 bytes is exactly `{count,null_count,min,p50,p95,p99,max}` of nullable u;
+count counts known observations, null_count counts explicitly null observations.
+Percentiles use ceiling rank on sorted known values, as retained in
+`shadow_report.percentiles` (A2-S6). With a completely enumerated empty series,
+count=null_count=0 and extrema/percentiles null. If enumeration is incomplete,
+all fields are null. Histogram bounds alone do not establish exact percentiles:
+where only histograms survive, percentiles are null, never bin edges presented
+as exact times. Counts/min/max may be supplied only when independently exact.
+
+`PEAKS` ≤4,096 bytes has exactly nullable u fields
+`simultaneous_routers,simultaneous_publishers,configured_routers,configured_publishers,
+startup_operations_1s,close_operations_1s,export_operations_1s` and the nullable
+RATIONAL fields `reads_per_second,pending_rows_per_second,trust_rows_per_second,
+health_rows_per_second,claim_operations_per_second,scan_operations_per_second,
+publication_operations_per_second,export_operations_per_second,export_bytes_per_second,
+configured_reads_per_second,configured_pending_rows_per_second,cpu_percent`.
+RATIONAL is `{numerator:u,denominator:u>0}`, ≤128 bytes, reduced by gcd; no float
+rounding changes comparisons. Each peak is a maximum over §5.1 sweep segments;
+CPU is the measured peak. Missing components stay null.
+
+`WRITER_REPORT` ≤8,192 bytes has common A2 tags, `day,boot,role:router|enclave,
+revision:rev,region:nullable(name)`, `interval:INTERVAL`, plus `partition,admission,
+comparator,attempts,checkpoint` of the same types above and
+`first_seed_at_us,first_reset_at_us,first_gap_at_us:nullable(u)`.
+Exactly one per expected role/day/boot (≤32×4,096=131,072); unknown inventory
+cannot invent a writer. Enclave comparator/admission values are not_required.
+`REGION_REPORT` ≤16,384 bytes has common tags, `region:name`, `writer_days:u`,
+`peaks:PEAKS`, `timing` as above, `seed_at_us:nullable(u)`; one per distinct actual
+region, ≤131,072, external pages rather than a 128-character-name list in the
+report. Unknown region stays on the writer and raises G2; never create an
+"unknown" actual region or silently omit a known region. Both detail streams
+are complete fixed-shape aggregates, not per-authorization maps.
+
+**Metric observation contract (A2-R3).** These populations apply identically to
+GATE_REPORT and REGION_REPORT.timing; regions filter the same observations by
+the original producer's validated actual region. A repeated file/export is not
+an observation. Deduplicate by the identities below, accepting only identical
+bodies; conflicting bodies make the dependent series unavailable, never
+latest-write-wins. Do not sum per-region percentiles to form fleet percentiles.
+No timing/delta series is a reconstruction of the attempt/comparator counters.
+
+- `S` is the complete retained SAMPLE population in the approved cohort whose
+  **original** observed_at_us is in [window.start_us,window.end_us), keyed by
+  (authorization_day,authorization_id). Include every classification, including
+  mismatch/unevaluable/observed exclusion, with no positive-seed filter. Receipt
+  references and sample persistence accounting establish the expected retained
+  set; absent required samples make its enumeration unavailable. A proven
+  unsampled attempt is not a null sample. The immutable first insertion counts
+  once; original, retry and completion references to it add no observations and
+  do not replace its fields/time. A distinct first-inserted sample from a retry
+  counts once at its own original observed_at_us. Forward reconciliation and
+  old reset-support samples outside the interval add no metric observations.
+  Region is SAMPLE.deployment.region, checked against original_terminal_receipt
+  and independent writer inventory.
+- `T` is every original **and retry** settle/refund receipt with event_at_us in
+  that same half-open interval, keyed by (day,boot,event_seq). No authorize,
+  replay or completion receipt is an extra T observation. For the null counters
+  below read the original receipt fields, before completion overlay; later
+  completion cannot erase an originally null field. Its independent partition
+  reconciliation and the comparator counters still obey §§6/8. Region is the
+  receipt writer's actual inventory region.
+- `J` is every independently scheduled publisher slot for each contender whose
+  slot*2,000,000 microseconds lies in the half-open window, keyed by (day,boot,slot)
+  under the A1 pre-submission day-ownership rule. Include missed/lost/failed slots,
+  not just publications. Slot-trace batches are containers, not observations.
+  All native RPCs/retries in a slot contribute only to its recorded aggregate;
+  request originals/retries/completions do not add J observations. Region is the
+  contender's actual inventory region.
+- `H` is every expected closing router writer-day with
+  window.start_us < SHUTDOWN_ENTRY.interval_end_us <= window.end_us, keyed by
+  (day,boot), independently derived from shutdown/lifetime inventory. Ordinary
+  UTC close, opt-out and shutdown each have one expected close, never one per
+  recovered checkpoint or request. `Hterm` is H with termination_applies=true.
+  Missing close/result/measurement is unavailable, not an omitted observation.
+  Region is the closing writer's actual inventory region.
+
+In the table, `nullable value` means count a present explicit JSON null in
+null_count and known values in count (or count nulls for a null_counts field).
+`required value` has no legal explicit null: a missing/invalid field is
+unavailable, not zero and not a known-null observation. Unavailable enumeration
+or required source makes all STAT fields null, all delta fields/bins null, or
+the individual null_counts scalar null; keep independently available series.
+Known enum values `unknown`, `pending` and `unevaluable` are never JSON null.
+The last column names the failure emitted for a required unavailable source,
+using its §7.5.2 constructor (original producer W/B/E, or N when unidentifiable),
+plus the underlying G1 failure; independently failing predicates still run.
+The corresponding rule is unevaluable. At a stage that does not require the
+population, its fields are null; this does not change §8's rule requirements
+(e.g. G7 still evaluates projected budgets before opt-in). S/T are required
+when G5 requires actual evidence, J when G6 does, H/Hterm when G8 or actual
+close-budget G7 does. Pre-enable invents none of these observations. A closed
+empty required population has
+count=null_count=0, zero bins, null extrema/percentiles. Histogram-only inputs
+cannot replace any population below or create individual observations.
+
+| Metric (fleet and, for timing, region) | Source object and exact field | Population / original-retry-completion treatment and window | Null/unavailable handling; failure |
+|---|---|---|---|
+| timing.authorize_shadow_us | SAMPLE.timing.authorize_shadow_us | S | nullable value; eligible_coverage_gap |
+| timing.handoff_prepare_us | SAMPLE.timing.handoff_prepare_us | S | nullable value; eligible_coverage_gap |
+| timing.router_settle_us | SAMPLE.timing.router_settle_us | S | nullable value; eligible_coverage_gap |
+| timing.booking_confirm_us | SAMPLE.timing.booking_confirm_us | S | nullable value; eligible_coverage_gap |
+| timing.comparator_us | SAMPLE.timing.comparator_us | S | nullable value; eligible_coverage_gap |
+| timing.evidence_write_us | SAMPLE.timing.evidence_write_us | S | nullable value; frozen self-timing field is always null; eligible_coverage_gap |
+| timing.workspace_age_us | SAMPLE.admission.workspace_age_us | S | nullable value; eligible_coverage_gap |
+| timing.health_age_us | SAMPLE.admission.health_age_us | S | nullable value; eligible_coverage_gap |
+| timing.publisher_cycle_us | PUBLISHER_SLOT_TRACE.cycle_us | J | nullable value (missed slot is null); publisher_trace_gap |
+| timing.publisher_slot_rpc_elapsed_us | PUBLISHER_SLOT_TRACE.rpc_elapsed_us | J, one **per-slot aggregate elapsed** observation, irrespective of rpc_count | required value (missed slot's recorded zero is a known zero); publisher_trace_gap |
+| timing.close_us | CLOSE_RESULT.elapsed_us | H, original close only | required value; writer_closure_gap |
+| timing.handoff_us | SHUTDOWN_ENTRY.measurement → SHUTDOWN_MEASUREMENT.result_us | H, the one result handoff | required value; close_handoff_budget_gap |
+| timing.drain_us | SHUTDOWN_ENTRY.measurement → SHUTDOWN_MEASUREMENT.final_pass_us | Hterm; whole shadow final pass, including preparation/export/close/result, not a money-drain or individual RPC duration | required value; close_handoff_budget_gap |
+| deltas.count, null_count, min_micro, max_micro and all eleven bins | SAMPLE.booked_minus_frozen | S; one signed microcredit delta per retained sample, unchanged by retry/completion references | nullable value; eligible_coverage_gap |
+| null_counts.eligibility | SAMPLE.eligibility.observed | S; count exactly explicit null observed-eligibility booleans | nullable value; eligible_coverage_gap |
+| null_counts.comparison | TERMINAL_EVENT.comparison | T; count exactly explicit null comparison fields in original receipt bodies | nullable value; terminal_coverage_gap |
+| null_counts.prediction | TERMINAL_EVENT.prediction | T; count exactly explicit null prediction objects, including noneligible attempts; unknown prediction enum is not null | nullable value; eligible_coverage_gap |
+| null_counts.booking | SAMPLE.booked_micro | S; count exactly explicit null booked amounts, not booking.outcome enums or missing receipts | nullable value; eligible_coverage_gap |
+| null_counts.timing | Each of the thirteen timing STAT.null_count fields above | Sum their null observations, with the populations above (not a union of subjects) | null if any summand is unavailable; corresponding source failure |
+| null_counts.delta | deltas.null_count | S, same observations as deltas | exact equality including null; eligible_coverage_gap |
+
+`publisher_slot_rpc_elapsed_us` replaces the misleading name `publisher_rpc_us`
+in the proposed A2 report only. The frozen A1 trace supplies rpc_count and
+rpc_elapsed_us per slot (`A2R/src/trusted_router/async_settle_shadow_v2_a1_health.py:133–138`);
+neither divide its total into per-RPC samples nor substitute native-RPC histogram
+percentiles. This does not rename A1 fields or alter its RPC-budget checks.
+
+For closed available populations, each S timing count+null_count=|S|,
+deltas.count+deltas.null_count=|S|, sum(deltas.bins)=deltas.count, and
+null_counts.delta=deltas.null_count. Both J timings have count+null_count=|J|;
+the slot-RPC series has count=|J| and null_count=0 (never sum(rpc_count)).
+close and handoff count=|H|, drain count=|Hterm|, with zero null_count when
+available. SAMPLE's frozen self-timing rule gives evidence_write_us.count=0
+and null_count=|S|. If deltas.count=0, min_micro=max_micro=null and all bins=0,
+including when every S delta is explicitly null; otherwise the extrema are the
+minimum/maximum known signed deltas. null_counts.eligibility and .booking are each ≤|S|;
+.comparison and .prediction are each ≤|T|. The latter two need not equal
+comparator.unevaluable or admission.U. All-known regional identities partition
+each fleet timing population: fleet count and null_count equal the sums of the
+corresponding regional counts, and fleet STAT is recomputed from their union.
+An observation with unknown region makes that series unavailable in every
+REGION_REPORT (G2 regional_roster_unknown at its writer W); known fleet values
+remain. It cannot create a fictional region or silently shrink a regional series.
+All sum equalities use exact integers; unavailable operands propagate null,
+and overflow blocks.
+
+A required rule that cannot be evaluated makes **every dependent aggregate**
+null/unevaluable; independently evaluated aggregates remain. For example missing
+one writer's counter invalidates fleet T/A/B/C/E totals, not the known writers'
+detail. Pre-enable has no invented traffic/cadence counts: those are null and
+not_required. Known zero, absent observation and uncomputable total are distinct.
+GATE_OUTPUT.elapsed_seconds must remain an integer: use 0 when report elapsed
+is null, but only with null clock_start and BLOCKED when clock is required; it
+is an envelope sentinel, never a measured zero. Otherwise equal floor of known
+continuous microseconds/1,000,000. A2 consumers must read the report state.
+
+#### 7.5.2 A2 ADD — Q2/Q3: exact failure totals, bounded subjects and flat pages
+
+`GAP_NAME` is the **58** distinct literals in the amended §8 table, including
+G9's explicitly enumerated retained reset names; 58<128. `GATE_OUTPUT.gaps`
+is their sorted unique set for **active failures**, never contextual strings.
+G5/G9 share one producer for exclusion_conflict. Resolved historical resets stay
+in reset_history; they become active failures only when the retained reset/clock
+predicate fails. This does not turn an old resolved mismatch into a permanent
+veto or erase its provenance. Verdict is BLOCKED iff gaps is nonempty, including
+unevaluable-required-rule and incomplete-run failures; otherwise PASS under the
+stage-specific §8 predicate. Complete iff all required evidence and evaluation
+are present, independently of whether the verdict passes.
+
+`FAILURE_SUBJECT` ≤768 bytes has exactly
+`{scope,day,role,boot,phase,dimensions,object,at_us,revision}`. Scope is
+`run|day|writer|bucket|object|reset`; day/role/boot/phase/dimensions/object/at_us/
+revision are nullable. Non-null day/boot/rev use existing schemas; phase is
+`authorize|replay|settle|refund|completion|worker`; dimensions is baseline
+DIMENSIONS for both new bucket subjects and event objects. Retained fixed-array
+diagnostics keep their original values; their containing writer-day assertion
+is selected by the table below, never a converted DIMENSIONS bucket. No
+conversion between a literal "unknown" and JSON null is allowed.
+`object` is exactly `{kind:name,key:ASCII[1..512],event_seq:nullable(seq)}`.
+
+**Normative constructors and assertion populations (A2-R1).** The constructors
+below set only the listed fields; **every other FAILURE_SUBJECT field is null**.
+`L(...)` is the §7.5.4 length-prefixed ASCII tuple encoding, also used here for
+virtual keys. No optional enrichment from diagnostics is permitted.
+
+- `N`: scope=run. `D(d)`: scope=day, day=d.
+- `W(d,r,b)`: scope=writer, day=d, role=r, boot=b, from independent inventory.
+  Writer populations are the union of independently expected and observed
+  role/day/boot identities with independently valid keys; disagreement remains G2.
+- `B(d,b,p,x)`: scope=bucket, day=d, role=router, boot=b, phase=p,
+  dimensions=x. Iterate the union of expected receipt-derived and counter-declared
+  baseline DIMENSIONS buckets, including declared zero buckets; p is authorize,
+  settle or refund as selected below. Fixed retained COUNTER_DIMENSIONS arrays
+  are not converted: array equations use phase_coverage_gap at W, and loss
+  diagnostics use evidence_loss_gap at W; a malformed counter uses G1 at O.
+- `O(k,x)`: scope=object, object={kind:k,key:x,event_seq:null}, using the
+  independently expected complete row kind/key. A non-row file uses the sole
+  virtual file kind `a2_file`, key=its exact input-inventory path. Aliases to a
+  row use its row identity, not a second file subject. No body-derived owner
+  fields are added. Missing/conflicting candidates share the expected identity.
+- `E(d,b,f,q)`: scope=object, day=d, role=router, boot=b,
+  object={kind:"async_settle_shadow_receipts_v2",key:d+"/"+b+"/"+f,event_seq:q}.
+  f and q are 20-digit sequences from verified page/event coordinates; phase and
+  dimensions are exactly those of the validated event. E requires independently
+  validated schema and coordinates; otherwise use I for that expected position
+  (or O if no position is enumerable), including for a dependent rule's failure.
+  This is the receipt's producer, never its verifier. Obligations use their own original_receipt
+  (including a replay's own receipt), not the fresh authorization's locator.
+- `I(d,b,f,i)`: invalid receipt at a known page, scope=object, day=d,
+  role=router, boot=b, object={kind:"a2_invalid_receipt",
+  key:L(d+"/"+b+"/"+f,"event",decimal(i)),event_seq:null}. i is the **zero-based**
+  array position, unpadded decimal with no leading zero except `0`. Page identity
+  comes only from its independently expected key. phase/dimensions remain null;
+  never take seq, owner or other identity from the invalid event. If the events
+  array cannot be enumerated, use `O` of the expected page instead.
+- `V(r)`: scope=object, object={kind:"a2_region",key:L("region",r),event_seq:null};
+  r is the exact actual region from inventory/policy. This is the REGION_REPORT
+  logical child, not a hash of a possibly unavailable report.
+- `K(t,r)`: scope=object, object kind `a2_budget`, event_seq=null,
+  key=L(t,"fleet","cap") when r is null, otherwise
+  L(t,"region",r,"cap"). t is the required BUDGET_ENVELOPE stage `pre` or `post`.
+  All limits for that scope form one cap assertion, not one per PEAKS field.
+  `A(t)` uses the same kind and key=L(t,"approval") for the envelope approval
+  child, including its prerequisite measurement/configuration checks.
+- `Q(z)`: scope=reset, at_us=z.at_us, revision=z.revision,
+  object={kind:"a2_reset",key:L(time,z.revision,z.reason,z.support.root),event_seq:null},
+  where time is `null` for unknown time, otherwise unpadded decimal microseconds.
+  z is the normalized RESET_ENTRY after the existing complete-support union;
+  its expected support.root identifies even absent support bytes. No source
+  file chosen from that support changes this subject. Unknown time is permitted
+  only for the retained unresolved counter-mismatch case.
+- `P(g,n)`: scope=object, object={kind:"a2_proof",key:L(g,n),event_seq:null};
+  g is required stage (gate enum), n is the exact EXTERNAL_REQUIREMENT.name.
+  The pilot prerequisite child uses n=`pilot`.
+
+These six virtual kinds (`a2_file`, `a2_invalid_receipt`, `a2_region`, `a2_budget`,
+`a2_reset`, `a2_proof`) are exhaustive; no virtual health-basis, slot or batch
+subject exists. All existing subject/key byte bounds still apply; inability to
+encode a required identity blocks with G1 evidence_schema_gap at N, never a
+truncated or hashed substitute.
+
+In the following **one row per name** table, the producer is exclusive. The
+population is what is iterated, not just the objects that happened to fail.
+`self` in the last column means an unevaluable required assertion emits that
+row's name at the same constructor. If its population/identity itself cannot
+be enumerated, emit that name once at N in addition to every independently
+identified failing subject; counts remain provisional and complete=false under
+the existing incomplete-input rule. G1 additionally reports the underlying
+missing bytes/schema defect; this is not a second producer of the affected
+name. `support` means G9 missing_support at Q (N if no reset can be identified),
+not an invented correctness mismatch. Stage-not-required assertions emit none.
+Within each row, OR all failing subchecks for a subject into **one** assertion;
+finer basis/slot/batch/field detail is diagnostic only and is not counted.
+Health-reader subchecks belong to each referencing receipt's reader writer-day;
+publisher subchecks belong to the trace/claim producer's scheduled writer-day.
+Several uses of a basis in one writer-day still count once for each failing name.
+A valid recorded empty/unusable source is evaluated under the unchanged §3
+predicate, not automatically an unevaluable assertion merely for being unusable.
+For G1, validate a page container and its independently enumerable events
+separately: a bad child emits E/I only, not another page failure merely because
+recursive page validation also rejected that child. A separately bad page
+header/chain still emits O. Unidentifiable run artifacts use N.
+
+| GAP_NAME | Single producer | Assertion population and constructor | Unevaluable |
+|---|---|---|---|
+| policy_version_gap | G1 | Each expected source/artifact logical object O, or receipt E/I, for its own policy/cohort check; cohort configuration uses its O | self |
+| evidence_schema_gap | G1 | Each expected source/artifact logical object O, or receipt E/I, for schema/identity/commitment checks | self |
+| artifact_gap | G1 | Each expected source/artifact logical object O for availability/digest/provenance; interrupted/incomplete run N | self |
+| writer_roster_gap | G2 | Each scoped day D; all manifest/inventory writer-set disagreements that day | self |
+| regional_roster_unknown | G2 | Each inventory/observed writer-day W | self |
+| legacy_region_label | G2 | Each inventory/observed writer-day W | self |
+| legacy_sample_region | G2 | Each retained sample logical key O | self |
+| flag_interval_gap | G2 | Each inventory/observed writer-day W; all four flags/lifetime segments together | self |
+| boot_prerequisite_gap | G2 | Each traffic writer-day W; all readiness/ledger prerequisites together | self |
+| authorize_coverage_gap | G3 | Each router writer-day W; fresh/replay counts and receipt-chain coverage together | self |
+| authorization_link_gap | G3 | Each receipt-derived authorization obligation E at its original_receipt | self |
+| authorization_obligation_gap | G3 | Each router writer-day W; projection/count/root completeness together | self |
+| authorization_terminal_conflict | G3 | Each receipt-derived authorization obligation E at its original_receipt | self |
+| authorization_horizon_gap | G3 | Each receipt-derived authorization obligation E at its original_receipt | self |
+| observed_partition_gap | G4 | Each settle/refund bucket B; partition equation and C=0 | self |
+| terminal_coverage_gap | G4 | Each original or retry settle/refund receipt E; proof/booking/once-only coverage after valid completion reconciliation | self |
+| phase_coverage_gap | G4 | Each router writer-day W; phase/aggregate/retained-array equations together | self |
+| exclusion_proof_gap | G4 | Each original or retry settle/refund receipt E; applicable exclusion proofs and original-receipt worker subcodes together | self |
+| eligible_coverage_gap | G5 | Each router writer-day W; independent eligible-attempt enumeration and comparator coverage together | self |
+| prediction_demand_gap | G5 | Each settle/refund bucket B; independent E and Y+N+U equation/known-demand checks | self |
+| prediction_unknown_gap | G5 | Each settle/refund bucket B; unchanged unknown fraction | self |
+| observer_cadence_gap | G6 | Each router writer-day W; all observer intervals together | self |
+| observer_budget_gap | G6 | Each router writer-day W; all observer read/failure/streak/degraded limits together | self |
+| shadow_health_gap | G6 | Each router writer-day W; all required health coverage/usability checks together | self |
+| health_source_gap | G6 | Each router writer-day W; all source/isolation checks together | self |
+| health_timestamp_gap | G6 | Each router writer-day W; all referenced health bases' O/C/R timestamp checks together | self |
+| health_elapsed_gap | G6 | Each router writer-day W; all referenced bases' q/e/deadline checks together | self |
+| health_slot_gap | G6 | Each router writer-day W; all reader references and publisher claim/slot/version fences together | self |
+| publisher_accounting_gap | G6 | Each router writer-day W; all scheduled/attempted/outcome and operation conservation checks together | self |
+| publisher_trace_gap | G6 | Each router writer-day W; all required slots/batches/chains/histogram reconciliation together | self |
+| simultaneous_capacity_gap | G7 | Each required budget stage and fleet/actual-region scope K; all simultaneous/configured/startup/churn cap checks together | self |
+| pre_enable_budget | G7 | Required pre-enable budget approval/prerequisites A(pre), once per run | self |
+| publisher_budget_gap | G7 | Each router writer-day W; all contender/publication RPC/read/write limits together | self |
+| fleet_headroom_gap | G7 | Each required budget stage and fleet/actual-region scope K; CPU/headroom/approval/pre-post matching together | self |
+| freshness_budget_gap | G7 | Each router writer-day W; all conservative-chain/component-deadline evidence together | self |
+| evidence_export_budget_gap | G7 | Run N; complete approved plan, every pass/rerun/cleanup and envelope approval together | self |
+| close_handoff_budget_gap | G7 | Each closing router writer-day W; final-pass/result/burst/grace measurements together | self |
+| checkpoint_reconciliation_gap | G8 | Each router writer-day W; every checkpoint/page/HWM/recovery check together | self |
+| evidence_loss_gap | G8 | Each router writer-day W; all loss/overflow diagnostics together | self |
+| writer_closure_gap | G8 | Each expected closing router writer-day W; original close/closure/acknowledgement together | self |
+| retry_original_gap | G8 | Each retry or completion receipt E; all original/context/order checks together | self |
+| close_result_identity_gap | G8 | Each expected close-result row O(async_settle_shadow_close_result_v2,day+"/"+boot) | self |
+| close_result_conflict | G8 | Each expected close-result row O(async_settle_shadow_close_result_v2,day+"/"+boot); all conflicting bodies together | self |
+| handoff_coverage_gap | G8 | Each closing router writer-day W; expected result/coverage/accounting together | self |
+| hash | G9 | Each retained reset fact Q of reason hash, subject to retained active/reset predicate | support |
+| identity | G9 | Each retained reset fact Q of reason identity, subject to retained active/reset predicate | support |
+| normalization | G9 | Each retained reset fact Q of reason normalization, subject to retained active/reset predicate | support |
+| evaluator_disagreement | G9 | Each retained reset fact Q of that reason, subject to retained active/reset predicate | support |
+| counter_mismatch | G9 | Each retained reset fact Q of reason counter_mismatch, including unsampled history | support |
+| reviewed_resolution | G9 | Each retained reset fact Q of reason reviewed_resolution; all resolution checks together | support |
+| revision_rollback | G9 | Each retained reset fact Q of reason revision_rollback; all rollback checks together | support |
+| missing_support | G9 | Each retained reset fact Q whose full provenance cannot be established | self |
+| exclusion_conflict | G9 (including G5 detection) | Each retained reset fact Q of reason exclusion_conflict; G5 forwards evidence to this producer | support |
+| positive_seed_gap | G10 | Run N | self |
+| regional_seed_gap | G10 | Each policy-required traffic-serving router region V | self |
+| continuous_window_gap | G10 | Run N | self |
+| external_proofs_missing | G11 | Each stage-required external proof P(stage,name); all checks/dependencies/approval together | self |
+| pilot_prerequisite_gap | G11 | Each required pilot stage P(stage,pilot); all retained pilot prerequisites together | self |
+
+The table fixes counting units only; §8's predicates, stage requirements and
+conservative affected-day rules are unchanged. A coalesced writer-day assertion
+blocks the union of the days affected by its failing subchecks, including
+forward effects, not just the date displayed in W. Every applicable receipt
+predicate still runs; grouping diagnostics does not forgive an invalid receipt.
+
+`GATE_FAILURE` ≤1,024 bytes is exactly common A2 tags plus
+`{gap:GAP_NAME,subject:FAILURE_SUBJECT,count:1}`. The counting unit remains one
+assertion per distinct (gap,complete subject). Several bad fields within the
+same assertion count once; different subjects never collapse. Bucket equations
+count assertions, not an inferred number of offending receipts; each applicable
+receipt predicate is separately evaluated. G5/G9's shared exclusion_conflict
+producer avoids double counting the same assertion.
+
+**Round 2 simplification:** §8's “retain all failures” now means **retain every
+failing name, exact counts and exact blocked days; list a deterministic bounded
+prefix of subjects**. Evaluate every rule over the complete input, count every
+assertion, and retain only the first **K=16** subjects per name in canonical
+subject-byte order. Sixteen gives an operator a useful batch of independent
+repairs per name while keeping all 58 names' diagnostics in four pages. K is a
+fixed listing constant, unrelated to publisher contender K; no verdict depends
+on its value. It is not a cap on evaluation, counting, raw evidence or history.
+
+For each name, `failure_counts.count` is the exact total; `listed=min(count,16)`;
+`complete=(count==listed)` describes **that subject listing only**. Zero count
+has listed=0 and complete=true. `day_counts[i]` is the exact number of distinct
+assertions of that name that block `days[i]` under §8, including issue-day and
+forward-coverage effects. One assertion can block several days, so their sum
+need not equal count. Unknown affected time blocks every possibly affected day;
+persistent missing support blocks all scoped days. Run-only stage failures still
+block the run; counts are never inferred from the listed subjects. The complete
+blocked-day set is exactly the days with any positive day_count (plus no unstated
+exceptions). Derive days and day attribution from full evidence and §8, never
+from the prefix. Older reset support remains in the complete reset-history stream.
+
+`GATE_OUTPUT.gaps` equals exactly the names with count>0, independently of listed
+subjects; PASS requires all 58 counts zero and all stage predicates evaluable.
+Each listed entry must be one of the actual first min(count,16) assertions, with
+no duplicates. Recompute counts, day counts and prefixes from the complete
+input when verifying; a claimed summary alone is not proof. Thus truncating the
+**diagnostic list** cannot change BLOCKED to PASS or hide a failing rule. A report
+can be complete=true with some listing complete=false: all rules were evaluated,
+only diagnostic subjects were capped. An operator loses direct subject detail
+beyond K until listed defects are fixed and the gate is rerun; the exact totals,
+blocked days and immutable source evidence are retained. This is the smaller
+mechanism because a PASS has no failures to list.
+
+For humans only, display a subject in this fixed order as
+`gap=<gap>;scope=<scope>;day=<day>;role=<role>;boot=<boot>;phase=<phase>;adapter=<a>;route=<r>;streamed=<s>;kind=<kind>;key=<key>;event_seq=<seq>;at_us=<time>;revision=<revision>`.
+Null prints `~`, booleans lowercase, numbers decimal; values are UTF-8 percent-
+escaped using uppercase hexadecimal with only ASCII alphanumeric/underscore/
+hyphen/dot left literal.
+Missing dimensions/object expand to null components. No length-128 constraint
+applies to this display. It is never parsed, stored as identity or hashed;
+canonical structured subjects are the identity. Thus the supplied legal
+138-character prefix witness has no effect on the name bound.
+
+A finite, explicit input inventory and approved export plan are still required.
+Drop round 1's 10,000-leaf × 10,000-key total-run ceiling and its physical-object,
+reset-subject and all-subject suprema: they existed only to bound a lossless
+failure list. Keep the **existing** ≤10,000 explicit keys per export pass/bundle,
+≤262,144-byte manifests, ≤32 scoped dates, ≤4,096 writers/day, terminal/event
+caps, ≤128 reviewed resolutions and all §7.2 rate/retention/budget limits, because
+those bound actual evidence or retained tools. Each additional pass and every
+older reset-support/dependency file is enumerated and charged; no recursive or
+unplanned input discovery. The finite approved plan, not a new universal leaf
+count, bounds the run. Do not restrict old reset history to the observation dates.
+
+Exact totals must fit u; never saturate or wrap. Missing input, interrupted
+traversal, overflow or resource exhaustion cannot produce a completed exact
+summary: mark report.complete=false, artifact_gap and dependent rules
+unevaluable, retain the partial work as provisional, never certify it. Finish
+all independently evaluable rules. An incomplete run does not claim complete
+failing names/counts; a completed result must. Failure to write a BLOCKED artifact
+is an unsuccessful tool run, never PASS. Reserve a run-subject artifact_gap slot
+before evaluation; it occupies one of that name's 16 slots by canonical order.
+
+`DETAIL` ≤512 bytes is exactly `{root:sha,count:u,pages:u,tail_sha256:nullable(sha)}`.
+Root is R over all entries **in this stream**, sorted by complete key; for failures
+these are only the listed entries, never an implied root of omitted subjects.
+Empty has R([]), 0, 0, null. Nonempty has C(last page), exact count and page count.
+All pages live at deterministic `(stream_path,page_seq)` output keys. stream_path
+is the full referring field path plus logical parent keys (including nested
+reset/support keys), encoded by §7.5.4's length-prefixed tuple rule; it is not
+merely a shared schema name. The validator's stream enum still chooses entry type. There is **no
+index tree**, for failure or other A2 detail streams. A verifier already streams
+every page, so an index provides no necessary correctness property.
+
+`FAILURE_PAGE,WRITER_REPORT_PAGE,REGION_REPORT_PAGE` have common A2 tags plus
+`{page_seq:seq,previous_sha256:nullable(sha),entries:array}`. First previous=null,
+later previous=C(previous page); sequence starts 1 and is contiguous. The final
+page must match tail_sha256. Entries strictly increase across pages; duplicate
+keys reject. Failure key is canonical `[gap,subject]` byte order; writer key
+`[day,role,boot]`, region key region. Pack all nonfinal pages to their entry limit;
+the final page is nonempty. Limits: failure 255×1,024 bytes +≤1,024 wrapper
+=≤262,144 bytes; writer 16×8,192 and region 8×16,384 +≤1,024 wrapper
+=≤132,096 bytes. Failure streams have ≤58×16=928 entries and ≤4 pages.
+Other detail streams retain their declared per-page entry/byte limits.
+
+Verify complete sequence, tail, R-root, exact counts, keys and expected set
+against independently enumerated input. For failures verify exact tallies and
+prefix selection as well. Page dropping, swapping, duplication and wrong-subject
+substitution all reject. A damaged emitted output is rejected with a new BLOCKED
+artifact_gap/evidence_schema_gap result about its input bytes, never silently
+repaired in place. No self-input or recursive storage acknowledgement is added.
+Output pages belong to the report/output graph, not the proof manifest's input
+attachments; this preserves the acyclic commitment.
+
+#### 7.5.3 A2 ADD — Q4: one implementation per verifier, supplied port
+
+Choose (a), a narrow supplied port. Tools supply the actual existing callables;
+the pure gate neither imports the binding module nor copies its validation.
+The signatures, including keyword-only parameters and return semantics, are:
+
+```
+verify_binding(token: str, keys: Sequence[TrustedKey], now: int) -> ShadowClaims
+verify_certificate(token: str, keys: Sequence[TrustedKey], expected: Mapping[str, Any],
+                   now: int, *, returned_key: tuple[str, str], page: bytes | None,
+                   attempt: dict[str, Any], server_attempt: dict[str, Any],
+                   booking: str) -> ReceiptVerification
+```
+
+These are the existing signatures (A2-S4). ShadowClaims is an opaque structural
+return type at the pure boundary; no runtime or TYPE_CHECKING import of its
+storage-importing module, no replacement claims/signature implementation.
+The pure certificate module/TrustedKey may be imported within the existing
+allowlist. Exceptions and C results remain failures; validate_claims alone is
+not a verifier. Existing original-receipt/backing checks remain mandatory.
+
+`VERIFIER_USE` ≤1,024 bytes is exactly `{entry_point:name,source_sha256:sha,
+fixture_sha256:sha,keyset_sha256:nullable(sha),calls:u}`. Source SHA hashes the
+exact defining source file; fixture SHA hashes the exact pinned fixture file
+(or fixture manifest) for that implementation. Keyset SHA hashes the exact
+named, canonical public trust-descriptor file supplied to that callable, with
+all TrustedKey fields and ordered keys; no private material or signed tokens
+are exported to reports. The retained-tools port has null keyset. Its entry_point
+is the fully qualified function, not a user-chosen label. Fixture/source/keyset
+files are registered named input artifacts; reviewed source revision and
+transitive dependency files are bound by the external CI proof. A source hash
+alone does not prove execution or key selection.
+
+The trusted offline tool must establish callable identity against the imported
+function, verify source bytes and fixture pin against the approved release,
+provide the exact approved key sequence, and record invocation count. The pure
+gate invokes it for every applicable object and independently checks contextual
+identity/results. Tests substitute a same-signature always-true function, alter
+keys, remove a port and suppress a call; all must block. A recorded self-asserted
+hash or prior PASS transcript cannot substitute for these checks. No call is
+needed on a genuinely unexercised branch, but both verifier bindings/pins must
+still be present for a certification run. Pure imports/construction execute no
+I/O; tools own source/file reads and dependency loading. Keep the AST and fresh-
+interpreter storage-import guards honest (A2-S5); do not allowlist the binding
+module. Moving the binding implementation into P1-A2 is rejected because it
+would modify the frozen non-v2 ticket/claims dependency boundary and require
+migration/differential proof beyond a port; two implementations are forbidden.
+
+#### 7.5.4 A2 ADD — Q5: preimages, attachment shapes and delegation
+
+There are only three digest constructions in A2:
+
+- **F(file/row):** SHA-256 of the named file's or row's exact retained bytes,
+  including final LF if present. Files resolve through the finite input inventory;
+  rows use complete `(kind,key)`. No parse/re-serialize step before F.
+- **R(entries,key):** SHA-256 of canonical JSON array of entries sorted by their
+  complete logical key, unique keys required. Empty root is SHA-256 of the two
+  bytes `[]`. Stream the canonical array (including brackets/commas); pagination
+  must not change this root. New roots use this entry-array construction.
+- **C(object):** SHA-256 of the canonical bytes of the named exact-schema object.
+  No implicit projection, unspecified concatenation or opaque digest string.
+
+**A1 exception retained, not repaired:** `coverage_root` validates the chain and
+returns SHA-256(canonical([C(page1),…,C(pageN)])); its array entries are **page
+digests in page_seq order**, not coverage entries. The obligation roots instead
+hash sorted AUTHORIZATION_OBLIGATION entries (and their unresolved subset).
+They are **not the same preimage construction** and repartitioning coverage
+pages changes the former (A2-S2). Both use R's canonical-array hashing operation,
+but the frozen coverage projection/key is explicitly page-digest/page_seq;
+only frozen A1 coverage fields below use it. A2 does not call coverage_root on
+entry arrays or change its behavior. This is the concrete reason for correcting
+the candidate's assumption that A1 already has a single entry-root construction.
+
+`ROOT_ENTRY` is A1 COVERAGE_ENTRY, unchanged: `{key,sha256,bytes,state}` and its
+1,024-byte/exact-state rules. For a present source sha256=F(original bytes),
+bytes=len(original bytes); a missing expected key has null hash/0 bytes, not an
+empty-body digest. Conflict coverage retains every candidate in the input
+inventory, qualified by its exact byte digest, and blocks. No latest-write-wins.
+For **every new ROOT_ENTRY stream** in the table below (day counters, closures,
+receipts, day/union ledgers and original slot-trace batches), group retained
+candidates by the table's complete logical key **before** constructing entries.
+Byte-identical repeated exports/references coalesce within that logical key,
+never across different keys. With two or more distinct
+exact bodies, emit exactly one entry at the unchanged logical key with
+`state="conflict"`, `sha256=SHA-256(canonical(sorted([F(b) for b in bodies])))`,
+and `bytes=sum(len(b) for b in bodies)`. The SHA preimage is the canonical array
+of lowercase 64-character exact-byte digests, sorted in ASCII order, without LF;
+it is C of that array, not F of a selected body or a concatenation. `bytes` is
+all distinct candidates' original byte sizes, **not** this array's encoded size.
+Distinct bodies with the same digest cannot be certified: retain both and block
+artifact_gap; digest collision or int64 size overflow makes this entry/root
+unevaluable, never choose a body or wrap a size.
+
+The entry's complete sort key remains exactly the decoded typed tuple in the
+digest table; there is no digest tiebreaker or extra root key. Exactly one entry
+per independently expected logical key is required, missing/present/conflict
+inclusive. ROOT_ENTRY stream counts count logical keys; input inventory object
+counts count distinct retained candidates/files. Every candidate must appear
+in the finite input inventory under a digest-qualified path and resolve to its
+exact bytes; repeated references to it do not add a candidate. Unexpected keys
+remain inventoried and fail the expected-set check; they do not expand the
+expected root population. The conflict entry does not satisfy a present-object
+predicate, and its candidates cannot supply a selected metric value. Missing
+candidate bytes makes the root unverifiable. These rules also apply wherever
+ROOT_ENTRY_PAGE carries one of these streams; other DETAIL entry schemas and
+frozen A1 coverage streams keep their specified constructions.
+
+This representation fits the **unchanged** reference
+`A2R/src/trusted_router/async_settle_shadow_v2_a1_evidence.py:117–127`:
+conflict permits a non-null digest and positive int64 byte count; no body-size
+or digest-preimage constraint there selects one candidate. The 1,024-byte entry
+bound still applies. Frozen COVERAGE_ENTRY and coverage_root (:140–151) are
+untouched; this is an A2 interpretation of the new entry-array streams only.
+The literal §11 conflict entry was also accepted by that frozen COVERAGE_ENTRY
+validator in a read-only schema calculation (133 canonical bytes); this is not
+an implementation/suite pass.
+New ROOT_ENTRY.key encodings use length-prefixed ASCII tuple components:
+join `decimal_byte_length:component` with `/`, no leading zero in a length.
+Components use their existing safe field schemas; integer components use canonical
+decimal and seq keeps its 20 digits. Require a unique parse, exact re-encoding
+and ≤512 bytes; compare decoded tuples with the types/order specified below.
+This avoids delimiter ambiguity and embedded JSON quoting in the frozen A1
+COVERAGE_ENTRY string validator. A1 coverage keeps its frozen key spelling and order.
+
+| Digest field | Construction and complete preimage/key |
+|---|---|
+| Day MANIFEST.counter_root | R(ROOT_ENTRY array for exactly all expected router counters that day, key=(day,boot)); each value hashes the exact counter row. |
+| Day MANIFEST.closure_root | R(ROOT_ENTRY for every expected router closure, key=(day,boot)); exact closure row, not SEALED_CLOSURE. |
+| Day MANIFEST.receipts_root | R(ROOT_ENTRY for all immutable receipt pages through each writer's committed HWM, key=(day,boot,first_seq)); exact page bytes. Validate page chains and event coverage too. |
+| Day MANIFEST.prerequisite_ledger_root | R(ROOT_ENTRY for every ledger entry required by that day's roster, key=(role,boot,revision,region,boot_at_us)); exact A1 PREREQUISITE_LEDGER bytes including predecessor link. |
+| Day MANIFEST.independent_inventory_sha256 | C(INDEPENDENT_INVENTORY for that day). |
+| Day MANIFEST.close_result_root, publisher_trace_root, health_basis_root | Frozen A1 coverage_root over that day's respective COVERAGE_PAGE stream; each present entry hashes exact CLOSE_RESULT, publisher trace batch or health basis batch bytes. Validate all expected objects from lifecycle/slots/references. |
+| PROOF_MANIFEST.evaluator_fixture_sha256 | F(`tests/fixtures/async_settlement/billing_v1.json`), exact frozen evaluator fixture bytes (A2-S8). |
+| PROOF_MANIFEST.binding_fixture_sha256 | F(`tests/fixtures/async_settlement/shadow_v1.json`), exact frozen binding/comparison fixture bytes (A2-S8). |
+| PROOF_MANIFEST.wire_fixture_sha256 | F(`tests/fixtures/async_settlement/shadow_v2/manifest.json`), baseline P1 wire fixture manifest. The combined A1/A2 release pin is separate; it does not replace the baseline wire identity. |
+| PROOF_MANIFEST.ledger_root | R(ROOT_ENTRY for the union of all required ledger entries, same complete key as day ledger root; repeated references across days coalesce only when the original bytes agree). |
+| PROOF_MANIFEST.shutdown_inventory_sha256 | C(SHUTDOWN_INVENTORY). |
+| PROOF_MANIFEST.cohort_seed_policy_sha256 | C(COHORT_SEED_POLICY). |
+| PROOF_MANIFEST.pre_budget_sha256, post_budget_sha256 | C(BUDGET_ENVELOPE with stage pre/post respectively), committing inputs, exact outputs and approvals, not a PASS string. |
+| PROOF_MANIFEST.publisher_slot_trace_sha256 | R(ROOT_ENTRY for every original slot-trace batch in scope, key=(day,boot,first_slot)); exact batch bytes. It is not an alias for the page-sensitive A1 publisher_trace_root. |
+| PROOF_MANIFEST.external_proofs_sha256 | C(EXTERNAL_PROOFS). |
+| PROOF_MANIFEST.resolution_dag_sha256 | C(RESOLUTION_DAG), including retained reset-support references. |
+| PROOF_MANIFEST.close_result_root, publisher_trace_root, health_basis_root, handoff_accounting_root, authorization_obligation_root | R of exactly `{day,root,count}` entries sorted by day, root=that day's frozen A1 coverage_root for the named stream; count=total underlying coverage entries. Stream is determined by field, not supplied by caller. The authorization stream covers every original A1 OBLIGATION_PROJECTION and AUTHORIZATION_OBLIGATION_PAGE; validates projection roots against complete receipt-derived entries. This cross-day envelope does not alter A1 page bytes. |
+| GATE_OUTPUT.proof_manifest_sha256 | F(the exact supplied A1 PROOF_MANIFEST file bytes); report uses the same digest. |
+| GATE_OUTPUT.prerequisite_ledger_root | Exactly PROOF_MANIFEST.ledger_root, computed from that union, not the hash of the hex string. |
+| GATE_OUTPUT.coverage_sha256 | C(the one GATE_REPORT). |
+
+A1's inner `open_obligations_root` remains R(unresolved AUTHORIZATION_OBLIGATION
+entries,(original_receipt.day,boot,event_seq)); `reconciliation_root` remains R(all
+entries,same key). A1 inner closure/counter/result digests keep canonical-object
+semantics where its validators use sha256(object); do not change them to F just
+because export ROOT_ENTRY hashes original row bytes. Both comparisons must pass.
+Day `proof_manifest_sha256`, when present, is the same F as the output. Day
+config/fixture and ledger policy/config/fixture/artifact SHA fields use F of
+named exact config/policy/fixture/ARTIFACT files in the input inventory. A ledger
+previous link is F of the previous exact ledger file. Completion times in
+ARTIFACT must equal their decoded evidence, not only the descriptor. No ZERO
+placeholder or digest with an undefined, absent or unverifiable preimage can
+support PASS: undefined interpretation raises **evidence_schema_gap**; missing
+or mismatched bytes raises **artifact_gap**; also retain the affected G2–G11
+failure. The baseline generator's ZERO fields are schema fixtures, not a
+passing end-to-end gate (A2-S3).
+
+The following new payloads are minimal offline envelopes. Each has common A2
+tags, is ≤262,144 bytes, and has exactly the fields below. `FILE_REF` ≤768 bytes
+is `{path:ASCII[1..512],sha256:sha,bytes:u≤262144}`; path is a named **relative**
+input-inventory key restricted to `[A-Za-z0-9_./:@+-]`, with no absolute path,
+traversal, network URL or secret. Larger
+source artifacts use separately bounded pages with a DETAIL; no giant embedded
+JSON/base64 blob. `APPROVAL` ≤1,024 bytes is `{subject_sha256:sha,reviewer:name,
+reviewed_at_us:u,decision:"approved",record:FILE_REF}`; subject is the exact
+approved input/config file digest, and record's existing reviewed release
+provenance must substantiate it. This is not a new signing protocol or a
+self-certifying approval string. Unknown/missing review authority fails G7/G11.
+
+| Schema | Exact additional fields, completeness and delegation |
+|---|---|
+| `INPUT_LEAF` | `{keys:array(FILE_REF,10000),complete:boolean}`; unique sorted path, conjunctive byte bound. File paths for rows encode kind/key and, on conflict, body digest. Receipt events are subobjects, not extra GETs. |
+| `INPUT_INVENTORY_ENTRY` | `{bundle:FILE_REF,first_key:ASCII[1..512],last_key:ASCII[1..512],objects:u}` ≤2,048 bytes; one per explicitly planned leaf bundle, sorted by first_key, disjoint ranges. Report input_inventory is R of these entries; paginate 64/page using the common page envelope. All derived expected keys and dependency files must be covered. |
+| `INDEPENDENT_INVENTORY` | `{day:day,serving:FILE_REF,deployment:FILE_REF,approval:APPROVAL,complete:boolean}`. serving contains the **retained v1 serving roster shape**, including retired/overlapping boots and exact intervals/pins. Tools delegate roster validation to pilot_enablement.roster_coverage and gate_roster_coverage; compare deployment source/approval, A1 day rosters, actual regions, lifetimes, ledger and four-flag intervals. New strict day/boot/revision/region bounds additionally apply. Never infer inventory from counters. |
+| `SHUTDOWN_INVENTORY` | `{writers:DETAIL,measurements:FILE_REF,approval:APPROVAL,complete:boolean}`. `SHUTDOWN_ENTRY` ≤2,048 bytes is `{day,boot,termination_applies:boolean,reason:utc_boundary\|shutdown\|opt_out\|hard_kill,interval_end_us:u,grace_us:nullable(u),original_close:nullable(FILE_REF),close_result:nullable(FILE_REF),measurement:FILE_REF}`. Sorted (day,boot), ≤131,072, 64/page. Missing close has null original_close; its expected complete key is derived from day/boot and raises writer_closure_gap, never an invented digest. Termination requires known grace and measured full-pass durations from the referenced evidence, not just elapsed of the close RPC. A1 validate_close_result/sealed_closure/HANDOFF_ACCOUNTING own the actual close rules. Hard kill/missing result never becomes graceful by this envelope. |
+| `COHORT_SEED_POLICY` | `{workspace_fingerprints:array(sha,32),regional_seed_policy:each_traffic_region\|fleet_only,required_regions:array(name,4096),primary_region:name,maximum_publishers:u,configuration:FILE_REF,approval:APPROVAL}`. Arrays sorted unique, workspaces nonempty; expected traffic regions derived from complete inventory must equal required_regions for the default each_traffic_region policy. Fleet_only is not the accepted §13 policy; changing to it requires a new owner decision, never an empty-array bypass. The first policy pins one dedicated eligible-only probe workspace, both routes, one supported candidate/request, fallback off and actual router seed regions through configuration; G1 checks this cohort restriction. Pre/post N equals workspace count; K, primary placement, config and readiness must match. |
+| `DELEGATED_PAYLOAD` | `{entry_point:name,payload:FILE_REF,dependencies:DETAIL,source:FILE_REF}`. Entry point is one of the eight literal functions named below; exact original payload shape/finite binary64 values are delegated, never normalized into a second v1 schema. Dependencies enumerate every opened local file by FILE_REF, sorted path, all charged to the finite input/export plan (≤10,000 keys per pass). Tool paths are safely materialized to this finite sandbox; hidden files or network reads reject. |
+| `BUDGET_ENVELOPE` | `{stage:pre\|post,retained:DELEGATED_PAYLOAD,output:FILE_REF,pre_envelope_sha256:nullable(sha),approval:APPROVAL,v2_load:LOAD_EVIDENCE}`. pre has null link, post points to C of the exact approved pre envelope. Delegate retained shape/checks to fleet_budgets_pre or fleet_budgets; preserve workspace/cap/allowance matching and approved measurement artifact bytes. Actual output is the delegated v1 tool output and must be recomputed, not trusted; it is not this run’s A2 GATE_OUTPUT, avoiding a self-reference. LOAD_EVIDENCE supplies the explicitly superseding v2 costs/sweep below. |
+| `LOAD_EVIDENCE` | `{interval:INTERVAL,segments:DETAIL,operations:DETAIL,limits:FILE_REF,approval:APPROVAL}`. `LOAD_SEGMENT` ≤8,192 bytes has `{day,boot,region:name,start_us:u,end_us:u,role:router\|enclave,contender:boolean,workspace_count:u≤32,peaks:PEAKS}`; sorted (day,boot,start_us), no overlap for same boot; complete lifetime coverage. `EXPORT_OPERATION` ≤2,048 bytes is `{object:FILE_REF,pass:u,at_us:u,operation:get\|put\|delete,native_rpcs:u,bytes:u,elapsed_us:u}`; sorted (pass,at_us,operation,object.path), unique, bounded by the approved finite operation count (u) including reruns/deletes; operation entries themselves are enumerated and charged when exported. Derived report-output operations are charged by the acyclic plan, not embedded back into their own input. Rates/bursts must be computed from operations and reconcile producer traces; scalar asserted peaks alone never suffice. Limits file is exactly `{regions:array({region:name,approved:PEAKS},4096),fleet:PEAKS}` with known applicable limits and exact pre/post equality; peaks use their declared units. This augments, never raises, v1 approvals. |
+| `EXTERNAL_PROOFS` | `{requirements:array(EXTERNAL_REQUIREMENT,64),pilot:nullable(DELEGATED_PAYLOAD)}`. Requirement ≤2,048 bytes is `{name:name,stage:gate_enum,router_revision:rev,enclave_revision:rev,evidence:FILE_REF,approval:APPROVAL}`. Unique (stage,name); required set is all eleven retained EXTERNAL_GATES plus §11 v2/A1/A2 proof rows, at their required stage and package scope fixed by §11 (P4b integration required before excluded-traffic opt-in), not a caller-chosen subset. Deferred P4b proof rows do not remove frozen verifier/schema/purpose or P4a fail-closed proofs from the first window. Evidence must be exact-revision CI/export/attestation with its named criterion and successful results, verified by tools and retained proof logic. pilot delegates pre_flip/post_flip at those stages, otherwise null. No digest-only PASS. |
+| `RESET_ENTRY` | `{at_us:nullable(u),revision:rev,reason:hash\|identity\|normalization\|evaluator_disagreement\|counter_mismatch\|reviewed_resolution\|revision_rollback\|exclusion_conflict,support:DETAIL,resolved_at_us:nullable(u),fixed_revision:nullable(rev),invalidated_at_us:nullable(u)}` ≤2,048 bytes. Key (at_us,revision,reason,support.root); unknown time sorts before known and blocks. support enumerates exact source FILE_REFs (or derived rollback's serving/resolution references), not a sample. One per retained reset fact, duplicate facts combined only with complete support union. Complete finite history from the approved input plan; no round-1 synthetic reset-entry ceiling. The retained ≤128 reviewed resolutions still applies. |
+| `RESOLUTION_DAG` | `{retained:DELEGATED_PAYLOAD,history:DETAIL,approvals:array(APPROVAL,128)}`. Retained payload supplies the unchanged `resolved_mismatches` shape (≤128 entries), serving tuples and manifests to collect_rollbacks. Retained report validation owns exact resolution fields, uniqueness and support requirement; use that validator via the tools, not collect_rollbacks alone. history points to RESET_ENTRY pages (128/page, subject to bytes; use 64 for 2,048-byte maxima). Compare all supplied history before window filtering; missing raw support is persistent missing_support. Resolve only with reviewed artifact and serving_since, exact fixed revision and retained DAG reachability, never SHA lexical order. |
+
+`PROOF_RESULT` ≤262,144 bytes is the required wrapper when no retained tool
+already owns a proof payload: common tags plus `{criterion:name,router_revision:rev,
+enclave_revision:rev,completed_at_us:u,producer:name,checks:array({name:name,
+result:pass|fail,evidence:FILE_REF},128),sources:DETAIL}`. Check names must exactly
+match the selected §11 criterion's frozen P5 fixture inventory; all checks must
+pass and reference verified exact evidence. Empty/self-asserted checklists fail.
+Tool validation binds producer/source CI or attestation provenance to the approved
+release; the wrapper does not manufacture trust. `REVIEW_RECORD` is common tags
+plus `{subject_sha256:sha,reviewer:name,reviewed_at_us:u,decision:approved|rejected}`,
+≤1,024 bytes; match APPROVAL and the approved reviewer/provenance source in the
+release inputs. A2 does not introduce a new approval authority.
+`SHUTDOWN_MEASUREMENT` is common tags plus `{day,boot,grace_us:u,
+final_pass_us:u,close_us:u,result_us:u,export_wait_us:u,preparation_us:u,
+outcome:graceful|hard_kill,source:FILE_REF}`, ≤2,048 bytes; measured total includes
+all work and must fit both grace and §6.1's four-second pass ceiling as applicable.
+Measurements and every FILE_REF have to be available, with independent source
+provenance; a numeric assertion without its source is artifact_gap.
+
+`ROOT_ENTRY_PAGE` is the common A2 page envelope with 128 ROOT_ENTRY entries;
+`ATTACHMENT_PAGE` uses the same envelope with 64 entries of one declared schema
+(the stream schema is determined by its referring field). Byte limit 132,096;
+FILE_REF dependency lists use 128 entries/page (≤99,328 bytes). All DETAIL streams
+use the same chain/tail/count/root validation and cannot silently change entry
+type. These declarations supply the referenced payloads' entire schema; opaque
+measurements/review/CI files have their retained validator/criterion named in the
+referring envelope. If no approved parser can establish that criterion, the run
+is unevaluable with evidence_schema_gap and the applicable rule's gap, not PASS.
+
+**Delegation boundary and retained deltas.** The eight retained entry points are
+`pilot_enablement.fleet_budgets_pre`, `fleet_budgets`, `shadow_serving`, `pre_flip`,
+`post_flip`, `counter_coverage_report`, `roster_coverage`, and
+`shadow_report.collect_rollbacks`. Each uses its existing signature (A2-S6/S7);
+DELEGATED_PAYLOAD for collect_rollbacks additionally supplies exact legacy
+`report` inputs so report's resolution/support validation runs. Tools call the
+existing functions; no v1 parser or signature checker is forked into the pure
+family. The existing functions are **not** whole-v2 predicates. P5's explicit
+retained-delta adapter must compare their outputs and apply only already approved
+§1.1/A1 deltas: per-writer known>0→E-based rule, historical sum→simultaneous sweep,
+v1 health timing→A1 timing, global prerequisite/seed time→§5.3/§8, v1 row/policy
+shape→A1 validators. Untouched checks, including approval/N/cap identity, roster,
+CPU<45, post-flip rollback/handoff and reset support, remain delegated and required.
+Do not demand v1 overall PASS on legitimate idle/sequential A1 inputs; do not
+mask any additional failure. A2 adds no new predicate exception. The adapter's
+source/fixtures are pinned as retained_tools VERIFIER_USE and differential
+proofs must exercise each permitted delta and every untouched checklist bit.
+Retained shape payloads remain v1 shape inside the envelope; no A1 rows are
+passed to an unchanged v1 row validator. This adapter is P5 tool work, not a
+runtime import or new validator implementation in P1-A2.
+
+#### 7.5.5 A2 ADD — bounded output/export arithmetic
+
+All figures are design arithmetic, not measured serialization/RSS/CPU or test
+results. Exact evaluation still reads all relevant evidence. Stream assertions
+in unique canonical key order (bounded external sort/spill if needed), maintain
+58 exact totals, 58×D day counters and at most 928 listed subjects; never allocate
+an all-failure dictionary. Sort/re-read/temp bytes require §7.2 approval.
+
+| Item | Round-2 bound / arithmetic |
+|---|---|
+| Closed names / listing constant | 58 (<128 frozen names); K=16 subjects/name |
+| Per-name tallies | 58 exact totals and ≤58×32=1,856 exact day counts; listed≤16, complete boolean |
+| Failure count map / report | ≤49,152 bytes within one ≤65,536-byte GATE_REPORT; remaining fields/wrappers ≤16,384 |
+| Listed failures | ≤58×16=928; ≤1,024 bytes/entry ⇒950,272 entry-body bytes |
+| Failure pages | ceil(928/255)=4; each ≤262,144; exact conservative total ≤950,272+4×1,024=954,368 bytes |
+| Failure/report/outer package | ≤954,368+65,536+262,144=1,282,048 bytes (1.283 MB decimal); ≤6 PUTs including report and outer |
+| Failure indexes / all-subject bound | 0 index nodes/bytes/operations; no all-subject supremum needed |
+| Source limits retained | ≤32 dates, ≤4,096 writers/day, ≤100,000 terminals/day, ≤400,000 events/day, ≤144 buckets/writer-day; these bound evidence, not diagnostic listing |
+| Export input plan | Finite approved list of passes; ≤10,000 explicit keys/pass and ≤262,144 bytes/manifest; no new global leaf/object ceiling |
+| Writer reports | ≤131,072 entries ×8,192=1,073,741,824 bytes; ≤8,192 pages; wrappers ≤8,388,608 ⇒1,082,130,432 bytes; 0 indexes |
+| Region reports | Conservative inherited ≤131,072 entries ×16,384=2,147,483,648 bytes; ≤16,384 pages; wrappers ≤16,777,216 ⇒2,164,260,864 bytes; 0 indexes. First cohort's configured GCP router inventory fits one page; actual inventory governs |
+| Other detail pages | Writer/region/root/attachment envelopes ≤132,096 bytes; dependency FILE_REF pages ≤99,328; manifests/source attachments ≤262,144, unchanged |
+| Offline operations | Every pass L+W; coarse body bytes ≤262,144(L+W); native RPCs, spill/sort, verification/reruns, report and cleanup all charged |
+| Producer lanes | Unchanged Σ(1+floor(active_seconds/5)) plus initial in-flight; ≤65,536 bytes/operation; does not pay for offline export |
+| Cleanup | ≤1,000 sink keys/s, ≤30 s/pass; Spanner ≤200 keys/transaction, ≤5 transactions/s, ≤30 s/pass; additional passes charged |
+| A2 runtime cost | 0 producer RPCs, request-path bytes, money operations, DDL/indexes or enclave runtime changes |
+| Enclave fixture follow-up | Exactly 1 combined A1+A2 pin-only release |
+
+The **failure diagnostic worst case is megabytes**, independent of the number
+of failed subjects. The complete raw input, writer aggregates and reset history
+are separate evidence costs, not bounded diagnostic samples; the conservative
+writer/region maxima above are not first-cohort capacity claims or approvals.
+Do not silently sample them to make the whole evidence export fit a megabyte.
+Keep one ≤256 KiB decode buffer and bounded page/merge state; native overhead
+and actual remaining-report fit need implementation proof.
+
+PROOF_MANIFEST.attachments retains its conjunctive 10,000-count/256 KiB limits;
+further input-leaf references live in authenticated input_inventory. Complete
+input closure is independently derived from inventory, HWM, scheduled slots and
+references, never from listed outputs. All referenced bytes must be available.
+L counts all input/support/verifier GETs; W counts all flat detail/root/report/
+output PUTs. Each rerun/verification pass and every cleanup key is charged.
+P5 plans actual finite operations/frequency before execution; P6 approval and
+G7 evidence_export_budget_gap reject unaffordable plans. No allowance increases.
+
+
 ## 8. Gate v2 — executable predicate specification
 
 **D-V2-8 — one shared predicate implementation.** `shadow_report` and pilot
 `fleet-budgets`, `shadow-serving`, `pre-flip` must call the same versioned
-validators, not subtly different copies. In the table, gaps are stable suffixes
-prefixed by day/boot/phase/dimension or object ID as applicable. Evaluate all rules
-and retain all failures; schema damage yields BLOCKED, never skipped rows.
+validators, not subtly different copies. **A2 BEFORE:** gaps were described as
+stable suffixes prefixed by day/boot/phase/dimension or object ID.
+**A2 AFTER:** gaps are the 58 closed GAP_NAME literals in this table, without
+prefixes; every failure has a structured §7.5 FAILURE_SUBJECT. Evaluate all rules
+and retain every failing name, exact counts and exact blocked days; list a
+deterministic bounded prefix of subjects (K=16/name) under §7.5.2. Complete input
+closure and full rule evaluation remain mandatory. GATE_OUTPUT.gaps equals the
+sorted names with positive exact count; BLOCKED iff nonempty.
+Schema damage/unevaluable required predicates produce failures, never skipped
+rows or zero metrics. A2's report verification additionally validates all output
+pages and verifier provenance before any PASS is accepted.
 
 | Rule | Exact PASS predicate | Replaces/retains v1 rule | Gap/reset name |
 |---|---|---|---|
-| G1 Policy/schema | All certification rows, proof, wire provenance and gate artifacts exactly shadow-v2, bounded and hash-verified; key/body identity agrees; no coercions; referenced objects present | shadow §§4/6 exact v1 schema (C7) replaced, strictness retained | `policy_version_gap`, `evidence_schema_gap`, `artifact_gap` |
+| **A2 AFTER G1** Policy/schema | All certification rows, proof, wire provenance and gate artifacts exactly shadow-v2 with their frozen/A2 revision as specified in §7.5, bounded and hash-verified; accepted cohort/seed configuration matches (first cohort requires T=A, B=C=0 when closed cohort traffic is evaluated; pre-enable does not invent traffic totals); key/body identity agrees; no coercions; referenced objects present. artifact_gap includes missing/mismatched report/page/input/support/verifier bytes, incomplete/bound-exhausted export or absent verifier. evidence_schema_gap includes undefined preimage, invalid subject/name/order/count/chain, gaps↔exact-counts or listed-prefix mismatch, null-as-zero, substituted/unapproved verifier or wrong key set. Keep each affected rule’s own failure as well | shadow §§4/6 exact v1 schema (C7) replaced, strictness retained | `policy_version_gap`, `evidence_schema_gap`, `artifact_gap` |
 | G2 Deployment | Complete independent boot/lifetime inventory equals all day manifests/counters/closures; full revisions and #1667 per-boot regions; all four flags off throughout; every traffic boot has §5.3 readiness before its first opted attempt; ledger hash chain complete | shadow §6 / outbox step 5 global gate timestamp and identity coverage (C8/C12) | `writer_roster_gap`, `regional_roster_unknown`, `legacy_region_label`, `legacy_sample_region`, `flag_interval_gap`, `boot_prerequisite_gap` |
 | **A1 AFTER G3** Authorize obligations | Fresh+replay equation equals the complete durable decision receipts/facts. Closure commits all report obligations through §7.3; writer closure/HWM is not discharge. P5 enumerates open count/root and reconciles every authorization only to actual durable terminal evidence within its original horizon, regardless of router boot/enclave. No nonterminal disposition or same-enclave claim. Provisional through forward coverage; missing/invalid/conflicting terminal blocks issue day | Replaces unspecified owner/link permission with terminal-only report discharge; all original factual backing rules retained | `authorize_coverage_gap`, `authorization_link_gap`, `authorization_obligation_gap`, `authorization_terminal_conflict`, `authorization_horizon_gap` |
 | G4 Terminal partition | T=settle+refund=A+B+C per writer/day/phase/dimension; C=0; A has compared proof, B has valid certificate or retained observed-exclusion proof; each receipt exactly once; phase sums equal aggregate; no envelope-present=T assumption | shadow §§3/4/6 and C7 envelope/observed/outcome equations | `observed_partition_gap`, `terminal_coverage_gap`, `phase_coverage_gap`, `exclusion_proof_gap` |
@@ -1674,7 +2565,7 @@ and retain all failures; schema damage yields BLOCKED, never skipped rows.
 | **A1 AFTER G6** Timer/health | Observer cadence/failure/streak/degraded gates and source isolation; exact Spanner O/C/R plus q/e predicate, slot/version fences and 250 ms health-read deadline (§3.1.1). Independently reconcile scheduled/attempted/published/failed/unknown/missed counters and traces, including queued old-day work. Usable late-landed rows never count as timely publications | Removes only missed-cycle⇒invalid-publication implication; strengthens shadow read deadline and server observation-slot bound; no host qualification | `observer_cadence_gap`, `observer_budget_gap`, `shadow_health_gap`, `health_source_gap`, `health_timestamp_gap`, `health_elapsed_gap`, `health_slot_gap`, `publisher_accounting_gap`, `publisher_trace_gap` |
 | **A1 AFTER G7** Fleet load | Simultaneous/cap/startup/churn sweep, exact approvals, strict CPU<45%; include metadata, health attachments with full §7.2 operations/re-runs/cleanup, report joins and separate close-result transactions/bursts. Conservative 4.25+.25=4.50 chain and measured component deadlines; over-budget cycles remain failures | No load allowance increases; removes ownership/signature/clock-service budgets because those mechanisms are absent | `simultaneous_capacity_gap`, `pre_enable_budget`, `publisher_budget_gap`, `fleet_headroom_gap`, `freshness_budget_gap`, `evidence_export_budget_gap`, `close_handoff_budget_gap` |
 | **A1 AFTER G8** Durability | Page/HWM/counter/no-loss rules and same-writer terminal-original completion context/order. Require original boot’s insert-only acknowledged CLOSE_RESULT, exact closure/day/boot/digest/checkpoint binding and independent inventory/coverage under §2 provenance. Failed original close never recovers. Unknown handoff reply can recover only landed fact; charge conservative bounds. Writer sealing never bypasses G3 | Defines durable later acknowledgement without a separate signing trust domain; ordinary checkpoint recovery unchanged | `checkpoint_reconciliation_gap`, `evidence_loss_gap`, `writer_closure_gap`, `retry_original_gap`, `close_result_identity_gap`, `close_result_conflict`, `handoff_coverage_gap` |
-| G9 Resets | Zero unexplained mismatch including counters/unsampled/conflicting retry; preserve all earlier mismatch/fix/rollback history, exact supporting evidence and reviewed revision partial order; no admission-unknown hiding a mismatch | shadow §3.1/§6 reset and revision-rollback rules verbatim | Existing correctness resets, `revision_rollback`, `missing_support`; new `exclusion_conflict` |
+| **A2 AFTER G9** Resets | Zero unexplained mismatch including counters/unsampled/conflicting retry; preserve all earlier mismatch/fix/rollback history, exact supporting evidence and reviewed revision partial order; no admission-unknown hiding a mismatch | shadow §3.1/§6 reset and revision-rollback rules verbatim | Retained correctness reset names made explicit by A2: `hash`, `identity`, `normalization`, `evaluator_disagreement`, `counter_mismatch`, `reviewed_resolution`, `revision_rollback`; `missing_support`, `exclusion_conflict` |
 | G10 Clock | First real durable eligible positive sample strictly after the `transport` PASS, post-opt-in `fleet-budgets` PASS (linked to `fleet-budgets-pre`) and its §5.3 boot prerequisites starts; exclude `shadow-serving` completion from that maximum; continuously covered ≥604,800 s; no gap/correctness reset within interval; regional seeds per proof policy | shadow §6 positive predicate/time, retained with policy and per-boot amendments | `positive_seed_gap`, `regional_seed_gap`, `continuous_window_gap` |
 | G11 External proof | Exact-revision cross-repo CI/fixtures, frozen money oracle, all v1/v2 mutations, real-adapter faults, D2/D3/real drain/load/rollback and accepted exposure/side-effect policy supplied at the stage requiring them | outbox §8 and runbook steps 6–9 retained; shadow never proves async drain capacity | `external_proofs_missing`, `pilot_prerequisite_gap` |
 
@@ -1691,10 +2582,22 @@ traffic does not excuse absent timers. G8 recovery never excuses G6 failures.
 Gap intervals retain conservative whole affected UTC-day blocking; an incomplete
 writer cannot declare its lost tail empty. Later restored coverage may begin a
 new interval from a new positive seed, not backfill that day. Persistent missing
-support/reset provenance stays persistent. Output both comparator and admission
-coverage, A/B/C and E, original/retry counts, checkpoint failure/recovery/loss,
-per-writer ratios including `not_exercised`, publisher and fleet peaks, actual
-regions, null counts/timing/deltas and first seed/reset/gap timestamps.
+support/reset provenance stays persistent. **A2 BEFORE:** the output paragraph
+required metrics without a contract-defined payload.
+**A2 AFTER:** emit the unchanged A1 GATE_OUTPUT envelope and exactly one §7.5
+GATE_REPORT whose canonical bytes hash to coverage_sha256. It carries both
+comparator and admission coverage, A/B/C and independently derived E,
+original/retry counts, checkpoint failure/recovery/loss, per-writer ratios
+including not_exercised, publisher/fleet peaks, actual regions, null counts,
+timing/deltas and first seed/reset/gap timestamps in the exact fixed schemas.
+Writer, region, input and reset details are complete paginated streams; failure
+subjects alone are a bounded prefix, with exact tallies/day counts in the report.
+Each stream is committed by root, count and chain tail. Null means unevaluable/absent as specified, never
+zero. Preserve every failing name/count/blocked day and every historical reset; list
+only the deterministic subject prefix. Report/outer equality and
+gaps↔positive-exact-count equality are mandatory. A required
+aggregate that cannot be computed blocks through its named rule; no silent
+partial total or report-free PASS.
 
 Pilot tools, precisely: `fleet-budgets-pre` requires dormant pins, bounded ≤1-hour
 measurements and approved **projected** G7; no demand/cadence evidence invented
@@ -1732,8 +2635,9 @@ transfer to v2.
 
 1. **Replace old steps 1–2:** retain/export current blocked v1 evidence; review a
    rollout removing shadow opt-in for migration. Close what can close; do not
-   erase losses. **A1 BEFORE → AFTER:** land baseline P1/P2, then P1-A1 and the enclave fixture-pin follow-up,
-   revised P3/P4/P5 dormant in §10 dependency order. Deploy enclave
+   erase losses. Land baseline P1/P2, P1-A1/P1-A2 and exactly one combined
+   enclave pin-only follow-up; revised P3/P4a/P5 dormant in §10 order.
+   P4b certificate issuance is deferred beyond the first window. Deploy enclave
    `shadow-v2-read-echo` everywhere first, shadow and negotiation off; deploy
    router v2 readers/code with policy empty and shadow workspace list empty.
    Admission/protection/fast drain remain false. Record every serving build,
@@ -1741,15 +2645,23 @@ transfer to v2.
 2. Provision/verify signer, positive authority epoch and public keyrings on all
    revisions as retained key-placement procedure requires; no new production
    key values in this document. Prove ticket/binding/exclusion separation and
-   dormant money oracles. **A1 ADD:** baseline P2 capability and the A1 fixture-pin follow-up must be
-   present before P4 emission; no new enclave protocol or origin registry. Prove
-   terminal-only report reconciliation and original-boot close-result production.
-   Obtain Joseph’s Q-A1–Q-A4 choices before P6.
-3. **Replace old step 3:** choose one shadow workspace (§13) and record its full
-   operator-supplied ID/key separately; do not expand prefix d385c399… by guess.
-   Collect immutable-fact/candidate/size distributions and actual-hop maximum
-   auth+12,288-byte header tests, full/hash-only/certificate variants and
-   fragmented delivery in every region. Run new `fleet-budgets-pre` with N=1,
+   dormant money oracles. Baseline P2 capability and the single combined
+   fixture pin must precede P4a compared emission. Certificate runtime issuance/
+   worker drills wait for P4b; frozen three-purpose rejection and verifier ports
+   remain required now. Prove terminal-only reconciliation and original-boot
+   close-result production. Q1–Q6/Q-A1–Q-A4 defaults are accepted (§13); obtain
+   the actual measurement-based approvals, not another choice of A1 mechanism.
+3. **Replace old step 3:** provision the ONE dedicated probe workspace via the
+   separate `shadow-probe-workspace` package (§10), in the Stage D provisioning
+   script pattern. Pin its identity in scripts/deploy/rollout.sh, keep key handling
+   outside this design, and verify that its only traffic is the deterministic
+   eligible probe (§13). Exercise chat.completions/responses through every enclave
+   regional hostname; verify actual router booking regions and seeds. Prove the
+   one-supported-candidate/full-event fit and ordinary parameters. Keep actual-hop
+   full/hash-only maximum header and fragmentation tests in every region; live
+   certificate-variant traffic and mixed-cohort distribution studies are deferred
+   to P4b because the first cohort has neither. Frozen certificate byte fixtures
+   and malformed/unexpected-proof rejection still run. Run new `fleet-budgets-pre` with N=1,
    configured caps including surge, publisher contender K and all §3/§7 load.
    Measure bounded read/claim/publish cycles against the real adapter in an
    isolated controlled trial, reviewed before production opt-in; include this
@@ -1759,8 +2671,11 @@ transfer to v2.
 4. **Replace old step 4:** reviewed config-as-code activation P6 sets router
    policy shadow-v2, health region, and single shadow workspace; then enclave
    shadow on with negotiation off. Bootstrap/old-authorization traffic is recorded
-   but noncertifying. Warm caches, issue and echo both variants, prove no money
-   worker calls. Measure one opted workspace on the actual single nam6 node:
+   but noncertifying. Warm caches, issue eligible bindings and exercise both
+   full/hash-only compared variants; prove no certificate issuance and no money
+   worker calls. Require exact T=A, B=C=0 for the qualifying cohort; an ineligible
+   authorization remains unresolved/C and blocks. Certificate emission/echo drills
+   wait for P4b; no benign-classification shortcut is allowed. Measure one opted workspace on the actual single nam6 node:
    CPU/read/write/index row load, startup/overlap, publisher progress, checkpoint
    recovery, closure and all regional latency/freshness components. If budgets
    fail, stop opt-in and redesign/reapprove; never enlarge the old allowance silently.
@@ -1785,22 +2700,32 @@ transfer to v2.
    zero unexplained disagreement and G1–G11 at their specified stages. Keep
    admission/protection/negotiation/fast drain off for the entire interval.
    Dormant unrelated PR G code may land only with exact-revision proof and pins.
-7. **Replace old step 7 selection inputs:** confirm admission-pilot workspace
+7. **DEFERRED until admission/pre-flip, not a first-window dependency — replace old step 7 selection inputs:** confirm admission-pilot workspace
    separately (§13), obtain its own traffic/concurrency/side-effect measurements,
    select all drain settings from real regional trial exports and run v2 pre-flip.
    Verify signer/epoch/keyring and same-price/status/rollback gates. Seven shadow
    days do not substitute for D2/D3, handoff or drain proof.
-8. **Retain old step 8 money order, add source handover:** after shadow PASS,
+8. **DEFERRED until admission, retain old step 8 money order/source handover:** after shadow PASS,
    protection on → verify fencing → measured fast drain on → verify real fleet-v1
    worker health plus §3.2 re-verifications → install pilot allowlist/$5 override
    → admission on → enclave negotiation on and shadow off for that pilot.
    Stop shadow publisher/close evidence before claiming handover complete; if
    temporarily overlapping health sources, budget both and prove no cross-use.
    No manual env edit, skipped attestation or queued-rollout claim.
-9. **Old step 9 and rollback retained:** admission/negotiation off first; retain
+9. **DEFERRED money-pilot step 9/rollback, still mandatory before money opt-in:** admission/negotiation off first; retain
    protection/keys and drain until all accepted work is durably resolved; only
    then protection off. Re-enable solely through the gated sequence, export
    actual regional handoff/booking/repair percentiles and rollback evidence.
+
+**First-window deferrals are stage-specific, not gate exceptions.** The
+admission pilot's traffic/concurrency/side-effect study, D2/D3/real-drain setting
+selection and fleet-v1 handover/money-flip drills in steps 7–9 belong to pre-flip
+or later as §8 already specifies. They do not start the shadow clock. Keep all
+applicable shadow transport, real-adapter faults, money isolation/oracles,
+readiness, health, close/export, load and seven-day gates. Shadow opt-out/closure/
+evidence retention rollback remains mandatory now; only money activation work
+is deferred. Multi-workspace provisioning and N>1 sizing wait for a proposed
+cohort addition, which must satisfy §5.2 before opt-in.
 
 **A1 ADD:** daily export includes exact report obligations/terminal horizon joins,
 close-result rows or explicit gaps, conservative handoff-accounting bounds,
@@ -1819,8 +2744,10 @@ closure; logs and absence of a row are not a substitute.
 
 ## 10. Smallest reviewable ordered PR sequence
 
-**A1 round 2 — D-V2-10:** retain P1–P6, add only contract package P1-A1
-and an enclave fixture-pin follow-up. P0-A1 and behavioral P2-A1 are removed. Each
+**A2 BEFORE:** A1 round 2 retained P1–P6 plus P1-A1 and an enclave fixture-pin
+follow-up. **A2 AFTER — D-V2-10:** add P1-A2 and consolidate A1/A2 into exactly
+one enclave pin-only follow-up (§7.1.1); split P4 into compared P4a and deferred
+exclusion P4b. The dedicated probe package is a P6 prerequisite. P0-A1 and behavioral P2-A1 remain removed. Each
 package carries its own tests; P1/P2 cross-repo fixture copies are an ordered
 contract pair. Dormancy means no new task/RPC/parsing/serialization/counter on
 empty v2 policy or nonmember paths, except the existing constant guard; no hidden
@@ -1829,19 +2756,34 @@ change to existing v1 behavior. Do not update a frozen oracle to absorb a surpri
 | Package | Repo, scope and dependencies | Dormancy, proof obligations and deployment/rollback |
 |---|---|---|
 | P1 `shadow-v2-contract` | Router schemas, pure decision/certificate validators, wire fixtures and evidence schema; no live imports/effects. Establish §7 fixture manifest. | Pure dormant contract. **WIRE**: exact schema/limits/three-purpose rejection/fallback matrix; existing billing literals unchanged. Deploy has no effect. |
-| P2 `shadow-v2-enclave-echo` | Enclave copy P1 bytes; retention/variant/header and capability support at all §4 seams; async binder rejects certificate. Depends P1 contract. | Existing shadow switch plus v2 router marker gate new work. **ECHO/OFF**: real stream/refund/route and byte oracles, retry frozen bytes, no async bind. Land and attest/deploy everywhere **before P4 emits**. Can revert while emission dormant; active rollback first disables router emission/ends certification. |
+| P2 `shadow-v2-enclave-echo` | Enclave copy P1 bytes; retention/variant/header and capability support at all §4 seams; async binder rejects certificate. Depends P1 contract. | Existing shadow switch plus v2 router marker gate new work. **ECHO/OFF**: real stream/refund/route and byte oracles, retry frozen bytes, no async bind. Land and attest/deploy everywhere **before P4a compared emission**, and also before later P4b certificate emission. Can revert while emission dormant; active rollback first disables router emission/ends certification. |
 | **A1 ADD P1-A1** `shadow-v2-contract-a1` | Depends baseline P1. Pure exact O/C/R+q/e reader predicate, changed HEALTH timestamp/age-input fields and HEALTH_CLAIM server-slot timestamp, publisher conservation/basis/trace, terminal-only contextual completion, closure obligation marker/report join schema, CLOSE_RESULT kind/sealed projection, coverage/retention allowlists and new fixture release (§§3/7) | No live imports/RPC/lifecycle. Baseline bytes frozen; explicit new manifest/negative fixtures. Enclave follow-up copies/pins **all** files/variants with no behavior change. |
+| **A2 ADD P1-A2** `shadow-v2-contract-a2` | Depends P1-A1. Pure additive report/failure/subject/preimage schemas, roots, output relationship checks and verifier port declarations; §7.1.1 exact surface and combined release. | Baseline/A1 behavior and bytes frozen. No live imports, I/O or G1–G11 implementation. All A2 fixtures and retained byte differentials required. One combined enclave pin, no behavior change. |
 | P3 `shadow-v2-durable-observation` | Depends P1-A1; independent health publisher/reader, exact SDK metadata/sentinel, bounded receipt HWM/checkpoint/closure, committed report obligations, ordinary health attachment export and original-boot one-attempt CLOSE_RESULT. No certificate issuance yet | Policy empty means dormant. Native timing/races/faults/SIGTERM/SIGKILL and same-writer recovery proofs; preserve money/shared adapters unchanged. Terminal obligations survive local retirement via durable receipt chain. Measure export/close costs. |
-| P4 `shadow-v2-cohort-integration` | Depends P1-A1/revised P3 and deployed baseline P2 plus A1 fixture pins. Authorize decisions/certificate issuance, terminal dispatch/links/demand, no ownership data or new wire | Opt-in/capability gated, off/nonmember pure. Existing PARTITION/MONEY/stream/byte and actual terminal reconciliation proofs; no shadow HTTP error or synchronous evidence lookup. |
-| P5 `shadow-v2-gates` | Depends P1-A1/revised P3/P4 and P2 wire/fixture evidence. Shared G1–G11, inventory/readiness, bounded exports, exact obligation enumeration and forward terminal joins, CLOSE_RESULT identity/coverage and handoff bounds, health replay/trace conservation | Offline tools explicit policy; no request storage. Full window/churn, missing-terminal/receipt/result and changed-version negatives. No clock qualification, owner collector or new boot-signature verifier; existing certificate/binding verifiers remain mandatory. |
-| P6 `shadow-v2-measured-opt-in` | Depends P1–P5, P1-A1 and enclave pin follow-up, Joseph’s choices and exact-revision CI/resource gates. Reviewed single-cohort router/enclave config/attestation releases; later money pilot is separate | Active release after dormant gates; actual N=1 measurements include 250 ms reads, server slots, export churn and close bursts. Preserve money off pins; opt-out/closure/export on rollback. |
+| **A2 P4a** `shadow-v2-compared-path` | Depends P1-A1/revised P3 and deployed baseline P2 plus the single combined fixture pin for activation. Authorize decision/receipt through journal; existing v1 eligible binding/snapshot under v2 outer policy; terminal dispatch and compared verification; exactly one terminal receipt/attempt, links and independently derived demand E. No new wire/ownership data. | Opt-in/capability gated, off/nonmember pure. Noneligible gets NO certificate/binding, stays unresolved; terminal C blocks day. PARTITION/MONEY/stream/bytes and actual terminal reconciliation; no HTTP error or synchronous evidence lookup. Required for P6/first window. |
+| **A2 P4b — DEFERRED** `shadow-v2-exclusion-issuance` | Depends P4a, P1-A1/P3 and existing P2. Adds issuance plus §4.1/§4.3 asynchronous exclusion verification worker, original receipt backing and certificate terminal projection. No A2 runtime dependency or new enclave behavior. | Not a P6/first-window prerequisite; required before opting in any cohort carrying excluded traffic. All certificate issuance/backing/locator integration and mixed-traffic proofs/load apply then. No auto-exclusion while absent. |
+| **A2 separate prerequisite** `shadow-probe-workspace` | Being written separately; changes no shadow module. Script patterned on scripts/provision_stage_d_probe_workspace.py provisions one dedicated local typed Credits workspace/key and deterministic eligible probe; routes/provider pin/fallback off/ordinary parameters/volume and regional hostnames as §13. | Required before P6; provision/configure through reviewed release procedures, identity pin in scripts/deploy/rollout.sh. Verify eligibility, event fit, actual region seeds and load; no source or provisioning completion claimed here. |
+| **A2 AFTER P5** `shadow-v2-gates` | Contract-only library/tools/planner depend P1-A1 + P1-A2; full live export integration additionally depends revised P3/P4a and baseline P2 with combined fixture-pin evidence. Add A2 report/pages/preimage resolution, exact verifier port binding and retained-tool delegation. Shared G1–G11, inventory/readiness, bounded exports, exact obligation enumeration and forward terminal joins, CLOSE_RESULT identity/coverage and handoff bounds, health replay/trace conservation | Offline tools explicit policy; no request storage. Full window/churn, missing-terminal/receipt/result and changed-version negatives. No clock qualification, owner collector or new boot-signature verifier; existing certificate/binding verifiers remain mandatory. |
+| **A2 AFTER P6** `shadow-v2-measured-opt-in` | Depends P1/P2/P3/P4a/P5, P1-A1/P1-A2, shadow-probe-workspace and the single combined enclave pin follow-up; accepted §13 choices and actual exact-revision CI/resource gates. P4b is explicitly not required. Reviewed single-cohort router/enclave config/attestation releases; later money pilot is separate | Active release after dormant gates; actual N=1 measurements include 250 ms reads, server slots, export churn and close bursts. Preserve money off pins; opt-out/closure/export on rollback. |
+
+**A2 ADD:** P3/P4a/P4b do not depend on P1-A2 schemas or implementation; their
+A1 APIs and producer behavior stay frozen. Earlier table references to “A1
+fixture pins” mean the consolidated release pin for activation, not a second
+enclave follow-up or an A2 runtime dependency.
 
 P3 combines health and persistence because publisher lifecycle/operation evidence
 must itself use the new counters/closure; splitting either into an active partial
-publisher is not a useful deploy. P4 is separate from P5 so wire/isolation review
+publisher is not a useful deploy. P4a/P4b are separate from P5 so wire/isolation review
 is not buried in gate arithmetic. No money admission PR is bundled with fixes
 to shadow certification. Reviewed CI, attestation, release workflows and rollout
 gates remain intact in both repos.
+
+First-window critical path: frozen P1/P2 + P1-A1 → revised P3 → P4a;
+P1-A2 → P5 and the **one** combined enclave pin; the independent
+`shadow-probe-workspace` prerequisite joins these at
+measured P6 → warm-up/transport/fleet PASS → eligible seed → seven-day window.
+P4b, N>1 expansion and money-admission packages are deferred to their actual
+use. This removes unused issuance work from the path without changing G1–G11.
 
 ## 11. Test and proof matrix
 
@@ -1849,6 +2791,24 @@ gates remain intact in both repos.
 not passing results. Use scratch mutants, never leave mutant code in either repo;
 a syntax/import failure is not a kill. Exact named suites may be split by authors,
 but each proof obligation below must appear in CI artifact inventory.
+
+**A2 proof ownership / first-window boundary:** P1/P2 frozen certificate schemas,
+verifier/purpose negatives and shared byte fixtures stay required. P4b owns the
+live issuance/worker portions of PARTITION/WIRE (mixed/excluded and all qualifying
+reasons), CANDIDATE BACKING (cross-boot certificate success/faults), ORIGINAL
+RECEIPT LOCATOR (signed certificate lookup/integration), MONEY/ECHO's certificate
+emission integration, and WINDOW's mixed eligible/certified-exclusion scenario;
+those portions are DEFERRED before the first eligible-only window. General
+journal reservation/HWM/size/closure/retry faults from those rows remain P3/P4a.
+P4a must prove missing/invalid binding, ineligible facts, oversized/unsupported
+candidate context, replay without original proof, header_absent and unexpected
+certificate traffic all persist receipts and remain C/BLOCKED; never relabel as
+B or drop from T/E. A B=0 full-window fixture must exercise all G1–G11 at their
+stages. P5 certificate verifier contract tests remain now; a live worker is not
+needed to run the frozen pure verifier. DEMAND's excluded-only arithmetic also
+remains a pure gate proof. LIVE drain-handover and money activation proofs retain
+their pre-flip stage, not the first shadow-window stage. Record deferred ownership
+explicitly in EXTERNAL_PROOFS; it is not an arbitrary not_required escape.
 
 | Change / obligation | Positive and fault tests | Scratch mutants that must fail |
 |---|---|---|
@@ -1889,6 +2849,88 @@ coverage ≥70%, relevant real-backend conformance, and for async/billing change
 Enclave runs its full affected Go/oracle/stream suites and shared 759-case
 contract. Patch backend classes, never STORE proxy. This design-only pass does
 not claim those implementation tests passed.
+
+
+**A2 ADD — proof rows (required future proofs, none executed here):**
+
+| Boundary | Positive proof | Mutants that must fail |
+|---|---|---|
+| A2 report commitment | Exact canonical report/outer equality, complete fixed fields; independent known-zero versus null and E=0 not_exercised cases | Report hash differs from coverage_sha256; read null as zero; emit PASS with no report; change original seed time to verification time |
+| A2 exact failure counts / bounded listing | >128 independent missing closures yield exact total/day counts and all blocked dates but exactly first 16 subjects; all 58 names, K−1/K/K+1 and four-page boundary, max subject, complete=true report with incomplete list; permuted input gives identical prefix; every rule evaluated after K | Drop page/name/nonlisted count/day, wrong subject/order/prefix or complete flag; infer counts/days from sample; omit failing rule after first/Kth failure; claim incomplete evaluation exact; positive count with PASS; zero count with listed entry |
+| A2 roots/preimages | Independent literal byte/root vectors for every §7.5.4 field; LF-sensitive F versus canonical C; A1 page-root unchanged and obligation entry-root unchanged | Accept undefined-preimage digest; substitute ZERO; reorder/repartition A1 coverage silently; wrong field's root; missing object/page/tail or count; circular report/proof commitment |
+| A2 verifier/purity | Both actual existing callables, exact keyset/source/fixture identity, per-applicable-object invocation; AST/fresh-process pure import tests | Verifier absent or same-signature replacement; claims-only acceptance; changed keyset; no call with fabricated transcript; import binding/storage into pure family |
+| A2 packaging/delegation/cost | Byte-identical baseline/A1 release and one combined enclave pin; v1 no-policy stdout/exit differential and every retained predicate/delta; worst-size pages and full L+W/churn/rerun/cleanup plan | Second enclave pin prerequisite; altered A1 bytes; v1 PASS relabelled v2; unlisted predicate bypass; charge only steady producer bytes; omit page/report/cleanup or approve unbounded passes |
+
+**A2-R1 literal counting/subject vectors.** Canonical JSON code lines below are
+exact ASCII subject bytes, without LF. With days=["2026-10-12"], two unusable
+health bases in router w1 that independently fail the required timestamp check
+produce health_timestamp_gap count=listed=1, complete=true, day_counts=[1].
+Their subject is exactly:
+
+```json
+{"at_us":null,"boot":"w1","day":"2026-10-12","dimensions":null,"object":null,"phase":null,"revision":null,"role":"router","scope":"writer"}
+```
+
+Three failing slots across two trace batches in that same writer-day produce
+publisher_trace_gap count=listed=1, complete=true, day_counts=[1], with **the
+same literal subject bytes above**. If those slots also violate accounting,
+publisher_accounting_gap independently has count=listed=1 and day_counts=[1]
+with those bytes. The same writer-day coalescing applies separately to the
+other G6 names; these vectors do not suppress independently failing names.
+Reordering the two bases, three slots or two batches changes none of these
+counts/subjects. Their individual diagnostic coordinates are not extra failures.
+
+For an otherwise valid expected page
+async_settle_shadow_receipts_v2/2026-10-12/w1/00000000000000000001 whose first
+event is schema-invalid, evidence_schema_gap count=listed=1, complete=true,
+day_counts=[1] for that defect. Position is 0 even if the invalid event claims
+seq=99. No extra page failure is counted merely for that invalid child. Exact
+subject bytes (page-key component length is 34):
+
+```json
+{"at_us":null,"boot":"w1","day":"2026-10-12","dimensions":null,"object":{"event_seq":null,"key":"34:2026-10-12/w1/00000000000000000001/5:event/1:0","kind":"a2_invalid_receipt"},"phase":null,"revision":null,"role":"router","scope":"object"}
+```
+
+**A2-R2 literal conflict/input-permutation vectors.** At the ROOT_ENTRY byte
+interpretation boundary use logical (day,boot)=("2026-10-12","w1") and exact
+candidate bytes `{}` (hex 7b7d, size 2) and `{}\n` (hex 7b7d0a, size 3).
+These minimal bodies exercise the root layer, not valid counter/closure payloads;
+their source-schema rejection remains a separate G1 failure. Their respective F
+values are `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a` and
+`ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356`. The exact conflict SHA preimage is:
+
+```json
+["44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"]
+```
+
+It is 135 bytes without LF. The exact conflict entry is:
+
+```json
+{"bytes":5,"key":"10:2026-10-12/2:w1","sha256":"0b896b4ad8e80334b52d5f5de239a1bee9f008464e9c5f019974159aea183a0c","state":"conflict"}
+```
+
+The byte count is 5; the expected-set/root-entry count is 1, and the candidate
+inventory count is 2. R of the one-entry canonical array is
+`129591526645105fa353f07120da3ca4905ce6ec7ac74914a96604ec9fb1e2f1`.
+Inputs [hex 7b7d, hex 7b7d0a], [hex 7b7d0a, hex 7b7d] and
+[hex 7b7d0a, hex 7b7d, hex 7b7d0a] all yield exactly that entry, SHA preimage,
+root and counts after byte-identical export deduplication. Neither candidate F
+may replace the conflict SHA. The same construction applies at each complete
+key in every new ROOT_ENTRY stream; it leaves A1 page-root vectors unchanged.
+
+**A2-R3 observation vector.** One retained S sample with booked_micro=100,
+booked_minus_frozen=-3 and eligibility.observed=null is referenced by an original
+terminal, one retry and one completion, all within the window. The original
+comparison is null, the retry comparison is explained-by-catalog-change, and both terminal prediction
+objects are non-null (one may contain prediction="unknown"). Then |S|=1, |T|=2,
+deltas.count=1, null_count=0, min_micro=max_micro=-3, bin `-2-10`=1 and every
+other bin=0; null_counts.{eligibility,comparison,prediction,booking,delta} is
+{1,1,0,0,0} in that field order. evidence_write_us has count=0, null_count=1
+and null extrema/percentiles. The completion adds no observation. Separately,
+two scheduled slots, one with rpc_count=3/rpc_elapsed_us=150 and one missed
+with 0/0, yield publisher_slot_rpc_elapsed_us exactly
+`{"count":2,"null_count":0,"min":0,"p50":0,"p95":150,"p99":150,"max":150}`.
+Neither three 50-us RPC observations nor omission of the missed slot is valid.
 
 ## 12. Feasibility estimate and measurements before the clock
 
@@ -1932,6 +2974,24 @@ The verification report's `(1-p)^W` argument explains why simply waiting under
 millions of checkpoint attempts is fragile; its extrapolation from 339 reported
 drops is **not** an estimate of v2's d. No invented hard-kill rate, eligible failure
 rate or seven-day success percentage is authorized here.
+
+**A2 first-window measurement scope:** mixed monitor/partner/candidate traffic
+surveys, certificate issuance/worker load and excluded-traffic terminal-loss
+studies are DEFERRED to P4b/cohort expansion. Multi-workspace N>1 sizing is
+DEFERRED until an addition is proposed; each addition needs new §5.2 approval.
+Money-pilot drain/side-effect measurements are DEFERRED to pre-flip. The dedicated
+probe still needs actual eligibility/one-candidate/event-fit confirmation,
+provider exact-usage/refund/failure behavior, configurable volume and observed
+per-writer-day eligible-demand distribution well over 50 (target ≥200 for each
+active bucket). Load balancing/churn cannot guarantee that by configuration
+alone; measure and size before P6, retain unchanged 2% unknown rule on every
+bucket including short-lived writers. Truly idle buckets stay E=0/not_exercised;
+no synthetic demand or per-boot positive-seed rule is introduced. All h/d/q/r,
+health, load, closure, authorization-horizon, export and observed regional-seed
+measurements remain. Predictable scheduled probes remove the need to estimate
+random monitor arrivals for the first cohort; actual seed success is still proven.
+Here N in the probability model denotes daily eligible attempts, while §5.2 N
+is opted workspace count (initially one). Neither is a measured value yet.
 
 ### 12.1 A1 round 2 — incremental costs and feasibility
 
@@ -1994,25 +3054,112 @@ products can be optimistic. Losing a response with no terminal still blocks an
 earlier issue day; ending the report window or waiting expiry never helps.
 The practical difference from round 1 is no early benign-running classification;
 final reports already waited for terminals, so no final correctness evidence is
-lost by removing ownership. Q-A1–Q-A4 retain the real cost/policy choices.
+lost by removing ownership. Q-A1–Q-A4 defaults were accepted on 2026-10-12;
+actual cost measurements and activation approvals remain required.
 
-## 13. Open questions for Joseph
+### 12.2 A2 ADD — offline report cost only
 
-**D-V2-13 — explicit operator choices, no guessed production identities.** These
-choices precede P6; they do not reopen the decision to amend the gate or permit
-weaker correctness. Recommendations below are proposed defaults, not asserted
-approvals.
+§7.5.5 gives the incremental report/failure/flat-page/attachment arithmetic.
+A2 adds **0** producer RPCs, **0** request-path bytes, **0** money operations,
+**0** DDL/indexes and **0** enclave runtime behavior. It adds one pure contract
+package and replaces two potential fixture pin steps with exactly **1** combined
+pin-only follow-up. Failure pages total ≤954,368 bytes; including report and outer
+envelope the bound is ≤1,282,048 bytes. Exact input evaluation and complete other
+evidence still cost their actual planned operations; this grants no new budget. P5 must calculate actual costs before
+execution; P6 approval and G7 remain mandatory. No latency, RSS, suite duration,
+coverage percentage or practical capacity is claimed measured in this amendment.
 
-| Question | Recommended default | If Joseph chooses otherwise |
+## 13. Owner decisions and remaining delivery evidence
+
+**D-V2-13 / A2 round 2 — owner decision, 2026-10-12:** “make this simple and
+fast to check and verify and get fully to prod.” The owner accepted every
+recommended default Q1–Q6 and Q-A1–Q-A4, then replaced Q1's conditional synthetic-
+monitor choice with **ONE dedicated eligible probe workspace** after the source
+check below. These are settled choices, not requests for another approval of
+A1. Q4 still requires a measurement-based numeric target, and Q5 approval of
+measurement is not fabricated approval of actual capacity. Concrete §5.2/P6
+resource/release evidence remains mandatory. No workspace/key identity appears
+here; its pin lives in `scripts/deploy/rollout.sh`.
+
+| Question | Accepted answer / delivery consequence | Alternative only after a new owner decision |
 |---|---|---|
-| Q1 Shadow cohort | Replace operator workspace `45819281…` with synthetic-monitor workspace `d385c399…`, **one opted workspace**. The abbreviated monitor ID `d385c399…` and roughly 25 OpenAI-provider requests/day from us-central1/europe-west4 are **gatekeeper-reported and unverified**, not established by the supplied inputs; confirm the full ID and measure traffic before P6, including immutable program/fallback eligibility, provider usage and actual seeds. Other requests require authenticated exclusions, not automatic partner exemption. | Keep operator workspace and add a small dedicated eligible probe **in that same workspace**, with owned key/routing and measured load; reported 141/141 partner authorizes supplied no eligible seed. A separate probe workspace makes N=2 and needs new approval/measurements; old budget fails. Neither proposal guarantees every monitor OpenAI request is actually eligible. |
-| Q2 Must admission pilot of old §10 step 7 / detailed runbook step 7 match shadow cohort? | No. Keep the approved operator admission pilot/no-auto-refill/side-effect exclusions/$5 guard; use shadow cohort for eligible evidence and separately measure pilot traffic before admission. | Same workspace requires explicit revision of pilot identity/key/side-effect policy, trust-tier/concurrency/traffic and drain trials; monitor workspace is not automatically approved for async admission. |
-| Q3 Per-region seed? | One durable eligible positive seed per **traffic-serving router region per window**, not per boot/day. If cohort reaches only two regions, route a bounded eligible probe to remaining serving regions or explicitly restrict reviewed serving scope before window. | Fleet-only seed retains every region's timer/transport/fixture/load coverage but labels price-comparison production coverage “not exercised” in unseeded regions. Per-day regional seeds increase probe demand and blocked-day probability; remeasure. |
+| Q1 Shadow cohort | ONE dedicated probe workspace, neither operator nor synthetic monitor; separately delivered `shadow-probe-workspace` provisions it in the Stage D script pattern. Its only traffic is a deterministic probe: direct first-party OpenAI or Anthropic model/endpoint, provider pinned, fallbacks disallowed, exactly one supported candidate, local typed Credits/ordinary program, chat.completions and responses, only ordinary parameters, through the enclave to every regional hostname. Full event/snapshot fit and terminal evidence still verified. | Additional dedicated workspaces may use the same script; each addition changes §5.2 N and requires the corresponding N-specific budget approval and measurement before opt-in. No automatic N=1→N=2 expansion or inclusion of other traffic. |
+| Q2 Must admission pilot of old §10 step 7 / detailed runbook step 7 match shadow cohort? | No. Keep the approved operator admission pilot/no-auto-refill/side-effect exclusions/$5 guard; use shadow cohort for eligible evidence and separately measure pilot traffic before admission. | Same workspace requires explicit revision of pilot identity/key/side-effect policy, trust-tier/concurrency/traffic and drain trials; dedicated shadow workspace is not automatically approved for async admission. |
+| Q3 Per-region seed? | One durable eligible positive seed per **traffic-serving router region per window**, not per boot/day. Send the dedicated probe to every enclave regional hostname; attribute seeds to actual router booking regions as below. Unseeded required router regions still block G10; enclave hostname coverage is not a router seed. | Fleet-only seed retains every region's timer/transport/fixture/load coverage but labels price-comparison production coverage “not exercised” in unseeded regions. Per-day regional seeds increase probe demand and blocked-day probability; remeasure. |
 | Q4 Acceptable residual blocked-day rate? | Choose an explicit target before P6 using §12 confidence bounds; do not choose a numeric target without measured h/d/q/N. Retain BLOCKED on every actual loss. | A target incompatible with observed hard kills calls for lifecycle reliability work or separate durable-handoff design; never loosen loss accounting. Requiring arbitrary-crash certification is outside v2. |
 | Q5 Publisher cadence/budget on the single nam6 node? | Approve **measurement** of primary-region contenders, two-second cadence, ≤500ms whole publish cycle and explicit extra 5,000.5 worst-case indexed row visits/s; enable only after newly approved N=1 CPU/RPC/write/row headroom passes <45%. | If rejected or unmeetable, reduce contender/observation cost through a separately reviewed bounded ownership/index design or add capacity; slower freshness or raising the alarm requires a new policy decision, not an implementation shortcut. |
 | Q6 Inventory/readiness/closure ownership? | Release tooling owns independent per-boot inventory and ledger, P5 enforces readiness; operators seal only proven closures. | If only revision inventory is available, missing boots remain unknowable and clock cannot start; procure boot-level evidence or separate durable registration/handoff design. |
 
-**A1 round-2 choices (recommendations, not asserted approval):**
+**Why the synthetic monitor is not this cohort (A2-S10–S13).** In A2R,
+`config.py:1036` defaults its model to trustedrouter/monitor; `synthetic/probes.py:1168–1181,1215–1230`
+supplies no provider preference. The read-only default-catalog calculation
+through `routing.chat_route_endpoint_candidates` gives **70 endpoints: 68 other,
+1 OpenAI, 1 Anthropic**; the canonical §4 candidate projection with empty feature
+lists is **6,341 bytes** (a lower bound if features must be added). This is local
+source/catalog arithmetic, not a live catalog/traffic measurement or test pass.
+`billing_snapshot.py:222,259,436–471` requires supported providers and at most
+64 candidates. `async_settle_shadow_v2_contract.py:149–163` cannot prove an
+all-other exclusion for that mixed set and cannot make a complete supported
+snapshot; `:39,166–175` caps the whole event at 2,048 bytes. The v2 candidate
+schema itself allows **128**, not 64; 64 is the **price snapshot** cap. Even a
+hypothetical candidate-based certificate could not retain this projection.
+
+`services/async_settle.py:290–310,323–329` is the existing async eligibility
+mapper: it requires the async header, checks ordinary parameters and conservatively
+marks a non-openai/anthropic model prefix partner. That heuristic is **not** an
+immutable v2 commercial-program proof; §4.1/decide do not permit an alias prefix
+to mint a certificate. Direct gateway probes (`synthetic/probes.py:1728–1746,1851–1867,1899–1916`)
+POST authorize/settle to the control plane with only the internal auth header,
+bypassing enclave capability/binding: header_absent is not an exclusion. Thus
+these configured paths cannot provide certifying coverage as they stand; their
+unresolved terminals block their days through G4. The reported **about 85%** of
+workspace authorizations and “every day” frequency are **owner-supplied estimates,
+not derivable or verified from source**. The conclusion needs no assumed fraction:
+any such unresolved terminal blocks its day. No production export was queried.
+
+**Dedicated cohort consequences.** Every cohort terminal must be A (compared);
+B from certificates is expected zero and C is a probe/system defect that blocks
+its day. Unexpected observed B also violates the eligible-only policy (§4).
+Configure volume so active writer-day demand buckets have well over 50 eligible
+predictions (target ≥200, subject to measured distribution, churn and budget).
+Keep independent E, exact booking/usage, retries/refunds and all health/closure
+rules; “eligible by construction” is an input restriction, never a proof bypass.
+Do not force traffic onto idle boots or claim that a rate setting guarantees a
+minimum on a boot that lives only briefly.
+
+**Regional seed plan and its limit (A2-S14).** In the reference inventory the four
+GCP hostnames are `api-us-central1.quillrouter.com`,
+`api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com` and
+`api-us-west1.quillrouter.com` (`enclave_regions.py:7`, `config.py:1030`). Send
+both probe routes to each; the complete reviewed enclave inventory, not a
+hard-coded four-entry list, governs if more regional targets are in scope.
+The gateway-specific routing configuration is newer
+than the generic nearest-control-plane comment in enclave_regions.py: its
+backend is **us-central1 plus southamerica-east1**, with us-central1 preferred
+for all four enclave origins (`scripts/deploy/gateway_edge.sh:13–14`,
+`gateway_edge_config.py:69–80,106–119`; `docs/runbooks/gateway-billing-edge.md:3–6,100–106`).
+Accordingly **each of the four normally books in router us-central1**; failover
+may book in southamerica-east1. This source configuration is not a serving
+measurement: P6 must record actual per-terminal router regions and the approved
+serving scope. Merely hitting the east/Europe hostname does not seed an east/
+Europe router. us-west1 has no router deployment of its own.
+
+All four enclave paths are exercised; only the observed booking router regions
+are seeded. For a proven normal billing scope whose only traffic-serving router
+region is us-central1, a durable eligible positive there after §8 prerequisites
+satisfies Q3; no extra seed on idle router deployments is required. southamerica-east1 remains unseeded until a qualifying probe books
+there; us-east4/europe-west4 control-plane deployments are also unseeded by this
+normal billing path. If any of these is a traffic-serving router region in the
+reviewed window scope, Q3/G10 still requires a real durable eligible seed there
+through a reviewed enclave routing/failover trial before claiming coverage.
+Do not use direct control-plane probes, infer seeds from hostnames, or silently
+narrow inventory/disable the regional gate. If the live topology differs, use
+its proven mapping. The accepted default covers actual traffic-serving router
+regions, not a promise of comparison evidence on every control-plane deployment;
+all deployed writers still owe their inventory/timer/closure/load evidence.
+
+
+**A1 round-2 defaults accepted by the owner on 2026-10-12 (not reopened):**
 
 | Question | Adopted minimal branch / consequence | Stronger or different branch / consequence |
 |---|---|---|
@@ -2109,8 +3256,48 @@ measured transport coverage; no existing execution or activation is inferred.
 
 Unverified: raw production export and all input production counts, missing live
 health, serving release/queued rollout, CPU extrapolation/sizing artifacts,
-monitor full identity/traffic/eligibility, future protocol/schema/load/closure
+dedicated probe identity/actual traffic and regional booking evidence, future protocol/schema/load/closure
 feasibility, independent boot roster availability, and all proposed PR/test
 outcomes. The official Cloud Run contract establishes platform behavior, not
 that this deployment finishes shutdown in its grace. These are explicit P6
 measurement/proof gates and §13 choices, not excuses for dropping evidence.
+
+### 14.3 A2 ADD — source verification for amendment A2
+
+`A2R/` is the read-only reference tree
+`/Users/jperla/josh/repos/tr/wt/v2-p1a1/`, inspected 2026-10-12. It is the
+supplied P1-A1 review tree; no claim is made that it is deployed or merged.
+A2-S identifiers are deliberately distinct from A1 round 2's old A2-C identifiers.
+Every A2 implementation claim is limited to this ledger. Normative A2 schemas,
+limits, adapter checks and fixture files above are future work, not current code.
+
+| ID | Verified code claim; paths relative to A2R/ |
+|---|---|
+| A2-S1 | Baseline PAGE/EVENT/MANIFEST/WRITERS/GAPS/terminal/event/key bounds: `src/trusted_router/async_settle_shadow_v2_evidence.py:44–58`; DIMENSIONS and locator: `:74–82`; 144 bucket count: `:303–311`; MANIFEST/ARTIFACT/LEDGER/PROOF/GATE shapes: `:343–377`. A1 only extends proof/day roots and adds contract_revision to gate/ledger: `src/trusted_router/async_settle_shadow_v2_a1_evidence.py:39–46`; root-name sets: `src/trusted_router/async_settle_shadow_v2_a1_deltas.py:12–13`. GATE_OUTPUT has coverage_sha256, not a metrics payload, and only enforces PASS⇒empty gaps. |
+| A2-S2 | COVERAGE_ENTRY exact fields/states, sorted-key/chain checks and page-digest-array root: `src/trusted_router/async_settle_shadow_v2_a1_evidence.py:117–151`. Obligation keys/pages and entry-array roots: `src/trusted_router/async_settle_shadow_v2_a1_reconciliation.py:83–115`. A1 close validation uses canonical object hashes: `src/trusted_router/async_settle_shadow_v2_a1_evidence.py:70–103`; report joins explicitly require independent backing reconciliation: `src/trusted_router/async_settle_shadow_v2_a1_reconciliation.py:151–173`. These functions do not establish a PASS from an arbitrary digest string. |
+| A2-S3 | Generator fills day roots with ZERO at `tests/shadow_v2_fixture_generator.py:163–167`, ledger artifacts at `:168–171`, proof fields at `:172–175`; no end-to-end gate meaning follows. Exact primitives and byte/schema enforcement: `src/trusted_router/async_settle_shadow_v2_schema.py:45–50,63–109,218–258`; canonical bytes: `src/trusted_router/detached_jws.py:60–62`. Fixed retained dimensions are 4×4×3: `src/trusted_router/async_settle_shadow_v2_retained.py:96–102`; baseline requested adapter/route enums: `src/trusted_router/async_settle_shadow_v2_contract.py:57–58`. |
+| A2-S4 | Binding imports ticket and storage_models at `src/trusted_router/async_settle_shadow_binding.py:11–13`; signature and one verification implementation at `:49–58`, separate claims validator at `:35–46`. Certificate full signature/backing/terminal/booking verification and exact signature: `src/trusted_router/async_settle_shadow_v2_certificate.py:214–243`; signature identity context: `:95–107`; ReceiptVerification fields: `:122–126`; original receipt checks: `:129–174`. TrustedKey fields: `src/trusted_router/detached_jws.py:27–33`. |
+| A2-S5 | Pure AST import allowlist excludes binding/storage modules: `tests/test_async_settle_shadow_v2_evidence.py:402–416`; fresh-interpreter storage/services/main/routes guard: `:447–460`. A2 adopts a port to preserve these boundaries, not because claims validation is signature verification. |
+| A2-S6 | V1 percentiles and signed bins: `scripts/async_settle/shadow_report.py:52–64`; eleven external gate labels: `:45–47`; DAG/earliest rollback/synthetic resolution provenance: `:241–292`; exact resolution shape/128 bound/uniqueness: `:315–328`; reset collection before day filtering and persistent missing support: `:335–380`; fix/clock logic: `:661–688`; separate comparator/admission metrics, nulls and timing: `:690–755`. Digest-shape external checks at `:395–400` are not independent artifact verification; A2 expressly requires actual preimages. |
+| A2-S7 | Artifact hashes actual file bytes: `scripts/async_settle/pilot_enablement.py:41–44`; explicit-key 10,000/512-character and LOW/200 ms/no-retry reads: `:55–70`; serving roster/lifetime and gate subset validation: `:122–152`; regional/counter coverage: `:155–192`; dormant pre-enable measurement/approval/N/cap and strict CPU checks: `:226–288`; shadow-serving gate identity and linked pre-enable: `:291–318`; exact pre/post matching and superseded historical sum: `:321–394`; retained pre-flip signer/drain/CI and post-flip rollback/status/timing rules: `:397–463`. These functions perform file reads; they belong in the offline tool boundary, not the pure contract. |
+| A2-S8 | Frozen evaluator file path/pin and byte check: `tests/test_billing_snapshot.py:20–22,224–228`; frozen binding/comparison file path and byte check: `tests/test_async_settle_shadow.py:38,76–77`; P1 fixture-manifest pin: `src/trusted_router/async_settle_shadow_v2_contract.py:38`; A1 independent manifest pin: `src/trusted_router/async_settle_shadow_v2_a1_evidence.py:31`. These are code pins, not invented A2 release hashes. |
+| A2-S9 | Existing test source exercises fleet freshness/coverage and pre/post-flip artifacts/timings: `tests/test_async_settle_pilot_tools.py:202–266`; pre-enable offline CLI and measurement boundaries: `:445–501`; matching pre-enable and bounded roster lifetimes: `:504–538`. Reset tests exercise unknown/predecessor revisions and cycles: `tests/test_async_settle_shadow_r13_rollback.py:165–198,268–278`; missing-support/ambiguous-history witnesses: `tests/test_async_settle_shadow_r14_resolution.py:48–103`. Reading these assertions is not a test execution/pass claim. |
+
+| A2-S10 | Monitor model default: `src/trusted_router/config.py:1036`; chat and Responses probe bodies without provider preference: `src/trusted_router/synthetic/probes.py:1168–1181,1215–1230`. Alias expansion: `src/trusted_router/routing_candidates.py:215–258,417–418`; endpoint expansion/filter/sort: `src/trusted_router/routing.py:248–284`. Read-only local evaluation with Settings defaults yielded 70 candidates (68 other, one OpenAI, one Anthropic) and 6,341 canonical bytes for `{endpoint_id,adapter,features:[]}` projections; no production state or traffic ratio measured. |
+| A2-S11 | Price snapshot supports provider openai/anthropic only and ≤64 candidates: `src/trusted_router/billing_snapshot.py:222,259,436–471`. V2 candidate-set cap is separately 128: `src/trusted_router/async_settle_shadow_v2_contract.py:39–41,72–73`; fixed commercial proof/all-other check/supported-context requirement: `:128–163`; whole-event 2,048-byte fit: `:166–175`. Source reasoning: the default mixed monitor set has neither supported complete snapshot nor all-other exclusion proof; model prefix is not immutable commercial-program evidence. |
+| A2-S12 | Direct control-plane probe URLs/headers/bodies: `src/trusted_router/synthetic/probes.py:1728–1746,1851–1867,1899–1916`, without enclave shadow/async headers. Existing async mapper header, ordinary parameters and conservative model-prefix condition: `src/trusted_router/services/async_settle.py:286–329`. NEVER_EXCLUSIONS includes header_absent: `src/trusted_router/async_settle_shadow_v2_contract.py:52–54`. About 85% unresolved and daily frequency are owner estimates, not verified by source or measured here. |
+| A2-S13 | Dedicated provisioning pattern, dry-run/apply, named identity/key/funding inputs and local typed key result: `scripts/provision_stage_d_probe_workspace.py:1–7,39–84`; this is Stage D, not a claim the new shadow package exists. Provider.only filters endpoint provider: `src/trusted_router/routing.py:1065–1075`; fallbacks default true unless explicitly disabled: `:523–551`; no-fallback candidate truncation: `:281–284`. Probe must verify the resulting single supported candidate, not rely on model branding. Shadow workspace pin is in the ENV_VARS array: `scripts/deploy/rollout.sh:643`; no identity copied here. |
+| A2-S14 | Four GCP enclave origins/no west router: `src/trusted_router/enclave_regions.py:7–19`; default regional hostname template: `src/trusted_router/config.py:1030`; control-plane list (including São Paulo) distinct from enclave list: `scripts/deploy/_lib.sh:18–45`. Gateway-specific primary/failover: `scripts/deploy/gateway_edge.sh:13–14`; exactly-two-region preflight and backend construction: `scripts/deploy/gateway_edge_config.py:69–80,106–119`. Authority/path and placement caveat: `docs/runbooks/gateway-billing-edge.md:3–6,100–106`. Intended normal booking for all four origins is us-central1, not four router regions; live routing and seeds remain P6 evidence. |
+| A2-S15 | P2 certificate is optional: `P2/enclave-go/internal/trustedrouter/async_settle_shadow_v2.go:162–193`; no certificate with valid binding/snapshot returns to compared path. Excluded terminal builder needs retained exclusion state: `:217–238`; P2 root is defined in §14.1. Therefore deferring issuance requires no P2 behavior change. P2 merged status is owner-provided; not a Git or serving-state verification. |
+
+
+Round-1 A2 recorded reading both `/tmp/v2-design-a2/p5-author-questions.md` and
+`/tmp/v2-design-a2/test_contract_blockers.py` completely. The latter contains
+four supplied executable witnesses, including 129 closures and the long prefix;
+A2 inspected their code but did not execute them. Their hard-coded v2-p5 tree
+is not the source root for A2's code claims. Round 2 performed read-only source
+inspection and local default-catalog/count/byte arithmetic (A2-S10); it ran no
+tests, production queries or performance/traffic measurements, created no fixtures,
+edited no code and performed no Git writes. `git diff --check` is a document
+whitespace check, not CI or implementation proof.
+Only this design document and the requested scratch decision report are deliverables.
