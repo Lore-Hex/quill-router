@@ -444,7 +444,7 @@ def test_export_preserves_bytes_pages_conflicts_and_failure_siblings():
     duplicate = MemoryPort({kind: (rows[0], replace(rows[0], body=b'{}'))}, {}, (), page_size=2)
     conflict = export_day(duplicate, DAY, completed_at_us=START, object_keys=())
     assert len(json.loads(conflict.transport)['rows']) == 2
-    assert conflict.gaps[0]['reason'] == 'conflicting_originals'
+    assert {g['reason'] for g in conflict.gaps} == {'conflicting_originals', 'range_or_order_violation'}
 
 
 def test_export_invalid_bytes_are_retained():

@@ -24,25 +24,30 @@ from trusted_router.async_settle_shadow_v2_export import (
 
 def native_io() -> Any:
     """Release-only wiring; no import of the exporter from a runtime module."""
-    from trusted_router.async_settle_shadow_v2_export_native import NativeIO
-    from trusted_router.storage_gcp_shadow_attachments import AuthRequest, Lifetime
-    from trusted_router.storage_gcp_shadow_io import (
-        configure,
-        observe_spanner_rpcs,
-        owned_database,
-        rpc_scope,
+    from functools import partial
+
+    from trusted_router.async_settle_shadow_v2_export_native import (
+        HEALTH_KIND,
+        NativeIO,
+        NativePage,
+        NativeRecord,
+    )
+    from trusted_router.storage_gcp_shadow_v2_export import (
+        Lifetime,
+        authorize,
+        open_page,
+        prepare,
         timestamp_ns,
     )
-    return NativeIO(owned_database, configure, rpc_scope, observe_spanner_rpcs,
-                    timestamp_ns, Lifetime, AuthRequest)
+    return NativeIO(prepare, partial(open_page, page_factory=NativePage,
+        record_factory=NativeRecord, health_kind=HEALTH_KIND), timestamp_ns, Lifetime, authorize)
 
 
 def live_port(args: Any, plan: dict[str, str | None]) -> Any:
     # Imported/constructed only after explicit resource and read-only checks.
-    from google.cloud.spanner_v1 import Client
-
     from trusted_router.async_settle_shadow_v2_export_native import NativePort
-    database = Client(project=args.project, disable_builtin_metrics=True).instance(args.instance).database(args.database)
+    from trusted_router.storage_gcp_shadow_v2_export import database_for_export
+    database = database_for_export(args.project, args.instance, args.database)
     return NativePort(database, args.bucket, plan, io=native_io(), page_size=args.page_size,
         resources={name: getattr(args, name) for name in ("project", "instance", "database", "bucket")})
 

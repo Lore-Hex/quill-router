@@ -102,7 +102,8 @@ class MemoryPort:
                 last=page[-1].key if page else None, count=len(page),
                 complete=len(page) < self.page_size, page_size=self.page_size,
                 deadline_ms=self.rpc_deadline_ms, priority='LOW', retries=0,
-                snapshot='fixed-offline-capture'))
+                snapshot='fixed-offline-capture', status='ok',
+                continuation=page[-1].key if len(page) == self.page_size else None))
             yield from page
             if len(page) < self.page_size:
                 return
@@ -257,43 +258,34 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
         read_count = 0
         page_at = len(port.pages)
         previous = ''
+        actual: dict[int, dict[str, Any]] = {}
         iterator = None
         try:
             iterator = port.rows(kind, day)
             for row in iterator:
                 low, high = bounds(day)
-                if not low <= row.key < high or row.key < previous:
+                if not low <= row.key < high or row.key <= previous:
                     gap(kind + '/' + row.key, 'range_or_order_violation')
-                retain(kind, row.key, row.body, row.commit, 'rows')
+                original_kind = row.commit.get('kind', '' if native else kind)
+                retain(original_kind, row.key, row.body, row.commit, 'rows')
+                if len(port.pages) <= page_at:
+                    gap(kind + '/' + row.key, 'row_without_page')
+                else:
+                    page = port.pages[-1]
+                    found = actual.setdefault(id(page), dict(count=0, first=row.key, last=None))
+                    found['count'] += 1
+                    found['last'] = row.key
+                    if native and (original_kind != kind or not row.commit.get('read_snapshot_ns')
+                            or row.commit.get('read_snapshot_ns') != page.get('snapshot')
+                            or row.commit.get('received_before_failure')):
+                        gap(kind + '/' + row.key, 'row_metadata_invalid')
                 previous = row.key
                 read_count += 1
-                # A page is already fetched: account all its bytes before
-                # stopping continuation. Never discard its tail at a key cap.
+                # Account the already fetched page before stopping continuation.
                 if len(entries) >= max_objects and read_count >= sum(p['count'] for p in port.pages[page_at:]):
                     if not port.pages[-1].get('complete') or len(entries) > max_objects:
                         gap(kind + '/' + day, 'finite_export_bound_exhausted')
                     break
-            else:
-                pages = port.pages[page_at:]
-                if not pages or not pages[-1].get('complete'):
-                    gap(kind + '/' + day, 'range_continuation_unproven')
-                cursor = ''
-                for index, page in enumerate(pages):
-                    low, high = bounds(day)
-                    if (page.get('source') != 'rows' or page.get('kind') != kind
-                            or page.get('start') != low or page.get('end') != high
-                            or page.get('after') != cursor
-                            or not 1 <= page.get('page_size', 0) <= 200
-                            or not 0 <= page.get('count', -1) <= page.get('page_size', 0)
-                            or not 0 < page.get('deadline_ms', 0) <= 200
-                            or page.get('priority') != 'LOW' or page.get('retries') != 0
-                            or not page.get('snapshot')
-                            or (pass_snapshot is not None and page.get('snapshot') != pass_snapshot)
-                            or bool(page.get('complete')) != (index == len(pages) - 1)
-                            or bool(page.get('complete')) != (page.get('count', 0) < page.get('page_size', 0))):
-                        gap(kind + '/' + day, 'page_coverage_invalid')
-                    pass_snapshot = page.get('snapshot')
-                    cursor = page.get('last') or cursor
         except Exception as exc:
             gap(kind + '/' + day, type(exc).__name__ + ':' + ('NativeV2RangeRead' if isinstance(exc, NotImplementedError) else 'read_failed'))
         finally:
@@ -303,6 +295,35 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
                     close()
             except Exception as exc:
                 gap(kind + '/' + day, type(exc).__name__ + ':cleanup_failed')
+        # Validate every exit, after cleanup has succeeded or recorded its gap.
+        pages = port.pages[page_at:]
+        if not pages or not pages[-1].get('complete'):
+            gap(kind + '/' + day, 'range_continuation_unproven')
+        if sum(p['count'] for p in actual.values()) != read_count or set(actual) - {id(p) for p in pages}:
+            gap(kind + '/' + day, 'page_originals_disagree')
+        cursor = ''
+        for index, page in enumerate(pages):
+            low, high = bounds(day)
+            found = actual.get(id(page), dict(count=0, first=None, last=None))
+            if any(page.get(field) != found[field] for field in ('count', 'first', 'last')):
+                gap(kind + '/' + day, 'page_originals_disagree')
+            if (page.get('source') != 'rows' or page.get('kind') != kind
+                    or page.get('start') != low or page.get('end') != high
+                    or page.get('after') != cursor
+                    or not 1 <= page.get('page_size', 0) <= 200
+                    or not 0 <= page.get('count', -1) <= page.get('page_size', 0)
+                    or not 0 < page.get('deadline_ms', 0) <= 200
+                    or page.get('priority') != 'LOW' or page.get('retries') != 0
+                    or page.get('status') != 'ok'
+                    or not page.get('snapshot')
+                    or (pass_snapshot is not None and page.get('snapshot') != pass_snapshot)
+                    or bool(page.get('complete')) != (index == len(pages) - 1)
+                    or bool(page.get('complete')) != (page.get('count', 0) < page.get('page_size', 0))
+                    or page.get('continuation') != (None if page.get('complete') else found['last'])):
+                gap(kind + '/' + day, 'page_coverage_invalid')
+            if pass_snapshot is None:
+                pass_snapshot = page.get('snapshot')
+            cursor = found['last'] or cursor
     # One exact planned key per call: failure cannot erase its later siblings.
     for key in object_keys:
         if len(entries) >= max_objects:

@@ -1617,7 +1617,7 @@ Additional invariant: `<lambda> [async_settle_shadow_v2_evidence.py:262]`.
 | `request_fee` | `exact boolean` |
 | `private_tier_basis` | `exact boolean` |
 
-## Round-1 execution and explicit seams
+## Export execution and remaining work
 
 The test module is `tests/test_async_settle_shadow_v2_live_export.py`. It uses
 P3's real ObservationStore with FakeSpannerDatabase and P4a's real Runtime;
@@ -1677,7 +1677,9 @@ exporter itself never filters cap rows, and its output includes every cap byte.
 ### Export interface and completeness limits
 
 `async_settle_shadow_v2_export.export_day` copies originals through one port with
-`rows(kind,day)` and `objects(prefix)`. MemoryPort.from_fake preserves row.body
+`rows(kind,day)` and `objects(exact_key)`. The dormant NativePort binds the
+bounded row reader and exact object reader through NativeIO.
+MemoryPort.from_fake preserves row.body
 UTF-8 bytes and labels its metadata **fake_version**, not a server timestamp.
 The fake object sink supplies immutable fake generation numbers. The supplied
 finite object key plan is explicit; prefix iteration is constrained to that plan,
@@ -1685,6 +1687,9 @@ and an exact planned key selects only that key (not a similarly prefixed sibling
 Rows use bounded ordered day pages (≤200, declared 200 ms LOW/no retry), with an
 empty EOF page after exact multiples. A failed source is a gap and later sources
 are still attempted. Page tails already fetched at a cap are fully charged.
+Before completion, each page is compared with its returned originals: count,
+first/last keys, strict cursor, kind, snapshot and successful status. Iterator
+cleanup precedes that comparison, including when the cap is reached exactly.
 
 The JSON transport contains original strings and bounded supplemental
 `export/{entries,reads,plan,gaps}/*.json` preimages. Each accounting page commits
@@ -1710,16 +1715,22 @@ Run offline with:
 Capture has exact original UTF-8 strings: rows `{kind,key,raw,commit}`,
 objects `{key,raw,generation}`, and independently planned `object_keys`. Inputs
 are original loader proof/preimage/ledger/prior strings and optional original
-collector attachments. The CLI does no network discovery and constructs no
-credentials. Outputs are exclusive-create, with originals under
+collector attachments. Capture mode constructs no credentials. Native mode
+requires explicit project, instance, database, bucket, finite object plan and
+read-only confirmation before the storage adapter constructs clients. It requests
+the supported Spanner `spanner.data` scope and GCS `devstorage.read_only` scope.
+The data scope alone does not make reads exclusive; use a read-only Spanner
+identity. There is no Spanner read-only OAuth scope or network discovery.
+Outputs are exclusive-create, with originals under
 `transport.json.sources/originals/`; reruns require a new output path and count
 as another pass. No release/deployment integration is added.
 
-MemorySnapshotMaterialization is also explicit: this round's fake/capture port
-materializes the finite snapshot and assembled transport in RAM. It does not
-claim the production §7.2 streaming-memory or native-cost budget. The future
-native port must stream a fixed snapshot, bounded decode state and output files;
-its SQL and generation seams are listed below. The library performs no evidence
+MemorySnapshotMaterialization is explicit for fake/capture mode, which
+materializes the finite snapshot and assembled transport in RAM. Native mode
+spools bounded pages and original bytes to files, reads one fixed snapshot and
+records actual calls, received bytes, metadata and failures. NativeIO separates
+the pure reader from storage_gcp_shadow_v2_export, which owns SDK clients,
+credentials, parameters, snapshots and streams. The library performs no evidence
 JSON parse/re-serialization; it serializes only its own transport/accounting.
 
 ## MISMATCHES
@@ -1731,24 +1742,22 @@ JSON parse/re-serialization; it serializes only its own transport/accounting.
    this companion. Smallest routing decision: approve a separate ephemeral
    secure capture source and retention policy, or change the verifier boundary
    to consume the evidence the design actually retains. Export cannot recover a token.
-2. **Native adapter mismatch.** `storage_gcp_async_settle_shadow.py:83–91`
-   day_statement accepts v1 KINDS only; DAY_SQL returns id/body, no commit metadata.
-   `ObservationStore` has no v2 day iterator. Smallest fix: reviewed registered
-   v2 range builder with `SELECT id, body, updated_at FROM tr_entities WHERE
-   kind=@kind AND id>=@day_start AND id<@next_day_start AND id>@after_id ORDER BY
-   id LIMIT @page_size`, one fixed snapshot, ≤200 rows, 200 ms LOW/no retry;
-   register SQL manifest/inventory before adding native execution.
-3. **Native object adapter mismatch.** GCSAttachments._request/get
-   (`storage_gcp_shadow_attachments.py:133–160,198`) returns body only, discards
-   generation. Export needs exact-key generation-pinned reads and metadata;
-   never use LIST as absence proof. NativeGenerationRead is the named seam.
+2. **Native row interface.** NativeV2RangeRead implements the registered v2
+   primary-key range and exact-key statements through NativeIO, with one fixed
+   snapshot, ≤200 rows, 200 ms LOW/no retry. Every delivered key and body is
+   retained even when metadata, order, size or deadline checks fail. Pages are
+   reconciled with returned originals after iterator cleanup on every exit.
+3. **Native object interface.** NativeGenerationRead implements finite exact-key
+   reads and retains generation/metageneration through the adapter's bounded
+   attachment transport. A returned generation is pinned for subsequent reads;
+   it never uses LIST as absence proof.
 4. **Scope ambiguity.** Health local/fleet and claim local/publish are mutable
    singleton keys (`v2_evidence.py:397`), not day keys. Daily history must use
    bases/traces. A day-range exporter cannot claim it exported historical health
    singleton versions. Exact current snapshots, if separately supplied, are diagnostics.
 5. **Exporter diagnostics ingestion seam.** `gate_loading.py:223–281` accepts no
    export-gap/completeness member, and arbitrary preimages are not semantic
-   export coverage. Round-1 tool must return nonzero on export gaps even if a
+   export coverage. The tool returns nonzero on export gaps even if a
    caller bypasses it and independently evaluates the partial transport. Routing
    fix: bind an approved finite export accounting dependency in G1/G7.
 
@@ -1770,13 +1779,11 @@ JSON parse/re-serialization; it serializes only its own transport/accounting.
    failures. A missing pre budget produces both artifact_gap and a quoted-key
    evidence_schema_gap. Smallest fix: classify absence by dependency/path before
    calling the view; do not alter unknown-schema rejection.
-9. **NativeCommitProvenance ambiguity.** `storage_gcp_shadow_observation.py:170–172`
-   uses COMMIT_TIMESTAMP only for HEALTH_KIND; other row updated_at values are
-   writer wall time. The proposed native SELECT must retain updated_at under
-   its actual semantics plus fixed-snapshot read metadata; it cannot label
-   updated_at as physical commit time. If per-row true commit time is required,
-   this needs a separately reviewed producer/storage change. Fake commit version
-   is explicitly a test version, never a fabricated native timestamp.
+9. **D2 timestamp labels (settled).** The row metadata reader with D2 timestamp
+   labels records HEALTH_KIND updated_at as store_commit_timestamp and every
+   other kind as writer_updated_at. Fixed-snapshot read metadata is separate;
+   neither is an acknowledgement. Nanoseconds are retained without float
+   conversion. Fake commit version remains explicitly a test version.
 
 ## MISSING PRODUCERS
 
@@ -1793,5 +1800,4 @@ JSON parse/re-serialization; it serializes only its own transport/accounting.
 * Retained v1 original payloads, original outputs/captures and reset/fix history.
 * Secure transient signature companion (pending the ambiguity above); P4b
   certificate records are deferred beyond first cohort.
-* Native bounded v2 row/commit-metadata reader and generation-aware exact object
-  reader. Round 1 implements the fake/captured-offline port; no native SQL added.
+This package includes dormant native row and exact object readers; native mode requires explicit resources and confirmation. Emulator execution and accounting consumption remain separate acceptance work.

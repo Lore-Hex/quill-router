@@ -110,7 +110,8 @@ def test_native_export_kinds_day_boundaries_and_fixed_snapshot(export_emulator, 
     changed = Row(closing.kind, closing.key, old+b' ')
     write(store, [changed])
     assert [r.body for r in found] == [r.body for r in counters]
-    assert list(reader.rows(CLOSURE_KIND, day))[0].body == old
+    assert [(r.key, r.body) for r in reader.rows(CLOSURE_KIND, day)] == [(closing.key, old)]
+    assert [p['count'] for p in reader.pages if p['kind'] == CLOSURE_KIND] == [1, 0]
     assert [p['count'] for p in reader.pages if p['kind'] == COUNTER_KIND] == [1, 1, 0]
     assert len({p['snapshot'] for p in reader.pages}) == 1
     assert all(p['snapshot'] > 0 for p in reader.pages)

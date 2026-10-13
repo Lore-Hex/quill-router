@@ -370,3 +370,285 @@ def test_object_lifetime_checks_late_iteration_and_cleanup(monkeypatch, tmp_path
     result = export_day(port, DAY, completed_at_us=1, object_keys=keys, spool_dir=tmp_path/'sources')
     assert len(result.gaps) == 1
     assert [a['id'] for a in json.loads(result.transport_path.read_bytes())['attachments']] == [keys[1]]
+
+
+@pytest.mark.parametrize('fault', ['changed_snapshot', 'missing_snapshot', 'updated_at', 'late'])
+def test_received_row_survives_metadata_and_deadline_failure(fault, tmp_path):
+    from dataclasses import replace
+
+    from trusted_router.async_settle_shadow_v2_export_native import NativePage, NativeRecord
+
+    def make():
+        clock = [1.]
+
+        @contextmanager
+        def read(database, sql, params, snapshot_ns, deadline, now, rpc, convert):
+            broken = params['kind'] == DAY_KINDS[0]
+
+            def metadata():
+                if broken and fault in ('missing_snapshot', 'updated_at'):
+                    raise ValueError(fault)
+                if broken and fault == 'late':
+                    clock[0] += .3
+                return dict(kind=params['kind'], updated_at_ns=42,
+                    updated_at_semantics='writer_updated_at',
+                    read_snapshot_ns=2 if broken and fault == 'changed_snapshot' else 1)
+            yield NativePage(iter([NativeRecord(DAY+'/a', RAW, metadata)]), lambda: 1)
+
+        io = replace(native_io(), owned_database=lambda db: db, open_page=read)
+        port = NativePort(None, 'bucket', {}, io=io)
+        port.range.clock = lambda: clock[0]
+        port.range.snapshot_ns = 1
+        return port
+
+    reader = make().range
+    received = []
+    with pytest.raises((ValueError, TimeoutError)):
+        for row in reader.rows(DAY_KINDS[0], DAY):
+            received.append(row)
+    assert [(r.key, r.body) for r in received] == [(DAY+'/a', RAW)]
+    assert received[0].commit['received_before_failure'] is True
+    assert reader.pages[0]['count'] == 1 and reader.pages[0]['body_bytes'] == len(RAW)
+    assert not reader.pages[0]['complete']
+    assert [(r.key, r.body) for r in reader.rows(DAY_KINDS[1], DAY)] == [(DAY+'/a', RAW)]
+    assert reader.pages[-1]['complete']
+
+    port = make()
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), spool_dir=tmp_path/'sources')
+    assert result.gaps and not port.pages[0]['complete']
+    account = json.loads(result.accounting)
+    assert account['source_body_bytes'] == account['operations']['body_bytes'] == len(RAW)*len(DAY_KINDS)
+    entries = json.loads((tmp_path/'sources/export/entries/00000.json').read_bytes())['entries']
+    assert entries[0]['metadata']['received_before_failure'] is True
+    assert [(e['key'], (tmp_path/'sources'/e['original']).read_bytes()) for e in entries] == [(DAY+'/a', RAW)]*len(DAY_KINDS)
+
+
+@pytest.mark.parametrize('fault', ['dropped', 'first', 'last', 'kind', 'snapshot', 'status'])
+def test_page_claims_reconcile_with_returned_originals(fault, tmp_path):
+    from dataclasses import replace
+
+    port = native(Database([(DAY_KINDS[0], DAY+'/a', RAW), (DAY_KINDS[0], DAY+'/b', b' second\n')]))
+    original = port.rows
+
+    def rows(kind, day):
+        for row in original(kind, day):
+            if kind == DAY_KINDS[0]:
+                if fault == 'dropped' and row.key.endswith('/a'):
+                    continue
+                if fault in ('kind', 'snapshot'):
+                    field, value = ('kind', DAY_KINDS[1]) if fault == 'kind' else ('read_snapshot_ns', 1)
+                    row = replace(row, commit={**row.commit, field: value})
+            yield row
+        if kind == DAY_KINDS[0] and fault in ('first', 'last', 'status'):
+            port.pages[-1][fault] = 'changed'
+    port.rows = rows
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), spool_dir=tmp_path/'sources')
+    assert not json.loads(result.accounting)['complete']
+    expected_reason = ('page_originals_disagree' if fault in ('dropped', 'first', 'last') else
+                       'page_coverage_invalid' if fault == 'status' else 'row_metadata_invalid')
+    assert expected_reason in {g['reason'] for g in result.gaps}
+    value = json.loads(result.transport_path.read_bytes())
+    assert [(r['id'], r['raw'].encode()) for r in value['rows']] == (
+        [(DAY+'/b', b' second\n')] if fault == 'dropped' else [(DAY+'/a', RAW), (DAY+'/b', b' second\n')])
+    entries = json.loads((tmp_path/'sources/export/entries/00000.json').read_bytes())['entries']
+    assert [(e['key'], (tmp_path/'sources'/e['original']).read_bytes()) for e in entries] == [
+        (r['id'], r['raw'].encode()) for r in value['rows']]
+    if fault == 'kind':
+        assert all(e['kind'] == e['metadata']['kind'] == DAY_KINDS[1] for e in entries)
+        assert all(r['kind'] == DAY_KINDS[1] for r in value['rows'])
+
+
+@pytest.mark.parametrize('fault', ['snapshot', 'cleanup', None])
+def test_exact_cap_final_range_validates_page_and_cleanup(fault, tmp_path):
+    port = native(Database([(DAY_KINDS[-1], DAY+'/z', RAW)]))
+    original = port.rows
+    cleaned = []
+
+    def rows(kind, day):
+        try:
+            for row in original(kind, day):
+                if kind == DAY_KINDS[-1] and fault == 'snapshot':
+                    port.pages[-1]['snapshot'] += 1
+                yield row
+        finally:
+            cleaned.append(kind)
+            if kind == DAY_KINDS[-1] and fault == 'cleanup':
+                raise RuntimeError('cleanup')
+    port.rows = rows
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), max_objects=1, spool_dir=tmp_path/'sources')
+    assert cleaned == list(DAY_KINDS)
+    assert json.loads(result.accounting)['complete'] is (fault is None)
+    assert [p.read_bytes() for p in (tmp_path/'sources/originals').iterdir()] == [RAW]
+    if fault:
+        reason = 'page_coverage_invalid' if fault == 'snapshot' else 'RuntimeError:cleanup_failed'
+        assert reason in {g['reason'] for g in result.gaps}
+
+
+def test_plan_persisted_before_first_native_operation_and_failure(tmp_path):
+    from trusted_router.async_settle_shadow_v2_export import bounds
+    from trusted_router.detached_jws import canonical
+
+    directory = tmp_path/'sources'
+    inspected = []
+    expected = canonical(dict(day=DAY,
+        ranges=[dict(kind=k, start=bounds(DAY)[0], end=bounds(DAY)[1]) for k in DAY_KINDS],
+        object_keys=[], max_objects=17, generations={}, resources={'project': 'explicit-project'}))
+
+    class Fail(Database):
+        def checkout(self, **kwargs):
+            inspected.append((directory/'plan.json').read_bytes() if (directory/'plan.json').exists() else None)
+            raise OSError('first operation failed')
+    port = native(Fail())
+    port.resources = {'project': 'explicit-project'}
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), max_objects=17, spool_dir=directory)
+    assert inspected == [expected]*len(DAY_KINDS)
+    assert (directory/'plan.json').read_bytes() == expected
+    assert 'RuntimeError:read_failed' in {g['reason'] for g in result.gaps}
+    assert not json.loads((directory/'accounting.json').read_bytes())['complete']
+    assert all(p['status'] == 'RuntimeError' and not p['complete'] for p in port.pages)
+    assert json.loads(result.transport_path.read_bytes())['rows'] == []
+
+
+@pytest.mark.parametrize('ids', [[DAY+'/a', DAY+'/a'], [DAY+'/b', DAY+'/a'], ['2026-10-13/a']])
+def test_native_range_order_failure_retains_originals_and_later_range(ids, tmp_path):
+    class Unordered(Database):
+        def query(self, sql, **kwargs):
+            keys = ids if kwargs['params']['kind'] == DAY_KINDS[0] else [DAY+'/later']
+            for index, key in enumerate(keys):
+                yield key, RAW + str(index).encode(), UPDATED
+
+    reader = native(Unordered()).range
+    found = []
+    with pytest.raises(ValueError, match='range_or_continuation'):
+        for row in reader.rows(DAY_KINDS[0], DAY):
+            found.append(row)
+    expected = [(key, RAW + str(i).encode()) for i, key in enumerate(ids)]
+    assert [(r.key, r.body) for r in found] == expected
+    assert not reader.pages[0]['complete'] and reader.pages[0]['count'] == len(ids)
+    assert [(r.key, r.body) for r in reader.rows(DAY_KINDS[1], DAY)] == [(DAY+'/later', RAW+b'0')]
+    assert reader.pages[-1]['complete']
+
+    port = native(Unordered())
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), spool_dir=tmp_path/'sources')
+    assert not port.pages[0]['complete'] and result.gaps
+    entries = json.loads((tmp_path/'sources/export/entries/00000.json').read_bytes())['entries']
+    assert [(e['key'], (tmp_path/'sources'/e['original']).read_bytes()) for e in entries[:len(ids)]] == expected
+    assert port.pages[1]['complete']
+
+
+@pytest.mark.parametrize('size', [262144, 262145])
+def test_native_body_bound_retains_original(size, tmp_path):
+    body = b' '*(size-1)+b'\n'
+    rows = [(DAY_KINDS[0], DAY+'/a', body), (DAY_KINDS[1], DAY+'/b', RAW)]
+    reader = native(Database(rows)).range
+    found = []
+    if size > 262144:
+        with pytest.raises(ValueError, match='body_bound_exhausted'):
+            for row in reader.rows(DAY_KINDS[0], DAY):
+                found.append(row)
+    else:
+        found = list(reader.rows(DAY_KINDS[0], DAY))
+    assert [(r.key, r.body) for r in found] == [(DAY+'/a', body)]
+    assert reader.pages[0]['complete'] is (size == 262144)
+    assert reader.pages[0]['body_bytes'] == size
+    assert [(r.key, r.body) for r in reader.rows(DAY_KINDS[1], DAY)] == [(DAY+'/b', RAW)]
+    port = native(Database(rows))
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), spool_dir=tmp_path/'sources')
+    assert port.pages[0]['complete'] is (size == 262144)
+    assert bool(result.gaps) is (size > 262144)
+    assert sorted(p.read_bytes() for p in (tmp_path/'sources/originals').iterdir()) == sorted([body, RAW])
+
+
+@pytest.mark.parametrize('page_index', [1, 2])
+def test_only_middle_or_terminal_cursor_changed(page_index, tmp_path):
+    port = native(Database([(DAY_KINDS[0], DAY+f'/{i}', RAW) for i in range(2)]), page_size=1)
+    original = port.rows
+
+    def rows(kind, day):
+        yield from original(kind, day)
+        if kind == DAY_KINDS[0]:
+            port.pages[page_index]['after'] = DAY+'/wrong'
+    port.rows = rows
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), spool_dir=tmp_path/'sources')
+    assert {g['reason'] for g in result.gaps} == {'page_coverage_invalid'}
+    assert [p['count'] for p in port.pages[:3]] == [1, 1, 0]
+    assert sorted(p.read_bytes() for p in (tmp_path/'sources/originals').iterdir()) == [RAW, RAW]
+    assert [(r['id'], r['raw'].encode()) for r in json.loads(result.transport_path.read_bytes())['rows']] == [
+        (DAY+f'/{i}', RAW) for i in range(2)]
+
+
+def test_object_overflow_retains_both_candidates_and_bound_gap(tmp_path):
+    from trusted_router.async_settle_shadow_v2_export import OriginalObject
+
+    key = f'publisher-traces/{DAY}/boot/1'
+    port = MemoryPort({}, {key: (OriginalObject(key, RAW, '7'), OriginalObject(key, b' other\n', '8'))}, (key,))
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(key,), max_objects=1, spool_dir=tmp_path/'sources')
+    assert {g['reason'] for g in result.gaps} == {'finite_export_bound_exhausted', 'conflicting_originals'}
+    assert sorted(p.read_bytes() for p in (tmp_path/'sources/originals').iterdir()) == sorted([RAW, b' other\n'])
+    assert [(a['id'], a['raw'].encode()) for a in json.loads(result.transport_path.read_bytes())['attachments']] == [
+        (key, RAW), (key, b' other\n')]
+
+
+def test_adapter_client_requests_data_scope_and_owned_client_preserves_it(monkeypatch):
+    from google.auth.credentials import Credentials
+    from google.cloud.spanner_v1 import Client
+
+    from trusted_router.storage_gcp_shadow_v2_export import (
+        DATA_SCOPE,
+        database_for_export,
+        owned_database,
+    )
+
+    class Credential(Credentials):
+        def refresh(self, request):
+            raise AssertionError('no live authentication')
+
+    credential = Credential()
+    requests = []
+
+    def default(**kwargs):
+        requests.append(kwargs)
+        return credential, 'explicit-project'
+    monkeypatch.delenv('SPANNER_EMULATOR_HOST', raising=False)
+    monkeypatch.setattr('google.auth.default', default)
+    database = database_for_export('explicit-project', 'explicit-instance', 'explicit-database')
+    assert requests == [{'scopes': [DATA_SCOPE]}]
+    owned = owned_database(database)
+    first, second = database._instance._client, owned._instance._client
+    assert isinstance(first, Client) and isinstance(second, Client) and first is not second
+    assert first._client_options.scopes == second._client_options.scopes == [DATA_SCOPE]
+    assert first.credentials is second.credentials is credential
+    assert owned._instance.instance_id == 'explicit-instance' and owned.database_id == 'explicit-database'
+
+
+@pytest.mark.parametrize('fault', ['changed_snapshot', 'missing_snapshot', 'updated_at', 'late'])
+def test_adapter_delivered_failure_retains_bytes_and_finishes_rpc_count(fault, tmp_path):
+    from dataclasses import replace
+
+    db = Database([(DAY_KINDS[0], DAY+'/a', RAW)])
+    io = native_io()
+
+    def convert(value):
+        if value is UPDATED:
+            if fault == 'updated_at':
+                return io.timestamp_ns('not a timestamp')
+            if fault == 'late':
+                db.now += .3
+        if value is STAMP:
+            if fault == 'missing_snapshot':
+                return io.timestamp_ns(None)
+            if fault == 'changed_snapshot':
+                return io.timestamp_ns(value)+1
+        return io.timestamp_ns(value)
+
+    port = NativePort(db, 'bucket', {}, io=replace(io, timestamp_ns=convert))
+    port.range.clock = lambda: db.now
+    port.range.snapshot_ns = io.timestamp_ns(STAMP)
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), spool_dir=tmp_path/'sources')
+    assert result.gaps and not port.pages[0]['complete']
+    account = json.loads(result.accounting)
+    assert account['source_body_bytes'] == account['operations']['body_bytes'] == len(RAW)
+    assert account['operations']['native_rpcs'] == len(db.calls) == 2*len(DAY_KINDS)
+    entries = json.loads((tmp_path/'sources/export/entries/00000.json').read_bytes())['entries']
+    assert len(entries) == 1 and entries[0]['metadata']['received_before_failure'] is True
+    assert entries[0]['key'] == DAY+'/a' and (tmp_path/'sources'/entries[0]['original']).read_bytes() == RAW

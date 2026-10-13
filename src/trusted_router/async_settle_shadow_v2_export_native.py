@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO
 from urllib.parse import quote, urlencode
 
 from trusted_router.async_settle_shadow_v2_a1_evidence import KINDS
@@ -37,19 +37,27 @@ HEALTH_KIND = KINDS[6]
 
 
 @dataclass(frozen=True)
-class NativeIO:
-    """Explicit release-tool wiring; this module never imports live writers.
+class NativeRecord:
+    """Delivered key/body with deferred metadata, so metadata cannot erase it."""
+    key: str
+    body: bytes | str
+    metadata: Callable[[], Mapping[str, Any]]
 
-    The CLI binds the existing v2-owned I/O and attachment lifetime helpers.
-    Pure import/dormancy guards remain unchanged; tests use identical wiring.
-    """
+
+@dataclass(frozen=True)
+class NativePage:
+    records: Iterator[NativeRecord]
+    snapshot_ns: Callable[[], int]
+
+
+@dataclass(frozen=True)
+class NativeIO:
+    """Read-only binding supplied by the release tool, without SDK objects here."""
     owned_database: Callable[..., Any]
-    configure: Callable[..., Any]
-    rpc_scope: Callable[..., Any]
-    observe_spanner_rpcs: Callable[..., Any]
+    open_page: Callable[..., Any]
     timestamp_ns: Callable[..., int]
     lifetime: Callable[..., Any]
-    auth_request: Callable[..., Any]
+    authorize: Callable[..., Any]
 
 
 def spool_row(spool: BinaryIO, row: OriginalRow) -> None:
@@ -73,20 +81,14 @@ class NativeV2RangeRead:
             raise ValueError('page_size')
         self.io = io
         self.database = io.owned_database(database)
-        io.configure(self.database)
         self.page_size, self.clock = page_size, clock
-        self.snapshot: Any = None
         self.snapshot_ns: int | None = None
         self.pages: list[dict[str, Any]] = []
 
     def _read(self, kind: str, day: str | None, key: str = '', after: str = '') -> Iterator[OriginalRow]:
-        from google.cloud.spanner_v1 import param_types as pt
         low, high = bounds(day) if day is not None else ('', '')
         params = (dict(kind=kind, day_start=low, next_day_start=high, after_id=after,
                        page_size=self.page_size) if day is not None else dict(kind=kind, id=key))
-        types = ({'kind': pt.STRING, 'day_start': pt.STRING, 'next_day_start': pt.STRING,
-                  'after_id': pt.STRING, 'page_size': pt.INT64} if day is not None
-                 else {'kind': pt.STRING, 'id': pt.STRING})
         page: dict[str, Any] = dict(source='rows' if day is not None else 'exact', kind=kind,
             start=low, end=high, after=after, key=key, first=None, last=None, count=0,
             complete=False, continuation=None, page_size=self.page_size if day is not None else 1,
@@ -103,43 +105,46 @@ class NativeV2RangeRead:
         failure: Exception | None = None
         with tempfile.TemporaryFile() as spool:
             try:
-                with self.io.observe_spanner_rpcs(rpc), self.io.rpc_scope(deadline, .2, self.clock):
-                    options = {'read_timestamp': self.snapshot} if self.snapshot is not None else {}
-                    with self.database.snapshot(**options) as snapshot:
-                        stream = snapshot.execute_sql(RANGE_SQL if day is not None else EXACT_SQL,
-                            params=params, param_types=types, retry=None,
-                            timeout=max(0.000001, deadline-self.clock()),
-                            request_options={'priority': 'PRIORITY_LOW'})
-                        previous = after
-                        for values in stream:
-                            stamp = stream.metadata.transaction.read_timestamp
-                            self._snapshot(stamp, page)
-                            identity, body, updated = values if day is not None else (key, *values)
-                            invalid_range = (page['count'] >= page['page_size'] or (day is not None and
-                                    (not low <= identity < high or identity <= previous)))
-                            raw = body.encode('utf-8') if isinstance(body, str) else body
-                            if not isinstance(raw, bytes):
-                                raise ValueError('body_encoding')
-                            page['count'] += 1
-                            page['body_bytes'] += len(raw)
-                            page['key_bytes'] += len(kind.encode()) + len(identity.encode())
-                            page['first'] = page['first'] or identity
-                            page['last'] = identity
-                            previous = identity
-                            metadata = dict(kind=kind, updated_at_ns=self.io.timestamp_ns(updated),
-                                updated_at_semantics='store_commit_timestamp' if kind == HEALTH_KIND else 'writer_updated_at',
-                                read_snapshot_ns=self.snapshot_ns)
+                with self.io.open_page(self.database, RANGE_SQL if day is not None else EXACT_SQL,
+                        params, self.snapshot_ns, deadline, self.clock, rpc,
+                        self.io.timestamp_ns) as source:
+                    previous = after
+                    for record in source.records:
+                        identity, body = record.key, record.body
+                        invalid_range = (page['count'] >= page['page_size'] or (day is not None and
+                                (not low <= identity < high or identity <= previous)))
+                        raw = body.encode('utf-8') if isinstance(body, str) else body
+                        if not isinstance(raw, bytes):
+                            raise ValueError('body_encoding')
+                        page['count'] += 1
+                        page['body_bytes'] += len(raw)
+                        page['key_bytes'] += len(kind.encode()) + len(identity.encode())
+                        page['first'] = page['first'] or identity
+                        page['last'] = identity
+                        previous = identity
+                        metadata: dict[str, Any] = dict(kind=kind, received_before_failure=True)
+                        try:
+                            metadata.update(record.metadata())
+                            self._snapshot(metadata['read_snapshot_ns'], page)
                             if self.clock() >= deadline:
                                 raise TimeoutError('range_iteration_deadline')
-                            spool_row(spool, OriginalRow(identity, raw, metadata))
                             if invalid_range:
                                 raise ValueError('range_or_continuation')
                             if len(raw) > BODY_LIMIT:
                                 raise ValueError('body_bound_exhausted')
-                        # An empty page MUST also return valid snapshot metadata.
-                        self._snapshot(stream.metadata.transaction.read_timestamp, page)
-                    if self.clock() >= deadline:
-                        raise TimeoutError('range_cleanup_deadline')
+                        except Exception as exc:
+                            metadata['metadata_or_read_failure'] = type(exc).__name__
+                            raise
+                        else:
+                            del metadata['received_before_failure']
+                        finally:
+                            # Every delivered original survives even invalid metadata,
+                            # an expired deadline, or invalid order/size.
+                            spool_row(spool, OriginalRow(identity, raw, metadata))
+                    # An empty page MUST also return valid snapshot metadata.
+                    self._snapshot(source.snapshot_ns(), page)
+                if self.clock() >= deadline:
+                    raise TimeoutError('range_cleanup_deadline')
                 page.update(status='ok', complete=page['count'] < page['page_size'],
                             continuation=page['last'] if page['count'] == page['page_size'] else None)
                 if day is None:
@@ -152,18 +157,17 @@ class NativeV2RangeRead:
 
             # Release SDK body references before reading our one-record spool buffer.
             if page['count']:
-                del values, body, raw
+                del record, body, raw
             spool.seek(0)
             yield from spool_rows(spool)
             if failure is not None:
                 raise failure
 
-    def _snapshot(self, stamp: Any, page: dict[str, Any]) -> None:
-        ns = self.io.timestamp_ns(stamp)
+    def _snapshot(self, ns: int, page: dict[str, Any]) -> None:
         if ns <= 0 or (self.snapshot_ns is not None and ns != self.snapshot_ns):
             raise ValueError('snapshot_metadata')
         if self.snapshot_ns is None:
-            self.snapshot, self.snapshot_ns = stamp, ns
+            self.snapshot_ns = ns
         page['snapshot'] = ns
 
     def rows(self, kind: str, day: str) -> Iterator[OriginalRow]:
@@ -241,12 +245,7 @@ class NativeGenerationRead:
                        + quote(key, safe='') + '?' + urlencode(params))
                 headers: dict[str, str] = {}
                 if self.authenticated:
-                    import google.auth
-                    auth = self.io.auth_request(lifetime)
-                    credentials, _ = google.auth.default(request=cast(Any, auth),
-                        scopes=['https://www.googleapis.com/auth/devstorage.read_only'])
-                    lifetime.remaining()
-                    credentials.before_request(auth, 'GET', url, headers)
+                    self.io.authorize(lifetime, url, headers)
                 lifetime.remaining()
                 status, received, data = lifetime.exchange('GET', url, None, headers)
                 page.update(response_status=status, body_bytes=len(data))
