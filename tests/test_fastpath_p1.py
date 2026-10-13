@@ -92,6 +92,12 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     # stop exercised.
     override = next(i for i, c in enumerate(commands)
                     if "scripts/provision_fastpath_p1_workspace.py" in c and "--apply" in c)
+    # The audit's baseline is what the provisioner printed the rows hold,
+    # an owned workspace's earlier funding included: never a figure the
+    # runbook wrote down.
+    assert re.search(r"`FUNDED` the `credits_total_microdollars` the\s+provisioner printed", runbook)
+    assert "prints the workspace's ID and `credits_total_microdollars`" in runbook
+    assert "FUNDED=100000000" not in runbook and not re.search(r"`100000000` micro-credits,\s+the `-funded`", runbook)
     role = next(i for i, c in enumerate(commands) if "roles/monitoring.viewer" in c and "tr-fastpath-node@" in c)
     assert max(override, role) < commands.index(watch)
     exercised = runbook.index("the stops P1 can produce are exercised once")
