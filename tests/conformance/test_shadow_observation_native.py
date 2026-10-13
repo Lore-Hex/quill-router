@@ -217,11 +217,12 @@ def test_shadow_native_one_attempt_handoff(shadow_emulator_resources, backend):
 @pytest.mark.parametrize("point", ["before_first_flush", "during_commit", "request_sent", "before_ack", "after_ack", "before_result", "after_result", "full_queues", "graceful"])
 def test_shadow_native_process_restart(shadow_emulator_resources, backend, point, signum, tmp_path):
     import json
-    import select
     import signal
     import subprocess
     import sys
     from pathlib import Path
+
+    from tests.shadow_observation_diagnostics import wait_boundary
     database, _ = shadow_emulator_resources
     boot = uuid4().hex
     args = [sys.executable, str(Path(__file__).parents[1]/"shadow_observation_restart.py"),
@@ -230,26 +231,14 @@ def test_shadow_native_process_restart(shadow_emulator_resources, backend, point
     log = tmp_path/"child.log"
     output = []
     with log.open("w") as errors:
-        child = subprocess.Popen([*args, point, manifest], stdout=subprocess.PIPE, stderr=errors, text=True)  # noqa: S603
+        child = subprocess.Popen([*args, point, manifest], stdout=subprocess.PIPE, stderr=errors, bufsize=0)  # noqa: S603
         def child_state():
             return "\n".join(output)+"\nSTDERR\n"+log.read_text()+"\nPARENT\n"+_diagnostics()
         try:
-            # The child emits status before its marker. A bounded child watchdog
-            # reports errors rather than leaving the parent on an infinite read.
-            ready_deadline = time.monotonic()+45
-            while True:
-                readable, _, _ = select.select([child.stdout], [], [], max(0, ready_deadline-time.monotonic()))
-                assert readable, "child boundary deadline: "+child_state()
-                line = child.stdout.readline()
-                if not line:
-                    break
-                output.append(line.rstrip())
-                if line.strip() == "BOUNDARY":
-                    break
-            assert output and output[-1] == "BOUNDARY", child_state()
+            assert wait_boundary(child.stdout, output, time.monotonic()+15), child_state()
             child.send_signal(getattr(signal, signum))
-            code = child.wait(timeout=35)
-            output.extend(child.stdout.read().splitlines())
+            code = child.wait(timeout=12)
+            output.extend(child.stdout.read().decode().splitlines())
             assert code == (0 if signum == "SIGTERM" else -signal.SIGKILL), child_state()
             if signum == "SIGTERM":
                 shutdown = json.loads(output[-1])
@@ -260,7 +249,7 @@ def test_shadow_native_process_restart(shadow_emulator_resources, backend, point
                 child.kill()
                 child.wait()
             print("CHILD_DIAGNOSTICS", child_state())
-    recovered = subprocess.run([*args, "recover", manifest], capture_output=True, text=True, timeout=60)  # noqa: S603
+    recovered = subprocess.run([*args, "recover", manifest], capture_output=True, text=True, timeout=15)  # noqa: S603
     diagnostics = child_state()+"\nRECOVERY\n"+recovered.stdout+recovered.stderr
     assert recovered.returncode == 0, diagnostics
     state = json.loads(recovered.stdout.splitlines()[-1])

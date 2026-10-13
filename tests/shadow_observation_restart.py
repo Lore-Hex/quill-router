@@ -12,7 +12,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from shadow_observation_diagnostics import client_history, status  # noqa: E402
+from shadow_observation_diagnostics import (  # noqa: E402
+    announce_boundary,
+    client_history,
+    hold_boundary,
+    status,
+)
 from shadow_observation_fixtures import (  # noqa: E402
     NOW_US,
     event_for,
@@ -127,11 +132,7 @@ async def run():
         child_diagnostic = diagnostic
         boundary_seen = threading.Event()
         def boundary(label):
-            boundary_seen.set()
-            # Worker snapshots use _state, never owner-only State access.
-            print(json.dumps(dict(boundary=label, status=json.loads(diagnostic()))), flush=True)
-            print("BOUNDARY", flush=True)
-            threading.Event().wait()  # Deliberately held until process termination.
+            hold_boundary(svc, history, label, sys.stdout, boundary_seen, threading.Event())
         # Model a host handler, then exercise the actual Service.start/trap_sigterm chain.
         host_called = []
         signal.signal(signal.SIGTERM, lambda *_: host_called.append(True))
@@ -216,17 +217,17 @@ async def run():
         if point in {"before_first_flush", "full_queues"}:
             svc.flush_job = asyncio.create_task(asyncio.to_thread(boundary, point))
         elif point == "graceful":
-            print(json.dumps(dict(boundary="graceful", status=json.loads(diagnostic()))), flush=True)
-            print("BOUNDARY", flush=True)
+            announce_boundary(svc, history, "graceful", sys.stdout)
+            boundary_seen.set()
         else:
-            svc.closing_reason, svc.termination_deadline = "shutdown", store.clock()+9
-            svc.flush_job = asyncio.create_task(svc.drive_async(svc._flush(store.clock()+4)))
+            svc.close_task = asyncio.create_task(svc.close())
         try:
-            async with asyncio.timeout(20):
+            async with asyncio.timeout(12):
                 while not host_called:
-                    if svc.flush_job is not None and svc.flush_job.done() and not boundary_seen.is_set():
-                        svc.flush_job.result()
-                        raise AssertionError("crash boundary was not reached: "+diagnostic())
+                    for job in (svc.flush_job, svc.close_task):
+                        if job is not None and job.done() and not boundary_seen.is_set():
+                            job.result()
+                            raise AssertionError("crash boundary was not reached: "+diagnostic())
                     await asyncio.sleep(.01)
                 await svc.close_done.wait()
             assert svc.close_finished, diagnostic()
@@ -234,8 +235,11 @@ async def run():
             sys.stdout.flush()
             os._exit(0)  # End the held worker after the installed bounded close returned.
         except BaseException:
+            import traceback
             print("CHILD_STATUS "+diagnostic(), file=sys.stderr, flush=True)
-            raise
+            traceback.print_exc()
+            sys.stderr.flush()
+            os._exit(1)
 
 
 if __name__ == "__main__":

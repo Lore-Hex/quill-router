@@ -408,13 +408,12 @@ def test_policy_empty_outputs_identical_with_package_imports_blocked(workspaces,
 def test_dormancy_closed_module_names_match_source_inventory():
     from pathlib import Path
 
-    from tests.shadow_observation_dormancy import NAMES
-    root = Path("src/trusted_router")
-    package = {p.stem for p in root.glob("async_settle_shadow_v2_*.py")}
-    package |= {p.stem for pattern in ("*shadow_lifecycle.py", "*shadow_journal.py", "*shadow_health_state.py",
-        "*shadow_attachments.py", "*shadow_observation.py", "*shadow_io.py", "services/*shadow_health.py")
-        for p in root.glob(pattern)}
-    assert NAMES == package
+    from tests.shadow_observation_dormancy import EXPLICIT_MODULES, covered_module
+    root = Path("src")
+    for path in root.rglob("async_settle_shadow_v2_*.py"):
+        assert covered_module(".".join(path.relative_to(root).with_suffix("").parts))
+    for name in EXPLICIT_MODULES:
+        assert (root/Path(*name.split("."))).with_suffix(".py").is_file(), name
 
 
 @pytest.mark.asyncio

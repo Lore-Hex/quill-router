@@ -8,16 +8,28 @@ from functools import lru_cache
 
 import pytest
 
-NAMES = {'async_settle_shadow_v2_a2_evidence', 'async_settle_shadow_v2_a2_roots', 'async_settle_shadow_v2_a2_contract', 'async_settle_shadow_v2_deltas', 'async_settle_shadow_lifecycle', 'async_settle_shadow_health_state', 'async_settle_shadow_v2_a1_numbers', 'storage_gcp_shadow_io', 'async_settle_shadow_v2_a1_health', 'async_settle_shadow_journal', 'async_settle_shadow_v2_retained', 'async_settle_shadow_health', 'async_settle_shadow_v2_contract', 'async_settle_shadow_v2_native', 'async_settle_shadow_v2_evidence', 'async_settle_shadow_v2_projection', 'async_settle_shadow_v2_certificate', 'async_settle_shadow_attachments', 'async_settle_shadow_v2_a1_evidence', 'storage_gcp_shadow_attachments', 'async_settle_shadow_v2_a1_deltas', 'async_settle_shadow_v2_a1_reconciliation', 'async_settle_shadow_v2_schema', 'storage_gcp_shadow_observation'}
+# The prefix covers future packages at any depth; only P3's other names are closed.
+EXPLICIT_MODULES = frozenset("trusted_router."+name for name in (
+    "async_settle_shadow_lifecycle", "async_settle_shadow_journal",
+    "async_settle_shadow_health_state", "async_settle_shadow_attachments",
+    "storage_gcp_shadow_io", "storage_gcp_shadow_attachments",
+    "storage_gcp_shadow_observation", "services.async_settle_shadow_health",
+))
+
+
+def covered_module(name):
+    return name in EXPLICIT_MODULES or (name.startswith("trusted_router.") and
+        any(part.startswith("async_settle_shadow_v2_") for part in name.split(".")[1:]))
+
 
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.rsplit(".", 1)[-1] in NAMES:
+        if covered_module(fullname):
             raise AssertionError("empty-policy v2 import blocker")
 
 
 def assert_dormant():
-    assert not any("shadow_v2_" in n or n.rsplit(".", 1)[-1] in NAMES for n in sys.modules), "empty-policy v2 import"
+    assert not any(covered_module(n) for n in sys.modules), "empty-policy v2 import"
 
 
 def probe():

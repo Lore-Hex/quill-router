@@ -57,7 +57,14 @@ def client_history(store):
             record(statement="transaction_return")
             return result
         except Exception as error:
-            record(statement="transaction_error", error=type(error).__name__, reason=str(error))
+            # Native wrappers deliberately suppress exception display. Preserve
+            # the actual cause for the next CI diagnosis without changing retries.
+            causes = []
+            cause = error.__cause__ or error.__context__
+            while cause is not None and len(causes) < 8:
+                causes.append(dict(error=type(cause).__name__, reason=str(cause)))
+                cause = cause.__cause__ or cause.__context__
+            record(statement="transaction_error", error=type(error).__name__, reason=str(error), causes=causes)
             raise
     @contextmanager
     def read(**kwargs):
@@ -66,3 +73,53 @@ def client_history(store):
             yield Reader(reader)
     with patch.object(database, "run_in_transaction", run), patch.object(database, "snapshot", read):
         yield history
+
+
+def announce_boundary(svc, history, label, stream):
+    """Snapshot lifecycle state on its owner, then publish the complete marker."""
+    svc.assert_owner()
+    print(json.dumps(dict(boundary=label, status=json.loads(status(svc, history)))), file=stream, flush=True)
+    print("BOUNDARY", file=stream, flush=True)
+
+
+
+def hold_boundary(svc, history, label, stream, seen, release):
+    """Workers request an owner snapshot before announcing a held crash point."""
+    from concurrent.futures import Future
+
+    delivered = Future()
+    def announce():
+        try:
+            announce_boundary(svc, history, label, stream)
+            seen.set()
+            delivered.set_result(None)
+        except BaseException as error:
+            delivered.set_exception(error)
+    svc.loop.call_soon_threadsafe(announce)
+    delivered.result(timeout=2)
+    release.wait()
+
+
+def wait_boundary(stream, output, deadline):
+    """Read raw pipe bytes: select cannot see lines prefetched by TextIOWrapper."""
+    import os
+    import select
+    import time
+
+    pending = b""
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([stream], [], [], max(0, deadline-time.monotonic()))
+        if not readable:
+            return False
+        chunk = os.read(stream.fileno(), 65536)
+        if not chunk:
+            if pending:
+                output.append(pending.decode())
+            return False
+        pending += chunk
+        while b"\n" in pending:
+            line, pending = pending.split(b"\n", 1)
+            output.append(line.decode())
+            if line == b"BOUNDARY":
+                return True
+    return False

@@ -259,6 +259,7 @@ class Port:
             slot = self.service.journal.slot(reservation)
             register = fold_owed and not slot.fold_registered
             if register:
+                require(not self.service.journal.stopped, "quiesced")
                 require(not self.service.journal.days[reservation.day].closing, "closed_day")
                 require(len(self.fold_obligations) < 32, "fold_capacity")
             body = self.service.journal.finalize(reservation, event)
@@ -1238,14 +1239,18 @@ class Service:
         deadline = min(deadline or self.store.clock()+9, self.termination_deadline or self.store.clock()+9)
         if reason == "shutdown":
             self.termination_deadline = deadline
-        stamp = int(self.store.wall()*1_000_000)
-        if not self.state.days:
-            self.tick(stamp, publisher=False)
-        self.accept(lifecycle.ShutdownRequested(stamp))
-        self.stopped.set()
-        self.slots.stopped = True
         with self.lock:
+            # Cut off new deferred registrations and admit every accepted owner
+            # before ShutdownRequested freezes lifecycle admission. Workers may
+            # still discharge those owners while close drains their outcomes.
             self.journal.stopped = True
+            self.sync_fold_obligations()
+            stamp = int(self.store.wall()*1_000_000)
+            if not self.state.days:
+                self.tick(stamp, publisher=False)
+            self.accept(lifecycle.ShutdownRequested(stamp))
+            self.stopped.set()
+            self.slots.stopped = True
             self.closing_reason = reason
             self.interval_end_us = stamp
         try:
@@ -1263,7 +1268,7 @@ class Service:
                 # budget. This never waits on, cancels or claims a money task.
                 while self.store.clock() < deadline-FLUSH_SECONDS:
                     with self.lock:
-                        owned = self.inflight or self.pending or any(
+                        owned = self.inflight or self.pending or "pending" in self.port.fold_obligations.values() or any(
                             slot.body is None or not slot.completion_requested
                             for page in self.journal.pages for slot in page.slots)
                     if not owned:
