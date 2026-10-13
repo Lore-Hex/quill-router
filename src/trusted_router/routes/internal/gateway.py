@@ -2873,8 +2873,11 @@ def _gateway_authorize_response(
             federated=async_federated, replay=idempotent_replay, effective_at=async_effective_at,
         )
     if async_request is not None:
-        _v2_authorize_hook(settings, async_request, async_body, authorization, async_additions,
-            endpoint_candidates, async_federated, idempotent_replay)
+        try:
+            _v2_authorize_hook(settings, async_request, async_body, authorization, async_additions,
+                endpoint_candidates, async_federated, idempotent_replay)
+        except Exception:  # noqa: S110 - observation entry cannot change committed authorization
+            pass
     if authorization.workspace_id in settings.async_settle_shadow_workspace_ids and async_request is not None:
         try:
             shadow_runtime = getattr(async_request.app.state, "async_settle_shadow", None)
@@ -3636,7 +3639,10 @@ def _settle_gateway_authorization(
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
     if authorization.settled:
-        _v2_capture_hook(settings, authorization, body, None, None, replay=True)
+        try:
+            _v2_capture_hook(settings, authorization, body, None, None, replay=True)
+        except Exception:  # noqa: S110 - observation entry cannot become a money failure
+            pass
         if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
             try:
                 from trusted_router.services.async_settle_shadow import capture_prices
@@ -3811,7 +3817,10 @@ def _settle_gateway_authorization(
         except ValueError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     billing_snapshot = billing_pricing_snapshot(authorization)
-    _v2_capture_hook(settings, authorization, body, selected_endpoint, billing_snapshot, replay=False)
+    try:
+        _v2_capture_hook(settings, authorization, body, selected_endpoint, billing_snapshot, replay=False)
+    except Exception:  # noqa: S110 - observation entry cannot become a money failure
+        pass
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_prices

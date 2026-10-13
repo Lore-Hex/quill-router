@@ -18,7 +18,7 @@ from trusted_router.async_settle_shadow_cohort import (
     replay_object,
 )
 from trusted_router.async_settle_shadow_journal import Reservation
-from trusted_router.async_settle_shadow_projection import snapshot_material
+from trusted_router.async_settle_shadow_projection import IDENTITY, snapshot_material
 from trusted_router.async_settle_shadow_v2_contract import LOCAL_BYTES, RequestedFacts
 from trusted_router.async_settle_shadow_v2_evidence import EVENT, committed_identity
 from trusted_router.async_settle_shadow_v2_schema import POLICY, require
@@ -36,6 +36,18 @@ class AuthorizePort(Protocol):
 def has_v2_capability(headers: tuple[str, ...]) -> bool:
     """Ruling 1: exactly one marker is capable, independently of cohort opt-in."""
     return headers == (POLICY,)
+
+
+def require_shadow_snapshot_bounds(snapshot: dict[str, Any]) -> None:
+    """Narrow a handler-validated billing snapshot to the shadow identity domain.
+
+    build_snapshot owns all DTO checks; billing identities allow 512 characters,
+    whereas shadow identities allow 128. Check every candidate, including models
+    omitted from EVENT, without reconstructing the validated pricing DTO.
+    """
+    for candidate in snapshot["candidates"]:
+        require(IDENTITY.fullmatch(candidate["endpoint_id"]) is not None, "identity")
+        require(IDENTITY.fullmatch(candidate["model_id"]) is not None, "identity")
 
 
 @dataclass(frozen=True)
@@ -121,6 +133,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
 
                 from trusted_router.detached_jws import canonical
                 snapshot = additions["billing_snapshot"]
+                require_shadow_snapshot_bounds(snapshot)
                 material = canonical(snapshot)
                 digest = hashlib.sha256(material).hexdigest()
                 candidates = snapshot["candidates"]

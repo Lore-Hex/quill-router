@@ -956,3 +956,131 @@ def test_fold_obligation_capacity_refuses_exposure(monkeypatch):
         assert service.port.lost.is_set()
     finally:
         shell.close()
+
+
+@pytest.mark.parametrize('field', ['model_id', 'endpoint_id'])
+@pytest.mark.parametrize('length', [128, 129, 512])
+@pytest.mark.parametrize('position', [0, 1])
+def test_handler_owned_snapshot_shadow_identity_bounds(monkeypatch, field, length, position):
+    from trusted_router.async_settle_shadow_wire import snapshot_from_object
+    from trusted_router.services.async_settle import authorize_additions
+
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    endpoints = [endpoint(id='a'), endpoint(id='z')]
+    identity = 'openai/'+'m'*(length-7) if field == 'model_id' else ('a' if position == 0 else 'z')*length
+    endpoints[position] = replace(endpoints[position], **{('id' if field == 'endpoint_id' else field): identity})
+    auth = replace(context().authorization, model_id=endpoints[0].model_id,
+                   candidate_endpoint_ids=tuple(e.id for e in endpoints))
+    body = GatewayAuthorizeRequest(api_key_hash='key-v1', model=auth.model_id,
+        route_type='chat.completions', stream=False, requested_parameters=[])
+    req = request([('X-TR-Settlement-Mode', 'async-v1'), ('X-TR-Settlement-Shadow-Policy', 'shadow-v2')])
+    req.app = SimpleNamespace(state=SimpleNamespace(async_settle=shell.async_runtime))
+    try:
+        values = authorize_additions(request=req, body=body, authorization=auth, endpoints=endpoints,
+            settings=shell.settings, typed=True, federated=False, replay=False, effective_at=auth.created_at)
+        assert 'billing_snapshot' in values  # real producer, not an unchecked copied DTO
+        if length == 128:
+            snapshot_from_object(values['billing_snapshot'])
+        else:
+            with pytest.raises(ValueError, match='identity'):
+                snapshot_from_object(values['billing_snapshot'])
+        shell.authorize_http(req, body, auth, values, endpoints, typed=True, federated=False, replay=False)
+        shell.join()
+        events = [EVENT.parse(slot.body) for page in service.journal.pages for slot in page.slots if slot.body]
+        assert events
+        assert ('billing_shadow_binding' in values) is (length == 128)
+        assert any(event['eligibility'] == 'eligible' for event in events) is (length == 128)
+    finally:
+        shell.close()
+        shell.worker.join(2)
+
+
+def test_trusted_snapshot_seam_matches_strict_parser(record_property):
+    import json
+    import random
+
+    from trusted_router.async_settle_shadow_wire import snapshot_from_object
+    from trusted_router.billing_snapshot import BillingSnapshot
+    from trusted_router.services.async_settle_shadow_cohort import require_shadow_snapshot_bounds
+
+    # This seam consumes a billing-validated producer object, not arbitrary wire
+    # data. Compare the composition of its present owners with the strict parser;
+    # invalid DTO fields must fail at the billing owner before reuse is possible.
+    def reused(value):
+        owned = BillingSnapshot.model_validate_json(json.dumps(value)).model_dump(mode='json')
+        require_shadow_snapshot_bounds(owned)
+
+    def accepts(function, value):
+        try:
+            function(value)
+        except (ValueError, TypeError, KeyError):
+            return False
+        return True
+
+    rng = random.Random(707)  # noqa: S311 - reproducible differential inputs
+    seed = copy.deepcopy(additions()['billing_snapshot'])
+    candidate = seed['candidates'][0]
+    candidate['tiers'] = [{'max_prompt_tokens': 10, 'rates': copy.deepcopy(candidate['rates'])},
+                          {'max_prompt_tokens': None, 'rates': copy.deepcopy(candidate['rates'])}]
+    cases = [seed]
+    fields = set()
+    def substitutions(value, path=()):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield from substitutions(child, (*path, key))
+            yield path, {**value, 'unexpected': 1}
+            for key in value:
+                yield path, {k: v for k, v in value.items() if k != key}
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                yield from substitutions(child, (*path, index))
+            for replacement in ([], [*value, *value], None, {}, 'bad'):
+                yield path, replacement
+        else:
+            for replacement in (None, True, False, -1, 0, 1, 2**63-1, 2**63, 1.5, '', 'bad', '\x00', '\ud800', [], {}):
+                yield path, replacement
+    for path, replacement in substitutions(seed):
+        fields.add('.'.join(map(str, path)))
+        value = copy.deepcopy(seed)
+        if path:
+            parent = value
+            for key in path[:-1]:
+                parent = parent[key]
+            parent[path[-1]] = replacement
+        else:
+            value = replacement
+        cases.append(value)
+    for _ in range(300):
+        value = copy.deepcopy(seed)
+        value['candidates'] = [copy.deepcopy(candidate) for _ in range(rng.randint(1, 3))]
+        for index, c in enumerate(value['candidates']):
+            c['provider'] = rng.choice(['openai', 'anthropic'])
+            c['prompt_convention'] = 'includes_cache' if c['provider'] == 'openai' else 'excludes_cache'
+            c['endpoint_id'] = chr(97+index)*rng.choice([1, 127, 128, 129, 512])
+            length = rng.choice([128, 129, 512])
+            c['model_id'] = c['provider']+'/'+('m'*(length-len(c['provider'])-1))
+        cases.append(value)
+    # Explicit lexical boundaries and cardinality/ordering/tier-shape controls.
+    for field in ('endpoint_id', 'model_id'):
+        for text in ('openai/a_./:@+-', 'openai/a\n', 'openai/é', 'openai/a b', 'openai/\\', 'openai/😀'):
+            value = copy.deepcopy(seed)
+            value['candidates'][0][field] = text
+            cases.append(value)
+    for count in (0, 1, 64, 65, 128):
+        value = copy.deepcopy(seed)
+        value['candidates'] = [{**copy.deepcopy(candidate), 'endpoint_id': f'endpoint-{i:03}'} for i in range(count)]
+        cases.append(value)
+    for maxima in ([0], [0, 1, None], [1, 1], [2, 1], [None, 1], list(range(64)), list(range(65))):
+        value = copy.deepcopy(seed)
+        value['candidates'][0]['tiers'] = [{'max_prompt_tokens': n, 'rates': copy.deepcopy(candidate['rates'])} for n in maxima]
+        cases.append(value)
+    results = []
+    for index, value in enumerate(cases):
+        strict, seam = accepts(snapshot_from_object, value), accepts(reused, value)
+        assert strict == seam, (index, value, strict, seam)
+        results.append(strict)
+    assert any(results) and not all(results)
+    record_property('snapshot_cases', len(cases))
+    record_property('accepted', sum(results))
+    record_property('audited_paths', sorted(fields))

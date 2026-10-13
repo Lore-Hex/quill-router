@@ -143,6 +143,12 @@ def forbid_cohort_calls(monkeypatch):
 
 @pytest.mark.usefixtures('fixed_operation_catalog')
 def test_authorize_shadow_exception_preserves_http_bytes_and_money(monkeypatch):
+    authorize_hook_fault_http(monkeypatch)
+
+
+def authorize_hook_fault_http(monkeypatch, fault=None):
+    import sys
+
     oracle.pin_clocks(monkeypatch)
     store, db, key = oracle._seed_typed_gateway_store()
     cfg = oracle.settings(async_settle_shadow_policy='', async_settle_shadow_workspaces='ws-rpc',
@@ -159,6 +165,41 @@ def test_authorize_shadow_exception_preserves_http_bytes_and_money(monkeypatch):
     payload = oracle._body(key.hash).model_dump(mode='json')
     saved = {k: copy.deepcopy(v) for k, v in vars(db).items() if isinstance(v, (dict, list, set, int))}
     outputs = []
+    reached = [set(), set()]
+    injected = []
+    operation_calls = []
+    operation = oracle.gateway._authorize_gateway_sync_impl
+    def counted(*args, **kwargs):
+        operation_calls.append(1)
+        return operation(*args, **kwargs)
+    monkeypatch.setattr(oracle.gateway, '_authorize_gateway_sync_impl', counted)
+    hook = oracle.gateway._v2_authorize_hook
+    leg = 0
+    def traced(*args, **kwargs):
+        if not args[0].async_settle_shadow_policy:
+            return hook(*args, **kwargs)
+        if fault[0] == 'entry':
+            injected.append(leg)
+            raise RuntimeError('authorize hook entry fault')
+        fired = False
+        def trace(frame, event, arg):
+            nonlocal fired
+            site = (frame.f_code.co_filename, frame.f_lineno)
+            if event == 'line' and site in fault[1]:
+                reached[leg].add(site)
+                if fault[0] == 'inject' and not fired:
+                    fired = True
+                    injected.append(leg)
+                    raise RuntimeError('authorize hook statement fault')
+            return trace
+        previous = sys.gettrace()
+        sys.settrace(trace)
+        try:
+            return hook(*args, **kwargs)
+        finally:
+            sys.settrace(previous)
+    if fault is not None:
+        monkeypatch.setattr(oracle.gateway, '_v2_authorize_hook', traced)
     try:
         for pin in ('', 'shadow-v2'):
             monkeypatch.setattr(oracle.acquisition, '_usage_check_after', oracle.OrderedDict())
@@ -169,14 +210,21 @@ def test_authorize_shadow_exception_preserves_http_bytes_and_money(monkeypatch):
             store._credit_shard_counts.invalidate('ws-rpc')
             cfg.async_settle_shadow_policy = pin
             responses = []
-            for _ in range(2):
+            for leg in range(2):  # noqa: B007 - read by the request-thread trace closure
+                before = len(operation_calls)
                 response = client.post('/v1/internal/gateway/authorize', json=payload,
                     headers={'X-TR-Settlement-Shadow-Policy': 'shadow-v2'})
+                assert len(operation_calls) == before+1
                 assert response.status_code == 200, response.text
-                responses.append((response.status_code, list(response.headers.multi_items()), response.content))
+                responses.append((response.status_code, list(response.headers.multi_items()), response.content,
+                    {k: copy.deepcopy(getattr(db, k)) for k in saved}))
             outputs.append((responses, {k: copy.deepcopy(getattr(db, k)) for k in saved}))
         assert outputs[0] == outputs[1]
-        assert calls == [1, 1]
+        if fault is None or fault[0] == 'record':
+            assert calls == [1, 1]
+        else:
+            assert injected == [0, 1]
+        return reached
     finally:
         client.close()
         if legacy is not None:
@@ -362,6 +410,8 @@ def terminal_hook_fault_http(env, monkeypatch, kind, fault):
     oracle.pin_clocks(monkeypatch)
     faults = []
     statement_mode = isinstance(fault, tuple)
+    capture_mode = statement_mode and len(fault) > 2
+    reached_legs = [set(), set()]
     if statement_mode:
         from tests.test_async_settle_shadow import NOW
         monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
@@ -415,16 +465,25 @@ def terminal_hook_fault_http(env, monkeypatch, kind, fault):
                     local.setattr(oracle.gateway, '_terminal_once', counted)
                 shell = None
                 if pin and statement_mode:
+                    if capture_mode and len(fault) > 4 and fault[4]:
+                        def capture_failure(*args, **kwargs):
+                            raise RuntimeError('capture helper failure')
+                        local.setattr(module, 'capture_prices', capture_failure)
                     from tests.test_async_settle_shadow_cohort_runtime import installed
                     shell, _, _ = installed()
                     client.app.state.async_settle_shadow_cohort = shell
-                    original_hook = getattr(oracle.gateway, '_v2_'+kind+'_hook')
+                    hook_name = '_v2_capture_hook' if capture_mode else '_v2_'+kind+'_hook'
+                    original_hook = getattr(oracle.gateway, hook_name)
                     def traced(*args, original_hook=original_hook, **kwargs):
+                        if fault[0] == 'entry':
+                            faults.append('entry')
+                            raise RuntimeError('capture hook entry fault')
                         injected = []
                         def trace(frame, event, arg):
                             site = (frame.f_code.co_filename, frame.f_lineno)
                             if event == 'line' and site in fault[1]:
                                 observed_lines.add(site)
+                                reached_legs[leg].add(site)  # noqa: B023 - synchronous HTTP leg owns the trace
                                 if fault[0] == 'inject' and not injected:
                                     injected.append(site)
                                     faults.append(site)
@@ -436,10 +495,10 @@ def terminal_hook_fault_http(env, monkeypatch, kind, fault):
                             return original_hook(*args, **kwargs)
                         finally:
                             sys.settrace(previous)
-                    local.setattr(oracle.gateway, '_v2_'+kind+'_hook', traced)
+                    local.setattr(oracle.gateway, hook_name, traced)
                 responses = []
                 try:
-                    for _ in range(2):
+                    for leg in range(2):  # noqa: B007 - read by the request-thread trace closure
                         before_money = len(money_calls)
                         if pin and statement_mode and before_money:
                             # A statement fault can strand observer-only locks.
@@ -453,7 +512,8 @@ def terminal_hook_fault_http(env, monkeypatch, kind, fault):
                         if pin:
                             assert len(money_calls) == before_money+1
                         assert response.status_code == 200, response.text
-                        responses.append((response.status_code, list(response.headers.multi_items()), response.content))
+                        responses.append((response.status_code, list(response.headers.multi_items()), response.content,
+                            {k: copy.deepcopy(getattr(db, k)) for k in saved}))
                     outputs.append((responses, {k: copy.deepcopy(getattr(db, k)) for k in saved}))
                 finally:
                     if shell is not None:
@@ -465,12 +525,14 @@ def terminal_hook_fault_http(env, monkeypatch, kind, fault):
             assert outputs[0][1][name] == outputs[1][1][name], name
         if not statement_mode:
             assert faults == [fault, fault]
+        elif fault[0] == 'entry':
+            assert faults == ['entry', 'entry']
         elif fault[0] == 'inject':
-            assert faults == [next(iter(fault[1]))]*2
+            assert faults == [next(iter(fault[1]))]*(fault[3] if capture_mode else 2)
         return (outputs[1][0], [], outputs[1][1])
     monkeypatch.setattr(oracle, 'transcripts', transcripts)
     oracle.test_flag_off_terminal_http_identity(env, monkeypatch, kind, 'none', False, 'nonmember', False)
-    return observed_lines
+    return reached_legs if capture_mode else observed_lines
 
 
 def test_terminal_boundary_keeps_original_callback_error_and_once_only():
@@ -558,3 +620,51 @@ def test_registered_app_factory_exact_configuration_and_reset(registered_apps):
     assert len(_APPS) == before + 3
     for client in (first, second, changed, third):
         client.close()
+
+
+def hook_statement_sites(hook):
+    import inspect
+    import textwrap
+
+    source, start = inspect.getsourcelines(hook)
+    return {(inspect.getsourcefile(hook), start+node.lineno-1)
+        for node in ast.walk(ast.parse(textwrap.dedent(''.join(source))))
+        if isinstance(node, ast.stmt) and node.lineno != 1}
+
+
+@pytest.mark.usefixtures('fixed_operation_catalog')
+def test_authorize_hook_entry_and_every_reached_statement_preserve_http(monkeypatch, record_property):
+    hook = oracle.gateway._v2_authorize_hook
+    with monkeypatch.context() as patch:
+        reached = authorize_hook_fault_http(patch, ('record', hook_statement_sites(hook)))
+    assert reached[0] == reached[1] and reached[0]
+    assert (hook.__code__.co_filename, hook.__code__.co_firstlineno+2) in reached[0]
+    record_property('injected_statement_sites', sorted(reached[0]))
+    record_property('http_fault_attempts', 2+2*len(reached[0]))
+    for fault in [('entry', set()), *[('inject', {site}) for site in sorted(reached[0])]]:
+        with monkeypatch.context() as patch:
+            authorize_hook_fault_http(patch, fault)
+
+
+@pytest.mark.parametrize('kind', ['settle', 'refund'])
+def test_capture_hook_entry_and_every_reached_statement_preserve_http(monkeypatch, kind, record_property):
+    hook = oracle.gateway._v2_capture_hook
+    def run(fault):
+        with monkeypatch.context() as patch:
+            setup = globals()['env'].__wrapped__(patch)
+            fresh = next(setup)
+            try:
+                return terminal_hook_fault_http(fresh, patch, kind, fault)
+            finally:
+                next(setup, None)
+    for helper_fails in (False, True):
+        reached = run(('record', hook_statement_sites(hook), 'capture', 0, helper_fails))
+        sites = reached[0] | reached[1]
+        assert sites and reached[0] != reached[1]  # replay-only price acquisition is exercised
+        assert (hook.__code__.co_filename, hook.__code__.co_firstlineno+2) in sites
+        record_property('injected_statement_sites_'+str(helper_fails), sorted(sites))
+        record_property('http_fault_attempts_'+str(helper_fails), 2+sum(map(len, reached)))
+        faults = [('entry', set(), 'capture', 2, helper_fails)]
+        faults += [('inject', {site}, 'capture', sum(site in leg for leg in reached), helper_fails) for site in sorted(sites)]
+        for fault in faults:
+            run(fault)
