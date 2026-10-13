@@ -96,27 +96,64 @@ def _metrics(v: dict[str, Any]) -> None:
     require(None in hcounts or hcounts[0] == hcounts[1])
 
 
+# §7.5.1 / §8 availability, expressed as report paths. Empty tuples mean
+# evidence/identity predicates with no nullable numeric report aggregate.
+# Projected pre-enable G7 uses fleet peaks, including measured CPU; it does
+# not require actual publisher counters or S/T/J/H observations.
+_RULE_AGGREGATES = {
+    "G1": (), "G2": (),
+    "G3": tuple("attempts." + k for k in e.ATTEMPTS.fields),
+    "G4": tuple("partition." + k for k in e.PARTITION.fields) + ("null_counts.comparison",),
+    "G5": tuple(f"{field}.{k}" for field, schema in
+        (("comparator", e.COMPARATOR), ("admission", e.ADMISSION), ("partition", e.PARTITION))
+        for k in schema.fields if k != "coverage")
+        + tuple("timing." + k + ".count" for k in e.TIMINGS[:8])
+        + ("deltas.count",) + tuple("null_counts." + k for k in
+            ("eligibility", "comparison", "prediction", "booking", "delta")),
+    "G6": tuple("publisher." + k for k in e.PUBLISHER.fields if k != "peaks")
+        + tuple("timing." + k + ".count" for k in e.TIMINGS[8:10]),
+    "G7": tuple("fleet_peaks." + k for k in e.PEAKS.fields),
+    "G8": tuple(f"{field}.{k}" for field, schema in
+        (("checkpoint", e.CHECKPOINT), ("handoff", e.HANDOFF)) for k in schema.fields)
+        + tuple("timing." + k + ".count" for k in e.TIMINGS[10:]),
+    "G9": (), "G10": ("first_seed_at_us", "clock_start_us", "elapsed_seconds"), "G11": (),
+}
+ACTUAL_STAGES = ("fleet-budgets", "shadow-serving", "pre-flip")
+PASS_AGGREGATES = {
+    stage: {rule: paths + (
+        tuple("publisher.peaks." + k for k in e.PEAKS.fields)
+        + tuple("timing." + k + ".count" for k in e.TIMINGS[10:])
+        if rule == "G7" and stage in ACTUAL_STAGES else ())
+        for rule, paths in _RULE_AGGREGATES.items()}
+    for stage in REQUIRED_RULES
+}
+
+
 def _pass_aggregates(report: dict[str, Any]) -> None:
-    rules = report["rules"]
-    dependent = {
-        "G3": ("attempts",), "G4": ("partition",), "G5": ("comparator", "admission", "partition"),
-        "G6": ("publisher",), "G8": ("checkpoint", "handoff"),
-    }
-    for rule, fields in dependent.items():
-        if rules[rule] != "pass":
+    for rule, paths in PASS_AGGREGATES[report["gate"]].items():
+        if report["rules"][rule] != "pass":
             continue
-        for field in fields:
-            require(all(value is not None for key, value in report[field].items() if key not in ("coverage", "peaks")))
-    for field in ("comparator", "admission"):
-        if rules["G5"] == "pass":
+        for path in paths:
+            value = report
+            for part in path.split("."):
+                value = value[part]
+            require(value is not None)
+    if report["rules"]["G5"] == "pass":
+        for field in ("comparator", "admission"):
             require(report[field]["coverage"]["state"] in ("evaluated", "not_exercised"))
-    # Required sample/slot/close populations may be empty, but not unavailable.
-    required_timings = (() if rules["G5"] != "pass" else e.TIMINGS[:8]) + (() if rules["G6"] != "pass" else e.TIMINGS[8:10]) + (() if rules["G8"] != "pass" else e.TIMINGS[10:])
-    require(all(report["timing"][k]["count"] is not None for k in required_timings))
-    if rules["G5"] == "pass":
-        require(report["deltas"]["count"] is not None)
-        require(all(report["null_counts"][key] is not None for key in
-                    ("eligibility", "comparison", "prediction", "booking", "delta")))
+
+
+def _regional_metrics(report: dict[str, Any], regions: list[dict[str, Any]]) -> None:
+    for timing in (report["timing"], *(region["timing"] for region in regions)):
+        h, handoff, hterm = (timing[k]["count"] for k in ("close_us", "handoff_us", "drain_us"))
+        require(h is None or handoff is None or h == handoff)
+        require(hterm is None or h is None or hterm <= h)
+        require(hterm is None or handoff is None or hterm <= handoff)
+    for key in e.TIMINGS:
+        for field in ("count", "null_count"):
+            total = _sum(region["timing"][key][field] for region in regions)
+            fleet = report["timing"][key][field]
+            require(total is None or fleet is None or total == fleet)
 
 
 def validate_gate_output(output: Any, report: Any, *, failures: Iterable[dict[str, Any]],
@@ -134,19 +171,28 @@ def validate_gate_output(output: Any, report: Any, *, failures: Iterable[dict[st
     streams = {"failures": failures, "writers": writers, "regions": regions,
                "input_inventory": inputs, "reset_history": reset_history}
     listed: dict[str, int] = dict.fromkeys((row.name for row in e.FAILURE_RULES), 0)
+    region_entries: list[dict[str, Any]] = []
+    fallback = False
     for stream, pages in streams.items():
         require(isinstance(pages, Iterable) and not isinstance(pages, (str, bytes, dict)))
         materialized = list(pages)
         r.validate_detail(report[stream], materialized, stream=stream)
+        if stream == "regions":
+            region_entries.extend(entry for page in materialized for entry in page["entries"])
         if stream == "failures":
             for page in materialized:
                 for failure in page["entries"]:
                     listed[failure["gap"]] += 1
+                    fallback |= (failure["subject"]["scope"] == "run"
+                                 and failure["gap"] not in e.RUN_SCOPED_FAILURES)
     require(all(tally["listed"] == listed[name] for name, tally in report["failure_counts"].items()))
     gaps = sorted(name for name, tally in report["failure_counts"].items() if tally["count"] > 0)
     require(output["gaps"] == gaps)
     require((output["verdict"] == "BLOCKED") == bool(gaps))
     require(report["complete"] or "artifact_gap" in gaps)
+    if fallback:
+        require(not report["complete"] and report["rules"]["G1"] in ("fail", "unevaluable")
+                and bool({"artifact_gap", "evidence_schema_gap"}.intersection(gaps)))
     for rule in REQUIRED_RULES[report["gate"]]:
         require(report["rules"][rule] != "not_required")
     for rule, state in report["rules"].items():
@@ -162,10 +208,11 @@ def validate_gate_output(output: Any, report: Any, *, failures: Iterable[dict[st
     if report["clock_start_us"] is not None:
         require(report["clock_start_us"] == report["first_seed_at_us"])
     _metrics(report)
+    _regional_metrics(report, region_entries)
+    _pass_aggregates(report)
     if output["verdict"] == "PASS":
         require(report["complete"] and all(state in ("pass", "not_required") for state in report["rules"].values()))
         require(verifiers["certificate"] is not None and verifiers["binding"] is not None, "artifact_gap")
-        _pass_aggregates(report)
 
 
 def display_failure(failure: Any) -> str:
@@ -226,6 +273,29 @@ def _references(value: Any, artifacts: Mapping[str, bytes]) -> None:
             _references(child, artifacts)
 
 
+def _root_identity(key: str, qualified: str, manifest: Any, proof: Any) -> None:
+    parts = e.decode_key(key)
+    stream = ENTRY_PREIMAGES[qualified]
+    # Validate the tuple shape before indexing. Row-body semantics remain A1/P5.
+    r._key({"key": key}, stream)
+    if qualified in ("manifest.counter_root", "manifest.closure_root", "manifest.receipts_root"):
+        require(parts[0] == manifest["day"], "artifact_gap")
+        require(parts[1] in manifest["router_writers"], "artifact_gap")
+    elif stream == "publisher_slot_trace_sha256":
+        require(parts[0] in proof["rosters_by_day"]
+                and parts[1] in proof["rosters_by_day"][parts[0]]["router"], "artifact_gap")
+    else:
+        role, boot, revision, region, _ = parts
+        rosters = ([manifest[role + "_writers"]] if qualified.startswith("manifest.") else
+                   [roster[role] for roster in proof["rosters_by_day"].values()])
+        matches = [roster[boot] for roster in rosters if boot in roster]
+        require(bool(matches) and all(writer["revision"] == revision and writer["region"] == region
+                                     for writer in matches), "artifact_gap")
+        if qualified.startswith("proof."):
+            require(all(regions[boot] == region for regions in proof["instance_regions_by_day"].values()
+                        if boot in regions), "artifact_gap")
+
+
 def validate_preimages(manifest: Any, proof: Any, *, artifacts: Mapping[str, bytes], roots: Mapping[str, Any]) -> None:
     a1.MANIFEST(manifest)
     a1.PROOF_MANIFEST(proof)
@@ -240,6 +310,12 @@ def validate_preimages(manifest: Any, proof: Any, *, artifacts: Mapping[str, byt
         if qualified in OBJECT_PREIMAGES:
             decoded = _object_bytes(raw, OBJECT_PREIMAGES[qualified])
             _references(decoded, artifacts)
+            if qualified == "manifest.independent_inventory_sha256":
+                require(decoded["day"] == manifest["day"], "artifact_gap")
+            if qualified == "proof.external_proofs_sha256":
+                for requirement in decoded["requirements"]:
+                    for role in ("router", "enclave"):
+                        require(requirement[role + "_revision"] == proof["source_shas"][role], "artifact_gap")
             if qualified in ("proof.pre_budget_sha256", "proof.post_budget_sha256"):
                 require(decoded["stage"] == ("pre" if qualified == "proof.pre_budget_sha256" else "post"))
             actual = sha256(decoded)
@@ -252,6 +328,7 @@ def validate_preimages(manifest: Any, proof: Any, *, artifacts: Mapping[str, byt
         for candidate in supplied:
             require(type(candidate) is dict and set(candidate) == {"key", "bodies"})
             entry = r._root_entry(candidate["key"], candidate["bodies"])
+            _root_identity(entry["key"], qualified, manifest, proof)
             # Every retained candidate has a digest-qualified named inventory key.
             for body in candidate["bodies"]:
                 digest = r.file_digest(body)
@@ -272,6 +349,7 @@ def validate_preimages(manifest: Any, proof: Any, *, artifacts: Mapping[str, byt
         for item in days:
             require(type(item) is dict and set(item) == {"day", "pages"})
             e.day(item["day"])
+            require(item["day"] in proof["rosters_by_day"], "artifact_gap")
             require(type(item["pages"]) is list)
             root = a1.coverage_root(item["pages"])
             require(all(page["day"] == item["day"] and page["stream"] == stream for page in item["pages"]))

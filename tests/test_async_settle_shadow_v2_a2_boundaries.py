@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 import pytest
@@ -75,6 +76,11 @@ def test_traced_nonempty_preimage_graph() -> None:
     args = obj('root_preimages', 'all-defined-preimages-empty')
     artifacts = {k: bytes.fromhex(v) for k, v in args.pop('artifacts_hex').items()}
     args['artifacts'] = artifacts
+    # Match the literal roots' w1 identity to the supplied manifest/proof scope.
+    writer = args['manifest']['router_writers']['issuer']
+    args['manifest']['router_writers'] = {'w1': writer}
+    args['proof']['rosters_by_day'] = {args['manifest']['day']: {'router': {'w1': writer}, 'enclave': {}}}
+    args['proof']['instance_regions_by_day'] = {args['manifest']['day']: {'w1': writer['region']}}
     body = b'{}\n'
     artifacts['candidates/' + r.file_digest(body) + '.json'] = body
     for qualified, stream in c.ENTRY_PREIMAGES.items():
@@ -84,13 +90,14 @@ def test_traced_nonempty_preimage_graph() -> None:
         args[owner][field] = r.entry_root([r._root_entry(literal['key'], [body])], stream=stream)
     for qualified, stream in c.COVERAGE_PREIMAGES.items():
         pages = obj('root_preimages', 'frozen-page-root-' + stream)
-        args['manifest']['day'] = pages[0]['day']
+        pages[0]['day'] = args['manifest']['day']
         args['roots'][qualified] = pages
         args['manifest'][qualified.split('.')[1]] = e.a1.coverage_root(pages)
     for qualified, stream in c.CROSS_DAY_PREIMAGES.items():
         pages = obj('root_preimages', 'frozen-page-root-' + stream)
+        pages[0]['day'] = args['manifest']['day']
         args['roots'][qualified] = [{'day': pages[0]['day'], 'pages': pages}]
-        args['proof'][qualified.split('.')[1]] = vector('root_preimages', 'cross-day-' + stream)['result']
+        args['proof'][qualified.split('.')[1]] = s.sha256([{'day': pages[0]['day'], 'root': e.a1.coverage_root(pages), 'count': sum(len(p['entries']) for p in pages)}])
     artifacts['proof_manifest'] = canonical(args['proof']) + b'\n'
     args['manifest']['proof_manifest_sha256'] = r.file_digest(artifacts['proof_manifest'])
     c.validate_preimages(**args)
@@ -549,3 +556,265 @@ def test_cross_day_shape_native_and_bounds() -> None:
             r.DAY_ROOT({**value, 'count': bad})
     with pytest.raises(ValueError):
         r.DAY_ROOT.parse(canonical(value) + b' ' * (129 - len(canonical(value))))
+
+
+# Independent §7.5.1/§8 transcription. None of these expected paths is read
+# from PASS_AGGREGATES or production schema fields.
+DESIGN_RULE_PATHS = {
+    'G1': '', 'G2': '',
+    'G3': 'attempts.authorize_fresh attempts.authorize_replay attempts.terminal_original attempts.terminal_retry attempts.completion',
+    'G4': 'partition.T partition.A partition.B partition.C null_counts.comparison',
+    'G5': 'comparator.eligible comparator.compared comparator.exact comparator.explained comparator.mismatch comparator.unevaluable admission.E admission.Y admission.N admission.U partition.T partition.A partition.B partition.C timing.authorize_shadow_us.count timing.handoff_prepare_us.count timing.router_settle_us.count timing.booking_confirm_us.count timing.comparator_us.count timing.evidence_write_us.count timing.workspace_age_us.count timing.health_age_us.count deltas.count null_counts.eligibility null_counts.comparison null_counts.prediction null_counts.booking null_counts.delta',
+    'G6': 'publisher.scheduled_slots publisher.claim_attempts publisher.claims publisher.lost_claims publisher.scans publisher.publications publisher.failures publisher.unknown_outcomes publisher.late_cycles publisher.missed_slots timing.publisher_cycle_us.count timing.publisher_slot_rpc_elapsed_us.count',
+    'G7': 'fleet_peaks.simultaneous_routers fleet_peaks.simultaneous_publishers fleet_peaks.configured_routers fleet_peaks.configured_publishers fleet_peaks.startup_operations_1s fleet_peaks.close_operations_1s fleet_peaks.export_operations_1s fleet_peaks.reads_per_second fleet_peaks.pending_rows_per_second fleet_peaks.trust_rows_per_second fleet_peaks.health_rows_per_second fleet_peaks.claim_operations_per_second fleet_peaks.scan_operations_per_second fleet_peaks.publication_operations_per_second fleet_peaks.export_operations_per_second fleet_peaks.export_bytes_per_second fleet_peaks.configured_reads_per_second fleet_peaks.configured_pending_rows_per_second fleet_peaks.cpu_percent',
+    'G8': 'checkpoint.attempts checkpoint.failures checkpoint.recoveries checkpoint.unknown_commits checkpoint.unreconciled_commits checkpoint.irrecoverable_losses checkpoint.evidence_loss handoff.expected handoff.landed handoff.attempts_lower handoff.attempts_upper handoff.failures_lower handoff.failures_upper handoff.unknown_reply_upper timing.close_us.count timing.handoff_us.count timing.drain_us.count',
+    'G9': '', 'G10': 'first_seed_at_us clock_start_us elapsed_seconds', 'G11': '',
+}
+DESIGN_REQUIRED_RULES = {
+    'transport': ('G1',), 'fleet-budgets-pre': ('G1', 'G7'),
+    'fleet-budgets': ('G1', 'G2', 'G5', 'G6', 'G7', 'G8'),
+    'shadow-serving': ('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10'),
+    'pre-flip': ('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10', 'G11'),
+    'post-flip': ('G1', 'G11'),
+}
+
+
+@pytest.mark.parametrize('stage', DESIGN_REQUIRED_RULES)
+def test_stage_rule_availability_table(stage: str) -> None:
+    assert c.REQUIRED_RULES == DESIGN_REQUIRED_RULES
+    expected = {rule: tuple(paths.split()) for rule, paths in DESIGN_RULE_PATHS.items()}
+    if stage in ('fleet-budgets', 'shadow-serving', 'pre-flip'):
+        expected['G7'] += tuple(path.replace('fleet_peaks.', 'publisher.peaks.') for path in DESIGN_RULE_PATHS['G7'].split())
+        expected['G7'] += ('timing.close_us.count', 'timing.handoff_us.count', 'timing.drain_us.count')
+    assert c.PASS_AGGREGATES[stage] == expected
+    # Prove every path is enforced for every passing rule, even outside PASS.
+    for rule, paths in expected.items():
+        for path in paths:
+            report = obj('gate_outputs_a2', 'closed-actual-empty')['report']
+            report['gate'] = stage
+            report['rules'] = dict.fromkeys(report['rules'], 'not_required')
+            report['rules'][rule] = 'pass'
+            for other in paths:
+                node = report
+                parts = other.split('.')
+                for part in parts[:-1]:
+                    node = node[part]
+                if node[parts[-1]] is None:
+                    node[parts[-1]] = 0
+            c._pass_aggregates(report)
+            node = report
+            parts = path.split('.')
+            for part in parts[:-1]:
+                node = node[part]
+            node[parts[-1]] = None
+            with pytest.raises(ValueError):
+                c._pass_aggregates(report)
+
+
+def test_regional_partition_preserves_unknown_and_checks_overflow() -> None:
+    report = obj('gate_outputs_a2', 'closed-actual-empty')['report']
+    region = obj('region_reports', 'region')
+    # Unknown regional identity must not turn known fleet observations into zero.
+    report['timing']['close_us']['count'] = 1
+    report['timing']['handoff_us']['count'] = 1
+    c._regional_metrics(report, [region])
+    region['timing'] = copy.deepcopy(report['timing'])
+    c._regional_metrics(report, [region])
+    report['timing']['close_us']['count'] = None
+    report['timing']['handoff_us']['count'] = None
+    c._regional_metrics(report, [region])
+    region['timing']['close_us']['count'] = s.INT64
+    region['timing']['handoff_us']['count'] = s.INT64
+    with pytest.raises(ValueError):
+        c._regional_metrics(report, [region, region])
+
+
+def test_fallback_N_requires_G1_and_incomplete_but_intrinsic_run_does_not() -> None:
+    assert e.RUN_SCOPED_FAILURES == {'artifact_gap', 'evidence_export_budget_gap', 'positive_seed_gap', 'continuous_window_gap'}
+    args = obj('gate_outputs_a2', 'complete-listed-fallback-N')
+    artifact = obj('gate_failures', 'constructor-artifact_gap')
+    entries = [artifact, *args['failures'][0]['entries']]
+    pages = make_pages(entries)
+    args['failures'] = pages
+    args['report']['failures'] = make_detail(entries, pages, 'failures')
+    args['report']['failure_counts']['artifact_gap'] = {'count': 1, 'listed': 1, 'complete': True, 'day_counts': [1]}
+    args['output']['gaps'] = ['artifact_gap', 'writer_closure_gap']
+    args['report']['complete'] = False
+    args['report']['rules']['G1'] = 'unevaluable'
+    args['output']['coverage_sha256'] = s.sha256(args['report'])
+    c.validate_gate_output(**args)
+    args['report']['rules']['G1'] = 'pass'
+    args['output']['coverage_sha256'] = s.sha256(args['report'])
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**args)
+    args = obj('gate_outputs_a2', 'pre-enable-structural-pass')
+    failure = obj('gate_failures', 'constructor-evidence_export_budget_gap')
+    pages = make_pages([failure])
+    args['failures'] = pages
+    args['report']['failures'] = make_detail([failure], pages, 'failures')
+    args['report']['failure_counts'][failure['gap']] = {'count': 1, 'listed': 1, 'complete': True, 'day_counts': [1]}
+    args['report']['rules']['G7'] = 'unevaluable'
+    args['output'].update(gaps=[failure['gap']], verdict='BLOCKED', coverage_sha256=s.sha256(args['report']))
+    c.validate_gate_output(**args)
+
+
+def test_reset_history_common_64_page_erratum() -> None:
+    from pathlib import Path
+
+    design = (Path(__file__).parents[1] / 'docs/design/async-settle-shadow-v2.md').read_text()
+    assert 'history points to RESET_ENTRY entries in common ATTACHMENT_PAGE envelopes (64 entries/page, ≤132,096 bytes/page; every nonfinal page has 64 entries).' in design
+    reset = obj('resolution_dag', 'reset')
+    entries = [{**reset, 'at_us': i} for i in range(128)]
+    for entry in entries:
+        e.RESET_ENTRY(entry)
+    page = make_pages(entries)[0]
+    with pytest.raises(ValueError):
+        e.ATTACHMENT_PAGE(page)
+    pages = make_pages(entries, 64)
+    root = 'b19202f484e1c13b9cfc8bc2025706083c4b1ed70ca609dde049fece4e65517d'
+    assert r.entry_root(entries, stream='reset_history') == root
+    detail = {'root': root, 'count': 128, 'pages': 2, 'tail_sha256': s.sha256(pages[-1])}
+    r.validate_detail(detail, pages, stream='reset_history')
+
+
+@pytest.mark.parametrize('qualified,parts,bad_index,bad_value', [
+    ('manifest.counter_root', ('2026-10-12', 'issuer'), 1, 'absent'),
+    ('manifest.counter_root', ('2026-10-12', 'issuer'), 1, 'enclave-only'),
+    ('manifest.closure_root', ('2026-10-12', 'issuer'), 1, 'enclave-only'),
+    ('manifest.receipts_root', ('2026-10-12', 'issuer', '00000000000000000001'), 1, 'enclave-only'),
+    ('manifest.closure_root', ('2026-10-12', 'issuer'), 1, 'absent'),
+    ('manifest.receipts_root', ('2026-10-12', 'issuer', '00000000000000000001'), 1, 'absent'),
+    ('proof.publisher_slot_trace_sha256', ('2026-10-12', 'issuer', '0'), 0, '2026-10-11'),
+    ('proof.publisher_slot_trace_sha256', ('2026-10-12', 'issuer', '0'), 1, 'absent'),
+    *[(owner + '.' + stream, ('router', 'issuer', 'a' * 40, 'us-central1', '0'), index, value)
+      for owner, stream in [('manifest', 'prerequisite_ledger_root'), ('proof', 'ledger_root')]
+      for index, value in [(0, 'enclave'), (1, 'absent'), (2, 'b' * 40), (3, 'wrong-region')]],
+])
+def test_preimage_root_identities(qualified: str, parts: tuple[str, ...], bad_index: int, bad_value: str) -> None:
+    args = obj('root_preimages', 'all-defined-preimages-empty')
+    args['artifacts'] = {k: bytes.fromhex(raw) for k, raw in args.pop('artifacts_hex').items()}
+    args['manifest']['proof_manifest_sha256'] = None
+    args['manifest']['enclave_writers']['enclave-only'] = copy.deepcopy(args['manifest']['router_writers']['issuer'])
+    owner, field = qualified.split('.')
+    for bad in (False, True):
+        components = list(parts)
+        if bad:
+            components[bad_index] = bad_value
+        key = '/'.join(str(len(part)) + ':' + part for part in components)
+        args['roots'][qualified] = [{'key': key, 'bodies': []}]
+        args[owner][field] = s.sha256([{'key': key, 'bytes': 0, 'sha256': None, 'state': 'missing'}])
+        if bad:
+            with pytest.raises(ValueError):
+                c.validate_preimages(**args)
+        else:
+            c.validate_preimages(**args)
+
+
+@pytest.mark.parametrize('stream', ['close_result', 'publisher_trace', 'health_basis', 'handoff_accounting', 'authorization_obligation'])
+def test_cross_day_root_binds_proof_days(stream: str) -> None:
+    args = obj('root_preimages', 'all-defined-preimages-empty')
+    args['artifacts'] = {k: bytes.fromhex(raw) for k, raw in args.pop('artifacts_hex').items()}
+    args['manifest']['proof_manifest_sha256'] = None
+    for day, rejected in [('2026-10-12', False), ('2026-10-11', True)]:
+        args['roots']['proof.' + stream + '_root'] = [{'day': day, 'pages': []}]
+        args['proof'][stream + '_root'] = s.sha256([{'day': day, 'root': s.sha256([]), 'count': 0}])
+        if rejected:
+            with pytest.raises(ValueError):
+                c.validate_preimages(**args)
+        else:
+            c.validate_preimages(**args)
+
+
+def _review_preargs() -> Any:
+    a = obj('root_preimages', 'all-defined-preimages-empty')
+    a['artifacts'] = {k: bytes.fromhex(v) for k, v in a.pop('artifacts_hex').items()}
+    a['manifest']['proof_manifest_sha256'] = None
+    return a
+
+
+def test_file_digest_retains_lf() -> None:
+    assert r.file_digest(b'{}') != r.file_digest(b'{}\n')
+
+
+def test_conflict_sums_original_bytes() -> None:
+    assert r._root_entry('10:2026-10-12/2:w1', [b'{}', b'{}\n'])['bytes'] == 5
+
+
+def test_conflict_deduplicates_exact_exports() -> None:
+    a = r._root_entry('10:2026-10-12/2:w1', [b'{}', b'{}\n'])
+    assert r._root_entry(a['key'], [b'{}', b'{}\n', b'{}']) == a
+    assert a['state'] == 'conflict'
+
+
+def test_root_rejects_duplicate_logical_keys() -> None:
+    v = r._root_entry('10:2026-10-12/2:w1', [b'{}'])
+    with pytest.raises(ValueError):
+        r.entry_root([v, v], stream='counter_root')
+
+
+def test_root_sorts_numeric_slot_as_integer() -> None:
+    vals = [r._root_entry(e.L('2026-10-12', 'w1', n), [b'{}']) for n in ['2', '10']]
+    assert r.entry_root(vals, stream='publisher_slot_trace_sha256') == s.sha256(vals)
+
+
+def test_invalid_receipt_position_zero_based() -> None:
+    assert e.I('2026-10-12', 'w1', '00000000000000000001', 0)['object']['key'].endswith('/1:0')
+
+
+def test_rational_reduced() -> None:
+    with pytest.raises(ValueError):
+        e.RATIONAL(dict(numerator=2, denominator=4))
+
+
+def test_tally_complete_iff_all_listed() -> None:
+    with pytest.raises(ValueError):
+        e.FAILURE_TALLY(dict(count=17, listed=16, complete=True, day_counts=[17]))
+
+
+def test_day_tally_vector_matches_days() -> None:
+    v = obj('gate_report', 'pre-enable-null-populations')
+    v['failure_counts']['artifact_gap']['day_counts'] = []
+    with pytest.raises(ValueError):
+        e.GATE_REPORT(v)
+
+
+def test_post_budget_link_matches_pre() -> None:
+    a = _review_preargs()
+    k = 'proof.post_budget_sha256'
+    v = json.loads(a['artifacts'][k])
+    v['pre_envelope_sha256'] = 'f' * 64
+    a['artifacts'][k] = canonical(v)
+    a['proof']['post_budget_sha256'] = s.sha256(v)
+    with pytest.raises(ValueError):
+        c.validate_preimages(**a)
+
+
+def test_file_ref_length_matches_exact_bytes() -> None:
+    a = _review_preargs()
+    k = 'manifest.independent_inventory_sha256'
+    v = json.loads(a['artifacts'][k])
+    v['serving']['bytes'] += 1
+    a['artifacts'][k] = canonical(v)
+    a['manifest']['independent_inventory_sha256'] = s.sha256(v)
+    with pytest.raises(ValueError):
+        c.validate_preimages(**a)
+
+
+def test_detail_tail_is_committed() -> None:
+    f = obj('gate_failures', 'constructor-writer_closure_gap')
+    p = dict(v=2, policy_version='shadow-v2', contract_revision='a2', page_seq='00000000000000000001', previous_sha256=None, entries=[f])
+    d = dict(root=r.entry_root([f], stream='failures'), count=1, pages=1, tail_sha256='f' * 64)
+    with pytest.raises(ValueError):
+        r.validate_detail(d, [p], stream='failures')
+
+
+
+def test_union_ledger_binds_instance_region_mapping() -> None:
+    args = _review_preargs()
+    key = '6:router/6:issuer/40:' + 'a' * 40 + '/11:us-central1/1:0'
+    args['roots']['proof.ledger_root'] = [{'key': key, 'bodies': []}]
+    args['proof']['ledger_root'] = s.sha256([{'key': key, 'bytes': 0, 'sha256': None, 'state': 'missing'}])
+    c.validate_preimages(**args)
+    args['proof']['instance_regions_by_day']['2026-10-12']['issuer'] = 'wrong-region'
+    with pytest.raises(ValueError):
+        c.validate_preimages(**args)

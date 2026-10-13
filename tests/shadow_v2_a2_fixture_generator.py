@@ -110,6 +110,11 @@ def build() -> dict[str, bytes]:
             "elapsed_seconds": rep["elapsed_seconds"] if rep["elapsed_seconds"] is not None else 0,
             "coverage_sha256": C(rep), "gaps": gaps, "verdict": "BLOCKED" if gaps else "PASS"}
         return {"output": outer, "report": rep, "failures": failure_pages or [], "writers": [], "regions": [], "inputs": [], "reset_history": [], "verifiers": rep["verifiers"]}
+    # All G7 sweep components are projected before opt-in; CPU is measured.
+    # Actual S/T/J/H observation series and publisher counters remain unavailable.
+    known_peaks = {**dict.fromkeys(peak_ints, 0),
+        **{k: {"numerator": 0, "denominator": 1} for k in peak_ratios}}
+    report["fleet_peaks"] = copy.deepcopy(known_peaks)
     add("gate_report", "pre-enable-null-populations", "GATE_REPORT", report)
     add("gate_outputs_a2", "pre-enable-structural-pass", "validate_gate_output", output_arguments(report))
     add("verifier_ports", "certificate", "VERIFIER_USE", verifier)
@@ -336,6 +341,7 @@ def build() -> dict[str, bytes]:
     inv = {"bundle": ref("inventory/leaf.json"), "first_key": "a", "last_key": "z", "objects": 1}
     add("input_inventory", "leaf", "INPUT_LEAF", leaf)
     add("input_inventory", "entry", "INPUT_INVENTORY_ENTRY", inv)
+    add("input_inventory", "zero-objects", "INPUT_INVENTORY_ENTRY", {**inv, "objects": 0})
     add("input_inventory", "page", "ATTACHMENT_PAGE", pages([inv], 64)[0])
     independent = {**TAG, "day": DAY, "serving": ref(), "deployment": ref(), "approval": approval, "complete": True}
     add("independent_inventory", "inventory", "INDEPENDENT_INVENTORY", independent)
@@ -378,6 +384,8 @@ def build() -> dict[str, bytes]:
     manifest = json.loads((A1 / "controls.json").read_bytes())["variants"][0]["object"]
     proof = json.loads((A1 / "proof_manifest.json").read_bytes())["variants"][0]["object"]
     manifest.update(day=DAY, proof_manifest_sha256=None)
+    proof["rosters_by_day"] = {DAY: {"router": manifest["router_writers"], "enclave": manifest["enclave_writers"]}}
+    proof["instance_regions_by_day"] = {DAY: {boot: writer["region"] for boot, writer in manifest["router_writers"].items()}}
     artifacts: dict[str, bytes] = {"evidence/source.json": b"{}\n"}
     object_fields = {"manifest.independent_inventory_sha256": independent, "proof.shutdown_inventory_sha256": shutdown,
         "proof.cohort_seed_policy_sha256": policy, "proof.pre_budget_sha256": pre, "proof.post_budget_sha256": post,
@@ -410,6 +418,92 @@ def build() -> dict[str, bytes]:
         owner, key_field = field.split(".")
         bad[owner][key_field] = "0" * 64
         add("root_preimages", "substitution-" + field, "validate_preimages", bad, "reject")
+    # Round-2 relationship witnesses: expected verdicts and all commitments are
+    # independent stdlib calculations, never calls into the contract under test.
+    for component in peak_ints + peak_ratios:
+        bad_report = copy.deepcopy(report)
+        bad_report["fleet_peaks"][component] = None
+        add("gate_outputs_a2", "missing-G7-" + component, "validate_gate_output",
+            output_arguments(bad_report), "reject")
+    blocked = copy.deepcopy(one)
+    blocked["report"]["rules"]["G5"] = "pass"
+    blocked["output"]["coverage_sha256"] = C(blocked["report"])
+    add("gate_outputs_a2", "blocked-G5-unavailable", "validate_gate_output", blocked, "reject")
+
+    actual = copy.deepcopy(report)
+    actual["gate"] = "fleet-budgets"
+    for rule in ("G2", "G5", "G6", "G8"):
+        actual["rules"][rule] = "pass"
+    for field in ("admission", "comparator"):
+        actual[field] = {k: 0 for k in actual[field] if k != "coverage"} | {
+            "coverage": {"state": "not_exercised", "numerator": 0, "denominator": 0}}
+    for field in ("partition", "checkpoint", "handoff", "null_counts"):
+        actual[field] = dict.fromkeys(actual[field], 0)
+    actual["publisher"] = {k: 0 for k in actual["publisher"] if k != "peaks"} | {"peaks": copy.deepcopy(known_peaks)}
+    actual["timing"] = {k: {**stat, "count": 0, "null_count": 0} for k in TIMINGS}
+    actual["deltas"] = {"count": 0, "null_count": 0, "min_micro": None, "max_micro": None, "bins": dict.fromkeys(BINS, 0)}
+    add("gate_outputs_a2", "closed-actual-empty", "validate_gate_output", output_arguments(actual))
+    def regional_arguments(rep: dict[str, Any], regs: list[dict[str, Any]]) -> dict[str, Any]:
+        region_pages = pages(regs, 8)
+        rep["regions"] = detail(regs, region_pages)
+        result = output_arguments(rep)
+        result["regions"] = region_pages
+        return result
+    for field in ("count", "null_count"):
+        bad_report = copy.deepcopy(actual)
+        reg = {**copy.deepcopy(region), "timing": copy.deepcopy(actual["timing"])}
+        if field == "count":
+            for k in ("close_us", "handoff_us"):
+                bad_report["timing"][k] = {"count": 1, "null_count": 0, **dict.fromkeys(("min", "p50", "p95", "p99", "max"), 1)}
+                reg["timing"][k] = {**bad_report["timing"][k], "count": 2}
+        else:
+            # Regional nullable S population contradicts the known empty fleet.
+            for k in TIMINGS[:8]:
+                reg["timing"][k]["null_count"] = 1
+        add("gate_outputs_a2", "regional-contradiction-" + field, "validate_gate_output",
+            regional_arguments(bad_report, [reg]), "reject")
+    bad_report = copy.deepcopy(actual)
+    bad_report["timing"]["drain_us"] = {"count": 2, "null_count": 0, **dict.fromkeys(("min", "p50", "p95", "p99", "max"), 1)}
+    for k in ("close_us", "handoff_us"):
+        bad_report["timing"][k] = {**bad_report["timing"]["drain_us"], "count": 1}
+    reg = {**copy.deepcopy(region), "timing": copy.deepcopy(bad_report["timing"])}
+    add("gate_outputs_a2", "Hterm-exceeds-H", "validate_gate_output", regional_arguments(bad_report, [reg]), "reject")
+    fallback = {**TAG, "gap": "writer_closure_gap", "subject": subject("run"), "count": 1}
+    bad_report = copy.deepcopy(actual)
+    fallback_pages = pages([fallback], 255)
+    bad_report["failures"] = detail([fallback], fallback_pages)
+    bad_report["failure_counts"]["writer_closure_gap"] = {"count": 1, "listed": 1, "complete": True, "day_counts": [1]}
+    bad_report["rules"]["G8"] = "unevaluable"
+    add("gate_outputs_a2", "complete-listed-fallback-N", "validate_gate_output",
+        output_arguments(bad_report, fallback_pages), "reject")
+    for label in ("inventory", "counter_root", "closure_root", "receipts_root"):
+        bad = copy.deepcopy(args)
+        if label == "inventory":
+            decoded = {**independent, "day": "2026-10-11"}
+            bad["artifacts_hex"]["manifest.independent_inventory_sha256"] = (canonical(decoded) + b"\n").hex()
+            bad["manifest"]["independent_inventory_sha256"] = C(decoded)
+        else:
+            source_file, variant_name = {"counter_root": ("counter", "closed-idle"),
+                "closure_root": ("closure", "closed-idle"), "receipts_root": ("receipt_pages", "one-authorize")} [label]
+            variants = json.loads((A1 / (source_file + ".json")).read_bytes())["variants"]
+            # Select frozen accepted row; the test separately proves A1 validity.
+            row = copy.deepcopy(next((v["object"] for v in variants if v["name"] == variant_name),
+                next(v["object"] for v in variants if v["expected"] == "accept")))
+            row["day"] = "2026-10-11"
+            key = L(row["day"], row["boot"], *([row["first_seq"]] if label == "receipts_root" else []))
+            body = canonical(row)
+            bad["artifacts_hex"]["candidates/" + F(body) + ".json"] = body.hex()
+            bad["roots"]["manifest." + label] = [{"key": key, "bodies_hex": [body.hex()]}]
+            bad["manifest"][label] = C([{"key": key, "sha256": F(body), "bytes": len(body), "state": "present"}])
+        add("root_preimages", "wrong-day-" + label, "validate_preimages", bad, "reject")
+    for role in ("router", "enclave"):
+        bad = copy.deepcopy(args)
+        decoded = copy.deepcopy(external)
+        decoded["requirements"][0][role + "_revision"] = "b" * 40
+        bad["artifacts_hex"]["proof.external_proofs_sha256"] = canonical(decoded).hex()
+        bad["proof"]["external_proofs_sha256"] = C(decoded)
+        bad["manifest"]["proof_manifest_sha256"] = None
+        add("root_preimages", "wrong-external-" + role + "-revision", "validate_preimages", bad, "reject")
     # Every new schema receives independent byte-bound/missing/extra variants.
     limits = {"GATE_REPORT": 65536, "FAILURE_SUBJECT": 768, "GATE_FAILURE": 1024, "RATIO": 256,
         "STAT": 512, "RATIONAL": 128, "PEAKS": 4096, "DETAIL": 512, "WRITER_REPORT": 8192,

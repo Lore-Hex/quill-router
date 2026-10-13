@@ -32,7 +32,7 @@ from trusted_router.async_settle_shadow_v2_schema import (
 )
 from trusted_router.detached_jws import canonical
 
-FIXTURE_MANIFEST_SHA256 = "68d538f01f276fcacbc01052ecd303a2a58454459918fdc88d3443031c07115e"
+FIXTURE_MANIFEST_SHA256 = "82fb6ca50796260bf4b094001934d85c06745016abeb99c73b2c71548b6849c8"
 ROOT_ENTRY = a1.COVERAGE_ENTRY
 GATE_OUTPUT = a1.GATE_OUTPUT
 TAG = {"contract_revision": literal("a2")}
@@ -194,13 +194,13 @@ FAILURE_RULES = (
     FailureRule('phase_coverage_gap', 'G4', 'Each router writer-day W; phase/aggregate/retained-array equations together', ('W',), 'self'),
     FailureRule('exclusion_proof_gap', 'G4', 'Each original or retry settle/refund receipt E; applicable exclusion proofs and original-receipt worker subcodes together', ('E',), 'self'),
     FailureRule('eligible_coverage_gap', 'G5', 'Each router writer-day W; independent eligible-attempt enumeration and comparator coverage together', ('W',), 'self'),
-    FailureRule('prediction_demand_gap', 'G5', 'Each settle/refund bucket B; independent E and Y+N+U equation/known-demand checks', ('B', 'E', 'N'), 'self'),
+    FailureRule('prediction_demand_gap', 'G5', 'Each settle/refund bucket B; independent E and Y+N+U equation/known-demand checks', ('B',), 'self'),
     FailureRule('prediction_unknown_gap', 'G5', 'Each settle/refund bucket B; unchanged unknown fraction', ('B',), 'self'),
     FailureRule('observer_cadence_gap', 'G6', 'Each router writer-day W; all observer intervals together', ('W',), 'self'),
     FailureRule('observer_budget_gap', 'G6', 'Each router writer-day W; all observer read/failure/streak/degraded limits together', ('W',), 'self'),
     FailureRule('shadow_health_gap', 'G6', 'Each router writer-day W; all required health coverage/usability checks together', ('W',), 'self'),
     FailureRule('health_source_gap', 'G6', 'Each router writer-day W; all source/isolation checks together', ('W',), 'self'),
-    FailureRule('health_timestamp_gap', 'G6', "Each router writer-day W; all referenced health bases' O/C/R timestamp checks together", ('W', 'O'), 'self'),
+    FailureRule('health_timestamp_gap', 'G6', "Each router writer-day W; all referenced health bases' O/C/R timestamp checks together", ('W',), 'self'),
     FailureRule('health_elapsed_gap', 'G6', "Each router writer-day W; all referenced bases' q/e/deadline checks together", ('W',), 'self'),
     FailureRule('health_slot_gap', 'G6', 'Each router writer-day W; all reader references and publisher claim/slot/version fences together', ('W',), 'self'),
     FailureRule('publisher_accounting_gap', 'G6', 'Each router writer-day W; all scheduled/attempted/outcome and operation conservation checks together', ('W',), 'self'),
@@ -234,6 +234,9 @@ FAILURE_RULES = (
     FailureRule('external_proofs_missing', 'G11', 'Each stage-required external proof P(stage,name); all checks/dependencies/approval together', ('P',), 'self'),
     FailureRule('pilot_prerequisite_gap', 'G11', 'Each required pilot stage P(stage,pilot); all retained pilot prerequisites together', ('P',), 'self'),
 )
+# Intrinsic run populations, distinct from the common unenumerable fallback.
+RUN_SCOPED_FAILURES = frozenset(("artifact_gap", "evidence_export_budget_gap",
+    "positive_seed_gap", "continuous_window_gap"))
 GAP_NAME = literal(*(row.name for row in FAILURE_RULES))
 
 
@@ -312,7 +315,7 @@ def _failure(v: Any) -> None:
     subject = v["subject"]
     scope = subject["scope"]
     if scope == "run":
-        return  # Unenumerable population fallback; completeness belongs to P5.
+        return  # Listed fallback completeness is checked by validate_gate_output.
     code = {"day": "D", "writer": "W", "bucket": "B", "reset": "Q", "object": "O"}[scope]
     if scope == "object":
         obj = subject["object"]
@@ -322,6 +325,14 @@ def _failure(v: Any) -> None:
         if obj["event_seq"] is not None:
             code = "E"
     require(code in row.constructor or "E" in row.constructor and code in ("I", "O"))
+    if code == "O" and "O" not in row.constructor:
+        # E may fall back only to the expected receipt page, never an arbitrary O.
+        require(subject["object"]["kind"] == "async_settle_shadow_receipts_v2")
+        parts = subject["object"]["key"].split("/")
+        require(len(parts) == 3)
+        day(parts[0])
+        identity(parts[1])
+        sequence(parts[2])
     if code == "W" and row.rule not in ("G2",):
         require(subject["role"] == "router")
     if code == "E" and row.rule in ("G3", "G4"):
@@ -466,7 +477,7 @@ APPROVAL = Schema({"subject_sha256": digest, "reviewer": name, "reviewed_at_us":
 INPUT_LEAF = _a2({"keys": array(FILE_REF, 10000), "complete": boolean}, invariant=lambda v: _sorted([r["path"] for r in v["keys"]]))
 INPUT_INVENTORY_ENTRY = Schema({"bundle": FILE_REF, "first_key": ascii_text(512, 1),
     "last_key": ascii_text(512, 1), "objects": integer}, 2048,
-    lambda v: require(v["first_key"] <= v["last_key"] and v["objects"] > 0))
+    lambda v: require(v["first_key"] <= v["last_key"]))
 INDEPENDENT_INVENTORY = _a2({"day": day, "serving": FILE_REF, "deployment": FILE_REF, "approval": APPROVAL, "complete": boolean})
 SHUTDOWN_ENTRY = Schema({"day": day, "boot": identity, "termination_applies": boolean,
     "reason": literal("utc_boundary", "shutdown", "opt_out", "hard_kill"), "interval_end_us": integer,

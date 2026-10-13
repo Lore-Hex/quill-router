@@ -65,6 +65,10 @@ def run_vector(v: dict[str, Any]) -> Any:
         return r.file_digest(bytes.fromhex(value['hex']))
     if target == 'validate_preimages':
         value['artifacts'] = {k: bytes.fromhex(v) for k, v in value.pop('artifacts_hex').items()}
+        for candidates in value['roots'].values():
+            for candidate in candidates:
+                if 'bodies_hex' in candidate:
+                    candidate['bodies'] = [bytes.fromhex(raw) for raw in candidate.pop('bodies_hex')]
         return c.validate_preimages(**value)
     if target == 'validate_gate_output':
         return c.validate_gate_output(**value)
@@ -300,3 +304,149 @@ for _file, _vector in VECTORS:
 @pytest.mark.parametrize('file,v', list(TRACED.values()), ids=[':'.join(key) for key in TRACED])
 def test_traced_fixture_branches(file: str, v: dict[str, Any]) -> None:
     test_frozen_vectors(file, v)
+
+
+# Literal transcription of §7.5.2's constructor column, not letters in prose.
+CONSTRUCTOR_TABLE = {
+    'policy_version_gap': ('O', 'E', 'I'),
+    'evidence_schema_gap': ('O', 'E', 'I'),
+    'artifact_gap': ('O', 'N'),
+    'writer_roster_gap': ('D',),
+    'regional_roster_unknown': ('W',),
+    'legacy_region_label': ('W',),
+    'legacy_sample_region': ('O',),
+    'flag_interval_gap': ('W',),
+    'boot_prerequisite_gap': ('W',),
+    'authorize_coverage_gap': ('W',),
+    'authorization_link_gap': ('E',),
+    'authorization_obligation_gap': ('W',),
+    'authorization_terminal_conflict': ('E',),
+    'authorization_horizon_gap': ('E',),
+    'observed_partition_gap': ('B',),
+    'terminal_coverage_gap': ('E',),
+    'phase_coverage_gap': ('W',),
+    'exclusion_proof_gap': ('E',),
+    'eligible_coverage_gap': ('W',),
+    'prediction_demand_gap': ('B',),
+    'prediction_unknown_gap': ('B',),
+    'observer_cadence_gap': ('W',),
+    'observer_budget_gap': ('W',),
+    'shadow_health_gap': ('W',),
+    'health_source_gap': ('W',),
+    'health_timestamp_gap': ('W',),
+    'health_elapsed_gap': ('W',),
+    'health_slot_gap': ('W',),
+    'publisher_accounting_gap': ('W',),
+    'publisher_trace_gap': ('W',),
+    'simultaneous_capacity_gap': ('K',),
+    'pre_enable_budget': ('A',),
+    'publisher_budget_gap': ('W',),
+    'fleet_headroom_gap': ('K',),
+    'freshness_budget_gap': ('W',),
+    'evidence_export_budget_gap': ('N',),
+    'close_handoff_budget_gap': ('W',),
+    'checkpoint_reconciliation_gap': ('W',),
+    'evidence_loss_gap': ('W',),
+    'writer_closure_gap': ('W',),
+    'retry_original_gap': ('E',),
+    'close_result_identity_gap': ('O',),
+    'close_result_conflict': ('O',),
+    'handoff_coverage_gap': ('W',),
+    'hash': ('Q',),
+    'identity': ('Q',),
+    'normalization': ('Q',),
+    'evaluator_disagreement': ('Q',),
+    'counter_mismatch': ('Q',),
+    'reviewed_resolution': ('Q',),
+    'revision_rollback': ('Q',),
+    'missing_support': ('Q',),
+    'exclusion_conflict': ('Q',),
+    'positive_seed_gap': ('N',),
+    'regional_seed_gap': ('V',),
+    'continuous_window_gap': ('N',),
+    'external_proofs_missing': ('P',),
+    'pilot_prerequisite_gap': ('P',),
+}
+
+
+@pytest.mark.parametrize('gap,expected', CONSTRUCTOR_TABLE.items())
+def test_exact_constructor_table(gap: str, expected: tuple[str, ...]) -> None:
+    assert {row.name for row in e.FAILURE_RULES} == set(CONSTRUCTOR_TABLE)
+    row = next(row for row in e.FAILURE_RULES if row.name == gap)
+    assert row.constructor == expected
+    base = obj('gate_failures', 'constructor-' + gap)
+    for code in 'NDWBOEIVKAQP':
+        if code == 'Q':
+            reset = obj('resolution_dag', 'reset')
+            reset['reason'] = gap if gap in e.RESET_REASONS else 'hash'
+            subject = e.Q(reset)
+        else:
+            subject = obj('gate_failures', 'subject-' + code)
+        if code == 'E' and row.rule == 'G3':
+            subject['phase'] = 'authorize'
+        # N is the common unenumerable-population fallback. I is the explicit
+        # position fallback for E. Neither widens the frozen constructor tuple.
+        if code in expected or code == 'N' or code == 'I' and 'E' in expected:
+            e.GATE_FAILURE({**base, 'subject': subject})
+        else:
+            with pytest.raises(ValueError):
+                e.GATE_FAILURE({**base, 'subject': subject})
+
+
+@pytest.mark.parametrize('gap', [name for name, codes in CONSTRUCTOR_TABLE.items() if codes == ('E',)])
+def test_receipt_page_fallback_kind_and_key(gap: str) -> None:
+    base = obj('gate_failures', 'constructor-' + gap)
+    kind = 'async_settle_shadow_receipts_v2'
+    key = '2026-10-12/w1/00000000000000000001'
+    e.GATE_FAILURE({**base, 'subject': e.O(kind, key)})
+    for wrong_kind, wrong_key in [('totally_unrelated', 'any'), ('wrong', key),
+                                 (kind, 'any'), (kind, '2026-10-12/w1/1'),
+                                 (kind, '2026-99-99/w1/00000000000000000001')]:
+        with pytest.raises(ValueError):
+            e.GATE_FAILURE({**base, 'subject': e.O(wrong_kind, wrong_key)})
+
+
+@pytest.mark.parametrize('label', ['inventory', 'counter_root', 'closure_root', 'receipts_root'])
+def test_preimages_bind_manifest_day(label: str) -> None:
+    v = vector('root_preimages', 'wrong-day-' + label)
+    if label != 'inventory':
+        candidate = v['object']['roots']['manifest.' + label][0]
+        raw = bytes.fromhex(candidate['bodies_hex'][0])
+        schema = {'counter_root': a1.COUNTER, 'closure_root': a1.CLOSURE, 'receipts_root': a1.p1.PAGE}[label]
+        assert schema.parse(raw)['day'] == '2026-10-11'
+    with pytest.raises(ValueError):
+        run_vector(v)
+
+
+@pytest.mark.parametrize('role', ['router', 'enclave'])
+def test_preimages_bind_external_revision(role: str) -> None:
+    with pytest.raises(ValueError):
+        run_vector(vector('root_preimages', 'wrong-external-' + role + '-revision'))
+
+
+@pytest.mark.parametrize('component', sorted(e.PEAKS.fields))
+def test_required_G7_component_unavailable(component: str) -> None:
+    with pytest.raises(ValueError):
+        run_vector(vector('gate_outputs_a2', 'missing-G7-' + component))
+
+
+def test_blocked_report_cannot_claim_G5_pass_with_unavailable_aggregates() -> None:
+    with pytest.raises(ValueError):
+        run_vector(vector('gate_outputs_a2', 'blocked-G5-unavailable'))
+
+
+@pytest.mark.parametrize('label', ['regional-contradiction-count', 'regional-contradiction-null_count', 'Hterm-exceeds-H'])
+def test_regional_populations_reconcile(label: str) -> None:
+    with pytest.raises(ValueError):
+        run_vector(vector('gate_outputs_a2', label))
+
+
+def test_listed_fallback_N_forces_incomplete() -> None:
+    with pytest.raises(ValueError):
+        run_vector(vector('gate_outputs_a2', 'complete-listed-fallback-N'))
+
+
+def test_inventory_zero_objects_native_and_transport() -> None:
+    v = obj('input_inventory', 'zero-objects')
+    assert v['objects'] == 0
+    assert_round_trip(e.INPUT_INVENTORY_ENTRY, v)
