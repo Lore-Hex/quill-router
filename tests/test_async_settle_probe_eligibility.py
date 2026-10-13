@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import hashlib
+import json
 import time
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from scripts.async_settle.probe_cohort_check import check
 from tests.test_async_settle_admission import request
 from tests.test_async_settle_shadow import FIXTURE, signer, wire
 from tests.test_async_settle_ticket import runtime, settings
@@ -16,6 +21,7 @@ from tests.test_settle_outbox_drain import _client
 from trusted_router import billing_snapshot as b
 from trusted_router.async_settle_shadow_binding import verify_binding
 from trusted_router.async_settle_shadow_compare import Booking
+from trusted_router.async_settle_shadow_evidence import SAMPLE
 from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.detached_jws import canonical
 from trusted_router.routes.internal import gateway
@@ -23,6 +29,7 @@ from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.services import async_settle
 from trusted_router.services.async_settle_shadow import Runtime
 from trusted_router.storage import configure_store
+from trusted_router.storage_models import generation_id_for_authorization
 from trusted_router.synthetic.shadow_probe_contract import SHAPES, Shape
 
 
@@ -54,8 +61,8 @@ def probe_backend() -> Any:
 
 
 @pytest.mark.catalog_as_built
-@pytest.mark.parametrize("shape", SHAPES, ids=lambda s: s.name)
-def test_real_authorize_and_settle_compares_every_shape(shape: Shape, monkeypatch: pytest.MonkeyPatch, shadow_deadline_clock: Any, probe_backend: Any) -> None:
+@pytest.mark.parametrize("shape,fault", [(s, "none") for s in SHAPES] + [(SHAPES[0], f) for f in ("fee", "missing_envelope", "dropped_comparison")], ids=[s.name for s in SHAPES] + ["fee", "missing_envelope", "dropped_comparison"])
+def test_real_authorize_and_settle_compares_every_shape(shape: Shape, fault: str, monkeypatch: pytest.MonkeyPatch, shadow_deadline_clock: Any, probe_backend: Any) -> None:
     store, db, key, cfg, client = probe_backend
     configure_store(store)
     # Independent records in the shared fake; never patch the STORE proxy.
@@ -71,6 +78,8 @@ def test_real_authorize_and_settle_compares_every_shape(shape: Shape, monkeypatc
             return 100
 
         def insert_sample(self, identity: str, row: dict[str, Any], deadline: float) -> str:
+            if fault == "dropped_comparison":
+                raise RuntimeError("comparison dropped")
             rows.append(row)
             return "inserted"
 
@@ -103,9 +112,24 @@ def test_real_authorize_and_settle_compares_every_shape(shape: Shape, monkeypatc
         return result
     monkeypatch.setattr(SpannerGenerations, "benchmark_sample", staticmethod(benchmark_sample))
     body = authorize_body(shape, key.hash, shape.body())
+    body.idempotency_key += fault
+    if fault == "fee":
+        from tests.fixture_routes import clear_catalog_caches
+        endpoint = MODEL_ENDPOINTS["openai/gpt-4.1-mini@openai/prepaid"]
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, replace(endpoint, request_price_microdollars=1))
+        clear_catalog_caches()
+    def reconciliation(data: dict[str, Any]) -> dict[str, Any]:
+        now = dt.datetime.now(dt.UTC)
+        evidence = SimpleNamespace(day=lambda kind, day: [(str(i), json.dumps(row)) for i, row in enumerate(rows)]
+                                   if kind == SAMPLE and day == now.date().isoformat() else [])
+        return check(evidence, "ws-rpc", now, [generation_id_for_authorization(data["authorization_id"])])
     try:
         data = gateway._authorize_gateway_sync(req, body, cfg)["data"]
         assert len(data["route_candidates"]) == 1
+        if fault == "fee":
+            assert "billing_shadow_binding" not in data
+            assert reconciliation(data)["errors"]
+            return
         assert len(facts) == 1
         assert facts[0] == b.Eligibility(route_type=body.route_type, streamed=shape.stream)
         claims = verify_binding(data["billing_shadow_binding"], [shadow.signer.trusted], int(time.time()))
@@ -135,9 +159,15 @@ def test_real_authorize_and_settle_compares_every_shape(shape: Shape, monkeypatc
             "authorization_id": data["authorization_id"], "actual_input_tokens": 10,
             "actual_output_tokens": 2, "selected_endpoint": candidate.endpoint_id,
             "route_type": body.route_type, "streamed": shape.stream, "usage_estimated": False,
-        }, headers={"X-TR-Settlement-Shadow": wire(envelope)[0]})
+        }, headers={} if fault == "missing_envelope" else {"X-TR-Settlement-Shadow": wire(envelope)[0]})
         assert response.status_code == 200, response.text
         assert generations and all(g.synthetic and g.app == "TrustedRouter Synthetic" for g in generations)
+        if fault != "none":
+            assert reconciliation(data)["errors"]
+            assert any(generation_id_for_authorization(data["authorization_id"]) in error
+                       for error in reconciliation(data)["errors"])
+            return
+        assert not reconciliation(data)["errors"]
         assert len(rows) == 1
         assert rows[0]["classification"] == "exact"
         assert rows[0]["adapter"] == shape.provider
@@ -149,6 +179,8 @@ def test_real_authorize_and_settle_compares_every_shape(shape: Shape, monkeypatc
         assert counters["exclusions"] == counters["drops"] == []
     finally:
         shadow.executor.shutdown()
+        if fault == "fee":
+            clear_catalog_caches()
 
 
 @pytest.mark.catalog_as_built
@@ -169,7 +201,7 @@ def test_real_authorize_negative_controls(negative: str) -> None:
     if negative == "monitor":
         payload["model"] = "trustedrouter/monitor"
         del payload["provider"]
-        cfg.async_settle_shadow_probe_api_key = raw
+        cfg.synthetic_monitor_api_key = raw
     else:
         candidate = next(e for e in MODEL_ENDPOINTS.values() if e.model_id.startswith("openai/")
                          and e.provider not in {"openai", "anthropic"} and e.usage_type == "Credits")

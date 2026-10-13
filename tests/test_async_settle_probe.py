@@ -4,7 +4,6 @@ import datetime as dt
 import io
 import json
 import secrets
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,14 +17,9 @@ from trusted_router.config import Settings
 from trusted_router.enclave_regions import ENCLAVE_REGIONS
 from trusted_router.storage import InMemoryStore
 from trusted_router.synthetic import cli, shadow_probe
-from trusted_router.synthetic.alerts import alert_on_failure_streak
-from trusted_router.synthetic.components import (
-    OPS_PROBE_TYPES,
-    sample_component_ids,
-    sample_slo_class_ids,
-)
-from trusted_router.synthetic.shadow_probe_contract import PROBE_NAMES, SHAPES, Shape
-from trusted_router.synthetic.status import _monitor_freshness, status_snapshot
+from trusted_router.synthetic.shadow_probe_contract import SHAPES, Shape
+
+PROBE_NAMES = frozenset(shape.name for shape in SHAPES)
 
 
 def test_fixed_request_contract() -> None:
@@ -56,46 +50,15 @@ def test_targets_always_use_all_regional_enclaves(regions: str) -> None:
 def success(shape: Shape) -> httpx.Response:
     payload = ({"choices": [{"finish_reason": "stop"}]} if shape.route == "/chat/completions"
                else {"type": "response.completed", "response": {"status": "completed"}})
+    inner = payload.get("response", payload)
+    inner["usage"] = {"input_tokens": 10, "output_tokens": 2,
+                      "provider_usage": {"generation_id": "gen-" + __import__("uuid").uuid4().hex}}
     if shape.stream:
         return httpx.Response(200, headers={"content-type": "text/event-stream"},
                               text="data: " + json.dumps(payload) + "\n\ndata: [DONE]\n\n")
     return httpx.Response(200, json=payload)
 
 
-@pytest.mark.asyncio
-async def test_every_shape_every_target_unique_idempotency_and_private_samples() -> None:
-    requests: list[httpx.Request] = []
-    key = secrets.token_urlsafe(24)
-    cfg = Settings(environment="test", async_settle_shadow_probe_api_key=key,
-                   async_settle_shadow_probe_repetitions=2)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        body = json.loads(request.content)
-        shape = next(s for s in SHAPES if s.body() == body and "/v1" + s.route == request.url.path)
-        assert request.headers["authorization"] == "Bearer " + key
-        assert request.url.host in {f"api-{r}.quillrouter.com" for r in ENCLAVE_REGIONS}
-        return success(shape)
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        samples = await shadow_probe.run_pass(cfg, monitor_region="test", client=client)
-    assert len(samples) == len(requests) == 64
-    assert len({request.headers["idempotency-key"] for request in requests}) == 64
-    assert all(sample.status == "up" for sample in samples)
-    assert {s.probe_type for s in samples} == PROBE_NAMES
-    assert PROBE_NAMES <= OPS_PROBE_TYPES
-    for sample in samples:
-        assert sample_component_ids(sample) == sample_slo_class_ids(sample) == []
-        sample.status = "down"
-        assert not alert_on_failure_streak(object(), sample)
-    now = dt.datetime.now(dt.UTC)
-    assert _monitor_freshness(samples, now=now)["latest_sample_at"] is None
-    before, after = status_snapshot([], now=now, settings=cfg), status_snapshot(samples, now=now, settings=cfg)
-    before.pop("generated_at")
-    after.pop("generated_at")
-    assert before == after
-    from trusted_router.routes.internal.synthetic import _client_watch_pass
-    _client_watch_pass(cfg, samples)
 
 
 @pytest.mark.asyncio
@@ -128,35 +91,6 @@ def test_settings_bound_probe_volume(field: str, value: int) -> None:
         Settings(environment="test", **{field: value})
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mounted", [False, True])
-async def test_cli_only_ingests_private_samples(monkeypatch: pytest.MonkeyPatch, capsys: Any, tmp_path: Path, mounted: bool) -> None:
-    key, observer = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-    cfg = Settings(environment="test", async_settle_shadow_probe_api_key=key, observer_internal_token=observer)
-    monkeypatch.delenv("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE", raising=False)
-    if mounted:
-        key_file = tmp_path / "probe-key"
-        key_file.write_text(key)
-        cfg = Settings(environment="worker", service_surface="observer", storage_backend="memory", observer_internal_token=observer)
-        monkeypatch.setenv("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE", str(key_file))
-    monkeypatch.setattr(cli, "get_settings", lambda: cfg)
-    posted = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/v1/internal/synthetic/samples":
-            posted.append(json.loads(request.content))
-            assert request.headers["x-trustedrouter-internal-token"] == observer
-            return httpx.Response(200, json={})
-        body = json.loads(request.content)
-        shape = next(s for s in SHAPES if s.body() == body and "/v1" + s.route == request.url.path)
-        return success(shape)
-
-    client_class = httpx.AsyncClient
-    monkeypatch.setattr(cli.httpx, "AsyncClient", lambda **kw: client_class(transport=httpx.MockTransport(handler), **kw))
-    assert await cli.run_shadow_probe() == 0
-    assert len(posted) == 1 and len(posted[0]["samples"]) == 32
-    output = capsys.readouterr()
-    assert key not in output.out + output.err and observer not in output.out + output.err
 
 
 def seed(store: InMemoryStore, path: Path, label: str = "") -> dict[str, Any]:
@@ -189,7 +123,7 @@ def test_provision_apply_keeps_key_file_private_and_funding_idempotent(tmp_path:
     if raw in output.out + output.err + caplog.text:
         pytest.fail("credential escaped into CLI output or logs")
     result = json.loads(output.out)
-    assert provisioning.main(["--apply"], store=store) == 0
+    assert provisioning.main(["--apply", "--key-output-file", str(path)], store=store) == 0
     repeated = json.loads(capsys.readouterr().out)
     assert repeated["credited"] is False
     assert repeated["pin_line"] == f'"TR_ASYNC_SETTLE_SHADOW_WORKSPACES={result["workspace_id"]}"'
@@ -252,107 +186,8 @@ def test_validate_cli_redacts_backend_exception(tmp_path: Path, monkeypatch: pyt
         pytest.fail("credential escaped into CLI output")
 
 
-@pytest.mark.parametrize("present", [False, True])
-@pytest.mark.parametrize("bridge", [False, True])
-def test_deploy_secret_guard_preserves_existing_commands(present: bool, bridge: bool, tmp_path: Path) -> None:
-    block = Path("scripts/deploy/_async_settle_shadow_probe_jobs.sh").read_text()
-    block = block[block.index("async_settle_shadow_probe_jobs() {"):] + "\nasync_settle_shadow_probe_jobs\n"
-    # Execute the actual optional deploy block with local recording functions.
-    # The existing full-script harness tests separately exercise its neighbours.
-    stub = r'''set -euo pipefail
-calls="$1"
-PRESENT="$2"
-gc() {
-  printf '%s\n' "$*" >> "$calls"
-  if [ "$1 $2" = "secrets describe" ]; then
-    [ "$PRESENT" = "true" ]; return
-  fi
-}
-synthetic_ingest_base_for_region() { echo "https://internal.example"; }
-prepare_synthetic_ingest_target() { :; }
-upsert_scheduler() { printf 'scheduler %s\n' "$*" >> "$calls"; }
-_REGION_LIST=(us-central1 europe-west4)
-DEPLOYED_COMBINED_BRIDGE="$3"
-IMAGE=image
-RUN_SERVICE_ACCOUNT=worker
-PRIVATE_RUN_APP_JOB_NETWORK_ARGS=()
-'''
-    calls_file = tmp_path / "calls"
-    rendered = tmp_path / "render.sh"
-    rendered.write_text(stub + block)
-    result = subprocess.run(["/bin/bash", str(rendered), str(calls_file), str(present).lower(), str(bridge).lower()],  # noqa: S603 - local recording shell
-                            capture_output=True, text=True, check=False)  # noqa: S603 - local stubbed shell only
-    assert result.returncode == 0, result.stderr
-    calls = calls_file.read_text().splitlines()
-    if not present:
-        assert calls == ["secrets describe " + provisioning.SECRET_NAME]
-        return
-    jobs = [call for call in calls if call.startswith("run jobs deploy ")]
-    schedules = [call for call in calls if call.startswith("scheduler ")]
-    assert len(jobs) == len(schedules) == 2
-    for job in jobs:
-        assert "--args=-m,trusted_router.synthetic.cli,--async-settle-shadow-probe" in job
-        assert "/var/run/secrets/shadow-probe/api-key=" + provisioning.SECRET_NAME in job
-        assert "synthetic-monitor-api-key" not in job
-        assert "TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY=" not in job
-        env_arg = job.split("--set-env-vars ", 1)[1].split(" --set-secrets", 1)[0]
-        env = dict(value.split("=", 1) for value in env_arg[3:].split("|"))
-        cfg = Settings(**{name[3:].lower(): value for name, value in env.items()
-                          if name[3:].lower() in Settings.model_fields},
-                       **{("internal_gateway_token" if bridge else "observer_internal_token"): secrets.token_urlsafe(24)})
-        assert cfg.service_surface == ("combined" if bridge else "observer")
-        assert not cfg.async_settle_shadow_probe_api_key
-    assert all(call.endswith("*/4 * * * *") for call in schedules)
 
 
-@pytest.mark.asyncio
-async def test_smoke_file_only_metadata_and_no_ingest(monkeypatch: pytest.MonkeyPatch, capsys: Any, tmp_path: Path) -> None:
-    key = secrets.token_urlsafe(24)
-    path = tmp_path / "key"
-    path.write_text(key)
-    path.chmod(0o600)
-    monkeypatch.setenv("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE", str(path))
-    monkeypatch.delenv("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY", raising=False)
-    cfg = Settings(environment="test", async_settle_shadow_probe_repetitions=8)
-    monkeypatch.setattr(cli, "get_settings", lambda: cfg)
-    calls = []
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        assert request.url.host in {f"api-{r}.quillrouter.com" for r in ENCLAVE_REGIONS}
-        body = json.loads(request.content)
-        shape = next(s for s in SHAPES if s.body() == body)
-        response = success(shape)
-        # Both response APIs, buffered and streamed, contain an ID and private
-        # provider text. Only the former may leave smoke output.
-        def with_id(payload: dict[str, Any]) -> dict[str, Any]:
-            response_payload = payload.get("response", payload)
-            response_payload.update(id="provider_response", output="PRIVATE_BODY",
-                                    usage={"provider_usage": {"generation_id": "gen_smoke"}})
-            return payload
-        if shape.stream:
-            payload = json.loads(response.text.split("data: ", 1)[1].split("\n", 1)[0])
-            text = "data: " + json.dumps(with_id(payload)) + "\n\ndata: [DONE]\n\n"
-        else:
-            text = json.dumps(with_id(response.json()))
-        return httpx.Response(200, headers=dict(response.headers) | {"x-private": "PRIVATE_HEADER"}, content=text)
-    original = httpx.AsyncClient
-    monkeypatch.setattr(cli.httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
-    assert await cli.run_shadow_probe(once=True, no_ingest=True) == 0
-    output = capsys.readouterr()
-    assert not output.err
-    lines = output.out.splitlines()
-    assert len(lines) == len(calls) == 32
-    for line in lines:
-        fields = line.split()
-        assert len(fields) == 5
-        assert fields[0] in ENCLAVE_REGIONS and fields[1] in PROBE_NAMES
-        assert fields[2] == "2xx" and fields[3].removesuffix("ms").isdigit()
-        assert fields[4] == "generation_id=gen_smoke"
-    assert all(secret not in output.out for secret in (key, "PRIVATE_BODY", "PRIVATE_HEADER"))
-    monkeypatch.delenv("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE")
-    cfg.async_settle_shadow_probe_api_key = key
-    assert await cli.run_shadow_probe(once=True, no_ingest=True) == 2
-    assert len(calls) == 32
 
 
 def test_probe_contract_rejects_every_extra_key() -> None:
@@ -392,7 +227,7 @@ def test_evidence_check_bounded_metadata_only() -> None:
                     rejections=[{"reason": "store_unavailable", "count": 3}], body="PRIVATE")))]
             return [("sample", json.dumps(dict(workspace_fingerprint=analytics_surrogate("workspace", ws),
                 observed_at_us=int(now.timestamp()*1e6), adapter="openai", route_type="responses", streamed=True,
-                classification="exact", body="PRIVATE"))) for ws in ("cohort", "other")]
+                classification="exact", authorization_id="auth-1", body="PRIVATE"))) for ws in ("cohort", "other")]
     result = check(Evidence(), "cohort", now)
     assert calls == [(kind, day) for day in ("2026-10-11", "2026-10-12") for kind in (SAMPLE, COUNTER)]
     assert len(result["buckets"]) == 8 and sum(b["compared"] for b in result["buckets"]) == 1
@@ -408,7 +243,7 @@ def test_smoke_cli_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
         return 0
     monkeypatch.setattr(cli, "run_shadow_probe", smoke)
     assert cli.main(["--async-settle-shadow-probe", "--once", "--no-ingest"]) == 0
-    assert called == [{"once": True, "no_ingest": True}]
+    assert called == [{"once": True, "no_ingest": True, "generation_ids_out": None}]
     with pytest.raises(SystemExit):
         cli.main(["--once", "--no-ingest"])
 
@@ -421,10 +256,3 @@ def test_apply_rejects_shard_target_before_creation(tmp_path: Path, monkeypatch:
     assert provisioning.main(["--apply", "--target-shards", "2", "--key-output-file", str(path)], store=store) == 1
     assert not path.exists()
     assert store.find_user_by_email(provisioning.cohort_names()["email"]) is None
-
-
-def test_smoke_generation_identifier_is_router_metadata_only() -> None:
-    assert shadow_probe._generation_id({"id": "provider_response"}) is None
-    assert shadow_probe._generation_id({"generation_id": "invalid\nbody"}) is None
-    assert shadow_probe._generation_id({"trustedrouter": {"generation_id": "gen_router"}}) == "gen_router"
-    assert shadow_probe._generation_id({"response": {"usage": {"provider_usage": {"generation_id": "gen_router"}}}}) == "gen_router"

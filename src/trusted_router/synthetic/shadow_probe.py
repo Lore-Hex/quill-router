@@ -7,15 +7,22 @@ import re
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-from trusted_router.config import Settings
+from trusted_router.config import Settings, validate_shadow_probe_key
 from trusted_router.enclave_regions import ENCLAVE_REGIONS
-from trusted_router.storage_models import SyntheticProbeSample
-from trusted_router.synthetic.probes import SyntheticTarget, _sample, configured_targets
+from trusted_router.synthetic.probes import SyntheticTarget, configured_targets
 from trusted_router.synthetic.shadow_probe_contract import SHAPES, Shape
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    status: str
+    generation_id: str | None
+    error_type: str | None
 
 
 def targets(settings: Settings) -> list[SyntheticTarget]:
@@ -47,22 +54,38 @@ def _generation_id(payload: dict[str, Any]) -> str | None:
     if not isinstance(response, dict):
         return None
     usage = response.get("usage")
+    if not isinstance(usage, dict) or not all(
+        type(value) is int and value >= 0 for value in (
+            usage.get("input_tokens", usage.get("prompt_tokens")),
+            usage.get("output_tokens", usage.get("completion_tokens")),
+        )
+    ):
+        return None
     provider_usage = usage.get("provider_usage") if isinstance(usage, dict) else None
-    trustedrouter = response.get("trustedrouter")
-    # The enclave exposes the billing generation ID in usage.provider_usage;
-    # a provider's top-level id is not the router generation identifier.
-    for metadata in (provider_usage, trustedrouter, response):
-        identity = metadata.get("generation_id") if isinstance(metadata, dict) else None
-        if isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identity):
-            return identity
-    return None
+    # storage_models.generation_id_for_authorization: gen- + uuid5.hex.
+    # Only usage.provider_usage.generation_id is router-owned wire metadata.
+    identity = provider_usage.get("generation_id") if isinstance(provider_usage, dict) else None
+    return identity if isinstance(identity, str) and re.fullmatch(r"gen-[0-9a-f]{32}", identity) else None
+
+
+def _verify_payload(payload: Any, key: str) -> None:
+    # Check recursively, including keys, before retaining ANY response metadata.
+    if isinstance(payload, str) and key in payload:
+        raise ValueError("credential echo")
+    if isinstance(payload, dict):
+        for name, value in payload.items():
+            _verify_payload(name, key)
+            _verify_payload(value, key)
+    elif isinstance(payload, list):
+        for value in payload:
+            _verify_payload(value, key)
 
 
 async def probe(
     client: httpx.AsyncClient, target: SyntheticTarget, shape: Shape, *,
     api_key: str, monitor_region: str,
     report: Callable[[str], None] | None = None,
-) -> SyntheticProbeSample:
+) -> ProbeResult:
     url = target.api_base_url + shape.route
     started = time.perf_counter()
     status: int | None = None
@@ -88,6 +111,7 @@ async def probe(
                             done = True
                             continue
                         payload = json.loads(data)
+                        _verify_payload(payload, api_key)
                         if not isinstance(payload, dict) or payload.get("error"):
                             raise ValueError("stream payload")
                         generation_id = _generation_id(payload) or generation_id
@@ -97,34 +121,30 @@ async def probe(
                 else:
                     await response.aread()
                     payload = response.json()
+                    _verify_payload(payload, api_key)
                     generation_id = _generation_id(payload)
                     if not _terminal(payload, shape):
                         raise ValueError("missing terminal")
+                if generation_id is None:
+                    raise ValueError("missing router usage identity")
     except Exception as exc:  # Sample only the class; never provider text or request headers.
         error = type(exc).__name__
-    elapsed = int((time.perf_counter() - started) * 1000)
-    if generation_id == api_key:
         generation_id = None
+    elapsed = int((time.perf_counter() - started) * 1000)
     if report is not None:
         status_class = f"{status // 100}xx" if status is not None else "none"
         report(f"{target.name} {shape.name} {status_class} {elapsed}ms"
                + (f" generation_id={generation_id}" if generation_id else ""))
-    return _sample(
-        shape.name, target, monitor_region, url, status="up" if error is None else "down",
-        latency_milliseconds=elapsed,
-        http_status=status, error_type=error, model=shape.model,
-    )
+    return ProbeResult("up" if error is None else "down", generation_id, error)
 
 
 async def run_pass(
     settings: Settings, *, monitor_region: str, client: httpx.AsyncClient,
     report: Callable[[str], None] | None = None,
-) -> list[SyntheticProbeSample]:
+) -> list[ProbeResult]:
     key = settings.async_settle_shadow_probe_api_key
-    if not key or key != key.strip() or key in {
-        settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key,
-        settings.internal_gateway_token, settings.observer_internal_token,
-    }:
+    validate_shadow_probe_key(settings, key)
+    if not key:
         raise ValueError("a distinct shadow probe key is required")
     samples = []
     target_list = targets(settings)

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -42,7 +41,7 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
       printf 'ERROR: (gcloud.%s.jobs.describe) NOT_FOUND\n' "$1" >&2; return 1 ;;
     "projects describe "*) echo 123456789 ;;
     "run services describe "*) printf '%s\n' "$PROBE_SERVICE_JSON" ;;
-    "run jobs describe "*) printf '%s\n' "$PROBE_JOB_JSON" ;;
+    "run jobs describe "*) [ "${PROBE_MONITOR:-present}" = present ] || return 1; printf '%s\n' "$PROBE_JOB_JSON" ;;
     "scheduler jobs describe "*) [ "$PROBE_SCHEDULERS" = present ]; return ;;
     "dns managed-zones describe "*) printf '%s\n' '{"dnsName":"run.app.","visibility":"private","privateVisibilityConfig":{"networks":[{"networkUrl":"projects/quill-cloud-proxy/global/networks/default"}]}}' ;;
     "projects get-iam-policy "*) echo '{"bindings":[]}' ;;
@@ -53,7 +52,7 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
     return result
 
 
-def run_script(harness: DeployScriptHarness, script: str):
+def run_script(harness: DeployScriptHarness, script: str, **overrides: str):
     fixture = SCRIPT_FIXTURES[script]
     return harness.run(script, extra_env={
         "BASH_ENV": str(harness.mirror / "probe-cloud.sh"),
@@ -62,6 +61,7 @@ def run_script(harness: DeployScriptHarness, script: str):
         "PROBE_SCHEDULERS": "absent" if any("scheduler" in f and "soak" not in f for f in fixture.failures) else "present",
         "PROBE_SERVICE_JSON": _SYNTHETIC_INGEST_SERVICE_JSON,
         "PROBE_JOB_JSON": _SYNTHETIC_COMBINED_JOB_JSON,
+        **overrides,
     })
 
 
@@ -77,17 +77,24 @@ def test_standalone_creates_only_cohort_and_refresh_only_image(harness: DeploySc
     monkeypatch.setitem(SCRIPT_FIXTURES, STANDALONE, replace(fixture, failures=failures))
     run = run_script(harness, STANDALONE)
     assert run.returncode == 0, summarise(run)
-    mutations = [c for c in run.calls if c[0] == "gcloud" and any(v in c for v in ("deploy", "create", "update", "delete"))
-                 and ("jobs" in c)]
+    mutations = [c for c in run.calls if c[0] == "gcloud" and not any(v in c for v in ("describe", "list", "get"))]
     assert len(mutations) == 4 and mutations == cohort_mutations(run.calls)
     jobs = [c for c in mutations if "run" in c]
     schedules = [c for c in mutations if "scheduler" in c]
     assert {c[c.index("deploy")+1] for c in jobs} == {COHORT+r for r in ("us-central1", "europe-west4")}
     assert len(schedules) == 2 and all("create" in c for c in schedules)
+    assert all(c[c.index("--schedule")+1] == "*/4 * * * *" for c in schedules)
     for c in jobs:
         assert c[c.index("--service-account")+1] == "probe-worker"
+        assert c[c.index("--tasks")+1] == c[c.index("--parallelism")+1] == "1"
         assert c[c.index("--image")+1] == fixture.env["IMAGE"]
         assert SECRET in c[c.index("--set-secrets")+1]
+        assert c[c.index("--set-secrets")+1] == "/var/run/secrets/shadow-probe/api-key=" + SECRET + ":latest"
+        from trusted_router.config import Settings
+        env = dict(item.split("=", 1) for item in c[c.index("--set-env-vars")+1][3:].split("|"))
+        cfg = Settings(**{name[3:].lower(): value for name, value in env.items() if name[3:].lower() in Settings.model_fields})
+        assert not cfg.observer_internal_token and not cfg.internal_gateway_token
+        assert not any("INGEST" in arg or "TR_OBSERVER_INTERNAL_TOKEN" in arg or "TR_INTERNAL_GATEWAY_TOKEN" in arg for arg in c)
         assert not any("synthetic-monitor-api-key" in arg for arg in c)
     # Same standalone command is idempotent when scheduler already exists.
     monkeypatch.setitem(SCRIPT_FIXTURES, STANDALONE, replace(fixture, failures=tuple(f for f in failures if "scheduler" not in f)))
@@ -127,8 +134,7 @@ def test_absent_secret_preserves_main_commands(harness: DeployScriptHarness, mon
     # Baseline is exactly the script before the single opt-in block. Round-2
     # report separately records byte equality against the starting HEAD (read only).
     script = (harness.mirror / FULL).read_text()
-    begin, end = script.index("# Isolated shadow cohort."), script.index("# Sustained-output benchmark:")
-    baseline = harness.write_script("scripts/deploy/synthetic-baseline.sh", script[:begin]+script[end:])
+    baseline = harness.write_script("scripts/deploy/synthetic-baseline.sh", script)
     monkeypatch.setitem(SCRIPT_FIXTURES, baseline, SCRIPT_FIXTURES[FULL])
     before, after = run_script(harness, baseline), run_script(harness, FULL)
     assert before.returncode == after.returncode == 0, (summarise(before), summarise(after))
@@ -141,9 +147,33 @@ def test_absent_secret_preserves_main_commands(harness: DeployScriptHarness, mon
     assert not any("jobs" in c for c in absent.calls)
 
 
-def test_standalone_uses_monitor_helper_definitions() -> None:
-    monitor = Path(FULL).read_text()
-    shared = Path("scripts/deploy/_async_settle_shadow_probe_jobs.sh").read_text()
-    for start, end in (("verify_synthetic_ingest_service_contract() {", "if ! gc artifacts docker images describe"),
-                       ("upsert_scheduler() {", "SYNTHETIC_MONITOR_REGIONS=")):
-        assert monitor[monitor.index(start):monitor.index(end)] in shared
+
+def test_missing_monitor_fails_before_any_mutation(harness, monkeypatch):
+    fixture = SCRIPT_FIXTURES[FULL]
+    monkeypatch.setitem(SCRIPT_FIXTURES, STANDALONE, replace(fixture, failures=tuple(f for f in fixture.failures if SECRET not in f)))
+    run = run_script(harness, STANDALONE, PROBE_MONITOR="absent")
+    assert run.returncode != 0
+    assert all(any(verb in call for verb in ("describe", "list", "get")) for call in run.calls if call[0] == "gcloud")
+
+
+@pytest.mark.parametrize("mode", ["direct", "connector"])
+def test_existing_monitor_egress_is_copied_read_only(harness, monkeypatch, mode):
+    import json
+    fixture = SCRIPT_FIXTURES[FULL]
+    monkeypatch.setitem(SCRIPT_FIXTURES, STANDALONE, replace(fixture, failures=tuple(f for f in fixture.failures if SECRET not in f)))
+    job = json.loads(_SYNTHETIC_COMBINED_JOB_JSON)
+    annotations = job["spec"]["template"]["spec"]["template"]["metadata"]["annotations"]
+    annotations["run.googleapis.com/vpc-access-egress"] = "all-traffic"
+    if mode == "direct":
+        annotations["run.googleapis.com/network-interfaces"] = json.dumps([{"network": "existing-network", "subnetwork": "existing-subnet"}])
+        expected = {"--network=existing-network", "--subnet=existing-subnet", "--vpc-egress=all-traffic"}
+    else:
+        annotations["run.googleapis.com/vpc-access-connector"] = "existing-connector"
+        expected = {"--vpc-connector=existing-connector", "--vpc-egress=all-traffic"}
+    run = run_script(harness, STANDALONE, PROBE_JOB_JSON=json.dumps(job))
+    assert run.returncode == 0, summarise(run)
+    mutations = [call for call in run.calls if call[0] == "gcloud" and not any(verb in call for verb in ("describe", "list", "get"))]
+    assert len(mutations) == 4 and mutations == cohort_mutations(run.calls)
+    for call in mutations:
+        if "run" in call:
+            assert expected <= set(call)

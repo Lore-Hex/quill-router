@@ -589,57 +589,56 @@ async def _run_scheduled_remediator(
         )
 
 
-async def run_shadow_probe(*, once: bool = False, no_ingest: bool = False) -> int:
+async def run_shadow_probe(*, once: bool = False, no_ingest: bool = False,
+                           generation_ids_out: Path | None = None) -> int:
+    from trusted_router.config import validate_shadow_probe_key
     from trusted_router.synthetic.shadow_probe import run_pass
 
+    output = None
     try:
         settings = get_settings()
-    except Exception:
-        print("Shadow probe configuration is invalid", file=sys.stderr)
-        return 2
-    # The one-shot observer job mounts its inference credential as a file.
-    # It is not an observer-service credential: keep the Settings env secret
-    # scoped to internal just like Stage D, without broadening any role.
-    key_file = os.environ.get("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE")
-    if no_ingest and (not key_file or os.environ.get("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY")):
-        print("Smoke mode requires only the credential file path", file=sys.stderr)
-        return 2
-    if key_file:
-        try:
-            key = Path(key_file).read_text(encoding="utf-8")
-            if not key or key != key.strip():
-                raise ValueError("invalid probe credential")
-        except Exception:
-            print("Shadow probe credential file is unavailable or invalid", file=sys.stderr)
-            return 2
+        key_file = os.environ.get("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE")
+        if not key_file or os.environ.get("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY"):
+            raise ValueError("credential file required")
+        path = Path(key_file)
+        # Cloud Run manages the mounted secret volume permissions; local
+        # callers create their credential file with umask 077.
+        if not path.is_file():
+            raise ValueError("credential file required")
+        key = path.read_text(encoding="utf-8")
+        if not key:
+            raise ValueError("empty credential")
+        validate_shadow_probe_key(settings, key)
         settings = settings.model_copy(update={"async_settle_shadow_probe_api_key": key})
-    observer_token = synthetic_observer_token(settings)
-    if once:
-        settings = settings.model_copy(update={"async_settle_shadow_probe_repetitions": 1})
-    if not settings.async_settle_shadow_probe_api_key or (not no_ingest and not observer_token):
-        print("Dedicated shadow probe key and observer token are required", file=sys.stderr)
+        if once:
+            if generation_ids_out is None:
+                raise ValueError("--once requires --generation-ids-out")
+            settings = settings.model_copy(update={"async_settle_shadow_probe_repetitions": 1})
+        if generation_ids_out is not None:
+            fd = os.open(generation_ids_out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            output = os.fdopen(fd, "w", encoding="utf-8")
+    except Exception:
+        print("Shadow probe configuration/file invalid; --once requires a new --generation-ids-out file", file=sys.stderr)
         return 2
-    region = settings.synthetic_monitor_region or settings.primary_region
-    ingest_url = os.environ.get(
-        "TR_SYNTHETIC_INGEST_URL", "https://trustedrouter.com/v1/internal/synthetic/samples"
-    )
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
-            samples = await run_pass(settings, monitor_region=region, client=client,
-                                     report=print if no_ingest else None)
-            if no_ingest:
-                return 0 if all(sample.status == "up" for sample in samples) else 1
-            assert observer_token is not None
-            response = await client.post(
-                ingest_url, headers={"x-trustedrouter-internal-token": observer_token},
-                json={"samples": [sample.public_dict() for sample in samples]},
-            )
-            response.raise_for_status()
-        print(f"shadow probe: {len(samples)} samples, {sum(s.status == 'down' for s in samples)} failed")
-        return 0 if all(sample.status == "up" for sample in samples) else 1
+            results = await run_pass(settings, monitor_region=settings.synthetic_monitor_region or settings.primary_region,
+                                     client=client, report=print)
+        if output is not None:
+            for result in results:
+                if result.generation_id is not None:
+                    output.write(result.generation_id + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        failed = sum(result.status != "up" for result in results)
+        print(f"shadow probe: {len(results)} requests, {failed} failed")
+        return 1 if failed else 0
     except Exception:
-        print("Shadow probe pass or ingestion failed", file=sys.stderr)
+        print("Shadow probe pass failed", file=sys.stderr)
         return 1
+    finally:
+        if output is not None:
+            output.close()
 
 
 async def run(*, expect_stage_d: bool = False) -> int:
@@ -968,13 +967,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--once", action="store_true", help="one complete shadow probe pass")
     parser.add_argument("--no-ingest", action="store_true", help="print smoke metadata only; credential file required")
+    parser.add_argument("--generation-ids-out", type=Path)
     args = parser.parse_args(argv)
-    if (args.once or args.no_ingest) and not args.async_settle_shadow_probe:
+    if (args.once or args.no_ingest or args.generation_ids_out) and not args.async_settle_shadow_probe:
         parser.error("--once and --no-ingest require --async-settle-shadow-probe")
     if args.no_ingest and not args.once:
         parser.error("--no-ingest requires --once")
     if args.async_settle_shadow_probe:
-        return asyncio.run(run_shadow_probe(once=args.once, no_ingest=args.no_ingest))
+        return asyncio.run(run_shadow_probe(once=args.once, no_ingest=args.no_ingest, generation_ids_out=args.generation_ids_out))
     return asyncio.run(run(expect_stage_d=args.expect_stage_d))
 
 

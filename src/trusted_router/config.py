@@ -323,6 +323,33 @@ def operator_credential_setting_names(settings_type: type[BaseSettings]) -> froz
     return frozenset(discovered)
 
 
+def validate_shadow_probe_key(settings: Any, key: str) -> None:
+    """One inventory for startup and mounted credentials, including JSON maps."""
+    if not key:
+        return
+
+    def values(value: Any) -> list[str]:
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except (ValueError, TypeError):
+                return [value]
+            return [value] + (values(decoded) if not isinstance(decoded, str) else [decoded])
+        if isinstance(value, dict):
+            return [secret for nested in value.values() for secret in values(nested)]
+        if isinstance(value, (list, tuple)):
+            return [secret for nested in value for secret in values(nested)]
+        return []
+
+    names = set(SERVICE_SURFACE_SECRET_OWNERS) | {"bootstrap_management_key"}
+    names.discard("async_settle_shadow_probe_api_key")
+    credentials = [secret for name in names for secret in values(getattr(settings, name, None))]
+    if key and (any(char.isspace() for char in key) or any(
+        secret and hmac.compare_digest(key.encode(), secret.encode()) for secret in credentials
+    )):
+        raise ValueError("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY must be distinct and whitespace-free")
+
+
 def _sensitive_setting_is_configured(field_name: str, value: object) -> bool:
     if field_name in {"google_alias_credentials_json", "github_alias_credentials_json"}:
         return value != "{}"
@@ -1350,15 +1377,7 @@ class Settings(BaseSettings):
     def production_is_fail_closed(self) -> Settings:
         if 60 % self.async_settle_shadow_probe_cadence_minutes:
             raise ValueError("TR_ASYNC_SETTLE_SHADOW_PROBE_CADENCE_MINUTES must divide 60")
-        probe_key = self.async_settle_shadow_probe_api_key
-        if probe_key and (
-            probe_key != probe_key.strip()
-            or any(value and hmac.compare_digest(probe_key.encode(), value.encode()) for value in (
-                self.synthetic_monitor_api_key, self.stage_d_probe_api_key,
-                self.internal_gateway_token, self.observer_internal_token,
-            ))
-        ):
-            raise ValueError("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY must be distinct and whitespace-free")
+        validate_shadow_probe_key(self, self.async_settle_shadow_probe_api_key)
         environment = self.environment.lower()
         surface = self.service_surface
         public_probe_types = {

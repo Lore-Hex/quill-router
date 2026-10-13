@@ -1036,7 +1036,7 @@ def _require_monitor_model_key(
         return
     api_key = principal.api_key
     api_key_lookup_hash = api_key.lookup_hash if api_key is not None else None
-    for expected in (settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key, settings.async_settle_shadow_probe_api_key):
+    for expected in (settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key):
         if expected and api_key_lookup_hash == lookup_hash_api_key(expected):
             return
     raise api_error(

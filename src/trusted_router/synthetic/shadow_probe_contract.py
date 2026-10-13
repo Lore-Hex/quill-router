@@ -1,4 +1,4 @@
-"""Fixed request matrix and private sample names for the shadow probe."""
+"""Fixed request matrix and log labels for the shadow probe."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ class Shape:
     def name(self) -> str:
         route = "chat" if self.route == "/chat/completions" else "responses"
         mode = "stream" if self.stream else "buffered"
-        return f"async_settle_probe_{self.provider}_{route}_{mode}"
+        return f"{self.provider}_{route}_{mode}"
 
     def body(self) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -44,5 +44,3 @@ SHAPES = tuple(
     for route in ("/chat/completions", "/responses")
     for stream in (False, True)
 )
-PROBE_NAMES = frozenset(shape.name for shape in SHAPES)
-
