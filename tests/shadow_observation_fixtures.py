@@ -1,6 +1,7 @@
 """Small standalone fixture reader shared with native restart children."""
 import copy
 import json
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -93,3 +94,29 @@ def saturate(svc, stamp):
     assert svc.port.lost.is_set() and svc.journal.losses, "saturation must record sticky capture loss"
     svc.journal.loss(day)
     return retained
+
+
+# Test-only ceiling below pytest's per-history watchdog. It covers GAPIC data,
+# session, admin and operations-poll RPCs, including SDK fixture cleanup calls.
+NATIVE_RPC_SECONDS = 3.
+
+
+@contextmanager
+def native_rpc_deadlines():
+    from unittest.mock import patch
+
+    from google.api_core.future.polling import POLLING_PREDICATE, PollingFuture
+    from google.api_core.gapic_v1.method import _GapicCallable
+    from google.api_core.retry import Retry
+
+    call, result = _GapicCallable.__call__, PollingFuture.result
+    def bounded_call(self, *args, timeout=None, **kwargs):
+        timeout = min(timeout, NATIVE_RPC_SECONDS) if isinstance(timeout, (int, float)) else NATIVE_RPC_SECONDS
+        kwargs["retry"] = None
+        return call(self, *args, timeout=timeout, **kwargs)
+    def bounded_result(self, timeout=None, **kwargs):
+        timeout = min(timeout, NATIVE_RPC_SECONDS) if isinstance(timeout, (int, float)) else NATIVE_RPC_SECONDS
+        kwargs["polling"] = Retry(predicate=POLLING_PREDICATE, initial=.01, maximum=.1, multiplier=1.5, timeout=timeout)
+        return result(self, timeout=timeout, **kwargs)
+    with patch.object(_GapicCallable, "__call__", bounded_call), patch.object(PollingFuture, "result", bounded_result):
+        yield

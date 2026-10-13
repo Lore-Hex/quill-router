@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from filelock import FileLock
@@ -89,7 +90,9 @@ def test_configured_emulator_skip_is_failure(monkeypatch):
     monkeypatch.setenv("TR_CONFORMANCE_EMULATOR_SCHEMA", "1")
     monkeypatch.setattr(spanner_emulator, "emulator_resources", unavailable)
     with pytest.raises(pytest.fail.Exception, match="configured native case skipped"):
-        next(shadow_emulator_resources.__wrapped__())
+        next(shadow_emulator_resources.__wrapped__(
+            SimpleNamespace(node=SimpleNamespace(name="process_restart")),
+            None, (None, []), None))
 
 
 def test_ci_loopback_skip_is_failure(monkeypatch, tmp_path):

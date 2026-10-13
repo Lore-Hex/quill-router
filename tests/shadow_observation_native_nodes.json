@@ -19,8 +19,6 @@
   "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[full_queues-SIGTERM-spanner-emulator]",
   "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[graceful-SIGKILL-spanner-emulator]",
   "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[graceful-SIGTERM-spanner-emulator]",
-  "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[request_pending_deliver-SIGKILL-spanner-emulator]",
-  "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[request_pending_deliver-SIGTERM-spanner-emulator]",
   "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[request_pending_drop-SIGKILL-spanner-emulator]",
   "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[request_pending_drop-SIGTERM-spanner-emulator]",
   "tests/conformance/test_shadow_observation_native.py::test_shadow_native_process_restart[request_sent-SIGKILL-spanner-emulator]",

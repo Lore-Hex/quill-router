@@ -10,12 +10,12 @@ from uuid import uuid4
 
 import pytest
 
-from tests.shadow_observation_diagnostics import client_history, status
+from tests.shadow_observation_diagnostics import NativeLiveness, client_history, status
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import NOW_US, maximum_rows
 from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
 
-pytestmark = pytest.mark.xdist_group("conformance-spanner-emulator")
+pytestmark = [pytest.mark.xdist_group("conformance-spanner-emulator"), pytest.mark.timeout(30)]
 
 
 def _diagnostics():
@@ -23,7 +23,7 @@ def _diagnostics():
 
 
 @pytest.fixture(autouse=True)
-def native_diagnostics(monkeypatch):
+def native_diagnostics(monkeypatch, native_watchdog, package_hygiene):  # noqa: F811
     from trusted_router.services.async_settle_shadow_health import Service
     global _diagnostics
     services, stores = [], []
@@ -52,16 +52,55 @@ def native_diagnostics(monkeypatch):
                 svc.evidence_executor.shutdown(wait=True, cancel_futures=True)
 
 
+@pytest.fixture(scope="session")
+def native_liveness(request):
+    state = NativeLiveness()
+    class Reports:
+        @pytest.hookimpl(hookwrapper=True)
+        def pytest_runtest_makereport(self, item, call):
+            result = yield
+            state.report(result.get_result())
+    request.config.pluginmanager.register(Reports(), "p3-native-liveness")
+    return state
+
+
+@pytest.fixture(autouse=True)
+def native_watchdog(request, native_liveness):
+    # sys.__stderr__ still uses fd 2 under pytest fd capture. Suspend both
+    # capture layers for the flushed marker so cancellation cannot hide it.
+    capture = request.config.pluginmanager.getplugin("capturemanager")
+    with capture.global_and_fixture_disabled():
+        native_liveness.start(request.node.nodeid)
+
+
 @pytest.fixture(scope="module")
-def shadow_emulator_resources():
-    # Reuse the existing emulator/schema fixture in an isolated instance so the
-    # empty snapshot witness cannot inherit outbox rows from adjacent suites.
+def native_resources_pool():
+    from tests.shadow_observation_fixtures import native_rpc_deadlines
+    with native_rpc_deadlines(), ExitStack() as stack:
+        yield stack, []
+
+
+@pytest.fixture
+def shadow_emulator_resources(request, native_watchdog, native_resources_pool, package_hygiene):  # noqa: F811
+    # Use the conformance helper's disposable schema. Every death history owns
+    # a distinct database/instance; no dead-session deletion or cross-history RW
+    # contention. Ordinary histories share one lazily provisioned schema.
     from tests.conformance.spanner_emulator import emulator_resources
     if "SPANNER_EMULATOR_HOST" in os.environ:
         assert os.environ.get("TR_CONFORMANCE_EMULATOR_SCHEMA") == "1", "configured emulator requires schema coverage"
+    stack, shared = native_resources_pool
     try:
-        with emulator_resources() as resources:
-            yield resources
+        if "process_restart" in request.node.name:
+            with emulator_resources() as resources:
+                try:
+                    yield resources
+                finally:
+                    resources[0].drop()
+        else:
+            if not shared:
+                shared.append(stack.enter_context(emulator_resources()))
+                stack.callback(shared[0][0].drop)
+            yield shared[0]
     except pytest.skip.Exception as error:
         if "SPANNER_EMULATOR_HOST" in os.environ:
             pytest.fail(f"configured native case skipped: {error}")
@@ -213,93 +252,6 @@ def test_shadow_native_one_attempt_handoff(shadow_emulator_resources, backend):
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
-@pytest.mark.parametrize("signum", ["SIGTERM", "SIGKILL"])
-@pytest.mark.parametrize("point", ["before_first_flush", "during_commit", "request_sent", "before_ack", "after_ack", "before_result", "after_result", "full_queues", "graceful", "request_pending_drop", "request_pending_deliver"])
-def test_shadow_native_process_restart(shadow_emulator_resources, backend, point, signum, tmp_path):
-    import json
-    import signal
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    from tests.shadow_observation_diagnostics import release_sessions, wait_boundary
-    database, _ = shadow_emulator_resources
-    boot = uuid4().hex
-    args = [sys.executable, str(Path(__file__).parents[1]/"shadow_observation_restart.py"),
-        database._instance._client.project, database._instance.instance_id, database.database_id, boot]
-    manifest = str(tmp_path/"manifest.json")
-    log = tmp_path/"child.log"
-    output = []
-    pending = point.startswith("request_pending")
-    gate = None
-    child_env = dict(os.environ)
-    if pending:
-        from tests.shadow_observation_gate import CommitGate
-        gate = CommitGate(os.environ["SPANNER_EMULATOR_HOST"])
-        child_env["SPANNER_EMULATOR_HOST"] = gate.address
-    with log.open("w") as errors:
-        child = subprocess.Popen([*args, point, manifest], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=errors, bufsize=0, env=child_env)  # noqa: S603
-        def child_state():
-            return "\n".join(output)+"\nSTDERR\n"+log.read_text()+"\nPARENT\n"+_diagnostics()
-        try:
-            if gate is not None:
-                assert wait_boundary(child.stdout, output, time.monotonic()+15, marker=b"GATE_ARM"), child_state()
-                gate.arm()
-                child.stdin.write(b"1")
-                child.stdin.flush()
-                assert gate.pending.wait(3), child_state()
-                assert gate.buffer, "commit must be outstanding in the transport gate"
-            else:
-                assert wait_boundary(child.stdout, output, time.monotonic()+15), child_state()
-            child.send_signal(getattr(signal, signum))
-            code = child.wait(timeout=12)
-            output.extend(child.stdout.read().decode().splitlines())
-            assert code == (0 if signum == "SIGTERM" else -signal.SIGKILL), child_state()
-            if signum == "SIGTERM" and not pending:
-                shutdown = json.loads(output[-1])
-                assert shutdown["handler_called"] and shutdown["shutdown"], child_state()
-                assert shutdown["status"]["unclosed"] == (point != "graceful"), child_state()
-        finally:
-            if child.poll() is None:
-                child.kill()
-                child.wait(timeout=3)
-            if gate is not None:
-                gate.close(deliver=point == "request_pending_deliver" and gate.pending.is_set())
-            # The parent makes no database calls until the child and gate stop.
-            # Delete only exact session names recorded by this dead child. This
-            # aborts stranded RW transactions before the next native history.
-            if os.path.exists(manifest):
-                release_sessions(database.spanner_api, database.name, json.loads(Path(manifest).read_text()))
-            print("CHILD_DIAGNOSTICS", child_state())
-    if pending:
-        assert not json.loads(Path(manifest).read_text()).get("pending_call_returned", False), child_state()
-    recovered = subprocess.run([*args, "recover", manifest], capture_output=True, text=True, timeout=15)  # noqa: S603
-    diagnostics = child_state()+"\nRECOVERY\n"+recovered.stdout+recovered.stderr
-    assert recovered.returncode == 0, diagnostics
-    state = json.loads(recovered.stdout.splitlines()[-1])
-    durable = point == "after_result" or (point == "graceful" and signum == "SIGTERM")
-    assert state["durable"] == durable and state["missing_close"] != durable, diagnostics
-    assert state["result_attempts"] == int(durable), diagnostics
-    if pending:
-        assert state["writer_closure_gap"] and not state["original_acknowledgement"], diagnostics
-        assert state["final_attempts"] == 1 and state["result_attempts"] == 0, diagnostics
-        if point == "request_pending_drop":
-            assert not state["closure"], diagnostics
-        # Deliver permits either landing or server cancellation after death.
-    else:
-        assert state["closure"] == (durable or point in {"request_sent", "before_ack", "after_ack", "before_result"}), diagnostics
-    if point == "full_queues":
-        assert state["sticky_loss"] and state["missing_close"], diagnostics
-        memory = state["lost_memory"]
-        assert {k: memory[k] for k in ("pages", "retained", "basis", "trace", "observers", "publishers")} == dict(
-            pages=4, retained=32, basis=4, trace=4, observers=32, publishers=1), diagnostics
-        assert memory["work_bytes"] == 256*1024, diagnostics
-        assert state["hwm"] == 0 and state["event_seq"] > 32 and len(state["lost_attachments"]) == 8, diagnostics
-        assert len(state["found"]) == 6 and state["found"] == state["landed"], diagnostics
-
-
-
-@pytest.mark.parametrize("backend", ["spanner-emulator"])
 def test_shadow_native_exact_miss_then_late_landing(shadow_emulator_resources, backend, monkeypatch):
     from google.api_core.exceptions import DeadlineExceeded
     from google.cloud.spanner_v1.types import CommitRequest
@@ -344,3 +296,83 @@ def test_shadow_native_exact_miss_then_late_landing(shadow_emulator_resources, b
     svc.flush(104.)
     assert day in svc.final_veto and len(pending) == 1, _diagnostics()
     assert read(CLOSE_RESULT_KIND, key, Budget(104., svc.store.clock)) is None, _diagnostics()
+
+
+@pytest.mark.parametrize("backend", ["spanner-emulator"])
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize("signum", ["SIGTERM", "SIGKILL"])
+@pytest.mark.parametrize("point", ["before_first_flush", "graceful", "after_result", "before_result", "after_ack", "before_ack", "request_sent", "full_queues", "during_commit", "request_pending_drop"])
+def test_shadow_native_process_restart(shadow_emulator_resources, backend, point, signum, tmp_path):
+    import json
+    import signal
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from tests.shadow_observation_diagnostics import wait_boundary
+    database, _ = shadow_emulator_resources
+    boot = uuid4().hex
+    args = [sys.executable, str(Path(__file__).parents[1]/"shadow_observation_restart.py"),
+        database._instance._client.project, database._instance.instance_id, database.database_id, boot]
+    manifest = str(tmp_path/"manifest.json")
+    log = tmp_path/"child.log"
+    output = []
+    pending = point.startswith("request_pending")
+    gate = None
+    child_env = dict(os.environ)
+    if pending:
+        from tests.shadow_observation_gate import CommitGate
+        gate = CommitGate(os.environ["SPANNER_EMULATOR_HOST"])
+        child_env["SPANNER_EMULATOR_HOST"] = gate.address
+    with log.open("w") as errors:
+        child = subprocess.Popen([*args, point, manifest], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=errors, bufsize=0, env=child_env)  # noqa: S603
+        def child_state():
+            return "\n".join(output)+"\nSTDERR\n"+log.read_text()+"\nPARENT\n"+_diagnostics()
+        try:
+            if gate is not None:
+                assert wait_boundary(child.stdout, output, time.monotonic()+15, marker=b"GATE_ARM"), child_state()
+                gate.arm()
+                child.stdin.write(b"1")
+                child.stdin.flush()
+                assert gate.pending.wait(3), child_state()
+                assert gate.buffer, "commit must be outstanding in the transport gate"
+            else:
+                assert wait_boundary(child.stdout, output, time.monotonic()+15), child_state()
+            child.send_signal(getattr(signal, signum))
+            code = child.wait(timeout=12)
+            output.extend(child.stdout.read().decode().splitlines())
+            assert code == (0 if signum == "SIGTERM" else -signal.SIGKILL), child_state()
+            if signum == "SIGTERM" and not pending:
+                shutdown = json.loads(output[-1])
+                assert shutdown["handler_called"] and shutdown["shutdown"], child_state()
+                assert shutdown["status"]["unclosed"] == (point != "graceful"), child_state()
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=3)
+            if gate is not None:
+                gate.close()
+            print("CHILD_DIAGNOSTICS", child_state())
+    if pending:
+        assert not json.loads(Path(manifest).read_text()).get("pending_call_returned", False), child_state()
+    recovered = subprocess.run([*args, "recover", manifest], capture_output=True, text=True, timeout=15)  # noqa: S603
+    diagnostics = child_state()+"\nRECOVERY\n"+recovered.stdout+recovered.stderr
+    assert recovered.returncode == 0, diagnostics
+    state = json.loads(recovered.stdout.splitlines()[-1])
+    durable = point == "after_result" or (point == "graceful" and signum == "SIGTERM")
+    assert state["durable"] == durable and state["missing_close"] != durable, diagnostics
+    assert state["result_attempts"] == int(durable), diagnostics
+    if pending:
+        assert state["writer_closure_gap"] and not state["original_acknowledgement"], diagnostics
+        assert state["final_attempts"] == 1 and state["result_attempts"] == 0, diagnostics
+        assert not state["closure"], diagnostics
+    else:
+        assert state["closure"] == (durable or point in {"request_sent", "before_ack", "after_ack", "before_result"}), diagnostics
+    if point == "full_queues":
+        assert state["sticky_loss"] and state["missing_close"], diagnostics
+        memory = state["lost_memory"]
+        assert {k: memory[k] for k in ("pages", "retained", "basis", "trace", "observers", "publishers")} == dict(
+            pages=4, retained=32, basis=4, trace=4, observers=32, publishers=1), diagnostics
+        assert memory["work_bytes"] == 256*1024, diagnostics
+        assert state["hwm"] == 0 and state["event_seq"] > 32 and len(state["lost_attachments"]) == 8, diagnostics
+        assert len(state["found"]) == 6 and state["found"] == state["landed"], diagnostics

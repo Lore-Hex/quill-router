@@ -164,23 +164,53 @@ def wait_boundary(stream, output, deadline, marker=b"BOUNDARY"):
     return False
 
 
-def track_sessions(api, manifest, save):
-    """Remember exact sessions so a dead child's open emulator RW locks can end."""
-    execute = api.execute_streaming_sql
-    def tracked(*args, **kwargs):
-        from google.cloud.spanner_v1.types import ExecuteSqlRequest
-        session = ExecuteSqlRequest(kwargs["request"]).session
-        if session not in manifest["sessions"]:
-            manifest["sessions"].append(session)
-            save()
-        return execute(*args, **kwargs)
-    api.execute_streaming_sql = tracked
+class NativeLiveness:
+    """Session-owned attribution, with a bounded loopback probe before/after tests."""
+    def __init__(self):
+        self.previous = "<none>"
+        self.outcomes = {}
+        self.started = None
 
+    def check(self):
+        import os
+        import socket
+        address = os.environ.get("SPANNER_EMULATOR_HOST")
+        if not address:
+            return
+        host, port = address.rsplit(":", 1)
+        assert host in {"localhost", "127.0.0.1", "[::1]"}, "loopback emulator required"
+        try:
+            with socket.create_connection((host.strip("[]"), int(port)), timeout=1):
+                pass
+        except OSError as error:
+            raise AssertionError(f"emulator not reachable; previous native test: {self.previous}") from error
 
-def release_sessions(api, database_name, manifest):
-    """Parent-only, after child death AND gate completion; no database scans."""
-    sessions = manifest.get("sessions", [])
-    assert len(sessions) <= 16, "native session bound"
-    for session in sessions:
-        assert session.startswith(database_name+"/sessions/")
-        api.delete_session(request={"name": session}, retry=None, timeout=2)
+    def start(self, nodeid):
+        import sys
+        import time
+        if self.started is None:
+            self.started = time.monotonic()
+        self.outcomes[nodeid] = "passed"
+        print(f"NATIVE_START {nodeid}", file=sys.__stderr__, flush=True)
+        self.check()
+
+    def report(self, report):
+        import sys
+        if report.nodeid not in self.outcomes:
+            return
+        if report.failed or (report.when == "teardown" and self.outcomes[report.nodeid] != "failed"):
+            try:
+                self.check()
+            except AssertionError as error:
+                report.outcome = "failed"
+                report.longrepr = str(report.longrepr or "")+"\n"+str(error)
+        if report.outcome != "passed":
+            self.outcomes[report.nodeid] = report.outcome
+        if report.when == "teardown":
+            import time
+            if time.monotonic()-self.started > 285:
+                report.outcome = self.outcomes[report.nodeid] = "failed"
+                report.longrepr = str(getattr(report, "longrepr", "") or "")+"\nnative module exceeded 285s serial budget"
+            outcome = self.outcomes.pop(report.nodeid)
+            print(f"NATIVE_END {report.nodeid} {outcome}", file=sys.__stderr__, flush=True)
+            self.previous = report.nodeid

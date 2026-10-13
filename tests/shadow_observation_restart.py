@@ -17,11 +17,11 @@ from shadow_observation_diagnostics import (  # noqa: E402
     client_history,
     hold_boundary,
     status,
-    track_sessions,
 )
 from shadow_observation_fixtures import (  # noqa: E402
     NOW_US,
     event_for,
+    native_rpc_deadlines,
     observation_service,
     saturate,
 )
@@ -122,7 +122,7 @@ async def run():
     if point == "full_queues":
         history_elapsed[0] = 480.  # Deterministic prior missed-slot history; no sleep.
         stamp = NOW_US+1000_000_000
-    manifest = dict(rows={}, landed={}, result_attempts=0, sessions=[])
+    manifest = dict(rows={}, landed={}, result_attempts=0)
     def save():
         manifest_file.write_text(json.dumps(manifest))
     def remember(rows, landed=False):
@@ -132,11 +132,6 @@ async def run():
             if landed:
                 manifest["landed"][identity] = row.digest
         save()
-    # Persist only exact emulator session names for parent cleanup AFTER death.
-    # Killing an open transaction does not promptly release the emulator's
-    # database-wide RW lock; deleting that dead child's session does.
-    api = store.database.spanner_api
-    track_sessions(api, manifest, save)
     with client_history(store) as history:
         def diagnostic():
             return status(svc, history)
@@ -278,7 +273,8 @@ if __name__ == "__main__":
     watchdog.daemon = True
     watchdog.start()
     try:
-        asyncio.run(run())
+        with native_rpc_deadlines():
+            asyncio.run(run())
     except BaseException:
         print(json.dumps(dict(failure=True, status=child_diagnostic())), flush=True)
         print("CHILD_STATUS "+child_diagnostic(), file=sys.stderr, flush=True)

@@ -1,4 +1,4 @@
-"""One-connection, deadline-bounded parent-owned emulator forwarding gate."""
+"""Bounded gate: native histories DROP; late delivery is a local-only witness."""
 import select
 import socket
 import threading
@@ -51,9 +51,16 @@ class CommitGate:
                         continue
                 else:
                     return
-            with client, self.connect(self.upstream, timeout=2) as server:
-                client.settimeout(2)
-                server.settimeout(2)
+            def remaining():
+                value = self.deadline-time.monotonic()
+                assert value > 0, "gate forwarding deadline"
+                return min(2, value)
+            with client, self.connect(self.upstream, timeout=remaining()) as server:
+                def send(target, data):
+                    target.settimeout(remaining())
+                    target.sendall(data)
+                client.settimeout(remaining())
+                server.settimeout(remaining())
                 incoming = bytearray()
                 preface = True
                 client_open = True
@@ -73,7 +80,7 @@ class CommitGate:
                                 return
                             if client_open:
                                 try:
-                                    client.sendall(data)
+                                    send(client, data)
                                 except OSError:
                                     client_open = False
                             continue
@@ -88,7 +95,7 @@ class CommitGate:
                         if preface:
                             if len(incoming) < 24:
                                 continue
-                            server.sendall(incoming[:24])
+                            send(server, incoming[:24])
                             del incoming[:24]
                             preface = False
                         while len(incoming) >= 9:
@@ -98,7 +105,7 @@ class CommitGate:
                             frame = bytes(incoming[:size])
                             del incoming[:size]
                             if not self.armed.is_set():
-                                server.sendall(frame)
+                                send(server, frame)
                             elif not self.pending.is_set():
                                 self.buffer.extend(frame)
                                 if frame[3] == 0 and frame[4] & 1:
@@ -106,7 +113,18 @@ class CommitGate:
                             # Once frozen, do not append later client cancellation.
                 if self.deliver:
                     assert self.pending.is_set() and self.buffer, "no pending request"
-                    server.sendall(self.buffer)
-                    # Closing after send permits either server landing or cancellation.
+                    send(server, self.buffer)
+                # Continue the SAME stream, finishing only complete frames. FIN
+                # follows the buffered request; drain replies before close so
+                # unread server bytes cannot turn ordinary close into a reset.
+                server.shutdown(socket.SHUT_WR)
+                drain_deadline = min(self.deadline, time.monotonic()+.5)
+                while time.monotonic() < drain_deadline:
+                    server.settimeout(drain_deadline-time.monotonic())
+                    try:
+                        if not server.recv(65536):
+                            break
+                    except TimeoutError:
+                        break
         except BaseException as error:
             self.error = error

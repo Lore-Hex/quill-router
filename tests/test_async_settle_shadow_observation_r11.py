@@ -208,28 +208,3 @@ def test_parent_coalesced_lines_with_open_writer(repeat):
             assert output == ['{"boundary":"ready"}', 'BOUNDARY']
     finally:
         os.close(writer)
-
-
-def test_dead_child_sessions_are_released_by_exact_name():
-    from types import SimpleNamespace
-
-    from google.cloud.spanner_v1.types import ExecuteSqlRequest
-
-    from tests.shadow_observation_diagnostics import release_sessions, track_sessions
-    database = "projects/test/instances/native/databases/isolated"
-    session = database+"/sessions/dead-child"
-    calls, saves = [], []
-    api = SimpleNamespace(execute_streaming_sql=lambda **kwargs: calls.append(kwargs),
-        delete_session=lambda **kwargs: calls.append(kwargs))
-    manifest = dict(sessions=[])
-    track_sessions(api, manifest, lambda: saves.append(True))
-    request = ExecuteSqlRequest(session=session, sql="SELECT 1")
-    api.execute_streaming_sql(request=request)
-    api.execute_streaming_sql(request=request)
-    assert len(saves) == 1 and manifest["sessions"] == [session]
-    assert calls == [dict(request=request), dict(request=request)]
-    release_sessions(api, database, manifest)
-    assert calls[-1] == dict(request=dict(name=session), retry=None, timeout=2)
-    with pytest.raises(AssertionError):
-        release_sessions(api, "projects/other", manifest)
-    assert len(calls) == 3
