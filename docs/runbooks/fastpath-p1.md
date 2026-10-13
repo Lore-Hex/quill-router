@@ -78,11 +78,17 @@ FRONT=$(gcloud compute instances list --project=quill-cloud-proxy --filter="name
    own, the watch ends with it, exiting 0 with the workspace left on:
 
    ```bash
-   /opt/fastpath/fastpathwatch -database $DB -project quill-cloud-proxy -instance trusted-router-nam6 -subscriptions auditor,stager,settle-log-archive,records-archive -workspace $WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m -overdue 5m -max-overdue 0 -max-spend $((FUNDED / 10)) -run /opt/fastpath/loadgen -front $FRONT -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl
+   /opt/fastpath/fastpathwatch -database $DB -project quill-cloud-proxy -instance trusted-router-nam6 -subscriptions auditor,stager -workspace $WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m -overdue 5m -max-overdue 0 -max-spend $((FUNDED / 10)) -run /opt/fastpath/loadgen -front $FRONT -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl
    ```
 
    The generator's report is its standard output, the watch's answer the
-   command's last line. A stop is a finding: the run's note says which
+   command's last line. The watch names the stage's own subscriptions,
+   `auditor` and `stager`, whose backlog age is the stage's; the two
+   archive subscriptions write to Cloud Storage in batches of up to 300
+   seconds (`max_duration` in `infra/fastpath.tf`), so a message waits
+   that long by design and an age ceiling below it stopped run 1
+   (`docs/design/fast-admission-p1-results.md`); their backlog is bounded
+   by their batching and is W7's alerting's to watch. A stop is a finding: the run's note says which
    ceiling and why before the next run.
 3. **The audit, after every run:**
 
