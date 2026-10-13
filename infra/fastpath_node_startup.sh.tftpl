@@ -4,6 +4,42 @@
 # .github/workflows/fastpath-release.yml) and runs it as the systemd unit
 # `fastpath`, which docs/runbooks/fastpath-deploy.md marks leaving and stops.
 set -euo pipefail
+# The node's journal reaches Cloud Logging through the Ops Agent, set up
+# before anything else so a node with no release, or one whose release
+# fails to install, still says why there. The unit writes its alerts as
+# structured JSON lines (fastpath_alert in the entry's labels, the alert's
+# severity), which W7's alerting reads in Cloud Logging; without the agent
+# they stop in journald, as P1's second run found. The install is
+# idempotent. The journal's line is its MESSAGE field; parsed, its
+# "logging.googleapis.com/labels" become the entry's labels and its
+# "logging.googleapis.com/severity" the entry's severity; a line that
+# states none keeps the journal's priority as its severity.
+if ! systemctl is-active --quiet google-cloud-ops-agent 2>/dev/null; then
+  curl -sSfo /tmp/add-ops-agent-repo.sh https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+  bash /tmp/add-ops-agent-repo.sh --also-install
+fi
+install -d /etc/google-cloud-ops-agent
+cat > /etc/google-cloud-ops-agent/config.yaml <<AGENT
+logging:
+  receivers:
+    fastpath_journal:
+      type: systemd_journald
+  processors:
+    fastpath_json:
+      type: parse_json
+      field: MESSAGE
+    fastpath_fields:
+      type: modify_fields
+      fields:
+        labels."unit":
+          move_from: jsonPayload._SYSTEMD_UNIT
+  service:
+    pipelines:
+      fastpath:
+        receivers: [fastpath_journal]
+        processors: [fastpath_json, fastpath_fields]
+AGENT
+systemctl restart google-cloud-ops-agent
 release="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-release' || true)"
 if [ -z "$release" ]; then
   echo "fastpath: no release pinned in the instance's metadata; the node stays stopped" | systemd-cat -t fastpath -p warning

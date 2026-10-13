@@ -125,3 +125,42 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
 def test_commands_keep_their_order_within_a_block() -> None:
     doc = "```bash\nuv run b\ngcloud a\n/opt/fastpath/c\n```\n`/opt/fastpath/d`\n"
     assert _commands(doc) == ["uv run b", "gcloud a", "/opt/fastpath/c", "/opt/fastpath/d"]
+
+
+def test_node_ships_its_journal_to_cloud_logging() -> None:
+    """The unit writes its alerts as structured JSON to journald; W7's
+    alerting reads them in Cloud Logging, so the node runs the Ops Agent
+    with a journald receiver whose parser reads the journal's MESSAGE and
+    whose fields processor names the unit (P1's second run
+    found the alerts stopping in journald). The agent is set up before the
+    release is looked up, so a node with no release still ships its journal,
+    and restarted on its configuration before the unit starts."""
+    import yaml
+
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    assert "add-google-cloud-ops-agent-repo.sh" in script and "--also-install" in script
+    config = yaml.safe_load(re.search(r"<<AGENT\n(.*?)\nAGENT\n", script, re.S).group(1))
+    logging = config["logging"]
+    receiver = next(iter(logging["receivers"].values()))
+    assert receiver == {"type": "systemd_journald"}
+    parser = logging["processors"]["fastpath_json"]
+    assert parser == {"type": "parse_json", "field": "MESSAGE"}
+    fields = logging["processors"]["fastpath_fields"]
+    assert fields["type"] == "modify_fields"
+    # The unit is always in a journal record; a severity moved from the
+    # payload would clear the journal's priority on every line that states
+    # none, so the service writes its alerts' severity under the agent's
+    # special field instead, and the agent moves no severity.
+    assert set(fields["fields"]) == {'labels."unit"'}
+    assert fields["fields"]['labels."unit"'] == {"move_from": "jsonPayload._SYSTEMD_UNIT"}
+    service = (ROOT / "fastpath" / "internal" / "service" / "service.go").read_text(encoding="utf-8")
+    assert '"logging.googleapis.com/severity": "ERROR"' in service
+    pipeline = logging["service"]["pipelines"]["fastpath"]
+    assert pipeline == {"receivers": list(logging["receivers"]), "processors": ["fastpath_json", "fastpath_fields"]}
+    # Order: install, then the configuration written, then the agent
+    # restarted on it, then the release looked up (and its early exit), then
+    # the unit started.
+    order = [script.index(step) for step in (
+        "--also-install", "/etc/google-cloud-ops-agent/config.yaml <<AGENT", "systemctl restart google-cloud-ops-agent",
+        'release="$(', 'if [ -z "$release" ]', "systemctl enable --now fastpath")]
+    assert order == sorted(order), order

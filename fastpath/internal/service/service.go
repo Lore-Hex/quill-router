@@ -774,17 +774,20 @@ func (r reporting) Receive(ctx context.Context, handle func(context.Context, aud
 var alertOutput io.Writer = os.Stderr
 
 // writeAlert writes an alert as one line of JSON, as Cloud Logging reads a
-// process's standard error: severity ERROR, the message, the subject, and
-// the alert's kind (auditor.AlertKind) as the label fastpath_alert, which
-// the alert policies match (docs/runbooks/fastpath-alerts.md). It carries
-// what the alert carries: a lease or an authorization and what happened,
-// never a record's contents.
+// process's standard error: severity ERROR, under the plain name Cloud
+// Logging's own agents read and under the Ops Agent's special field, which
+// a node's journal reaches Cloud Logging through; the message, the subject,
+// and the alert's kind (auditor.AlertKind) as the label fastpath_alert,
+// which the alert policies match (docs/runbooks/fastpath-alerts.md). It
+// carries what the alert carries: a lease or an authorization and what
+// happened, never a record's contents.
 func writeAlert(w io.Writer, subject, what string) {
 	line, err := json.Marshal(map[string]any{
-		"severity":                      "ERROR",
-		"message":                       "fastpath alert: " + what,
-		"subject":                       subject,
-		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+		"severity":                        "ERROR",
+		"logging.googleapis.com/severity": "ERROR",
+		"message":                         "fastpath alert: " + what,
+		"subject":                         subject,
+		"logging.googleapis.com/labels":   map[string]string{"fastpath_alert": auditor.AlertKind(what)},
 	})
 	if err != nil {
 		log.Printf("alert: %s: %s", subject, what)
