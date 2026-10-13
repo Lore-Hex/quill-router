@@ -527,7 +527,7 @@ def main() -> None:
     import sys
     if '--policy' in sys.argv[1:] or any(a.startswith('--policy=') for a in sys.argv[1:]):
         argv = sys.argv[1:]
-        stages = {'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'}
+        stages = {'transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'}
         command = next((a for a in argv if a in stages), 'pre-flip')
         if command in argv:
             argv = list(argv)

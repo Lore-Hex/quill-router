@@ -2,17 +2,24 @@
 from __future__ import annotations
 
 import json
-import sys
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import replace
 from functools import lru_cache
 from typing import Any
 
 import pytest
 
-from tests.shadow_v2_gate_fixture_generator import build, ports
-from tests.test_async_settle_shadow_v2_gates import GAPS, damage
+from tests.shadow_v2_gate_a2_fixture import (
+    BYTE_WITNESS_SEAMS,
+    mutate_transport,
+    real_fixture,
+    transport,
+)
+from tests.shadow_v2_gate_fixture_generator import (
+    build,
+    exhaustive,
+    no_line_tracing,
+    untraced,  # noqa: F401
+)
+from tests.test_async_settle_shadow_v2_gates import GAPS
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a1_health as health
 from trusted_router import async_settle_shadow_v2_a2_contract as contract
@@ -22,42 +29,12 @@ from trusted_router import async_settle_shadow_v2_gate_load as load
 from trusted_router import async_settle_shadow_v2_gate_report as reports
 from trusted_router import async_settle_shadow_v2_gates as gates
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
-from trusted_router.async_settle_shadow_v2_gate_bundle import ATTACHMENTS
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle
+from trusted_router.async_settle_shadow_v2_gate_loader import load as load_original
 from trusted_router.async_settle_shadow_v2_gate_result import render
 from trusted_router.async_settle_shadow_v2_gates import evaluate
 from trusted_router.async_settle_shadow_v2_schema import Schema
 from trusted_router.detached_jws import canonical
-
-
-@contextmanager
-def no_line_tracing() -> Iterator[None]:
-    saved = sys.gettrace()
-    # The exhaustive data adds no branches beyond the traced short witnesses.
-    # Stop coverage's background-thread tracers too: on CPython 3.12 those keep
-    # interpreter tracing overhead active even after sys.settrace(None).
-    from coverage import Coverage
-    coverage = Coverage.current()
-    if coverage is not None:
-        coverage.stop()
-    sys.settrace(None)
-    try:
-        yield
-    finally:
-        if coverage is not None:
-            coverage.start()
-        else:
-            sys.settrace(saved)
-
-
-@pytest.fixture
-def untraced() -> Iterator[None]:
-    with no_line_tracing():
-        yield
-
-
-def exhaustive(test: Any) -> Any:
-    return pytest.mark.usefixtures('untraced')(pytest.mark.timeout(method='signal')(test))
 
 
 @pytest.fixture(scope='session')
@@ -68,39 +45,47 @@ def validation_cache():
     parse = Schema.parse
     call = Schema.__call__
     validate = health.validate_publisher_traces
-    schemas = {id(schema): schema for schema in ATTACHMENTS.values()}
-    stable_schemas = {id(health.PUBLISHER_SLOT_TRACE), id(health.PUBLISHER_TRACE_PAGE), id(a1.COVERAGE_PAGE)}
-    checked_values = {}
+    # Only these parser results are immutable within this fixture family.
+    # Other schemas (notably shutdown sources) are edited by fixture builders.
+    schemas = {id(schema): schema for schema in (health.PUBLISHER_TRACE_PAGE, a1.COVERAGE_PAGE)}
+    origins = {}
     @lru_cache(maxsize=16000)
     def parsed(schema_id, raw):
-        return parse(schemas[schema_id], raw)
+        value = parse(schemas[schema_id], raw)
+        origins[id(value)] = (value, (schema_id, raw))
+        if schema_id == id(health.PUBLISHER_TRACE_PAGE):
+            for index, entry in enumerate(value['entries']):
+                origins[id(entry)] = (entry, (id(health.PUBLISHER_SLOT_TRACE), raw, index))
+        return value
     def dispatch(schema, raw):
         return parsed(id(schema), raw) if id(schema) in schemas else parse(schema, raw)
     def checked_call(schema, value):
-        key = (id(schema), id(value))
-        if id(schema) in stable_schemas and key in checked_values and checked_values[key] is value:
+        origin = origins.get(id(value))
+        if origin is not None and origin[0] is value and origin[1][0] == id(schema):
             return
         call(schema, value)
-        if id(schema) in stable_schemas:
-            checked_values[key] = value
     digest = lru_cache(maxsize=16000)(roots.file_digest)
     root = a1.coverage_root
     coverage_roots = {}
+    def content(value):
+        origin = origins.get(id(value))
+        return origin[1] if origin is not None and origin[0] is value else canonical(value)
     def coverage(pages):
         values = tuple(pages)
-        key = tuple(map(id, values))
+        key = tuple(content(v) for v in values)
         if key not in coverage_roots:
-            coverage_roots[key] = (values, root(list(values)))
-        return coverage_roots[key][1]
+            coverage_roots[key] = root(list(values))
+        return coverage_roots[key]
     original_sha = load.sha256
     hashes = {}
     def sha(value):
-        if (id(health.PUBLISHER_TRACE_PAGE), id(value)) not in checked_values and (id(a1.COVERAGE_PAGE), id(value)) not in checked_values:
+        origin = origins.get(id(value))
+        if origin is None or origin[0] is not value:
             return original_sha(value)
-        key = id(value)
+        key = origin[1]
         if key not in hashes:
-            hashes[key] = (value, original_sha(value))
-        return hashes[key][1]
+            hashes[key] = original_sha(value)
+        return hashes[key]
     input_inventory = reports.input_inventory
     inventories = {}
     def inventoried(ctx):
@@ -145,21 +130,59 @@ def validation_cache():
                 for child in value:
                     references(child)
         for qualified in contract.OBJECT_PREIMAGES:
-            references(json.loads(artifacts[qualified]))
+            if qualified in artifacts:
+                references(json.loads(artifacts[qualified]))
         named = tuple((k, artifacts.get(k)) for k in sorted(needed))
         presence = tuple((digest(body), artifacts.get('candidates/' + digest(body) + '.json') == body)
             for key in contract.ENTRY_PREIMAGES for entry in roots[key] for body in entry['bodies'])
         key = (canonical(manifest), canonical(proof), named, freeze(roots), presence)
         if key not in audits:
-            audit(manifest, proof, artifacts=artifacts, roots=roots)
-            audits[key] = True
+            try:
+                audit(manifest, proof, artifacts=artifacts, roots=roots)
+            except ValueError as exc:
+                audits[key] = str(exc)
+            else:
+                audits[key] = None
+        if audits[key] is not None:
+            raise ValueError(audits[key])
     def traces(publisher, entries, **kwargs):
-        key = (canonical(publisher), tuple(id(e) for e in entries), tuple(sorted(kwargs.items())))
+        key = (canonical(publisher), tuple(content(e) for e in entries), tuple(sorted(kwargs.items())))
         if key not in checked:
-            validate(publisher, entries, **kwargs)
-            checked[key] = entries  # retain identities until the session ends
+            try:
+                validate(publisher, entries, **kwargs)
+            except ValueError as exc:
+                checked[key] = str(exc)
+            else:
+                checked[key] = None
+        if checked[key] is not None:
+            raise ValueError(checked[key])
+    from trusted_router import async_settle_shadow_v2_gate_expected as expected
+    from trusted_router import async_settle_shadow_v2_gate_loader as loader
+    enumerate_traces = expected.trace_keys
+    trace_populations = {}
+    def trace_keys(ctx):
+        b = ctx.bundle
+        key = (tuple(r for r in b.attachments if r.key.kind == 'publisher_trace'), b.inventory, b.completed_at_us)
+        if key not in trace_populations:
+            trace_populations[key] = frozenset(enumerate_traces(ctx))
+        return set(trace_populations[key])
+    # Repeated transports contain equal original byte strings. Intern these at
+    # the test loading boundary so per-mutation cache keys share their storage.
+    row_type, file_type = loader.Row, loader.Preimage
+    @lru_cache(maxsize=16000)
+    def original(raw):
+        return raw
+    patch.setattr(loader, 'Row', lambda key, raw: row_type(key, original(raw)))
+    patch.setattr(loader, 'Preimage', lambda name, raw: file_type(name, original(raw)))
+    patch.setattr(expected, 'trace_keys', trace_keys)
+    patch.setattr(expected, 'sha256', sha)
     patch.setattr(gates, 'observer_health', observed)
     patch.setattr(reports, 'input_inventory', inventoried)
+    import sys
+    original_digest = roots.file_digest
+    for module_name, module in tuple(sys.modules.items()):
+        if module_name.startswith('trusted_router.async_settle_shadow_v2_gate') and getattr(module, 'file_digest', None) is original_digest:
+            patch.setattr(module, 'file_digest', digest)
     patch.setattr(roots, 'file_digest', digest)
     patch.setattr(a1, 'coverage_root', coverage)
     patch.setattr(load, 'sha256', sha)
@@ -176,7 +199,9 @@ def validation_cache():
     digest.cache_clear()
     coverage_roots.clear()
     hashes.clear()
-    checked_values.clear()
+    origins.clear()
+    trace_populations.clear()
+    original.cache_clear()
     inventories.clear()
     observers.clear()
 
@@ -192,8 +217,9 @@ def seven_days(tmp_path_factory: Any, validation_cache: Any) -> Bundle:
 
 @exhaustive
 @pytest.mark.xdist_group('p5-seven-days')
-def test_seven_day_churn_render(seven_days: Bundle) -> None:
-    result = evaluate(seven_days, ports(), gate='pre-flip')
+def test_seven_day_churn_render(real_seven_days: Any) -> None:
+    _, bound_ports, loaded = real_seven_days
+    result = evaluate(loaded, bound_ports, gate='pre-flip')
     raw, attachments = render(result)
     report = json.loads(attachments[0])
     assert report['elapsed_seconds'] == 604802
@@ -210,22 +236,51 @@ def test_seven_day_churn_render(seven_days: Bundle) -> None:
     for field in ('comparator', 'admission', 'partition', 'attempts', 'checkpoint', 'handoff', 'publisher'):
         assert all(value is not None for key, value in report[field].items() if key not in ('coverage', 'peaks')), field
     # A structural PASS on the current A2 head cannot waive G7's required
-    # projected/measured sources. Keep this acceptance requirement visible
-    # while the retained-load adapter is unfinished; never fill it with zeros.
+    # projected/measured original sources; never fill missing facts with zeros.
     for field, values in (('fleet_peaks', report['fleet_peaks']), ('publisher.peaks', report['publisher']['peaks'])):
         assert all(value is not None for value in values.values()), (field, [key for key, value in values.items() if value is None])
 
 
+# Three byte mutations each cover two/three named failures. Evaluate each
+# distinct original once, retaining all corresponding named assertions.
+BYTE_CASES = {gap: (gap,) for gap in GAPS if gap not in BYTE_WITNESS_SEAMS}
+for representative, aliases in (
+    ('artifact_gap', ('external_proofs_missing', 'pilot_prerequisite_gap')),
+    ('positive_seed_gap', ('regional_seed_gap',)),
+    ('prediction_demand_gap', ('prediction_unknown_gap',)),
+):
+    BYTE_CASES[representative] += aliases
+    for alias in aliases:
+        del BYTE_CASES[alias]
+
+
 @exhaustive
 @pytest.mark.xdist_group('p5-seven-days')
-@pytest.mark.parametrize('gap', GAPS)
-def test_seven_day_blocked_render(seven_days: Bundle, gap: str) -> None:
-    bad = damage(seven_days, gap)
-    if gap == 'continuous_window_gap':
-        # Keep all the original evidence; cut the certified window short.
-        bad = replace(seven_days, completed_at_us=seven_days.completed_at_us - 3000000)
-    result = evaluate(bad, ports(), gate='pre-flip')
-    raw, attachments = render(result)
-    assert gap in result.gaps
-    assert json.loads(raw)['verdict'] == 'BLOCKED'
+@pytest.mark.parametrize('gap', BYTE_CASES)
+def test_seven_day_blocked_render(real_seven_days: Any, gap: str) -> None:
+    raw, bound_ports, _ = real_seven_days
+    bad = load_original(mutate_transport(raw, gap), bound_ports)
+    result = evaluate(bad, bound_ports, gate='pre-flip')
+    output, attachments = render(result)
+    assert set(BYTE_CASES[gap]) <= set(result.gaps), (gap, result.gaps)
+    assert json.loads(output)['verdict'] == 'BLOCKED'
     assert json.loads(attachments[0]) == result.gate_report
+
+
+def test_byte_witness_inventory_is_explicit() -> None:
+    covered = {name for names in BYTE_CASES.values() for name in names}
+    assert covered.isdisjoint(BYTE_WITNESS_SEAMS)
+    assert covered | set(BYTE_WITNESS_SEAMS) == set(GAPS)
+    assert len(covered) == 44 and len(BYTE_WITNESS_SEAMS) == 14
+
+
+@pytest.fixture(scope='session')
+def real_seven_days(tmp_path_factory: Any, seven_days: Bundle) -> Any:
+    with no_line_tracing():
+        original, bound_ports, _ = real_fixture(tmp_path_factory.mktemp('real-seven-days'),
+            seconds=604804, pilot_stage='pre-flip', seed_bundle=seven_days)
+        raw = transport(original)
+        loaded = load_original(raw, bound_ports)
+        assert loaded.a2_streams['loading_issues'] == []
+        assert loaded.a2_streams['loading_validation'] == []
+        return raw, bound_ports, loaded

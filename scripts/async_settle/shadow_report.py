@@ -785,8 +785,7 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
         verify_certificate,
         verify_original_receipt,
     )
-    from trusted_router.async_settle_shadow_v2_gate_inputs import VerifierApproval
-    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+    from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts, VerifierApproval
     from trusted_router.async_settle_shadow_v2_gate_retained import unchanged_checks
     from trusted_router.async_settle_shadow_v2_gate_views import budget_view
     from trusted_router.detached_jws import TrustedKey, canonical
@@ -817,13 +816,15 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
         fixtures = (root / 'tests/fixtures/async_settlement/shadow_v2_a2/manifest.json').read_bytes()
         approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, b'[]', (),
             hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
-    from trusted_router.async_settle_shadow_v2_gate_views import SHUTDOWN_SOURCE
+    from trusted_router.async_settle_shadow_v2_gate_inputs import SHUTDOWN_SOURCE
     measurements = {path: SHUTDOWN_SOURCE.parse for path in release.artifacts
                     if path.startswith('sources/measurement/')} if release is not None else {}
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+    release_files = {path: (root / path).read_bytes() for path in RELEASE_FILES.values()}
     return LoadingPorts(verify_certificate, verify_original_receipt, verify_binding,
         comparator_positive, positive_sample, known_exclusion, pilot_enablement.fleet_budgets_pre,
         collect_rollbacks, report, pilot_enablement.post_flip, tuple(approvals),
-        shadow_v2_release_pins(), lambda path: (root / path).read_bytes(), pilot_enablement.roster_coverage,
+        shadow_v2_release_pins(), lambda path: release_files[path], pilot_enablement.roster_coverage,
         retained=run_retained, gate_roster=pilot_enablement.gate_roster_coverage, release=release,
         measurements=measurements)
 
@@ -845,7 +846,7 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
     parser = argparse.ArgumentParser(description="Offline shadow-v2 gate")
     parser.add_argument('--policy', choices=['shadow-v2'], required=True)
     parser.add_argument('--bundle', type=Path, required=True)
-    parser.add_argument('--gate', choices=['fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'], default=gate or 'pre-flip')
+    parser.add_argument('--gate', choices=['transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'], default=gate or 'pre-flip')
     parser.add_argument('--certificate-keys', type=Path)
     parser.add_argument('--binding-keys', type=Path)
     parser.add_argument('--output-dir', type=Path)

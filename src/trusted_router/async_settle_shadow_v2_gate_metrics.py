@@ -143,9 +143,15 @@ def counts(ctx: Context, counters: list[dict[str, Any]] | None, events: list[dic
     admission: dict[str, Any] = dict(E=eligible if 'G5' in required and not enclave else None)
     for code, word in (('Y', 'yes'), ('N', 'no'), ('U', 'unknown')):
         admission[code] = total(c['admission_observer']['prediction_' + word] for c in counters or []) if available and 'G5' in required and not enclave else None
+    # A contradictory counter cannot be certified against the independently
+    # enumerated receipt population, even with an unavailable ratio.
+    if eligible is not None and sum(admission[k] or 0 for k in ('Y', 'N')) > eligible:
+        admission['Y'] = admission['N'] = None
     closed = bool(available and partition['C'] == 0 and all(admission[k] == 0 for k in ('E', 'Y', 'N', 'U')))
     admission['coverage'] = ratio(total(admission[k] for k in ('Y', 'N')), admission['E'], required='G5' in required and not enclave, closed_empty=closed)
     comparator: dict[str, Any] = dict(eligible=admission['E'], compared=partition['A'] if not enclave else None)
+    if eligible is not None and comparator['compared'] is not None and comparator['compared'] > eligible:
+        comparator['compared'] = None
     for name, classes in (('exact', ('exact',)), ('explained', ('explained-by-catalog-change',)),
                           ('mismatch', ('mismatch',)), ('unevaluable', (None, 'unevaluable'))):
         comparator[name] = sum(t['comparison'] in classes for t in terminal if t['eligibility'] == 'eligible') if available and 'G5' in required and not enclave else None

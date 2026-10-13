@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from dataclasses import replace
-from functools import cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -204,7 +204,7 @@ def reseal(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
     return replace(current, rows=tuple(rows), proof=raw_proof)
 
 
-def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
+def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None = None, seed_bundle: Bundle | None = None, empty_segment: bool = False) -> tuple[Bundle, Any, dict[str, Any]]:
     """Complete small original-byte fixture, with real retained function outputs.
 
     The release authority is a test trust root separate from the export. Every
@@ -225,17 +225,19 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
         pre_enable_bundle,
     )
     from trusted_router.async_settle_shadow_evidence import Counters
-    from trusted_router.async_settle_shadow_v2_gate_ports import ReleasePlan
-    from trusted_router.async_settle_shadow_v2_gate_views import (
+    from trusted_router.async_settle_shadow_v2_gate_inputs import (
         ALLOWANCES,
         BUDGET_MEASUREMENTS,
         COMPONENTS,
+        SHUTDOWN_SOURCE,
+        ReleasePlan,
+    )
+    from trusted_router.async_settle_shadow_v2_gate_views import (
         EXTERNAL_REQUIRED,
         MEASUREMENTS_PATH,
-        SHUTDOWN_SOURCE,
     )
 
-    bundle = build(tmp_path, churn=False)
+    bundle = seed_bundle if seed_bundle is not None else build(tmp_path, churn=False, seconds=seconds)
     assert bundle.inventory and bundle.budget
     end = bundle.completed_at_us
     artifacts = {p.name: p.raw for p in bundle.preimages}
@@ -246,6 +248,7 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
         record = dict(**TAG, subject_sha256=reference['sha256'], reviewer='fixture-reviewer', reviewed_at_us=at, decision='approved')
         return {k: v for k, v in record.items() if k not in TAG} | dict(record=ref('reviews/' + reference['sha256'] + '/' + str(at), e.REVIEW_RECORD.serialize(record)))
     def stream(values: list[dict[str, Any]], name: str, path: str) -> dict[str, Any]:
+        values = sorted(values, key=lambda v: r._key(v, name))
         desc, pages = detail(values, name)
         for page in pages:
             ref(path + '/' + page['page_seq'], canonical(page))
@@ -295,11 +298,23 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
     for path, raw in artifacts.copy().items():
         if path.endswith('/serving.json'):
             serving.extend(json.loads(raw))
+    merged_serving = {}
+    for row in serving:
+        if row['instance'] not in merged_serving:
+            merged_serving[row['instance']] = {**row, 'intervals': []}
+        merged_serving[row['instance']]['intervals'].extend(row['intervals'])
+    serving = list(merged_serving.values())
     counter = Counters(REGION, REV, clock=lambda: START / 1000000)
     counter._day()
     _, legacy_body = counter.snapshot(closed=True)[0]
     legacy_boot = legacy_body['instance']
     legacy_serving = [{**row, 'instance': legacy_boot if row['role'] == 'router' else row['instance']} for row in serving]
+    combined = {}
+    for row in legacy_serving:
+        if row['instance'] not in combined:
+            combined[row['instance']] = {**row, 'intervals': []}
+        combined[row['instance']]['intervals'].extend(row['intervals'])
+    legacy_serving = list(combined.values())
     legacy_body.update(started_at_us=START, flushed_at_us=end)
     legacy_body['admission_observer'].update(workspace_reads=5, health_reads=20)
     legacy_rows = [dict(kind=pilot.COUNTER, id=day_at(START) + '/' + legacy_boot, body=legacy_body)]
@@ -312,7 +327,7 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
             publisher_period=2., publisher_jitter=.25, publication=.5, poll_period=1.,
             poll_jitter=.25, install=.25, skew=.25, workspace_period=4., workspace_jitter=.25, workspace_install=.5))
     measured = {k: rat(getattr(bundle.budget, k)) for k in ALLOWANCES}
-    from trusted_router.async_settle_shadow_v2_gate_views import TOTALS
+    from trusted_router.async_settle_shadow_v2_gate_inputs import TOTALS
     measured.update({k: getattr(bundle.budget, k) for k in TOTALS})
     measured['component_us'] = {k: int(bundle.budget.component_seconds[k] * 1000000) for k in COMPONENTS}
     measurement_ref = ref(MEASUREMENTS_PATH, BUDGET_MEASUREMENTS.serialize(measured))
@@ -330,8 +345,15 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
         value['configured_pending_rows_per_second'] = rat(300)
     limit_ref = ref('budgets/limits.json', canonical(limits))
     segments = []
-    for boot in sorted(bundle.inventory.boots, key=lambda b: b.boot):
+    spans = [(boot, rate.start_us, rate.end_us) for boot in bundle.inventory.boots
+             for rate in bundle.budget.rates if rate.boot == boot.boot]
+    spans += [(boot, max(boot.start_us, epoch * 86400000000), min(boot.end_us, (epoch + 1) * 86400000000))
+        for boot in bundle.inventory.boots if boot.role == 'enclave'
+        for epoch in range(boot.start_us // 86400000000, (boot.end_us - 1) // 86400000000 + 1)]
+    for boot, left, right in sorted(spans, key=lambda v: (v[0].boot, v[1])):
         peaks = dict.fromkeys(e.PEAKS.fields)
+        peaks.update(startup_operations_1s=0, close_operations_1s=2, export_operations_1s=2,
+            export_operations_per_second=rat(Fraction(2, 5)), export_bytes_per_second=rat(Fraction(131072, 5)))
         peaks.update(simultaneous_routers=int(boot.role == 'router'), simultaneous_publishers=int(boot.contender),
             reads_per_second=rat(Fraction(13, 4) if boot.role == 'router' else 0),
             pending_rows_per_second=rat(Fraction(1001, 4) if boot.role == 'router' else 0),
@@ -340,8 +362,12 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
             publication_operations_per_second=rat(Fraction(1, 2) if boot.role == 'router' else 0),
             trust_rows_per_second=rat(Fraction(1, 4) if boot.role == 'router' else 0),
             health_rows_per_second=rat(1 if boot.role == 'router' else 0))
-        segments.append(dict(day=day_at(boot.start_us), boot=boot.boot, region=boot.region,
-            start_us=boot.start_us, end_us=boot.end_us, role=boot.role, contender=boot.contender, workspace_count=1, peaks=peaks))
+        segments.append(dict(day=day_at(left), boot=boot.boot, region=boot.region,
+            start_us=left, end_us=right, role=boot.role, contender=boot.contender, workspace_count=1, peaks=peaks))
+    if empty_segment:
+        source = next(s for s in segments if s['role'] == 'router')
+        segments.append({**source, 'start_us': source['end_us'], 'day': day_at(source['end_us']),
+            'peaks': dict.fromkeys(e.PEAKS.fields)})
     operation = dict(object=dependencies[1], **{'pass': 1}, at_us=START, operation='get',
         native_rpcs=1, bytes=dependencies[1]['bytes'], elapsed_us=1000)
     load = dict(**TAG, interval=dict(start_us=START, end_us=end),
@@ -351,6 +377,10 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
     for row in sorted(pre_input['serving'], key=lambda v: v['instance']):
         span = row['intervals'][0]
         peaks = dict.fromkeys(e.PEAKS.fields)
+        peaks.update(startup_operations_1s=0, close_operations_1s=2, export_operations_1s=2,
+            claim_operations_per_second=rat(Fraction(1, 2)), scan_operations_per_second=rat(Fraction(1, 2)),
+            publication_operations_per_second=rat(Fraction(1, 2)),
+            export_operations_per_second=rat(Fraction(2, 5)), export_bytes_per_second=rat(Fraction(131072, 5)))
         peaks.update(configured_routers=int(row['role'] == 'router'), configured_publishers=0,
             configured_reads_per_second=rat(Fraction(5, 4) if row['role'] == 'router' else 0))
         pre_segments.append(dict(day=span['day'], boot=row['instance'], region=row['region'],
@@ -411,11 +441,18 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
             completed_at_us=at, producer='fixture-ci', checks=[dict(name='contract_vectors', result='pass', evidence=evidence)],
             sources=stream([evidence], 'files', 'ci/' + criterion + '/sources'))
     requirements = []
-    for criterion in EXTERNAL_REQUIRED:
+    required = (*EXTERNAL_REQUIRED, 'attestation', 'exposure_acceptance') if pilot_stage else EXTERNAL_REQUIRED
+    for criterion in required:
         proof_ref = ref('proofs/' + criterion, e.PROOF_RESULT.serialize(proof_result(criterion, START - 1)))
         requirements.append(dict(name=criterion, stage='shadow-serving', router_revision=REV, enclave_revision=REV,
             evidence=proof_ref, approval=approve(proof_ref)))
-    artifacts['proof.external_proofs_sha256'] = e.EXTERNAL_PROOFS.serialize(dict(**TAG, requirements=requirements, pilot=None))
+    pilot_envelope = None
+    if pilot_stage:
+        pilot_payload, pilot_files = retained_pilot_fixture(tmp_path, pilot_stage)
+        pilot_dependencies = [ref(name, raw) for name, raw in sorted(pilot_files.items())]
+        pilot_envelope, _ = delegated('pilot_enablement.' + pilot_stage.replace('-', '_'),
+            pilot_payload, pilot_dependencies, 'pilot/' + pilot_stage)
+    artifacts['proof.external_proofs_sha256'] = e.EXTERNAL_PROOFS.serialize(dict(**TAG, requirements=requirements, pilot=pilot_envelope))
     ledgers = []
     previous = None
     for raw in bundle.ledgers:
@@ -425,7 +462,7 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
             ledger[field] = ref('ledger/' + ledger['boot'] + '/' + field, material)['sha256']
         for field in ('transport', 'size', 'regional_load', 'boot_transport', 'observer_freshness', 'marker_keys'):
             value = proof_result(field, ledger['boot_at_us'])
-            from trusted_router.async_settle_shadow_v2_gate_provenance import PREREQUISITE_CONTEXT
+            from trusted_router.async_settle_shadow_v2_gate_inputs import PREREQUISITE_CONTEXT
             context = {k: ledger[k] for k in ('role', 'boot', 'revision', 'region', 'boot_at_us')}
             context.update(criterion=field, completed_at_us=value['completed_at_us'])
             context_ref = ref('ledger/' + ledger['boot'] + '/' + field + '/context', PREREQUISITE_CONTEXT.serialize(context))
@@ -454,13 +491,197 @@ def real_fixture(tmp_path: Path) -> tuple[Bundle, Any, dict[str, Any]]:
         signature_material.append(value)
     ref('loading/signatures.json', canonical(signature_material))
     trusted_pins = {path: r.file_digest(raw) for path, raw in artifacts.items() if not path.startswith('proof.')}
-    plan_raw = canonical(dict(artifacts=trusted_pins, criteria=criteria, verifiers=verifier_pins, required=list(EXTERNAL_REQUIRED)))
+    plan_raw = canonical(dict(artifacts=trusted_pins, criteria=criteria, verifiers=verifier_pins, required=list(required)))
     plan_path = 'loading/release-plan.json'
     ref(plan_path, plan_raw)
-    release = ReleasePlan(plan_path, plan_raw, trusted_pins, criteria, verifier_pins, EXTERNAL_REQUIRED)
+    release = ReleasePlan(plan_path, plan_raw, trusted_pins, criteria, verifier_pins, required)
     tool_ports = replace(tool_ports, release=release, measurements=parsers)
     bundle = reseal(bundle, artifacts)
     expected = dict(pre_input=pre_input, pre_output=pre_output, post_input=post_input,
         post_output=json.loads(post_call.output), reset_output=json.loads(reset_call.output),
-        measurements=measured, rates=[asdict(rate) for rate in bundle.budget.rates])
+        segments=segments, projected_segments=pre_segments, measurements=measured, rates=[asdict(rate) for rate in bundle.budget.rates])
     return bundle, tool_ports, expected
+
+
+def retained_pilot_fixture(tmp_path: Path, stage: str) -> tuple[dict[str, Any], dict[str, bytes]]:
+    """Real retained pilot inputs and captures, with finite relative file paths."""
+    from unittest.mock import patch
+
+    from scripts.async_settle import pilot_enablement as pilot
+    from tests import test_async_settle_pilot_tools as fixtures
+    directory = tmp_path / 'pilot-originals'
+    directory.mkdir(exist_ok=True)
+    original_artifact = fixtures.artifact
+    def artifact(path: Path, name: str, value: Any) -> dict[str, Any]:
+        result = original_artifact(path, name, value)
+        return {**result, 'path': 'pilot-originals/' + name}
+    with patch.object(fixtures, 'artifact', artifact), patch.object(pilot, 'Path', lambda path: tmp_path / path):
+        data = fixtures.fleet_bundle(directory)
+        if stage == 'pre-flip':
+            source = artifact(directory, 'export.json', [])
+            selected = fixtures.select([fixtures.trial()])
+            selected['exports'] = {source['path']: source['sha256']}
+            data.update(drain=artifact(directory, 'drain.json', selected),
+                ci={name: artifact(directory, name, {'passed': True}) for name in ('F1', 'F2b', 'F2c')},
+                signer=dict(epoch=1, audience='router-settlement', kid='kid', issuer='issuer', mounted=True,
+                    public_key=fixtures.FIXTURE['public_key'], verification=artifact(directory, 'signer.json', {'passed': True})))
+            data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_TICKET_KID='kid', TR_ASYNC_SETTLE_TICKET_ISSUER='issuer',
+                TR_ASYNC_SETTLE_TICKET_AUDIENCE='router-settlement', TR_ASYNC_SETTLE_AUTHORITY_EPOCH='1',
+                TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE='/mounted/key.pem')
+        else:
+            assert stage == 'post-flip'
+            data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
+                TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+            data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
+            data.update(rollback=artifact(directory, 'rollback.json', dict(status='PASS', states=[
+                'admission_on', 'pending', 'admission_off', 'drained', 'protection_off'])),
+                outbox=[dict(authorization_id='a', intent_kind='settle', workspace_id=pilot.PILOT,
+                    status='done', created_at=100, terminal_at=102, async_version=1)],
+                handoff={'a.settle': dict(region='us-central1', handoff_us=3000)}, observed_peak_concurrency=4)
+    return data, {'pilot-originals/' + path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+
+
+# These semantic witnesses need a newly approved/recommitted dependency graph;
+# a single damaged original cannot remain a valid approved budget/reset fact.
+# The evaluator unit witnesses remain in test_async_settle_shadow_v2_gates.
+BYTE_WITNESS_SEAMS = {
+    **dict.fromkeys(('simultaneous_capacity_gap', 'freshness_budget_gap', 'evidence_export_budget_gap'),
+        'approved_budget_mutations: needs a coherent replacement approved budget graph'),
+    **dict.fromkeys(('hash', 'identity', 'normalization', 'evaluator_disagreement', 'counter_mismatch',
+        'reviewed_resolution', 'revision_rollback', 'exclusion_conflict'),
+        'supported_reset_mutations: needs matching retained output, history and original support'),
+    **dict.fromkeys(('health_source_gap', 'health_timestamp_gap', 'health_elapsed_gap'),
+        'referenced_basis_mutations: a changed basis also needs its receipt commitment changed'),
+}
+
+
+@lru_cache(maxsize=1)
+def transport_object(raw: bytes) -> dict[str, Any]:
+    return json.loads(raw)
+
+
+def mutate_transport(raw: bytes, gap: str) -> bytes:
+    """One original source mutation; never edits a decoded typed gate view."""
+    # Original strings are immutable; only the outer lists and one selected
+    # source are replaced. Shared transport parsing is keyed by exact bytes.
+    original_value = transport_object(raw)
+    value = {**original_value, **{name: list(original_value[name])
+        for name in ('rows', 'attachments', 'preimages', 'ledgers')}}
+    def row(kind: str, change: Any = None, *, remove: bool = False, conflict: bool = False) -> None:
+        collection = 'rows' if any(r['kind'] == kind for r in value['rows']) else 'attachments'
+        rows = value[collection]
+        index = next(i for i, r in enumerate(rows) if r['kind'] == kind)
+        if remove:
+            rows.pop(index)
+            return
+        original = rows[index]
+        body = json.loads(original['raw'])
+        change(body)
+        changed = {**original, 'raw': canonical(body).decode()}
+        if conflict:
+            rows.append(changed)
+        else:
+            rows[index] = changed
+    def absent(path: str) -> None:
+        index = next(i for i, p in enumerate(value['preimages']) if p['name'] == path)
+        value['preimages'].pop(index)
+    counters = {
+        'policy_version_gap': lambda c: c.update(policy_version='shadow-v1'),
+        'evidence_schema_gap': lambda c: c.update(unrecognized=1),
+        'legacy_region_label': lambda c: c.update(region='wrong'),
+        'phase_coverage_gap': lambda c: c['buckets'][1]['dimensions'].update(adapter='anthropic'),
+        'observer_cadence_gap': lambda c: c['admission_observer'].update(workspace_reads=0),
+        'observer_budget_gap': lambda c: c['admission_observer'].update(max_consecutive_failures=3),
+        'publisher_accounting_gap': lambda c: c['publisher'].update(claims=0),
+        'checkpoint_reconciliation_gap': lambda c: c.update(durable_event_hwm=0),
+        'evidence_loss_gap': lambda c: c.update(loss_count=1),
+        'writer_closure_gap': lambda c: c.update(closed=False),
+    }
+    receipts = {
+        'authorize_coverage_gap': lambda p: (p.update(first_seq=p['last_seq']), p['events'].pop(0)),
+        'authorization_link_gap': lambda p: p['events'][0].update(facts=None),
+        'authorization_terminal_conflict': lambda p: p['events'][1]['identity'].update(epoch=2),
+        'authorization_horizon_gap': lambda p: p['events'][1].update(receipt_at_us=p['events'][1]['event_at_us'] + 172802000000),
+        'observed_partition_gap': lambda p: p['events'][1].update(partition='C', comparison='unevaluable'),
+        'exclusion_proof_gap': lambda p: p['events'][1].update(partition='B', eligibility='excluded', proof_kind='observed_binding', prediction=None, comparison='unevaluable'),
+        'prediction_demand_gap': lambda p: p['events'][1]['prediction'].update(prediction='unknown'),
+        'prediction_unknown_gap': lambda p: p['events'][1]['prediction'].update(prediction='unknown'),
+        'health_slot_gap': lambda p: p['events'][1]['prediction'].update(health_slot=0),
+        'retry_original_gap': lambda p: p['events'][1].update(retry_original=dict(day=p['day'], boot='absent', event_seq=f'{1:020}')),
+    }
+    removals = {'writer_roster_gap': p1.KINDS[3], 'terminal_coverage_gap': p1.KINDS[2],
+        'eligible_coverage_gap': p1.KINDS[0], 'authorization_obligation_gap': 'authorization_obligation',
+        'shadow_health_gap': 'health_basis', 'publisher_trace_gap': 'publisher_trace',
+        'close_result_identity_gap': a1.KINDS[-1], 'handoff_coverage_gap': 'handoff_accounting',
+        'close_handoff_budget_gap': 'shutdown_measurement'}
+    files = {'artifact_gap': 'proof.external_proofs_sha256', 'external_proofs_missing': 'proof.external_proofs_sha256',
+        'pilot_prerequisite_gap': 'proof.external_proofs_sha256', 'missing_support': 'proof.resolution_dag_sha256',
+        'pre_enable_budget': 'proof.pre_budget_sha256', 'fleet_headroom_gap': 'loading/budget-measurements.json'}
+    if gap in counters:
+        row(p1.KINDS[3], counters[gap])
+    elif gap in receipts:
+        row(p1.KINDS[2], receipts[gap])
+    elif gap in removals:
+        row(removals[gap], remove=True)
+    elif gap in files:
+        absent(files[gap])
+    elif gap == 'regional_roster_unknown':
+        proof = json.loads(value['proof'])
+        proof['instance_regions_by_day'] = {}
+        value['proof'] = canonical(proof).decode()
+    elif gap == 'legacy_sample_region':
+        row(p1.KINDS[0], lambda s: s['deployment'].update(region='wrong'))
+    elif gap == 'flag_interval_gap':
+        row(p1.KINDS[5], lambda m: m.update(disabled_flag_intervals=[]))
+    elif gap == 'boot_prerequisite_gap':
+        value['ledgers'].pop(0)
+    elif gap == 'publisher_budget_gap':
+        index = next(i for i, p in enumerate(value['preimages']) if p['name'] == 'proof.cohort_seed_policy_sha256')
+        source = value['preimages'][index]
+        policy = json.loads(source['raw'])
+        policy['maximum_publishers'] = 0
+        value['preimages'][index] = {**source, 'raw': canonical(policy).decode()}
+    elif gap == 'close_result_conflict':
+        row(a1.KINDS[-1], lambda v: v.update(elapsed_us=v['elapsed_us'] + 1), conflict=True)
+    elif gap in ('positive_seed_gap', 'regional_seed_gap'):
+        gate = json.loads(value['transport'])
+        sample = json.loads(next(r['raw'] for r in value['rows'] if r['kind'] == p1.KINDS[0]))
+        gate['completed_at_us'] = sample['observed_at_us']
+        value['transport'] = canonical(gate).decode()
+    elif gap == 'continuous_window_gap':
+        value['completed_at_us'] -= 3000000
+    else:
+        raise ValueError(BYTE_WITNESS_SEAMS[gap])
+    changed_keys = [key for key in value if value[key] != original_value[key]]
+    assert len(changed_keys) == 1
+    key = changed_keys[0]
+    marker = canonical(key) + b':'
+    start = raw.index(marker) + len(marker)
+    before, after = original_value[key], value[key]
+    if isinstance(before, list):
+        if len(after) == len(before) + 1:
+            # Conflict witnesses append one new original candidate.
+            assert all(a is b for a, b in zip(before, after, strict=False))
+            last = canonical(before[-1])
+            end = raw.index(last, start) + len(last)
+            assert raw[end:end + 1] == b']'
+            return raw[:end] + b',' + canonical(after[-1]) + raw[end:]
+        index = next(i for i, item in enumerate(before) if i >= len(after) or item is not after[i])
+        fragment = canonical(before[index])
+        start = raw.index(fragment, start)
+        end = start + len(fragment)
+        if len(after) == len(before) - 1:
+            if raw[end:end + 1] == b',':
+                end += 1
+            elif raw[start - 1:start] == b',':
+                start -= 1
+            replacement = b''
+        else:
+            assert len(after) == len(before)
+            replacement = canonical(after[index])
+    else:
+        fragment = canonical(before)
+        assert raw[start:start + len(fragment)] == fragment
+        end = start + len(fragment)
+        replacement = canonical(after)
+    return raw[:start] + replacement + raw[end:]

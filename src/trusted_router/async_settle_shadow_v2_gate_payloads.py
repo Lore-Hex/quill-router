@@ -200,7 +200,7 @@ class PayloadGraph:
                 require(day_at(entry['interval_end_us'] - 1) == entry['day'], 'evidence_schema_gap')
                 require((entry['reason'] == 'hard_kill') == (measurement['outcome'] == 'hard_kill'), 'evidence_schema_gap')
                 if self.ports is not None:
-                    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+                    from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts
                     parsers = self.ports.measurements if isinstance(self.ports, LoadingPorts) else {}
                     parser = parsers.get(measurement['source']['path'])
                     require(parser is not None, 'evidence_schema_gap')
@@ -223,8 +223,9 @@ class PayloadGraph:
             segments = self.detail(load['segments'], 'segments')
             ends: dict[tuple[str, str], int] = {}
             for segment in segments:
-                require(segment['day'] == day_at(segment['start_us']) == day_at(segment['end_us'] - 1), 'evidence_schema_gap')
-                require(load['interval']['start_us'] <= segment['start_us'] < segment['end_us'] <= load['interval']['end_us'], 'evidence_schema_gap')
+                require(segment['day'] == day_at(segment['start_us']), 'evidence_schema_gap')
+                require(segment['start_us'] == segment['end_us'] or segment['day'] == day_at(segment['end_us'] - 1), 'evidence_schema_gap')
+                require(load['interval']['start_us'] <= segment['start_us'] <= segment['end_us'] <= load['interval']['end_us'], 'evidence_schema_gap')
                 key = (segment['day'], segment['boot'])
                 require(ends.get(key, 0) <= segment['start_us'], 'evidence_schema_gap')
                 ends[key] = segment['end_us']
@@ -267,7 +268,7 @@ class PayloadGraph:
             require(type(serving) is list and type(deployment) is dict and type(deployment.get('serving')) is list, 'evidence_schema_gap')
             measured = ports.roster_coverage(serving)
             require(measured == ports.roster_coverage(deployment['serving']), 'evidence_schema_gap')
-            from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+            from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts
             if isinstance(ports, LoadingPorts):
                 require(ports.gate_roster is not None, 'artifact_gap')
                 assert ports.gate_roster is not None

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import cProfile
 import sys
 import threading
 from collections.abc import Mapping
@@ -10,7 +11,7 @@ from typing import Any, Literal
 from scripts.async_settle import pilot_enablement as pilot
 from scripts.async_settle import shadow_report as shadow
 from trusted_router.async_settle_shadow_v2_a2_evidence import FILE_REF, RETAINED_ENTRY_POINTS
-from trusted_router.async_settle_shadow_v2_gate_ports import RetainedResult
+from trusted_router.async_settle_shadow_v2_gate_inputs import RetainedResult
 from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
 
@@ -55,11 +56,13 @@ def run_retained(entry_point: str, payload: Any, files: Mapping[str, bytes]) -> 
         if event == 'call' and frame.f_code in codes:
             name = codes[frame.f_code]
             calls[name] = calls.get(name, 0) + 1
-        if previous_profile is not None:
+        if callable(previous_profile):
             previous_profile(frame, event, arg)
     with _LOCK:
         original_path = pilot.Path
         pilot.Path = FinitePath
+        if isinstance(previous_profile, cProfile.Profile):
+            previous_profile.disable()
         sys.setprofile(count_call)
         try:
             result: Any
@@ -83,21 +86,26 @@ def run_retained(entry_point: str, payload: Any, files: Mapping[str, bytes]) -> 
                     {**data['observer'], 'serving': data['serving'], 'rows': data['rows']})
             return RetainedResult(canonical(result), tuple(sorted(opened)), calls, components)
         finally:
-            sys.setprofile(previous_profile)
+            if isinstance(previous_profile, cProfile.Profile):
+                sys.setprofile(None)
+                previous_profile.enable()
+            else:
+                sys.setprofile(previous_profile)
             pilot.Path = original_path
 
 
 def read_release_plan(raw: bytes, approved_sha256: str) -> Any:
     """Explicit independently pinned release input; never infer a trusted pin."""
     from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_inputs import ReleasePlan
     from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
-    from trusted_router.async_settle_shadow_v2_gate_ports import ReleasePlan
     from trusted_router.async_settle_shadow_v2_schema import digest, name
 
     digest(approved_sha256)
     require(file_digest(raw) == approved_sha256, 'artifact_gap')
     value = retained_json(raw)
-    require(type(value) is dict and set(value) == {'artifacts', 'criteria', 'verifiers', 'required'}, 'evidence_schema_gap')
+    require(type(value) is dict and set(value) in ({'artifacts', 'criteria', 'verifiers', 'required'},
+        {'artifacts', 'criteria', 'verifiers', 'required', 'required_stages'}), 'evidence_schema_gap')
     for path, pin in value['artifacts'].items():
         FILE_REF.fields['path'](path)
         digest(pin)
@@ -118,5 +126,12 @@ def read_release_plan(raw: bytes, approved_sha256: str) -> Any:
     require(type(value['required']) is list and len(value['required']) == len(set(value['required'])), 'evidence_schema_gap')
     for criterion in value['required']:
         name(criterion)
+    required_stages = value.get('required_stages', {})
+    from trusted_router.async_settle_shadow_v2_a2_contract import REQUIRED_RULES
+    require(type(required_stages) is dict, 'evidence_schema_gap')
+    for stage, criteria in required_stages.items():
+        require(stage in REQUIRED_RULES and type(criteria) is list and criteria
+            and len(criteria) == len(set(criteria)) and set(criteria) <= set(value['required']), 'evidence_schema_gap')
+    require(not required_stages or {c for values in required_stages.values() for c in values} == set(value['required']), 'evidence_schema_gap')
     return ReleasePlan('loading/release-plan.json', raw, value['artifacts'],
-        {k: tuple(v) for k, v in value['criteria'].items()}, verifiers, tuple(value['required']))
+        {k: tuple(v) for k, v in value['criteria'].items()}, verifiers, tuple(value['required']), {stage: tuple(values) for stage, values in required_stages.items()})

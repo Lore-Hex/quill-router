@@ -7,7 +7,14 @@ from typing import Any
 
 import pytest
 
-from tests.shadow_v2_gate_fixture_generator import START, build, change_row, ports
+from tests.shadow_v2_gate_fixture_generator import (
+    START,
+    build,
+    change_row,
+    exhaustive,
+    ports,
+    untraced,  # noqa: F401
+)
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_a2_evidence import FAILURE_RULES
@@ -59,9 +66,9 @@ def with_reset(bundle: Bundle, reason: str, at_us: int = START + 1) -> Bundle:
     entry = dict(at_us=at_us, revision='a' * 40, reason=reason, support=support,
                  resolved_at_us=None, fixed_revision=None, invalidated_at_us=None)
     assert bundle.reset_support
-    return replace(bundle, reset_support=replace(bundle.reset_support, resets=(entry,)),
-        preimages=(*bundle.preimages, Preimage(path, raw)),
-        a2_streams={**bundle.a2_streams, 'files/' + support['root']: files})
+    return replace(bundle, reset_support=replace(bundle.reset_support, resets=(entry,),
+            support_files={**bundle.reset_support.support_files, support['root']: (Preimage(path, raw),)}),
+        preimages=(*bundle.preimages, Preimage(path, raw)))
 
 
 def damage(bundle: Bundle, gap: str) -> Bundle:
@@ -202,12 +209,14 @@ def test_gap_negative(passing: Bundle, gap: str) -> None:
     assert json.loads(attachments[0]) == result.gate_report
 
 
-@pytest.mark.parametrize('gap', GAPS)
-def test_gap_positive(positive_results: dict[str, Any], gap: str) -> None:
-    # Seven-day duration has a separate full-bundle witness; shadow-serving is
-    # intentionally allowed to pass before the seven-day deadline.
-    result = positive_results['shadow-serving' if gap == 'continuous_window_gap' else 'pre-flip']
-    assert gap not in result.gaps, (gap, result.gaps)
+def test_gap_positive(positive_results: dict[str, Any]) -> None:
+    # All 58 memberships inspect the same two evaluated results.
+    checked = set()
+    for gap in GAPS:
+        result = positive_results['shadow-serving' if gap == 'continuous_window_gap' else 'pre-flip']
+        assert gap not in result.gaps, (gap, result.gaps)
+        checked.add(gap)
+    assert checked == set(PRODUCERS)
 
 
 def test_one_producer_and_both_directions() -> None:
@@ -216,7 +225,8 @@ def test_one_producer_and_both_directions() -> None:
     assert set(PRODUCERS) == set(expected)
     assert len(set(PRODUCERS.values())) == 58
     assert all(fn.__name__ == 'decide_' + name for name, fn in PRODUCERS.items())
-    assert set(test_gap_positive.pytestmark[0].args[1]) == set(expected)
+    # The positive loop consumes GAPS directly; it verifies its executed set.
+    assert set(GAPS) == set(expected)
     assert set(test_gap_negative.pytestmark[0].args[1]) == set(expected)
 
 
@@ -512,8 +522,8 @@ def test_completion_reuses_contextual_contract(name: str) -> None:
 
 
 def test_all_required_peak_sources_and_missing_component(passing: Bundle) -> None:
-    from trusted_router.async_settle_shadow_v2_gate_load_evidence import BudgetEvidence
-    assert isinstance(passing.budget, BudgetEvidence)
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Budget
+    assert isinstance(passing.budget, Budget)
     result = evaluate(passing, ports(), gate='fleet-budgets-pre')
     raw, _ = render(result)
     assert json.loads(raw)['verdict'] == 'PASS'
@@ -527,7 +537,7 @@ def test_all_required_peak_sources_and_missing_component(passing: Bundle) -> Non
                   'publication_operations_per_second', 'export_operations_per_second', 'export_bytes_per_second'):
         source = passing.budget.load_segments[0]
         bad = replace(passing, budget=replace(passing.budget,
-            load_segments=({**source, 'peaks': {**source['peaks'], field: None}}, *passing.budget.load_segments[1:])))
+            projected_load_segments=({**source, 'peaks': {**source['peaks'], field: None}}, *passing.budget.load_segments[1:])))
         blocked = evaluate(bad, ports(), gate='fleet-budgets-pre')
         assert blocked.gate_report['fleet_peaks'][field] is None
         assert blocked.gate_report['rules']['G7'] == 'unevaluable'
@@ -540,6 +550,7 @@ SINGLETON_POPULATIONS = frozenset(('pre_enable_budget', 'pilot_prerequisite_gap'
     'evidence_export_budget_gap', 'positive_seed_gap', 'continuous_window_gap'))
 
 
+@exhaustive
 @pytest.mark.parametrize('rule', FAILURE_RULES, ids=lambda row: row.name)
 def test_all_failure_populations(rule, passing: Bundle, positive_results: dict[str, Any]) -> None:
     from trusted_router import async_settle_shadow_v2_a2_evidence as a2
@@ -647,7 +658,7 @@ def test_reset_subject_support_routing(passing: Bundle, reason: str) -> None:
     result = evaluate(good, ports(), gate='shadow-serving')
     own = [f for f in result.failures if f.gap == reason]
     assert len(own) == 1 and own[0].subject['scope'] == 'reset'
-    bad = replace(good, a2_streams={})
+    bad = replace(good, reset_support=replace(good.reset_support, support_files={}))
     result = evaluate(bad, ports(), gate='shadow-serving')
     assert reason not in result.gaps
     unsupported = [f for f in result.failures if f.gap == 'missing_support']
@@ -777,7 +788,7 @@ def test_overflow_propagates_and_rule_states(passing: Bundle) -> None:
     assert result.gate_report['rules']['G5'] == 'unevaluable'
     assert result.gate_report['rules']['G11'] == 'not_required'
     assert result.gate_report['rules']['G6'] == 'pass'
-    assert result.gate_report['rules']['G1'] == 'fail'
+    assert result.gate_report['rules']['G1'] == 'unevaluable'
     render(result)
 
 
@@ -864,3 +875,48 @@ def test_unenumerable_reset_preserves_its_named_fallback(passing: Bundle, reason
     assert {'artifact_gap', 'missing_support', reason} <= set(result.gaps)
     assert result.gate_report['complete'] is False
     render(result)
+
+
+@pytest.mark.parametrize('residence', ['region', 'writer'])
+def test_required_aggregate_availability_at_each_residence(passing: Bundle, monkeypatch: pytest.MonkeyPatch, residence: str) -> None:
+    from trusted_router import async_settle_shadow_v2_gate_report as reports
+    if residence == 'region':
+        original = reports.peaks
+        def incomplete_peak(value: Any, ctx: Any, *, publisher: bool = False) -> Any:
+            result = original(value, ctx, publisher=publisher)
+            if value is not None and value.region is not None:
+                result['cpu_percent'] = None
+            return result
+        monkeypatch.setattr(reports, 'peaks', incomplete_peak)
+        rule = 'G7'
+    else:
+        original_counts = reports.counts
+        def incomplete_counts(ctx: Any, counters: Any, events: Any, required: Any, *, enclave: bool = False) -> Any:
+            result = original_counts(ctx, counters, events, required, enclave=enclave)
+            if counters is not None and len(counters) == 1 and not enclave:
+                result['comparator']['exact'] = None
+            return result
+        monkeypatch.setattr(reports, 'counts', incomplete_counts)
+        rule = 'G5'
+    result = evaluate(passing, ports(), gate='shadow-serving')
+    assert result.gate_report['rules'][rule] == 'unevaluable'
+    assert result.gate_report['complete'] is False
+    assert 'artifact_gap' in result.gaps
+    assert json.loads(render(result)[0])['verdict'] == 'BLOCKED'
+
+
+def test_external_stage_and_release_package_scope_are_retained(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_a2_evidence import P
+    from trusted_router.async_settle_shadow_v2_gates import external
+    assert passing.external
+    proof = passing.external.proofs[0]
+    scoped = replace(passing.external, proofs=(replace(proof, stage='post-flip'),),
+        required_stages={'pre-flip': (proof.name,)})
+    ctx = decode_bundle(replace(passing, external=scoped), ports(), 'pre-flip')
+    external(ctx)
+    assert any(i.gap == 'external_proofs_missing' and i.subject.wire == P('pre-flip', proof.name)
+               for i in ctx.issues)
+    deferred = replace(scoped, required_stages={'post-flip': (proof.name,)})
+    ctx = decode_bundle(replace(passing, external=deferred), ports(), 'pre-flip')
+    external(ctx)
+    assert not any(i.gap == 'external_proofs_missing' for i in ctx.issues)

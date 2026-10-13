@@ -271,24 +271,24 @@ def measured_peaks(ctx: Context, region: str | None, *, publisher: bool = False)
     Configured projections and measured CPU come from the approved Budget.
     """
     from trusted_router import async_settle_shadow_v2_a2_evidence as a2
-    from trusted_router.async_settle_shadow_v2_gate_load_evidence import segments
     budget, cohort = ctx.bundle.budget, ctx.bundle.cohort
     independent = ('simultaneous_routers', 'simultaneous_publishers', 'reads_per_second',
                    'pending_rows_per_second', 'trust_rows_per_second', 'health_rows_per_second')
     result: dict[str, Any] = {k: None for k in a2.PEAKS.fields if k not in independent}
     if budget is None or cohort is None:
         return result
-    values = segments(ctx.bundle, ctx.gate)
+    projected = ctx.gate == 'fleet-budgets-pre'
+    values = budget.projected_load_segments if projected else budget.load_segments
     try:
         require(values is not None)
         assert values is not None
         for segment in values:
             a2.LOAD_SEGMENT(segment)
-        expected = {(r.boot, r.start_us, r.end_us) for r in budget.rates}
-        require(expected == {(s['boot'], s['start_us'], s['end_us']) for s in values if s['role'] == 'router'})
+        expected = {(s['boot'], s['start_us'], s['end_us']) for s in values if s['role'] == 'router' and s['start_us'] < s['end_us']} if projected else {(r.boot, r.start_us, r.end_us) for r in budget.rates}
+        require(expected == {(s['boot'], s['start_us'], s['end_us']) for s in values if s['role'] == 'router' and s['start_us'] < s['end_us']})
         require(len(values) == len({(s['boot'], s['start_us'], s['end_us']) for s in values}))
         boots = {b.boot: b for b in ctx.bundle.inventory.boots} if ctx.bundle.inventory else {}
-        require(all(s['boot'] in boots and s['region'] == boots[s['boot']].region
+        require(projected or all(s['boot'] in boots and s['region'] == boots[s['boot']].region
             and s['contender'] == boots[s['boot']].contender and s['role'] == boots[s['boot']].role
             and s['workspace_count'] == cohort.workspace_count and s['day'] == day_at(s['start_us']) for s in values))
     except (ValueError, KeyError, TypeError):

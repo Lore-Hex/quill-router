@@ -89,3 +89,43 @@ def test_loader_retains_original_bytes() -> None:
 def test_loader_v1_rejection_marker() -> None:
     value = load(b'{"policy_version":"shadow-v1","contract_revision":"a1"}')
     assert 'invalid_or_cross_version_bundle' in value.undefined_preimages
+
+
+@pytest.fixture(scope='module')
+def cli_original(tmp_path_factory: Any) -> Any:
+    from tests.shadow_v2_gate_a2_fixture import real_fixture
+    return real_fixture(tmp_path_factory.mktemp('cli-original'))
+
+
+@pytest.mark.parametrize('tool', ['report', 'pilot'])
+@pytest.mark.parametrize('gate', ['transport', 'fleet-budgets-pre'])
+def test_v2_tools_render_the_shared_original_byte_result(cli_original: Any, tmp_path: Path,
+        monkeypatch: Any, capsys: Any, tool: str, gate: str) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    original, ports, _ = cli_original
+    expected, attachments = render(evaluate(load(transport(original), ports), ports, gate=gate))
+    assert json.loads(expected)['verdict'] == 'PASS'
+    path = tmp_path / 'bundle.json'
+    path.write_bytes(transport(original))
+    plan = tmp_path / 'release.json'
+    plan.write_bytes(ports.release.raw)
+    argv = [tool]
+    if tool == 'pilot':
+        argv.append(gate)
+    argv += ['--policy', 'shadow-v2', '--bundle', str(path), '--release-plan', str(plan),
+             '--release-plan-sha256', file_digest(plan.read_bytes())]
+    if tool == 'report':
+        argv += ['--gate', gate]
+    for name in ('certificate', 'binding'):
+        keyfile = tmp_path / (name + '.json')
+        keyfile.write_bytes(next(a.keyset for a in ports.approvals if a.entry_point.endswith('.verify_' + name)))
+        argv += ['--' + name + '-keys', str(keyfile)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    with pytest.raises(SystemExit) as exc:
+        (shadow_report.main if tool == 'report' else pilot_enablement.main)()
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.encode() == expected + b'\n'
+    assert (tmp_path / 'gate-output/output.json').read_bytes() == expected
+    assert (tmp_path / 'gate-output/report.json').read_bytes() == attachments[0]

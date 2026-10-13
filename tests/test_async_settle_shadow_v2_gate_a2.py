@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import copy
 import json
-import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.shadow_v2_gate_fixture_generator import build, ports
+from tests.shadow_v2_gate_fixture_generator import (
+    build,
+    exhaustive,
+    ports,
+    untraced,  # noqa: F401
+)
 from trusted_router import async_settle_shadow_v2_a2_contract as contract
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
@@ -22,16 +26,6 @@ from trusted_router.async_settle_shadow_v2_gate_metrics import observations, rat
 from trusted_router.async_settle_shadow_v2_gate_result import Subject, render
 from trusted_router.async_settle_shadow_v2_gates import evaluate
 from trusted_router.detached_jws import canonical
-
-# Exhaustive producer/shape grids reuse the contract's tracing discipline.
-# Traced literal, per-gap and pagination witnesses cover their distinct branches.
-_collection_trace = sys.gettrace()
-try:
-    sys.settrace(None)
-    from tests.test_async_settle_shadow_v2_evidence import exhaustive, untraced  # noqa: F401
-finally:
-    sys.settrace(_collection_trace)
-
 
 pytestmark = pytest.mark.timeout(method='signal')
 FIXTURES = Path(__file__).parent / 'fixtures/async_settlement/shadow_v2_a2'
@@ -181,8 +175,10 @@ def test_unexercised_certificate_still_bound(passing: Bundle) -> None:
 def test_missing_preimage_never_accepts_digest(passing: Bundle) -> None:
     result = evaluate(replace(passing, preimages=tuple(p for p in passing.preimages
         if p.name != 'proof.external_proofs_sha256')), ports(), gate='shadow-serving')
-    assert any(f.gap == 'artifact_gap' and 'A2 manifest/proof preimage validation failed' in f.detail
-               for f in result.failures)
+    assert result.verdict == 'BLOCKED' and 'artifact_gap' in result.gaps
+    assert any(f.gap == 'artifact_gap' and f.subject == a2.O('a2_file', 'proof.external_proofs_sha256')
+               and f.detail == 'A2 required original preimage absent' for f in result.failures)
+    assert result.gate_report is not None and not result.gate_report['complete']
 
 
 def test_conflict_entry_commits_both_candidates() -> None:
@@ -356,8 +352,8 @@ def test_four_flat_failure_pages_from_all_producers() -> None:
     ('same-slots-accounting', 'publisher_accounting_gap', Subject('2026-10-12', 'w1'), 3),
     ('invalid-first-event-claims-99', 'evidence_schema_gap',
         Subject(wire=a2.I('2026-10-12', 'w1', '00000000000000000001', 0)), 1),
-    ('fleet-cap', 'simultaneous_capacity_gap', Subject(), 1),
-    ('region-cap', 'simultaneous_capacity_gap', Subject(object_id='us-central1'), 1),
+    ('fleet-cap', 'simultaneous_capacity_gap', Subject(wire=a2.K('pre', None)), 1),
+    ('region-cap', 'simultaneous_capacity_gap', Subject(wire=a2.K('pre', 'us-central1')), 1),
     ('approval', 'pre_enable_budget', Subject(), 1),
     ('expected-row-conflict', 'close_result_conflict', Subject('2026-10-12', 'w1'), 2),
 ])

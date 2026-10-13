@@ -3,20 +3,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
-from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
-from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
-from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
-from trusted_router.async_settle_shadow_v2_schema import Schema, digest, literal, require
-from trusted_router.detached_jws import canonical
 
 # DELEGATED_PAYLOAD itself has no output field. Budget envelopes supply it;
 # other uses commit this supplemental original capture in the approved finite
 # dependency inventory. Missing captures are a named interface seam, not trust
 # in a prior PASS transcript or an invented contract field.
-RETAINED_OUTPUT = Schema(dict(entry_point=literal(*a2.RETAINED_ENTRY_POINTS),
-    payload_sha256=digest, output=a2.FILE_REF), 2048)
+from trusted_router.async_settle_shadow_v2_gate_inputs import RETAINED_OUTPUT, LoadingPorts
+from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
+from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
+from trusted_router.async_settle_shadow_v2_schema import digest, require
+from trusted_router.detached_jws import canonical
 
 
 def capture_path(payload_sha256: str) -> str:

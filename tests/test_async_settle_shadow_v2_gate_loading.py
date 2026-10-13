@@ -6,6 +6,10 @@ from typing import Any
 
 import pytest
 
+from tests.shadow_v2_gate_fixture_generator import (
+    exhaustive,
+    untraced,  # noqa: F401
+)
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
@@ -56,6 +60,7 @@ def budget_graph() -> tuple[dict[str, bytes], dict[str, Any]]:
     return files, pre
 
 
+@exhaustive
 @pytest.mark.parametrize('raw', [b'{"x":1,"x":2}', b'{"x":NaN}', b'{"x":Infinity}', b'{"x":1e999}', b'{"x":"\\ud800"}', b'[' * 1000])
 def test_retained_transport_rejects_ambiguous_or_nonfinite(raw: bytes) -> None:
     with pytest.raises(ValueError):
@@ -72,7 +77,9 @@ def test_retained_transport_preserves_binary64_and_original_lf() -> None:
     assert pre['retained']['payload']['sha256'] != roots.file_digest(b'{"cpu":20.5}')
 
 
+@exhaustive
 @pytest.mark.parametrize('path', ['limits.json', 'pre.json', 'source.py', 'output.json'])
+@exhaustive
 @pytest.mark.parametrize('mutation', ['absent', 'wrong-byte'])
 def test_every_delegated_file_requires_original_bytes(path: str, mutation: str) -> None:
     files, pre = budget_graph()
@@ -85,6 +92,7 @@ def test_every_delegated_file_requires_original_bytes(path: str, mutation: str) 
     assert [(issue.gap, issue.path) for issue in graph.issues] == [('artifact_gap', path)]
 
 
+@exhaustive
 @pytest.mark.parametrize('mutation', ['extra', 'duplicate-region', 'float', 'missing', 'duplicate-key'])
 def test_limits_original_schema_is_not_a_hash_only_check(mutation: str) -> None:
     files, pre = budget_graph()
@@ -107,6 +115,7 @@ def test_limits_original_schema_is_not_a_hash_only_check(mutation: str) -> None:
     assert [issue.gap for issue in graph.issues] == ['evidence_schema_gap']
 
 
+@exhaustive
 @pytest.mark.parametrize('mutation', ['wrong-subject', 'future', 'rejected', 'reviewer', 'missing-record'])
 def test_review_binding_and_time(mutation: str) -> None:
     files, pre = budget_graph()
@@ -143,6 +152,7 @@ def test_materialize_does_not_stop_after_first_bad_payload() -> None:
         ('artifact_gap', 'output.json'), ('artifact_gap', 'output.json')]
 
 
+@exhaustive
 @pytest.mark.parametrize('mutation', ['overlap', 'wrong-day', 'outside-interval'])
 def test_load_segment_identity_and_interval(mutation: str) -> None:
     files, pre = budget_graph()
@@ -210,7 +220,9 @@ PAYLOADS = [
 ]
 
 
+@exhaustive
 @pytest.mark.parametrize('qualified,file,variant', PAYLOADS)
+@exhaustive
 @pytest.mark.parametrize('mutation', ['missing-field', 'extra', 'wrong-revision', 'duplicate-key', 'oversize'])
 def test_every_top_level_payload_uses_original_contract_schema(qualified: str, file: str, variant: str, mutation: str) -> None:
     from tests.shadow_v2_gate_a2_fixture import fixture_bytes
@@ -234,6 +246,7 @@ def test_every_top_level_payload_uses_original_contract_schema(qualified: str, f
     assert own and own[0]['gap'] == ('artifact_gap' if mutation == 'oversize' else 'evidence_schema_gap')
 
 
+@exhaustive
 @pytest.mark.parametrize('conflicting', [False, True])
 def test_repeated_file_exports_coalesce_only_identical_original_bytes(conflicting: bool) -> None:
     from trusted_router.async_settle_shadow_v2_gate_loader import load
@@ -281,6 +294,7 @@ def test_missing_page_is_artifact_gap() -> None:
     assert [i.gap for i in graph.issues] == ['artifact_gap']
 
 
+@exhaustive
 @pytest.mark.parametrize('mutation', ['absent', 'wrong-byte', 'wrong-time', 'undefined-parser', 'valid'])
 def test_ledger_artifacts_require_defined_original_preimages(mutation: str) -> None:
     from tests.shadow_v2_gate_fixture_generator import fixture

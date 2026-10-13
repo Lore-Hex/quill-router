@@ -48,6 +48,10 @@ def receipt_keys(ctx: Context, manifest: dict[str, Any]) -> set[str]:
 
 def trace_keys(ctx: Context) -> set[str]:
     """First scheduled slot then verified predecessor; never observed-key union."""
+    cache_key = (tuple(row for row in ctx.bundle.attachments if row.key.kind == 'publisher_trace'),
+                 ctx.bundle.inventory, ctx.bundle.completed_at_us)
+    if ctx.trace_population_cache is not None and ctx.trace_population_cache[0] == cache_key:
+        return set(ctx.trace_population_cache[1])
     expected: set[str] = set()
     pages: dict[str, dict[str, Any]] = {}
     conflicts = set()
@@ -83,6 +87,7 @@ def trace_keys(ctx: Context) -> set[str]:
                 if not first < next_first <= last + 1:
                     break
                 first, previous = next_first, sha256(found)
+    ctx.trace_population_cache = (cache_key, frozenset(expected))
     return expected
 
 

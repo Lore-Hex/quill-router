@@ -52,6 +52,8 @@ class Context:
     salvaged_events: list[tuple[dict[str, Any], dict[str, Any]]] = field(default_factory=list)
     release_files: dict[str, bytes] = field(default_factory=dict)
     reset_history: list[dict[str, Any]] = field(default_factory=list)
+    release_artifacts_cache: tuple[Any, ...] | None = None
+    trace_population_cache: tuple[Any, frozenset[str]] | None = None
 
     def kind(self, kind: str) -> list[dict[str, Any]]:
         return [v for k, v in self.rows.items() if k.kind == kind]

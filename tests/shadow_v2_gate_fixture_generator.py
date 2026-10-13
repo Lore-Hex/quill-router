@@ -4,10 +4,15 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from functools import cache
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from scripts.async_settle import pilot_enablement as pilot
 from scripts.async_settle import shadow_report as legacy
@@ -21,6 +26,7 @@ from trusted_router import async_settle_shadow_v2_contract as contract
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_inputs import (
     Boot,
+    Budget,
     Bundle,
     Cohort,
     External,
@@ -36,7 +42,6 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import (
     VerifierApproval,
 )
 from trusted_router.async_settle_shadow_v2_gate_load import COMPONENT_BOUNDS
-from trusted_router.async_settle_shadow_v2_gate_load_evidence import BudgetEvidence
 from trusted_router.async_settle_shadow_v2_schema import day_at, sha256
 from trusted_router.detached_jws import TrustedKey, b64decode, canonical
 
@@ -79,10 +84,12 @@ def ports() -> Ports:
         release = (ROOT / 'shadow_v2_a2/manifest.json').read_bytes()
         approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, release, b'[]', (),
             hashlib.sha256(source).hexdigest(), hashlib.sha256(release).hexdigest()))
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+    release_files = {path: (Path(__file__).parents[1] / path).read_bytes() for path in RELEASE_FILES.values()}
     return Ports(cert.verify_certificate, cert.verify_original_receipt, binding.verify_binding,
         legacy.comparator_positive, legacy.positive_sample, legacy.known_exclusion,
         pilot.fleet_budgets_pre, legacy.collect_rollbacks, legacy.report, pilot.post_flip, tuple(approvals),
-        legacy.shadow_v2_release_pins(), lambda path: (Path(__file__).parents[1] / path).read_bytes(), pilot.roster_coverage)
+        legacy.shadow_v2_release_pins(), lambda path: release_files[path], pilot.roster_coverage)
 
 
 def pre_enable_bundle(tmp_path: Path) -> dict[str, Any]:
@@ -328,7 +335,7 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
     pre_input['monitoring']['sha256'] = hashlib.sha256(monitoring_path.read_bytes()).hexdigest()
     pre_result = pilot.fleet_budgets_pre(pre_input)
     caps = pre_result['maximum_router_instances_by_region']
-    budget = BudgetEvidence(pre_input, caps, sum(caps.values()), 0, 1,
+    budget = Budget(pre_input, caps, sum(caps.values()), 0, 1,
         {REGION: 10.}, {REGION: 300.}, 10., 2., 1., 20., 1., COMPONENT_BOUNDS.copy(),
         tuple(rate_segments), START - 1, START, sha256(pre_result), sha256(pre_result), 1, caps,
         100000, 1000000000, 100, 1000, 1000000, 1000000, 4000000,
@@ -351,7 +358,7 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
         load_segments.append(dict(day=day_at(rate.start_us), boot=rate.boot, region=REGION,
             start_us=rate.start_us, end_us=rate.end_us, role='router', contender=True,
             workspace_count=1, peaks=observed))
-    budget = replace(budget, load_segments=tuple(load_segments))
+    budget = replace(budget, load_segments=tuple(load_segments), projected_load_segments=tuple(load_segments))
     def gate(name: str, at: int) -> bytes:
         value = fixture('gate_outputs')
         value.update(gate=name, verdict='PASS', gaps=[], completed_at_us=at, proof_manifest_sha256=sha256(proof), prerequisite_ledger_root=ledger_root)
@@ -403,3 +410,33 @@ def change_row(bundle: Bundle, kind: str, change: Any, index: int = 0) -> Bundle
     change(value)
     rows[pos] = Row(row.key, canonical(value))
     return replace(bundle, rows=tuple(rows))
+
+
+@contextmanager
+def no_line_tracing() -> Iterator[None]:
+    saved = sys.gettrace()
+    # The exhaustive data adds no branches beyond the traced short witnesses.
+    # Stop coverage's background-thread tracers too: on CPython 3.12 those keep
+    # interpreter tracing overhead active even after sys.settrace(None).
+    from coverage import Coverage
+    coverage = Coverage.current()
+    if coverage is not None:
+        coverage.stop()
+    sys.settrace(None)
+    try:
+        yield
+    finally:
+        if coverage is not None:
+            coverage.start()
+        else:
+            sys.settrace(saved)
+
+
+@pytest.fixture
+def untraced() -> Iterator[None]:
+    with no_line_tracing():
+        yield
+
+
+def exhaustive(test: Any) -> Any:
+    return pytest.mark.usefixtures('untraced')(pytest.mark.timeout(method='signal')(test))

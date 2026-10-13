@@ -8,7 +8,10 @@ from typing import Any
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router import async_settle_shadow_v2_gate_report as a2report
-from trusted_router.async_settle_shadow_v2_a2_contract import PASS_AGGREGATES, REQUIRED_RULES
+from trusted_router.async_settle_shadow_v2_a2_contract import (
+    PASS_AGGREGATE_LOCATIONS,
+    REQUIRED_RULES,
+)
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
 from trusted_router.async_settle_shadow_v2_gate_accounting import (
     PREREQUISITES,
@@ -112,14 +115,22 @@ def external(ctx: Context) -> None:
         ctx.issue('external_proofs_missing', 'decoded external proofs absent')
         ctx.issue('pilot_prerequisite_gap', 'pilot proof absent')
         return
-    names = [p.name for p in supplied.proofs]
-    if len(names) != len(set(names)) or set(names) != set(supplied.required) or not names:
-        ctx.issue('external_proofs_missing', 'external proof inventory differs')
-    for proof in supplied.proofs:
-        if (not proof.passed or hashlib.sha256(proof.raw).hexdigest() != proof.sha256 or ctx.proof is None
-                or proof.router_revision != ctx.proof['source_shas']['router']
-                or proof.enclave_revision != ctx.proof['source_shas']['enclave']):
-            ctx.issue('external_proofs_missing', 'external proof hash/revision/verdict differs', Subject(object_id=proof.name))
+    stages = ('transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip')
+    requirements = supplied.required_stages or {ctx.gate: supplied.required}
+    identities = [(p.stage or ctx.gate, p.name) for p in supplied.proofs]
+    if len(identities) != len(set(identities)):
+        ctx.issue('external_proofs_missing', 'duplicate stage/proof identity')
+    for stage, required in requirements.items():
+        if stage not in stages or stages.index(stage) > stages.index(ctx.gate):
+            continue
+        for name in required:
+            matches = [p for p in supplied.proofs if p.name == name and (p.stage or ctx.gate) == stage]
+            proof = matches[0] if len(matches) == 1 else None
+            if (proof is None or not proof.passed or hashlib.sha256(proof.raw).hexdigest() != proof.sha256
+                    or ctx.proof is None or proof.router_revision != ctx.proof['source_shas']['router']
+                    or proof.enclave_revision != ctx.proof['source_shas']['enclave']):
+                ctx.issue('external_proofs_missing', 'required stage proof hash/revision/verdict differs',
+                          Subject(wire=a2.P(stage, name)))
     if ctx.gate == 'post-flip':
         try:
             require(ctx.ports is not None and supplied.post_input is not None, 'pilot_prerequisite_gap')
@@ -281,19 +292,34 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
     if window is not None and populations is not None and ctx.proof is not None:
         gate_report, streams, leaves = a2report.build(ctx, failures, metrics, window, populations, records(ctx))
         unavailable: list[str] = []
-        for rule, paths in PASS_AGGREGATES[gate].items():
+        residences = {
+            'GATE_REPORT': [gate_report],
+            'REGION_REPORT': [entry for page in streams['regions'] for entry in page['entries']],
+            'WRITER_REPORT': [entry for page in streams['writers'] for entry in page['entries']
+                if entry['role'] == 'router' and any(entry[field]['coverage']['state'] != 'not_required'
+                    for field in ('admission', 'comparator'))],
+        }
+        for rule, locations in PASS_AGGREGATE_LOCATIONS[gate].items():
             if gate_report['rules'][rule] in ('not_required', 'unevaluable'):
                 continue
-            for path in paths:
-                value = gate_report
-                for part in path.split('.'):
-                    value = value[part]
-                if value is None:
-                    unavailable.append(rule)
-                    gap = {'G6': 'publisher_trace_gap', 'G7': 'close_handoff_budget_gap' if path.startswith('timing.') else 'fleet_headroom_gap',
-                           'G8': 'handoff_coverage_gap' if path.startswith(('handoff.', 'timing.handoff', 'timing.drain')) else 'writer_closure_gap'}.get(rule, names(rule)[0])
-                    ctx.issue(gap, 'required aggregate unavailable: ' + path, unavailable=True)
-                    break
+            missing = []
+            for residence, paths in locations.items():
+                for record in residences[residence]:
+                    for path in paths:
+                        value = record
+                        for part in path.split('.'):
+                            value = value[part]
+                        if value is None:
+                            missing.append(residence + '.' + path)
+            if rule == 'G5' and any(record[field]['coverage']['state'] not in ('evaluated', 'not_exercised')
+                    for record in [gate_report, *residences['WRITER_REPORT']]
+                    for field in ('admission', 'comparator')):
+                missing.append('coverage')
+            if missing:
+                unavailable.append(rule)
+                gap = {'G6': 'publisher_trace_gap', 'G7': 'close_handoff_budget_gap' if any('.timing.' in path for path in missing) else 'fleet_headroom_gap',
+                       'G8': 'handoff_coverage_gap' if any('.handoff' in path or '.timing.drain' in path for path in missing) else 'writer_closure_gap'}.get(rule, names(rule)[0])
+                ctx.issue(gap, 'required aggregate unavailable: ' + ', '.join(missing), unavailable=True)
         if unavailable:
             ctx.issue('artifact_gap', 'required report aggregate unavailable')
             normalize(ctx)

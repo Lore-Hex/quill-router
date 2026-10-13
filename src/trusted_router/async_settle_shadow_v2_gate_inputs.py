@@ -9,7 +9,17 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router.async_settle_shadow_v2_a2_contract import BindingVerifier, CertificateVerifier
+from trusted_router.async_settle_shadow_v2_schema import (
+    Schema,
+    digest,
+    identity,
+    integer,
+    literal,
+    name,
+    revision,
+)
 from trusted_router.detached_jws import TrustedKey
 
 if TYPE_CHECKING:
@@ -155,6 +165,8 @@ class Budget:
     cleanup_spanner_keys: int = 0
     cleanup_sink_keys: int = 0
     cleanup_seconds: int = 30
+    load_segments: tuple[dict[str, Any], ...] | None = None
+    projected_load_segments: tuple[dict[str, Any], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +177,7 @@ class ExternalProof:
     raw: bytes
     sha256: str
     passed: bool
+    stage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -176,6 +189,7 @@ class External:
     attestation_checked: bool
     exposure_accepted: bool
     post_input: dict[str, Any] | None = None
+    required_stages: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -183,6 +197,7 @@ class ResetSupport:
     rows: tuple[dict[str, Any], ...]
     proof: dict[str, Any]
     resets: tuple[dict[str, Any], ...] = ()
+    support_files: Mapping[str, tuple[Preimage, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -228,3 +243,66 @@ class Bundle:
     a2_payloads: Mapping[str, dict[str, Any]] = field(default_factory=dict)
     window: Mapping[str, int] | None = None
     a2_streams: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RetainedResult:
+    output: bytes
+    opened: tuple[str, ...]
+    calls: Mapping[str, int]
+    components: Mapping[str, Any] = field(default_factory=dict)
+
+
+class RetainedRunner(Protocol):
+    def __call__(self, entry_point: str, payload: Any,
+                 files: Mapping[str, bytes]) -> RetainedResult: ...
+
+
+@dataclass(frozen=True)
+class ReleasePlan:
+    """Tool-approved pins, not assertions copied out of the evidence bundle.
+
+    ``artifacts`` includes the exact review/CI files and transitive dependencies.
+    ``criteria`` freezes the check inventory for each external/prerequisite proof.
+    ``verifiers`` pins source, fixture and ordered public descriptor bytes.
+    The original plan is itself an inventoried dependency, independently pinned
+    by the trusted tool's release input.
+    """
+    path: str
+    raw: bytes
+    artifacts: Mapping[str, str]
+    criteria: Mapping[str, tuple[str, ...]]
+    verifiers: Mapping[str, tuple[str, str, str | None]]
+    required: tuple[str, ...]
+    required_stages: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LoadingPorts(Ports):
+    retained: RetainedRunner | None = None
+    gate_roster: Callable[[list[dict[str, Any]], list[dict[str, Any]]], bool] | None = None
+    release: ReleasePlan | None = None
+    # Original producer-specific parsers. No unknown opaque format passes.
+    measurements: Mapping[str, Callable[[bytes], Mapping[str, Any]]] = field(default_factory=dict)
+
+
+COMPONENTS = ('publisher_period', 'publisher_jitter', 'publication', 'poll_period',
+              'poll_jitter', 'install', 'workspace_period', 'workspace_jitter', 'workspace_install')
+ALLOWANCES = ('publisher_reads', 'publisher_writes', 'publisher_unresolved_rows_per_second',
+              'publisher_control_rows_per_second', 'publisher_transactions_per_second',
+              'publisher_rpc_per_second', 'metadata_bytes_per_second')
+TOTALS = ('surge', 'export_operations', 'export_bytes', 'close_transactions', 'close_rows',
+          'export_passes', 'export_root_writes', 'export_write_bytes',
+          'cleanup_spanner_keys', 'cleanup_sink_keys', 'cleanup_seconds')
+BUDGET_MEASUREMENTS = Schema({**dict.fromkeys(ALLOWANCES, a2.RATIONAL),
+    **dict.fromkeys(TOTALS, integer), 'component_us': Schema(dict.fromkeys(COMPONENTS, integer), 2048)}, 8192)
+
+SHUTDOWN_SOURCE = Schema({k: v for k, v in a2.SHUTDOWN_MEASUREMENT.fields.items() if k != 'source'}, 2048)
+
+
+PREREQUISITE_CONTEXT = Schema(dict(role=literal('router', 'enclave'), boot=identity,
+    revision=revision, region=name, boot_at_us=integer, criterion=name, completed_at_us=integer), 2048)
+
+
+RETAINED_OUTPUT = Schema(dict(entry_point=literal(*a2.RETAINED_ENTRY_POINTS),
+    payload_sha256=digest, output=a2.FILE_REF), 2048)

@@ -14,33 +14,26 @@ from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_inputs import (
+    ALLOWANCES,
+    BUDGET_MEASUREMENTS,
+    TOTALS,
     Budget,
     External,
     ExternalProof,
     Inventory,
+    LoadingPorts,
+    Preimage,
     Rate,
     ResetSupport,
     Row,
 )
 from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
-from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
 from trusted_router.async_settle_shadow_v2_gate_retained import delegate
-from trusted_router.async_settle_shadow_v2_schema import Schema, integer, require, sha256
+from trusted_router.async_settle_shadow_v2_schema import integer, require, sha256
 from trusted_router.detached_jws import canonical
 
-COMPONENTS = ('publisher_period', 'publisher_jitter', 'publication', 'poll_period',
-              'poll_jitter', 'install', 'workspace_period', 'workspace_jitter', 'workspace_install')
-ALLOWANCES = ('publisher_reads', 'publisher_writes', 'publisher_unresolved_rows_per_second',
-              'publisher_control_rows_per_second', 'publisher_transactions_per_second',
-              'publisher_rpc_per_second', 'metadata_bytes_per_second')
-TOTALS = ('surge', 'export_operations', 'export_bytes', 'close_transactions', 'close_rows',
-          'export_passes', 'export_root_writes', 'export_write_bytes',
-          'cleanup_spanner_keys', 'cleanup_sink_keys', 'cleanup_seconds')
-BUDGET_MEASUREMENTS = Schema({**dict.fromkeys(ALLOWANCES, a2.RATIONAL),
-    **dict.fromkeys(TOTALS, integer), 'component_us': Schema(dict.fromkeys(COMPONENTS, integer), 2048)}, 8192)
 MEASUREMENTS_PATH = 'loading/budget-measurements.json'
-SHUTDOWN_SOURCE = Schema({k: v for k, v in a2.SHUTDOWN_MEASUREMENT.fields.items() if k != 'source'}, 2048)
 
 # Retained eleven plus the required first-window v2/A1/A2 contract and fail-closed
 # integration criteria. Further release-specific criteria may only add to this.
@@ -119,7 +112,8 @@ def budget_view(graph: PayloadGraph, payloads: dict[str, dict[str, Any]],
             and all(a['end_us'] == b['start_us'] for a, b in zip(spans, spans[1:], strict=False)), 'evidence_schema_gap')
     for segment in segments:
         require(segment['workspace_count'] == pre_result['workspace_count'], 'evidence_schema_gap')
-        if segment['role'] != 'router':
+        # Equal endpoints are a legal empty half-open load interval.
+        if segment['role'] != 'router' or segment['start_us'] == segment['end_us']:
             continue
         counter = counters.get((segment['day'], segment['boot']))
         require(counter is not None, 'artifact_gap')
@@ -172,7 +166,8 @@ def budget_view(graph: PayloadGraph, payloads: dict[str, dict[str, Any]],
         close_elapsed_us=max(s['final_pass_us'] for s in shutdown),
         handoff_elapsed_us=max(s['result_us'] + s['export_wait_us'] + s['preparation_us'] for s in shutdown),
         grace_us=min(s['grace_us'] for s in shutdown),
-        **extra_fields)
+        load_segments=tuple(segments),
+        projected_load_segments=tuple(graph.detail(pre['v2_load']['segments'], 'segments')), **extra_fields)
 
 
 def external_view(graph: PayloadGraph, value: dict[str, Any]) -> External:
@@ -186,11 +181,11 @@ def external_view(graph: PayloadGraph, value: dict[str, Any]) -> External:
         proof = graph.object(item['evidence'], a2.PROOF_RESULT)
         from trusted_router.async_settle_shadow_v2_gate_release import validate_proof
         validate_proof(graph, proof)
-        graph.streams.setdefault('external_stages', []).append(dict(name=item['name'], stage=item['stage'],
-            router_revision=item['router_revision'], enclave_revision=item['enclave_revision']))
         proofs.append(ExternalProof(item['name'], item['router_revision'], item['enclave_revision'],
-            raw, item['evidence']['sha256'], all(c['result'] == 'pass' for c in proof['checks'])))
+            raw, item['evidence']['sha256'], all(c['result'] == 'pass' for c in proof['checks']), item['stage']))
     require(set(required) <= {p.name for p in proofs}, 'artifact_gap')
+    scoped = ports.release.required_stages
+    require(not scoped or set(required) <= {name for names in scoped.values() for name in names}, 'artifact_gap')
     pilot_input = None
     pilot_result: dict[str, Any] = {}
     if value['pilot'] is not None:
@@ -200,7 +195,8 @@ def external_view(graph: PayloadGraph, value: dict[str, Any]) -> External:
         checks.get('signer_epoch') == checks.get('signer_public_key') == 'PASS',
         any(p.name == 'attestation' and p.passed for p in proofs),
         any(p.name == 'exposure_acceptance' and p.passed for p in proofs),
-        pilot_input if value['pilot'] and value['pilot']['entry_point'].endswith('.post_flip') else None)
+        pilot_input if value['pilot'] and value['pilot']['entry_point'].endswith('.post_flip') else None,
+        ports.release.required_stages or {'shadow-serving': required})
 
 
 def reset_view(graph: PayloadGraph, value: dict[str, Any], inventory: Inventory | None = None,
@@ -230,9 +226,10 @@ def reset_view(graph: PayloadGraph, value: dict[str, Any], inventory: Inventory 
         require(any(canonical(retained_json(graph.file(ref))) in originals for ref in support), 'evidence_schema_gap')
     for resolution in payload['proof'].get('resolved_mismatches', []):
         require(any(a['subject_sha256'] == resolution['artifact_sha256'] for a in value['approvals']), 'artifact_gap')
-    return ResetSupport(tuple(payload['rows']), payload['proof'], tuple(
-        {k: v for k, v in reset.items() if k not in ('resolved_at_us', 'fixed_revision', 'invalidated_at_us') or v is not None}
-        for reset in history))
+    return ResetSupport(tuple(payload['rows']), payload['proof'], tuple(history),
+        {reset['support']['root']: tuple(Preimage(ref['path'], graph.file(ref))
+            for ref in graph.detail(reset['support'], 'files')) for reset in history})
+
 
 
 def signature_views(graph: PayloadGraph, rows: tuple[Row, ...]) -> tuple[Any, ...]:

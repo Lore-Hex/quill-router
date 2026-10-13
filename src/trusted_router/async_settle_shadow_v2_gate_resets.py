@@ -19,15 +19,19 @@ def normalized(value: dict[str, Any]) -> dict[str, Any]:
 
 def supported(ctx: Context, entry: dict[str, Any]) -> bool:
     ref = entry['support']
-    files = ctx.bundle.a2_streams.get('files/' + ref['root'])
-    if files is None or not files:
+    support = ctx.bundle.reset_support
+    originals = support.support_files.get(ref['root']) if support is not None else None
+    if not originals:
         return False
+    files = [dict(path=p.name, bytes=len(p.raw), sha256=roots.file_digest(p.raw)) for p in originals]
     try:
         actual, _ = detail(files, 'files')
     except (ValueError, KeyError, TypeError):
         return False
     if actual != ref:
         return False
-    supplied = {p.name: p.raw for p in ctx.bundle.preimages}
-    return all(f['path'] in supplied and len(supplied[f['path']]) == f['bytes']
-               and roots.file_digest(supplied[f['path']]) == f['sha256'] for f in files)
+    # Original inventory remains authoritative if a file is removed/conflicts.
+    supplied: dict[str, set[bytes]] = {}
+    for source in ctx.bundle.preimages:
+        supplied.setdefault(source.name, set()).add(source.raw)
+    return all(supplied.get(p.name) == {p.raw} for p in originals)

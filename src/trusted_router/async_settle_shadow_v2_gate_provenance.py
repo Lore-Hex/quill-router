@@ -8,20 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from trusted_router.async_settle_shadow_v2_gate_inputs import PREREQUISITE_CONTEXT
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
 from trusted_router.async_settle_shadow_v2_gate_release import validate_proof
 from trusted_router.async_settle_shadow_v2_schema import (
-    Schema,
-    identity,
-    integer,
-    literal,
-    name,
     require,
-    revision,
 )
-
-PREREQUISITE_CONTEXT = Schema(dict(role=literal('router', 'enclave'), boot=identity,
-    revision=revision, region=name, boot_at_us=integer, criterion=name, completed_at_us=integer), 2048)
 
 
 def prerequisite(graph: PayloadGraph, proof: dict[str, Any], ledger: dict[str, Any], field: str) -> None:

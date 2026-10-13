@@ -7,6 +7,10 @@ from typing import Any
 import pytest
 
 from tests.shadow_v2_gate_a2_fixture import real_fixture, transport
+from tests.shadow_v2_gate_fixture_generator import (
+    exhaustive,
+    untraced,  # noqa: F401
+)
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
@@ -41,22 +45,25 @@ def test_load_real_original_bytes_all_views_field_by_field(real: Any) -> None:
     wanted.update(pre_input=expected['pre_input'], pre_digest=sha256(pre), post_pre_digest=sha256(pre),
         post_completed_us=original.completed_at_us, cpu_increment=5., close_elapsed_us=2000000,
         rates=tuple({**rate, 'publisher_reads': 40, 'publisher_writes': 20} for rate in expected['rates']))
+    wanted['load_segments'] = tuple(expected['segments'])
+    wanted['projected_load_segments'] = tuple(expected['projected_segments'])
     actual = asdict(bundle.budget)
     for field in wanted:
         assert actual[field] == wanted[field], field
     assert bundle.reset_support is not None
-    assert asdict(bundle.reset_support) == dict(rows=(), proof=dict(resolved_mismatches=[]), resets=())
+    assert asdict(bundle.reset_support) == dict(rows=(), proof=dict(resolved_mismatches=[]), resets=(), support_files={})
     assert bundle.external is not None
     assert bundle.external.required == tuple(sorted(ports.release.required))
     assert set(bundle.external.required) == {p.name for p in bundle.external.proofs}
     for proof in bundle.external.proofs:
         original_proof = next(p.raw for p in original.preimages if p.name == 'proofs/' + proof.name)
         assert asdict(proof) == dict(name=proof.name, router_revision='a' * 40, enclave_revision='a' * 40,
-            raw=original_proof, sha256=roots.file_digest(original_proof), passed=True)
+            raw=original_proof, sha256=roots.file_digest(original_proof), passed=True, stage='shadow-serving')
     assert (bundle.external.drain_selected, bundle.external.signer_checked,
             bundle.external.attestation_checked, bundle.external.exposure_accepted, bundle.external.post_input) == (False, False, False, False, None)
 
 
+@exhaustive
 @pytest.mark.parametrize('path', [
     'proof.pre_budget_sha256', 'proof.post_budget_sha256', 'proof.external_proofs_sha256',
     'proof.resolution_dag_sha256', 'proof.shutdown_inventory_sha256', 'proof.cohort_seed_policy_sha256',
@@ -64,6 +71,7 @@ def test_load_real_original_bytes_all_views_field_by_field(real: Any) -> None:
     'budgets/post/output.json', 'budgets/limits.json', 'loading/budget-measurements.json',
     'loading/release-plan.json', 'sources/pilot_enablement.py', 'sources/shadow_report.py',
 ])
+@exhaustive
 @pytest.mark.parametrize('mutation', ['absent', 'wrong-byte', 'conflicting', 'oversize'])
 def test_each_payload_original_mutation_blocks(real: Any, path: str, mutation: str) -> None:
     original, ports, _ = real
@@ -87,6 +95,7 @@ def test_each_payload_original_mutation_blocks(real: Any, path: str, mutation: s
     assert 'artifact_gap' in diagnostics(loaded), (path, mutation)
 
 
+@exhaustive
 @pytest.mark.parametrize('field', [
     'pre_budget_sha256', 'post_budget_sha256', 'external_proofs_sha256', 'resolution_dag_sha256',
     'shutdown_inventory_sha256', 'cohort_seed_policy_sha256', 'ledger_root', 'publisher_slot_trace_sha256',
@@ -101,6 +110,7 @@ def test_each_proof_digest_has_defined_original_preimage(real: Any, field: str) 
     assert 'artifact_gap' in diagnostics(loaded)
 
 
+@exhaustive
 @pytest.mark.parametrize('kind,gap', [(p1.KINDS[3], 'phase_coverage_gap'), (p1.KINDS[4], 'writer_closure_gap'),
     (p1.KINDS[2], 'authorize_coverage_gap'), (a1.KINDS[-1], 'close_result_identity_gap'),
     ('publisher_trace', 'publisher_trace_gap'), ('health_basis', 'shadow_health_gap')])
@@ -135,6 +145,7 @@ def test_unexpected_receipt_does_not_expand_expected_root(real: Any) -> None:
     assert all('outsider' not in e['key'] for e in inputs['manifest.receipts_root'])
 
 
+@exhaustive
 @pytest.mark.parametrize('mutation', ['source-pin', 'fixture-pin', 'key-pin', 'review', 'plan', 'port', 'callable', 'key-order'])
 def test_independent_release_authority_blocks_substitutions(real: Any, mutation: str) -> None:
     original, ports, _ = real
@@ -186,6 +197,7 @@ def test_release_plan_requires_external_pin(real: Any) -> None:
         read_release_plan(ports.release.raw, roots.file_digest(b'not approved'))
 
 
+@exhaustive
 @pytest.mark.parametrize('field', ['counter_root', 'closure_root', 'receipts_root', 'prerequisite_ledger_root',
     'independent_inventory_sha256', 'close_result_root', 'publisher_trace_root', 'health_basis_root',
     'config_sha256', 'fixture_sha256', 'proof_manifest_sha256'])
@@ -235,6 +247,7 @@ def test_every_declared_file_ref_requires_exact_original_bytes(real: Any) -> Non
         files[path] = expected
 
 
+@exhaustive
 @pytest.mark.parametrize('mutation', ['empty-checks', 'unknown-check', 'wrong-revision', 'future', 'wrong-boot'])
 def test_prerequisite_provenance_is_contextual(real: Any, mutation: str) -> None:
     from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
@@ -276,3 +289,52 @@ def test_conflicting_file_exports_keep_both_original_candidates() -> None:
     assert 'source.json' not in files
     assert set(files.values()) == {p.raw for p in originals}
     assert all(path.endswith(roots.file_digest(raw)) for path, raw in files.items())
+
+
+@pytest.fixture(scope='module')
+def pilot_real(tmp_path_factory: Any) -> Any:
+    return real_fixture(tmp_path_factory.mktemp('real-pilot'), pilot_stage='pre-flip')
+
+
+@exhaustive
+@pytest.mark.parametrize('gate', ['transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving'])
+def test_original_bytes_stage_pass(real: Any, gate: str) -> None:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    original, ports, _ = real
+    loaded = load(transport(original), ports)
+    assert not diagnostics(loaded)
+    result = evaluate(loaded, ports, gate=gate)
+    raw, attachments = render(result)
+    assert json.loads(raw)['verdict'] == 'PASS', [(f.gap, f.detail) for f in result.failures]
+    assert json.loads(attachments[0])['complete'] is True
+
+
+def test_original_bytes_post_flip_pass(tmp_path: Any) -> None:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    original, ports, _ = real_fixture(tmp_path, pilot_stage='post-flip')
+    loaded = load(transport(original), ports)
+    assert not diagnostics(loaded)
+    result = evaluate(loaded, ports, gate='post-flip')
+    assert json.loads(render(result)[0])['verdict'] == 'PASS', [(f.gap, f.detail) for f in result.failures]
+
+
+def test_original_bytes_empty_load_segment_is_legal(tmp_path: Any) -> None:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    original, ports, _ = real_fixture(tmp_path, empty_segment=True)
+    loaded = load(transport(original), ports)
+    assert not diagnostics(loaded)
+    assert loaded.budget is not None and loaded.budget.load_segments is not None
+    assert any(s['start_us'] == s['end_us'] for s in loaded.budget.load_segments)
+    result = evaluate(loaded, ports, gate='fleet-budgets')
+    assert result.gaps == (), [(f.gap, f.detail) for f in result.failures]
+    assert result.gate_report['fleet_peaks']['publication_operations_per_second'] == dict(numerator=1, denominator=2)
+    assert json.loads(render(result)[0])['verdict'] == 'PASS'

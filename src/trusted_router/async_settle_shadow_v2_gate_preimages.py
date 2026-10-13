@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
@@ -88,7 +89,16 @@ def preimages(ctx: Context, manifest: dict[str, Any]) -> tuple[dict[str, bytes],
         result[field] = sorted([p for p in ctx.attached('coverage') if p['day'] == day and p['stream'] == stream], key=lambda p: p['page_seq'])
     for field, stream in contract.CROSS_DAY_PREIMAGES.items():
         result[field] = [dict(day=d, pages=sorted([p for p in ctx.attached('coverage') if p['day'] == d and p['stream'] == stream], key=lambda p: p['page_seq'])) for d in ctx.bundle.days]
+    # A2 checks each candidate against this finite inventory by iteration. Put
+    # digest-qualified candidates first; preserve every key and original byte.
+    artifacts = {**{k: v for k, v in artifacts.items() if k.startswith('candidates/')}, **artifacts}
     return artifacts, result
+
+
+@lru_cache(maxsize=128)
+def _entry_digest(stream: str, entries: tuple[tuple[str, tuple[bytes, ...]], ...]) -> str:
+    """Memoize only immutable original-byte roots using the contract functions."""
+    return roots.entry_root([roots._root_entry(key, bodies) for key, bodies in entries], stream=stream)
 
 
 def audit(ctx: Context) -> None:
@@ -120,10 +130,27 @@ def audit(ctx: Context) -> None:
         if 'router_writers' not in manifest:
             continue
         artifacts, root_inputs = preimages(ctx, manifest)
+        for qualified in (*contract.FILE_PREIMAGES, *contract.OBJECT_PREIMAGES):
+            if qualified not in artifacts:
+                ctx.issue('artifact_gap', 'A2 required original preimage absent',
+                    Subject(day=manifest['day'], wire=a2.O('a2_file', qualified)))
         try:
+            # Fail the exact original proof commitment before traversing its
+            # unchanged global source roots. The contract repeats this check.
+            if ctx.bundle.proof is None or roots.file_digest(ctx.bundle.proof) != manifest['proof_manifest_sha256']:
+                raise ValueError('artifact_gap')
             inventory = contract._object_bytes(artifacts['manifest.independent_inventory_sha256'], a2.INDEPENDENT_INVENTORY)
             if inventory['day'] != manifest['day']:
                 raise ValueError('evidence_schema_gap')
+            # Check the same contract R/F construction before its quadratic
+            # candidate-presence scan. This is only an early rejection; a new
+            # successful input still goes through the complete contract check.
+            for qualified, stream in contract.ENTRY_PREIMAGES.items():
+                owner, field = qualified.split('.')
+                entries = tuple((entry['key'], tuple(entry['bodies'])) for entry in root_inputs[qualified])
+                actual = _entry_digest(stream, entries)
+                if actual != (manifest if owner == 'manifest' else ctx.proof)[field]:
+                    raise ValueError('artifact_gap')
             contract.validate_preimages(manifest, ctx.proof, artifacts=artifacts, roots=root_inputs)
         except KeyError:
             ctx.issue('artifact_gap', 'independent inventory preimage absent',
@@ -145,8 +172,8 @@ def ledger_preimages(ctx: Context) -> None:
     for source in ctx.bundle.preimages:
         if source.name not in RELEASE_FILES and len(source.raw) <= 262144:
             files[roots.file_digest(source.raw)].add(source.raw)
+    from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts
     from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
-    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
     graph = PayloadGraph({p.name: p.raw for p in ctx.bundle.preimages}, ctx.bundle.completed_at_us, ports=ctx.ports)
     previous_files: dict[str, set[bytes]] = defaultdict(set)
     for raw in ctx.bundle.ledgers:
