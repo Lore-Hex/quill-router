@@ -1008,3 +1008,170 @@ def test_writer_ratio_uses_same_population_invariant(field: str) -> None:
     args['output']['coverage_sha256'] = s.sha256(args['report'])
     with pytest.raises(ValueError):
         c.validate_gate_output(**args)
+
+
+def _interior_segments() -> list[dict[str, Any]]:
+    first = copy.deepcopy(SEEDS['LOAD_SEGMENT'])
+    first.update(start_us=1, end_us=5)
+    return [first, {**copy.deepcopy(first), 'start_us': 2, 'end_us': 2}]
+
+
+def test_empty_segment_inside_nonempty_lifetime_is_not_overlap() -> None:
+    entries = _interior_segments()
+    for entry in entries:
+        assert_round_trip(e.LOAD_SEGMENT, entry)
+    expected = s.sha256(entries)
+    assert r.entry_root(reversed(entries), stream='segments') == expected
+    assert expected != r.entry_root(entries[:1], stream='segments')
+    pages = make_pages(entries, 64)
+    detail = {'root': expected, 'count': 2, 'pages': 1, 'tail_sha256': s.sha256(pages[0])}
+    r.validate_detail(detail, pages, stream='segments')
+    # The full budget preimage path retains the committed empty segment too.
+    args = _review_preargs()
+    pre = json.loads(args['artifacts']['proof.pre_budget_sha256'])
+    post = json.loads(args['artifacts']['proof.post_budget_sha256'])
+    pre['v2_load']['interval'] = {'start_us': 1, 'end_us': 5}
+    pre['v2_load']['segments'] = detail
+    post['v2_load'] = copy.deepcopy(pre['v2_load'])
+    post['pre_envelope_sha256'] = s.sha256(pre)
+    for stage, envelope in (('pre', pre), ('post', post)):
+        field = stage + '_budget_sha256'
+        args['artifacts']['proof.' + field] = canonical(envelope) + b'\n'
+        args['proof'][field] = s.sha256(envelope)
+    args['manifest']['proof_manifest_sha256'] = None
+    c.validate_preimages(**args)
+
+
+def test_empty_segment_cannot_hide_real_overlap() -> None:
+    entries = _interior_segments()
+    entries.append({**copy.deepcopy(entries[0]), 'start_us': 3, 'end_us': 6})
+    for candidate in (entries, [entries[0], entries[2]]):
+        with pytest.raises(ValueError):
+            r.entry_root(candidate, stream='segments')
+        pages = make_pages(candidate, 64)
+        detail = {'root': s.sha256(candidate), 'count': len(candidate), 'pages': 1,
+                  'tail_sha256': s.sha256(pages[0])}
+        with pytest.raises(ValueError):
+            r.validate_detail(detail, pages, stream='segments')
+
+
+def test_empty_segments_keep_keys_endpoints_and_detail_counts() -> None:
+    entries = _interior_segments()
+    for candidate in ([entries[1], entries[1]],
+                      [entries[0], {**entries[1], 'start_us': 1, 'end_us': 1}],
+                      [{**entries[1], 'start_us': 3}]):
+        with pytest.raises(ValueError):
+            r.entry_root(candidate, stream='segments')
+    # An empty-only stream remains committed, without asserting load/coverage.
+    pages = make_pages(entries[1:], 64)
+    detail = make_detail(entries[1:], pages, 'segments')
+    r.validate_detail(detail, pages, stream='segments')
+    detail['count'] = 0
+    with pytest.raises(ValueError):
+        r.validate_detail(detail, pages, stream='segments')
+
+
+@pytest.mark.parametrize('path', ['evidence//source.json', 'evidence/./source.json'])
+def test_relative_file_keys_through_detail_preimages_and_gate_output(path: str) -> None:
+    args = _review_preargs()
+    original = 'evidence/source.json'
+    args['artifacts'][path] = args['artifacts'].pop(original)
+    for qualified in c.OBJECT_PREIMAGES:
+        decoded = json.loads(args['artifacts'][qualified])
+        for node in nested(decoded):
+            if type(node) is dict and set(node) == set(e.FILE_REF.fields):
+                node['path'] = path
+        args['artifacts'][qualified] = canonical(decoded) + b'\n'
+    pre = json.loads(args['artifacts']['proof.pre_budget_sha256'])
+    post = json.loads(args['artifacts']['proof.post_budget_sha256'])
+    post['pre_envelope_sha256'] = s.sha256(pre)
+    args['artifacts']['proof.post_budget_sha256'] = canonical(post) + b'\n'
+    for qualified in c.OBJECT_PREIMAGES:
+        owner, field = qualified.split('.')
+        args[owner][field] = s.sha256(json.loads(args['artifacts'][qualified]))
+    args['manifest']['proof_manifest_sha256'] = None
+    c.validate_preimages(**args)
+    reference = {'path': path, 'bytes': len(args['artifacts'][path]),
+                 'sha256': r.file_digest(args['artifacts'][path])}
+    pages = make_pages([reference], 128)
+    r.validate_detail(make_detail([reference], pages, 'files'), pages, stream='files')
+    # Exact string identity survives into the report's inventory attachment.
+    gate = obj('gate_outputs_a2', 'pre-enable-structural-pass')
+    entry = copy.deepcopy(SEEDS['INPUT_INVENTORY_ENTRY'])
+    entry['bundle'] = reference
+    gate['inputs'] = make_pages([entry], 64)
+    gate['report']['input_inventory'] = make_detail([entry], gate['inputs'], 'input_inventory')
+    gate['output']['coverage_sha256'] = s.sha256(gate['report'])
+    c.validate_gate_output(**gate)
+    args['artifacts'][original] = args['artifacts'].pop(path)
+    with pytest.raises(ValueError):
+        c.validate_preimages(**args)
+
+
+@pytest.mark.parametrize('key', e.TIMINGS)
+@pytest.mark.parametrize('field', ['count', 'null_count'])
+@pytest.mark.parametrize('unknown', [False, True])
+def test_independently_available_regional_subtotals(key: str, field: str, unknown: bool) -> None:
+    report = obj('gate_outputs_a2', 'closed-actual-empty')['report']
+    region = obj('region_reports', 'region')
+    # Isolate one available operand; missing series cannot disable its bound.
+    report['timing'] = {k: dict.fromkeys(value) for k, value in report['timing'].items()}
+    report['timing'][key] = {'count': 0, 'null_count': 0,
+                             'min': None, 'p50': None, 'p95': None, 'p99': None, 'max': None}
+    region['timing'] = copy.deepcopy(report['timing'])
+    unavailable = obj('region_reports', 'region')
+    unavailable['region'] = 'us-east1'
+    writers = [obj('writer_reports', 'unknown-region')] if unknown else []
+    c._regional_metrics(report, [region, unavailable], writers)
+    region['timing'][key][field] = 1
+    # Self timing and required-value nulls have stricter shared rules, which
+    # are deliberately retained alongside the general subset bound.
+    with pytest.raises(ValueError):
+        c._regional_metrics(report, [region, unavailable], writers)
+
+
+@pytest.mark.parametrize('field', ['count', 'null_count'])
+def test_partial_regional_sum_overflow_even_without_fleet(field: str) -> None:
+    report = obj('gate_outputs_a2', 'pre-enable-structural-pass')['report']
+    region = obj('region_reports', 'region')
+    region['timing']['authorize_shadow_us'] = {
+        'count': s.INT64 if field == 'count' else 0,
+        'null_count': s.INT64 if field == 'null_count' else 0,
+        'min': None, 'p50': None, 'p95': None, 'p99': None, 'max': None}
+    unavailable = obj('region_reports', 'region')
+    writer = obj('writer_reports', 'unknown-region')
+    c._regional_metrics(report, [region, unavailable], [writer])
+    with pytest.raises(ValueError):
+        c._regional_metrics(report, [region, region, unavailable], [writer])
+
+
+@pytest.mark.parametrize('field', ['comparator', 'admission'])
+@pytest.mark.parametrize('residence', ['fleet', 'writer'])
+@pytest.mark.parametrize('state', ['not_required', 'unevaluable'])
+def test_unavailable_ratio_keeps_known_subset_bound(field: str, residence: str, state: str) -> None:
+    args = obj('gate_outputs_a2', 'pre-enable-structural-pass')
+    record = args['report'] if residence == 'fleet' else obj('writer_reports', 'unknown-region')
+    whole, part = ('eligible', 'compared') if field == 'comparator' else ('E', 'Y')
+    record[field][whole] = record[field][part] = 1
+    record[field]['coverage'] = {'state': state, 'numerator': None, 'denominator': None}
+
+    def commit() -> None:
+        if residence == 'writer':
+            args['writers'] = make_pages([record], 16)
+            args['report']['writers'] = make_detail([record], args['writers'], 'writers')
+        args['output']['coverage_sha256'] = s.sha256(args['report'])
+
+    commit()
+    c.validate_gate_output(**args)
+    record[field][part] = 2
+    commit()
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**args)
+
+
+def test_unavailable_sum_still_checks_known_overflow() -> None:
+    assert c._sum([s.INT64, None]) is None
+    assert c._sum([None]) is None
+    assert c._sum([]) == 0
+    with pytest.raises(ValueError):
+        c._sum([s.INT64, 1, None])

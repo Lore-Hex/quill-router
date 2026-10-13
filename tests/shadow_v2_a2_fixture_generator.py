@@ -526,6 +526,13 @@ def build() -> dict[str, bytes]:
                 "validate_gate_output", regional_arguments(copy.deepcopy(rep), [bad]), "reject")
     segment = next(v["object"] for v in files["budget_envelopes"] if v["target"] == "LOAD_SEGMENT")
     add("budget_envelopes", "equal-endpoints", "LOAD_SEGMENT", {**segment, "end_us": segment["start_us"]})
+    interior = [{**copy.deepcopy(segment), "start_us": start, "end_us": end}
+                for start, end in ((1, 5), (2, 2))]
+    add("budget_envelopes", "legal-empty-interior-segment-root", "entry_root",
+        {"entries": interior, "stream": "segments"}, result=C(interior))
+    add("budget_envelopes", "empty-interior-cannot-hide-overlap", "entry_root",
+        {"entries": [*interior, {**copy.deepcopy(segment), "start_us": 3, "end_us": 6}],
+         "stream": "segments"}, "reject")
     for complete in (False, True):
         rep = copy.deepcopy(report)
         failure = {**TAG, "gap": "artifact_gap", "subject": subject("run"), "count": 1}
@@ -558,6 +565,27 @@ def build() -> dict[str, bytes]:
     unknown3 = output_arguments(rep, fp)
     unknown3["writers"] = wp
     add("gate_outputs_a2", "unknown-only-region-known-fleet", "validate_gate_output", unknown3)
+    # Known regional observations remain a subset even with unknown attribution.
+    mixed = copy.deepcopy(unknown3)
+    reg = {**copy.deepcopy(region), "timing": copy.deepcopy(mixed["report"]["timing"])}
+    unknown_writer = mixed["writers"][0]["entries"][0]
+    known_writer = {**copy.deepcopy(unknown_writer), "boot": "known-region-boot", "region": reg["region"]}
+    unknown_writer["interval"]["end_us"] = mixed["report"]["window"]["end_us"] + 1
+    known_writer["interval"]["end_us"] = mixed["report"]["window"]["end_us"]
+    for field in ("comparator", "admission", "partition", "attempts", "checkpoint"):
+        known_writer[field] = copy.deepcopy(mixed["report"][field])
+    mixed["writers"] = pages([known_writer, unknown_writer], 16)
+    mixed["report"]["writers"] = detail([known_writer, unknown_writer], mixed["writers"])
+    mixed["regions"] = pages([reg], 8)
+    mixed["report"]["regions"] = detail([reg], mixed["regions"])
+    mixed["output"]["coverage_sha256"] = C(mixed["report"])
+    add("gate_outputs_a2", "known-and-unknown-valid-base", "validate_gate_output", mixed)
+    for key in ("close_us", "handoff_us"):
+        reg["timing"][key]["count"] = 2
+    mixed["regions"] = pages([reg], 8)
+    mixed["report"]["regions"] = detail([reg], mixed["regions"])
+    mixed["output"]["coverage_sha256"] = C(mixed["report"])
+    add("gate_outputs_a2", "impossible-region-rejected", "validate_gate_output", mixed, "reject")
     # Required-value null is impossible even when the fleet source is unavailable.
     rep = copy.deepcopy(actual)
     reg = {**copy.deepcopy(region), "peaks": copy.deepcopy(known_peaks), "timing": copy.deepcopy(rep["timing"])}

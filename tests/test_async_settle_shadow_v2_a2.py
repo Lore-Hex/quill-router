@@ -573,3 +573,67 @@ def test_G7_pass_requires_supplied_actual_region_peaks():
     _r3_commit(a)
     with pytest.raises(ValueError):
         c.validate_gate_output(**a)
+
+
+def _known_and_unknown_regions() -> dict[str, Any]:
+    args = _r3_unknown_region_report()
+    region = obj('region_reports', 'region')
+    region['timing'] = copy.deepcopy(args['report']['timing'])
+    unknown = args['writers'][0]['entries'][0]
+    known = copy.deepcopy(unknown)
+    known.update(boot='known-region-boot', region=region['region'])
+    unknown['interval']['end_us'] = args['report']['window']['end_us'] + 1
+    known['interval']['end_us'] = args['report']['window']['end_us']
+    for field in ('comparator', 'admission', 'partition', 'attempts', 'checkpoint'):
+        known[field] = copy.deepcopy(args['report'][field])
+    _r3_stream(args, 'writers', [known, unknown])
+    _r3_stream(args, 'regions', [region])
+    _r3_commit(args)
+    return args
+
+
+def test_unknown_identity_does_not_allow_regional_population_above_fleet() -> None:
+    c.validate_gate_output(**_r3_unknown_region_report())
+    args = _known_and_unknown_regions()
+    c.validate_gate_output(**args)
+    region = args['regions'][0]['entries'][0]
+    for key in ('close_us', 'handoff_us'):
+        region['timing'][key] = _r3_stat(2)
+    _r3_stream(args, 'regions', [region])
+    _r3_commit(args)
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**args)
+
+
+def test_unknown_identity_does_not_allow_regional_null_subtotal_above_fleet() -> None:
+    args = _known_and_unknown_regions()
+    c.validate_gate_output(**args)
+    region = args['regions'][0]['entries'][0]
+    # Null S observations are distinct from known observations. Keep every
+    # regional S population consistent, but exceed the fleet's known null=0.
+    for key in e.TIMINGS[:8]:
+        region['timing'][key]['null_count'] = 1
+    _r3_stream(args, 'regions', [region])
+    _r3_commit(args)
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**args)
+
+
+def test_repeated_retained_tools_through_gate_output() -> None:
+    args = obj('gate_outputs_a2', 'pre-enable-structural-pass')
+    args['verifiers'] = obj('verifier_ports', 'repeated-sorted-tool')
+    args['report']['verifiers'] = copy.deepcopy(args['verifiers'])
+    _r3_commit(args)
+    c.validate_gate_output(**args)
+
+
+def test_independent_stat_components_through_detail_and_gate_output() -> None:
+    args = _known_and_unknown_regions()
+    region = args['regions'][0]['entries'][0]
+    partial = obj('gate_report', 'independently-known-percentile')
+    for timing in (args['report']['timing'], region['timing']):
+        timing['close_us'] = copy.deepcopy(partial)
+    _r3_stream(args, 'regions', [region])
+    _r3_commit(args)
+    r.validate_detail(args['report']['regions'], args['regions'], stream='regions')
+    c.validate_gate_output(**args)

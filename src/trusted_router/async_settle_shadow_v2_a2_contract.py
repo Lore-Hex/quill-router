@@ -44,11 +44,9 @@ REQUIRED_RULES = {
 
 def _sum(values: Iterable[int | None]) -> int | None:
     items = list(values)
-    if any(item is None for item in items):
-        return None
     total = sum(item for item in items if item is not None)
     integer(total)
-    return total
+    return None if any(item is None for item in items) else total
 
 
 def _ratios(v: dict[str, Any]) -> None:
@@ -57,6 +55,10 @@ def _ratios(v: dict[str, Any]) -> None:
         ("admission", _sum(v["admission"][k] for k in ("Y", "N")), v["admission"]["E"]),
     ):
         ratio = v[field]["coverage"]
+        # An unavailable ratio cannot excuse a known part exceeding its whole.
+        subtotal = (sum(v["admission"][k] for k in ("Y", "N") if v["admission"][k] is not None)
+                    if field == "admission" else numerator)
+        require(subtotal is None or denominator is None or subtotal <= denominator)
         if ratio["state"] in ("evaluated", "not_exercised"):
             require(ratio["numerator"] == numerator and ratio["denominator"] == denominator)
         if ratio["state"] == "not_exercised":
@@ -194,6 +196,9 @@ def _regional_metrics(report: dict[str, Any], regions: list[dict[str, Any]],
         for field in ("count", "null_count"):
             total = _sum(region["timing"][key][field] for region in regions)
             fleet = report["timing"][key][field]
+            known_subtotal = sum(region["timing"][key][field] for region in regions
+                                 if region["timing"][key][field] is not None)
+            require(fleet is None or known_subtotal <= fleet)
             if identities_known:
                 require(total is None or fleet is None or total == fleet)
 

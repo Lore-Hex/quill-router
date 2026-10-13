@@ -32,7 +32,7 @@ from trusted_router.async_settle_shadow_v2_schema import (
 )
 from trusted_router.detached_jws import canonical
 
-FIXTURE_MANIFEST_SHA256 = "92de75c6c7a9a6a4fbc51c43a4ee4b9c51d61ba7f6129b3653e310532620e437"
+FIXTURE_MANIFEST_SHA256 = "ae3835553ddacc18a12eb5206f355cff92732b8a401cdc2a74a2afa13697cc78"
 ROOT_ENTRY = a1.COVERAGE_ENTRY
 GATE_OUTPUT = a1.GATE_OUTPUT
 TAG = {"contract_revision": literal("a2")}

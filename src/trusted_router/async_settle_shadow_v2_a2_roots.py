@@ -121,7 +121,8 @@ def entry_root(entries: Iterable[dict[str, Any]], *, stream: str) -> str:
     if stream == "input_inventory":
         require(all(a[1]["last_key"] < b[1]["first_key"] for a, b in zip(keyed, keyed[1:], strict=False)))
     if stream == "segments":
-        require(all(a[0][:2] != b[0][:2] or a[1]["end_us"] <= b[1]["start_us"] for a, b in zip(keyed, keyed[1:], strict=False)))
+        nonempty = [pair for pair in keyed if pair[1]["start_us"] < pair[1]["end_us"]]
+        require(all(a[0][:2] != b[0][:2] or a[1]["end_us"] <= b[1]["start_us"] for a, b in zip(nonempty, nonempty[1:], strict=False)))
     if stream == "failures":
         counts: dict[str, int] = {}
         for _, entry in keyed:
