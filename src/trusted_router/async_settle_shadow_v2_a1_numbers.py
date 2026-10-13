@@ -14,14 +14,17 @@ binary64-representable integers beyond int64 remain legal on declared paths.
 """
 from __future__ import annotations
 
-import json
 import re
-from collections.abc import Callable
+from _json import scanstring
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from trusted_router.async_settle_shadow_v2_a1_deltas import broadening
 from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
+
+# CPython JSON accepts ASCII digits only, including in fractions/exponents.
+NUMBER_RE = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?")
 
 
 def binary64(value: Any) -> None:
@@ -40,51 +43,96 @@ def _int(lexeme: str) -> int:
     return int(lexeme)
 
 
-def number_decoder(raw: bytes, paths: tuple[tuple[str, ...], ...]) -> Callable[[str, Callable[[str], Any]], Any] | None:
-    """Plan path selection only; the shared decoder owns all transport policy.
+def _number_tokens(raw: bytes, paths: tuple[tuple[str, ...], ...]) -> Iterator[tuple[str, bool]]:
+    """Label the syntactically scanned prefix, without enforcing transport policy.
 
-    A permissive structural pass labels number tokens in source order. The real
-    decoder then invokes either the declared binary64 parser or its original
-    number parser on the ORIGINAL bytes. Thus even diagnostic precedence for
-    undeclared numbers, duplicate keys and malformed transport stays retained.
-    Failed structural planning falls back to that original decoder's diagnostic.
+    Use the decoder's string scanner and number grammar (including partial
+    numbers such as 1 in 1e+). An explicit stack keeps planning nonrecursive.
+    Constants are values, but never number-hook tokens. Duplicate members keep
+    their original positions. A malformed suffix cannot erase earlier labels.
+    This is only a plan: the authoritative decoder owns every refusal.
     """
-    class Members(list[tuple[str, Any]]):
-        pass
-
-    tokens: list[object] = []
-
-    def token(lexeme: str) -> object:
-        marker = object()
-        tokens.append(marker)
-        return marker
-
     try:
-        value = json.loads(raw, object_pairs_hook=Members, parse_int=token, parse_float=token)
-    except (ValueError, RecursionError, UnicodeError):
-        return None
-    selected: set[int] = set()
-
-    def numbers(child: Any, allowed: tuple[tuple[str, ...], ...]) -> None:
-        if not allowed:
-            return
-        if type(child) is Members:
-            for key, member in child:
-                numbers(member, tuple(p[1:] for p in allowed if p and p[0] == key))
-        elif type(child) is list:
-            for member in child:
-                numbers(member, tuple(p[1:] for p in allowed if p and p[0] == "*"))
-        elif () in allowed:
-            selected.add(id(child))
-    numbers(value, paths)
-    if not selected:
-        return None
+        text = raw.decode("utf-8")
+    except UnicodeError:
+        return
     index = 0
+    pending = [("value", paths)]
+    while pending:
+        state, allowed = pending.pop()
+        while index < len(text) and text[index] in " \t\n\r":
+            index += 1
+        if index == len(text):
+            return
+        char = text[index]
+        if state in ("object-first", "object-key"):
+            if char == "}" and state == "object-first":
+                index += 1
+                continue
+            if char != '"':
+                return
+            try:
+                key, index = scanstring(text, index + 1)
+            except ValueError:
+                return
+            while index < len(text) and text[index] in " \t\n\r":
+                index += 1
+            if index == len(text) or text[index] != ":":
+                return
+            index += 1
+            pending.extend((("object-next", allowed),
+                            ("value", tuple(p[1:] for p in allowed if p and p[0] == key))))
+        elif state in ("object-next", "array-next"):
+            if char == ("}" if state == "object-next" else "]"):
+                index += 1
+            elif char == ",":
+                index += 1
+                if state == "object-next":
+                    pending.append(("object-key", allowed))
+                else:
+                    pending.extend((("array-next", allowed), ("value", allowed)))
+            else:
+                return
+        elif state == "array-first":
+            if char == "]":
+                index += 1
+            else:
+                pending.extend((("array-next", allowed), ("value", allowed)))
+        elif char == "{":
+            index += 1
+            pending.append(("object-first", allowed))
+        elif char == "[":
+            index += 1
+            pending.append(("array-first", tuple(p[1:] for p in allowed if p and p[0] == "*")))
+        elif char == '"':
+            try:
+                _, index = scanstring(text, index + 1)
+            except ValueError:
+                return
+        else:
+            match = NUMBER_RE.match(text, index)
+            if match is not None:
+                yield match.group(), () in allowed
+                index = match.end()
+            else:
+                constant = next((v for v in ("null", "true", "false", "NaN", "Infinity", "-Infinity")
+                                 if text.startswith(v, index)), None)
+                if constant is None:
+                    return
+                index += len(constant)
+
+
+def number_decoder(raw: bytes, paths: tuple[tuple[str, ...], ...]) -> Callable[[str, Callable[[str], Any]], Any]:
+    """Apply prefix path labels to the authoritative decoder's number calls.
+
+    Planning is lazy: only the next numeric path is requested at each hook call.
+    No successful whole-document parse is needed, and later syntax cannot
+    change an earlier selection. Schemas without paths never call this planner.
+    """
+    tokens = _number_tokens(raw, paths)
 
     def parse(lexeme: str, retained: Callable[[str], Any]) -> Any:
-        nonlocal index
-        allowed = id(tokens[index]) in selected
-        index += 1
+        _, allowed = next(tokens)
         if not allowed:
             return retained(lexeme)
         result = _float(lexeme) if any(c in lexeme for c in ".eE") else _int(lexeme)

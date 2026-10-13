@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 from dataclasses import replace
 from typing import Any
@@ -510,7 +511,7 @@ def test_numeric_transport_policy_and_diagnostics(retained: bool) -> None:
 
 
 # Drive the complete existing raw-token transport corpus through both numeric
-# selections, in both policies. No declared path is touched in this corpus.
+# selections, in both policies, with actual declared numbers before the payload.
 from tests.test_async_settle_shadow_v2_evidence import (  # noqa: E402
     CONSTRUCTION,
     OBJECT_TOKEN_CASES,
@@ -534,3 +535,173 @@ def test_numeric_optin_baseline_transport_corpus(start: int) -> None:
                 raw = raw_token_variant(value, path, key, mode)
                 for retained in (False, True):
                     assert decode_result(raw, retained, ()) == decode_result(raw, retained, (("absent-number",),))
+                    assert_active_number_transport(raw, retained)
+                assert_number_token_differential(raw)
+
+
+@pytest.mark.parametrize("retained", [False, True])
+@pytest.mark.parametrize("tail", [b'"s":', b'"s":"unterminated}', b'"s":0,}'])
+def test_malformed_tail_keeps_declared_number_policy(retained: bool, tail: bytes) -> None:
+    with pytest.raises(ValueError, match="^json_shape$"):
+        s.decode(b'{"n":1,' + tail, 65536, retained_strings=retained)
+    for token in (b"1.0", str(2**100).encode()):
+        with pytest.raises(ValueError, match="^json_shape$"):
+            s.decode(b'{"n":' + token + b',' + tail, 65536,
+                     retained_strings=retained, binary64_paths=(("n",),))
+
+
+def test_actual_health_valid_float_does_not_mask_trailing_comma() -> None:
+    body = obj("health", "empty")
+    for value in (1, 1.0):
+        raw = canonical(dict(body, backlog_age_at_seconds=value))
+        h.HEALTH.parse(raw)
+        with pytest.raises(ValueError, match="^json_shape$"):
+            h.HEALTH.parse(raw[:-1] + b',}')
+
+
+def assert_active_number_transport(payload: bytes, retained: bool) -> None:
+    def result(token: bytes, paths: tuple[tuple[str, ...], ...]) -> Any:
+        try:
+            value = s.decode(b'{"n":' + token + b',"payload":' + payload + b'}',
+                             262144, retained_strings=retained, binary64_paths=paths)
+            assert type(value["n"]) is (float if token == b"1.0" else int)
+            assert value["n"] == (2**100 if len(token) > 20 else 1)
+            # Normalize ONLY the declared field, retaining every payload type.
+            value["n"] = 1
+            return ("ok", canonical(value))
+        except ValueError as exc:
+            return (type(exc), str(exc))
+    baseline = result(b"1", ())
+    for token in (b"1.0", str(2**100).encode()):
+        assert result(token, (("n",),)) == baseline, (payload, retained, token)
+
+
+NUMBER_PATHS = ((), ("n",), ("payload", "n"), ("a", "*", "n"), ("a", "*", "*"),
+                ("*", "n"), ("*", "*"), ("escaped1",), ("*",))
+
+
+def assert_number_token_differential(raw: bytes) -> None:
+    from trusted_router import async_settle_shadow_v2_a1_numbers as numbers
+    from trusted_router.async_settle_shadow_wire import bounded_json
+
+    # Independent whole-document selection oracle; callbacks preserve duplicate
+    # members and all number lexemes without numeric conversion or range limits.
+    class Members(list):
+        pass
+
+    tokens: list[tuple[str, object]] = []
+
+    def token(lexeme: str) -> object:
+        marker = object()
+        tokens.append((lexeme, marker))
+        return marker
+
+    valid = recursive = False
+    selected: set[int] = set()
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=Members,
+                           parse_int=token, parse_float=token)
+        valid = True
+    except RecursionError:
+        recursive = True
+    except (ValueError, UnicodeError):
+        pass
+
+    def visit(value: Any, paths: tuple[tuple[str, ...], ...]) -> None:
+        if type(value) is Members:
+            for key, child in value:
+                visit(child, tuple(p[1:] for p in paths if p and p[0] == key))
+        elif type(value) is list:
+            for child in value:
+                visit(child, tuple(p[1:] for p in paths if p and p[0] == "*"))
+        elif () in paths:
+            selected.add(id(value))
+
+    if valid:
+        visit(value, NUMBER_PATHS)
+    if not recursive:
+        planned = list(numbers._number_tokens(raw, NUMBER_PATHS))
+        assert [lexeme for lexeme, _ in planned] == [lexeme for lexeme, _ in tokens], raw
+        if valid:
+            assert [allowed for _, allowed in planned] == [id(marker) in selected for _, marker in tokens], raw
+
+    # Compare actual hook calls through the authoritative retained decoder, so
+    # byte/depth gates, duplicate keys and constants can stop either run early.
+    # Isolate selection from numeric validity: both numeric callbacks return 0.
+    expected: list[str] = []
+    actual: list[str] = []
+
+    def record(lexeme: str, retained: Any) -> int:
+        expected.append(lexeme)
+        return 0
+
+    def selected_number(lexeme: str) -> int:
+        actual.append(lexeme)
+        return 0
+
+    def result(hook: Any) -> Any:
+        try:
+            return ("ok", bounded_json(raw, 262144, signed=True, number_hook=hook))
+        except ValueError as exc:
+            return (type(exc), str(exc))
+
+    baseline = result(record)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(numbers, "_float", selected_number)
+        patch.setattr(numbers, "_int", selected_number)
+        patch.setattr(numbers, "binary64", lambda value: None)
+        hook = numbers.number_decoder(raw, NUMBER_PATHS)
+        observed = result(lambda lexeme, retained: hook(lexeme, selected_number))
+    assert actual == expected, raw
+    assert observed == baseline, raw
+
+
+def hostile_number_documents() -> list[bytes]:
+    return [
+        b'', b'"unterminated', b'{"s":0,}', b'undefined', b'[0,]',
+        b'{"x":1,"x":2}', b'{"x":1,"x":2,}', b'[' * 17 + b'0' + b']' * 17,
+        b'{"n":1.0,"s":', b'{"n":1.0,"s":"unterminated}', b'{"n":1.0,"s":0,}',
+        b'{"a":[{"n":1.0,"s":2},[3,4.0]],"n":5,"n":6.0}',
+        b'{"n":NaN,"a":[Infinity,-Infinity,1.0],"x":2}',
+        b'{"n":-0,"a":[-0.0,1e+2,1E-2,1e,1e+]}',
+        b'{"n":' + str(2**100).encode() + b',"x":' + b'9' * 5000 + b'}',
+        br'{"n":1.0,"s":"123 \" 4 \\ 5 \u0036","escaped\u0031":7.0}',
+        br'{"n":1.0,"s":"\ud800","a":["\ud800\udc00",8]}',
+        br'{"n":1.0,"s":"\uXX00","x":2}', b'{"n":1.0,"s":"\x00","x":2}',
+        b'{"n":1.0,"s":"\xff","x":2}', b'\xef\xbb\xbf{"n":1.0}',
+        *[('{"n":' + token + ',"a":[2]}').encode() for token in
+          ("1١", "1.١", "1e١", "+1", "01", "00", "-.1", "-Infinity", "1e+", "1.")],
+        b'{"n":1.0} 2', b'  \t\n\r{"n":1.0,"a":[2,3]} \r\n',
+        b'{"n":1.0,\v"x":2}', b'{"n":1.0,\f"x":2}',
+        *[b'[' * depth + b'{"n":1.0}' + b']' * depth for depth in (15, 16, 17, 100, 10000)],
+    ]
+
+
+@exhaustive
+def test_number_scanner_every_hostile_prefix() -> None:
+    for raw in hostile_number_documents():
+        for end in range(len(raw) + 1):
+            prefix = raw[:end]
+            assert_number_token_differential(prefix)
+            for retained in (False, True):
+                assert_active_number_transport(prefix, retained)
+
+
+def test_number_scanner_string_tokens_and_paths() -> None:
+    from trusted_router.async_settle_shadow_v2_a1_numbers import _number_tokens
+    raw = b'{"s":"123", "a":[{"n":1.0,"s":"2"},[3,4]],"n":5,"n":6}'
+    assert list(_number_tokens(raw, (("a", "*", "n"), ("n",)))) == [
+        ("1.0", True), ("3", False), ("4", False), ("5", True), ("6", True)]
+
+
+@pytest.mark.parametrize("retained", [False, True])
+def test_no_paths_never_invokes_number_planner(monkeypatch: pytest.MonkeyPatch, retained: bool) -> None:
+    from trusted_router import async_settle_shadow_v2_a1_numbers as numbers
+
+    def forbidden(*args: Any) -> Any:
+        pytest.fail("number planner invoked without a declared path")
+
+    monkeypatch.setattr(numbers, "number_decoder", forbidden)
+    assert s.decode(b'{"n":1}', 100, retained_strings=retained) == {"n": 1}
+    with pytest.raises(ValueError, match="^integer$"):
+        s.decode(b'{"n":1.0}', 100, retained_strings=retained)
