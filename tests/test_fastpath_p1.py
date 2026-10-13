@@ -67,7 +67,7 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     # /opt/fastpath on its PATH.
     for command in commands:
         assert not re.match(r"(fastpathctl|loadgen|fastpathwatch)\b", command), command
-        assert re.match(r"(/opt/fastpath/|gcloud |uv run |LOADGEN=)", command), command
+        assert re.match(r"(/opt/fastpath/|gcloud |uv run |FRONT=)", command), command
     # The load runs only under the watch: one command, the watch's, with
     # every ceiling of P1's, and the generator after -run; no generator
     # runs on its own, in the background or by PID.
@@ -80,8 +80,12 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
                  "-workspace $WS", "-run /opt/fastpath/loadgen "):
         assert flag in watch, flag
     load = watch.split("-run ", 1)[1]
-    for flag in ("-workspace $WS", "-database $DB", "-mix /opt/fastpath/load-mix.json", "-rate 1"):
+    for flag in ("-workspace $WS", "-database $DB", "-mix /opt/fastpath/load-mix.json", "-rate 1", "-front $FRONT"):
         assert flag in load, flag
+    # The front doors are read from the nodes, never written down: a node
+    # keeps its IP only until it is replaced.
+    assert not re.search(r"10\.128\.\d+\.\d+", runbook)
+    assert any(c.startswith("FRONT=$(gcloud compute instances list") for c in commands)
     # Before the first run, in this order: the override that puts the
     # workspace at the tier, and the role the watch's Monitoring reads
     # need, both before the watch's command; before the rate rises, each
