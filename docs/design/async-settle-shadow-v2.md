@@ -3488,17 +3488,7 @@ blocks, and missing object never authorizes LIST. Native store timestamps retain
 nanoseconds exactly; D2 governs their meaning. Reader timestamps/versions cannot
 replace the original reply required by CLOSE_RESULT.
 
-**Boot identity is an explicit activation seam (C8).** The evidence boot is a
-process UUID, not a platform revision or automatically the platform instance ID.
-P6 must capture a content-free startup correlation `(platform instance, process
-boot, revision, region, process start)` through the platform-tagged lifecycle
-channel before opted traffic, and reconcile each platform instance/process restart
-against it. Retain platform-owned inventory/events independently of those records;
-never enumerate boots by surviving counters/startup messages alone. A missing
-binding, unobservable restart or platform lifecycle hole blocks G2; a revision-only
-API cannot prove per-boot completeness. This is observability/readiness integration,
-not a new signed evidence protocol or a collector-created boot acknowledgement.
-Demonstrate kill-before-first-flush and restart joins in acceptance before opting in.
+**Independent process inventory is an unresolved A3-C1 source decision.** Before this producer assignment is complete, record one reviewed source binding for each router and enclave deployment: the exact platform API/log event type and fields supplying instance identity, process-launch identity, start, restart, stop/kill and revision/region; the bounded query and pagination/EOF rule; retention and delivery-completeness boundary; and a captured kill-before-startup-record plus same-instance-restart witness. If platform instance events are the source, prove and enforce one evidence process per independently observed instance lifetime. Otherwise A3-C1 must specify and instrument a supervisor outside the evidence-writing process that independently records every process launch and exit, including launches that emit no application record. The writer’s content-free startup correlation joins its UUID to that independently enumerated launch; it never supplies the expected-launch population. Retain all unmatched launches and block G2 for their affected interval; missing joins or unavailable completion boundaries cannot be silently dropped. Name and review this adapter/source protocol before implementing the collector or authorizing P6; revision records, aggregate Monitoring counts and surviving startup messages are not sufficient substitutes.
 
 | A3 ADD §5.3 criterion | Minimal satisfying original artifact / actual producer for this window |
 |---|---|
@@ -3543,10 +3533,7 @@ alone. Missing/partial/mismatched accounting is G1 artifact_gap; production plan
 native provenance (C2 fake_version/native=false is only for test plans). Malformed/unknown
 parser/semantics is evidence_schema_gap; also G7 evidence_export_budget_gap.
 
-Register every accounting source, platform source, dependency and original byte
-candidate in frozen INPUT_LEAF/INPUT_INVENTORY_ENTRY. Enforce C1's combined
-10,000-object transport bound as well as each pass bound; splitting collection
-passes never permits truncating a stage's complete input/dependency graph. Expected coverage remains
+Register every accounting source, platform source, dependency and original byte candidate in frozen INPUT_LEAF/INPUT_INVENTORY_ENTRY. Preserve the ≤10,000 explicit-key bound per export pass/bundle and every frozen per-object/page/manifest bound. A3-E/N/C2 must support a finite reviewed multi-bundle input plan for one complete stage evaluation, including predecessor graphs, without a new total-run object ceiling. P5’s current combined 10,000-object transport limit is an implementation seam to resolve, not a policy limit. Splitting passes never permits truncating the complete stage input graph. Acceptance must evaluate more than 10,000 original inputs across bounded bundles and prove that deleting a bundle blocks certification. Expected coverage remains
 independently derived from T14/HWM/slots; a self-consistent partial listing is
 insufficient. Report input_inventory commits that complete graph; predecessor
 re-evaluation repeats the same accounting verification. Exclude only the three
@@ -3649,7 +3636,7 @@ cap-only manifest input, invalid retained resolution support, pre-seed at/before
 any prerequisite and new unseeded booking region. Correct failures keep frozen
 §7.5 counts/subjects; ≥8 dates when the seed starts after midnight, and each
 issue-day horizon remains covered. Code packages run §11 full CI/oracle/conformance;
-A3 document editing is not evidence those tests passed.
+A3 document editing is not evidence those tests passed. A3-E/I must reject a release plan that moves a currently required criterion to a later stage, removes a deferred name from the whole-policy inventory, or substitutes a money-stage requirement with its earlier shadow-only result. Test the requested stage and recursively re-evaluated predecessor graphs. Required names, earliest stages and stage-specific check scope come from §§8/11/15.6; the release plan supplies approved evidence and cannot weaken that policy.
 
 **A3 ADD — pre-enable preimage resolution.** Frozen
 `W/src/async_settle_shadow_v2_a2_contract.py:351–375,414–416` requires both
