@@ -484,3 +484,34 @@ async def test_crlf_and_bom_across_byte_chunks():
                 yield bytes([byte])
     assert (await run_reply(STREAMS[0], httpx.Response(
         200, headers={"content-type": "text/event-stream"}, stream=ByteChunks()))).status == "up"
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", None])
+def test_streamed_requires_boolean_true(value):
+    # Review round 2, S03: a truthiness test would group integer 1 with True in
+    # the shape counter and skip the malformed-dimension error.
+    now, rows, results, evidence, _ = full_pass()
+    next(row for row in rows if row["streamed"])["streamed"] = value
+    result = check(evidence, "cohort", now, shadow_probe.denominator(results).splitlines())
+    assert result["errors"], result
+
+
+@pytest.mark.parametrize("side", ["start", "end"])
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_guard_coverage_edge(side, offset):
+    # Review round 2, S05: the thirty-second guard on each side must itself fit
+    # the ten-minute window; one microsecond outside fails before any read.
+    from scripts.async_settle.probe_cohort_check import PASS_CLOCK_SKEW_US, PASS_GUARD_INTERVAL_US
+    now, _, results, evidence, calls = full_pass()
+    now_us = int(now.timestamp() * 1e6)
+    margin = PASS_CLOCK_SKEW_US + PASS_GUARD_INTERVAL_US
+    start = now_us - 600_000_000 + margin + offset if side == "start" else now_us - 120_000_000
+    end = now_us - margin + offset if side == "end" else now_us - 90_000_000
+    results = [replace(r, request_sent_at_us=start, response_finished_at_us=end) for r in results]
+    lines = shadow_probe.denominator(results).splitlines()
+    if (offset < 0) if side == "start" else (offset > 0):
+        with pytest.raises(ValueError):
+            check(evidence, "cohort", now, lines)
+        assert calls == []
+    else:
+        assert check(evidence, "cohort", now, lines)["errors"] == []
