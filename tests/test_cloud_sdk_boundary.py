@@ -46,6 +46,10 @@ ALLOWED = {
     "storage_gcp_batch_dml.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
+    # Opt-in v2 owns a separate native client, metadata adapter and GCS attachment transport.
+    "storage_gcp_shadow_io.py",
+    "storage_gcp_shadow_observation.py",
+    "storage_gcp_shadow_attachments.py",
     "storage_gcp_settle_outbox.py",
     # Native Spanner implementation of the isolated, optional ShadowStore port.
     "storage_gcp_speculation_shadow.py",

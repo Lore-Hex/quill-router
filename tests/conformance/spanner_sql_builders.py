@@ -355,4 +355,16 @@ def builder_cases() -> list[SQLCase]:
         database = SimpleNamespace(snapshot=lambda capture=capture: nullcontext(capture))
         SpannerOperationalAnalyticsOutbox(database, pt).oldest_enqueued_at(floors=floors)
         cases.append(SQLCase(f"oldest-full-shards-{len(floors or {})}", capture.statements))
+    from trusted_router.storage_gcp_shadow_observation import (
+        read_shadow_health_statement,
+        shadow_health_claim_read,
+        shadow_health_previous,
+        shadow_health_publish_fence,
+    )
+    cases.extend([
+        SQLCase("shadow_health_claim_read", [shadow_health_claim_read()]),
+        SQLCase("shadow_health_publish_fence", [shadow_health_publish_fence()]),
+        SQLCase("shadow_health_previous", [shadow_health_previous()]),
+        SQLCase("read_shadow_health", [read_shadow_health_statement()]),
+    ])
     return cases
