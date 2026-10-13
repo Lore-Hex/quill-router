@@ -757,6 +757,23 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         report_sha256="719a3acfc87edf226b7b51a06b3b5d74192944dce248442ddc7e865fa2d4c2f0")
 
 
+def shadow_v2_release_pins() -> dict[str, str]:
+    """Read the existing A2-S8 code pins without importing the billing tests."""
+    import ast
+
+    from trusted_router.async_settle_shadow_v2_contract import FIXTURE_MANIFEST_SHA256
+
+    root = Path(__file__).resolve().parents[2]
+    tree = ast.parse((root / 'tests/test_billing_snapshot.py').read_bytes())
+    pins = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == 'FIXTURE_SHA256' for target in node.targets)]
+    if len(pins) != 1 or type(pins[0]) is not str:
+        raise ValueError('artifact_gap: billing release pin unavailable')
+    return {'proof.evaluator_fixture_sha256': pins[0],
+            'proof.binding_fixture_sha256': FIXTURE_SHA256,
+            'proof.wire_fixture_sha256': FIXTURE_MANIFEST_SHA256}
+
+
 def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes | None = None) -> Any:
     """Bind imported verifiers and original public descriptors at the I/O boundary."""
     import inspect
@@ -795,9 +812,7 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
     return Ports(verify_certificate, verify_original_receipt, verify_binding,
         comparator_positive, positive_sample, known_exclusion, pilot_enablement.fleet_budgets_pre,
         collect_rollbacks, report, pilot_enablement.post_flip, tuple(approvals),
-        {field: hashlib.sha256((root / 'tests/fixtures/async_settlement' / file).read_bytes()).hexdigest()
-         for field, file in (('proof.evaluator_fixture_sha256', 'billing_v1.json'),
-            ('proof.binding_fixture_sha256', 'shadow_v1.json'), ('proof.wire_fixture_sha256', 'shadow_v2/manifest.json'))})
+        shadow_v2_release_pins(), lambda path: (root / path).read_bytes(), pilot_enablement.roster_coverage)
 
 
 def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
@@ -816,7 +831,7 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
     args = parser.parse_args(argv)
     ports = shadow_v2_ports(args.certificate_keys.read_bytes() if args.certificate_keys else None,
                             args.binding_keys.read_bytes() if args.binding_keys else None)
-    result = evaluate(load(args.bundle.read_bytes()), ports, gate=args.gate)
+    result = evaluate(load(args.bundle.read_bytes(), ports), ports, gate=args.gate)
     try:
         output, _attachments = render(result)
     except ValueError as exc:

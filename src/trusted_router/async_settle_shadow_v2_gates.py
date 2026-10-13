@@ -239,8 +239,6 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
     reset_times = resets(ctx)
     external(ctx)
     start, elapsed, gap_times = clock(ctx, reset_times)
-    from trusted_router.async_settle_shadow_v2_gate_preimages import oversized_file_preimage
-    oversized_file_preimage(ctx)
     selected = STAGES[gate]
     window = None
     populations = None

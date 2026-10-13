@@ -9,15 +9,26 @@ from trusted_router import async_settle_shadow_v2_a2_contract as contract
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
 from trusted_router import async_settle_shadow_v2_evidence as p1
+from trusted_router.async_settle_shadow_v2_gate_inputs import Key
 from trusted_router.async_settle_shadow_v2_gate_result import Subject
 
 if TYPE_CHECKING:
     from trusted_router.async_settle_shadow_v2_gate_bundle import Context
 
 
+# These three F inputs are repository release files, not exported FILE_REFs.
+# Design §7.5.4 and the A2-S8 ledger fix their paths and existing code pins.
+RELEASE_FILES = {
+    'proof.evaluator_fixture_sha256': 'tests/fixtures/async_settlement/billing_v1.json',
+    'proof.binding_fixture_sha256': 'tests/fixtures/async_settlement/shadow_v1.json',
+    'proof.wire_fixture_sha256': 'tests/fixtures/async_settlement/shadow_v2/manifest.json',
+}
+
+
 def preimages(ctx: Context, manifest: dict[str, Any]) -> tuple[dict[str, bytes], dict[str, Any]]:
     """Derive roots from complete logical identities, retaining every candidate."""
-    artifacts = {v.name: v.raw for v in ctx.bundle.preimages}
+    artifacts = {v.name: v.raw for v in ctx.bundle.preimages if v.name not in RELEASE_FILES}
+    artifacts.update(ctx.release_files)
     for qualified in (*contract.OBJECT_PREIMAGES, *contract.FILE_PREIMAGES):
         dated = manifest['day'] + '/' + qualified
         if dated in artifacts:
@@ -42,9 +53,25 @@ def preimages(ctx: Context, manifest: dict[str, Any]) -> tuple[dict[str, bytes],
     expected = set(manifest['router_writers'])
     for field, kind in (('counter_root', p1.KINDS[3]), ('closure_root', p1.KINDS[4])):
         result['manifest.' + field] = [dict(key=a2.L(day, boot), bodies=grouped[kind, day + '/' + boot]) for boot in sorted(expected)]
+    # A missing page is still a root entry. Enumerate the first committed page
+    # and each successor from the counter's HWM and verified predecessor, not
+    # merely from the files that happened to arrive in the export.
     receipt_keys = {key for kind, key in grouped if kind == p1.KINDS[2] and key.startswith(day + '/')}
+    for counter in ctx.kind(p1.KINDS[3]):
+        if counter['day'] != day or counter['durable_event_hwm'] == 0:
+            continue
+        first = 1
+        while first <= counter['durable_event_hwm']:
+            key = day + '/' + counter['boot'] + '/' + f'{first:020}'
+            receipt_keys.add(key)
+            page = ctx.rows.get(Key(p1.KINDS[2], key))
+            if page is None:
+                break
+            first = int(page['last_seq']) + 1
     result['manifest.receipts_root'] = [dict(key=a2.L(*key.split('/')), bodies=grouped[p1.KINDS[2], key]) for key in sorted(receipt_keys)]
-    result['proof.ledger_root'] = [dict(key=key, bodies=values) for key, values in sorted(ledgers.items())]
+    expected_ledgers = {a2.L(b.role, b.boot, b.revision, b.region, str(b.start_us))
+                        for b in ctx.bundle.inventory.boots} if ctx.bundle.inventory else set()
+    result['proof.ledger_root'] = [dict(key=key, bodies=ledgers[key]) for key in sorted(expected_ledgers)]
     day_boots = set(manifest['router_writers']) | set(manifest['enclave_writers'])
     result['manifest.prerequisite_ledger_root'] = [entry for entry in result['proof.ledger_root'] if a2.decode_key(entry['key'])[1] in day_boots]
     trace_entries = []
@@ -64,6 +91,14 @@ def preimages(ctx: Context, manifest: dict[str, Any]) -> tuple[dict[str, bytes],
 def audit(ctx: Context) -> None:
     if ctx.proof is None:
         return
+    expected_ledgers = {a2.L(b.role, b.boot, b.revision, b.region, str(b.start_us))
+                        for b in ctx.bundle.inventory.boots} if ctx.bundle.inventory else set()
+    actual_ledgers = {a2.L(*(str(ledger[k]) for k in ('role', 'boot', 'revision', 'region', 'boot_at_us')))
+                      for ledger in ctx.ledgers}
+    for key in sorted(expected_ledgers - actual_ledgers):
+        ctx.issue('artifact_gap', 'expected prerequisite ledger absent', Subject(wire=a2.O('prerequisite_ledger', key)))
+    for key in sorted(actual_ledgers - expected_ledgers):
+        ctx.issue('evidence_schema_gap', 'prerequisite ledger outside independent inventory', Subject(wire=a2.O('prerequisite_ledger', key)))
     for qualified in contract.FILE_PREIMAGES:
         if not qualified.startswith('proof.'):
             continue
@@ -77,7 +112,13 @@ def audit(ctx: Context) -> None:
             continue
         artifacts, root_inputs = preimages(ctx, manifest)
         try:
+            inventory = contract._object_bytes(artifacts['manifest.independent_inventory_sha256'], a2.INDEPENDENT_INVENTORY)
+            if inventory['day'] != manifest['day']:
+                raise ValueError('evidence_schema_gap')
             contract.validate_preimages(manifest, ctx.proof, artifacts=artifacts, roots=root_inputs)
+        except KeyError:
+            ctx.issue('artifact_gap', 'independent inventory preimage absent',
+                Subject(day=manifest['day'], wire=a2.O(p1.KINDS[5], manifest['day'] + '/manifest-v2')))
         except ValueError as exc:
             gap = str(exc) if str(exc) in ('artifact_gap', 'evidence_schema_gap') else 'evidence_schema_gap'
             ctx.issue(gap, 'A2 manifest/proof preimage validation failed',
@@ -88,7 +129,7 @@ def input_inventory(ctx: Context) -> tuple[list[dict[str, Any]], dict[str, bytes
     """Inventory exact candidate files, including conflicts, in bounded leaves."""
     from trusted_router.async_settle_shadow_v2_gate_failures import TAG
     from trusted_router.async_settle_shadow_v2_schema import sha256
-    artifacts = {v.name: v.raw for v in ctx.bundle.preimages}
+    artifacts = {v.name: v.raw for v in ctx.bundle.preimages if v.name not in RELEASE_FILES}
     for row in (*ctx.bundle.rows, *ctx.bundle.attachments):
         artifacts['rows/' + row.key.kind + '/' + row.key.id + '/' + roots.file_digest(row.raw)] = row.raw
     for raw in ctx.bundle.ledgers:
@@ -109,13 +150,30 @@ def input_inventory(ctx: Context) -> tuple[list[dict[str, Any]], dict[str, bytes
     return entries, leaves
 
 
-def oversized_file_preimage(ctx: Context) -> None:
-    """Closed P5 seam pending the bounded source-file reconstruction mapping.
+def verify_release_file_preimages(ctx: Context) -> None:
+    """Read fixed checkout inputs through the tool's I/O port, checking both pins.
 
-    Keep its bytes available for F verification and every independent predicate;
-    the provisional inventory cannot certify complete input closure.
+    Exported bytes cannot substitute for a release input. The reader is bound
+    to the tool checkout, never to a caller-supplied bundle path. All other
+    supplied evidence remains subject to FILE_REF's original-byte bound.
     """
+    for qualified, path in RELEASE_FILES.items():
+        subject = Subject(wire=a2.O('a2_file', path))
+        if ctx.ports is None or ctx.ports.read_release_file is None or ctx.proof is None:
+            ctx.issue('artifact_gap', 'release checkout reader absent', subject)
+            continue
+        try:
+            raw = ctx.ports.read_release_file(path)
+            actual = roots.file_digest(raw)
+        except (OSError, ValueError):
+            ctx.issue('artifact_gap', 'release checkout file unavailable', subject)
+            continue
+        pin = ctx.ports.approved_files.get(qualified)
+        if pin is None or actual != pin or actual != ctx.proof[qualified.split('.')[1]]:
+            ctx.issue('artifact_gap', 'release checkout file differs from repository or manifest pin', subject)
+            continue
+        ctx.release_files[qualified] = raw
     for source in ctx.bundle.preimages:
-        if len(source.raw) > 262144:
-            ctx.issue('artifact_gap', 'oversized_file_preimage: ' + source.name,
+        if source.name not in RELEASE_FILES and len(source.raw) > 262144:
+            ctx.issue('artifact_gap', 'exported_file_ref_bound: ' + source.name,
                       Subject(wire=a2.O('a2_file', source.name)))

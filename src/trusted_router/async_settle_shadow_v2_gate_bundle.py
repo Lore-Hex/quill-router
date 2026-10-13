@@ -49,6 +49,7 @@ class Context:
     verified: set[str] = field(default_factory=set)
     obligations: list[dict[str, Any]] = field(default_factory=list)
     salvaged_events: list[tuple[dict[str, Any], dict[str, Any]]] = field(default_factory=list)
+    release_files: dict[str, bytes] = field(default_factory=dict)
 
     def kind(self, kind: str) -> list[dict[str, Any]]:
         return [v for k, v in self.rows.items() if k.kind == kind]
@@ -155,7 +156,11 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
         ctx.issue('artifact_gap', 'undefined preimage: ' + name, Subject(object_id=name))
     if len({p.name for p in bundle.preimages}) != len(bundle.preimages):
         ctx.issue('artifact_gap', 'duplicate supplied preimage')
-    from trusted_router.async_settle_shadow_v2_gate_preimages import audit
+    from trusted_router.async_settle_shadow_v2_gate_preimages import (
+        audit,
+        verify_release_file_preimages,
+    )
+    verify_release_file_preimages(ctx)
     audit(ctx)
     return ctx
 

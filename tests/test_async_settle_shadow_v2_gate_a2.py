@@ -179,7 +179,8 @@ def test_unexercised_certificate_still_bound(passing: Bundle) -> None:
 
 
 def test_missing_preimage_never_accepts_digest(passing: Bundle) -> None:
-    result = evaluate(replace(passing, preimages=()), ports(), gate='shadow-serving')
+    result = evaluate(replace(passing, preimages=tuple(p for p in passing.preimages
+        if p.name != 'proof.external_proofs_sha256')), ports(), gate='shadow-serving')
     assert any(f.gap == 'artifact_gap' and 'A2 manifest/proof preimage validation failed' in f.detail
                for f in result.failures)
 
@@ -213,19 +214,61 @@ def test_traffic_router_region_cannot_be_excused(passing: Bundle) -> None:
     assert 'regional_seed_gap' in evaluate(bundle, ports(), gate='pre-flip').gaps
 
 
-def test_contract_gap_exact_billing_fixture_cannot_be_file_ref() -> None:
+def test_release_billing_fixture_is_not_a_file_ref() -> None:
     raw = (FIXTURES.parent / 'billing_v1.json').read_bytes()
     assert len(raw) == 699476
     with pytest.raises(ValueError):
         a2.FILE_REF(dict(path='fixtures/billing_v1.json', bytes=len(raw), sha256=roots.file_digest(raw)))
 
 
-def test_oversized_preimage_keeps_inventory_provisional(passing: Bundle) -> None:
+def test_release_files_are_checkout_inputs_outside_export_inventory(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
     result = evaluate(passing, ports(), gate='shadow-serving')
     raw, _ = render(result)
-    assert json.loads(raw)['verdict'] == 'BLOCKED'
+    assert json.loads(raw)['verdict'] == 'PASS'
+    assert result.gate_report is not None and result.gate_report['complete'] is True
+    assert not set(RELEASE_FILES) & {source.name for source in passing.preimages}
+    refs = [ref for leaf in result.input_leaves.values() for ref in json.loads(leaf)['keys']]
+    assert not set(RELEASE_FILES) & {ref['path'] for ref in refs}
+    assert all(ref['bytes'] <= 262144 for ref in refs)
+
+
+@pytest.mark.parametrize('field', ['proof.evaluator_fixture_sha256', 'proof.binding_fixture_sha256', 'proof.wire_fixture_sha256'])
+@pytest.mark.parametrize('damage', ['missing', 'changed', 'manifest', 'pin', 'unbound'])
+def test_release_file_requires_checkout_and_both_pins(passing: Bundle, field: str, damage: str) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+    reader = ports().read_release_file
+    assert reader is not None
+    path = RELEASE_FILES[field]
+    def read(name: str) -> bytes:
+        if name == path:
+            if damage == 'missing':
+                raise FileNotFoundError(name)
+            if damage == 'changed':
+                return reader(name) + b'\n'
+        return reader(name)
+    bound = replace(ports(), read_release_file=None if damage == 'unbound' else read)
+    if damage == 'pin':
+        bound = replace(bound, approved_files={**bound.approved_files, field: '0' * 64})
+    if damage == 'manifest':
+        proof = json.loads(passing.proof)
+        proof[field.split('.')[1]] = '0' * 64
+        passing = replace(passing, proof=canonical(proof))
+    # An exported copy cannot rescue a missing/changed checkout input.
+    passing = replace(passing, preimages=(*passing.preimages, Preimage(field, reader(path))))
+    ctx = decode_bundle(passing, bound, 'shadow-serving')
+    assert any(issue.gap == 'artifact_gap' and issue.subject.wire == a2.O('a2_file', path) for issue in ctx.issues)
+    assert field not in ctx.release_files
+
+
+def test_oversized_export_still_blocks(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    candidate = replace(passing, preimages=(*passing.preimages, Preimage('evidence/too-large', b'x' * 262145)))
+    result = evaluate(candidate, ports(), gate='shadow-serving')
+    assert result.verdict == 'BLOCKED'
     assert result.gate_report is not None and result.gate_report['complete'] is False
-    assert any(f.gap == 'artifact_gap' and f.detail.startswith('oversized_file_preimage:') for f in result.failures)
+    assert any(f.gap == 'artifact_gap' and f.detail.startswith('exported_file_ref_bound:') for f in result.failures)
 
 
 def test_loader_decodes_original_a2_payload_bytes() -> None:
@@ -350,6 +393,95 @@ def test_render_rechecks_exact_unlisted_tally(passing: Bundle) -> None:
     with pytest.raises(ValueError):
         render(replace(result, failures=failures, gaps=tuple(sorted({f.gap for f in failures})),
             gate_report=report, detail_streams={**result.detail_streams, 'failures': pages}))
+
+
+def test_missing_ledger_is_enumerated_from_inventory(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_preimages import preimages
+    candidate = replace(passing, ledgers=())
+    ctx = decode_bundle(candidate, ports(), 'shadow-serving')
+    manifest = ctx.kind(p1.KINDS[5])[0]
+    _, entries = preimages(ctx, manifest)
+    assert passing.inventory is not None
+    expected = sorted(a2.L(b.role, b.boot, b.revision, b.region, str(b.start_us)) for b in passing.inventory.boots)
+    assert entries['proof.ledger_root'] == [dict(key=key, bodies=[]) for key in expected]
+    assert any(i.gap == 'artifact_gap' and i.detail == 'expected prerequisite ledger absent' for i in ctx.issues)
+
+
+def loaded_fixture(passing: Bundle) -> Bundle:
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    value = dict(v=2, policy_version='shadow-v2', contract_revision='a1',
+        rows=[dict(kind=r.key.kind, id=r.key.id, raw=r.raw.decode()) for r in passing.rows],
+        attachments=[dict(kind=r.key.kind, id=r.key.id, raw=r.raw.decode()) for r in passing.attachments],
+        preimages=[dict(name=p.name, raw=p.raw.decode()) for p in passing.preimages],
+        proof=passing.proof.decode(), ledgers=[raw.decode() for raw in passing.ledgers],
+        completed_at_us=passing.completed_at_us, days=list(passing.days))
+    raw = canonical(value)
+    assert len(raw) > 262144  # The container is not a single FILE_REF.
+    return load(raw, ports())
+
+
+def test_loader_derives_roster_cohort_and_shutdown_from_original_bytes(passing: Bundle) -> None:
+    loaded = loaded_fixture(passing)
+    assert loaded.inventory is not None and passing.inventory is not None
+    def attributes(b: Any) -> tuple[Any, ...]:
+        return b.boot, b.role, b.revision, b.region, b.start_us, b.end_us, b.termination_applies
+    assert sorted(map(attributes, loaded.inventory.boots)) == sorted(map(attributes, passing.inventory.boots))
+    assert loaded.cohort == passing.cohort
+    shutdown = [entry for key, entries in loaded.a2_streams.items() if key.startswith('shutdown_writers/') for entry in entries]
+    assert {entry['boot'] for entry in shutdown} == {'boot0', 'boot1'}
+    assert loaded.undefined_preimages == ('retained_payload_adapter_unbound',)
+    assert loaded.budget is None  # Envelope decoding is not retained approval.
+
+
+@pytest.mark.parametrize('missing', ['reviews/', 'budgets/deployment.json', 'details/shutdown/', 'measurements/'])
+def test_loader_requires_original_dependency_bytes(passing: Bundle, missing: str) -> None:
+    candidate = replace(passing, preimages=tuple(p for p in passing.preimages if not p.name.startswith(missing)))
+    loaded = loaded_fixture(candidate)
+    assert any(name.startswith('a2_payload_dependency_closure:') for name in loaded.undefined_preimages)
+
+
+def test_loader_rejects_changed_retained_roster_pins(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    changed = {}
+    for source in passing.preimages:
+        if source.name.endswith('/serving.json'):
+            rows = json.loads(source.raw)
+            rows[0]['pins']['TR_ASYNC_SETTLE_ENABLED'] = 'true'
+            changed[source.name] = canonical(rows)
+    sources = []
+    for source in passing.preimages:
+        if source.name in changed:
+            source = Preimage(source.name, changed[source.name])
+        elif source.name.endswith('/manifest.independent_inventory_sha256'):
+            envelope = json.loads(source.raw)
+            raw = changed[envelope['serving']['path']]
+            envelope['serving'].update(sha256=roots.file_digest(raw), bytes=len(raw))
+            source = Preimage(source.name, a2.INDEPENDENT_INVENTORY.serialize(envelope))
+        sources.append(source)
+    loaded = loaded_fixture(replace(passing, preimages=tuple(sources)))
+    assert any(name.startswith('a2_payload_dependency_closure:') for name in loaded.undefined_preimages)
+
+
+def test_missing_first_receipt_has_expected_root_entry(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_preimages import preimages
+    candidate = replace(passing, rows=tuple(r for r in passing.rows if r.key.kind != p1.KINDS[2]))
+    ctx = decode_bundle(candidate, ports(), 'shadow-serving')
+    manifest = ctx.kind(p1.KINDS[5])[0]
+    _, entries = preimages(ctx, manifest)
+    assert entries['manifest.receipts_root'] == [dict(key=a2.L(passing.days[0], 'boot0', f'{1:020}'), bodies=[])]
+
+
+def test_independent_inventory_day_must_match_manifest(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    sources = []
+    for source in passing.preimages:
+        if source.name.endswith('/manifest.independent_inventory_sha256'):
+            value = json.loads(source.raw)
+            value['day'] = '2026-01-01'
+            source = Preimage(source.name, a2.INDEPENDENT_INVENTORY.serialize(value))
+        sources.append(source)
+    ctx = decode_bundle(replace(passing, preimages=tuple(sources)), ports(), 'shadow-serving')
+    assert any(i.gap == 'evidence_schema_gap' and i.detail == 'A2 manifest/proof preimage validation failed' for i in ctx.issues)
 
 
 def test_traced_detail_pagination_chain() -> None:

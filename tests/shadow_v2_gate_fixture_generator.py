@@ -82,9 +82,7 @@ def ports() -> Ports:
     return Ports(cert.verify_certificate, cert.verify_original_receipt, binding.verify_binding,
         legacy.comparator_positive, legacy.positive_sample, legacy.known_exclusion,
         pilot.fleet_budgets_pre, legacy.collect_rollbacks, legacy.report, pilot.post_flip, tuple(approvals),
-        {field: hashlib.sha256((ROOT / file).read_bytes()).hexdigest() for field, file in (
-            ('proof.evaluator_fixture_sha256', 'billing_v1.json'), ('proof.binding_fixture_sha256', 'shadow_v1.json'),
-            ('proof.wire_fixture_sha256', 'shadow_v2/manifest.json'))})
+        legacy.shadow_v2_release_pins(), lambda path: (Path(__file__).parents[1] / path).read_bytes(), pilot.roster_coverage)
 
 
 def pre_enable_bundle(tmp_path: Path) -> dict[str, Any]:

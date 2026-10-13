@@ -1,12 +1,14 @@
 """A2 byte graph for P5 test bundles; no frozen fixture is modified."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
 from typing import Any
 
+from scripts.async_settle.pilot_enablement import PILOT, roster_coverage
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a2_contract as c
 from trusted_router import async_settle_shadow_v2_a2_evidence as e
@@ -16,7 +18,7 @@ from trusted_router.async_settle_shadow_v2_gate_bundle import ATTACHMENTS, Conte
 from trusted_router.async_settle_shadow_v2_gate_failures import TAG, detail
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Preimage, Row
 from trusted_router.async_settle_shadow_v2_gate_preimages import preimages
-from trusted_router.async_settle_shadow_v2_schema import sha256
+from trusted_router.async_settle_shadow_v2_schema import day_at, sha256
 from trusted_router.detached_jws import canonical
 
 ROOT = Path(__file__).parent / 'fixtures/async_settlement'
@@ -95,8 +97,23 @@ def seal(bundle: Bundle) -> Bundle:
             continue
         manifest = a1.MANIFEST.parse(row.raw)
         day = manifest['day']
-        roster = ref('inventory/' + day + '/serving.json', canonical(dict(router=manifest['router_writers'], enclave=manifest['enclave_writers'])))
-        independent = dict(**TAG, day=day, serving=roster, deployment=roster, approval=approval(roster), complete=True)
+        serving = []
+        for boot in bundle.inventory.boots:
+            end = boot.end_us or bundle.completed_at_us
+            if not day_at(boot.start_us) <= day <= day_at(end - 1):
+                continue
+            midnight = (dt.date.fromisoformat(day) - dt.date(1970, 1, 1)).days * 86400000000
+            pins = (dict(TR_ASYNC_SETTLE_ENABLED='false', TR_ASYNC_SETTLE_PROTECTION='false',
+                TR_ASYNC_SETTLE_SHADOW_WORKSPACES=PILOT, TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED='false')
+                if boot.role == 'router' else dict(TR_ASYNC_SETTLE_NEGOTIATE='off', TR_ASYNC_SETTLE_SHADOW='on'))
+            serving.append(dict(instance=boot.boot, role=boot.role, revision=boot.revision, region=boot.region,
+                intervals=[dict(day=day, started_at_us=max(midnight, boot.start_us),
+                    flushed_at_us=min(midnight + 86400000000, end))], pins=pins))
+        roster_coverage(serving)
+        roster = ref('inventory/' + day + '/serving.json', canonical(serving))
+        deployment = ref('inventory/' + day + '/deployment.json', canonical(dict(serving=serving,
+            maximum_router_instances_by_region=dict(bundle.budget.regional_caps))))
+        independent = dict(**TAG, day=day, serving=roster, deployment=deployment, approval=approval(deployment), complete=True)
         artifacts[day + '/manifest.independent_inventory_sha256'] = e.INDEPENDENT_INVENTORY.serialize(independent)
         manifest['independent_inventory_sha256'] = sha256(independent)
         for field, raw in (('config_sha256', artifacts[config['path']]), ('fixture_sha256', (ROOT / 'shadow_v2_a2/manifest.json').read_bytes())):
@@ -111,7 +128,10 @@ def seal(bundle: Bundle) -> Bundle:
         if field.startswith('proof.'):
             proof[field.split('.')[1]] = r.file_digest(artifacts[field])
     ctx = Context(replace(bundle, preimages=tuple(Preimage(k, v) for k, v in artifacts.items())), None, 'pre-flip')
-    ctx.attachments = {row.key: ATTACHMENTS[row.key.kind].parse(row.raw) for row in bundle.attachments}
+    # Root construction only consumes decoded coverage containers. The generator
+    # already called every trace constructor; evaluation validates those bytes.
+    ctx.attachments = {row.key: ATTACHMENTS[row.key.kind].parse(row.raw)
+                       for row in bundle.attachments if row.key.kind == 'coverage'}
     for _, manifest in manifests:
         _, roots = preimages(ctx, manifest)
         for field, stream in c.ENTRY_PREIMAGES.items():
@@ -124,4 +144,6 @@ def seal(bundle: Bundle) -> Bundle:
     for key, manifest in manifests:
         manifest['proof_manifest_sha256'] = r.file_digest(raw_proof)
         rows.append(Row(key, a1.MANIFEST.serialize(manifest)))
-    return replace(bundle, rows=tuple(rows), proof=raw_proof, preimages=tuple(Preimage(k, v) for k, v in artifacts.items()))
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+    return replace(bundle, rows=tuple(rows), proof=raw_proof,
+        preimages=tuple(Preimage(k, v) for k, v in artifacts.items() if k not in RELEASE_FILES))

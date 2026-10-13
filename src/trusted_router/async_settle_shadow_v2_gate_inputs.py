@@ -31,6 +31,10 @@ class LegacyReport(Protocol):
                  *, not_before_us: int = 0) -> dict[str, Any]: ...
 
 
+class RosterCoverage(Protocol):
+    def __call__(self, rows: list[dict[str, Any]]) -> set[tuple[Any, ...]]: ...
+
+
 @dataclass(frozen=True)
 class VerifierApproval:
     """Trusted tool's imported callable and approved original public artifacts."""
@@ -58,6 +62,8 @@ class Ports:
     post_flip: Callable[[dict[str, Any]], dict[str, Any]]
     approvals: tuple[VerifierApproval, ...] = ()
     approved_files: Mapping[str, str] = field(default_factory=dict)
+    read_release_file: Callable[[str], bytes] | None = None
+    roster_coverage: RosterCoverage | None = None
 
 
 @dataclass(frozen=True, order=True)
@@ -221,3 +227,4 @@ class Bundle:
     preimages: tuple[Preimage, ...] = ()
     a2_payloads: Mapping[str, dict[str, Any]] = field(default_factory=dict)
     window: Mapping[str, int] | None = None
+    a2_streams: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)
