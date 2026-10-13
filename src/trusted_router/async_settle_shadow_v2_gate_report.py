@@ -61,13 +61,13 @@ def population(ctx: Context, window: dict[str, int], required: tuple[str, ...]) 
         and s['deployment']['region'] == by_boot.get(s['original_terminal_receipt']['boot']) for s in samples)
     slots = [e for page in ctx.attached('publisher_trace') for e in page['entries'] if left <= e['slot'] * 2000000 < right]
     available_slots = known and not any(i.gap == 'publisher_trace_gap' for i in ctx.issues)
-    shutdown = [v for v in ctx.attached('shutdown_entry') if left < v['interval_end_us'] <= right]
+    shutdown = [v for v in (ctx.bundle.shutdown.entries if ctx.bundle.shutdown else ()) if left < v['interval_end_us'] <= right]
     expected_closes = {(m['day'], boot) for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m
         for boot, writer in m['router_writers'].items() if left < writer['lifetime']['end_us'] <= right}
     known_closes = known and expected_closes == {(s['day'], s['boot']) for s in shutdown}
     closes = [v for v in ctx.kind(a1.KINDS[-1]) if (v['day'], v['boot']) in expected_closes]
     known_results = known_closes and {(v['day'], v['boot']) for v in closes} == expected_closes
-    measurements = [v for v in ctx.attached('shutdown_measurement') if (v['day'], v['boot']) in expected_closes]
+    measurements = [v for v in (ctx.bundle.shutdown.measurements if ctx.bundle.shutdown else ()) if (v['day'], v['boot']) in expected_closes]
     known_measurements = known_closes and {(v['day'], v['boot']) for v in measurements} == expected_closes
     term = {(s['day'], s['boot']) for s in shutdown if s['termination_applies']}
     for available, rule, gap in ((available_samples, 'G5', 'eligible_coverage_gap'),
@@ -85,14 +85,23 @@ def population(ctx: Context, window: dict[str, int], required: tuple[str, ...]) 
 
 
 def window_for(ctx: Context) -> dict[str, int]:
-    if ctx.bundle.window is not None:
-        value = dict(ctx.bundle.window)
-        p1.INTERVAL(value)
-        return value
-    intervals = [v['lifetime'] for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m
-                 for v in m['router_writers'].values()]
-    require(bool(intervals), 'artifact_gap: observation window unavailable')
-    return dict(start_us=min(v['start_us'] for v in intervals), end_us=max(v['end_us'] for v in intervals))
+    # Observation scope survives optional/missing manifests: approved independent
+    # writer lifetimes and validated selected days are the authority.
+    intervals = [(b.start_us, min(b.end_us or ctx.bundle.completed_at_us, ctx.bundle.completed_at_us))
+                 for b in ctx.bundle.inventory.boots if b.role == 'router'] if ctx.bundle.inventory else []
+    intervals = [(left, right) for left, right in intervals if left < right]
+    require(bool(intervals), 'artifact_gap: observation scope unavailable')
+    left, right = min(v[0] for v in intervals), max(v[1] for v in intervals)
+    if ctx.certified_end_us is not None:
+        right = min(right, ctx.certified_end_us)
+    value = dict(start_us=left, end_us=right)
+    p1.INTERVAL(value)
+    requested = ctx.bundle.window
+    if requested is not None and (dict(requested) != value or
+            ctx.certified_start_us is not None and requested['start_us'] < ctx.certified_start_us):
+        ctx.issue('artifact_gap', 'requested window is not closed by original evidence')
+        ctx.issue('continuous_window_gap', 'requested interval exceeds certified continuous coverage', unavailable=True)
+    return value
 
 
 def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: dict[str, int],
@@ -174,7 +183,7 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
         fleet_peaks=peaks(next((p for p in legacy.peaks or () if p.region is None), None), ctx), **observations(**populations),
         first_seed_at_us=legacy.first_seed_us, first_reset_at_us=None if any(r['at_us'] is None for r in ctx.reset_history) else min(legacy.reset_timestamps_us, default=None),
         first_gap_at_us=min(legacy.gap_timestamps_us, default=None), clock_start_us=legacy.clock_start_us,
-        elapsed_seconds=None if legacy.clock_start_us is None else (window['end_us'] - legacy.clock_start_us) // 1000000,
+        elapsed_seconds=legacy.elapsed_seconds,
         failure_counts=tallies, **details, verifiers=verifiers,
         complete=not any(i.gap in ('artifact_gap', 'evidence_schema_gap') for i in ctx.issues))
     # Fleet and region series are independent recomputations of the same union.

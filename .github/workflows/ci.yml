@@ -415,7 +415,7 @@ jobs:
       - name: Frozen-main proof matrix without coverage
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
-          -m proof_oracle tests/test_async_settle_proof_oracle.py
+          -m proof_oracle tests/test_async_settle_proof_oracle.py tests/test_async_settle_shadow_v2_gate_window.py
           --splits 4 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
 

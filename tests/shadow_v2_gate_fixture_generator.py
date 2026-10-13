@@ -238,20 +238,8 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
                         bucket.update(settle_attempts=1, A=1, proof_compared=1, requested_eligible=1)
                     counter['buckets'].append(bucket)
             first, last = (left + 1999999) // 2000000, (right - 1) // 2000000
-            previous_trace = None
             trace_template = fixture('publisher_slot_trace')
-            for offset in range(first, last + 1, 60):
-                entries = []
-                for slot in range(offset, min(last + 1, offset + 60)):
-                    trace = trace_template.copy()
-                    stamp = slot * 2000000
-                    trace.update(day=day, boot=boot.boot, slot=slot, claim_start_us=stamp,
-                        claim_at_ns=stamp * 1000, observed_at_ns=stamp * 1000, publisher_heartbeat_ns=stamp * 1000,
-                        ack_at_us=stamp + 400000, body_sha256=sha256(body) if slot == body['slot'] else sha256({'slot': slot, 'boot': boot.boot}))
-                    entries.append(trace)
-                tp = dict(**TAG, day=day, boot=boot.boot, first_slot=offset, last_slot=entries[-1]['slot'], previous_sha256=previous_trace, entries=entries)
-                attachments.append(Row(Key('publisher_trace', f'publisher-traces/{day}/{boot.boot}/{offset}'), canonical(tp)))
-                previous_trace = sha256(tp)
+            attachments.extend(trace_rows(day, boot.boot, first, last, trace_template, body))
             count_slots = last - first + 1
             counter['publisher'].update(scheduled_slots=count_slots, claim_attempts=count_slots,
                                        claims=count_slots, scans=count_slots, publications=count_slots)
@@ -431,6 +419,45 @@ def change_row(bundle: Bundle, kind: str, change: Any, index: int = 0) -> Bundle
     change(value)
     rows[pos] = Row(row.key, canonical(value))
     return replace(bundle, rows=tuple(rows))
+
+
+
+def trace_rows(day: str, boot: str, first: int, last: int,
+               template: dict[str, Any], body: dict[str, Any]) -> list[Row]:
+    """Generate identical slot shapes in bulk; only the loader validates them.
+
+    Each UTC day reuses this shape and 60-slot page layout. Dates, writer names,
+    absolute slots, timestamp offsets and predecessor hashes are the variables.
+    """
+    fields = ('ack_at_us', 'body_sha256', 'claim_at_ns', 'claim_start_us',
+              'observed_at_ns', 'publisher_heartbeat_ns', 'slot')
+    shape = {**template, 'day': day, 'boot': boot,
+             **{name: 'INSERT_' + name for name in fields}}
+    encoded = canonical(shape)
+    for name in fields:
+        encoded = encoded.replace(canonical('INSERT_' + name), b'%s' if name == 'body_sha256' else b'%d')
+    digest_prefix = b'{"boot":' + canonical(boot) + b',"slot":'
+    special = canonical(sha256(body))
+    page_shape = canonical(dict(**TAG, day=day, boot=boot, entries='ENTRIES',
+        first_slot='FIRST', last_slot='LAST', previous_sha256='PREVIOUS'))
+    for marker, replacement in ((b'"ENTRIES"', b'[%s]'), (b'"FIRST"', b'%d'),
+                                (b'"LAST"', b'%d'), (b'"PREVIOUS"', b'%s')):
+        page_shape = page_shape.replace(marker, replacement)
+    previous = b'null'
+    rows = []
+    for offset in range(first, last + 1, 60):
+        stop = min(last + 1, offset + 60)
+        entries = []
+        for slot in range(offset, stop):
+            stamp = slot * 2000000
+            digest = special if slot == body['slot'] else b'"' + hashlib.sha256(
+                digest_prefix + str(slot).encode() + b'}').hexdigest().encode() + b'"'
+            entries.append(encoded % (stamp + 400000, digest, stamp * 1000,
+                stamp, stamp * 1000, stamp * 1000, slot))
+        raw = page_shape % (b','.join(entries), offset, stop - 1, previous)
+        rows.append(Row(Key('publisher_trace', f'publisher-traces/{day}/{boot}/{offset}'), raw))
+        previous = b'"' + hashlib.sha256(raw).hexdigest().encode() + b'"'
+    return rows
 
 
 @contextmanager

@@ -179,6 +179,11 @@ def commit_originals(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
         proof[field.split('.')[1]] = r.file_digest((Path(__file__).parents[1] / path).read_bytes())
     current = replace(bundle, preimages=tuple(Preimage(k, v) for k, v in artifacts.items()))
     ctx = Context(current, None, 'pre-flip')
+    # Construction already owns this complete population. Do not validate each
+    # generated slot merely to enumerate root keys; the loader does that once.
+    trace_rows = tuple(row for row in current.attachments if row.key.kind == 'publisher_trace')
+    ctx.trace_population_cache = ((trace_rows, current.inventory, current.completed_at_us),
+                                  frozenset(row.key.id for row in trace_rows))
     ctx.rows = {row.key: a1.validate_row(row.key.kind, row.key.id, row.raw) for row in bundle.rows}
     ctx.attachments = {row.key: ATTACHMENTS[row.key.kind].parse(row.raw)
                        for row in bundle.attachments if row.key.kind == 'coverage'}
@@ -357,6 +362,9 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
         value['configured_reads_per_second'] = rat(10)
         value['pending_rows_per_second'] = rat(300)
         value['configured_pending_rows_per_second'] = rat(300)
+    for value in [limits['fleet'], limits['regions'][0]['approved']]:
+        value.update(startup_operations_1s=1, close_operations_1s=2, export_operations_1s=2,
+                     export_bytes_per_second=rat(30000))
     limit_ref = ref('budgets/limits.json', canonical(limits))
     segments = []
     spans = [(boot, rate.start_us, rate.end_us) for boot in bundle.inventory.boots
@@ -395,7 +403,12 @@ def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None 
             claim_operations_per_second=rat(Fraction(1, 2)), scan_operations_per_second=rat(Fraction(1, 2)),
             publication_operations_per_second=rat(Fraction(1, 2)),
             export_operations_per_second=rat(Fraction(2, 5)), export_bytes_per_second=rat(Fraction(131072, 5)))
-        peaks.update(configured_routers=int(row['role'] == 'router'), configured_publishers=0,
+        peaks.update(simultaneous_routers=int(row['role'] == 'router'), simultaneous_publishers=0,
+            reads_per_second=rat(Fraction(5, 4) if row['role'] == 'router' else 0),
+            pending_rows_per_second=rat(Fraction(1001, 4) if row['role'] == 'router' else 0),
+            trust_rows_per_second=rat(Fraction(1, 4) if row['role'] == 'router' else 0),
+            health_rows_per_second=rat(1 if row['role'] == 'router' else 0),
+            configured_routers=int(row['role'] == 'router'), configured_publishers=0,
             configured_reads_per_second=rat(Fraction(5, 4) if row['role'] == 'router' else 0))
         pre_segments.append(dict(day=span['day'], boot=row['instance'], region=row['region'],
             start_us=span['started_at_us'], end_us=span['flushed_at_us'], role=row['role'],

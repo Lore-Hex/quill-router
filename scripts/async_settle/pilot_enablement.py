@@ -557,8 +557,6 @@ def main() -> None:
                                       os.environ[args.gateway_token_env], client)
         else:
             bundle = json.loads(args.bundle.read_text())
-            if bundle.get('policy_version') == 'shadow-v2' or bundle.get('contract_revision') == 'a1':
-                raise ValueError('explicit shadow-v2 policy required')
             if getattr(args, 'live', False):
                 database = live_database(args.project, args.instance, args.database)
                 if args.command == 'post-flip':

@@ -49,6 +49,9 @@ def test_load_real_original_bytes_all_views_field_by_field(real: Any) -> None:
             'publisher_writes': (rate['end_us'] - rate['start_us']) // 1000000} for rate in expected['rates']))
     wanted['load_segments'] = tuple(expected['segments'])
     wanted['projected_load_segments'] = tuple(expected['projected_segments'])
+    from trusted_router.async_settle_shadow_v2_gate_loading import LIMITS
+    approved = LIMITS.parse(next(p.raw for p in original.preimages if p.name == 'budgets/limits.json'))
+    wanted['peak_limits'] = dict(pre=approved, post=approved)
     actual = asdict(bundle.budget)
     for field in wanted:
         assert actual[field] == wanted[field], field

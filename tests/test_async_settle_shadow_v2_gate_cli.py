@@ -58,16 +58,18 @@ def test_explicit_v2_rejects_v1_bundle(tmp_path: Path, monkeypatch: Any, capsys:
     assert output['status'] == 'BLOCKED' and output['policy_version'] == 'shadow-v2'
 
 
-def test_v1_rejects_v2_bundle(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
+@pytest.mark.parametrize('extras', [{'contract_revision': 'a1'}, {'policy_version': 'shadow-v2'},
+    {'unrecognized': {'revision': 9, 'labels': [True, None, 'ignored']}}, {'new_flag': False}])
+def test_no_policy_preserves_ignored_metadata(tmp_path: Path, monkeypatch: Any, capsys: Any, extras: Any) -> None:
     data = pre_enable_bundle(tmp_path)
-    data.update(policy_version='shadow-v2', contract_revision='a1')
+    data.update(extras)
     path = tmp_path / 'v2.json'
     path.write_text(json.dumps(data))
     monkeypatch.setattr(sys, 'argv', ['pilot', 'fleet-budgets-pre', '--bundle', str(path)])
     with pytest.raises(SystemExit) as exc:
         pilot_enablement.main()
-    assert exc.value.code == 1
-    assert json.loads(capsys.readouterr().out)['status'] == 'BLOCKED'
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out)['status'] == 'PASS'
     with pytest.raises(ValueError):
         shadow_report.report([dict(kind='async_settle_shadow_counter_v2', id='x', body={})], ['2026-10-06'], {})
 

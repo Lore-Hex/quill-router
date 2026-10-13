@@ -142,8 +142,9 @@ def budget_view(graph: PayloadGraph, payloads: dict[str, dict[str, Any]],
         rates.append(Rate(segment['boot'], segment['start_us'], segment['end_us'],
             observer['workspace_reads'], observer['health_reads'],
             publisher['claim_attempts'] + 3 * publisher['scans'], 2 * publisher['publications']))
-    writers = graph.detail(payloads['proof.shutdown_inventory_sha256']['writers'], 'shutdown_writers')
-    shutdown = [graph.object(w['measurement'], a2.SHUTDOWN_MEASUREMENT) for w in writers]
+    require(graph.shutdown is not None, 'artifact_gap')
+    assert graph.shutdown is not None
+    shutdown = graph.shutdown.measurements
     require(bool(shutdown), 'artifact_gap')
     caps = pre_result['maximum_router_instances_by_region']
     limits = graph.limits['post']
@@ -166,7 +167,7 @@ def budget_view(graph: PayloadGraph, payloads: dict[str, dict[str, Any]],
         close_elapsed_us=max(s['final_pass_us'] for s in shutdown),
         handoff_elapsed_us=max(s['result_us'] + s['export_wait_us'] + s['preparation_us'] for s in shutdown),
         grace_us=min(s['grace_us'] for s in shutdown),
-        load_segments=tuple(segments),
+        load_segments=tuple(segments), peak_limits=dict(graph.limits),
         projected_load_segments=tuple(graph.detail(pre['v2_load']['segments'], 'segments')), **extra_fields)
 
 

@@ -137,6 +137,10 @@ class Result:
         return 'BLOCKED' if self.gaps else 'PASS'
 
 
+class UnavailableGateOutput(ValueError):
+    """Frozen non-null report commitments have no unavailable encoding."""
+
+
 def render(result: Result) -> tuple[bytes, tuple[bytes, ...]]:
     """Emit the frozen envelope/report/flat streams, validating the final graph."""
     from trusted_router import async_settle_shadow_v2_a2_contract as contract
@@ -146,8 +150,8 @@ def render(result: Result) -> tuple[bytes, tuple[bytes, ...]]:
     from trusted_router.detached_jws import canonical
 
     report = result.gate_report
-    require(report is not None, 'artifact_gap: report unavailable')
-    assert report is not None
+    if report is None:
+        raise UnavailableGateOutput('artifact_gap: unavailable_required_report_commitments')
     tallies, prefix = listing(result.failures, tuple(report['days']))
     require(tallies == report['failure_counts'], 'evidence_schema_gap')
     streams = result.detail_streams

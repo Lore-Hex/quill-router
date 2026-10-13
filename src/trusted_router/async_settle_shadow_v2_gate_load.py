@@ -245,6 +245,10 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
             ctx.issue('fleet_headroom_gap', 'measured simultaneous load exceeds approval', Subject(object_id=p.region))
     actual_ops = len(ctx.bundle.rows) + len(ctx.bundle.attachments) + len(ctx.bundle.ledgers) + 1
     actual_bytes = sum(len(r.raw) for r in (*ctx.bundle.rows, *ctx.bundle.attachments)) + sum(map(len, ctx.bundle.ledgers)) + len(ctx.bundle.proof or b'')
+    prior_originals = [raw for name in ('transport', 'fleet', 'pre', 'serving')
+                       if (raw := getattr(ctx.bundle, name)) is not None]
+    actual_ops += len(prior_originals)
+    actual_bytes += sum(map(len, prior_originals))
     actual_ops += len(ctx.bundle.preimages)
     actual_bytes += sum(len(p.raw) for p in ctx.bundle.preimages)
     actual_ops = (actual_ops + budget.export_root_writes) * budget.export_passes
@@ -260,6 +264,7 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
     closes = len(ctx.kind(p1.KINDS[4]))
     if budget.close_transactions < 2 * closes or budget.close_rows < 7 * closes or budget.close_elapsed_us > 2000000 or budget.handoff_elapsed_us > 2000000 or budget.close_elapsed_us + budget.handoff_elapsed_us > min(4000000, budget.grace_us):
         ctx.issue('close_handoff_budget_gap', 'separate final/close-result transaction budget')
+    compare_peak_limits(ctx, peaks)
     return peaks
 
 
@@ -331,6 +336,68 @@ def measured_peaks(ctx: Context, region: str | None, *, publisher: bool = False)
             check(result[name])
         except ValueError:
             result[name] = None
+    if projected:
+        result.update(projected_independent_peaks(ctx, region))
     if cap is None:
         result['configured_reads_per_second'] = result['configured_pending_rows_per_second'] = None
     return result
+
+
+
+def compare_peak_limits(ctx: Context, actual: tuple[Peak, ...]) -> None:
+    """Consume every contract PEAKS component in exact arithmetic at each K."""
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_gate_report import peaks as report_peaks
+    budget = ctx.bundle.budget
+    if budget is None:
+        return
+    stage = 'pre' if ctx.gate == 'fleet-budgets-pre' else 'post'
+    if stage == 'post':
+        projected = Context(ctx.bundle, ctx.ports, 'fleet-budgets-pre', issues=ctx.issues)
+        compare_peak_limits(projected, actual)
+    limits = budget.peak_limits.get(stage)
+    scopes = [None, *sorted(budget.regional_caps)]
+    for region in scopes:
+        sub = Subject(wire=a2.K(stage, region))
+        approved = (limits.get('fleet') if region is None else next((r['approved']
+            for r in limits.get('regions', []) if r['region'] == region), None)) if limits else None
+        values = report_peaks(next((p for p in actual if p.region == region), None), ctx)
+        for name in a2.PEAKS.fields:
+            value, limit = values.get(name), approved.get(name) if approved else None
+            if value is None or limit is None:
+                ctx.issue('fleet_headroom_gap', stage + ' unavailable peak or limit: ' + name,
+                          sub, unavailable=True)
+                ctx.issue('artifact_gap', 'required approved peak comparison unavailable',
+                          Subject(wire=a2.O('a2_file', 'budgets/limits.json')))
+            elif peak_number(value) > peak_number(limit):
+                gap = ('simultaneous_capacity_gap' if name in ('simultaneous_routers',
+                    'simultaneous_publishers', 'configured_routers', 'configured_publishers',
+                    'startup_operations_1s') else 'fleet_headroom_gap')
+                ctx.issue(gap, stage + ' approved peak exceeded: ' + name, sub)
+
+
+def peak_number(value: Any) -> Fraction:
+    return Fraction(value['numerator'], value['denominator']) if isinstance(value, dict) else Fraction(value)
+
+
+
+def projected_independent_peaks(ctx: Context, region: str | None) -> dict[str, Any]:
+    """Pre-enable report and comparison share the same projected population."""
+    segments = ctx.bundle.budget.projected_load_segments if ctx.bundle.budget else None
+    names = ('simultaneous_routers', 'simultaneous_publishers', 'reads_per_second',
+             'pending_rows_per_second', 'trust_rows_per_second', 'health_rows_per_second')
+    selected = [s for s in segments or () if s['role'] == 'router'
+                and (region is None or s['region'] == region)]
+    edges = sorted({s[k] for s in selected for k in ('start_us', 'end_us')})
+    values = {}
+    for name in names:
+        peak: Fraction | None = Fraction(0) if segments is not None else None
+        for at in edges[:-1]:
+            parts = [s['peaks'][name] for s in selected if s['start_us'] <= at < s['end_us']]
+            if peak is None or any(v is None for v in parts):
+                peak = None
+            else:
+                peak = max(peak, sum((peak_number(v) for v in parts), Fraction(0)))
+        values[name] = None if peak is None else int(peak) if name.startswith('simultaneous_') else dict(
+            numerator=peak.numerator, denominator=peak.denominator)
+    return values

@@ -146,6 +146,7 @@ def test_proof_oracle_ci_split(request, tmp_path):
     command = proof_oracle_command(job)
     assert command == ['uv', 'run', 'pytest', '-q', '-n', '4', '--dist', 'loadgroup',
                        '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
+                       'tests/test_async_settle_shadow_v2_gate_window.py',
                        '--splits', '4', '--group', '${{', 'matrix.shard', '}}',
                        '--splitting-algorithm', 'least_duration']
     assert job['runs-on'] == 'ubuntu-latest'

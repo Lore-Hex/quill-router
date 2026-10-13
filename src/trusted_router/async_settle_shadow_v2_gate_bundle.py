@@ -53,6 +53,8 @@ class Context:
     release_files: dict[str, bytes] = field(default_factory=dict)
     reset_history: list[dict[str, Any]] = field(default_factory=list)
     release_artifacts_cache: tuple[Any, ...] | None = None
+    certified_start_us: int | None = None
+    certified_end_us: int | None = None
     trace_population_cache: tuple[Any, frozenset[str]] | None = None
 
     def kind(self, kind: str) -> list[dict[str, Any]]:
@@ -124,6 +126,16 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
                 ctx.issue(owner, 'invalid required row: ' + str(exc), diagnostic)
             if str(exc) == 'a1-publisher-conservation':
                 ctx.issue('publisher_accounting_gap', str(exc), diagnostic)
+    verified_aliases = {row.key: row.raw for row in bundle.shutdown.aliases} if bundle.shutdown else {}
+    supplied_aliases = {row.key: row.raw for row in bundle.attachments if row.key.kind in ('shutdown_entry', 'shutdown_measurement')}
+    for key in sorted(verified_aliases.keys() | supplied_aliases.keys()):
+        if verified_aliases.get(key) != supplied_aliases.get(key):
+            sub = Subject(wire=a2.O(key.kind, key.id))
+            ctx.issue('artifact_gap', 'shutdown alias differs from verified population', sub)
+            entry = next((entry for entry in bundle.shutdown.entries
+                if key.id in ('shutdown/' + entry['day'] + '/' + entry['boot'], entry['measurement']['path'])), None) if bundle.shutdown else None
+            shutdown_owner = Subject(day=entry['day'], boot=entry['boot']) if entry else Subject()
+            ctx.issue('close_handoff_budget_gap', 'shutdown alias identity or original bytes differ', shutdown_owner)
     if not bundle.rows and gate != 'fleet-budgets-pre':
         ctx.issue('evidence_schema_gap', 'no evidence rows')
     try:
@@ -140,12 +152,15 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
     for name in ('transport', 'fleet', 'pre', 'serving'):
         gate_raw = getattr(bundle, name)
         if gate_raw is None:
+            from trusted_router.async_settle_shadow_v2_gate_prior import verified_prior_gate
+            verified_prior_gate(ctx, name, {})
             continue
         try:
             value = a1.GATE_OUTPUT.parse(gate_raw)
             expected = {'fleet': 'fleet-budgets', 'pre': 'fleet-budgets-pre', 'serving': 'shadow-serving'}.get(name, name)
             require(value['gate'] == expected, 'artifact_gap')
-            ctx.gates[name] = value
+            from trusted_router.async_settle_shadow_v2_gate_prior import verified_prior_gate
+            verified_prior_gate(ctx, name, value)
         except ValueError as exc:
             ctx.issue('artifact_gap', name + ': ' + str(exc))
     if ctx.proof is not None:

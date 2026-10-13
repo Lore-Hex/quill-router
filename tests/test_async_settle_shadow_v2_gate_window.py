@@ -249,6 +249,7 @@ def validation_cache(request: Any):
 
 
 @exhaustive
+@pytest.mark.proof_oracle
 @pytest.mark.xdist_group('p5-seven-days')
 def test_seven_day_churn_render(real_seven_days: Any) -> None:
     _, bound_ports, loaded = real_seven_days
@@ -315,6 +316,7 @@ def test_short_blocked_render(short_family: Any, tmp_path: Any, case: Any) -> No
 
 
 @exhaustive
+@pytest.mark.proof_oracle
 @pytest.mark.xdist_group('p5-seven-days')
 @pytest.mark.parametrize('gap', LONG_CASES)
 def test_seven_day_blocked_render(real_seven_days: Any, gap: str) -> None:
@@ -381,3 +383,102 @@ def test_traced_midnight_continuity(tmp_path: Any, monkeypatch: Any) -> None:
     assert result.report.elapsed_seconds == 14
     assert len(result.gate_report['days']) == 2
     assert json.loads(render(result)[0])['verdict'] == 'PASS'
+
+
+def test_long_family_has_ci_selection() -> None:
+    import shlex
+    import tomllib
+
+    import yaml
+    from _pytest.mark.expression import Expression
+
+    root = Path(__file__).parents[1]
+    config = tomllib.loads((root / 'pyproject.toml').read_text())['tool']['pytest']['ini_options']
+    options = shlex.split(config['addopts']) if isinstance(config['addopts'], str) else config['addopts']
+    expression = Expression.compile(options[options.index('-m') + 1]) if '-m' in options else Expression.compile('')
+    workflow = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())
+    command = '\n'.join(step.get('run', '') for step in workflow['jobs']['proof-oracle']['steps'])
+    for test in (test_seven_day_churn_render, test_seven_day_blocked_render):
+        markers = {mark.name for mark in test.pytestmark}
+        default = expression.evaluate(lambda name, markers=markers: name in markers)
+        assert default or ('proof_oracle' in markers and 'tests/test_async_settle_shadow_v2_gate_window.py' in command)
+
+
+def test_bulk_trace_generator_preserves_original_bytes() -> None:
+    from tests.shadow_v2_gate_fixture_generator import START, TAG, fixture, trace_rows
+    from trusted_router.async_settle_shadow_v2_schema import sha256
+    body = fixture('health')
+    first = START // 2000000
+    body['slot'] = first + 1
+    template = fixture('publisher_slot_trace')
+    generated = trace_rows('2026-10-06', 'boot0', first, first + 60, template, body)
+    previous = None
+    for row in generated:
+        page = health.PUBLISHER_TRACE_PAGE.parse(row.raw)
+        expected = []
+        for slot in range(page['first_slot'], page['last_slot'] + 1):
+            stamp = slot * 2000000
+            entry = template.copy()
+            entry.update(day='2026-10-06', boot='boot0', slot=slot, claim_start_us=stamp,
+                claim_at_ns=stamp * 1000, observed_at_ns=stamp * 1000, publisher_heartbeat_ns=stamp * 1000,
+                ack_at_us=stamp + 400000, body_sha256=sha256(body) if slot == body['slot'] else sha256(dict(slot=slot, boot='boot0')))
+            expected.append(entry)
+        original = dict(**TAG, day='2026-10-06', boot='boot0', first_slot=page['first_slot'],
+            last_slot=page['last_slot'], previous_sha256=previous, entries=expected)
+        assert row.raw == canonical(original)
+        previous = sha256(original)
+
+
+@pytest.mark.parametrize('mode', ['continuous', 'gap', 'seed', 'restart', 'lifetime', 'threshold'])
+def test_short_verified_clock_branches(short_family: Any, mode: str) -> None:
+    """Clock algorithm with verified prerequisite views as an explicit precondition.
+
+    This emits no gate output and does not waive the original-prior-graph seam.
+    The export acceptance tests still require that seam and remain fail-closed.
+    """
+    from dataclasses import replace
+
+    from trusted_router.async_settle_shadow_v2_gate_bundle import decode_bundle, verify_samples
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Key
+    from trusted_router.async_settle_shadow_v2_schema import day_at
+
+    raw, ports = short_family
+    bundle = load_original(raw, ports)
+    ctx = decode_bundle(bundle, ports, 'pre-flip')
+    assert all('prior gate' in i.detail or 'prior_gate_' in i.detail for i in ctx.issues)
+    ctx.issues.clear()
+    start = min(b.start_us for b in bundle.inventory.boots)
+    ctx.gates = {name: dict(verdict='PASS', completed_at_us=start) for name in ('transport', 'fleet', 'pre')}
+    verify_samples(ctx)
+    template = next(v for v in ctx.rows.values() if 'disabled_flag_intervals' in v)
+    if mode == 'seed':
+        ctx.verified.clear()
+    elif mode in ('gap', 'restart'):
+        original = template['disabled_flag_intervals'][0]
+        template['disabled_flag_intervals'] = [
+            {**original, 'interval': dict(start_us=start, end_us=start + 100000000)},
+            {**original, 'interval': dict(start_us=start + (101000000 if mode == 'gap' else 100000000), end_us=bundle.completed_at_us)}]
+    elif mode == 'lifetime':
+        template['disabled_flag_intervals'][0]['interval']['end_us'] += 100000000
+        ctx.bundle = replace(bundle, completed_at_us=bundle.completed_at_us + 100000000)
+    elif mode == 'threshold':
+        end = start + 604802000000
+        days = []
+        for midnight in range(start // 86400000000 * 86400000000, end, 86400000000):
+            day = day_at(midnight)
+            days.append(day)
+            manifest = json.loads(canonical(template))
+            manifest['day'] = day
+            interval = dict(start_us=max(start, midnight), end_us=min(end, midnight + 86400000000))
+            manifest['disabled_flag_intervals'][0]['interval'] = interval
+            for writer in manifest['router_writers'].values():
+                writer['lifetime'] = interval
+            ctx.rows[Key(p1.KINDS[5], day + '/manifest-v2')] = manifest
+        ctx.bundle = replace(bundle, days=tuple(days), completed_at_us=end,
+            inventory=replace(bundle.inventory, boots=tuple(replace(b, end_us=end) for b in bundle.inventory.boots)))
+    seed, elapsed, _ = gates.clock(ctx, ())
+    assert elapsed == (None if mode == 'seed' else 98 if mode == 'gap' else 604800 if mode == 'threshold' else 398)
+    assert seed == (None if mode == 'seed' else start + 2000000)
+    assert any(i.gap == 'continuous_window_gap' for i in ctx.issues) == (mode != 'threshold')
+    if mode == 'seed':
+        assert any(i.gap == 'regional_seed_gap' for i in ctx.issues)

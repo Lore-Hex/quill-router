@@ -163,10 +163,18 @@ def clock(ctx: Context, reset_times: tuple[int, ...]) -> tuple[int | None, int |
             continue
         day_start = (dt.date.fromisoformat(manifest['day']) - dt.date(1970, 1, 1)).days * 86400000000
         for flag in manifest['disabled_flag_intervals']:
-            left = max(day_start, flag['interval']['start_us'])
-            right = min(day_start + 86400000000, flag['interval']['end_us'])
-            if left < right:
-                intervals.append((left, right))
+            for boot, writer in manifest['router_writers'].items():
+                independent = next((b for b in ctx.bundle.inventory.boots
+                    if b.boot == boot and b.role == 'router'), None) if ctx.bundle.inventory else None
+                if independent is None:
+                    continue
+                left = max(day_start, flag['interval']['start_us'], independent.start_us,
+                           writer['lifetime']['start_us'])
+                right = min(day_start + 86400000000, flag['interval']['end_us'],
+                            independent.end_us or ctx.bundle.completed_at_us,
+                            writer['lifetime']['end_us'], ctx.bundle.completed_at_us)
+                if left < right:
+                    intervals.append((left, right))
     transport, fleet, pre = (ctx.gates.get(k) for k in ('transport', 'fleet', 'pre'))
     prerequisites = bool(transport and fleet and pre and all(g['verdict'] == 'PASS' for g in (transport, fleet, pre))
                          and ctx.bundle.budget and ctx.bundle.budget.pre_digest == ctx.bundle.budget.post_pre_digest)
@@ -193,6 +201,8 @@ def clock(ctx: Context, reset_times: tuple[int, ...]) -> tuple[int | None, int |
             assert end is not None
             if left <= end < right:
                 end = min(right, ctx.bundle.completed_at_us)
+    ctx.certified_start_us = start
+    ctx.certified_end_us = end
     elapsed = (end - start) // 1000000 if start is not None and end is not None else None
     if ctx.gate == 'pre-flip' and (elapsed is None or elapsed < 604800):
         ctx.issue('continuous_window_gap', 'less than 604800 continuously covered seconds')

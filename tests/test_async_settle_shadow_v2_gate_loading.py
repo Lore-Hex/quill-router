@@ -363,3 +363,202 @@ assert not PayloadGraph({}).files
     result = subprocess.run([sys.executable, '-c', program], cwd=root,  # noqa: S603 - literal offline import guard
         env={**os.environ, 'PYTHONPATH': str(root / 'src')}, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.fixture(scope='module')
+def round9_originals(tmp_path_factory: Any) -> Any:
+    from tests.shadow_v2_gate_a2_fixture import real_fixture, transport
+    original, ports, expected = real_fixture(tmp_path_factory.mktemp('round9-originals'))
+    return original, transport(original), ports, expected
+
+
+def round9_render(raw: bytes, ports: Any) -> Any:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    result = evaluate(load(raw, ports), ports, gate='shadow-serving')
+    output, attachments = render(result)
+    assert json.loads(output)['verdict'] == 'BLOCKED'
+    assert json.loads(attachments[0]) == result.gate_report
+    return result
+
+
+@pytest.mark.parametrize('mode', ['content', 'source', 'reference', 'key', 'extra'])
+def test_shutdown_alias_original_bytes(round9_originals: Any, mode: str) -> None:
+    import json
+    _, raw, ports, _ = round9_originals
+    value = json.loads(raw)
+    kind = 'shutdown_entry' if mode == 'reference' else 'shutdown_measurement'
+    row = next(r for r in value['attachments'] if r['kind'] == kind)
+    body = json.loads(row['raw'])
+    if mode == 'content':
+        body['result_us'] = 1000000000
+    elif mode == 'source':
+        body['source']['sha256'] = '0' * 64
+    elif mode == 'reference':
+        body['measurement']['sha256'] = '0' * 64
+    elif mode == 'key':
+        row['id'] += '-wrong'
+    else:
+        value['attachments'].append({**row, 'id': row['id'] + '-extra'})
+    row['raw'] = canonical(body).decode()
+    result = round9_render(canonical(value), ports)
+    assert 'close_handoff_budget_gap' in result.gaps
+    assert any('shutdown alias' in f.detail for f in result.failures)
+    assert result.gate_report['timing']['handoff_us']['count'] == 1
+    assert result.gate_report['timing']['handoff_us']['max'] == 1000000
+
+
+@pytest.mark.parametrize('name', ['transport', 'fleet', 'pre'])
+@pytest.mark.parametrize('field', ['coverage_sha256', 'proof_manifest_sha256', 'prerequisite_ledger_root'])
+def test_unresolved_prior_graph_is_never_authority(round9_originals: Any, name: str, field: str) -> None:
+    import json
+    _, raw, ports, _ = round9_originals
+    value = json.loads(raw)
+    prior = json.loads(value[name])
+    prior[field] = '0' * 64
+    value[name] = canonical(prior).decode()
+    result = round9_render(canonical(value), ports)
+    assert 'artifact_gap' in result.gaps and 'positive_seed_gap' in result.gaps
+    assert result.report.clock_start_us is None
+    assert any('prior_gate_original_graph_unavailable' in f.detail for f in result.failures)
+
+
+@pytest.mark.parametrize('scope', ['fleet', 'region'])
+@pytest.mark.parametrize('field', ['startup_operations_1s', 'close_operations_1s', 'export_operations_1s',
+                                  'export_operations_per_second', 'export_bytes_per_second'])
+def test_approved_peak_limits_original_bytes(round9_originals: Any, scope: str, field: str) -> None:
+    import json
+    from dataclasses import replace
+
+    from tests.shadow_v2_gate_a2_fixture import commit_originals, transport
+    from trusted_router.async_settle_shadow_v2_gate_failures import detail as pages_for
+    original, _, ports, expected = round9_originals
+    files = {p.name: p.raw for p in original.preimages}
+    segments = copy.deepcopy(expected['segments'])
+    for segment in segments:
+        if segment['role'] == 'router':
+            segment['peaks'][field] = 1000000000 if field.endswith('_1s') else dict(numerator=1000000000, denominator=1)
+    ref, pages = pages_for(segments, 'segments')
+    for path, raw in list(files.items()):
+        try:
+            value = json.loads(raw)
+        except (ValueError, UnicodeError):
+            continue
+        if isinstance(value, dict) and value.get('entries') == expected['segments']:
+            files[path] = canonical(pages[0])
+    post = json.loads(files['proof.post_budget_sha256'])
+    post['v2_load']['segments'] = ref
+    files['proof.post_budget_sha256'] = a2.BUDGET_ENVELOPE.serialize(post)
+    pins = {path: roots.file_digest(files[path]) for path in ports.release.artifacts}
+    plan = canonical({**json.loads(ports.release.raw), 'artifacts': pins})
+    files[ports.release.path] = plan
+    ports = replace(ports, release=replace(ports.release, raw=plan, artifacts=pins))
+    result = round9_render(transport(commit_originals(original, files)), ports)
+    subject = a2.K('post', None if scope == 'fleet' else 'us-central1')
+    assert any(f.subject == subject and 'approved peak exceeded: ' + field in f.detail for f in result.failures)
+    assert result.gate_report['rules']['G7'] in ('fail', 'unevaluable')
+
+
+@pytest.mark.parametrize('field', list(a2.PEAKS.fields))
+def test_every_peak_limit_component_is_consumed(round9_originals: Any, field: str) -> None:
+    from dataclasses import replace
+
+    from trusted_router.async_settle_shadow_v2_gate_bundle import Context
+    from trusted_router.async_settle_shadow_v2_gate_load import compare_peak_limits, sweep
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    _, raw, ports, _ = round9_originals
+    bundle = load(raw, ports)
+    limits = copy.deepcopy(bundle.budget.peak_limits)
+    limits['post']['fleet'][field] = None
+    ctx = Context(replace(bundle, budget=replace(bundle.budget, peak_limits=limits)), ports, 'shadow-serving')
+    compare_peak_limits(ctx, sweep(bundle.inventory.boots, bundle.budget.rates, bundle.cohort.workspace_count, bundle.completed_at_us))
+    assert any(i.unavailable and i.detail == 'post unavailable peak or limit: ' + field for i in ctx.issues)
+
+
+@pytest.mark.parametrize('mode', ['future', 'early', 'days', 'gap'])
+def test_requested_window_cannot_certify_time(round9_originals: Any, mode: str) -> None:
+    import json
+    original, raw, ports, _ = round9_originals
+    value = json.loads(raw)
+    start = min(b.start_us for b in original.inventory.boots)
+    value['window'] = dict(start_us=start, end_us=original.completed_at_us)
+    if mode == 'future':
+        value['window']['end_us'] += 604800000000
+    elif mode == 'early':
+        value['window']['start_us'] -= 1
+    elif mode == 'days':
+        value['window']['start_us'] -= 86400000000
+    else:
+        row = next(r for r in value['rows'] if r['kind'] == 'async_settle_shadow_control_v2')
+        body = json.loads(row['raw'])
+        body['complete'] = False
+        body['gaps'] = [dict(interval=dict(start_us=start + 10000000, end_us=start + 11000000), reason='writer_closure_gap')]
+        row['raw'] = canonical(body).decode()
+    result = round9_render(canonical(value), ports)
+    assert result.gate_report['elapsed_seconds'] == result.report.elapsed_seconds
+    assert result.gate_report['window']['end_us'] <= original.completed_at_us
+    if mode != 'gap':
+        assert 'continuous_window_gap' in result.gaps
+
+
+@pytest.mark.parametrize('mode', ['missing-manifest', 'conflicting-manifest', 'days-string', 'days-date',
+    'window-list', 'window-equal', 'completion-null', 'completion-overflow', 'completion-bool'])
+def test_damaged_scope_renders_blocked(round9_originals: Any, mode: str) -> None:
+    import json
+    _, raw, ports, _ = round9_originals
+    value = json.loads(raw)
+    if mode.endswith('manifest'):
+        row = next(r for r in value['rows'] if r['kind'] == 'async_settle_shadow_control_v2')
+        if mode == 'missing-manifest':
+            value['rows'].remove(row)
+        else:
+            body = json.loads(row['raw'])
+            body['complete'] = False
+            value['rows'].append({**row, 'raw': canonical(body).decode()})
+    elif mode.startswith('days'):
+        value['days'] = 'bad' if mode == 'days-string' else ['not-a-date']
+    elif mode.startswith('window'):
+        value['window'] = [] if mode == 'window-list' else dict(start_us=1, end_us=1)
+    else:
+        value['completed_at_us'] = {'completion-null': None, 'completion-overflow': 2**63,
+                                    'completion-bool': True}[mode]
+    result = round9_render(canonical(value), ports)
+    assert 'artifact_gap' in result.gaps
+    assert result.gate_report['complete'] is False
+    if mode.endswith('manifest'):
+        assert any(f.subject == a2.O('async_settle_shadow_control_v2', '2026-10-06/manifest-v2')
+                   for f in result.failures if f.gap == 'artifact_gap')
+
+
+def test_every_gate_input_field_has_provenance_row() -> None:
+    import dataclasses
+    import re
+    from pathlib import Path
+
+    from trusted_router import async_settle_shadow_v2_gate_inputs as inputs
+    expected = {name + '.' + field.name for name, cls in vars(inputs).items()
+        if isinstance(cls, type) and dataclasses.is_dataclass(cls) and cls.__module__ == inputs.__name__
+        for field in dataclasses.fields(cls)}
+    table = (Path(__file__).parents[1] / 'docs/design/async-settle-shadow-v2-p5-inputs.md').read_text()
+    rows = re.findall(r'^\| `([A-Za-z]+\.[a-z_0-9]+)` \| ([^|]+) \| ([^|]+) \|$', table, re.M)
+    assert len(rows) == len(expected)
+    assert {row[0] for row in rows} == expected
+    assert all(source.strip() and validator.strip() for _, source, validator in rows)
+
+
+def test_shutdown_population_requires_original_proof_commitment(round9_originals: Any) -> None:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    _, raw, ports, _ = round9_originals
+    value = json.loads(raw)
+    proof = json.loads(value['proof'])
+    proof['shutdown_inventory_sha256'] = '0' * 64
+    value['proof'] = canonical(proof).decode()
+    damaged = canonical(value)
+    assert load(damaged, ports).shutdown is None
+    result = round9_render(damaged, ports)
+    assert result.gate_report['timing']['handoff_us']['count'] is None

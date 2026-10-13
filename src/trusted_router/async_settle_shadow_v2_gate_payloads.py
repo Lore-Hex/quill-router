@@ -12,7 +12,15 @@ from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a2_contract as contract
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
-from trusted_router.async_settle_shadow_v2_gate_inputs import Boot, Cohort, Inventory, Ports
+from trusted_router.async_settle_shadow_v2_gate_inputs import (
+    Boot,
+    Cohort,
+    Inventory,
+    Key,
+    Ports,
+    Row,
+    Shutdown,
+)
 from trusted_router.async_settle_shadow_v2_gate_loading import (
     LIMITS,
     LoadingIssue,
@@ -47,6 +55,7 @@ class PayloadGraph:
     _lookups: dict[bytes, Any] = field(default_factory=dict)
     issues: list[LoadingIssue] = field(default_factory=list)
     limits: dict[str, dict[str, Any]] = field(default_factory=dict)
+    shutdown: Shutdown | None = None
     ports: Ports | None = None
 
     def reject(self, path: str, exc: Exception) -> None:
@@ -193,6 +202,8 @@ class PayloadGraph:
             writers = self.detail(value['writers'], 'shutdown_writers')
             measured_inventory = retained_json(self.file(value['measurements']))
             require(measured_inventory == [entry['measurement'] for entry in writers], 'evidence_schema_gap')
+            measurements: list[dict[str, Any]] = []
+            aliases: list[Row] = []
             for entry in writers:
                 measurement = self.object(entry['measurement'], a2.SHUTDOWN_MEASUREMENT)
                 require(all(measurement[key] == entry[key] for key in ('day', 'boot')), 'evidence_schema_gap')
@@ -201,16 +212,23 @@ class PayloadGraph:
                 require((entry['reason'] == 'hard_kill') == (measurement['outcome'] == 'hard_kill'), 'evidence_schema_gap')
                 if self.ports is not None:
                     from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts
+                    from trusted_router.async_settle_shadow_v2_gate_release import approved_file
+                    approved_file(self, value['approval']['record'])
+                    approved_file(self, measurement['source'])
                     parsers = self.ports.measurements if isinstance(self.ports, LoadingPorts) else {}
                     parser = parsers.get(measurement['source']['path'])
                     require(parser is not None, 'evidence_schema_gap')
                     assert parser is not None
                     original = parser(self.file(measurement['source']))
                     require(all(original.get(k) == v for k, v in measurement.items() if k not in ('v', 'policy_version', 'contract_revision', 'source')), 'evidence_schema_gap')
+                measurements.append(measurement)
+                aliases.extend((Row(Key('shutdown_entry', 'shutdown/' + entry['day'] + '/' + entry['boot']), a2.SHUTDOWN_ENTRY.serialize(entry)),
+                    Row(Key('shutdown_measurement', entry['measurement']['path']), self.file(entry['measurement']))))
                 for field_name, schema in (('original_close', a1.CLOSURE), ('close_result', a1.CLOSE_RESULT)):
                     if entry[field_name] is not None:
                         close = self.object(entry[field_name], schema)
                         require(all(close[k] == entry[k] for k in ('day', 'boot')), 'evidence_schema_gap')
+            self.shutdown = Shutdown(tuple(writers), tuple(measurements), tuple(aliases))
         elif qualified in ('proof.pre_budget_sha256', 'proof.post_budget_sha256'):
             require(value['stage'] == ('pre' if qualified == 'proof.pre_budget_sha256' else 'post'), 'evidence_schema_gap')
             self.approved_subject(value['approval'], value['retained']['payload'])

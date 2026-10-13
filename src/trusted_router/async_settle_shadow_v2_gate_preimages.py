@@ -240,6 +240,10 @@ def input_inventory(ctx: Context) -> tuple[list[dict[str, Any]], dict[str, bytes
         artifacts['ledgers/' + roots.file_digest(raw)] = raw
     if ctx.bundle.proof is not None:
         artifacts['proof_manifest'] = ctx.bundle.proof
+    for name in ('transport', 'fleet', 'pre', 'serving'):
+        prior = getattr(ctx.bundle, name)
+        if prior is not None:
+            artifacts['prior-gates/' + name] = prior
     references = [dict(path=path, sha256=roots.file_digest(raw), bytes=len(raw)) for path, raw in sorted(artifacts.items()) if len(raw) <= 262144]
     entries, leaves = [], {}
     for at in range(0, len(references), 512):

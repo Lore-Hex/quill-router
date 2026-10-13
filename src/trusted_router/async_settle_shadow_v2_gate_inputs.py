@@ -167,6 +167,7 @@ class Budget:
     cleanup_seconds: int = 30
     load_segments: tuple[dict[str, Any], ...] | None = None
     projected_load_segments: tuple[dict[str, Any], ...] | None = None
+    peak_limits: Mapping[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,14 @@ class Preimage:
 
 
 @dataclass(frozen=True)
+class Shutdown:
+    """Single population from the committed inventory and approved sources."""
+    entries: tuple[dict[str, Any], ...]
+    measurements: tuple[dict[str, Any], ...]
+    aliases: tuple[Row, ...]
+
+
+@dataclass(frozen=True)
 class Bundle:
     rows: tuple[Row, ...] = ()
     proof: bytes | None = None
@@ -241,6 +250,7 @@ class Bundle:
     undefined_preimages: tuple[str, ...] = ()
     preimages: tuple[Preimage, ...] = ()
     a2_payloads: Mapping[str, dict[str, Any]] = field(default_factory=dict)
+    shutdown: Shutdown | None = None
     window: Mapping[str, int] | None = None
     a2_streams: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)
 

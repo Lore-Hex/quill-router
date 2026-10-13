@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a2_contract as a2
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Key, Ports, Preimage, Row
 from trusted_router.async_settle_shadow_v2_gate_loading import (
@@ -12,7 +13,7 @@ from trusted_router.async_settle_shadow_v2_gate_loading import (
     validate_original_bytes,
 )
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
-from trusted_router.async_settle_shadow_v2_schema import integer, require
+from trusted_router.async_settle_shadow_v2_schema import day, day_at, integer, require, sha256
 
 # Missing bindings are reported at the particular dependency, never as a
 # blanket stand-in for implementing the retained adapters.
@@ -25,7 +26,7 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
     try:
         # This is the finite transport containing many original files, not one
         # FILE_REF payload. Each child keeps its own contract byte bound.
-        value = retained_json(raw, limit=MAX_BUNDLE_BYTES, allow_float=False, max_depth=16)
+        value = retained_json(raw, limit=MAX_BUNDLE_BYTES, allow_float=False, max_depth=16, bounded_integers=False)
         require(type(value) is dict and value.get('policy_version') == 'shadow-v2'
                 and value.get('contract_revision') == 'a1', 'policy_version_gap')
         require(set(value) <= {'v', 'policy_version', 'contract_revision', 'rows', 'attachments', 'proof', 'ledgers',
@@ -45,9 +46,29 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
         ledgers = value.get('ledgers', [])
         require(type(ledgers) is list and len(ledgers) <= 4096 and all(type(x) is str for x in ledgers), 'artifact_gap')
         days = value.get('days', [])
-        require(type(days) is list and len(days) <= 32 and all(type(x) is str for x in days), 'artifact_gap')
+        metadata_issues = []
+        try:
+            require(type(days) is list and 0 < len(days) <= 32 and days == sorted(set(days)), 'artifact_gap')
+            for selected in days:
+                day(selected)
+        except (ValueError, TypeError):
+            metadata_issues.append('days')
+            days = []
+        window = value.get('window')
+        try:
+            if window is not None:
+                from trusted_router import async_settle_shadow_v2_evidence as p1
+                p1.INTERVAL(window)
+                require(window['start_us'] < window['end_us'])
+        except (ValueError, TypeError, KeyError):
+            metadata_issues.append('window')
+            window = None
         completed = value.get('completed_at_us', 0)
-        integer(completed)
+        try:
+            integer(completed)
+        except ValueError:
+            metadata_issues.append('completed_at_us')
+            completed = 0
         files = value.get('preimages', [])
         require(type(files) is list and len(files) <= 10000, 'artifact_gap')
         preimages = []
@@ -82,7 +103,8 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
             payloads.pop(name, None)
         decoded_rows, decoded_attachments = rows('rows'), rows('attachments')
         require(len(decoded_rows) + len(decoded_attachments) + len(ledgers) + len(preimages) + 1 <= 10000, 'artifact_gap')
-        graph = PayloadGraph({k: v for k, v in unique.items() if k not in conflicts}, completed, ports=ports)
+        graph = PayloadGraph({k: v for k, v in unique.items() if k not in conflicts},
+                             None if 'completed_at_us' in metadata_issues else completed, ports=ports)
         for qualified in a2.OBJECT_PREIMAGES:
             if qualified.startswith('proof.') and qualified not in unique:
                 issues.append(LoadingIssue('artifact_gap', qualified, 'required payload absent'))
@@ -90,12 +112,34 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
         inventory = None
         cohort = None
         graph.materialize(payloads)
+        # Materialization verifies source closure; the original proof must also
+        # commit this population before either Budget or reporting can read it.
+        try:
+            proof_raw = original(value.get('proof'))
+            require(proof_raw is not None, 'artifact_gap')
+            assert proof_raw is not None
+            proof_value = a1.PROOF_MANIFEST.parse(proof_raw)
+            require(sha256(payloads['proof.shutdown_inventory_sha256'])
+                    == proof_value['shutdown_inventory_sha256'], 'artifact_gap')
+        except (ValueError, KeyError) as exc:
+            graph.shutdown = None
+            graph.reject('proof.shutdown_inventory_sha256', exc)
         try:
             inventory = graph.inventory(payloads, ports)
         except ValueError as exc:
             graph.reject('manifest.independent_inventory_sha256', exc)
         except (KeyError, TypeError):
             graph.reject('manifest.independent_inventory_sha256', ValueError('evidence_schema_gap'))
+        if inventory is not None:
+            if not days:
+                days = sorted({day_at(at) for boot in inventory.boots
+                    for at in range(boot.start_us // 86400000000 * 86400000000,
+                                    boot.end_us or completed, 86400000000)})
+            if 'completed_at_us' in metadata_issues:
+                completed = max((boot.end_us or boot.start_us for boot in inventory.boots), default=0)
+                graph.completed_at_us = completed
+        issues.extend(LoadingIssue('artifact_gap', 'transport/' + field, 'invalid transport metadata')
+                      for field in metadata_issues)
         try:
             cohort = graph.cohort(payloads)
         except (ValueError, KeyError, TypeError) as exc:
@@ -127,8 +171,8 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
                       transport=original(value.get('transport')), fleet=original(value.get('fleet')),
                       pre=original(value.get('pre')), serving=original(value.get('serving')),
                       completed_at_us=completed, undefined_preimages=undefined,
-                      preimages=tuple(preimages), a2_payloads=payloads, window=value.get('window'),
-                      a2_streams=graph.streams, inventory=inventory, cohort=cohort,
+                      preimages=tuple(preimages), a2_payloads=payloads, window=window,
+                      a2_streams=graph.streams, inventory=inventory, cohort=cohort, shutdown=graph.shutdown,
                       budget=views.get('proof.pre_budget_sha256'), external=views.get('proof.external_proofs_sha256'),
                       reset_support=views.get('proof.resolution_dag_sha256'),
                       signatures=views.get('loading/signatures.json', ()))

@@ -47,7 +47,7 @@ def error_gap(exc: Exception) -> str:
     return 'artifact_gap' if str(exc) in ('artifact_gap', 'evidence_size') else 'evidence_schema_gap'
 
 
-def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, max_depth: int = 64) -> Any:
+def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, max_depth: int = 64, bounded_integers: bool = True) -> Any:
     """Transport decode only; the retained callable owns the payload schema.
 
     Do not run v1 binary64 measurements through the integer-only A2 decoder.
@@ -83,7 +83,7 @@ def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, 
                                (child.values() if isinstance(child, dict) else child))
             elif isinstance(child, str):
                 child.encode('utf-8')
-            elif not allow_float and type(child) is int:
+            elif not allow_float and bounded_integers and type(child) is int:
                 require(-(1 << 63) <= child < (1 << 63))
         return value
     except (UnicodeError, RecursionError, OverflowError) as exc:
