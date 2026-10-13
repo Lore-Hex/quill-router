@@ -32,7 +32,7 @@ from trusted_router.async_settle_shadow_v2_schema import (
 )
 from trusted_router.detached_jws import canonical
 
-FIXTURE_MANIFEST_SHA256 = "82fb6ca50796260bf4b094001934d85c06745016abeb99c73b2c71548b6849c8"
+FIXTURE_MANIFEST_SHA256 = "92de75c6c7a9a6a4fbc51c43a4ee4b9c51d61ba7f6129b3653e310532620e437"
 ROOT_ENTRY = a1.COVERAGE_ENTRY
 GATE_OUTPUT = a1.GATE_OUTPUT
 TAG = {"contract_revision": literal("a2")}
@@ -235,7 +235,7 @@ FAILURE_RULES = (
     FailureRule('pilot_prerequisite_gap', 'G11', 'Each required pilot stage P(stage,pilot); all retained pilot prerequisites together', ('P',), 'self'),
 )
 # Intrinsic run populations, distinct from the common unenumerable fallback.
-RUN_SCOPED_FAILURES = frozenset(("artifact_gap", "evidence_export_budget_gap",
+RUN_SCOPED_FAILURES = frozenset(("evidence_export_budget_gap",
     "positive_seed_gap", "continuous_window_gap"))
 GAP_NAME = literal(*(row.name for row in FAILURE_RULES))
 
@@ -379,7 +379,7 @@ def _stat(v: Any) -> None:
         require(values == sorted(values))
         if v["count"] == 0:
             require(not values)
-        require(all(v[k] is None for k in ("p50", "p95", "p99")) or all(v[k] is not None for k in ("min", "p50", "p95", "p99", "max")))
+        # Each declared nullable statistic may be independently unavailable.
 
 
 STAT = Schema(dict.fromkeys("count null_count min p50 p95 p99 max".split(), nullable(integer)), 512, _stat)
@@ -424,7 +424,7 @@ VERIFIER_USE = Schema({"entry_point": name, "source_sha256": digest, "fixture_sh
 
 def _verifiers(v: Any) -> None:
     keys = [item["entry_point"] for item in v["retained_tools"]]
-    _sorted(keys)
+    require(keys == sorted(keys))
     require(all(item["keyset_sha256"] is None for item in v["retained_tools"]))
     for key in ("certificate", "binding"):
         if v[key] is not None:
@@ -468,7 +468,7 @@ REGION_REPORT = _a2({"region": name, "writer_days": integer, "peaks": PEAKS, "ti
 
 def _path(v: Any) -> None:
     text(512)(v)
-    require(not v.startswith("/") and "://" not in v and all(p not in ("", ".", "..") for p in v.split("/")))
+    require(not v.startswith("/") and "://" not in v and all(p != ".." for p in v.split("/")))
 
 
 FILE_REF = Schema({"path": _path, "sha256": digest, "bytes": _bounded(262144)}, 768)
@@ -496,7 +496,7 @@ DELEGATED_PAYLOAD = _a2({"entry_point": literal(*RETAINED_ENTRY_POINTS), "payloa
     "dependencies": DETAIL, "source": FILE_REF})
 LOAD_SEGMENT = Schema({"day": day, "boot": identity, "region": name, "start_us": integer, "end_us": integer,
     "role": ROLE, "contender": boolean, "workspace_count": _bounded(32), "peaks": PEAKS}, 8192,
-    lambda v: require(v["start_us"] < v["end_us"]))
+    lambda v: require(v["start_us"] <= v["end_us"]))
 EXPORT_OPERATION = Schema({"object": FILE_REF, "pass": integer, "at_us": integer,
     "operation": literal("get", "put", "delete"), "native_rpcs": integer, "bytes": integer, "elapsed_us": integer}, 2048)
 LOAD_EVIDENCE = _a2({"interval": p1.INTERVAL, "segments": DETAIL, "operations": DETAIL, "limits": FILE_REF, "approval": APPROVAL})

@@ -51,7 +51,7 @@ def _sum(values: Iterable[int | None]) -> int | None:
     return total
 
 
-def _metrics(v: dict[str, Any]) -> None:
+def _ratios(v: dict[str, Any]) -> None:
     for field, numerator, denominator in (
         ("comparator", v["comparator"]["compared"], v["comparator"]["eligible"]),
         ("admission", _sum(v["admission"][k] for k in ("Y", "N")), v["admission"]["E"]),
@@ -62,6 +62,10 @@ def _metrics(v: dict[str, Any]) -> None:
         if ratio["state"] == "not_exercised":
             require(all(v["admission"][k] == 0 for k in ("E", "Y", "N", "U"))
                     and all(x is not None for x in v["partition"].values()) and v["partition"]["C"] == 0)
+
+
+def _metrics(v: dict[str, Any]) -> None:
+    _ratios(v)
     timing = v["timing"]
     require(v["null_counts"]["timing"] == _sum(stat["null_count"] for stat in timing.values()))
     delta = v["deltas"]
@@ -81,19 +85,27 @@ def _metrics(v: dict[str, Any]) -> None:
     populations.append(_sum((delta["count"], delta["null_count"])))
     known = [n for n in populations if n is not None]
     require(not known or len(set(known)) == 1)
-    self_timing = timing["evidence_write_us"]
-    if self_timing["count"] is not None:
-        require(self_timing["count"] == 0)
     if known:
         for key in ("eligibility", "booking"):
             require(v["null_counts"][key] is None or v["null_counts"][key] <= known[0])
-    jt = [timing[k] for k in e.TIMINGS[8:10]]
-    jcounts = [_sum((s["count"], s["null_count"])) for s in jt]
+
+
+def _timing_metrics(timing: dict[str, Any]) -> None:
+    """§7.5.1 observation identities shared by fleet and every region."""
+    populations = [_sum((timing[k]["count"], timing[k]["null_count"])) for k in e.TIMINGS[:8]]
+    known = [n for n in populations if n is not None]
+    require(not known or len(set(known)) == 1)
+    self_timing = timing["evidence_write_us"]
+    if self_timing["count"] is not None:
+        require(self_timing["count"] == 0)
+    jcounts = [_sum((timing[k]["count"], timing[k]["null_count"])) for k in e.TIMINGS[8:10]]
     require(None in jcounts or jcounts[0] == jcounts[1])
     for key in e.TIMINGS[9:]:
         require(timing[key]["count"] is None or timing[key]["null_count"] == 0)
-    hcounts = [timing[k]["count"] for k in ("close_us", "handoff_us")]
-    require(None in hcounts or hcounts[0] == hcounts[1])
+    h, handoff, hterm = (timing[k]["count"] for k in ("close_us", "handoff_us", "drain_us"))
+    require(h is None or handoff is None or h == handoff)
+    require(hterm is None or h is None or hterm <= h)
+    require(hterm is None or handoff is None or hterm <= handoff)
 
 
 # §7.5.1 / §8 availability, expressed as report paths. Empty tuples mean
@@ -129,31 +141,61 @@ PASS_AGGREGATES = {
 }
 
 
-def _pass_aggregates(report: dict[str, Any]) -> None:
-    for rule, paths in PASS_AGGREGATES[report["gate"]].items():
+# Every stage/rule has an explicit residence mapping. WRITER_REPORT paths
+# apply to actual router observation reports (declared coverage applicable);
+# inventory-only writers and enclave admission/comparator are not_required.
+# Regional peaks before enablement are projections, never actual S/T/J/H.
+PASS_AGGREGATE_LOCATIONS = {
+    stage: {rule: {
+        "GATE_REPORT": paths,
+        "REGION_REPORT": (
+            tuple("peaks." + k for k in e.PEAKS.fields)
+            + (tuple("timing." + k + ".count" for k in e.TIMINGS[10:])
+               if stage in ACTUAL_STAGES else ()) if rule == "G7" else
+            tuple(path for path in paths if path.startswith("timing."))),
+        "WRITER_REPORT": tuple(path for path in paths
+            if path.split(".")[0] in ("comparator", "admission", "partition", "attempts", "checkpoint")),
+    } for rule, paths in rules.items()} for stage, rules in PASS_AGGREGATES.items()
+}
+
+
+def _pass_aggregates(report: dict[str, Any], regions: Iterable[dict[str, Any]] = (),
+                     writers: Iterable[dict[str, Any]] = ()) -> None:
+    records = {"GATE_REPORT": [report], "REGION_REPORT": list(regions),
+               "WRITER_REPORT": [writer for writer in writers if writer["role"] == "router"
+                   and any(writer[field]["coverage"]["state"] != "not_required"
+                           for field in ("admission", "comparator"))]}
+    for rule, locations in PASS_AGGREGATE_LOCATIONS[report["gate"]].items():
         if report["rules"][rule] != "pass":
             continue
-        for path in paths:
-            value = report
-            for part in path.split("."):
-                value = value[part]
-            require(value is not None)
+        for location, paths in locations.items():
+            for record in records[location]:
+                for path in paths:
+                    value = record
+                    for part in path.split("."):
+                        value = value[part]
+                    require(value is not None)
     if report["rules"]["G5"] == "pass":
-        for field in ("comparator", "admission"):
-            require(report[field]["coverage"]["state"] in ("evaluated", "not_exercised"))
+        for record in [report, *records["WRITER_REPORT"]]:
+            for field in ("comparator", "admission"):
+                require(record[field]["coverage"]["state"] in ("evaluated", "not_exercised"))
 
 
-def _regional_metrics(report: dict[str, Any], regions: list[dict[str, Any]]) -> None:
+def _regional_metrics(report: dict[str, Any], regions: list[dict[str, Any]],
+                      writers: Iterable[dict[str, Any]] = ()) -> None:
     for timing in (report["timing"], *(region["timing"] for region in regions)):
-        h, handoff, hterm = (timing[k]["count"] for k in ("close_us", "handoff_us", "drain_us"))
-        require(h is None or handoff is None or h == handoff)
-        require(hterm is None or h is None or hterm <= h)
-        require(hterm is None or handoff is None or hterm <= handoff)
+        _timing_metrics(timing)
+    # Unknown identity is carried on writers and in G2's complete failure tally,
+    # including identities outside the bounded failure listing. An empty closed
+    # stream still sums to zero. Available regional operands still check overflow.
+    identities_known = (all(writer["region"] is not None for writer in writers)
+                        and report["failure_counts"]["regional_roster_unknown"]["count"] == 0)
     for key in e.TIMINGS:
         for field in ("count", "null_count"):
             total = _sum(region["timing"][key][field] for region in regions)
             fleet = report["timing"][key][field]
-            require(total is None or fleet is None or total == fleet)
+            if identities_known:
+                require(total is None or fleet is None or total == fleet)
 
 
 def validate_gate_output(output: Any, report: Any, *, failures: Iterable[dict[str, Any]],
@@ -172,11 +214,14 @@ def validate_gate_output(output: Any, report: Any, *, failures: Iterable[dict[st
                "input_inventory": inputs, "reset_history": reset_history}
     listed: dict[str, int] = dict.fromkeys((row.name for row in e.FAILURE_RULES), 0)
     region_entries: list[dict[str, Any]] = []
+    writer_entries: list[dict[str, Any]] = []
     fallback = False
     for stream, pages in streams.items():
         require(isinstance(pages, Iterable) and not isinstance(pages, (str, bytes, dict)))
         materialized = list(pages)
         r.validate_detail(report[stream], materialized, stream=stream)
+        if stream == "writers":
+            writer_entries.extend(entry for page in materialized for entry in page["entries"])
         if stream == "regions":
             region_entries.extend(entry for page in materialized for entry in page["entries"])
         if stream == "failures":
@@ -208,8 +253,10 @@ def validate_gate_output(output: Any, report: Any, *, failures: Iterable[dict[st
     if report["clock_start_us"] is not None:
         require(report["clock_start_us"] == report["first_seed_at_us"])
     _metrics(report)
-    _regional_metrics(report, region_entries)
-    _pass_aggregates(report)
+    for writer in writer_entries:
+        _ratios(writer)
+    _regional_metrics(report, region_entries, writer_entries)
+    _pass_aggregates(report, region_entries, writer_entries)
     if output["verdict"] == "PASS":
         require(report["complete"] and all(state in ("pass", "not_required") for state in report["rules"].values()))
         require(verifiers["certificate"] is not None and verifiers["binding"] is not None, "artifact_gap")

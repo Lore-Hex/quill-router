@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tests import shadow_v2_a2_fixture_generator as generator
 from tests.test_async_settle_shadow_v2_a2 import SCHEMAS, VECTORS, obj
 from tests.test_async_settle_shadow_v2_contract import assert_round_trip
 from tests.test_async_settle_shadow_v2_evidence import exhaustive, untraced  # noqa: F401
@@ -630,7 +631,7 @@ def test_regional_partition_preserves_unknown_and_checks_overflow() -> None:
 
 
 def test_fallback_N_requires_G1_and_incomplete_but_intrinsic_run_does_not() -> None:
-    assert e.RUN_SCOPED_FAILURES == {'artifact_gap', 'evidence_export_budget_gap', 'positive_seed_gap', 'continuous_window_gap'}
+    assert e.RUN_SCOPED_FAILURES == { 'evidence_export_budget_gap', 'positive_seed_gap', 'continuous_window_gap'}
     args = obj('gate_outputs_a2', 'complete-listed-fallback-N')
     artifact = obj('gate_failures', 'constructor-artifact_gap')
     entries = [artifact, *args['failures'][0]['entries']]
@@ -818,3 +819,192 @@ def test_union_ledger_binds_instance_region_mapping() -> None:
     args['proof']['instance_regions_by_day']['2026-10-12']['issuer'] = 'wrong-region'
     with pytest.raises(ValueError):
         c.validate_preimages(**args)
+
+
+@pytest.mark.parametrize('stage', DESIGN_REQUIRED_RULES)
+def test_all_aggregate_residences(stage: str) -> None:
+    """Independent per-rule residence matrix, with deletion of every member."""
+    for rule, declared in DESIGN_RULE_PATHS.items():
+        gate = tuple(declared.split())
+        actual = stage in ('fleet-budgets', 'shadow-serving', 'pre-flip')
+        close = ('timing.close_us.count', 'timing.handoff_us.count', 'timing.drain_us.count')
+        if rule == 'G7':
+            region = tuple(path.replace('fleet_peaks.', 'peaks.') for path in gate)
+            if actual:
+                gate += tuple(path.replace('peaks.', 'publisher.peaks.') for path in region) + close
+                region += close
+        else:
+            region = tuple(path for path in gate if path.startswith('timing.'))
+        writer = tuple(path for path in gate if path.split('.')[0] in
+                       ('comparator', 'admission', 'partition', 'attempts', 'checkpoint'))
+        expected = {'GATE_REPORT': gate, 'REGION_REPORT': region, 'WRITER_REPORT': writer}
+        assert c.PASS_AGGREGATE_LOCATIONS[stage][rule] == expected
+        report = obj('gate_outputs_a2', 'closed-actual-empty')['report']
+        report['gate'] = stage
+        report['rules'] = dict.fromkeys(report['rules'], 'not_required')
+        report['rules'][rule] = 'pass'
+        report['attempts'] = dict.fromkeys(report['attempts'], 0)
+        for field in ('first_seed_at_us', 'clock_start_us', 'elapsed_seconds'):
+            report[field] = 1
+        reg = obj('region_reports', 'region')
+        reg.update(peaks=copy.deepcopy(report['fleet_peaks']), timing=copy.deepcopy(report['timing']))
+        wr = obj('writer_reports', 'unknown-region')
+        for field in ('comparator', 'admission', 'partition', 'attempts', 'checkpoint'):
+            wr[field] = copy.deepcopy(report[field])
+        records = {'GATE_REPORT': report, 'REGION_REPORT': reg, 'WRITER_REPORT': wr}
+        c._pass_aggregates(report, [reg], [wr])
+        for location, paths in expected.items():
+            for path in paths:
+                node = records[location]
+                parts = path.split('.')
+                for part in parts[:-1]:
+                    node = node[part]
+                original = node[parts[-1]]
+                node[parts[-1]] = None
+                with pytest.raises(ValueError):
+                    c._pass_aggregates(report, [reg], [wr])
+                node[parts[-1]] = original
+
+
+@pytest.mark.parametrize('stage', DESIGN_REQUIRED_RULES)
+def test_regional_G7_pass_in_BLOCKED_report(stage: str) -> None:
+    args = obj('gate_outputs_a2', 'regional-G7-' + stage)
+    failure = obj('gate_failures', 'constructor-artifact_gap')
+    args['failures'] = make_pages([failure])
+    args['report']['failures'] = make_detail([failure], args['failures'], 'failures')
+    args['report']['failure_counts']['artifact_gap'] = {'count': 1, 'listed': 1, 'complete': True, 'day_counts': [1]}
+    args['report']['rules']['G1'] = 'fail'
+    args['output'].update(gaps=['artifact_gap'], verdict='BLOCKED')
+    args['output']['coverage_sha256'] = s.sha256(args['report'])
+    c.validate_gate_output(**args)
+    args['regions'][0]['entries'][0]['peaks']['configured_publishers'] = None
+    args['report']['regions'] = make_detail(args['regions'][0]['entries'], args['regions'], 'regions')
+    args['output']['coverage_sha256'] = s.sha256(args['report'])
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**args)
+
+
+@pytest.mark.parametrize('key', ['publisher_slot_rpc_elapsed_us', 'close_us', 'handoff_us', 'drain_us'])
+def test_regional_required_values_have_no_null_observations(key: str) -> None:
+    report = obj('gate_outputs_a2', 'closed-actual-empty')['report']
+    region = obj('region_reports', 'region')
+    region['timing'] = copy.deepcopy(report['timing'])
+    # Fleet unavailability cannot mask a malformed regional population.
+    report['timing'] = {name: dict.fromkeys(stat) for name, stat in report['timing'].items()}
+    c._regional_metrics(report, [region])
+    region['timing'][key]['null_count'] = 1
+    with pytest.raises(ValueError):
+        c._regional_metrics(report, [region])
+    region['timing'] = copy.deepcopy(report['timing'])
+    c._regional_metrics(report, [region])
+
+
+@pytest.mark.parametrize('defect', ['S', 'J', 'self-timing', 'H', 'Hterm'])
+def test_common_regional_timing_population_invariants(defect: str) -> None:
+    report = obj('gate_outputs_a2', 'closed-actual-empty')['report']
+    region = obj('region_reports', 'region')
+    region['timing'] = copy.deepcopy(report['timing'])
+    report['timing'] = {name: dict.fromkeys(stat) for name, stat in report['timing'].items()}
+    key, field = {'S': ('authorize_shadow_us', 'null_count'), 'J': ('publisher_cycle_us', 'null_count'),
+                  'self-timing': ('evidence_write_us', 'count'), 'H': ('close_us', 'count'),
+                  'Hterm': ('drain_us', 'count')}[defect]
+    region['timing'][key][field] = 1
+    with pytest.raises(ValueError):
+        c._regional_metrics(report, [region])
+
+
+def test_closed_empty_regions_still_reconcile() -> None:
+    report = obj('gate_outputs_a2', 'closed-actual-empty')['report']
+    c._regional_metrics(report, [])
+    report['timing']['close_us']['count'] = report['timing']['handoff_us']['count'] = 1
+    with pytest.raises(ValueError):
+        c._regional_metrics(report, [])
+    writer = obj('writer_reports', 'unknown-region')
+    c._regional_metrics(report, [], [writer])
+    writer['region'] = 'us-central1'
+    with pytest.raises(ValueError):
+        c._regional_metrics(report, [], [writer])
+    report['failure_counts']['regional_roster_unknown']['count'] = 17
+    c._regional_metrics(report, [], [writer])
+
+
+@pytest.mark.parametrize('serialized', [False, True])
+def test_sorted_retained_tools_need_not_be_unique(serialized: bool) -> None:
+    value = obj('verifier_ports', 'repeated-sorted-tool')
+    assert value['retained_tools'][0] == value['retained_tools'][1]
+    if serialized:
+        e.VERIFIERS.parse(canonical(value))
+    else:
+        e.VERIFIERS(value)
+
+
+@pytest.mark.parametrize('path', ['evidence//source.json', 'evidence/./source.json'])
+@pytest.mark.parametrize('serialized', [False, True])
+def test_relative_file_keys_need_not_be_normalized(path: str, serialized: bool) -> None:
+    value = {'path': path, 'sha256': 'a' * 64, 'bytes': 0}
+    if serialized:
+        e.FILE_REF.parse(canonical(value))
+    else:
+        e.FILE_REF(value)
+
+
+@pytest.mark.parametrize('gap', [row[0] for row in generator.rules()])
+def test_every_N_failure_completeness(gap: str) -> None:
+    # Names/producers are transcribed from the design by the offline generator,
+    # never from FAILURE_RULES or RUN_SCOPED_FAILURES.
+    producer = next(row[1].split()[0] for row in generator.rules() if row[0] == gap)
+    args = obj('gate_outputs_a2', 'pre-enable-structural-pass')
+    names = sorted({gap, 'artifact_gap'})
+    failures = [{'v': 2, 'policy_version': 'shadow-v2', 'contract_revision': 'a2',
+                 'gap': name, 'subject': generator.subject('run'), 'count': 1} for name in names]
+    args['failures'] = make_pages(failures)
+    args['report']['failures'] = make_detail(failures, args['failures'], 'failures')
+    for name in names:
+        args['report']['failure_counts'][name] = {'count': 1, 'listed': 1, 'complete': True, 'day_counts': [1]}
+    args['report']['rules'][producer] = 'fail'
+    args['report']['rules']['G1'] = 'fail'
+    args['report']['complete'] = False
+    args['output'].update(gaps=names, verdict='BLOCKED', coverage_sha256=s.sha256(args['report']))
+    c.validate_gate_output(**args)
+    args['report']['complete'] = True
+    if gap in ('evidence_export_budget_gap', 'positive_seed_gap', 'continuous_window_gap'):
+        failures = [failure for failure in failures if failure['gap'] == gap]
+        args['failures'] = make_pages(failures)
+        args['report']['failures'] = make_detail(failures, args['failures'], 'failures')
+        args['report']['failure_counts']['artifact_gap'] = {'count': 0, 'listed': 0, 'complete': True, 'day_counts': [0]}
+        args['report']['rules']['G1'] = 'pass'
+        args['output']['gaps'] = [gap]
+        args['output']['coverage_sha256'] = s.sha256(args['report'])
+        c.validate_gate_output(**args)
+    else:
+        args['output']['coverage_sha256'] = s.sha256(args['report'])
+        with pytest.raises(ValueError):
+            c.validate_gate_output(**args)
+
+
+@pytest.mark.parametrize('serialized', [False, True])
+def test_stat_components_need_not_be_jointly_available(serialized: bool) -> None:
+    value = obj('gate_report', 'independently-known-percentile')
+    if serialized:
+        e.STAT.parse(canonical(value))
+    else:
+        e.STAT(value)
+
+
+@pytest.mark.parametrize('field', ['comparator', 'admission'])
+def test_writer_ratio_uses_same_population_invariant(field: str) -> None:
+    args = obj('gate_outputs_a2', 'regional-G7-fleet-budgets')
+    writer = obj('writer_reports', 'unknown-region')
+    writer['region'] = 'us-central1'
+    for key in ('comparator', 'admission', 'partition', 'attempts', 'checkpoint'):
+        writer[key] = copy.deepcopy(args['report'][key])
+    args['writers'] = [{'v': 2, 'policy_version': 'shadow-v2', 'contract_revision': 'a2',
+                        'page_seq': '00000000000000000001', 'previous_sha256': None, 'entries': [writer]}]
+    args['report']['writers'] = make_detail([writer], args['writers'], 'writers')
+    args['output']['coverage_sha256'] = s.sha256(args['report'])
+    c.validate_gate_output(**args)
+    writer[field]['coverage'] = {'state': 'evaluated', 'numerator': 0, 'denominator': 1}
+    args['report']['writers'] = make_detail([writer], args['writers'], 'writers')
+    args['output']['coverage_sha256'] = s.sha256(args['report'])
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**args)

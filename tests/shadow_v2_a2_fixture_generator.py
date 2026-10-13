@@ -451,7 +451,7 @@ def build() -> dict[str, bytes]:
         return result
     for field in ("count", "null_count"):
         bad_report = copy.deepcopy(actual)
-        reg = {**copy.deepcopy(region), "timing": copy.deepcopy(actual["timing"])}
+        reg = {**copy.deepcopy(region), "peaks": copy.deepcopy(known_peaks), "timing": copy.deepcopy(actual["timing"])}
         if field == "count":
             for k in ("close_us", "handoff_us"):
                 bad_report["timing"][k] = {"count": 1, "null_count": 0, **dict.fromkeys(("min", "p50", "p95", "p99", "max"), 1)}
@@ -466,7 +466,7 @@ def build() -> dict[str, bytes]:
     bad_report["timing"]["drain_us"] = {"count": 2, "null_count": 0, **dict.fromkeys(("min", "p50", "p95", "p99", "max"), 1)}
     for k in ("close_us", "handoff_us"):
         bad_report["timing"][k] = {**bad_report["timing"]["drain_us"], "count": 1}
-    reg = {**copy.deepcopy(region), "timing": copy.deepcopy(bad_report["timing"])}
+    reg = {**copy.deepcopy(region), "peaks": copy.deepcopy(known_peaks), "timing": copy.deepcopy(bad_report["timing"])}
     add("gate_outputs_a2", "Hterm-exceeds-H", "validate_gate_output", regional_arguments(bad_report, [reg]), "reject")
     fallback = {**TAG, "gap": "writer_closure_gap", "subject": subject("run"), "count": 1}
     bad_report = copy.deepcopy(actual)
@@ -504,6 +504,87 @@ def build() -> dict[str, bytes]:
         bad["proof"]["external_proofs_sha256"] = C(decoded)
         bad["manifest"]["proof_manifest_sha256"] = None
         add("root_preimages", "wrong-external-" + role + "-revision", "validate_preimages", bad, "reject")
+    # Round-3 independent regional availability matrix: projections before
+    # opt-in, observed populations only at actual-evidence stages.
+    for stage in ("transport", "fleet-budgets-pre", "fleet-budgets", "shadow-serving", "pre-flip", "post-flip"):
+        rep = copy.deepcopy(actual if stage in ("fleet-budgets", "shadow-serving", "pre-flip") else report)
+        rep["gate"] = stage
+        required = {"transport": (1,), "fleet-budgets-pre": (1, 7),
+            "fleet-budgets": (1, 2, 5, 6, 7, 8), "shadow-serving": tuple(range(1, 11)),
+            "pre-flip": tuple(range(1, 12)), "post-flip": (1, 11)}[stage]
+        rep["rules"] = {f"G{i}": "pass" if i in required or i == 7 else "not_required" for i in range(1, 12)}
+        if stage in ("shadow-serving", "pre-flip"):
+            rep["attempts"] = dict.fromkeys(rep["attempts"], 0)
+            rep["first_seed_at_us"] = rep["clock_start_us"] = rep["window"]["start_us"]
+            rep["elapsed_seconds"] = 1
+        reg = {**copy.deepcopy(region), "peaks": copy.deepcopy(known_peaks), "timing": copy.deepcopy(rep["timing"])}
+        add("gate_outputs_a2", "regional-G7-" + stage, "validate_gate_output", regional_arguments(rep, [reg]))
+        for component in peak_ints + peak_ratios:
+            bad = copy.deepcopy(reg)
+            bad["peaks"][component] = None
+            add("gate_outputs_a2", "regional-G7-" + stage + "-missing-" + component,
+                "validate_gate_output", regional_arguments(copy.deepcopy(rep), [bad]), "reject")
+    segment = next(v["object"] for v in files["budget_envelopes"] if v["target"] == "LOAD_SEGMENT")
+    add("budget_envelopes", "equal-endpoints", "LOAD_SEGMENT", {**segment, "end_us": segment["start_us"]})
+    for complete in (False, True):
+        rep = copy.deepcopy(report)
+        failure = {**TAG, "gap": "artifact_gap", "subject": subject("run"), "count": 1}
+        fp = pages([failure], 255)
+        rep["failures"] = detail([failure], fp)
+        rep["failure_counts"]["artifact_gap"] = {"count": 1, "listed": 1, "complete": True, "day_counts": [1]}
+        rep["rules"]["G1"] = "fail"
+        rep["complete"] = complete
+        add("gate_outputs_a2", "artifact-N-" + ("complete" if complete else "incomplete"),
+            "validate_gate_output", output_arguments(rep, fp), "reject" if complete else "accept")
+    # Unknown-only regional identity: retain known fleet H observations.
+    rep = copy.deepcopy(actual)
+    for key in ("close_us", "handoff_us"):
+        rep["timing"][key] = {"count": 1, "null_count": 0, **dict.fromkeys(("min", "p50", "p95", "p99", "max"), 1)}
+    failures3 = [{**TAG, "gap": gap, "subject": (subject("writer", day=DAY, role="router", boot="unknown-region-boot")
+        if gap == "regional_roster_unknown" else subject("run")), "count": 1}
+        for gap in ("artifact_gap", "fleet_headroom_gap", "regional_roster_unknown")]
+    fp = pages(failures3, 255)
+    rep["failures"] = detail(failures3, fp)
+    for failure3 in failures3:
+        rep["failure_counts"][failure3["gap"]] = {"count": 1, "listed": 1, "complete": True, "day_counts": [1]}
+    rep["rules"].update(G1="unevaluable", G2="fail", G7="unevaluable")
+    rep["complete"] = False
+    rep["fleet_peaks"] = copy.deepcopy(peaks)
+    rep["publisher"]["peaks"] = copy.deepcopy(peaks)
+    writer3 = copy.deepcopy(next(v["object"] for v in files["writer_reports"] if v["name"] == "unknown-region"))
+    writer3["boot"] = "unknown-region-boot"
+    wp = pages([writer3], 16)
+    rep["writers"] = detail([writer3], wp)
+    unknown3 = output_arguments(rep, fp)
+    unknown3["writers"] = wp
+    add("gate_outputs_a2", "unknown-only-region-known-fleet", "validate_gate_output", unknown3)
+    # Required-value null is impossible even when the fleet source is unavailable.
+    rep = copy.deepcopy(actual)
+    reg = {**copy.deepcopy(region), "peaks": copy.deepcopy(known_peaks), "timing": copy.deepcopy(rep["timing"])}
+    for key in ("close_us", "handoff_us"):
+        reg["timing"][key] = {"count": 1, "null_count": 1, **dict.fromkeys(("min", "p50", "p95", "p99", "max"), 1)}
+        rep["timing"][key] = copy.deepcopy(stat)
+    rep["null_counts"]["timing"] = None
+    failures3 = [{**TAG, "gap": gap, "subject": (object_subject("a2_file", "missing-close.json")
+        if gap == "artifact_gap" else subject("writer", day=DAY, role="router", boot="issuer")), "count": 1}
+        for gap in ("artifact_gap", "close_handoff_budget_gap", "writer_closure_gap")]
+    fp = pages(failures3, 255)
+    rep["failures"] = detail(failures3, fp)
+    for failure3 in failures3:
+        rep["failure_counts"][failure3["gap"]] = {"count": 1, "listed": 1, "complete": True, "day_counts": [1]}
+    rep["rules"].update(G1="unevaluable", G7="unevaluable", G8="unevaluable")
+    rep["complete"] = False
+    null3 = regional_arguments(rep, [reg])
+    null3["failures"] = fp
+    add("gate_outputs_a2", "region-required-null-under-unavailable-fleet", "validate_gate_output", null3, "reject")
+    # Complete invariant audit: sorted does not declare unique retained tools;
+    # relative FILE_REF keys have no declared normalized-path restriction.
+    tool3 = {**verifier, "entry_point": "pilot_enablement.fleet_budgets_pre", "keyset_sha256": None}
+    add("verifier_ports", "repeated-sorted-tool", "VERIFIERS", {**verifiers, "retained_tools": [tool3, tool3]})
+    for path3 in ("evidence//source.json", "evidence/./source.json"):
+        add("input_inventory", "relative-key-" + path3, "FILE_REF", ref(path3))
+    add("gate_report", "independently-known-percentile", "STAT",
+        {"count": 1, "null_count": 0, "min": None, "p50": 1, "p95": None, "p99": None, "max": None})
     # Every new schema receives independent byte-bound/missing/extra variants.
     limits = {"GATE_REPORT": 65536, "FAILURE_SUBJECT": 768, "GATE_FAILURE": 1024, "RATIO": 256,
         "STAT": 512, "RATIONAL": 128, "PEAKS": 4096, "DETAIL": 512, "WRITER_REPORT": 8192,

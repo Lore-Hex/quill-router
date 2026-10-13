@@ -450,3 +450,126 @@ def test_inventory_zero_objects_native_and_transport() -> None:
     v = obj('input_inventory', 'zero-objects')
     assert v['objects'] == 0
     assert_round_trip(e.INPUT_INVENTORY_ENTRY, v)
+
+
+# Round-2 reviewer witnesses, retained in the release suite.
+def _r3_commit(a):
+    a['output']['coverage_sha256'] = s.sha256(a['report'])
+
+def _r3_stream(a, name, values):
+    p = dict(v=2, policy_version='shadow-v2', contract_revision='a2', page_seq='00000000000000000001', previous_sha256=None, entries=values)
+    a[name] = [p]
+    a['report'][name] = dict(root=hashlib.sha256(canonical(values)).hexdigest(), count=len(values), pages=1, tail_sha256=s.sha256(p))
+
+def _r3_stat(n):
+    return dict(count=n, null_count=0, min=1 if n else None, p50=1 if n else None, p95=1 if n else None, p99=1 if n else None, max=1 if n else None)
+
+def _r3_unknown_region_report():
+    a = obj('gate_outputs_a2', 'closed-actual-empty')
+    for key in ('close_us', 'handoff_us'):
+        a['report']['timing'][key] = _r3_stat(1)
+    f = dict(v=2, policy_version='shadow-v2', contract_revision='a2', gap='regional_roster_unknown', subject=e.W('2026-10-12', 'router', 'unknown-region-boot'), count=1)
+    _r3_stream(a, 'failures', [f])
+    a['report']['failure_counts'][f['gap']] = dict(count=1, listed=1, complete=True, day_counts=[1])
+    a['report']['rules']['G2'] = 'fail'
+    a['output'].update(gaps=[f['gap']], verdict='BLOCKED')
+    w = obj('writer_reports', 'unknown-region')
+    w.update(boot='unknown-region-boot', region=None)
+    _r3_stream(a, 'writers', [w])
+    extra = [dict(v=2, policy_version='shadow-v2', contract_revision='a2', gap=n, subject=e.N(), count=1) for n in ('artifact_gap', 'fleet_headroom_gap')]
+    entries = sorted([f, *extra], key=lambda x: (x['gap'], canonical(x['subject'])))
+    _r3_stream(a, 'failures', entries)
+    for x in extra:
+        a['report']['failure_counts'][x['gap']] = dict(count=1, listed=1, complete=True, day_counts=[1])
+    a['report']['rules']['G1'] = 'unevaluable'
+    a['report']['rules']['G7'] = 'unevaluable'
+    a['report']['complete'] = False
+    a['report']['fleet_peaks'] = dict.fromkeys(a['report']['fleet_peaks'])
+    a['report']['publisher']['peaks'] = dict.fromkeys(a['report']['publisher']['peaks'])
+    a['output']['gaps'] = sorted(x['gap'] for x in entries)
+    _r3_commit(a)
+    return a
+
+def test_all_regions_unknown_preserves_known_fleet():
+    a = _r3_unknown_region_report()
+    assert a['regions'] == []
+    e.GATE_REPORT(a['report'])
+    e.WRITER_REPORT(a['writers'][0]['entries'][0])
+    c._metrics(a['report'])
+    c.validate_gate_output(**a)
+
+@pytest.mark.parametrize('serialized', [False, True])
+def test_zero_duration_load_segment_declared_unsigned_endpoints(serialized):
+    v = next(copy.deepcopy(v['object']) for v in json.loads((FIXTURES / 'budget_envelopes.json').read_bytes())['variants'] if v['target'] == 'LOAD_SEGMENT' and v['expected'] == 'accept')
+    v['end_us'] = v['start_us']
+    if serialized:
+        e.LOAD_SEGMENT.parse(canonical(v))
+    else:
+        e.LOAD_SEGMENT(v)
+
+def test_real_large_release_fixtures_have_unbounded_F_preimages():
+    a = obj('root_preimages', 'all-defined-preimages-empty')
+    a['artifacts'] = {k: bytes.fromhex(v) for k, v in a.pop('artifacts_hex').items()}
+    a['manifest']['proof_manifest_sha256'] = None
+    for field, path in [('evaluator_fixture_sha256', 'billing_v1.json'), ('binding_fixture_sha256', 'shadow_v1.json'), ('wire_fixture_sha256', 'shadow_v2/manifest.json')]:
+        raw = (FIXTURES.parent / path).read_bytes()
+        a['artifacts']['proof.' + field] = raw
+        a['proof'][field] = hashlib.sha256(raw).hexdigest()
+    assert len(a['artifacts']['proof.evaluator_fixture_sha256']) == 699476
+    c.validate_preimages(**a)
+
+def test_artifact_run_incomplete_cannot_claim_complete():
+    a = obj('gate_outputs_a2', 'pre-enable-structural-pass')
+    f = dict(v=2, policy_version='shadow-v2', contract_revision='a2', gap='artifact_gap', subject=e.N(), count=1)
+    _r3_stream(a, 'failures', [f])
+    a['report']['failure_counts']['artifact_gap'] = dict(count=1, listed=1, complete=True, day_counts=[1])
+    a['report']['rules']['G1'] = 'fail'
+    a['output'].update(gaps=['artifact_gap'], verdict='BLOCKED')
+    _r3_commit(a)
+    a['report']['complete'] = False
+    _r3_commit(a)
+    c.validate_gate_output(**a)
+    a['report']['complete'] = True
+    _r3_commit(a)
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**a)
+
+def test_region_required_close_measurement_cannot_count_null():
+    a = obj('gate_outputs_a2', 'closed-actual-empty')
+    region = obj('region_reports', 'region')
+    region['timing'] = copy.deepcopy(a['report']['timing'])
+    for key in ('close_us', 'handoff_us'):
+        region['timing'][key] = dict(_r3_stat(1), null_count=1)
+        a['report']['timing'][key] = dict.fromkeys(a['report']['timing'][key])
+    a['report']['null_counts']['timing'] = None
+    _r3_stream(a, 'regions', [region])
+    entries = [dict(v=2, policy_version='shadow-v2', contract_revision='a2', gap=n, subject=e.W('2026-10-12', 'router', 'issuer') if n != 'artifact_gap' else e.O('a2_file', 'missing-close.json'), count=1) for n in ('artifact_gap', 'close_handoff_budget_gap', 'writer_closure_gap')]
+    _r3_stream(a, 'failures', entries)
+    for x in entries:
+        a['report']['failure_counts'][x['gap']] = dict(count=1, listed=1, complete=True, day_counts=[1])
+    a['report']['rules']['G1'] = 'unevaluable'
+    a['report']['rules']['G7'] = 'unevaluable'
+    a['report']['rules']['G8'] = 'unevaluable'
+    a['report']['complete'] = False
+    a['output'].update(gaps=[x['gap'] for x in entries], verdict='BLOCKED')
+    _r3_commit(a)
+    e.GATE_REPORT(a['report'])
+    e.REGION_REPORT(region)
+    c._metrics(a['report'])
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**a)
+
+def test_G7_pass_requires_supplied_actual_region_peaks():
+    a = obj('gate_outputs_a2', 'closed-actual-empty')
+    region = obj('region_reports', 'region')
+    region['timing'] = copy.deepcopy(a['report']['timing'])
+    region['peaks'] = copy.deepcopy(a['report']['fleet_peaks'])
+    _r3_stream(a, 'regions', [region])
+    _r3_commit(a)
+    c.validate_gate_output(**a)
+    assert a['report']['rules']['G7'] == 'pass' and a['output']['verdict'] == 'PASS'
+    region['peaks']['configured_routers'] = None
+    _r3_stream(a, 'regions', [region])
+    _r3_commit(a)
+    with pytest.raises(ValueError):
+        c.validate_gate_output(**a)
