@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import shlex
 from copy import deepcopy
 from pathlib import Path
 
@@ -192,94 +191,101 @@ def test_ci_and_production_use_the_same_python() -> None:
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "actions/setup-python" not in ci
     assert "astral-sh/setup-uv" in ci
-    assert_ci_uses_repository_python(yaml.safe_load(ci))
+    assert_ci_uses_repository_python(ci)
 
 
-# ci.yml currently needs no UV_* settings. Each future exception must explain
-# why it cannot bypass the repository's interpreter pin.
+# Exact NAME=value text only, with a justification for each exception. Empty:
+# even comments mentioning UV_ are intentionally rejected, before YAML parsing.
 UV_ENV_ALLOWLIST: dict[str, str] = {}
 
 
 def assert_ci_uses_repository_python(document: object, location: str = "ci") -> None:
+    text = document if isinstance(document, str) else yaml.safe_dump(document)
+    for setting in re.findall(r"UV_(?:[A-Za-z0-9_]+=[^\s]+)?", text):
+        assert setting in UV_ENV_ALLOWLIST, f"{location}: interpreter override: forbidden text {setting}"
+    assert_ci_python_sources(yaml.safe_load(text), location)
+
+
+def assert_ci_python_sources(document: object, location: str) -> None:
     """Check every workflow/job/step, including env and action inputs."""
     if isinstance(document, dict):
         for key, value in document.items():
             here = f"{location}.{key}"
-            assert not str(key).startswith("UV_") or key in UV_ENV_ALLOWLIST, (
-                f"{here}: interpreter override: UV_* setting not on the CI allowlist"
-            )
             assert key not in {"python-version", "python-version-file"}, (
                 f"{here}: interpreter override bypasses .python-version"
             )
             if key == "uses" and isinstance(value, str):
                 assert "setup-python" not in value.lower(), f"{here}: alternate interpreter source"
             if key == "run" and isinstance(value, str):
-                # Assignments include inline env and quoted $GITHUB_ENV writes
-                # (both NAME=value and multiline NAME<<EOF). Bare exports can
-                # expose an inherited value without an assignment here.
-                variables = re.findall(r"\b(UV_[A-Za-z0-9_]+)\s*(?:=|<<)", value)
-                for exported in re.findall(r"\bexport\s+([^\n;&|]+)", value):
-                    variables.extend(re.findall(r"\bUV_[A-Za-z0-9_]+\b", exported))
-                assert all(variable in UV_ENV_ALLOWLIST for variable in variables), (
-                    f"{here}: interpreter override in shell environment"
-                )
-                assert_no_uv_interpreter_flags(value, here)
+                assert_uv_lines_allowed(value, here)
                 assert ".python-version" not in value, f"{here}: rewrites the interpreter pin"
-            assert_ci_uses_repository_python(value, here)
+            assert_ci_python_sources(value, here)
     elif isinstance(document, list):
         for i, value in enumerate(document):
-            assert_ci_uses_repository_python(value, f"{location}[{i}]")
+            assert_ci_python_sources(value, f"{location}[{i}]")
 
 
-# Deny by default: these are the only uv forms ci.yml uses. Any other uv/uvx
-# invocation (uvx, uv tool run, uv python pin, interpreter or config options)
-# must be classified here on purpose before CI may use it.
-UV_RUN_TOOLS = frozenset({"python", "pytest", "mypy", "ruff", "coverage"})
+# Whole-line TEXT rules, with expressions only after the tool name and one
+# exact Python heredoc form. Redirect/tee targets cannot carry shell syntax.
+UV_ACTIONS_EXPRESSION = r"\$\{\{ *(?:env|matrix)\.[A-Za-z0-9_]+ *\}\}"
+UV_REDIRECT_TARGET = r"[^\s|&;<>`$()]+"
+UV_TAIL = (
+    rf"(?P<tail>( +(?:[12]?>>?|&>) *{UV_REDIRECT_TARGET}| +2>&1)*"
+    rf"( *\| *tee( -a)? +{UV_REDIRECT_TARGET})?)"
+)
+UV_PYTHON_HEREDOC = re.compile(r"""uv run python - <<(?P<quote>['"]?)(?P<tag>[A-Za-z_]+)(?P=quote)""")
+UV_LINE_RULES = {
+    "sync": re.compile(r"uv sync --frozen( --no-dev)?" + UV_TAIL),
+    "run": re.compile(
+        r"uv run( --no-sync)? (python|pytest|mypy|ruff|coverage)"
+        rf"( (?:[^|&;<>`$()]|{UV_ACTIONS_EXPRESSION})*)?" + UV_TAIL,
+    ),
+    "python-heredoc": UV_PYTHON_HEREDOC,
+}
 
 
-def uv_invocation_allowed(args: list[str]) -> bool:
-    if args[:2] == ["sync", "--frozen"]:
-        return args[2:] in ([], ["--no-dev"])
-    if args[:1] == ["run"]:
-        rest = args[1:]
-        if rest[:1] == ["--no-sync"]:
-            rest = rest[1:]
-        return bool(rest) and rest[0] in UV_RUN_TOOLS
-    return False
-
-
-def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
-    # Keep quoted/multiline arguments intact while separating shell commands.
-    # Strip unquoted comments at word starts, preserving their newline. shlex's
-    # built-in comment handling eats that boundary and merges the next command.
-    script = re.sub(
-        r"""('[^']*'|"(?:\\.|[^"\\])*"|\\.)|(?<![^\s;&|()<>])#[^\n]*""",
-        lambda match: match[1] or "",
-        script.replace("\\\n", ""),
-    )
-    punctuation = ";&|()<>\n"
-    lexer = shlex.shlex(script, posix=True, punctuation_chars=punctuation)
-    lexer.whitespace = " \t\r"
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    command: list[str] = []
-    for token in [*lexer, "\n"]:
-        if not set(token) <= set(punctuation):
-            command.append(token)
+def uv_logical_lines(script: str) -> list[str]:
+    lines = []
+    pending = ""
+    heredoc_tag = None
+    for physical in script.splitlines():
+        # Body text is not shell commands. Check the exact physical terminator
+        # before stripping comments or joining any backslashes in the body.
+        if heredoc_tag is not None:
+            if physical == heredoc_tag:
+                heredoc_tag = None
             continue
-        # A descriptor such as the 2 in 2>&1 belongs to the redirection,
-        # not to uv. Redirections and pipes end the invocation's arguments.
-        if ("<" in token or ">" in token) and command and command[-1].isdigit():
-            command.pop()
-        for i, word in enumerate(command):
-            name = Path(word).name
-            if name == "uvx":
-                raise AssertionError(f"{location}: uvx is not an allowed CI form: {command}")
-            if name == "uv":
-                assert uv_invocation_allowed(command[i + 1:]), (
-                    f"{location}: uv form not on the CI allowlist: {command[i:]}"
-                )
-        command = []
+        # Remove comments BEFORE continuations: a backslash inside a comment
+        # cannot hide the following command. Quoted/escaped hashes stay text.
+        line = re.sub(
+            r"""('[^']*'|"(?:\\.|[^"\\])*"|\\.)|(?<!\S)#[^\n]*""",
+            lambda match: match[1] or "",
+            physical,
+        )
+        continued = line.endswith("\\")
+        if line != physical:
+            line = line.rstrip()  # Whitespace before a removed comment.
+        pending += line[:-1] if continued else line
+        if not continued:
+            logical = pending.lstrip()
+            lines.append(logical)
+            if heredoc := UV_PYTHON_HEREDOC.fullmatch(logical):
+                heredoc_tag = heredoc["tag"]
+            pending = ""
+    assert heredoc_tag is None, "CI allowlist requires a terminated Python heredoc"
+    if pending:
+        lines.append(pending.lstrip())
+    return lines
+
+
+def assert_uv_lines_allowed(script: str, location: str) -> None:
+    for line in uv_logical_lines(script):
+        if re.search(r"\buvx?\b", line):
+            assert not re.search(r"\buvx\b", line) and any(
+                rule.fullmatch(line) for rule in UV_LINE_RULES.values()
+            ), (
+                f"{location}: uv line not on the CI allowlist: {line}"
+            )
 
 
 @pytest.mark.parametrize("scope", ["workflow", "job", "step"])
@@ -344,7 +350,7 @@ def test_ci_alternate_python_source_mutations_are_detected(step: dict[str, objec
 
 def test_ci_python_check_allows_unrelated_command_flags() -> None:
     assert_ci_uses_repository_python({"jobs": {"example": {"steps": [{"run": (
-        "uv run --no-sync python -c 'print(\"--python\")'\n"
+        "uv run --no-sync python -c '\"--python\"'\n"
         "go test -p 1 ./...\nuv run pytest -p no:cacheprovider\n"
     )}]}}})
 
@@ -372,8 +378,8 @@ def test_ci_python_pin_bypass_mutations_are_detected(command: str) -> None:
 
 def test_uv_run_tool_options_are_not_interpreter_flags() -> None:
     # Options after the tool belong to the tool (pytest -p plugins, ruff -p...).
-    assert_no_uv_interpreter_flags("uv run pytest -p no:cacheprovider", "ci")
-    assert_no_uv_interpreter_flags("uv run --no-sync python -c 'print(1)'", "ci")
+    assert_uv_lines_allowed("uv run pytest -p no:cacheprovider", "ci")
+    assert_uv_lines_allowed("uv run --no-sync python -c 'pass'", "ci")
 
 
 @pytest.mark.parametrize("script", [
@@ -381,30 +387,95 @@ def test_uv_run_tool_options_are_not_interpreter_flags() -> None:
     "uv sync --frozen # don't parse 'comment quotes\necho done",
     "uv sync --frozen > /tmp/sync.log",  # noqa: S108 -- parsed shell text, never executed
     "uv run pytest 2>&1 | tee log",
-    "uv sync --frozen >> log", "uv sync --frozen < input", "uv sync --frozen 2> log",
+    "uv sync --frozen >> log", "uv sync --frozen 2> log",
     "uv sync --frozen &> log", "uv sync --frozen 2>&1", "uv sync --frozen | tee log",
 ])
-def test_ci_uv_allows_shell_comments_and_redirections(
-    script: str, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invocations: list[list[str]] = []
-    allowed = uv_invocation_allowed
-
-    def record(args: list[str]) -> bool:
-        invocations.append(args)
-        return allowed(args)
-
-    monkeypatch.setattr(f"{__name__}.uv_invocation_allowed", record)
+def test_ci_uv_allows_shell_comments_and_redirections(script: str) -> None:
     assert_ci_uses_repository_python({"run": script})
-    assert invocations == [["run", "pytest"] if script.startswith("uv run") else ["sync", "--frozen"]]
 
 
 def test_ci_uv_rejects_override_after_inline_comment() -> None:
     with pytest.raises(AssertionError, match="allowlist") as caught:
         assert_ci_uses_repository_python({"run": "uv sync --frozen # c\nuv sync --python 3.11"})
-    assert str(["uv", "sync", "--python", "3.11"]) in str(caught.value)
+    assert "uv sync --python 3.11" in str(caught.value)
 
 
 def test_ci_uv_does_not_strip_quoted_hash_arguments() -> None:
     with pytest.raises(AssertionError, match="allowlist"):
         assert_ci_uses_repository_python({"run": 'uv sync --frozen "#argument"'})
+
+
+@pytest.mark.parametrize("script", [
+    "uv sync --frozen >/dev/null --python 3.11",
+    "uv sync --frozen # install \\\nuv sync --frozen --python 3.11",
+    "env 'UV_NO_CONFIG'=true uv sync --frozen",
+    "uv sync --frozen; echo done",
+    "uv sync --frozen && echo done",
+    "uv sync --frozen || echo done",
+    "(uv sync --frozen)",
+    "uv run pytest `echo --python=3.11`",
+    "uv run pytest $(echo --python=3.11)",
+    "uv sync --frozen < input",
+])
+def test_ci_uv_strict_text_mutations_are_detected(script: str) -> None:
+    with pytest.raises(AssertionError, match="override|allowlist"):
+        assert_ci_uses_repository_python({"run": script})
+
+
+@pytest.mark.parametrize("addition", [
+    "# UV_NO_CONFIG is deliberately forbidden even in comments\n",
+    "env:\n  SETTING: UV_NO_CONFIG\n",
+    "env:\n  PREFIX_UV_NO_CONFIG: true\n",
+    "name: UV_\n",
+    "run: echo UV_NO_CONFIG\n",
+])
+def test_ci_rejects_uv_substrings_anywhere_in_workflow_text(addition: str) -> None:
+    ci = (ROOT / ".github/workflows/ci.yml").read_text()
+    with pytest.raises(AssertionError, match="interpreter override"):
+        assert_ci_uses_repository_python(ci + "\n" + addition)
+
+
+@pytest.mark.parametrize("script", [
+    "uv run pytest --group ${{ matrix.shard }}",
+    "uv run --no-sync pytest --splits ${{env.TEST_SHARDS}} --group ${{  matrix.shard  }}",
+])
+def test_ci_allows_github_expressions_only_in_tool_arguments(script: str) -> None:
+    assert_ci_uses_repository_python({"run": script})
+
+
+@pytest.mark.parametrize("script", [
+    "uv run ${{ env.X }} pytest",
+    "uv sync --frozen ${{ env.X }}",
+    "uv run pytest $(echo x)",
+    "uv run pytest $X",
+    "uv run pytest --group ${{ secrets.X }}",
+    "uv run pytest --group ${{ matrix.shard || 1 }}",
+    "uv run python - <<'PY' extra",
+    "uv sync --frozen >$(echo log)",
+    "uv run pytest >log;echo",
+    "uv run pytest >log&&echo",
+    "uv run pytest >log||echo",
+    "uv run pytest >`echo log`",
+])
+def test_ci_rejects_shell_syntax_outside_narrow_exceptions(script: str) -> None:
+    with pytest.raises(AssertionError, match="allowlist"):
+        assert_ci_uses_repository_python({"run": script})
+
+
+@pytest.mark.parametrize("quote", ["", "'", '"'])
+def test_ci_python_heredoc_exempts_only_body_lines(quote: str) -> None:
+    script = f"uv run python - <<{quote}PY{quote}\nuv sync --python 3.11\nPY\n"
+    assert_ci_uses_repository_python({"run": script})
+    with pytest.raises(AssertionError, match="uv sync --python 3.11"):
+        assert_ci_uses_repository_python({"run": script + "uv sync --python 3.11\n"})
+
+
+def test_ci_python_heredoc_still_rejects_raw_uv_settings() -> None:
+    with pytest.raises(AssertionError, match="interpreter override"):
+        assert_ci_uses_repository_python({"run": "uv run python - <<'PY'\n# UV_NO_CONFIG\nPY\n"})
+
+
+def test_ci_python_heredoc_body_backslash_cannot_hide_terminator() -> None:
+    script = "uv run python - <<'PY'\n# body \\\nPY\nuv sync --python 3.11\n"
+    with pytest.raises(AssertionError, match="uv sync --python 3.11"):
+        assert_ci_uses_repository_python({"run": script})
