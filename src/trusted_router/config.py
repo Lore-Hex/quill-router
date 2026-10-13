@@ -324,26 +324,40 @@ def operator_credential_setting_names(settings_type: type[BaseSettings]) -> froz
 
 
 def validate_shadow_probe_key(settings: Any, key: str) -> None:
-    """One inventory for startup and mounted credentials, including JSON maps."""
+    """One inventory for startup and mounted credentials, using each structured credential's runtime parser."""
     if not key:
         return
 
-    def values(value: Any) -> list[str]:
-        if isinstance(value, str):
-            try:
-                decoded = json.loads(value)
-            except (ValueError, TypeError):
-                return [value]
-            return [value] + (values(decoded) if not isinstance(decoded, str) else [decoded])
-        if isinstance(value, dict):
-            return [secret for nested in value.values() for secret in values(nested)]
-        if isinstance(value, (list, tuple)):
-            return [secret for nested in value for secret in values(nested)]
-        return []
-
     names = set(SERVICE_SURFACE_SECRET_OWNERS) | {"bootstrap_management_key"}
     names.discard("async_settle_shadow_probe_api_key")
-    credentials = [secret for name in names for secret in values(getattr(settings, name, None))]
+    credentials = []
+    for name in names:
+        value = getattr(settings, name, None)
+        if not isinstance(value, str) or not value:
+            continue
+        credentials.append(value)
+        if name == "federation_settlement_inbound_tokens":
+            credentials.extend(parse_settlement_inbound_tokens(value))
+        elif name in {"google_alias_credentials_json", "github_alias_credentials_json"}:
+            credentials.extend(secret for pair in _parse_oauth_alias_credentials(value, name).values()
+                               for secret in pair)
+        elif name == "postgres_dsn":
+            from trusted_router.postgres_dsn import dsn_field
+            credentials.append(dsn_field(value, "password"))
+        elif name in {"clickhouse_url", "provider_analytics_clickhouse_url", "operational_analytics_clickhouse_url"}:
+            import httpx
+
+            from trusted_router.clickhouse_endpoints import parse_endpoints
+            for endpoint in parse_endpoints(value):
+                url = httpx.URL(endpoint)
+                credentials.extend((url.username, url.password))
+        elif name == "sentry_dsn":
+            from sentry_sdk.utils import Dsn
+            dsn = Dsn(value)
+            credentials.extend((dsn.public_key, dsn.secret_key or ""))
+        elif name in {"attribution_cookie_key", "byok_envelope_key_b64", "adyen_hmac_key"}:
+            decoded = bytes.fromhex(value) if name == "adyen_hmac_key" else base64.b64decode(value, validate=True)
+            credentials.append(decoded.decode("utf-8", errors="replace"))
     if key and (any(char.isspace() for char in key) or any(
         secret and hmac.compare_digest(key.encode(), secret.encode()) for secret in credentials
     )):

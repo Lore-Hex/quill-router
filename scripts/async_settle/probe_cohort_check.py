@@ -18,6 +18,37 @@ from trusted_router.storage_models import generation_id_for_authorization
 from trusted_router.storage_operational_analytics import analytics_surrogate
 from trusted_router.synthetic.shadow_probe_contract import SHAPES
 
+# Counter policy table: action, fields, reason. Tests require exact schema
+# coverage, including nested count fields; new diagnostics require a decision.
+COUNTER_POLICY = (
+    ("report", "v instance region router_revision policy_version started_at_us flushed_at_us sequence closed", "Writer identity, version and interval; not cohort attribution."),
+    ("buckets", "counts terminal_counts", "Inspect every mismatch, conflict and non-exact diagnostic below."),
+    ("veto", "exclusions drops rejections comparison_dropped dimension_overflow counter_overflow conflicting_samples booking_pending booking_unknown", "Cumulative ambiguity, loss or conflict vetoes even if another workspace caused it."),
+    ("window", "last_mismatch_at_us first_gap_at_us", "A mismatch or coverage gap in the requested window vetoes."),
+    ("ignore", "comparison_attempts samples_inserted duplicate_samples first_evidence_at_us", "Volume and identical retries do not contradict exact per-ID reconciliation."),
+    ("ignore", "authorize_shadow_hist evidence_write_hist admission_observer", "Latency and admission health belong to fleet certification, not this smoke comparison."),
+)
+BUCKET_POLICY = (
+    ("veto", "mismatch requires_review unevaluable explained observed_unknown observed_ineligible comparison_dropped conflicting_samples booking_pending booking_unknown", "Non-exact, conflicted or incomplete observations veto conservatively."),
+    ("ignore", "authorize_attempts authorize_fresh authorize_replay header_absent requested_eligible snapshot_sent settle_attempts refund_attempts envelope_present observed_attempts observed_eligible evaluable exact comparison_attempts samples_inserted duplicate_samples", "Traffic and exact/identical retry totals; reconcile retained identities separately."),
+)
+
+
+def counter_veto(row: dict[str, Any], cutoff_us: int, now_us: int) -> bool:
+    for action, fields, _reason in COUNTER_POLICY:
+        for field in fields.split():
+            value = row.get(field)
+            if action == "veto" and value:
+                return True
+            if action == "window" and value is not None and cutoff_us <= value <= now_us:
+                return True
+            if action == "buckets":
+                for bucket in value or []:
+                    if any(bucket.get(name) for mode, names, _ in BUCKET_POLICY
+                           if mode == "veto" for name in names.split()):
+                        return True
+    return False
+
 
 def check(evidence: Any, workspace: str, now: dt.datetime, generation_ids: list[str] | None = None) -> dict[str, Any]:
     cutoff = now - dt.timedelta(minutes=10)
@@ -46,11 +77,8 @@ def check(evidence: Any, workspace: str, now: dt.datetime, generation_ids: list[
                 continue
             # Counter schema has no workspace dimension. Never mislabel these
             # cumulative writer/day diagnostics as ten-minute cohort deltas.
-            counters.append({name: row.get(name) for name in (
-                "instance", "region", "router_revision", "flushed_at_us", "counts",
-                "terminal_counts", "samples_inserted", "comparison_attempts",
-                "comparison_dropped", "exclusions", "drops", "rejections",
-                "dimension_overflow", "counter_overflow")})
+            counters.append({name: row.get(name) for action, fields, _ in COUNTER_POLICY
+                             if action != "ignore" for name in fields.split()})
     buckets = []
     for shape in SHAPES:
         route = "chat.completions" if shape.route == "/chat/completions" else "responses"
@@ -66,10 +94,9 @@ def check(evidence: Any, workspace: str, now: dt.datetime, generation_ids: list[
     errors.extend(cohort_errors)
     # Writer counters cannot attribute losses to a workspace. Veto ambiguous
     # losses conservatively, never label these diagnostics cohort-specific.
-    if any(row.get("exclusions") or row.get("drops") or row.get("rejections")
-           or row.get("comparison_dropped") or row.get("dimension_overflow")
-           or row.get("counter_overflow") for row in counters):
-        errors.append("writer/day loss or exclusion; cohort attribution unavailable")
+    if any(counter_veto(row, int(cutoff.timestamp() * 1e6), int(now.timestamp() * 1e6))
+           for row in counters):
+        errors.append("writer/day loss, exclusion or conflict; cohort attribution unavailable")
     return dict(window_minutes=10, errors=errors, reconciled=len(generation_ids or []),
                 buckets=buckets, writer_day_counters=counters,
                 counter_scope="all shadow traffic; cumulative writer/day, not workspace-attributable")

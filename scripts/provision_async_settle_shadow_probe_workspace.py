@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Provision or read-only validate an isolated async-settle shadow cohort."""
+"""Provision or validate a shadow cohort: single-operator, run-once procedure.
+
+Reconciliation is a safety net, not permission to run concurrent applies.
+"""
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import re
+import stat
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +50,10 @@ def _validate_workspace(store: Any, workspace_id: str, target_shards: int = 1) -
         raise ValueError("probe workspace must be active and local")
     if store.list_byok_providers(workspace_id):
         raise ValueError("probe workspace must not have BYOK credentials")
+    members = store.list_members(workspace_id)
+    if (len(members) != 1 or members[0].user_id != workspace.owner_user_id
+            or members[0].role != "owner"):
+        raise ValueError("probe workspace must have a pristine sole-owner membership")
     account = store.get_credit_account(workspace_id)
     if account is None or account.auto_refill_enabled or account.shard_count != target_shards:
         raise ValueError("probe workspace has an unexpected shard count or auto-refill")
@@ -83,6 +93,55 @@ class MissingCredential(ValueError):
     """An existing active key has no recoverable local credential."""
 
 
+class ConcurrentProvisioning(ValueError):
+    """The newly created key was disabled; retain the recovery file."""
+
+
+@contextmanager
+def recovery_file(path: Path, *, has_key: bool) -> Iterator[str]:
+    """Validate and sync the same no-follow descriptor, including crash reuse."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+        created = False
+    except FileNotFoundError:
+        if has_key:
+            raise MissingCredential() from None
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+    with os.fdopen(fd, "r+", encoding="utf-8") as output:
+        info = os.fstat(output.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+            raise ValueError("credential must be caller-owned, regular, 0600 and single-linked")
+        if created:
+            try:
+                output.write(new_api_key())
+                output.flush()
+            except Exception:
+                path.unlink(missing_ok=True)
+                raise
+        raw = os.pread(output.fileno(), 53, 0).decode("ascii")
+        if os.fstat(output.fileno()).st_size != 52 or re.fullmatch(r"sk-tr-v1-[A-Za-z0-9_-]{43}", raw) is None:
+            if has_key:
+                raise MissingCredential()
+            # Incomplete file from a pre-database crash. Remove only this inode.
+            if path.lstat().st_ino != info.st_ino:
+                raise ValueError("credential path changed")
+            path.unlink()
+            with recovery_file(path, has_key=False) as replacement:
+                yield replacement
+            return
+        os.fsync(output.fileno())
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        if path.lstat().st_ino != info.st_ino:
+            raise ValueError("credential path changed")
+        yield raw
+
+
 def apply_cohort(store: Any, names: dict[str, str], funding: int, path: Path | None) -> dict[str, Any]:
     user = store.find_user_by_email(names["email"])
     workspace = None
@@ -104,38 +163,18 @@ def apply_cohort(store: Any, names: dict[str, str], funding: int, path: Path | N
                 raise ValueError("personal workspace is not pristine")
         elif workspace.name != names["workspace_name"]:
             raise ValueError("unexpected workspace")
-    if path is None or (keys and not path.exists()):
+    if path is None:
         raise MissingCredential()
-    if path.exists():
-        if not path.is_file() or path.is_symlink() or path.stat().st_mode & 0o077:
-            raise ValueError("credential file must be private")
-        raw = path.read_text()
-        if re.fullmatch(r"sk-tr-v1-[A-Za-z0-9_-]{43}", raw) is None:
-            if keys:
-                raise MissingCredential()
-            # A process may die during the exclusive write, before any DB step.
-            # No active key exists: discard only the incomplete local credential.
-            path.unlink()
-    if not path.exists():
-        raw = new_api_key()
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as output:
-                output.write(raw)
-                output.flush()
-                os.fsync(output.fileno())
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-        except Exception:
-            path.unlink(missing_ok=True)
-            raise
-    raw = path.read_text()
+    with recovery_file(path, has_key=bool(keys)) as raw:
+        return _apply_with_credential(store, names, funding, raw, user, workspace, keys)
+
+
+def _apply_with_credential(store: Any, names: dict[str, str], funding: int, raw: str,
+                           user: Any, workspace: Any, keys: list[Any]) -> dict[str, Any]:
     registered = store.get_key_by_raw(raw)
     if keys:
-        if registered is None or registered.hash != keys[0].hash:
+        if (registered is None or registered.hash != keys[0].hash
+                or registered.workspace_id != workspace.id or registered.disabled):
             raise MissingCredential()
         validate(store, raw, label=names["email"].removeprefix("async-settle-shadow-probe").split("@")[0].removeprefix("-"))
     elif registered is not None:
@@ -148,6 +187,7 @@ def apply_cohort(store: Any, names: dict[str, str], funding: int, path: Path | N
             raise ValueError("unexpected workspace inventory")
         workspace = workspaces[0]
     assert workspace is not None
+    _validate_workspace(store, workspace.id)
     if workspace.name == "Personal Workspace":
         workspace = store.update_workspace(workspace.id, name=names["workspace_name"])
     credited = store.credit_workspace_typed_direct(
@@ -156,10 +196,19 @@ def apply_cohort(store: Any, names: dict[str, str], funding: int, path: Path | N
                                     external_ref=None, occurred_at=datetime.now(UTC)),
     )
     if not keys:
+        if store.get_key_by_raw(raw) is not None:
+            raise ValueError("credential already belongs to a key; rerun alone with an unregistered file")
         _, key = store.create_api_key(workspace_id=workspace.id, name=names["key_name"],
             creator_user_id=user.id, management=False, raw_key=raw,
             tags={"purpose": "synthetic_monitoring", "analytics": "excluded",
                   "spend_control": "workspace_funding_only"})
+        # Independent writes can race. Never report a stale key inventory as success.
+        inventory = store.list_keys(workspace.id)
+        bound = store.get_key_by_raw(raw)
+        if (any(not candidate.disabled and candidate.hash != key.hash for candidate in inventory)
+                or bound is None or bound.hash != key.hash or bound.workspace_id != workspace.id):
+            store.update_key(key.hash, {"disabled": True})
+            raise ConcurrentProvisioning("concurrent provisioning; created key disabled; keep file and rerun alone")
     else:
         key = keys[0]
     return dict(apply=True, workspace_id=workspace.id, key_id=key.hash, credited=credited,
@@ -208,6 +257,9 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         result.update(secret_name=names["secret_name"], pin_line=(
             f'"TR_ASYNC_SETTLE_SHADOW_WORKSPACES={workspace_id}"' if workspace_id else None
         ))
+    except ConcurrentProvisioning:
+        print("ERROR: concurrent provisioning; this run disabled its new key; retain the file and rerun alone", file=sys.stderr)
+        return 1
     except MissingCredential:
         print("ERROR: supply the original --key-output-file; if lost, disable the active key through the existing key management path and rerun with a new file", file=sys.stderr)
         return 1

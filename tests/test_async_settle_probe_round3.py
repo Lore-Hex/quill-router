@@ -1,4 +1,7 @@
-"""Round-three boundary regressions; all I/O stays local or mocked."""
+"""Coupling tripwire and boundary regressions; all I/O stays local or mocked.
+
+The tripwire detects ordinary imports/reflection, not arbitrary Python data flow.
+"""
 from __future__ import annotations
 
 import ast
@@ -29,6 +32,45 @@ SOURCE_ALLOWLIST = frozenset({
     'src/trusted_router/synthetic/shadow_probe.py',
     'src/trusted_router/synthetic/shadow_probe_contract.py',
 })
+# Existing request-path reflection sites: (file, function, kind): count.
+# Additions require explicit review; no blanket module/function exemptions.
+REFLECTION_EXCEPTIONS = {('trusted_router/async_settle_shadow_compare.py', '_compare', 'dynamic getattr'): 3,
+ ('trusted_router/async_settle_shadow_wire.py', 'parse_header', 'dynamic getattr'): 2,
+ ('trusted_router/axiom_config.py', '_resolve_level', 'dynamic getattr'): 1,
+ ('trusted_router/billing_snapshot.py', '_validate_strings', 'dynamic getattr'): 1,
+ ('trusted_router/billing_snapshot.py', 'exclusion', 'dynamic getattr'): 1,
+ ('trusted_router/catalog.py', '_meta_price_range', 'dynamic getattr'): 6,
+ ('trusted_router/config.py', 'production_is_fail_closed', 'dynamic getattr'): 5,
+ ('trusted_router/config.py', 'validate_shadow_probe_key', 'dynamic getattr'): 1,
+ ('trusted_router/credit_transfer.py', '_field', 'dynamic getattr'): 1,
+ ('trusted_router/dashboard.py', '_endpoint_price_values', 'dynamic getattr'): 1,
+ ('trusted_router/dashboard.py', '_minimum_model_price', 'dynamic getattr'): 1,
+ ('trusted_router/dashboard.py', '_price_range', 'dynamic getattr'): 2,
+ ('trusted_router/main.py', '_configure_application_logging', 'dynamic getattr'): 1,
+ ('trusted_router/main.py', 'format', 'dynamic getattr'): 1,
+ ('trusted_router/middleware.py', 'spend_window_headers_middleware', 'dynamic getattr'): 1,
+ ('trusted_router/request_limits.py', 'enforce_authenticated_rate_limit', 'dynamic getattr'): 2,
+ ('trusted_router/routes/console/api_keys.py', '_key_view', 'dynamic getattr'): 1,
+ ('trusted_router/routes/mcp.py', '_require_api_key', 'dynamic getattr'): 1,
+ ('trusted_router/routes/oauth.py', '_alias_credentials', 'dynamic getattr'): 1,
+ ('trusted_router/routes/oauth.py', '_client_id', 'dynamic getattr'): 1,
+ ('trusted_router/routes/oauth.py', '_client_secret', 'dynamic getattr'): 1,
+ ('trusted_router/routes/oauth.py', '_provider_redirect_uri', 'dynamic getattr'): 1,
+ ('trusted_router/routes/oauth_authorized_apps.py', '_repair_all', 'dynamic getattr'): 1,
+ ('trusted_router/routes/oauth_authorized_apps.py', '_update_all_or_rollback', 'dynamic getattr'): 3,
+ ('trusted_router/seo_catalog.py', '_endpoint_price_range', 'dynamic getattr'): 2,
+ ('trusted_router/serialization.py', 'key_shape', 'dynamic getattr'): 1,
+ ('trusted_router/services/async_settle_shadow.py', '_submit', 'dynamic getattr'): 1,
+ ('trusted_router/speculation_protocol.py', 'verify_grant', 'dynamic getattr'): 1,
+ ('trusted_router/spend_windows.py', 'key_window_limits', 'dynamic getattr'): 1,
+ ('trusted_router/storage.py', '__getattr__', 'dynamic getattr'): 1,
+ ('trusted_router/storage_gcp_counters.py', '_field', 'dynamic getattr'): 1,
+ ('trusted_router/storage_gcp_io.py', 'configure_spanner_rpc_deadlines', 'dynamic getattr'): 2,
+ ('trusted_router/storage_gcp_speculation_shadow.py', 'resolve', 'dynamic getattr'): 2,
+ ('trusted_router/storage_gcp_trust.py', 'trust_event_row', 'dynamic getattr'): 1,
+ ('trusted_router/storage_postgres.py', 'consume', 'dynamic getattr'): 1,
+ ('trusted_router/synthetic/rollups.py', '_rollup_histograms', 'dynamic getattr'): 1}
+
 PROBE_MODULES = frozenset({
     'trusted_router.synthetic.shadow_probe', 'trusted_router.synthetic.shadow_probe_contract',
 })
@@ -52,11 +94,117 @@ def syntax_nodes(tree):
     return tuple(ast.walk(tree))
 
 
+def folded_constant(node):
+    """Fold only literal operations; never evaluate source code."""
+    try:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return tuple(folded_constant(item) for item in node.elts)
+        if isinstance(node, ast.BinOp):
+            left, right = folded_constant(node.left), folded_constant(node.right)
+            if isinstance(node.op, ast.Add) and isinstance(left, str) and isinstance(right, str):
+                return left + right
+            if isinstance(node.op, ast.Mod) and isinstance(left, str) and right is not None:
+                return left % right
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for item in node.values:
+                if isinstance(item, ast.FormattedValue):
+                    value = folded_constant(item.value)
+                    if value is None:
+                        return None
+                    value = repr(value) if item.conversion == 114 else ascii(value) if item.conversion == 97 else str(value) if item.conversion == 115 else value
+                    spec = folded_constant(item.format_spec) if item.format_spec else ''
+                    parts.append(format(value, spec))
+                else:
+                    parts.append(folded_constant(item))
+            return ''.join(parts)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            value = folded_constant(node.func.value)
+            args = [folded_constant(arg) for arg in node.args]
+            kwargs = {item.arg: folded_constant(item.value) for item in node.keywords if item.arg}
+            if isinstance(value, str) and all(arg is not None for arg in args):
+                if node.func.attr == 'join' and len(args) == 1:
+                    return value.join(args[0])
+                if node.func.attr == 'format' and all(v is not None for v in kwargs.values()):
+                    return value.format(*args, **kwargs)
+    except (TypeError, ValueError, KeyError, IndexError):
+        pass
+    return None
+
+
 @lru_cache(maxsize=1024)
 def contains_probe_reference(text):
-    return probe_reference(text) or any(
-        probe_reference(value) for node in syntax_nodes(parsed_source(text))
-        for _, value in ast.iter_fields(node) if isinstance(value, str))
+    if probe_reference(text):
+        return True
+    for node in syntax_nodes(parsed_source(text)):
+        value = folded_constant(node)
+        if isinstance(value, str) and probe_reference(value):
+            return True
+    return False
+
+
+@lru_cache(maxsize=1024)
+def reflection_sites(tree):
+    """Conservative syntactic tripwire, with explicit current-tree exceptions."""
+    sites = {}
+    import_names = {'__import__', 'import_module'}
+    settings_names = {'settings', 'cfg', 'config'}
+    settings_factories = {'Settings', 'get_settings'}
+    for node in syntax_nodes(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in {'importlib', 'builtins'}:
+            import_names.update(a.asname or a.name for a in node.names if a.name in import_names)
+        if isinstance(node, ast.ImportFrom) and node.module == 'trusted_router.config':
+            settings_factories.update(a.asname or a.name for a in node.names if a.name in {'Settings', 'get_settings'})
+        if isinstance(node, ast.arg) and node.annotation is not None:
+            annotation = node.annotation
+            if ((isinstance(annotation, ast.Name) and annotation.id in settings_factories)
+                    or (isinstance(annotation, ast.Attribute) and annotation.attr == 'Settings')):
+                settings_names.add(node.arg)
+        if isinstance(node, ast.Assign) and is_settings(node.value, settings_names, settings_factories):
+            settings_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+
+    def walk(node, function='<module>'):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        kind = None
+        if isinstance(node, ast.Call):
+            name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ''
+            if name in import_names and (not node.args or not isinstance(folded_constant(node.args[0]), str)):
+                kind = 'dynamic import'
+            elif name == 'getattr' and (len(node.args) < 2 or not isinstance(folded_constant(node.args[1]), str)):
+                kind = 'dynamic getattr'
+            elif (isinstance(node.func, ast.Attribute) and node.func.attr in {'model_dump', 'model_dump_json', 'dict', 'json', '__iter__'}
+                  and is_settings(node.func.value, settings_names, settings_factories)):
+                kind = 'Settings enumeration'
+            elif name in {'dict', 'vars', 'iter', 'list', 'tuple', 'set', 'sorted', 'str', 'repr'} and node.args and is_settings(node.args[0], settings_names, settings_factories):
+                kind = 'Settings enumeration'
+            elif any(k.arg is None and is_settings(k.value, settings_names, settings_factories) for k in node.keywords):
+                kind = 'Settings enumeration'
+        elif isinstance(node, ast.Attribute) and node.attr == '__dict__' and is_settings(node.value, settings_names, settings_factories):
+            kind = 'Settings enumeration'
+        elif isinstance(node, (ast.For, ast.comprehension)) and is_settings(node.iter, settings_names, settings_factories):
+            kind = 'Settings enumeration'
+        elif isinstance(node, ast.Dict) and any(k is None and is_settings(v, settings_names, settings_factories) for k, v in zip(node.keys, node.values, strict=True)):
+            kind = 'Settings enumeration'
+        if kind:
+            sites[function, kind] = sites.get((function, kind), 0) + 1
+        for child in ast.iter_child_nodes(node):
+            walk(child, function)
+    walk(tree)
+    return sites
+
+
+def is_settings(node, names, factories=frozenset({'Settings', 'get_settings'})):
+    if isinstance(node, ast.Name):
+        return node.id in names or node.id == 'Settings'
+    if isinstance(node, ast.Attribute):
+        return node.attr in names
+    if isinstance(node, ast.Call):
+        return ((isinstance(node.func, ast.Name) and node.func.id in factories)
+                or (isinstance(node.func, ast.Attribute) and node.func.attr in {'Settings', 'get_settings'}))
+    return False
 
 
 def source_inventory(root):
@@ -79,6 +227,34 @@ def assert_probe_references_isolated(root, inventory):
             assert not any(probe_reference(value) for node in ast.walk(ast.parse(text))
                            for _, value in ast.iter_fields(node) if isinstance(value, str)), name
     assert not offenders, f'probe reference outside exact allowlist: {offenders}'
+
+
+@lru_cache(maxsize=1024)
+def import_references(module, tree, package_init):
+    cli_module = 'trusted_router.synthetic.cli'
+    package = module if package_init else module.rpartition('.')[0]
+    imports = set()
+    for node in syntax_nodes(tree):
+        if isinstance(node, ast.Import):
+            assert all(alias.name != cli_module for alias in node.names), 'request imports CLI module'
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            prefix = node.module or ''
+            if node.level:
+                parents = package.split('.')
+                prefix = '.'.join(parents[:len(parents) - node.level + 1]
+                                  + ([prefix] if prefix else []))
+            if prefix == cli_module:
+                assert {alias.name for alias in node.names} == {'rotation_pass'}, 'request imports CLI command'
+            assert all(prefix + '.' + alias.name != cli_module for alias in node.names), 'request imports CLI module'
+            imports.add(prefix)
+            imports.update(prefix + '.' + alias.name for alias in node.names)
+        elif isinstance(node, ast.Call) and node.args:
+            value = folded_constant(node.args[0])
+            if isinstance(value, str) and value.startswith('trusted_router.'):
+                assert value != cli_module, 'request imports CLI module'
+                imports.add(value)
+    return imports
 
 
 def assert_request_import_graph_isolated(inventory):
@@ -109,31 +285,7 @@ def assert_request_import_graph_isolated(inventory):
 
     def dependencies(module):
         tree, package_init = modules[module]
-        package = module if package_init else module.rpartition('.')[0]
-        imports = set()
-        for node in syntax_nodes(tree):
-            if isinstance(node, ast.Import):
-                assert all(alias.name != cli_module for alias in node.names), 'request imports CLI module'
-                imports.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                prefix = node.module or ''
-                if node.level:
-                    parents = package.split('.')
-                    prefix = '.'.join(parents[:len(parents) - node.level + 1]
-                                      + ([prefix] if prefix else []))
-                if prefix == cli_module:
-                    assert {alias.name for alias in node.names} == {'rotation_pass'}, 'request imports CLI command'
-                assert all(prefix + '.' + alias.name != cli_module for alias in node.names), 'request imports CLI module'
-                imports.add(prefix)
-                imports.update(prefix + '.' + alias.name for alias in node.names)
-            elif isinstance(node, ast.Call) and node.args:
-                # Literal dynamic imports, including aliased importlib calls.
-                if isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    value = node.args[0].value
-                    if value.startswith('trusted_router.'):
-                        assert value != cli_module, 'request imports CLI module'
-                        imports.add(value)
-        # Importing a submodule also executes its package initializers.
+        imports = import_references(module, tree, package_init)
         return {'.'.join(parts[:i]) for name in imports
                 if (parts := name.split('.')) for i in range(1, len(parts) + 1)
                 if '.'.join(parts[:i]) in modules}
@@ -151,10 +303,13 @@ def assert_request_import_graph_isolated(inventory):
     # Fail if the walk silently stopped at an unresolved entry/package import.
     assert {'trusted_router.routes.inference', 'trusted_router.routes.internal.gateway',
             'trusted_router.routes.internal.synthetic'} <= seen
+    actual = {(module.replace('.', '/') + '.py', function, kind): count
+              for module in seen for (function, kind), count in reflection_sites(modules[module][0]).items()}
+    assert actual == REFLECTION_EXCEPTIONS, f'request reflection tripwire: {actual.items() - REFLECTION_EXCEPTIONS.items()}'
     return seen
 
 
-def test_tree_probe_isolation():
+def test_tree_probe_tripwire():
     root = Path(__file__).resolve().parents[1]
     inventory = source_inventory(root)
     assert SOURCE_ALLOWLIST <= inventory.keys()
@@ -288,15 +443,50 @@ async def test_response_requires_router_usage_without_credential_echo(shape, dam
     assert key not in '\n'.join(lines)
 
 
-@pytest.mark.parametrize('field', sorted(set(SERVICE_SURFACE_SECRET_OWNERS) - {'async_settle_shadow_probe_api_key'} | {'bootstrap_management_key'}))
+# Scalar presentation/configuration entries in the surface inventory carry no
+# credential. Keep them explicit so a new setting cannot silently be omitted.
+NON_CREDENTIAL_SETTINGS = {
+    'postgres_iam_auth', 'routable_enabled', 'adyen_enabled', 'x402_enabled',
+    'notify_enabled', 'veriff_enabled',
+}
+CREDENTIAL_FIELDS = sorted((set(SERVICE_SURFACE_SECRET_OWNERS) | {'bootstrap_management_key'})
+                           - NON_CREDENTIAL_SETTINGS - {'async_settle_shadow_probe_api_key'})
+
+
+def credential_setting(field, key):
+    extras = {}
+    if field == 'federation_settlement_inbound_tokens':
+        value = 'aws-eu=' + key + ',azure=' + 'z' * 43
+    elif field.endswith('_alias_credentials_json'):
+        value = json.dumps({'fixture.invalid': {'client_id': 'client', 'client_secret': key}})
+    elif field.endswith('clickhouse_url') or field == 'clickhouse_url':
+        value = 'http://reader:' + key + '@localhost:8123'
+    elif field == 'sentry_dsn':
+        value = 'https://' + key + '@sentry.invalid/1'
+    elif field == 'postgres_dsn':
+        value = 'host=localhost user=fixture password=' + key
+    else:
+        value = key
+    if field == 'operator_token':
+        extras['operator_identities'] = 'fixture@invalid.example'
+    if field == 'ops_chat_webhook_secret':
+        extras['ops_chat_webhook_urls'] = 'https://fixture.invalid/hooks'
+    if field == 'federation_settlement_home_token':
+        extras['federation_home_base_url'] = 'https://fixture.invalid'
+    return {field: value, **extras}
+
+
+@pytest.mark.parametrize('field', CREDENTIAL_FIELDS)
 def test_central_credential_inventory(field):
-    key = secrets.token_urlsafe(32)
-    cfg = Settings(environment='test').model_copy(update={field: key})
+    # Real Settings construction and real accepted encodings at both boundaries.
+    import base64
+    key = base64.b64encode(b'a' * 32).decode() if field == 'attribution_cookie_key' else 'a' * 64
+    args = credential_setting(field, key)
+    cfg = Settings(environment='test', **args)
     with pytest.raises(ValueError, match='distinct'):
         validate_shadow_probe_key(cfg, key)
-    nested = cfg.model_copy(update={field: json.dumps({'peer': {'tokens': [key]}})})
     with pytest.raises(ValueError, match='distinct'):
-        validate_shadow_probe_key(nested, key)
+        Settings(environment='test', async_settle_shadow_probe_api_key=key, **args)
 
 
 @pytest.mark.parametrize('whitespace', [' ', '\t', '\n', '\r', '\u2003'])
@@ -374,6 +564,7 @@ def test_resume_interrupted_file(fault, tmp_path, monkeypatch):
                 class Partial:
                     def __init__(self, *a, **kw): self.file = original(*a, **kw)
                     def __enter__(self): return self
+                    def __getattr__(self, name): return getattr(self.file, name)
                     def write(self, value):
                         self.file.write(value[:10])
                         self.file.flush()
@@ -469,8 +660,9 @@ def test_public_coverage_residual_is_quantified_through_activity_rollup_projecti
     assert after['windows']['24h']['coverage'] == round(10000 / 43040, 4) == 0.2323
     assert [r for r in before_rows if r['scope'] != 'fleet_all'] == [
         r for r in after_rows if r['scope'] != 'fleet_all']
-    # Compare every public field, not just the coverage ratio: observed
-    # volume, availability, latency, host and SDK breakdowns stay unchanged.
+    # Other fields of this client-observed projection stay unchanged:
+    # observed volume, availability, latency, host and SDK breakdowns.
+    # Shared analytics freshness is tested separately in the consumer table.
     after['windows']['24h']['coverage'] = before['windows']['24h']['coverage']
     assert after == before
     # The SDK alternative changes the same public ratio even at 100% delivery.
@@ -508,6 +700,7 @@ def test_interrupted_cleanup_recovers_on_both_sides_of_unlink(tmp_path, monkeypa
             class Partial:
                 def __init__(self, *a, **kw): self.file = original_fdopen(*a, **kw)
                 def __enter__(self): return self
+                def __getattr__(self, name): return getattr(self.file, name)
                 def write(self, value):
                     self.file.write(value[:10])
                     self.file.flush()
