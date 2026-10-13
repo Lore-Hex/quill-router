@@ -1,7 +1,9 @@
 package auditor
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -984,6 +986,16 @@ func TestADrainedLeaseIsBookedReapedAndClosed(t *testing.T) {
 	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
 		t.Fatalf("the record topic: %v", got)
 	}
+	// The reap's full record states the hold's basis and, the basis being
+	// terms that state none, no boot binding; the pending work then alerts,
+	// as the record topic's consumer would see.
+	var full reapRecord
+	f.records.mu.Lock()
+	body := f.records.data[0]
+	f.records.mu.Unlock()
+	if err := json.Unmarshal(body, &full); err != nil || !bytes.Equal(full.Basis, []byte("terms")) || len(full.Boot) != 0 {
+		t.Fatalf("the reap's full record: %+v %v", full, err)
+	}
 	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, "a"); err != nil || len(rows) != 1 || rows[0].RecordID != "reap-a" {
 		t.Fatalf("the reap's row: %+v %v", rows, err)
 	}
@@ -1423,5 +1435,50 @@ func TestADrainOverdueIsToldThoughItsBoundaryIsNotStored(t *testing.T) {
 	}
 	if l, _, err := f.s.ReadLease(ctx, f.ref); err != nil || l.BoundarySeq.Valid {
 		t.Fatalf("the boundary was stored, so the commits did not fail: %+v %v", l, err)
+	}
+}
+
+// TestAReapStatesTheBootBindingTheBasisCarries: a hold whose first
+// heartbeat's basis carries the boot binding is reaped with a full record
+// that states it, so the pending work can do the reap's work.
+func TestAReapStatesTheBootBindingTheBasisCarries(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	first := hb(1, "a", 1, 10)
+	first.Basis = []byte(`{"boot":"Ym9vdC0x","model":"m"}`)
+	handleAll(rt, on(t, f.ref, first), on(t, f.ref, settle(2, "b", 40, 0)))
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) {
+		n++
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second))
+	round(rt)
+	late := row.Expiry
+	if deadline.After(late) {
+		late = deadline
+	}
+	late = late.Add(time.Hour)
+	clock = late
+	tickAt(late)
+	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
+		t.Fatalf("the record topic: %v", got)
+	}
+	var full reapRecord
+	f.records.mu.Lock()
+	body := f.records.data[0]
+	f.records.mu.Unlock()
+	if err := json.Unmarshal(body, &full); err != nil || !bytes.Equal(full.Boot, []byte("boot-1")) ||
+		!bytes.Equal(bootOf(body), []byte("boot-1")) {
+		t.Fatalf("the reap's full record: %+v %v", full, err)
 	}
 }

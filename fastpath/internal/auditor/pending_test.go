@@ -3,6 +3,7 @@ package auditor
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -389,6 +390,24 @@ func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 	if done, events, alerts, _, _ := run(func(s *fakePending, _ *fakeTopic) { s.body = []byte("not json") }); done ||
 		!slices.Equal(alerts, []string{"a: " + AlertNoBootBinding}) || slices.Contains(events, "publish a") {
 		t.Fatalf("a full record that states no boot binding: done %v, %v, told %v", done, events, alerts)
+	}
+	// A reap's full record built from a hold whose row carried no boot
+	// binding states it through its basis, the request's terms the first
+	// heartbeat brought; a basis that states none is none.
+	basis := func(terms string) []byte {
+		return fmt.Appendf(nil, `{"v":1,"a":"a","basis":%q}`, base64.StdEncoding.EncodeToString([]byte(terms)))
+	}
+	done, events, alerts, _, topic = run(func(s *fakePending, _ *fakeTopic) { s.body = basis(`{"boot":"Ym9vdC0x","model":"m"}`) })
+	if !done || len(alerts) != 0 || !slices.Equal(events, want) {
+		t.Fatalf("a boot binding in the basis: done %v, %v, told %v", done, events, alerts)
+	}
+	var out OutcomeRecord
+	if err := json.Unmarshal(topic.data[0], &out); err != nil || !bytes.Equal(out.Boot, []byte("boot-1")) {
+		t.Fatalf("the outcome's boot from the basis: %+v %v", out, err)
+	}
+	if done, _, alerts, _, _ := run(func(s *fakePending, _ *fakeTopic) { s.body = basis(`{"model":"m"}`) }); done ||
+		!slices.Equal(alerts, []string{"a: " + AlertNoBootBinding}) {
+		t.Fatalf("a basis that states no boot binding: done %v, told %v", done, alerts)
 	}
 
 	// The records go in batches each within its bounds.

@@ -235,12 +235,33 @@ var stagedBatch = store.MaxDropStaged
 // owner's reap's and an auditor's reap's each carry it, as "boot".
 func bootOf(body []byte) []byte {
 	var full struct {
-		Boot []byte `json:"boot"`
+		Boot  []byte `json:"boot"`
+		Basis []byte `json:"basis"`
 	}
 	if json.Unmarshal(body, &full) != nil {
 		return nil
 	}
-	return full.Boot
+	if len(full.Boot) > 0 {
+		return full.Boot
+	}
+	// A reap's full record built from a hold whose row carried no boot
+	// binding states it through the basis.
+	return bootInBasis(full.Basis)
+}
+
+// bootInBasis is the boot binding the basis a hold's first heartbeat
+// brought carries (§4.9): the request's terms and boot binding, as the
+// gateway states them, which a reap of the hold needs to build its full
+// record so no reap depends on the authorization's record. A basis that is
+// not of that shape, or states none, yields none.
+func bootInBasis(basis []byte) []byte {
+	var terms struct {
+		Boot []byte `json:"boot"`
+	}
+	if len(basis) == 0 || json.Unmarshal(basis, &terms) != nil {
+		return nil
+	}
+	return terms.Boot
 }
 
 // Do does a pack's work, and reports whether the pack is done. A settle's or
