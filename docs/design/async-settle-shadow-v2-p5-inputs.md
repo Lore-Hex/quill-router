@@ -222,16 +222,19 @@ No contract, fixture or pin changes accompany these internal seams.
 
 ## P5 test data lifetime and oracle scheduling
 
-The production input fields above are unchanged in round 15. The all-paths decoder
+The production input fields above are unchanged in round 16. The all-paths decoder
 property retains all ten sibling-check lexemes and all twenty agreement-check
 lexemes at the same native paths. Its test ids divide the original traversal
 into sixteen disjoint ranges for each lexeme; the root remains omitted only
-from the sibling check. Per-case timing lives in `.test_durations`.
+from the sibling check. Per-case timing lives in `.test_durations`. Default checks
+collect the complete lexeme/range product, compare its path union with the
+unsplit matrix, and require timing entries for every selected window oracle ID,
+including loadgroup suffixes. The timing check does not generate entries.
 
 | Test data | Lifetime check |
 |---|---|
-| Parsed variants, last transport, typed ports and prior-result tables | `_p5_cache_lifetime` clears these at module teardown and measures live objects after collection |
-| Fixture byte tables, original prior chain and entry-digest inputs | Shared across modules; included in the unchanged 35,000-object check. The seven-day family still performs a full release after its large graph |
+| Parsed variants, last transport, typed ports, prior results and entry-digest inputs | `_p5_cache_lifetime` clears these at module teardown; the separate `_p5_cache_counts` checks the remaining objects and restored functions |
+| Fixture byte tables and original prior chain | Shared only through test-module holders; included in the unchanged 35,000-object check. The seven-day family still performs a full release after its large graph |
 | Boundary loaded graphs and evaluated results | `BoundaryCache.installed` clears both tables after restoring the original functions |
 | Schema, validation, original-byte, root and inventory lookup tables | Existing module fixtures clear their tables and restore function identities before the shared lifetime check |
 
@@ -250,8 +253,16 @@ P5 fixture data is built. This excludes permanent first-use support imports from
 the data-lifetime measurement without increasing its fixed allowance.
 
 The final default cache-lifetime case leaves 40,000 nested entries in the
-transport helper cache. The shared teardown releases them; removing that fixture
-on a scratch copy makes the independent object-count check fail.
+transport helper cache and 12,000 distinct scalar strings in the prior-result
+table. The release fixture clears both. A separate module-scoped
+checker observes teardown even if the release fixture is removed. Round 16 adds a
+default subprocess that runs this sentinel and its module teardown; scratch
+fixture-removal verification is recorded in the round report. The checker also
+counts the module-rooted reference walk before and after each package module,
+with a fixed 5,000-object allowance, and checks restored lookup identities and
+empty transient tables. The existing 35,000 live-object allowances remain.
+The digest table and prior results are released in the default selection too;
+shared original bytes remain only in test-module holders.
 
 The generated boundary family and seven-day family use class-scoped data.
 Their large loaded graphs are released when each family completes; the

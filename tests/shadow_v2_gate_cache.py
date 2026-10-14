@@ -182,9 +182,9 @@ def release_data_caches(*, shared: bool = True) -> None:
     from trusted_router import async_settle_shadow_v2_gate_preimages as preimages
     from trusted_router import async_settle_shadow_v2_gate_prior as prior
 
-    caches = (a2._transport_object, generator._variants)
+    caches = (a2._transport_object, generator._variants, preimages._entry_digest)
     if shared:
-        caches += (a2.fixture_bytes, a2._shared_prior_chain, preimages._entry_digest)
+        caches += (a2.fixture_bytes, a2._shared_prior_chain)
     for cached in caches:
         cached.cache_clear()
         assert cached.cache_info().currsize == 0
@@ -193,4 +193,55 @@ def release_data_caches(*, shared: bool = True) -> None:
     prior._VERIFIED.clear()
     assert not prior._VERIFIED
     generator.TYPED_PORTS.clear()
+    assert not generator.TYPED_PORTS
+
+
+def reachable_objects() -> int:
+    """Count the same module-rooted walk used by the follow-on frame checks."""
+    import time
+
+    from tests.fakes.frozen_package import ALIAS, _namespace_roots, _references
+
+    started = time.perf_counter()
+    namespaces = (ALIAS, 'trusted_router', 'tests.fakes.spanner')
+    count = sum(1 for _ in _references(_namespace_roots(*namespaces), namespaces=namespaces))
+    print(f'P5 reference walk: count={count} seconds={time.perf_counter() - started:.6f}')
+    return count
+
+
+def installed_lookups() -> tuple[Any, ...]:
+    """Identities that each module must restore before its data is released."""
+    import sys
+
+    from trusted_router import async_settle_shadow_v2_a1_evidence as a1
+    from trusted_router import async_settle_shadow_v2_a1_health as health
+    from trusted_router import async_settle_shadow_v2_a2_contract as contract
+    from trusted_router import async_settle_shadow_v2_a2_roots as roots
+    from trusted_router import async_settle_shadow_v2_gate_loader as loader
+    from trusted_router import async_settle_shadow_v2_gate_loading as loading
+    from trusted_router import async_settle_shadow_v2_gate_payloads as payloads
+    from trusted_router import async_settle_shadow_v2_gate_preimages as preimages
+    from trusted_router.async_settle_shadow_v2_schema import Schema
+
+    digests = tuple((name, module.file_digest) for name, module in sorted(sys.modules.items())
+                    if name.startswith('trusted_router.async_settle_shadow_v2_gate')
+                    and hasattr(module, 'file_digest'))
+    assert all(digest is roots.file_digest for _, digest in digests)
+    return (roots.file_digest, roots._root_entry, roots.entry_root,
+            a1.coverage_root, health.validate_publisher_traces, loader.Row, loader.Preimage,
+            contract.validate_preimages, contract.validate_gate_output,
+            contract._object_bytes, payloads.retained_json, payloads.PayloadGraph.detail,
+            Schema.parse, Schema._validate, Schema._decode, loading.transport_values,
+            preimages._entry_digest)
+
+
+def assert_released_data() -> None:
+    from tests import shadow_v2_gate_a2_fixture as a2
+    from tests import shadow_v2_gate_fixture_generator as generator
+    from trusted_router import async_settle_shadow_v2_gate_preimages as preimages
+    from trusted_router import async_settle_shadow_v2_gate_prior as prior
+
+    for cached in (a2._transport_object, generator._variants, preimages._entry_digest):
+        assert cached.cache_info().currsize == 0
+    assert not prior._VERIFIED
     assert not generator.TYPED_PORTS

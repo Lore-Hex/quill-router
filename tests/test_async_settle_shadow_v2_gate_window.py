@@ -265,6 +265,90 @@ def test_long_family_has_ci_selection() -> None:
         assert default or ('proof_oracle' in markers and 'tests/test_async_settle_shadow_v2_gate_window.py' in command)
 
 
+
+@pytest.fixture(scope='module')
+def round16_window_collection(tmp_path_factory: Any) -> list[dict[str, Any]]:
+    """Collect the actual oracle items, then use xdist's loadgroup ID spelling."""
+    import os
+    import subprocess
+    import sys
+
+    scratch = tmp_path_factory.mktemp('window-collection')
+    output = scratch / 'items.json'
+    (scratch / 'window_collection.py').write_text("""
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from xdist.remote import WorkerInteractor
+
+def pytest_collection_finish(session):
+    WorkerInteractor.pytest_collection_modifyitems(None,
+        SimpleNamespace(getvalue=lambda name: name == 'loadgroup'), session.items)
+    Path(OUTPUT).write_text(json.dumps([
+        dict(nodeid=item.nodeid, params={key: value for key, value in
+             getattr(getattr(item, 'callspec', None), 'params', {}).items()
+             if key in ('lexeme_case', 'path_range')}) for item in session.items]))
+""".replace('OUTPUT', repr(str(output))))
+    root = Path(__file__).parents[1]
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '--collect-only',  # noqa: S603
+        '-p', 'no:xdist', '-p', 'no:cacheprovider', '-p', 'window_collection',
+        '-m', 'proof_oracle', str(Path(__file__).relative_to(root))], cwd=root,
+        env={**os.environ, 'PYTHONPATH': str(scratch) + os.pathsep + os.environ.get('PYTHONPATH', '')},
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+    assert result.returncode == 0, result.stdout
+    return json.loads(output.read_text())
+
+
+def test_round16_window_matrix_selection(round16_window_collection: Any, tmp_path: Any) -> None:
+    from tests.test_async_settle_shadow_v2_gate_loading import ROUND13_LEXEMES
+
+    pieces = [item for item in round16_window_collection
+              if '::test_round12_every_value_decode_is_local[' in item['nodeid']]
+    pairs = [(item['params']['lexeme_case'], item['params']['path_range']) for item in pieces]
+    assert len(pairs) == 480
+    assert set(pairs) == {(lexeme, part) for lexeme in range(30) for part in range(16)}
+    assert len(ROUND13_LEXEMES) == 20
+    original, _, _ = real_fixture(tmp_path, chain=False, traffic=False)
+    paths = []
+    pending = [((), json.loads(transport(original)))]
+    while pending:
+        path, value = pending.pop()
+        paths.append(path)
+        if isinstance(value, dict):
+            pending.extend(((*path, key), child) for key, child in value.items())
+        elif isinstance(value, list):
+            pending.extend(((*path, index), child) for index, child in enumerate(value))
+    # The unsplit original product is independent of the range helper.
+    original_pairs = {(lexeme, path) for lexeme in range(30) for path in paths
+                      if lexeme >= 10 or path}
+    selected_pairs = [(lexeme, path) for lexeme, part in pairs
+                      for path in _window_path_range(paths, part) if lexeme >= 10 or path]
+    assert len(selected_pairs) == len(set(selected_pairs))
+    assert set(selected_pairs) == original_pairs
+
+
+def test_round16_window_duration_selection(round16_window_collection: Any) -> None:
+    durations = json.loads((Path(__file__).parents[1] / '.test_durations').read_text())
+    assert round16_window_collection
+    missing = [item['nodeid'] for item in round16_window_collection if item['nodeid'] not in durations]
+    assert not missing, missing
+
+
+def test_round16_module_release_subprocess() -> None:
+    """The sentinel's module teardown must pass its separate count checker."""
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).parents[1]
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:xdist',
+        '-p', 'no:cacheprovider',
+        'tests/test_async_settle_shadow_v2_gate_window.py::test_round14_transport_cache_has_module_lifetime'],
+        cwd=root, env={**os.environ, 'PYTEST_ADDOPTS': ''}, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+    assert result.returncode == 0, result.stdout
+
+
 def test_bulk_trace_generator_preserves_original_bytes() -> None:
     from tests.shadow_v2_gate_fixture_generator import START, TAG, fixture, trace_rows
     from trusted_router.async_settle_shadow_v2_schema import sha256
@@ -462,6 +546,10 @@ class TestGeneratedBoundary:
 
 
 
+def _window_path_range(paths: list[Any], part: int) -> list[Any]:
+    return paths[len(paths) * part // 16:len(paths) * (part + 1) // 16]
+
+
 @pytest.mark.proof_oracle
 @pytest.mark.parametrize('path_range', range(16), ids=lambda n: f'paths-{n:02d}')
 @pytest.mark.parametrize('lexeme_case', range(30), ids=lambda n: f'lexeme-{n:02d}')
@@ -539,7 +627,7 @@ def test_round12_every_value_decode_is_local(totality_original: Any, monkeypatch
         else:
             assert actual == expected
     # Disjoint contiguous ranges preserve the original traversal and matrices.
-    selected_paths = paths[len(paths) * path_range // 16:len(paths) * (path_range + 1) // 16]
+    selected_paths = _window_path_range(paths, path_range)
     record_property('native_paths', len(paths))
     record_property('sibling_substitutions', sum(bool(path) for path in selected_paths) if lexeme_case < 10 else 0)
     record_property('agreement_substitutions', len(selected_paths) if lexeme_case >= 10 else 0)
@@ -644,6 +732,11 @@ def test_round14_transport_cache_has_module_lifetime() -> None:
     # This is test-helper data, with no gate output or original fixture changes.
     raw = json.dumps({'rows': [{'raw': ['original']} for _ in range(40000)]}).encode()
     assert len(transport_object(raw)['rows']) == 40000
+    from trusted_router import async_settle_shadow_v2_gate_prior as prior
+
+    # Distinct scalar entries are visible to the reference walk even though
+    # gc.get_objects does not count them. Teardown must release this table.
+    prior._VERIFIED[tuple(f'module-original-{index}' for index in range(12000))] = True
 
 
 class TestSevenDays:

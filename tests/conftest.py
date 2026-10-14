@@ -327,9 +327,15 @@ def deterministic_shadow_budgets(request, monkeypatch):
 
 
 @pytest.fixture(scope='module', autouse=True)
-def _p5_cache_lifetime(request):
-    """Release transient P5 data and count the remaining shared originals."""
-    from tests.shadow_v2_gate_cache import PACKAGE_MODULES, live_objects, release_data_caches
+def _p5_cache_counts(request):
+    """Check module teardown independently of the data-release fixture."""
+    from tests.shadow_v2_gate_cache import (
+        PACKAGE_MODULES,
+        assert_released_data,
+        installed_lookups,
+        live_objects,
+        reachable_objects,
+    )
 
     if request.node.path.name not in PACKAGE_MODULES:
         yield
@@ -350,12 +356,21 @@ def _p5_cache_lifetime(request):
     oracle_selection = any(item.path == request.node.path and
                            item.get_closest_marker('proof_oracle')
                            for item in request.session.items)
+    lookups_before = installed_lookups()
+    reachable_before = reachable_objects()
     before = live_objects()
     baseline = getattr(request.session, '_p5_objects_before', before)
     request.session._p5_objects_before = baseline
     yield
-    release_data_caches(shared=oracle_selection)
     after = live_objects()
+    reachable_after = reachable_objects()
+    reachable_margin = 5000
+    print(f'P5 reachable {request.node.path.name}: before={reachable_before} '
+          f'after={reachable_after} margin={reachable_margin}')
+    assert reachable_after <= reachable_before + reachable_margin, (
+        request.node.path.name, reachable_before, reachable_after, reachable_margin)
+    assert installed_lookups() == lookups_before
+    assert_released_data()
     # A fixed allowance for pytest reports and modules first imported by tests.
     module_margin = package_margin = 35000
     print(f'P5 objects {request.node.path.name}: baseline={baseline} before={before} after={after} '
@@ -364,3 +379,16 @@ def _p5_cache_lifetime(request):
         return
     assert after <= before + module_margin, (request.node.path.name, before, after, module_margin)
     assert after <= baseline + package_margin, (request.node.path.name, baseline, after, package_margin)
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _p5_cache_lifetime(request, _p5_cache_counts):
+    """Release module data before the separate count fixture checks teardown."""
+    from tests.shadow_v2_gate_cache import PACKAGE_MODULES, release_data_caches
+
+    yield
+    if request.node.path.name in PACKAGE_MODULES:
+        oracle_selection = any(item.path == request.node.path and
+                               item.get_closest_marker('proof_oracle')
+                               for item in request.session.items)
+        release_data_caches(shared=oracle_selection)
