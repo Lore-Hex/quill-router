@@ -54,12 +54,11 @@ def test_the_vm_forwards_only_the_routed_destinations() -> None:
         "chain forward {",
         "type filter hook forward priority filter; policy drop;",
         "ct state established,related accept",
-        'iifname "$iface" oifname "$iface" ip saddr ${source_range} ip daddr { ${destinations} } tcp dport 443'
-        " ct state new counter accept",
+        "ip saddr ${source_range} ip daddr { ${destinations} } tcp dport 443 ct state new counter accept",
         "}",
         "chain postrouting {",
         "type nat hook postrouting priority srcnat; policy accept;",
-        'oifname "$iface" ip daddr { ${destinations} } counter masquerade',
+        "ip daddr { ${destinations} } counter masquerade",
         "}",
         "}",
     ]
