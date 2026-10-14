@@ -2006,6 +2006,8 @@ def rotation_candidates(*, include_input_only: bool = True) -> dict[str, list[st
         provider = PROVIDERS.get(endpoint.provider)
         if model is None or provider is None:
             continue
+        if model.internal_only or provider.internal_only:
+            continue
         if not model.supports_chat or not provider.supports_chat:
             continue
         models = pool.setdefault(endpoint.provider, [])

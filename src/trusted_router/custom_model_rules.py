@@ -9,7 +9,7 @@ from trusted_router.types import ErrorType
 
 
 def is_allowed_custom_model_base(model: Model) -> bool:
-    if not model.supports_chat or model.id == MONITOR_MODEL_ID or is_creator_model_id(model.id):
+    if not model.supports_chat or model.internal_only or model.id == MONITOR_MODEL_ID or is_creator_model_id(model.id):
         return False
     # A custom model is a chat wrapper, and a decision model answers POST
     # /v1/decide only. A NAMED one (trev-1.0) keeps supports_chat so the

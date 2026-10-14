@@ -799,7 +799,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         **({"aliases": router_model_aliases(model.id)} if router_model_aliases(model.id) else {}),
         "configuration_hidden": model.hidden_public_metadata,
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
-        "internal_only": model.id == MONITOR_MODEL_ID,
+        "internal_only": model.internal_only or model.id == MONITOR_MODEL_ID,
         # Capability flags so OpenRouter-compat clients (and TR's own chat
         # picker) can tell an embedding model from a chat model without
         # parsing `architecture.modality`.
@@ -1016,4 +1016,7 @@ def providers_for_display() -> tuple[Provider, ...]:
             provider.slug,
         )
 
-    return tuple(sorted(PROVIDERS.values(), key=display_key))
+    return tuple(sorted(
+        (provider for provider in PROVIDERS.values() if not provider.internal_only),
+        key=display_key,
+    ))

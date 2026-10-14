@@ -35,7 +35,10 @@ def test_provider_cards_compare_upstream_verification_not_gateway(client: TestCl
     assert response.status_code == 200
     soup = BeautifulSoup(response.text, "html.parser")
     cards = soup.select("[data-provider-row]")
-    assert {card["data-provider-id"] for card in cards} == set(PROVIDERS) - {"trustedrouter"}
+    assert {card["data-provider-id"] for card in cards} == {
+        slug for slug, provider in PROVIDERS.items()
+        if slug != "trustedrouter" and not provider.internal_only
+    }
     assert soup.select_one("[data-provider-result-count]").get_text(strip=True) == f"{len(cards)} entries"
     assert cards[0]["data-provider-id"] == "tinfoil"
     for card in cards:

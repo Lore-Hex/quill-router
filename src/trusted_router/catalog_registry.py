@@ -1777,3 +1777,42 @@ MODEL_ENDPOINTS = {
     identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
     if endpoint.model_id not in _unavailable_gateway_models
 }
+
+# Operator-only POC tariff, approved 2026-10-13: Z.ai GLM-5.3-Flash's
+# $0.15/$0.50 per million reference rate, NOT a verified Fortanix quote.
+# No cache discount, automatic pool membership, public listing, or BYOK.
+_fortanix_prompt = _customer_price(150_000)
+_fortanix_completion = _customer_price(500_000)
+_fortanix_tiers = _flat_tier(_fortanix_prompt, _fortanix_completion, None)
+_fortanix_model = Model(
+    id="trustedrouter/fortanix-test",
+    name="Fortanix internal test",
+    provider="fortanix",
+    upstream_id="GLM-5.3-Flash",
+    context_length=131_072,
+    prepaid_available=True,
+    byok_available=False,
+    internal_only=True,
+    prompt_price_microdollars_per_million_tokens=_fortanix_prompt,
+    completion_price_microdollars_per_million_tokens=_fortanix_completion,
+    published_prompt_price_microdollars_per_million_tokens=_fortanix_prompt,
+    published_completion_price_microdollars_per_million_tokens=_fortanix_completion,
+    price_tiers=_fortanix_tiers,
+    published_price_tiers=_fortanix_tiers,
+)
+MODELS[_fortanix_model.id] = _fortanix_model
+_fortanix_endpoint = ModelEndpoint(
+    id=f"{_fortanix_model.id}@fortanix/prepaid",
+    model_id=_fortanix_model.id,
+    provider="fortanix",
+    usage_type="Credits",
+    upstream_id=_fortanix_model.upstream_id,
+    input_modalities=("text",),
+    prompt_price_microdollars_per_million_tokens=_fortanix_prompt,
+    completion_price_microdollars_per_million_tokens=_fortanix_completion,
+    published_prompt_price_microdollars_per_million_tokens=_fortanix_prompt,
+    published_completion_price_microdollars_per_million_tokens=_fortanix_completion,
+    price_tiers=_fortanix_tiers,
+    published_price_tiers=_fortanix_tiers,
+)
+MODEL_ENDPOINTS[_fortanix_endpoint.id] = _fortanix_endpoint

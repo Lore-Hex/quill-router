@@ -55,6 +55,7 @@ class Provider:
     provider_headquarters_country: str | None = None
     renewable_energy_inference: bool = False
     energy_policy_url: str | None = None
+    internal_only: bool = False
 
 
 PRIVACY_TIER_STANDARD = 0  # no tracked posture (would store content)
@@ -133,6 +134,10 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "fortanix": (
+        "Checked the operator-supplied POC catalog and conformance report. "
+        "Neither declares inference location or the contracting entity; no country filter claim."
+    ),
     "zro": (
         "Checked zro.moonmath.ai/docs/privacy and its API documentation. These "
         "declare EU/US inference placement but do not establish the API operator's "
@@ -419,6 +424,7 @@ class Model:
     published_price_tiers: tuple[PriceTier, ...] = ()
     hidden_public_metadata: bool = False
     documentation: ModelDocumentation | None = None
+    internal_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -2298,10 +2304,21 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://www.voyageai.com/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "fortanix": Provider(
+        slug="fortanix",
+        name="Fortanix",
+        internal_only=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+    ),
 }
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "fortanix",
         "byteplus",
         "abliterate",
         "system1models",

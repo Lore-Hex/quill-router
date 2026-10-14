@@ -52,7 +52,6 @@ from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
     DECIDE_PATH,
     MODELS,
-    MONITOR_MODEL_ID,
     NAMED_DECISION_MODEL_PROVIDERS,
     PRIVATE_PROXY_MODEL_TARGETS,
     PROVIDERS,
@@ -172,7 +171,6 @@ from trusted_router.schemas import (
     GatewayValidateRequest,
 )
 from trusted_router.scopes import SCOPE_INFERENCE
-from trusted_router.security import lookup_hash_api_key
 from trusted_router.services import federation
 from trusted_router.services.broadcast import (
     drain_broadcast_queue,
@@ -3317,25 +3315,9 @@ def _require_monitor_model_key(
     api_key_lookup_hash: str,
     settings: Settings,
 ) -> None:
-    if not _requests_monitor_model(body):
-        return
-    for expected in (settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key):
-        if expected and api_key_lookup_hash == lookup_hash_api_key(expected):
-            return
-    raise api_error(
-        403,
-        "trustedrouter/monitor is restricted to the synthetic monitor key",
-        ErrorType.FORBIDDEN,
-    )
+    from trusted_router.internal_model_access import require_internal_model_key
 
-
-def _requests_monitor_model(body: dict[str, Any]) -> bool:
-    if str(body.get("model") or "").strip() == MONITOR_MODEL_ID:
-        return True
-    models = body.get("models")
-    if isinstance(models, list):
-        return any(str(model).strip() == MONITOR_MODEL_ID for model in models)
-    return False
+    require_internal_model_key(body, api_key_lookup_hash, settings)
 
 
 def _force_custom_model_credit_routes(
