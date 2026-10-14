@@ -904,11 +904,15 @@ func TestAProcessWithNoAlertCallbackWritesJSON(t *testing.T) {
 		return false, nil
 	})
 	var got map[string]any
-	want := map[string]any{"severity": "ERROR", "logging.googleapis.com/severity": "ERROR",
+	want := map[string]any{
 		"message":                       "fastpath alert: " + auditor.AlertNoLeaseAuth,
 		"subject":                       "not-an-authorization",
 		"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "full_record_of_no_authorization"}}
-	if err := json.Unmarshal([]byte(line), &got); err != nil || !reflect.DeepEqual(got, want) {
+	body, found := strings.CutPrefix(line, "<3>")
+	if !found {
+		t.Fatalf("the line without the journal's err priority prefix: %q", line)
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("the line %q: %v, want %v", line, err, want)
 	}
 }
