@@ -12,10 +12,14 @@
 # The VM forwards TLS it cannot read: the enclave runs TLS with Fortanix end
 # to end and checks Fortanix's certificate itself.
 #
+# While the VM is not running, GCP drops the gateways' packets to Fortanix
+# instead of sending them by the default route.
+#
 # If Fortanix's address changes, the gateways' connections leave directly
 # again and Fortanix refuses them. To follow it, change fortanix_destinations
 # and merge. The apply replaces the VM, because the startup script changes,
-# and the routes; the reserved address stays.
+# and the routes, and keeps the reserved address; Fortanix connections fail
+# until the new VM has booted.
 locals {
   fortanix_egress_region = "us-west1"
   fortanix_egress_zone   = "us-west1-b"
@@ -24,7 +28,9 @@ locals {
   fortanix_destinations = ["52.53.179.221/32"]
 }
 
-# Fortanix allow-lists this address. Destroying it would lose the address.
+# Fortanix allow-lists this address. prevent_destroy fails any plan that
+# would destroy it while this block exists; deleting the block deletes the
+# address.
 resource "google_compute_address" "fortanix_egress" {
   project      = local.gcp_project_id
   name         = "tr-fortanix-egress"
@@ -59,7 +65,8 @@ resource "google_compute_instance" "fortanix_egress" {
     subnetwork = "default"
 
     access_config {
-      nat_ip = google_compute_address.fortanix_egress.address
+      nat_ip       = google_compute_address.fortanix_egress.address
+      network_tier = google_compute_address.fortanix_egress.network_tier
     }
   }
 
@@ -84,7 +91,8 @@ resource "google_compute_instance" "fortanix_egress" {
 # Only VMs tagged quill-enclave, the gateways' instance templates' tag
 # (quill-cloud-proxy tools/deploy-gcp-mig.sh), use these routes. A /32 is
 # more specific than the default route, so it wins although each gateway
-# has its own external address.
+# has its own external address. A replacement VM with the same name and zone
+# becomes the next hop without a change to the route.
 resource "google_compute_route" "fortanix_egress" {
   for_each = toset(local.fortanix_destinations)
 
@@ -95,12 +103,6 @@ resource "google_compute_route" "fortanix_egress" {
   dest_range        = each.value
   next_hop_instance = google_compute_instance.fortanix_egress.self_link
   tags              = ["quill-enclave"]
-
-  # A replaced VM keeps its name, so the route's next hop would read the
-  # same; replace the route with it.
-  lifecycle {
-    replace_triggered_by = [google_compute_instance.fortanix_egress.instance_id]
-  }
 }
 
 output "fortanix_egress_address" {

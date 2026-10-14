@@ -212,8 +212,9 @@ allow-listed. The GCP gateways' own external addresses are ephemeral, so
 
 - `tr-fortanix-egress`, a reserved external address in us-west1. This is the
   address Fortanix allow-lists. It is printed as the `fortanix_egress_address`
-  output of every apply. `prevent_destroy` makes a plan that would destroy it
-  fail.
+  output of every apply. While its block is in `fortanix_egress.tf`,
+  `prevent_destroy` fails any plan that would destroy it. Deleting the block
+  deletes the address, and Fortanix would have to allow-list a new one.
 - `tr-fortanix-egress`, an `e2-small` VM in us-west1-b that holds the address,
   with IP forwarding on. Its startup script forwards new connections from the
   VPC to Fortanix's addresses on port 443, rewritten to the VM's own address,
@@ -228,12 +229,17 @@ The network's `default-allow-internal` rule admits the forwarded packets to
 the VM. The enclave runs TLS with Fortanix end to end, so the VM forwards
 ciphertext.
 
+The VM is the only path. While it is not running (a reboot, a replacement),
+GCP drops the gateways' packets to Fortanix rather than sending them by the
+default route. A replacement VM with the same name and zone becomes the next
+hop without a change to the routes.
+
 The routes match Fortanix's addresses, not its hostname. If `poc1.armet.ai`
 resolves elsewhere, the gateways' connections leave from their own addresses
 again and Fortanix refuses them. To follow the change, edit
 `fortanix_destinations` in a pull request. Its apply replaces the VM and the
-routes and keeps the reserved address. AWS and Azure gateways do not use this
-path.
+routes and keeps the reserved address. Fortanix connections fail until the
+new VM has booted. AWS and Azure gateways do not use this path.
 
 To check the path, compare the address with the output, and look at the
 VM's counters:
@@ -246,4 +252,5 @@ gcloud compute ssh tr-fortanix-egress --zone=us-west1-b --tunnel-through-iap --c
 The forward rule's counter counts the packets that open a connection, so a
 retried SYN counts again. The masquerade rule sees only each connection's
 first packet, so its counter counts the connections rewritten to the VM's
-address.
+address. The counters show that the VM forwarded and rewrote connections, not
+that Fortanix accepted them.

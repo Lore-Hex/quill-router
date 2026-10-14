@@ -3,25 +3,17 @@
 # attested gateways' connections to Fortanix here; this forwards them,
 # rewritten to this VM's internal address, so they leave from its reserved
 # external address, which Fortanix allow-lists. Nothing else is forwarded.
-# The rules are rebuilt on every boot.
+# The rules are rebuilt on every boot, and forwarding is turned on after
+# they load.
 set -euo pipefail
 
 iface="$(ip -o -4 route show to default | awk '{print $5; exit}')"
 
-# The image's 60-gce-network-security.conf turns forwarding off. This file
-# sorts after it, so forwarding stays on whenever the files are applied
-# again. The image turns redirects off for "all" and "default" only; this
-# turns them off on the interface itself.
-echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-fortanix-egress.conf
-sysctl --quiet -w net.ipv4.ip_forward=1 "net.ipv4.conf.$iface.send_redirects=0"
-
-if ! command -v nft > /dev/null; then
-  for attempt in 1 2 3 4 5; do
-    apt-get update -q && apt-get install -y -q nftables && break
-    echo "fortanix-egress: installing nftables failed (attempt $attempt)"
-    sleep 15
-  done
-fi
+# Without nftables there are no rules to load, so this retries until the
+# install succeeds.
+until command -v nft > /dev/null; do
+  apt-get update -q && apt-get install -y -q nftables || sleep 30
+done
 
 # Forwarding is closed by default: only a new connection from the VPC to a
 # Fortanix address on port 443, and the packets of connections already
@@ -41,6 +33,13 @@ table ip fortanix_egress {
   }
 }
 RULES
+
+# The image's 60-gce-network-security.conf turns forwarding off. This file
+# sorts after it, so forwarding stays on whenever the files are applied
+# again. The image turns redirects off for "all" and "default" only; this
+# turns them off on the interface itself.
+echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-fortanix-egress.conf
+sysctl --quiet -w net.ipv4.ip_forward=1 "net.ipv4.conf.$iface.send_redirects=0"
 
 nft list table ip fortanix_egress
 echo "fortanix-egress: forwarding to ${destinations} on $iface"

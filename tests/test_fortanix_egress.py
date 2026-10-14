@@ -38,27 +38,45 @@ def test_only_the_gateways_route_their_fortanix_connections_through_the_vm() -> 
     # to it.
     assert "quill-enclave" not in vm
     assert "nat_ip = google_compute_address.fortanix_egress.address" in vm
+    assert "network_tier = google_compute_address.fortanix_egress.network_tier" in vm
     assert "service_account" not in vm
 
 
 def test_the_vm_forwards_only_the_routed_destinations() -> None:
     vm = _block('resource "google_compute_instance" "fortanix_egress"')
     assert 'destinations = join(", ", local.fortanix_destinations)' in vm
-    assert "policy drop;" in SCRIPT
-    admitted = [line for line in SCRIPT.splitlines() if "ct state new" in line]
-    assert len(admitted) == 1
-    assert "ip saddr ${source_range} ip daddr { ${destinations} } tcp dport 443" in admitted[0]
-    masquerade = [line for line in SCRIPT.splitlines() if "masquerade" in line]
-    assert len(masquerade) == 1 and "ip daddr { ${destinations} }" in masquerade[0]
-    assert "net.ipv4.ip_forward = 1" in SCRIPT
+    rules = SCRIPT[SCRIPT.index("nft -f - <<RULES\n") : SCRIPT.index("\nRULES\n")]
+    assert [line.strip() for line in rules.splitlines()[1:]] == [
+        "table ip fortanix_egress",
+        "delete table ip fortanix_egress",
+        "table ip fortanix_egress {",
+        "chain forward {",
+        "type filter hook forward priority filter; policy drop;",
+        "ct state established,related accept",
+        'iifname "$iface" oifname "$iface" ip saddr ${source_range} ip daddr { ${destinations} } tcp dport 443'
+        " ct state new counter accept",
+        "}",
+        "chain postrouting {",
+        "type nat hook postrouting priority srcnat; policy accept;",
+        'oifname "$iface" ip daddr { ${destinations} } counter masquerade',
+        "}",
+        "}",
+    ]
+
+
+def test_forwarding_turns_on_only_after_the_rules_load() -> None:
+    loaded = SCRIPT.index("nft -f - <<RULES")
+    assert SCRIPT.index("until command -v nft") < loaded
+    assert loaded < SCRIPT.index(
+        'echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-fortanix-egress.conf'
+    )
+    assert loaded < SCRIPT.index("sysctl --quiet -w net.ipv4.ip_forward=1")
+    assert SCRIPT.count("ip_forward") == 2
 
 
 def test_an_apply_cannot_destroy_the_allow_listed_address() -> None:
     address = _block('resource "google_compute_address" "fortanix_egress"')
     assert "lifecycle { prevent_destroy = true }" in address
-    # Changing the destinations replaces the VM; the routes follow it.
-    route = _block('resource "google_compute_route" "fortanix_egress"')
-    assert "replace_triggered_by = [google_compute_instance.fortanix_egress.instance_id]" in route
 
 
 def test_the_rendered_startup_script_parses() -> None:
