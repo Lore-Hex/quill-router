@@ -77,7 +77,7 @@ resource "google_compute_instance" "fortanix_egress" {
   # 10.128.0.0/9 holds every subnet of the default network, the range of
   # its default-allow-internal rule, which admits the forwarded packets.
   metadata_startup_script = templatefile("${path.module}/fortanix_egress_startup.sh.tftpl", {
-    destinations = join(", ", local.fortanix_destinations)
+    destinations = join(", ", sort(local.fortanix_destinations))
     source_range = "10.128.0.0/9"
   })
 
