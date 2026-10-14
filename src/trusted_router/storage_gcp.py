@@ -4999,19 +4999,28 @@ class SpannerStore:
         generation: Generation | None = None,
         authorization_snapshot: GatewayAuthorization | None = None,
         refund_benchmark: ProviderBenchmarkSample | None = None,
+        settle_intent: SettleOutboxRow | None = None,
     ) -> tuple[TypedFinalizeResult, GatewayAuthorization] | None:
         """The pilot's finalize: the records of a terminal whose money the
         fast path booked (docs/design/fast-admission-pilot.md). ONE commit
-        marks the authorization settled with its finalization facts and
-        writes the generation record, the activity row and the benchmark;
-        it claims no reservation, releases no hold, books no usage and pays
-        no markup, since the lease did the booking and the pilot's cohort
-        has no markups. None when the authorization is not a leased one or
-        is settled already (the caller answers the stored disposition)."""
+        marks the authorization settled with its finalization facts, writes
+        the settle-outbox intent already resolved (its refill attachment and
+        retention as the one-commit settle writes them), the generation
+        record, the activity row and the benchmark, and starts the row's
+        retention clock; it claims no reservation, releases no hold, books
+        no usage and pays no markup, since the lease did the booking and
+        the pilot's cohort has no markups. None when the authorization is
+        not a leased one or is settled already (the caller answers the
+        stored disposition)."""
         from trusted_router.storage_gcp_batch_dml import execute_batch_dml
         from trusted_router.storage_gcp_generation_records import generation_insert_statement
         from trusted_router.storage_gcp_request_records import (
+            complete_gateway_authorization_retention,
             gateway_authorization_settled_statement,
+        )
+        from trusted_router.storage_gcp_settle_outbox import (
+            intent_insert_counts,
+            intent_insert_statements,
         )
 
         authorization = (
@@ -5048,6 +5057,18 @@ class SpannerStore:
         def txn(transaction: Any) -> None:
             statements = [gateway_authorization_settled_statement(pt, authorization)]
             counts: list[tuple[int, ...]] = [(1,)]
+            if settle_intent is not None:
+                # The enqueue's own statements with the row already resolved:
+                # a leased intent names no reservation, so the done-mark's
+                # reservation retention does not apply; the authorization's
+                # is armed below.
+                stamp = now.isoformat().replace("+00:00", "Z")
+                later = (now + dt.timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
+                resolved = intent_insert_statements(
+                    pt, settle_intent, now=stamp, next_attempt_at=later, resolved=True,
+                )
+                statements.extend(resolved)
+                counts.extend(intent_insert_counts(resolved))
             if success and generation is not None:
                 if persist_generation:
                     statements.append(generation_insert_statement(pt, generation, terminal_at=now))
@@ -5059,6 +5080,13 @@ class SpannerStore:
                 statements.append(benchmark_outbox.enqueue_statement(benchmark))
                 counts.append((1,))
             execute_batch_dml(transaction, statements, counts)
+            # The retention clock, armed here since no later done-mark will:
+            # the intent above is already done.
+            armed = complete_gateway_authorization_retention(
+                transaction, pt, authorization_id, terminal_at=now, outbox_available=settle_intent is not None,
+            )
+            if armed != 1:
+                raise RuntimeError(f"leased finalize armed retention on {armed} rows")
 
         run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_settle_leased")
         return (

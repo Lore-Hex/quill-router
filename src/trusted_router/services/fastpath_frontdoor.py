@@ -125,14 +125,21 @@ class SpannerFrontDoors:
         self._addresses: tuple[str, ...] = ()
         self._read_at = float("-inf")
 
-    def __call__(self) -> tuple[str, ...]:
+    def __call__(self, timeout_seconds: float | None = None) -> tuple[str, ...]:
+        """The addresses, read within `timeout_seconds` when the cache is
+        stale: the read is part of the caller's budget."""
         now = self._clock()
         with self._lock:
             if now - self._read_at < FRONT_DOORS_TTL_SECONDS:
                 return self._addresses
             try:
                 with self._database.snapshot() as snap:
-                    found = tuple(str(row[0]) for row in snap.execute_sql(FAST_PATH_FRONT_DOORS))
+                    rows = (
+                        snap.execute_sql(FAST_PATH_FRONT_DOORS, timeout=timeout_seconds)
+                        if timeout_seconds is not None
+                        else snap.execute_sql(FAST_PATH_FRONT_DOORS)
+                    )
+                    found = tuple(str(row[0]) for row in rows)
             except Exception:  # noqa: BLE001 - a membership read is advisory; the request goes on
                 logger.warning("fastpath front doors: membership read failed; keeping %d", len(self._addresses))
                 self._read_at = now
@@ -151,7 +158,7 @@ class FrontDoorClient:
 
     def __init__(
         self,
-        front_doors: Callable[[], Sequence[str]],
+        front_doors: Callable[[float], Sequence[str]],
         *,
         timeout_seconds: float,
         clock: Callable[[], float] = time.monotonic,
@@ -235,7 +242,7 @@ class FrontDoorClient:
         the whole call, the membership read included. None when none answered
         200 with a JSON object in time."""
         deadline = self._clock() + self._budget
-        addresses = tuple(self._front_doors())
+        addresses = tuple(self._front_doors(self._budget))
         if not addresses:
             logger.warning("fastpath %s: no serving front door", path)
             return None

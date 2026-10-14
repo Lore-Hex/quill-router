@@ -4587,7 +4587,7 @@
   "sinks": {
     "byok_aad_backfill:SpannerEntityStore.scan": "cbcb8994d09d078c7ad24a01c07dc5b581d0f7576876ead1765c794295c58edd",
     "byok_aad_backfill:SpannerEntityStore.census": "1a7ab3c8c71257ae9cc02e40a716ec4beef925476fbfea0c054dcda3024b2e49",
-    "services.fastpath_frontdoor:SpannerFrontDoors.__call__": "c04962997a3a2fc0077c3f3c99a317b8b605b567a430f9466eb631ff775f0058",
+    "services.fastpath_frontdoor:SpannerFrontDoors.__call__": "ab6e1774269d5e5a41db17067e914e2521d06e823c52d7fa169f3e069fd3a66c",
     "storage_gcp:SpannerStore._workspace_trust_events_tx": "2667a0cbd3785bf54838fe1360410dd3e9b5d50f603fcbe6c8c2009db9df3111",
     "storage_gcp:SpannerStore._increment_lifetime_topup_tx": "b8e66263f19c8fcce2a80c366e63a4b052ec668fdadb89e96274e9c36e22e931",
     "storage_gcp:SpannerStore._insert_credit_movement_tx": "570833170f2179aefa3746b630cfe8b68c09f8ddb1d45f7c3b50a1253d3830dd",
@@ -4602,7 +4602,7 @@
     "storage_gcp:SpannerStore.reserve_earnings_cashout.txn": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
     "storage_gcp:SpannerStore.release_earnings_cashout.txn": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
     "storage_gcp:SpannerStore.ensure_earnings_account.txn": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
-    "storage_gcp:SpannerStore.typed_finalize_leased_result.txn": "ab3aee356377e641dd1b1c695dd05874bbf9158f4e95d693d0f45bc21d795229",
+    "storage_gcp:SpannerStore.typed_finalize_leased_result.txn": "0786f65219c7d02eee19d5d713db30a4be25c91ee09c0703d51497128e53dea2",
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
     "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",

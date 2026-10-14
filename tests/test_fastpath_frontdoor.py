@@ -41,7 +41,7 @@ def _transport(doors: dict[str, _Door], *, down: AbstractSet[str] = frozenset())
 def _client(doors: dict[str, _Door], *, down: AbstractSet[str] = frozenset(), clock: list[float] | None = None) -> fd.FrontDoorClient:
     ticks = clock if clock is not None else [0.0]
     return fd.FrontDoorClient(
-        lambda: tuple(doors),
+        lambda _budget: tuple(doors),
         timeout_seconds=1.5,
         clock=lambda: ticks[0],
         transport=_transport(doors, down=down),
@@ -89,7 +89,7 @@ def test_a_front_door_that_is_down_is_passed_over_for_the_next() -> None:
 
 
 def test_no_front_door_at_all_is_todays_path() -> None:
-    client = fd.FrontDoorClient(lambda: (), timeout_seconds=1.5, transport=_transport({}))
+    client = fd.FrontDoorClient(lambda _budget: (), timeout_seconds=1.5, transport=_transport({}))
     assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
 
 
@@ -144,7 +144,7 @@ def test_one_call_stays_within_its_budget_whatever_the_doors_do() -> None:
         raise httpx.ReadTimeout("slow", request=request)
 
     client = fd.FrontDoorClient(
-        lambda: ("10.0.0.1:8080", "10.0.0.2:8080"), timeout_seconds=1.5, clock=lambda: clock[0],
+        lambda _budget: ("10.0.0.1:8080", "10.0.0.2:8080"), timeout_seconds=1.5, clock=lambda: clock[0],
         transport=httpx.MockTransport(handle),
     )
     assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
@@ -158,7 +158,7 @@ def test_one_call_stays_within_its_budget_whatever_the_doors_do() -> None:
         raise httpx.ReadTimeout("slower", request=request)
 
     client = fd.FrontDoorClient(
-        lambda: ("10.0.0.1:8080", "10.0.0.2:8080"), timeout_seconds=1.5, clock=lambda: clock[0],
+        lambda _budget: ("10.0.0.1:8080", "10.0.0.2:8080"), timeout_seconds=1.5, clock=lambda: clock[0],
         transport=httpx.MockTransport(slower),
     )
     assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
@@ -209,8 +209,9 @@ def test_a_malformed_terminal_answer_is_raised() -> None:
 
 
 class _Snapshot:
-    def __init__(self, rows: list[tuple[str]] | Exception) -> None:
+    def __init__(self, rows: list[tuple[str]] | Exception, timeouts: list[float | None]) -> None:
         self.rows = rows
+        self.timeouts = timeouts
 
     def __enter__(self) -> _Snapshot:
         return self
@@ -218,8 +219,9 @@ class _Snapshot:
     def __exit__(self, *_: object) -> None:
         return None
 
-    def execute_sql(self, sql: str) -> list[tuple[str]]:
+    def execute_sql(self, sql: str, timeout: float | None = None) -> list[tuple[str]]:
         assert sql == fd.FAST_PATH_FRONT_DOORS
+        self.timeouts.append(timeout)
         if isinstance(self.rows, Exception):
             raise self.rows
         return self.rows
@@ -229,10 +231,11 @@ class _Database:
     def __init__(self) -> None:
         self.rows: list[tuple[str]] | Exception = []
         self.reads = 0
+        self.timeouts: list[float | None] = []
 
     def snapshot(self) -> _Snapshot:
         self.reads += 1
-        return _Snapshot(self.rows)
+        return _Snapshot(self.rows, self.timeouts)
 
 
 def test_front_doors_are_the_serving_members_read_at_most_once_per_ttl() -> None:
@@ -240,12 +243,14 @@ def test_front_doors_are_the_serving_members_read_at_most_once_per_ttl() -> None
     db.rows = [("10.0.0.1:8080",), ("10.0.0.2:8080",)]
     clock = [100.0]
     doors = fd.SpannerFrontDoors(db, clock=lambda: clock[0])
-    assert doors() == ("10.0.0.1:8080", "10.0.0.2:8080")
-    assert doors() == ("10.0.0.1:8080", "10.0.0.2:8080")
+    assert doors(1.5) == ("10.0.0.1:8080", "10.0.0.2:8080")
+    assert doors(1.5) == ("10.0.0.1:8080", "10.0.0.2:8080")
     assert db.reads == 1
+    # The read is given the call's budget.
+    assert db.timeouts == [1.5]
     db.rows = [("10.0.0.3:8080",)]
     clock[0] += fd.FRONT_DOORS_TTL_SECONDS
-    assert doors() == ("10.0.0.3:8080",)
+    assert doors(0.7) == ("10.0.0.3:8080",)
     assert db.reads == 2
 
 
@@ -254,12 +259,12 @@ def test_a_membership_read_that_fails_keeps_the_last_front_doors() -> None:
     db.rows = [("10.0.0.1:8080",)]
     clock = [0.0]
     doors = fd.SpannerFrontDoors(db, clock=lambda: clock[0])
-    assert doors() == ("10.0.0.1:8080",)
+    assert doors(1.5) == ("10.0.0.1:8080",)
     db.rows = RuntimeError("spanner down")
     clock[0] += fd.FRONT_DOORS_TTL_SECONDS
-    assert doors() == ("10.0.0.1:8080",)
+    assert doors(1.5) == ("10.0.0.1:8080",)
     # And a failed read is not retried on every request.
-    assert doors() == ("10.0.0.1:8080",)
+    assert doors(1.5) == ("10.0.0.1:8080",)
     assert db.reads == 2
 
 
