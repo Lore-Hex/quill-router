@@ -48,6 +48,9 @@ FRONT_DOORS_TTL_SECONDS = 30.0
 BREAKER_THRESHOLD = 5
 BREAKER_COOLDOWN_SECONDS = 30.0
 CONNECT_TIMEOUT_SECONDS = 0.25
+# How many front doors one call may try within its budget: the fleet has
+# two, and a stale membership row must not spend the budget on a third.
+DOORS_PER_CALL = 2
 
 ADMITTED = "admitted"
 BUSY = "busy"
@@ -155,9 +158,9 @@ class FrontDoorClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._front_doors = front_doors
-        self._timeout = httpx.Timeout(timeout_seconds, connect=min(CONNECT_TIMEOUT_SECONDS, timeout_seconds))
+        self._budget = float(timeout_seconds)
         self._clock = clock
-        self._client = httpx.Client(timeout=self._timeout, transport=transport, follow_redirects=False)
+        self._client = httpx.Client(timeout=timeout_seconds, transport=transport, follow_redirects=False)
         self._breakers: dict[str, _Breaker] = {}
         self._turn = 0
         self._lock = threading.Lock()
@@ -201,11 +204,11 @@ class FrontDoorClient:
         """The authorization's settle, with the charge Python priced and the
         full record the pending work needs. Raises FrontDoorUnavailable when
         no front door answered."""
-        body = {"Envelope": envelope, "Charge": int(charge), "Full": base64.b64encode(full).decode("ascii"), "Money": money}
+        body = {"Envelope": envelope, "Charge": int(charge), "Full": _bytes(full), "Money": _money(money)}
         return self._terminal("/v1/settle", body)
 
     def refund(self, *, envelope: str, money: dict[str, Any]) -> Terminal:
-        body = {"Envelope": envelope, "Money": money}
+        body = {"Envelope": envelope, "Money": _money(money)}
         return self._terminal("/v1/refund", body)
 
     def _terminal(self, path: str, body: dict[str, Any]) -> Terminal:
@@ -227,9 +230,11 @@ class FrontDoorClient:
     # -- transport --------------------------------------------------------
 
     def _call(self, path: str, body: dict[str, Any]) -> dict[str, Any] | None:
-        """One JSON call, tried on each front door the breakers allow, in
-        turn from a rotating start. None when none answered 200 with a JSON
-        object."""
+        """One JSON call, tried on at most DOORS_PER_CALL front doors the
+        breakers allow, in turn from a rotating start, within one budget for
+        the whole call, the membership read included. None when none answered
+        200 with a JSON object in time."""
+        deadline = self._clock() + self._budget
         addresses = tuple(self._front_doors())
         if not addresses:
             logger.warning("fastpath %s: no serving front door", path)
@@ -238,15 +243,22 @@ class FrontDoorClient:
             start = self._turn % len(addresses)
             self._turn += 1
         payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
-        for i in range(len(addresses)):
+        for i in range(min(len(addresses), DOORS_PER_CALL)):
             address = addresses[(start + i) % len(addresses)]
             breaker = self._breakers.setdefault(address, _Breaker())
             now = self._clock()
             if breaker.is_open(now):
                 continue
+            remaining = deadline - now
+            if remaining <= 0:
+                logger.warning("fastpath %s: budget spent before %s", path, address)
+                break
             try:
                 response = self._client.post(
-                    f"http://{address}{path}", content=payload, headers={"Content-Type": "application/json"}
+                    f"http://{address}{path}",
+                    content=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=httpx.Timeout(remaining, connect=min(CONNECT_TIMEOUT_SECONDS, remaining)),
                 )
             except httpx.HTTPError as exc:
                 breaker.record_failure(self._clock())
@@ -271,6 +283,17 @@ class FrontDoorClient:
             breaker.record_success()
             return answer
         return None
+
+
+def _bytes(value: bytes) -> str:
+    """Go's []byte on the wire: standard base64."""
+    return base64.b64encode(value).decode("ascii")
+
+
+def _money(money: dict[str, Any]) -> str:
+    """The money fields as the front door takes them, []byte of a JSON
+    document, which the drain log keeps as sent."""
+    return _bytes(json.dumps(money, separators=(",", ":"), sort_keys=True).encode("utf-8"))
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -309,6 +332,7 @@ def pilot_reason(
     key_capped: bool,
     budget_strict: bool,
     app_markup: bool,
+    records_durable: bool,
 ) -> str | None:
     """Why an authorize stays on today's path, or None when the pilot takes
     it. The cohort is the design's §4.11 at its narrowest: a credit-funded
@@ -338,4 +362,8 @@ def pilot_reason(
         return "key_cap"
     if app_markup:
         return "markup"
+    if not records_durable:
+        # The leased settle writes the activity row in its own commit, so
+        # the pilot needs the durable activity outbox, not the direct sink.
+        return "records"
     return None

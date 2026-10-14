@@ -13,6 +13,7 @@ from tests.fakes.spanner import make_fake_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_models import CreditProvenance, Generation
+from trusted_router.types import UsageType
 
 
 def _store() -> tuple[Any, Any]:
@@ -102,6 +103,21 @@ def test_the_control_without_an_envelope_reserves_as_today() -> None:
     assert len(_reservations(db, workspace.id)) == 1
 
 
+def test_a_leased_authorize_is_not_refused_by_the_unleased_headroom_check() -> None:
+    """The synchronous path remembers a workspace it found out of credit and
+    rechecks its unleased headroom first; a request the front door admitted
+    was admitted from a lease's room, so that check does not apply."""
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    for (candidate, _shard), row in db.typed[CREDIT_BALANCE_TABLE].items():
+        if candidate == workspace.id:
+            row["reserved"] = row["total_credits"]
+    store._insufficient_credit_workspaces.add(workspace.id)
+    outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1")
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None and authorization.fastpath_envelope == "sealed-1"
+
+
 def test_a_leased_authorize_needs_its_id_up_front() -> None:
     store, _db = _store()
     workspace, key = _funded_workspace(store)
@@ -126,7 +142,7 @@ def _generation(authorization: Any, *, cost: int) -> Generation:
         tokens_prompt=10,
         tokens_completion=20,
         total_cost_microdollars=cost,
-        usage_type="Credits",
+        usage_type=UsageType.CREDITS,
         speed_tokens_per_second=40.0,
         finish_reason="stop",
         status="success",

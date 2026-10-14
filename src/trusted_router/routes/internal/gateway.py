@@ -1679,6 +1679,7 @@ def _authorize_gateway_sync_impl(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
+            key_window_limits,
             remember_spend_window_decision,
             spend_window_headers,
             spend_window_limit_error_message,
@@ -1718,10 +1719,21 @@ def _authorize_gateway_sync_impl(
             boot_kid=boot_auth.kid if boot_auth is not None else None,
             idempotency_key=presented_idempotency_key,
             service_tier=body.service_tier,
-            key_capped=api_key.limit_microdollars is not None or bool(window_limits),
+            key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
             budget_strict=bool(api_key.budget_strict),
             app_markup=app_markup_basis_points > 0,
+            records_durable=callable(
+                getattr(getattr(_typed_store, "_operational_analytics_outbox", None), "activity_insert_statement", None)
+            ),
         )
+
+        def release_after_error() -> None:
+            release_user_model_slot_after_error()
+            if admitted is not None:
+                # Admitted under a lease, but no authorization row: give the
+                # hold back now, so it is not held until the lease drains.
+                _fastpath_release_after_failure(settings, admitted, authorization_id=authorization_id)
+
         try:
             with gateway_phase("store_ms", after="post_commit_ms"):
                 outcome, authorization = _typed_store.authorize_gateway_typed(
@@ -1801,7 +1813,7 @@ def _authorize_gateway_sync_impl(
                     ),
                 )
         except conflict_store_error_types() as exc:
-            release_user_model_slot_after_error()
+            release_after_error()
             # The generic 503 request log cannot identify a tenant hot row.
             # Emit only safe billing metadata so an operator can reshard the
             # affected workspace without ever logging a key, prompt, or body.
@@ -1827,7 +1839,7 @@ def _authorize_gateway_sync_impl(
         except transient_store_error_types() as exc:
             from trusted_router.strict_budget import StrictBudgetBusy
 
-            release_user_model_slot_after_error()
+            release_after_error()
             # Keep enough tenant-safe context to distinguish a Spanner
             # deadline, service outage, session exhaustion, or retry failure.
             # The request body, raw key, prompt, and output stay out of logs.
@@ -1852,7 +1864,7 @@ def _authorize_gateway_sync_impl(
             )
             raise
         except BaseException:
-            release_user_model_slot_after_error()
+            release_after_error()
             raise
         window_decision = getattr(outcome, "rate_limit", None)
         remember_spend_window_decision(request, window_decision)
@@ -4139,19 +4151,6 @@ def _settle_gateway_authorization(
     _typed_store = typed_billing_store(STORE)
     is_typed = _typed_store is not None
     intent_kind = "settle" if success else "refund"
-    if authorization.fastpath_envelope is not None and _typed_store is not None:
-        # The fast path's pilot (docs/design/fast-admission-pilot.md): the
-        # hold is a lease's, so the terminal goes to the front door and the
-        # records alone are written here; no intent, no claim, no release.
-        return _settle_leased_authorization(
-            authorization,
-            settings=settings,
-            success=success,
-            actual_cost=actual_cost,
-            selected_usage_type=selected_usage_type,
-            generation=generation,
-            typed_store=_typed_store,
-        )
     is_customer_billing_event = partner_mode != PartnerBillingMode.INTERNAL
     enqueue_ms = 0.0
     outbox_enqueued = False
@@ -4176,6 +4175,20 @@ def _settle_gateway_authorization(
             selected_usage_type=selected_usage_type,
         )
     )
+    if authorization.fastpath_envelope is not None and _typed_store is not None:
+        # The fast path's pilot (docs/design/fast-admission-pilot.md): the
+        # hold is a lease's, so the terminal goes to the front door and the
+        # records alone are written here; no intent, no claim, no release.
+        return _settle_leased_authorization(
+            authorization,
+            settings=settings,
+            success=success,
+            actual_cost=actual_cost,
+            selected_usage_type=selected_usage_type,
+            generation=generation,
+            refund_benchmark=refund_benchmark,
+            typed_store=_typed_store,
+        )
     durable_intent: SettleOutboxRow | None = None
     settle_intent: SettleOutboxRow | None = None
     if settings.settle_outbox_enabled:
@@ -4904,6 +4917,7 @@ def _fastpath_admission(
     key_capped: bool,
     budget_strict: bool,
     app_markup: bool,
+    records_durable: bool,
 ) -> _fastpath.Admitted | None:
     """The pilot's admission, or None for today's path. The region is this
     control plane's own: the front doors are reachable from the region the
@@ -4923,6 +4937,7 @@ def _fastpath_admission(
         key_capped=key_capped,
         budget_strict=budget_strict,
         app_markup=app_markup,
+        records_durable=records_durable,
     )
     if reason is not None:
         if settings.fastpath_pilot_enabled and workspace_id in settings.fastpath_pilot_workspace_ids:
@@ -4950,6 +4965,29 @@ def _fastpath_admission(
     return admitted
 
 
+def _fastpath_release_after_failure(settings: Settings, admitted: _fastpath.Admitted, *, authorization_id: str) -> None:
+    """A hold admitted under a lease whose authorization row was not
+    written: refunded at once, best effort, so the hold ends now rather
+    than when the lease drains. A refund that cannot be sent is logged; the
+    hold then ends with the lease (docs/design/fast-admission-pilot.md)."""
+    client = _fastpath_front_door(settings)
+    if client is None:
+        return
+    try:
+        terminal = client.refund(envelope=admitted.envelope, money={"charge": 0, "estimate": 0})
+    except _fastpath.FrontDoorUnavailable:
+        logger.error("fastpath pilot hold not released after a failed insert authorization_id=%s", authorization_id)
+        return
+    except Exception:  # noqa: BLE001 - a release after a failure must not mask the failure
+        logger.exception("fastpath pilot release after a failed insert authorization_id=%s", authorization_id)
+        return
+    logger.warning(
+        "fastpath pilot hold released after a failed insert authorization_id=%s status=%s",
+        authorization_id,
+        terminal.status,
+    )
+
+
 def _settle_leased_authorization(
     authorization: GatewayAuthorization,
     *,
@@ -4958,6 +4996,7 @@ def _settle_leased_authorization(
     actual_cost: int,
     selected_usage_type: UsageType | str,
     generation: Generation | None,
+    refund_benchmark: ProviderBenchmarkSample | None,
     typed_store: Any,
 ) -> dict[str, Any]:
     """The pilot's terminal (docs/design/fast-admission-pilot.md): the settle
@@ -4975,6 +5014,7 @@ def _settle_leased_authorization(
     envelope = str(authorization.fastpath_envelope)
     estimate = int(authorization.estimated_microdollars)
     charge = int(actual_cost) if success else 0
+    kind = "settle" if success else "refund"
     money = {"charge": charge, "estimate": estimate}
     boot_kid = authorization.stage_d_boot_kid or ""
     if not boot_kid:
@@ -4984,7 +5024,7 @@ def _settle_leased_authorization(
             full = json.dumps(
                 {
                     "boot": base64.b64encode(boot_kid.encode("utf-8")).decode("ascii"),
-                    "kind": "settle",
+                    "kind": kind,
                     "authorization_id": authorization.id,
                     "workspace_id": authorization.workspace_id,
                     "generation_id": generation.id if generation is not None else None,
@@ -4999,21 +5039,54 @@ def _settle_leased_authorization(
             terminal = client.refund(envelope=envelope, money=money)
     except _fastpath.FrontDoorUnavailable:
         logger.warning(
-            "fastpath pilot terminal unavailable authorization_id=%s success=%s", authorization.id, success,
+            "fastpath pilot terminal unavailable authorization_id=%s kind=%s", authorization.id, kind,
         )
         raise unavailable from None
-    if terminal.status == _fastpath.FAILED:
-        logger.warning("fastpath pilot terminal failed authorization_id=%s", authorization.id)
-        raise unavailable
-    booked = charge
-    if terminal.status == _fastpath.INVALID:
-        # No retry makes it good; the hold is reaped at its end of life and the
-        # audit shows the difference. The records say what Python priced.
-        logger.error("fastpath pilot terminal invalid authorization_id=%s", authorization.id)
-    elif terminal.status == _fastpath.SETTLED and terminal.cost_known:
-        # The lease closed before the terminal: the disposition's cost is what
-        # the fast path booked, so the records carry it.
-        booked = int(terminal.cost)
+    logger.info(
+        "fastpath pilot terminal %s authorization_id=%s kind=%s won=%s charge=%d outcome=%s",
+        terminal.status,
+        authorization.id,
+        kind,
+        terminal.kind,
+        terminal.charge,
+        terminal.outcome,
+    )
+    # What the records say is what the fast path decided, never what this
+    # route asked: the owner's winner (its kind and charge), or the closed
+    # lease's disposition. Anything else is not final here.
+    if terminal.status == _fastpath.WON:
+        if terminal.kind != kind:
+            # Another terminal of this authorization won at the owner, and its
+            # own route writes the records; this one retries into the replay.
+            logger.error(
+                "fastpath pilot terminal lost to another kind authorization_id=%s kind=%s won=%s",
+                authorization.id,
+                kind,
+                terminal.kind,
+            )
+            raise unavailable
+        booked_success, booked = success, int(terminal.charge)
+        if booked != charge:
+            logger.warning(
+                "fastpath pilot winner's charge differs authorization_id=%s won=%d priced=%d",
+                authorization.id,
+                booked,
+                charge,
+            )
+    elif terminal.status == _fastpath.SETTLED:
+        # The lease closed before this terminal: the disposition is the
+        # outcome, a booking (settled, or the reaper's snapshot) or none.
+        if terminal.outcome in {"settled", "reaped_snapshot"} and terminal.cost_known:
+            booked_success, booked = True, int(terminal.cost)
+        elif terminal.outcome in {"refunded", "released"}:
+            booked_success, booked = False, 0
+        else:
+            logger.error(
+                "fastpath pilot terminal after the lease closed with no outcome authorization_id=%s outcome=%s",
+                authorization.id,
+                terminal.outcome,
+            )
+            raise unavailable
         logger.warning(
             "fastpath pilot terminal after the lease closed authorization_id=%s outcome=%s cost=%d priced=%d",
             authorization.id,
@@ -5021,20 +5094,26 @@ def _settle_leased_authorization(
             booked,
             charge,
         )
-    logger.info(
-        "fastpath pilot terminal %s authorization_id=%s kind=%s charge=%d",
-        terminal.status,
-        authorization.id,
-        terminal.kind or ("settle" if success else "refund"),
-        terminal.charge,
-    )
+    elif terminal.status == _fastpath.RECORDED:
+        # Durable in the drain log, and the lease's order decides it: not
+        # settled yet, as today's intent_durable, with nothing written.
+        logger.warning("fastpath pilot terminal recorded, undecided authorization_id=%s", authorization.id)
+        return {"data": _intent_durable_gateway_data(authorization)}
+    else:
+        # failed, invalid, or a status this release does not know: no record
+        # of a terminal the fast path did not take.
+        logger.error(
+            "fastpath pilot terminal not taken authorization_id=%s status=%s", authorization.id, terminal.status,
+        )
+        raise unavailable
     result = typed_store.typed_finalize_leased_result(
         authorization.id,
-        success=success,
+        success=booked_success,
         actual_microdollars=booked,
         selected_usage_type=selected_usage_type,
-        generation=generation,
+        generation=generation if booked_success else None,
         authorization_snapshot=authorization,
+        refund_benchmark=refund_benchmark if not booked_success else None,
     )
     if result is None:
         refreshed = STORE.get_gateway_authorization(authorization.id) or authorization

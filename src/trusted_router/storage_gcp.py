@@ -5443,6 +5443,22 @@ class SpannerStore:
             if cap_verdict == HEADROOM:
                 self._lifetime_cap_exhausted_keys.discard(key_hash)
 
+        if fastpath_envelope is not None:
+            # The fast path's pilot: the request is held under a lease the
+            # front door granted (the envelope), so no credit or key is
+            # reserved and no tr_reservation row exists; the authorization
+            # row alone is written, for the settle to price and record. It
+            # skips the synchronous headroom check below too: the lease's
+            # room, not the unleased balance, admitted it.
+            return self._authorize_gateway_leased(
+                build_authorization=build_authorization,
+                authorization_id=authorization_id,
+                fastpath_envelope=fastpath_envelope,
+                fastpath_end_of_life=fastpath_end_of_life,
+                created_at=created_at,
+                window_decision=window_decision,
+            )
+
         if has_credit_candidate and workspace_id in self._insufficient_credit_workspaces:
             credit_verdict = credit_exhaustion_precheck(
                 self._database,
@@ -5460,20 +5476,6 @@ class SpannerStore:
                 )
             if credit_verdict == HEADROOM:
                 self._insufficient_credit_workspaces.discard(workspace_id)
-
-        if fastpath_envelope is not None:
-            # The fast path's pilot: the request is held under a lease the
-            # front door granted (the envelope), so no credit or key is
-            # reserved and no tr_reservation row exists; the authorization
-            # row alone is written, for the settle to price and record.
-            return self._authorize_gateway_leased(
-                build_authorization=build_authorization,
-                authorization_id=authorization_id,
-                fastpath_envelope=fastpath_envelope,
-                fastpath_end_of_life=fastpath_end_of_life,
-                created_at=created_at,
-                window_decision=window_decision,
-            )
 
         credit_shard_candidates = (
             self._credit_shard_candidates(workspace_id) if has_credit_candidate else (UNSHARDED,)

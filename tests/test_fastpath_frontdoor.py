@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,7 +24,7 @@ class _Door:
         self.seen: list[tuple[str, dict[str, Any]]] = []
 
 
-def _transport(doors: dict[str, _Door], *, down: frozenset[str] = frozenset()) -> httpx.MockTransport:
+def _transport(doors: dict[str, _Door], *, down: AbstractSet[str] = frozenset()) -> httpx.MockTransport:
     def handle(request: httpx.Request) -> httpx.Response:
         address = request.url.netloc.decode()
         if address in down:
@@ -37,7 +38,7 @@ def _transport(doors: dict[str, _Door], *, down: frozenset[str] = frozenset()) -
     return httpx.MockTransport(handle)
 
 
-def _client(doors: dict[str, _Door], *, down: frozenset[str] = frozenset(), clock: list[float] | None = None) -> fd.FrontDoorClient:
+def _client(doors: dict[str, _Door], *, down: AbstractSet[str] = frozenset(), clock: list[float] | None = None) -> fd.FrontDoorClient:
     ticks = clock if clock is not None else [0.0]
     return fd.FrontDoorClient(
         lambda: tuple(doors),
@@ -111,10 +112,57 @@ def test_the_breaker_skips_a_failing_front_door_and_tries_it_again_after_the_coo
     # Every call reached the good door; the bad one was tried until the
     # breaker opened at the threshold, then skipped.
     assert len(bad.seen) == fd.BREAKER_THRESHOLD
+    # Many more calls before the cooldown: the open breaker lets none through.
+    for _ in range(4 * fd.BREAKER_THRESHOLD):
+        assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is not None
+    assert len(bad.seen) == fd.BREAKER_THRESHOLD
     clock[0] += fd.BREAKER_COOLDOWN_SECONDS
-    client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b")
-    client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b")
-    assert len(bad.seen) == fd.BREAKER_THRESHOLD + 1
+    # After the cooldown the door is tried again, on the calls that start
+    # with it (the start rotates), and opens again at the threshold.
+    for _ in range(4 * fd.BREAKER_THRESHOLD):
+        assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is not None
+    assert len(bad.seen) == 2 * fd.BREAKER_THRESHOLD
+
+
+def test_one_call_tries_at_most_two_front_doors(monkeypatch: pytest.MonkeyPatch) -> None:
+    doors = {f"10.0.0.{i}:8080": _Door() for i in range(1, 6)}
+    client = _client(doors, down=set(doors))
+    assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
+    # Down doors raise before the handler records them, so count the breakers.
+    assert sum(b.failures for b in client._breakers.values()) == fd.DOORS_PER_CALL
+
+
+def test_one_call_stays_within_its_budget_whatever_the_doors_do() -> None:
+    """Each door's request is given only what is left of the call's budget,
+    and a door reached after the budget is spent is not tried at all."""
+    clock = [0.0]
+    seen_timeouts: list[float] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen_timeouts.append(request.extensions["timeout"]["read"])
+        clock[0] += 1.0  # the door answered slowly
+        raise httpx.ReadTimeout("slow", request=request)
+
+    client = fd.FrontDoorClient(
+        lambda: ("10.0.0.1:8080", "10.0.0.2:8080"), timeout_seconds=1.5, clock=lambda: clock[0],
+        transport=httpx.MockTransport(handle),
+    )
+    assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
+    assert [round(t, 2) for t in seen_timeouts] == [1.5, 0.5]
+    clock[0] = 0.0
+    seen_timeouts.clear()
+
+    def slower(request: httpx.Request) -> httpx.Response:
+        seen_timeouts.append(request.extensions["timeout"]["read"])
+        clock[0] += 2.0
+        raise httpx.ReadTimeout("slower", request=request)
+
+    client = fd.FrontDoorClient(
+        lambda: ("10.0.0.1:8080", "10.0.0.2:8080"), timeout_seconds=1.5, clock=lambda: clock[0],
+        transport=httpx.MockTransport(slower),
+    )
+    assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
+    assert [round(t, 2) for t in seen_timeouts] == [1.5]
 
 
 def test_a_body_that_is_not_json_counts_as_a_failure() -> None:
@@ -125,16 +173,25 @@ def test_a_body_that_is_not_json_counts_as_a_failure() -> None:
 def test_a_settle_carries_the_charge_and_the_full_record_and_reads_the_owners_decision() -> None:
     door = _Door({"/v1/settle": {"Status": "won", "Kind": "settle", "Charge": 7, "Outcome": "settle", "Cost": 7, "CostKnown": True}})
     client = _client({"10.0.0.1:8080": door})
-    got = client.settle(envelope="sealed", charge=7, full=b'{"record":1}', money={"currency": "USD", "micro": 7})
+    got = client.settle(envelope="sealed", charge=7, full=b'{"record":1}', money={"estimate": 9, "charge": 7})
     assert got == fd.Terminal(status="won", kind="settle", charge=7, outcome="settle", cost=7, cost_known=True)
-    assert door.seen[0][1] == {"Envelope": "sealed", "Charge": 7, "Full": base64.b64encode(b'{"record":1}').decode(), "Money": {"currency": "USD", "micro": 7}}
+    sent = door.seen[0][1]
+    assert sent == {
+        "Envelope": "sealed",
+        "Charge": 7,
+        "Full": base64.b64encode(b'{"record":1}').decode(),
+        "Money": base64.b64encode(b'{"charge":7,"estimate":9}').decode(),
+    }
+    # Both are Go []byte fields: base64 text that decodes to the bytes sent.
+    assert json.loads(base64.b64decode(sent["Money"])) == {"charge": 7, "estimate": 9}
+    assert base64.b64decode(sent["Full"]) == b'{"record":1}'
 
 
 def test_a_refund_carries_the_envelope() -> None:
     door = _Door({"/v1/refund": {"Status": "recorded"}})
     client = _client({"10.0.0.1:8080": door})
-    assert client.refund(envelope="sealed", money={"micro": 0}).status == "recorded"
-    assert door.seen[0] == ("/v1/refund", {"Envelope": "sealed", "Money": {"micro": 0}})
+    assert client.refund(envelope="sealed", money={"charge": 0, "estimate": 3}).status == "recorded"
+    assert door.seen[0] == ("/v1/refund", {"Envelope": "sealed", "Money": base64.b64encode(b'{"charge":0,"estimate":3}').decode()})
 
 
 def test_a_terminal_no_front_door_answers_is_raised_never_dropped() -> None:
@@ -229,6 +286,7 @@ _ELIGIBLE: dict[str, Any] = {
     "key_capped": False,
     "budget_strict": False,
     "app_markup": False,
+    "records_durable": True,
 }
 
 
@@ -247,5 +305,6 @@ def test_the_narrowest_cohort_is_eligible_and_each_departure_names_itself() -> N
         ("key_capped", True, "key_cap"),
         ("budget_strict", True, "key_cap"),
         ("app_markup", True, "markup"),
+        ("records_durable", False, "records"),
     ]:
         assert fd.pilot_reason(**{**_ELIGIBLE, field: value}) == reason, field

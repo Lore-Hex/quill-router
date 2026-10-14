@@ -41,13 +41,25 @@ door (`/v1/settle` with the charge, the full record and the money fields;
 authorization marked settled with its finalization facts, the generation
 record, the activity row and the benchmark row. It claims no reservation,
 releases no hold, books no usage and pays no markup; the lease booked the
-usage, and the audit (`fastpathctl audit`) holds it.
+usage, and the audit (`fastpathctl audit`) holds it. The records say what
+the fast path decided, never what the route asked: the owner's winner (its
+kind and charge), or the closed lease's disposition; a terminal answered
+`recorded` (durable in the drain log, the lease's order still to decide)
+is answered to the enclave as today's `intent_durable`, pending, with
+nothing written; a terminal the fast path did not take (`failed`,
+`invalid`, a winner of another kind) is answered 503 with `Retry-After`,
+and the enclave retries. A hold admitted whose authorization row then
+could not be written is refunded at once, best effort, so it does not
+wait for the lease to drain.
 
 The cohort, `pilot_reason` in `services/fastpath_frontdoor.py`, is the
 design's §4.11 at its narrowest: a credit-funded key on a standard route,
 not streaming, with a verified boot, no idempotency key, no service tier,
-no key cap or window, no strict budget, no app markup; a workspace in the
-pilot set; a control plane in a pilot region. Everything else stays on
+no key cap or window (alert-only windows included), no strict budget, no
+app markup; a workspace in the pilot set; a control plane in a pilot
+region; a control plane whose activity rows go through the durable outbox
+(the leased settle writes the activity row in its own commit). Everything
+else stays on
 today's path, as does any request the front door does not admit: `off` (the
 workspace is not on the fast path's own switch), `busy` (no lease took it),
 `invalid`, a front door that failed, or none serving. A request is never
@@ -56,6 +68,7 @@ refused for a fast path that is not there.
 The front doors are the fleet's serving members, `tr_fastpath_member`, read
 from Spanner and cached thirty seconds, so a node a deploy replaces is found
 by its new address; each has a breaker (five failures, thirty seconds).
+One call tries at most two of them within one budget, the whole call's.
 
 ## The switches
 

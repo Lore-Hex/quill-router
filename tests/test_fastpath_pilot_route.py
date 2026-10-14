@@ -25,7 +25,7 @@ from trusted_router.storage_models import CreditAccount, Workspace
 WORKSPACE = "ws-pilot"
 MODEL = "anthropic/claude-haiku-4.5"
 ADMIT = {"Status": "admitted", "Envelope": "sealed-pilot", "EndOfLife": "2026-10-14T20:00:00Z"}
-WON = {"Status": "won", "Kind": "settle", "Charge": 0, "Outcome": "", "Cost": 0, "CostKnown": False}
+WON = {"Status": "won", "Kind": "settle", "Charge": 306, "Outcome": "", "Cost": 0, "CostKnown": False}
 
 
 def _pilot(**overrides: Any) -> Settings:
@@ -91,7 +91,7 @@ def _body(key_hash: str, **overrides: Any) -> GatewayAuthorizeRequest:
 def door(monkeypatch: pytest.MonkeyPatch) -> _Door:
     """One front door, answering admitted and won, standing in for the fleet."""
     monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: True)
-    door = _Door({"/v1/authorize": ADMIT, "/v1/settle": WON, "/v1/refund": {"Status": "won", "Kind": "refund"}})
+    door = _Door({"/v1/authorize": ADMIT, "/v1/settle": dict(WON), "/v1/refund": {"Status": "won", "Kind": "refund", "Charge": 0}})
     client = fd.FrontDoorClient(lambda: ("10.0.0.1:8080",), timeout_seconds=1.5, transport=_transport({"10.0.0.1:8080": door}))
     monkeypatch.setattr(gateway, "_fastpath_client", client)
     return door
@@ -195,7 +195,7 @@ def test_the_settle_of_a_leased_request_goes_to_the_front_door_and_leaves_record
     assert path == "/v1/settle"
     assert sent["Envelope"] == "sealed-pilot"
     assert sent["Charge"] == authorization.finalized_cost_microdollars
-    assert json.loads(sent["Money"] if isinstance(sent["Money"], str) else json.dumps(sent["Money"])) == {
+    assert json.loads(base64.b64decode(sent["Money"])) == {
         "charge": authorization.finalized_cost_microdollars,
         "estimate": authorization.estimated_microdollars,
     }
@@ -244,16 +244,117 @@ def test_a_front_door_that_cannot_take_the_terminal_answers_503_and_keeps_the_re
     with pytest.raises(Exception) as caught:
         gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
     assert getattr(caught.value, "status_code", None) == 503
-    assert caught.value.headers.get("Retry-After") == "1"
+    assert getattr(caught.value, "headers", {}).get("Retry-After") == "1"
     authorization = store.get_gateway_authorization(authorized["authorization_id"])
     assert authorization is not None and not authorization.settled
 
 
-def test_a_lease_closed_before_the_terminal_records_what_the_fast_path_booked(door: _Door) -> None:
+def test_the_records_say_what_the_owner_decided_not_what_the_route_priced(door: _Door) -> None:
     store, _database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/settle"] = {"Status": "won", "Kind": "settle", "Charge": 7}
+    gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and authorization.settled
+    assert authorization.finalized_cost_microdollars == 7
+
+
+def test_a_lease_closed_before_the_terminal_records_the_disposition(door: _Door) -> None:
+    store, database, key = _seed()
     authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
     door.answers["/v1/settle"] = {"Status": "settled", "Outcome": "reaped_snapshot", "Cost": 5, "CostKnown": True}
     gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
     authorization = store.get_gateway_authorization(authorized["authorization_id"])
     assert authorization is not None and authorization.settled
-    assert authorization.finalized_cost_microdollars == 5
+    assert authorization.finalization_outcome == "settled" and authorization.finalized_cost_microdollars == 5
+    # A settle answered with a refunded disposition records a refund, no generation.
+    second = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/settle"] = {"Status": "settled", "Outcome": "refunded", "Cost": 0, "CostKnown": True}
+    activity_before = len(database.operational_analytics_outbox)
+    gateway._settle_gateway_authorization(_settle_body(second), success=True, settings=_pilot())
+    refunded = store.get_gateway_authorization(second["authorization_id"])
+    assert refunded is not None and refunded.settled and refunded.finalization_outcome == "refunded"
+    assert len(database.operational_analytics_outbox) == activity_before
+
+
+def test_a_terminal_that_lost_to_another_kind_is_retried_not_recorded(door: _Door) -> None:
+    store, _database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/refund"] = {"Status": "won", "Kind": "settle", "Charge": 306}
+    with pytest.raises(Exception) as caught:
+        gateway._settle_gateway_authorization(_settle_body(authorized, success=False), success=False, settings=_pilot())
+    assert getattr(caught.value, "status_code", None) == 503
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and not authorization.settled
+
+
+def test_a_recorded_terminal_is_pending_not_settled(door: _Door) -> None:
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/settle"] = {"Status": "recorded"}
+    data = gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())["data"]
+    assert data["settled"] is False and data["already_settled"] is False
+    assert data["disposition"] == "intent_durable" and data["finalization_outcome"] == "pending"
+    assert "generation_id" not in data
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and not authorization.settled
+    assert database.operational_analytics_outbox == []
+
+
+@pytest.mark.parametrize("status", ["invalid", "failed", "something_new"])
+def test_a_terminal_the_fast_path_did_not_take_is_not_recorded(door: _Door, status: str) -> None:
+    store, _database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/settle"] = {"Status": status}
+    with pytest.raises(Exception) as caught:
+        gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
+    assert getattr(caught.value, "status_code", None) == 503
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and not authorization.settled
+
+
+def test_a_failed_insert_after_admission_gives_the_hold_back(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+
+    store, _database, key = _seed()
+
+    def failing(*_args: Any, **_kwargs: Any) -> None:
+        raise DeadlineExceeded("spanner")
+
+    monkeypatch.setattr(storage_gcp.SpannerStore, "_authorize_gateway_leased", failing)
+    with pytest.raises(DeadlineExceeded):
+        gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())
+    assert [path for path, _sent in door.seen] == ["/v1/authorize", "/v1/refund"]
+    assert door.seen[1][1]["Envelope"] == "sealed-pilot"
+
+
+def test_a_key_with_an_alert_only_window_stays_on_todays_path(door: _Door) -> None:
+    store, database, _key = _seed()
+    _raw, key = store.api_keys.create(
+        workspace_id=WORKSPACE, name="alert-window", creator_user_id="user-pilot",
+        limit_daily_microdollars=1_000, budget_alert_only=True,
+    )
+    data = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None and authorization.fastpath_envelope is None
+    assert _credit(database)["reserved"] > 0
+    assert door.seen == []
+
+
+def test_a_store_without_the_activity_outbox_stays_on_todays_path(door: _Door) -> None:
+    store, database = make_fake_store(request_record_write_mode="typed", operational_analytics_outbox_enabled=False)
+    workspace = Workspace(id=WORKSPACE, name="Pilot", owner_user_id="user-pilot")
+    store._write_entity("workspace", workspace.id, workspace)
+    store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
+    database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace.id, 0)] = {
+        "workspace_id": workspace.id, "shard": 0, "total_credits": 50_000_000, "total_usage": 0, "reserved": 0,
+        "source_updated_at": None, "updated_at": None,
+    }
+    _raw, key = store.api_keys.create(workspace_id=workspace.id, name="k", creator_user_id="user-pilot")
+    configure_store(store)
+    data = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None and authorization.fastpath_envelope is None
+    assert door.seen == []
