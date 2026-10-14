@@ -5,11 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep, get_authorization_bearer
 from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.security import constant_time_equal
+from trusted_router.services.stripe_radar import report_workspace_card_fraud
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -93,8 +95,19 @@ def register(router: APIRouter) -> None:
         body = await json_body(request)
         abuse_ref = _required_text(body, "abuse_ref", limit=_MAX_ABUSE_REF)
         reason = _required_text(body, "reason")
+        clearing = body.get("action") == "clear"
+        # Opt-in because not every abuse involves stolen cards: a fraud report
+        # blocks the card at Stripe, which would wrongly cut off a real
+        # cardholder whose account broke the rules some other way.
+        report_card_fraud = body.get("report_card_fraud", False)
+        if not isinstance(report_card_fraud, bool):
+            raise api_error(400, "report_card_fraud must be a boolean", ErrorType.BAD_REQUEST)
+        if clearing and report_card_fraud:
+            raise api_error(
+                400, "report_card_fraud applies only when latching abuse", ErrorType.BAD_REQUEST
+            )
         try:
-            if body.get("action") == "clear":
+            if clearing:
                 applied = STORE.clear_workspace_abuse_pause(
                     workspace_id,
                     abuse_ref=abuse_ref,
@@ -116,7 +129,14 @@ def register(router: APIRouter) -> None:
             if str(exc) == "abuse_ref_conflict":
                 raise api_error(409, "abuse_ref is already used", ErrorType.CONFLICT) from exc
             raise
-        return {"data": {"applied": applied, "replayed": not applied, "action": action}}
+        data: dict[str, Any] = {"applied": applied, "replayed": not applied, "action": action}
+        if report_card_fraud:
+            # Runs on replays too, so repeating the call retries a report that
+            # failed; charges already reported are skipped.
+            data["stripe_card_fraud_report"] = await run_in_threadpool(
+                report_workspace_card_fraud, workspace_id=workspace_id, settings=settings
+            )
+        return {"data": data}
 
 
 def is_operator_route(path: str) -> bool:
