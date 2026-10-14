@@ -105,8 +105,9 @@ closed, credits 100,000,000 unchanged.
 **The stop.** The watch stopped the stage at 20:32:30Z: six packs' work
 had been pending longer than five minutes. Those packs were run 1's: the
 holds of the three leases run 1's stop revoked, streams cut off before
-their terminals and reaped by the auditor once their life and the grace
-had passed. Every reaped hold's winner alerted `no_boot_binding`,
+their terminals and reaped by the auditor once their last heartbeat's
+deadline, 30 seconds, and the grace, a minute, had passed. Every reaped
+hold's winner alerted `no_boot_binding`,
 because a hold made by heartbeats alone had no boot binding on its row,
 so the reap's record stated none and the winner's pack could not finish.
 The watch knows a pack's age only from its own first look, so run 2's,
@@ -115,8 +116,8 @@ started empty at 20:27Z, found them pending for more than five minutes at
 its packs (the three leases run 2's stop revoked closed on their own
 later), but the packs stay pending, and run 2's own cut-off streams,
 reaped afterwards, added theirs. The ceiling worked as W3 means it to:
-it found the fast path's defect within five minutes of the watch's first
-look at it.
+it stopped the stage once the packs had been seen pending for more than
+five minutes, at the first 30-second poll past the ceiling.
 
 ## What the two runs found
 
