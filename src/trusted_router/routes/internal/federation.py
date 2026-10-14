@@ -204,6 +204,12 @@ def register(router: APIRouter) -> None:
             "revision": getattr(api_key, "updated_at", None)
             or getattr(api_key, "created_at", None),
         }
+        if "abuse" in getattr(workspace, "billing_pause_causes", ()):
+            # An abuse suspension is final until cleared, and peers answer it
+            # with a 403 the gateway does not retry, as this plane does. Only
+            # suspended records carry the bit: every other record stays
+            # byte-identical, and old peers drop it harmlessly.
+            record["workspace_suspended"] = True
         if app_id:
             # Attribution and its restrictive suspension bit travel together.
             # Old peers drop both harmlessly; legacy records remain byte-identical.

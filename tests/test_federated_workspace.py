@@ -568,6 +568,21 @@ class TestFederatedRequestReachesAuthorize:
         assert response.status_code == 503, response.text
         assert "billing is paused" in response.text.lower()
 
+    def test_a_home_plane_suspension_is_the_same_final_403(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An abuse suspension must not turn back into a retried 503 here."""
+        client = _federating_client(
+            monkeypatch,
+            {**HOME_RECORD, "workspace_billing_paused": True, "workspace_suspended": True},
+        )
+
+        response = _authorize(client, "lh-fed-1")
+
+        assert response.status_code == 403, response.text
+        assert "retry-after" not in response.headers
+        assert response.json()["error"]["message"] == "billing_paused"
+
     def test_a_non_federated_workspace_still_gets_the_plain_402(self) -> None:
         """The new error must not leak onto ordinary local customers, who
         really are out of money."""

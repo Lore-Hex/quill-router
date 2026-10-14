@@ -2089,7 +2089,7 @@ def federated_workspace_from_record(record: dict[str, Any]) -> Workspace:
     credits are ever consulted.
 
     A shadow is a SECOND COPY of somebody else's record, so every field carried
-    is a field that can drift. Only two things are carried, and only because
+    is a field that can drift. Only these are carried, and only because
     something on this plane actually reads them:
 
       * `id` — every workspace-scoped read on the authorize path keys on it,
@@ -2103,6 +2103,9 @@ def federated_workspace_from_record(record: dict[str, Any]) -> Workspace:
         does not reach here until the key record is re-federated. Refusing to
         serve is the safe side of that staleness; the unsafe side — a pause
         that fails to arrive — is why a refresh path is still owed.
+      * `workspace_suspended` — sent only when the home pause is an abuse
+        suspension, so the shadow's cause is "abuse" and the gateway answers
+        the same final 403 the home plane does. Another restriction.
 
     Everything else is deliberately NOT carried:
 
@@ -2118,7 +2121,8 @@ def federated_workspace_from_record(record: dict[str, Any]) -> Workspace:
       * No credits, of any kind. That is the whole point — see
         `trusted_router.credit_transfer`.
     """
-    paused = bool(record.get("workspace_billing_paused", False))
+    suspended = bool(record.get("workspace_suspended", False))
+    paused = suspended or bool(record.get("workspace_billing_paused", False))
     return Workspace(
         id=str(record.get("workspace_id") or ""),
         name=FEDERATED_WORKSPACE_NAME,
@@ -2127,6 +2131,9 @@ def federated_workspace_from_record(record: dict[str, Any]) -> Workspace:
         content_storage_enabled=False,
         billing_paused=paused,
         billing_pause_reason=FEDERATED_WORKSPACE_PAUSE_REASON if paused else "",
+        # A bare paused bit becomes the legacy "migration" cause in
+        # Workspace.__post_init__; only a suspension names "abuse".
+        billing_pause_causes=["abuse"] if suspended else [],
         # Same marker convention as ApiKey.federated_home: the home record's
         # revision when it sent one, otherwise a constant. Non-empty is what
         # makes this distinguishable from a locally-issued workspace.
