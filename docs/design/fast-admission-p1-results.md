@@ -150,8 +150,89 @@ Each was found by a mechanism the stage is meant to exercise (the
 pending-work ceiling, the alerts' path, the alerts' severity) and none by
 the accounting, which held in both runs.
 
+## Runs 3 to 5: the fixes on the nodes, the rate raised by steps
+
+2026-10-14, nodes on release `f96c21395` (the three fixes above), the
+legacy pending packs marked done by an operator first. Each run the full
+ten minutes, the generator ending on its own, the watch exiting 0, the
+audit exiting 0 with no problem.
+
+| run | rate | started | admitted / busy | settles / refunds | streams complete | heartbeats |
+|---|---|---|---|---|---|---|
+| 3 (04:34Z) | 1/s | 600 | 595 / 5 | 589 / 6 | 306 | 472 |
+| 4 (04:47Z) | 2/s | 1,200 | 1,193 / 7 | 1,174 / 19 | 601 | 920 |
+| 5 (05:00Z) | 4/s | 2,400 | 2,398 / 2 | 2,373 / 25 | 1,193 | 1,930 |
+
+None not started for lack of room in flight, none cancelled. The busy
+answers are each run's first requests, before its first lease.
+
+| run | authorize admitted p50 / p99 / max | heartbeat p50 / p99 | settle p50 / p99 / max |
+|---|---|---|---|
+| 3 | 2.96 / 3.93 / 5.00 ms | 21 / 53 ms | 47 / 93 / 578 ms |
+| 4 | 2.42 / 3.80 / 4.03 ms | 13 / 34 ms | 29 / 69 / 307 ms |
+| 5 | 2.64 / 3.65 / 9.57 ms | 13 / 42 ms | 26 / 62 / 143 ms |
+
+The admission's cost stays under the 10 ms budget at every quantile at
+four generations a second, the slowest of the three runs' 4,186
+admissions at 9.6 ms. Its p50 is higher than runs 1 and 2's 1.6 ms on release
+`bfa94e22e`, with the same mix and the same generator placement. What
+was measured after run 5: from `tr-fastpath-1`, where the generator
+runs, an empty `/owner/ping` (`fastpath/internal/frontdoor/http.go`, a
+204 and nothing else) answers in 0.41 ms from its own front door and
+2.54 ms from `tr-fastpath-2`'s, a zone away, p50 of 30 each; the
+generator sends every other request to each front door
+(`fastpath/internal/loadgen`), and a front door may forward an
+authorization to the other node's owner; the authorize path between
+the two releases is unchanged (`git log bfa94e22e..f96c21395 --
+fastpath/` touches the heartbeat record and the alert line); the
+observed load during run 4 was low (load average 0.11 on two vCPUs,
+the logging agent at six percent, no journal line per request). The
+pair of runs 1 and 2 was replaced on 2026-10-13 22:23Z and its hop was
+not measured, so the rise is most likely the hop but not established,
+and the pooled p50 is not the admission's cost over either floor. The
+runbook now reads both floors before every run (`fastpath-p1.md`, "The
+floor"), so later runs carry their baseline; the owner's own timing of
+an admission is the measurement that settles it.
+
+**The audits.** Usage booked after run 3, 2,178,353 micro-credits; after
+run 4, 4,260,009; after run 5, 12,180,547 (12.18 USD of the 100 funded),
+each equal to the leases' consumption, no fault usage, every winner
+decided once. The charges are heavy-tailed: of run 3's 595 terminals won
+(589 settles, 6 refunds), most charged 8 micro-credits and the largest
+429,406, the sum 1,206,288.
+
+**The stops exercised at one generation a second**, between runs 3 and 4,
+as the runbook requires before the rate rises:
+
+- *A lost view at the start.* The watch given `-subscriptions
+  auditor,does-not-exist` exited 1 at its first look ("the first look
+  could not read"), the generator never started, no generation was
+  logged, and the workspace stayed enabled with its leases.
+- *The spend ceiling under load.* With `-max-spend 1`, the watch stopped
+  the stage 31 seconds in: "the stage has spent 204, past 1", the load
+  exited, 29 generations logged (28 admitted, 15 settles won), six leases
+  revoked, the workspace turned off; the audit after it exited 0 with no
+  problem, and the workspace was enabled again for run 4. The 204 is the
+  sum of the 15 settles' charges in the generation log (fourteen
+  non-stream settles for 196, one stream for 8), so the watch's spend is
+  the log's to the unit; the tail charges above had not come yet.
+  `fastpathctl status` exits 3 while the revoked leases drain, not 0 at
+  once as the runbook's evidence said.
+
+**The cost of a stop.** The six leases the spend stop revoked were fenced
+by the auditor within 35 seconds and hold no holds and no gap, yet they
+stay draining: a revoked lease whose holds were never listed (the stop
+revokes, nothing hands off) closes only once the hold life and the grace
+have passed its expiry (`fastpath/internal/store/close.go`, §4.5), two
+hours and twenty-one minutes, and until then its unconsumed allocation
+stays reserved, here 10.6 of the 27.3 million reserved after run 5. A
+stop at P4 holds a real workspace's room for that long; the hand-off at
+a planned stop (`fastpath-deploy.md`) is the way around it, and the
+watch's stop could list the holds the same way.
+
 ## Next
 
-Run 3 at the same rate for the full ten minutes on release `f96c21395`,
-after the legacy pending packs are handled; then the spend-stop exercise,
-then the rate raised by steps.
+The rate's next step, eight a second, spends about 16 USD in ten
+minutes, past the run's spend ceiling of a tenth of the funding, and the
+workspace has 60 USD of room left: the next runs need either more
+funding or five-minute runs, the owner's timings read for the p50 first.

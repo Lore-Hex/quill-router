@@ -65,10 +65,10 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     commands = _commands(runbook)
     assert len(commands) >= 8, commands
     # No command starts with a bare binary: a fresh IAP login has no
-    # /opt/fastpath on its PATH.
+    # /opt/fastpath on its PATH (curl is the image's, for the floor).
     for command in commands:
         assert not re.match(r"(fastpathctl|loadgen|fastpathwatch)\b", command), command
-        assert re.match(r"(/opt/fastpath/|gcloud |uv run |FRONT=)", command), command
+        assert re.match(r"(/opt/fastpath/|gcloud |uv run |curl |FRONT=)", command), command
     # The load runs only under the watch: one command, the watch's, with
     # every ceiling of P1's, and the generator after -run; no generator
     # runs on its own, in the background or by PID.
