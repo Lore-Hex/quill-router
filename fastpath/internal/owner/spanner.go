@@ -157,7 +157,8 @@ func (o *Owner) Renew(ctx context.Context) error {
 // cutoff, for the auditor to finish (§4.8): its workspace is off, or the
 // owner retired a hold's life and the grace ago, so every hold admitted
 // before has had its time, and one still open, a request whose terminal
-// never came, would otherwise keep the lease, and the node, for ever.
+// never came and whose release the reaper could not decide (adopt.go),
+// would otherwise keep the lease, and the node, for ever.
 func (o *Owner) abandoned(l *Lease, now time.Time) bool {
 	if !o.cfg.Enabled(l.workspace) {
 		return true
