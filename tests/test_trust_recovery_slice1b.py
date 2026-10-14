@@ -175,12 +175,15 @@ def test_multi_shard_debit_takes_maximum_safe_and_pauses_for_remainder(monkeypat
 
 def test_later_topup_absorbs_oldest_debt_and_clears_only_recovery_cause() -> None:
     store, database, workspace_id = _store_with_payment(credited=1_000, charged=1_000)
+    # Another shard-owned cause; it must survive the recovery clear. (The
+    # document-owned "migration" never belongs on the shards; see
+    # tests/test_pause_cause_representations.py.)
     for (owner, _), row in database.typed["tr_credit_balance"].items():
         if owner == workspace_id:
             row["total_usage"] = row["total_credits"]
-            row["billing_pause_causes"] = ["migration"]
+            row["billing_pause_causes"] = ["resharding"]
     workspace = store.get_workspace(workspace_id)
-    workspace.billing_pause_causes = ["migration"]
+    workspace.billing_pause_causes = ["resharding"]
     workspace.billing_paused = True
     store._write_entity("workspace", workspace_id, workspace)
     result = store.record_adverse_trust_event(
@@ -200,11 +203,11 @@ def test_later_topup_absorbs_oldest_debt_and_clears_only_recovery_cause() -> Non
     assert _payment(database, workspace_id)["unrecovered_micro"] == 0
     assert _balance(database, workspace_id) == 1_200
     assert all(
-        row["billing_pause_causes"] == ["migration"]
+        row["billing_pause_causes"] == ["resharding"]
         for (owner, _), row in database.typed["tr_credit_balance"].items()
         if owner == workspace_id
     )
-    assert store.get_workspace(workspace_id).billing_pause_causes == ["migration"]
+    assert store.get_workspace(workspace_id).billing_pause_causes == ["resharding"]
 
 
 def test_inbox_before_payment_drains_in_payment_transaction() -> None:

@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import re
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, TypeVar, cast
 
@@ -276,6 +277,36 @@ def workspace_billing_paused(workspace: object | None) -> bool:
     return bool(
         workspace is not None
         and getattr(workspace, "billing_pause_causes", ())
+    )
+
+
+#: Pause causes owned by the workspace document. The legacy "migration"
+#: quiesce (``update_workspace(billing_paused=...)``) is written to the
+#: document only, so a writer that rebuilds the document's causes from the
+#: shard set must carry it across, and must never put it on the shards:
+#: dropped, it lets a quiesced workspace take new work; copied, it outlives the
+#: unpause, which edits the document only.
+DOCUMENT_ONLY_PAUSE_CAUSES = frozenset({"migration"})
+
+
+def shard_pause_causes(causes: Iterable[str]) -> list[str]:
+    """The causes a shard set may hold.
+
+    A document-owned cause found on the shards was copied there by an earlier
+    writer. Dropping it on the next write repairs that; the document's own
+    copy, if any, still decides."""
+
+    return sorted(set(causes) - DOCUMENT_ONLY_PAUSE_CAUSES)
+
+
+def document_pause_causes(
+    shard_causes: Iterable[str], document_causes: Iterable[str]
+) -> list[str]:
+    """The document's causes: the shard-owned causes plus its own."""
+
+    return sorted(
+        set(shard_pause_causes(shard_causes))
+        | (set(document_causes) & DOCUMENT_ONLY_PAUSE_CAUSES)
     )
 
 

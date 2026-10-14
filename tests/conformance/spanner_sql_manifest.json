@@ -181,7 +181,7 @@
       ]
     },
     "storage_gcp:txn:3": {
-      "fingerprint": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
+      "fingerprint": "6cff4ba3431aa50e4184cdaf60e214d9fb839c55eec909ef832e926ee8a7729f",
       "scenarios": [
         {
           "bindings": {},
@@ -193,7 +193,7 @@
       ]
     },
     "storage_gcp:txn:4": {
-      "fingerprint": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
+      "fingerprint": "6cff4ba3431aa50e4184cdaf60e214d9fb839c55eec909ef832e926ee8a7729f",
       "scenarios": [
         {
           "bindings": {},
@@ -205,7 +205,7 @@
       ]
     },
     "storage_gcp:txn:5": {
-      "fingerprint": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
+      "fingerprint": "6cff4ba3431aa50e4184cdaf60e214d9fb839c55eec909ef832e926ee8a7729f",
       "scenarios": [
         {
           "bindings": {},
@@ -219,7 +219,7 @@
       ]
     },
     "storage_gcp:txn:6": {
-      "fingerprint": "d8fc24496cd4759f5fb548b407301c31d54b940866efa4f449db9f3506c31669",
+      "fingerprint": "14dcdb42362bfe7c3b3b1bd3d951035e41367416d01770d9a45c47f239df85ad",
       "scenarios": [
         {
           "bindings": {},
@@ -231,7 +231,7 @@
       ]
     },
     "storage_gcp:txn:7": {
-      "fingerprint": "d8fc24496cd4759f5fb548b407301c31d54b940866efa4f449db9f3506c31669",
+      "fingerprint": "14dcdb42362bfe7c3b3b1bd3d951035e41367416d01770d9a45c47f239df85ad",
       "scenarios": [
         {
           "bindings": {},
@@ -2960,7 +2960,7 @@
       ]
     },
     "storage_gcp_trust:_sync_principal_recovery_pause_tx:1": {
-      "fingerprint": "1d345dc8c806e4a20cf070a11fc69f1afd0a220dd98c09e4177b5897b3fd0c04",
+      "fingerprint": "04b609c410d77c9b02657a1e8cfa93616b81aaf8358e2bd1623e39485ae8edea",
       "scenarios": [
         {
           "bindings": {},
@@ -2972,7 +2972,7 @@
       ]
     },
     "storage_gcp_trust:_sync_principal_recovery_pause_tx:2": {
-      "fingerprint": "1d345dc8c806e4a20cf070a11fc69f1afd0a220dd98c09e4177b5897b3fd0c04",
+      "fingerprint": "04b609c410d77c9b02657a1e8cfa93616b81aaf8358e2bd1623e39485ae8edea",
       "scenarios": [
         {
           "bindings": {},
@@ -2986,7 +2986,7 @@
       ]
     },
     "storage_gcp_trust:_sync_principal_recovery_pause_tx:3": {
-      "fingerprint": "1d345dc8c806e4a20cf070a11fc69f1afd0a220dd98c09e4177b5897b3fd0c04",
+      "fingerprint": "04b609c410d77c9b02657a1e8cfa93616b81aaf8358e2bd1623e39485ae8edea",
       "scenarios": [
         {
           "bindings": {},
@@ -4079,6 +4079,18 @@
         }
       ]
     },
+    "storage_gcp_trust:constants:4": {
+      "fingerprint": "1c6e52ebfd18147d8dcc9fbc0fd508aeb96f55d23f22ebe2295f43e7b43dde78",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "id": "STRING",
+            "kind": "STRING"
+          }
+        }
+      ]
+    },
     "storage_trust_reconciliation:constants:1": {
       "fingerprint": "16b0d9bc7931826586ca9c1c75fef68eb271be0930136b18c916251d13984521",
       "scenarios": [
@@ -4582,8 +4594,8 @@
     "storage_gcp:SpannerStore._increment_lifetime_topup_tx": "b8e66263f19c8fcce2a80c366e63a4b052ec668fdadb89e96274e9c36e22e931",
     "storage_gcp:SpannerStore._insert_credit_movement_tx": "570833170f2179aefa3746b630cfe8b68c09f8ddb1d45f7c3b50a1253d3830dd",
     "storage_gcp:SpannerStore._delete_credit_transfer_claim_tx": "9884e9d228b4e9b12fb33e54a56eae1a0edcc2ed992fe2e812a4a5d23c5243d7",
-    "storage_gcp:SpannerStore.record_workspace_abuse_and_demote.txn": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
-    "storage_gcp:SpannerStore.clear_workspace_abuse_pause.txn": "d8fc24496cd4759f5fb548b407301c31d54b940866efa4f449db9f3506c31669",
+    "storage_gcp:SpannerStore.record_workspace_abuse_and_demote.txn": "6cff4ba3431aa50e4184cdaf60e214d9fb839c55eec909ef832e926ee8a7729f",
+    "storage_gcp:SpannerStore.clear_workspace_abuse_pause.txn": "14dcdb42362bfe7c3b3b1bd3d951035e41367416d01770d9a45c47f239df85ad",
     "storage_gcp:SpannerStore.get_byok_providers": "f4c3e18d45bdb55d850950d98669bc923002d31885af15f146c7b8159256bc15",
     "storage_gcp:SpannerStore.list_stale_trust_inbox": "0727a48948262a9b5a54df4b22915be9ad4f3fae71c90b47438837855a4d7391",
     "storage_gcp:SpannerStore.credit_user_earnings.txn": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
@@ -4721,7 +4733,7 @@
     "storage_gcp_stage_d_policy:get_stage_d_policy_watermark": "aa9db793080ddd1bd6403471723b396a1560e265c307a08f09ff487c396008c0",
     "storage_gcp_strict_budget:reserve_strict_key": "7a35098cb2a910de9879df22182c34dae76c643340d9ddf306436a8e786b1f25",
     "storage_gcp_trust:insert_credit_trust_event": "a16a6554e6493d096a98f771e6fe48e7858519238f8ecda75bca42717c37aac4",
-    "storage_gcp_trust:_sync_principal_recovery_pause_tx": "1d345dc8c806e4a20cf070a11fc69f1afd0a220dd98c09e4177b5897b3fd0c04",
+    "storage_gcp_trust:_sync_principal_recovery_pause_tx": "04b609c410d77c9b02657a1e8cfa93616b81aaf8358e2bd1623e39485ae8edea",
     "storage_gcp_trust:apply_adverse_trust_event_tx": "c5c2b8d11c381739c469b2475557f00bc2c7b8362d42d37345e4676bb8c3e7e2",
     "storage_gcp_trust:insert_trust_inbox_tx": "7d46f1df0ba7d3d6a575d3de113efc38f8b8ab699c0f92a3ad1f5032440891de",
     "storage_gcp_trust:_read_payment_tx": "9ac34a03bafecc780294d11ae6fb4cb82804c072636c8731137355a2f5836614",
@@ -4854,27 +4866,31 @@
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_legacy_trust:recover_released_postgres:1": {
-      "fingerprint": "ce06d775488d6bad6e42fd952582de0a6cd7cd46fcc3d8f873c6ab67e28458e2",
+      "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_legacy_trust:recover_released_postgres:2": {
-      "fingerprint": "ce06d775488d6bad6e42fd952582de0a6cd7cd46fcc3d8f873c6ab67e28458e2",
+      "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_legacy_trust:recover_released_postgres:3": {
-      "fingerprint": "ce06d775488d6bad6e42fd952582de0a6cd7cd46fcc3d8f873c6ab67e28458e2",
+      "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_legacy_trust:recover_released_postgres:4": {
-      "fingerprint": "ce06d775488d6bad6e42fd952582de0a6cd7cd46fcc3d8f873c6ab67e28458e2",
+      "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_legacy_trust:recover_released_postgres:5": {
-      "fingerprint": "ce06d775488d6bad6e42fd952582de0a6cd7cd46fcc3d8f873c6ab67e28458e2",
+      "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_legacy_trust:recover_released_postgres:6": {
-      "fingerprint": "ce06d775488d6bad6e42fd952582de0a6cd7cd46fcc3d8f873c6ab67e28458e2",
+      "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
+      "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
+    },
+    "storage_legacy_trust:recover_released_postgres:7": {
+      "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_legacy_trust:reject_postgres_reservation:1": {

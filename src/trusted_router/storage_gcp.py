@@ -213,6 +213,8 @@ from trusted_router.storage_models import (
     TypedFinalizeResult,
     UserModelPayout,
     _is_expired,
+    document_pause_causes,
+    shard_pause_causes,
 )
 from trusted_router.storage_models import decode_auth_record as _auth_record
 from trusted_router.storage_operational_analytics import (
@@ -1498,7 +1500,7 @@ class SpannerStore:
                 ),
                 now,
             )
-            causes = sorted({*old_causes, "abuse"})
+            causes = shard_pause_causes({*old_causes, "abuse"})
             updated = transaction.execute_update(
                 "UPDATE tr_credit_balance SET trust_tier=0, "
                 "trust_latched_at=COALESCE(trust_latched_at,@now), "
@@ -1520,7 +1522,9 @@ class SpannerStore:
             )
             if int(updated) != shard_count:
                 raise RuntimeError("abuse latch did not cover every active shard")
-            workspace.billing_pause_causes = causes
+            workspace.billing_pause_causes = document_pause_causes(
+                causes, workspace.billing_pause_causes
+            )
             workspace.billing_paused = True
             workspace.billing_pause_reason = reason
             if update_entity_body_dml(
@@ -1594,7 +1598,7 @@ class SpannerStore:
             if len(controls) != 1:
                 raise RuntimeError("replicated pause controls diverged")
             old_causes, _pause_epoch = next(iter(controls))
-            causes = sorted(set(old_causes) - {"abuse"})
+            causes = shard_pause_causes(set(old_causes) - {"abuse"})
             now = dt.datetime.now(dt.UTC)
             insert_entity_dml_at(
                 transaction,
@@ -1631,8 +1635,10 @@ class SpannerStore:
             )
             if int(updated) != shard_count:
                 raise RuntimeError("abuse clear did not cover every active shard")
-            workspace.billing_pause_causes = causes
-            workspace.billing_paused = bool(causes)
+            workspace.billing_pause_causes = document_pause_causes(
+                causes, workspace.billing_pause_causes
+            )
+            workspace.billing_paused = bool(workspace.billing_pause_causes)
             workspace.billing_pause_reason = reason
             if update_entity_body_dml(
                 transaction,

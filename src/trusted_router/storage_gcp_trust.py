@@ -20,6 +20,8 @@ from trusted_router.storage_models import (
     TrustEvent,
     User,
     Workspace,
+    document_pause_causes,
+    shard_pause_causes,
 )
 from trusted_router.trust_tiers import (
     TRUST_PAUSE_CAUSES,
@@ -202,7 +204,7 @@ def _sync_principal_recovery_pause_tx(
         causes.discard("principal_recovery")
     if causes == before:
         return
-    normalized = sorted(causes)
+    normalized = shard_pause_causes(causes)
     updated = transaction.execute_update(
         "UPDATE tr_credit_balance SET billing_pause_causes=@causes, "
         "pause_epoch=COALESCE(pause_epoch,0)+1, updated_at=@now "
@@ -225,14 +227,35 @@ def _sync_principal_recovery_pause_tx(
     if read_entity_tx is not None and write_entity_tx is not None:
         workspace = read_entity_tx(transaction, "workspace", workspace_id, Workspace)
         if workspace is not None:
-            workspace.billing_pause_causes = normalized
-            workspace.billing_paused = bool(normalized)
+            workspace.billing_pause_causes = document_pause_causes(
+                normalized, workspace.billing_pause_causes
+            )
+            workspace.billing_paused = bool(workspace.billing_pause_causes)
             if paused:
                 workspace.billing_pause_reason = "principal_recovery"
-            elif not normalized and workspace.billing_pause_reason == "principal_recovery":
+            elif (
+                not workspace.billing_pause_causes
+                and workspace.billing_pause_reason == "principal_recovery"
+            ):
                 workspace.billing_pause_reason = ""
             write_entity_tx(transaction, "workspace", workspace_id, workspace)
     else:
+        # The settle hot path passes no entity reader. The document is read
+        # only here, once a cause has actually changed, so its document-only
+        # causes survive the rewrite below.
+        rows = list(
+            transaction.execute_sql(
+                WORKSPACE_DOCUMENT_SQL,
+                params={"kind": "workspace", "id": workspace_id},
+                param_types={"kind": param_types.STRING, "id": param_types.STRING},
+            )
+        )
+        body = json.loads(rows[0][0]) if rows else {}
+        # A pre-cause document's bare paused bit is the legacy "migration".
+        held = body.get("billing_pause_causes") or (
+            ["migration"] if body.get("billing_paused") else []
+        )
+        on_document = document_pause_causes(normalized, held)
         reason = "principal_recovery" if paused else ""
         transaction.execute_update(
             "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
@@ -240,8 +263,8 @@ def _sync_principal_recovery_pause_tx(
             "PARSE_JSON(@causes_json), '$.billing_pause_reason', @reason)), "
             "updated_at=@now WHERE kind='workspace' AND id=@workspace_id",
             params={
-                "paused": bool(normalized),
-                "causes_json": json.dumps(normalized, separators=(",", ":")),
+                "paused": bool(on_document),
+                "causes_json": json.dumps(on_document, separators=(",", ":")),
                 "reason": reason,
                 "now": now,
                 "workspace_id": workspace_id,
@@ -788,6 +811,9 @@ TRUST_SHARDS_SQL = (
     "trust_computed_at FROM tr_credit_balance WHERE workspace_id=@pk "
     "AND shard>=0 AND shard<@shard_count ORDER BY shard"
 )
+# The workspace document point read for the settle hot path's pause rewrite,
+# which has no entity reader (_sync_principal_recovery_pause_tx).
+WORKSPACE_DOCUMENT_SQL = "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
 
 
 def inputs_digest(*parts: Any) -> str:

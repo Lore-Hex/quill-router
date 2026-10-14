@@ -91,20 +91,39 @@ def recover_released_postgres(conn: Any, workspace_id: str, store: Any) -> None:
         (workspace_id,),
     ).fetchall()
     if not remaining and rows:
-        from trusted_router.storage_models import Workspace
+        from trusted_router.storage_models import (
+            Workspace,
+            document_pause_causes,
+            shard_pause_causes,
+        )
 
         workspace = store._read_entity_tx(
             conn, "workspace", workspace_id, Workspace, for_update=True
         )
         if workspace is not None:
-            causes = sorted(set(workspace.billing_pause_causes) - {"principal_recovery"})
+            # Each representation drops the cause from what it holds, so the
+            # document's own "migration" stays on the document only.
+            shard_rows = conn.execute(
+                "SELECT shard, billing_pause_causes FROM tr_credit_balance "
+                "WHERE workspace_id = %s ORDER BY shard FOR UPDATE",
+                (workspace_id,),
+                prepare=False,
+            ).fetchall()
+            held = {
+                cause
+                for row in shard_rows
+                for cause in (json.loads(row[1]) if isinstance(row[1], str) else row[1] or ())
+            }
+            causes = shard_pause_causes(held - {"principal_recovery"})
             conn.execute(
                 "UPDATE tr_credit_balance SET billing_pause_causes = %s::jsonb, "
                 "pause_epoch = COALESCE(pause_epoch, 0) + 1 WHERE workspace_id = %s",
                 (json.dumps(causes), workspace_id),
             )
-            workspace.billing_pause_causes = causes
-            workspace.billing_paused = bool(causes)
+            workspace.billing_pause_causes = document_pause_causes(
+                causes, workspace.billing_pause_causes
+            )
+            workspace.billing_paused = bool(workspace.billing_pause_causes)
             store._write_entity_tx(conn, "workspace", workspace_id, workspace)
 
 

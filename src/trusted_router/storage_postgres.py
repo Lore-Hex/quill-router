@@ -166,11 +166,13 @@ from trusted_router.storage_models import (
     Workspace,
     _is_byok,
     _is_expired,
+    document_pause_causes,
     federated_api_key_from_record,
     federated_workspace_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
+    shard_pause_causes,
     utcnow,
 )
 from trusted_router.storage_oauth_apps import apply_oauth_app_patch
@@ -1925,7 +1927,7 @@ class PostgresStore:
                 },
             ):
                 raise RuntimeError("operator abuse audit reference already exists")
-            causes = sorted({*old_causes, "abuse"})
+            causes = shard_pause_causes({*old_causes, "abuse"})
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_tier = 0, "
                 "trust_latched_at = COALESCE(trust_latched_at, %s), "
@@ -1935,7 +1937,9 @@ class PostgresStore:
             )
             if updated.rowcount != shard_count:
                 raise RuntimeError("abuse latch did not cover every active shard")
-            workspace.billing_pause_causes = causes
+            workspace.billing_pause_causes = document_pause_causes(
+                causes, workspace.billing_pause_causes
+            )
             workspace.billing_paused = True
             workspace.billing_pause_reason = reason
             self._write_entity_tx(conn, "workspace", workspace_id, workspace)
@@ -1977,7 +1981,22 @@ class PostgresStore:
             )
             if workspace is None or workspace.deleted or account is None:
                 raise ValueError("workspace_not_found")
-            causes = sorted(set(workspace.billing_pause_causes) - {"abuse"})
+            # The shards keep their own causes; the document's document-only
+            # causes must neither be lost nor copied onto the shards.
+            rows = conn.execute(
+                "SELECT shard, billing_pause_causes FROM tr_credit_balance "
+                "WHERE workspace_id = %s ORDER BY shard FOR UPDATE",
+                (workspace_id,),
+            ).fetchall()
+            if [int(row[0]) for row in rows] != list(range(credit_shard_count(account))):
+                raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+            replicated = {
+                tuple(json.loads(row[1])) if isinstance(row[1], str) else tuple(row[1] or ())
+                for row in rows
+            }
+            if len(replicated) != 1:
+                raise RuntimeError("replicated pause controls diverged")
+            causes = shard_pause_causes(set(next(iter(replicated))) - {"abuse"})
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET billing_pause_causes = %s::jsonb, "
                 "pause_epoch = COALESCE(pause_epoch, 0) + 1, updated_at = CURRENT_TIMESTAMP "
@@ -1986,8 +2005,10 @@ class PostgresStore:
             )
             if updated.rowcount != credit_shard_count(account):
                 raise RuntimeError("abuse clear did not cover every active shard")
-            workspace.billing_pause_causes = causes
-            workspace.billing_paused = bool(causes)
+            workspace.billing_pause_causes = document_pause_causes(
+                causes, workspace.billing_pause_causes
+            )
+            workspace.billing_paused = bool(workspace.billing_pause_causes)
             workspace.billing_pause_reason = reason.strip()
             self._write_entity_tx(conn, "workspace", workspace_id, workspace)
             return True
@@ -4922,6 +4943,7 @@ class PostgresStore:
             else:
                 causes.discard("principal_recovery")
             if causes != before:
+                causes = set(shard_pause_causes(causes))
                 conn.execute(
                     "UPDATE tr_credit_balance SET billing_pause_causes = %s::jsonb, "
                     "pause_epoch = COALESCE(pause_epoch, 0) + 1 "
@@ -4932,8 +4954,10 @@ class PostgresStore:
                     conn, "workspace", payment.workspace_id, Workspace, for_update=True
                 )
                 if workspace is not None:
-                    workspace.billing_pause_causes = sorted(causes)
-                    workspace.billing_paused = bool(causes)
+                    workspace.billing_pause_causes = document_pause_causes(
+                        causes, workspace.billing_pause_causes
+                    )
+                    workspace.billing_paused = bool(workspace.billing_pause_causes)
                     workspace.billing_pause_reason = (
                         "principal_recovery" if unrecovered else ""
                     )

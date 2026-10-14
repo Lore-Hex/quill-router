@@ -1228,13 +1228,14 @@ class _FakeTransaction:
             body["billing_paused"] = p["paused"]
             body["billing_pause_causes"] = json.loads(p["causes_json"])
             body["billing_pause_reason"] = p["reason"]
+            # Same 4-tuple as every other update_entity_dml write; the commit
+            # unpacks exactly four (this branch had never been committed).
             self.pending_writes.append(
                 (
                     "update_entity_dml",
                     "workspace",
                     p["workspace_id"],
                     json.dumps(body, separators=(",", ":"), sort_keys=True),
-                    p["now"],
                 )
             )
             return 1
