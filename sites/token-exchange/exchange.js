@@ -226,7 +226,8 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
         mode: 'cors',
         credentials: 'omit',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: email.value.trim(), website: form.elements.website.value, resource: 'brochure', campaign: campaignFields}),
+        body: JSON.stringify({email: email.value.trim(), website: form.elements.website.value, resource: 'brochure',
+          campaign: campaignFields, ...window.TokenExchangeAnalytics?.context()}),
         signal: controller.signal,
       });
       if (!response.ok) {

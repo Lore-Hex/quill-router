@@ -114,6 +114,27 @@ def test_raw_content_and_identifiers_never_survive_projection():
     assert row['creative_id'] == '(redacted)'
 
 
+@pytest.mark.parametrize('name', [
+    'home.token_exchange_clicked', 'enterprise_brief_delivered', 'enterprise_security_pack_delivered',
+])
+def test_exchange_events_export_once_without_lead_contact_details(name):
+    row = project({'_time': '2026-09-16T21:55:00Z', 'event': 'acquisition.' + name,
+        'anonymous_fingerprint': 'a'*64, 'utm_source': 'trustedrouter.com',
+        'utm_campaign': 'token-exchange-launch', 'creative_id': 'homepage-banner',
+        'referer_host': 'nytokenexchange.com', 'email': 'lead@example.com',
+        'body': {'email': 'lead@example.com'}}, 'cloud_logging')
+    assert row['referrer_domain'] == 'nytokenexchange.com'
+    assert row['creative_id'] == 'homepage-banner'
+    assert row['utm_campaign'] == 'token-exchange-launch'
+    assert not {'email', 'body'} & row.keys()
+    io = FakeIO([row, row])
+    updated, _ = cycle(state(), io, NOW)
+    assert len([r for r in io.sent if r['event'] == row['event']]) == 1
+    io.sent.clear()
+    cycle(updated, io, NOW + dt.timedelta(minutes=5))
+    assert not [r for r in io.sent if r['event'] == row['event']]
+
+
 @pytest.mark.parametrize('status', [
     {'isPartial': True}, {'isEstimate': True},
     {'messages': [{'code': 'default_limit_warning'}]},
@@ -225,7 +246,7 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     value = source_filter()
     assert '=~' not in value
     assert '\\' not in value
-    assert value.count('jsonPayload.event=') == 29
+    assert value.count('jsonPayload.event=') == 34
     for name in m.BROWSER_EVENTS | m.CONVERSION_EVENTS:
         assert f'jsonPayload.event="{name}"' in value
     assert 'resource.type="cloud_run_revision"' in value

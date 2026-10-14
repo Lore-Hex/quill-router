@@ -80,6 +80,7 @@ def test_exported_page_counts_use_existing_path_privacy_filters(
     "home.catalog_filter", "home.alias_copied", "home.migration_tab",
     "home.base_url_copied", "home.hero_agent_prompt_copied", "home.agent_prompt_copied",
     "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
+    "home.token_exchange_clicked",
     "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
     "signin_mode_switched", "signup_mode_switched", "landing_viewed",
 ])

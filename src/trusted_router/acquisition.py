@@ -659,14 +659,20 @@ def exchange_site_touch(page_url: str, campaign: dict[str, str]) -> dict[str, st
     return touch
 
 
-def log_exchange_site_funnel_event(request: Request, event: str, touch: dict[str, str]) -> None:
+def log_exchange_site_funnel_event(
+    request: Request, event: str, touch: dict[str, str], *, visitor_id: str | None = None,
+) -> None:
     if _privacy_signal_enabled(request) or acquisition_request_is_automated(request):
         return
     log.info(
         f"acquisition.{event}",
         extra={
             "event": f"acquisition.{event}",
-            "anonymous_fingerprint": _fingerprint(uuid.uuid4().hex),
+            "anonymous_fingerprint": _fingerprint(
+                f"exchange:{touch.get('referer_host', '')}:{visitor_id or uuid.uuid4().hex}"
+            ),
+            "site_domain": touch.get("referer_host", ""),
+            "page_path": touch.get("page_path", "/"),
             **_safe_touch_log_fields(touch),
         },
     )

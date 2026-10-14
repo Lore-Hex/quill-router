@@ -221,6 +221,7 @@ class ExchangeTests(unittest.TestCase):
             self.assertNotIn("nine-page", page)
             self.assertNotIn("calendly", page)
             self.assertNotIn("google-analytics", page)
+            self.assertIn('<script src="/assets/analytics.js?v=test" defer></script>', page)
             self.assertNotIn("$headline", page)
             # The hero photograph and the provider marquee: one visible group of six links,
             # one hidden copy that stays out of the tab order, under the relationship label.

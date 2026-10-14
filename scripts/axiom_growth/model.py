@@ -43,7 +43,12 @@ BROWSER_EVENTS = frozenset(
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",
         "home.base_url_copied", "home.hero_agent_prompt_copied", "home.agent_prompt_copied",
         "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
+        "home.token_exchange_clicked",
+        "exchange.landing_viewed", "exchange.landing_engaged",
         "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
+        # Server-confirmed exchange downloads use the same Cloud Logging source.
+        # Never accept these as browser-submitted conversion claims.
+        "enterprise_brief_delivered", "enterprise_security_pack_delivered",
     )
 )
 CONVERSION_EVENTS = frozenset(
@@ -64,7 +69,7 @@ FIRST_FIELDS = ("first_utm_source", "first_utm_medium", "first_utm_campaign", "f
 EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_domain_basis",
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
-FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path",
+FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain",
           "page_path",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
@@ -98,7 +103,8 @@ def timestamp(value: object) -> str:
 def safe_label(value: object) -> str:
     if not isinstance(value, str) or not value:
         return ""
-    if not LABEL_RE.fullmatch(value) or SECRET_RE.search(value):
+    # This public campaign name contains "token", but is not a credential.
+    if not LABEL_RE.fullmatch(value) or (value != "token-exchange-launch" and SECRET_RE.search(value)):
         return "(redacted)"
     return value
 
@@ -152,6 +158,11 @@ def project_event(
     if event in {"acquisition.landing_viewed", "acquisition.landing_engaged"}:
         output["page_path"] = safe_path(row.get("page_path"))
     output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
+    if event.startswith("acquisition.exchange.") or event in {
+        "acquisition.enterprise_brief_delivered", "acquisition.enterprise_security_pack_delivered",
+    }:
+        output["site_domain"] = domain(row.get("site_domain"))
+        output["page_path"] = safe_path(row.get("page_path"))
     if row.get('first_utm_source'):
         output['first_utm_source'] = canonical_source(row['first_utm_source'], output['first_referrer_domain'])
     output['identity_link_status'] = (

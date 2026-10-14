@@ -32,6 +32,26 @@ and shared footer.
 
 ## Download and lead handling
 
+The TrustedRouter homepage banner links to `nytokenexchange.com` with
+`utm_source=trustedrouter.com`, `utm_medium=referral`,
+`utm_campaign=token-exchange-launch`, and `utm_content=homepage-banner`.
+`acquisition.home.token_exchange_clicked` measures that outbound click.
+The growth worker exports it and server-confirmed brochure/security-pack
+deliveries to `trustedrouter-marketing`. Deploy the worker and refresh its
+exact-event logging sink when adding event names; a website deploy alone is
+insufficient. Standalone sites send `acquisition.exchange.landing_viewed`
+when visible and `acquisition.exchange.landing_engaged` after ten continuous
+visible seconds, once each per page load. `site_domain` and bounded `page_path`
+identify the market and page. There is no polling or database write per event.
+A random per-tab ID (30-minute storage lifetime), hashed with the market hostname
+before logging, joins visits to successful brochure downloads on that site.
+GPC and DNT suppress events and storage. Requests omit cookies and credentials.
+The event collector limits bodies to 2 KiB, accepts only owned origins and
+two fixed event names, and caps traffic in bounded per-process memory.
+The ID is not a cross-domain user identity and is not tied to a submitted email.
+Downloads without this ID remain unlinked; do not claim a complete
+cross-domain visit-to-purchase funnel. Historical untracked visits cannot be recovered.
+
 - `POST /token-exchange/brief` belongs to the **actions** service surface.
   Keep its exact path in `scripts/deploy/service_surface_url_map.py` during
   split-surface deployments. GET/HEAD rendering remains public.

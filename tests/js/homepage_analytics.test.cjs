@@ -40,6 +40,20 @@ test('failed transport never rejects into UI handlers', async () => {
  await new Promise(setImmediate);
  assert.equal(local.length, 1);
 });
+test('exchange banner click is tracked without blocking navigation', () => {
+ const events = [];
+ let click;
+ const context = vm.createContext({
+  $$: selector => {assert.equal(selector, '[data-token-exchange-banner]');
+   return [{addEventListener:(name, handler)=>{assert.equal(name,'click');click=handler;}}];},
+  track: name => events.push(name),
+ });
+ const start = source.indexOf("$$('[data-token-exchange-banner]')");
+ const end = source.indexOf('// Shared auth-aware chrome', start);
+ vm.runInContext(source.slice(start, end), context);
+ click();
+ assert.deepEqual(events, ['home.token_exchange_clicked']);
+});
 test('initially open FAQ is not counted until a visitor reopens it', () => {
  const events = [];
  let toggle;

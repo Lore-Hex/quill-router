@@ -22,13 +22,19 @@ picker and footer share one ordered directory and highlight the current market.
   retaining query parameters. Canonical URLs, sitemaps and OG images are generated.
 - Buyers request the brochure on the page. The form posts to TrustedRouter's existing
   email-gated `/token-exchange/brief` action, which accepts the canonical exchange
-  origins; nothing is stored on these sites.
+  origins; submitted email addresses are never stored in browser analytics.
   Suppliers use the existing provider marketplace application. Credentials are
   handled separately by that onboarding flow.
 - Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
   from TrustedRouter on load and every minute. There is no direct Spanner
-  access, inference, cookie, or third-party pixel on these sites. The brochure form is the only form. Allowlisted UTM fields pass to intake. Initial site visits are
-  not funnel events; central intake and signup use TrustedRouter's existing tracking.
+  access, inference, cookie, or third-party pixel on these sites. The brochure form
+  is the only form. Allowlisted UTM fields pass to intake. The first-party
+  `/token-exchange/events` collector records visible visits and ten-second
+  engagement. A random 30-minute per-tab identifier joins brochure downloads
+  within the same exchange domain, with GPC/DNT opt-outs. The growth worker
+  exports these metadata-only events to `trustedrouter-marketing` in Axiom.
+  This is not cross-domain user or payment tracking. Deploy the collector,
+  worker, and exact-event logging sink before the static tracking asset.
 
 The HTTPS proxy also retains independent flagship certificates
 `token-exchange-global-20260920` and `token-exchange-new-york-20260920` for each

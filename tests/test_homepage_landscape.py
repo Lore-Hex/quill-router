@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from bs4 import BeautifulSoup
@@ -80,6 +81,22 @@ def test_catalog_prices_and_privacy_follow_application_view(
         assert all(row["id"] != "z-ai/glm-5.3"
                    for row in result["homepage_catalog"]["lists"][key])
     assert result["homepage_data"]["migration"]["base_url"] == "https://example.test/v1"
+
+
+def test_exchange_banner_links_to_tagged_new_york_site() -> None:
+    settings = Settings(environment="test", storage_backend="memory", homepage_landscape_enabled=True)
+    page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
+    banner = page.select_one("main > a[data-token-exchange-banner]")
+    assert banner is not None
+    assert "New York Token Exchange" in banner.get_text()
+    destination = urlsplit(banner["href"])
+    assert destination.scheme == "https"
+    assert destination.netloc == "nytokenexchange.com"
+    assert parse_qs(destination.query) == {
+        "utm_source": ["trustedrouter.com"], "utm_medium": ["referral"],
+        "utm_campaign": ["token-exchange-launch"], "utm_content": ["homepage-banner"],
+    }
+    assert banner.find_next_sibling("section")["id"] == "top"
 
 
 def test_homepage_catalog_matches_model_directory() -> None:
