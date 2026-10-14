@@ -99,7 +99,8 @@ type Lease struct {
 // landed, kept with the winner since Pub/Sub does not deliver an
 // acknowledged record again. A settle's or a reap's full record is the
 // staged one with Digest; a refund or a release writes a disposition record
-// with Boot; a reap charged the snapshot of the heartbeat record with
+// with Boot, an owner's from its record and a drain-log refund's from its
+// hold's row; a reap charged the snapshot of the heartbeat record with
 // SnapshotSeq; a drain-log row's Money and Cause are its own.
 type Work struct {
 	V           int    `json:"v"`
@@ -428,6 +429,13 @@ func (l *Lease) ApplyRow(row store.DrainRow) error {
 	work := Work{V: 1, Estimate: row.Estimate, Digest: row.Digest, Money: row.Money, Cause: row.Cause}
 	if row.SnapshotOwnerSeq.Valid {
 		work.SnapshotSeq = row.SnapshotOwnerSeq.Int64
+	}
+	if h := l.holds[row.AuthorizationID]; h != nil && row.Kind == "refund" {
+		// A refund has no full record to read a boot binding from: its
+		// disposition record states the hold's (§4.9), which the owner's
+		// refund record would carry, and the hold's row keeps the owner's
+		// statement of it, from the first heartbeat record or the hand-off.
+		work.Boot = h.row.Boot
 	}
 	l.winners[row.AuthorizationID] = true
 	l.won = append(l.won, store.Winner{AuthorizationID: row.AuthorizationID, Kind: row.Kind, Charge: row.Charge,

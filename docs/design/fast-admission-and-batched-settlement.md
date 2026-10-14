@@ -1392,13 +1392,16 @@ when Python is unreachable: the first durable point is Python's
   - A refund or a release writes no generation record, as today, so the
     auditor writes it a compact disposition record instead: the
     authorization, its outcome and its boot binding, which a boot-signed
-    lookup checks. A release's outcome is `released` in its winner, its
-    record and every answer. Today's values are `settled`, `reaped_snapshot`
-    and `refunded`. The enclave counts a loss from `already_settled` without
-    `settled`, and from a lookup only for `reaped_snapshot`, so a new value is
-    safe. So after the packs are deleted, every winner still has a
-    record, and only an authorization the auditor never saw answers
-    `pending`.
+    lookup checks. An owner's refund or release record carries the binding;
+    a refund the drain log decides has no full record, so its winner takes
+    the hold's, which the hold's row keeps from the first heartbeat record
+    or the hand-off (§4.8). A release's outcome is `released` in its
+    winner, its record and every answer. Today's values are `settled`,
+    `reaped_snapshot` and `refunded`. The enclave counts a loss from
+    `already_settled` without `settled`, and from a lookup only for
+    `reaped_snapshot`, so a new value is safe. So after the packs are
+    deleted, every winner still has a record, and only an authorization the
+    auditor never saw answers `pending`.
 - **What stays synchronous for now.**
   - Synthetic-probe workspaces, so release gates keep reading Spanner.
   - OAuth-app keys with a markup, until payouts have a durable obligation tied
