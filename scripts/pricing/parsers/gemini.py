@@ -1,22 +1,10 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses the server-rendered HTML at ai.google.dev/gemini-api/docs/pricing.
-# The parser also accepts the historical normalized Markdown format so captured
-# fixtures remain useful during the migration away from that mirror.
-# Captured fixture lives at tests/fixtures/pricing/gemini.html.
-#
-# Page format: each model lives under a `## Gemini X.Y Flavor` heading,
-# followed by tables shaped:
-#
-#   |  | Free Tier | Paid Tier, per 1M tokens in USD |
-#   | --- | --- | --- |
-#   | Input price | Free of charge | $1.25, prompts <= 200k tokens $2.50, prompts > 200k tokens |
-#   | Output price (including thinking tokens) | Free of charge | $10.00, prompts <= 200k tokens $15.00, prompts > 200k |
-#
-# We extract the Paid Tier column. When a price line carries
-# "<= 200k / > 200k" markers, we emit two PriceTier rows; otherwise
-# a single uncapped tier.
-"""Google Gemini pricing parser for official HTML and legacy Markdown."""
+# Parses the server-rendered page at ai.google.dev/gemini-api/docs/pricing.
+# The page is served as a mix of markdown-style headings (## Model Name) and
+# markdown tables (| col | col | col |). We also accept full HTML as a
+# fallback for captured fixtures.
+"""Google Gemini pricing parser for official page and legacy fixtures."""
 
 from __future__ import annotations
 
@@ -24,37 +12,66 @@ import re
 
 from bs4 import BeautifulSoup, Tag
 
-# Markdown heading text → OR-canonical id.
+# Markdown heading text → OR-canonical id. Only generative text models we
+# surface in OpenRouter land in here; multimodal-only (TTS, image, embedding,
+# video, live-audio) models are intentionally skipped by returning None from
+# the fallback regex below.
 _NAME_TO_OR_ID = {
+    "Gemini 4 Argon": "google/gemini-4-argon",
+    "Gemini 3.8 Flash": "google/gemini-3.8-flash",
+    "Gemini 3.6 Flash": "google/gemini-3.6-flash",
+    "Gemini 3.5 Flash": "google/gemini-3.5-flash",
+    "Gemini 3.5 Flash-Lite": "google/gemini-3.5-flash-lite",
+    "Gemini 3.1 Flash-Lite": "google/gemini-3.1-flash-lite",
+    "Gemini 3.1 Flash-Lite Preview": "google/gemini-3.1-flash-lite-preview",
+    "Gemini 3.1 Pro Preview": "google/gemini-3.1-pro-preview",
+    "Gemini 3 Flash Preview": "google/gemini-3-flash-preview",
     "Gemini 2.5 Pro": "google/gemini-2.5-pro",
     "Gemini 2.5 Flash": "google/gemini-2.5-flash",
     "Gemini 2.5 Flash-Lite": "google/gemini-2.5-flash-lite",
     "Gemini 2.0 Flash": "google/gemini-2.0-flash-001",
     "Gemini 2.0 Flash-Lite": "google/gemini-2.0-flash-lite-001",
-    "Gemini 3.1 Pro Preview": "google/gemini-3.1-pro-preview",
-    "Gemini 3.5 Flash": "google/gemini-3.5-flash",
-    "Gemini 3.6 Flash": "google/gemini-3.6-flash",
-    "Gemini 3.1 Flash-Lite": "google/gemini-3.1-flash-lite",
-    "Gemini 3.1 Flash-Lite Preview": "google/gemini-3.1-flash-lite-preview",
-    "Gemini 3 Flash Preview": "google/gemini-3-flash-preview",
     "Gemini 1.5 Pro": "google/gemini-1.5-pro",
     "Gemini 1.5 Flash": "google/gemini-1.5-flash",
 }
 
 _STANDARD_MODEL_HEADING_RE = re.compile(
     r"^Gemini\s+(?P<version>\d+(?:\.\d+)?)\s+"
-    r"(?P<variant>Pro|Flash(?:[ -]Lite)?)$",
+    r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon)$",
     re.IGNORECASE,
+)
+
+# Headings we never want to try to parse as a text pricing table, because
+# their row shape differs (per-second video, per-request song, per-image, etc.)
+_SKIP_HEADING_SUBSTRINGS = (
+    "tts",
+    "image",
+    "nano banana",
+    "veo",
+    "lyria",
+    "embedding",
+    "live",
+    "transcribe",
+    "robotics",
+    "gemma",
+    "pricing for",
+    "notes",
 )
 
 
 def _model_id_from_heading(heading: str) -> str | None:
     """Map stable Gemini pricing headings without a per-release code edit."""
 
-    mapped = _NAME_TO_OR_ID.get(heading)
+    cleaned = heading.strip()
+    lowered = cleaned.casefold()
+    for banned in _SKIP_HEADING_SUBSTRINGS:
+        if banned in lowered:
+            return None
+
+    mapped = _NAME_TO_OR_ID.get(cleaned)
     if mapped is not None:
         return mapped
-    match = _STANDARD_MODEL_HEADING_RE.fullmatch(heading.strip())
+    match = _STANDARD_MODEL_HEADING_RE.fullmatch(cleaned)
     if match is None:
         return None
     variant = match.group("variant").casefold().replace(" ", "-")
@@ -93,12 +110,7 @@ def _to_micro_per_m(usd: str) -> int:
 
 
 def _parse_price_cell(text: str) -> tuple[list[tuple[int | None, int]], bool]:
-    """Parse a Gemini "Paid Tier" cell. Returns (tier_list, was_tiered).
-
-    `tier_list` is a list of (max_prompt_tokens, micro_per_m) pairs;
-    the last entry has max_prompt_tokens=None when tiered, or is the
-    only entry when flat.
-    """
+    """Parse a Gemini "Paid Tier" cell. Returns (tier_list, was_tiered)."""
     tiered_match = _TIERED_PRICE_RE.search(text)
     if tiered_match:
         low_usd, threshold_value, threshold_unit, high_usd = tiered_match.groups()
@@ -110,8 +122,6 @@ def _parse_price_cell(text: str) -> tuple[list[tuple[int | None, int]], bool]:
             ],
             True,
         )
-    # Flat: take the first $-amount in the cell. Skip cells that say
-    # "Free of charge" or "Not available".
     lowered = text.casefold()
     if "free" in lowered or "not available" in lowered:
         return [], False
@@ -138,9 +148,6 @@ def _price_from_rows(rows: list[tuple[str, str]]) -> dict[str, object] | None:
     if not prompt_tiers or not completion_tiers:
         return None
 
-    # Gemini tiers prompt and completion at the same thresholds. If the page
-    # ever diverges, keep billing conservative and use the low flat tier until
-    # the hourly parser review adapts the richer shape.
     if len(prompt_tiers) != len(completion_tiers) or any(
         prompt[0] != completion[0]
         for prompt, completion in zip(prompt_tiers, completion_tiers, strict=False)
@@ -178,14 +185,17 @@ def _price_from_rows(rows: list[tuple[str, str]]) -> dict[str, object] | None:
 
 
 def _parse_markdown(md: str) -> dict[str, dict[str, object]]:
+    """Walk every "## Heading" and consume the first markdown table under it.
+
+    The Gemini pricing page emits multiple tables per model (Standard, Batch,
+    Flex, Priority). We take the first (Standard) and ignore the rest.
+    """
+
     out: dict[str, dict[str, object]] = {}
-    # Walk every "## Heading" and the first (Standard) table under it.
     sections = re.split(r"(?m)^## ", md)
     for section in sections:
         if not section:
             continue
-        # The first line after split is the heading; everything else
-        # belongs to that section until the next "##".
         first_newline = section.find("\n")
         if first_newline == -1:
             continue
@@ -195,17 +205,19 @@ def _parse_markdown(md: str) -> dict[str, dict[str, object]]:
             continue
         body = section[first_newline + 1 :]
         rows: list[tuple[str, str]] = []
+        found_table = False
         for line in body.splitlines():
             if not line.startswith("|"):
-                if rows:
+                if found_table:
                     break
                 continue
+            found_table = True
             cells = [c.strip() for c in line.strip("|").split("|")]
             if len(cells) < 3:
                 continue
             rows.append((cells[0], cells[-1]))
         price = _price_from_rows(rows)
-        if price is not None:
+        if price is not None and or_id not in out:
             out[or_id] = price
     return out
 
@@ -251,16 +263,14 @@ def _parse_html(html: str) -> dict[str, dict[str, object]]:
                 )
             )
         price = _price_from_rows(rows)
-        if price is not None:
+        if price is not None and or_id not in out:
             out[or_id] = price
     return out
 
 
-def parse(content: str) -> dict[str, dict[str, object]]:
-    """Parse Gemini pricing from the official HTML or a legacy Markdown copy."""
+def parse(html: str) -> dict:
+    """Parse Gemini pricing from the official page or a legacy HTML fixture."""
 
-    if re.search(r"<h2\b", content, re.IGNORECASE) and re.search(
-        r"<table\b", content, re.IGNORECASE
-    ):
-        return _parse_html(content)
-    return _parse_markdown(content)
+    if re.search(r"<h2\b", html, re.IGNORECASE) and re.search(r"<table\b", html, re.IGNORECASE):
+        return _parse_html(html)
+    return _parse_markdown(html)

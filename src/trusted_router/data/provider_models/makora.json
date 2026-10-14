@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-10-13T12:09:08Z",
+  "generated_at": "2026-10-14T02:11:04Z",
   "price_scale": "microdollars_per_million",
   "model_count": 18,
   "models": [
@@ -106,7 +106,8 @@
       "output_token_price_per_m": 280000,
       "input_modalities": [
         "text",
-        "image"
+        "image",
+        "video"
       ],
       "output_modalities": [
         "text"
@@ -493,7 +494,9 @@
       "title": "zai-org/GLM-5.3-Flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image",
+        "video"
       ],
       "output_modalities": [
         "text"
@@ -507,22 +510,24 @@
         "tools",
         "json_mode",
         "structured_outputs",
-        "reasoning"
+        "reasoning",
+        "logprobs"
       ],
       "supported_parameters": [
         "temperature",
         "top_p",
         "top_k",
-        "seed",
         "stop",
-        "max_tokens"
+        "max_tokens",
+        "frequency_penalty",
+        "repetition_penalty",
+        "presence_penalty"
       ],
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 470000,
       "cached_input_token_price_per_m": 24000,
-      "missing_since": "2026-09-16",
-      "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable": true,
+      "max_output_tokens": 131072
     },
     {
       "id": "z-ai/glm-5.3",

@@ -225,7 +225,7 @@
       "status": 1,
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek-v4.1-flash",
-      "context_length": 327680,
+      "context_length": 1048576,
       "routable": true,
       "supported_features": [
         "chat",
@@ -238,6 +238,6 @@
       "cached_input_token_price_per_m": 8000
     }
   ],
-  "generated_at": "2026-10-13T12:09:08Z",
+  "generated_at": "2026-10-14T02:11:04Z",
   "model_count": 8
 }

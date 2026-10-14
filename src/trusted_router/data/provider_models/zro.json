@@ -167,11 +167,31 @@
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 1500000,
       "cached_input_token_price_per_m": 90000
+    },
+    {
+      "display_name": "zro/gemini-4-argon",
+      "title": "gemini-4-argon",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "zro/gemini-4-argon",
+      "upstream_id": "gemini-4-argon",
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-14"
     }
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-10-13T12:09:08Z",
+  "generated_at": "2026-10-14T02:11:04Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 6
+  "model_count": 7
 }
