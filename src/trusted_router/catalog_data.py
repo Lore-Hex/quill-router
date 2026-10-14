@@ -3007,8 +3007,8 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "system1models-eu",
-    "nextbit-eu",
     "mistral",
+    "nextbit-eu",
     "regolo",
     "google-vertex",
     "openai",
