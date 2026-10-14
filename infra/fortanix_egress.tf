@@ -1,6 +1,6 @@
 # A fixed source address for the GCP gateways' connections to Fortanix.
 #
-# Fortanix's test endpoint (poc1.armet.ai, the "fortanix" provider in
+# Fortanix's endpoint (ctf.armet.ai, the "fortanix" provider in
 # quill-cloud-proxy's enclave-go/internal/directproviders) accepts
 # connections only from addresses it has allow-listed. A gateway VM's
 # external address is ephemeral and changes whenever a rollout replaces the
@@ -24,7 +24,8 @@ locals {
   fortanix_egress_region = "us-west1"
   fortanix_egress_zone   = "us-west1-b"
 
-  # poc1.armet.ai's A record on 2026-10-14: one EC2 address in AWS us-west-1.
+  # ctf.armet.ai's A record on 2026-10-14: one EC2 address in AWS us-west-1
+  # (the retired poc1.armet.ai had the same address).
   fortanix_destinations = ["52.53.179.221/32"]
 }
 

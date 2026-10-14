@@ -40,7 +40,7 @@ from trusted_router.secrets import LocalKeyFile
 from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
-    "fortanix": (("FORTANIX_API_KEY",), "https://poc1.armet.ai/v1"),
+    "fortanix": (("FORTANIX_API_KEY",), "https://ctf.armet.ai/v1"),
     "byteplus": (("BYTEPLUS_API_KEY",), "https://ark.ap-southeast.bytepluses.com/api/v3"),
     "abliterate": (("ABLITERATE_API_KEY",), "https://abliterate.ai/api/v1"),
     "meta": (("META_API_KEY",), "https://api.meta.ai/v1"),
