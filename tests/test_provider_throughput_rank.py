@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from scripts import update_provider_throughput_rank as refresh
 from scripts.update_provider_throughput_rank import parse_snapshot
 from trusted_router import provider_ranking as ranking
 
@@ -80,6 +82,71 @@ def test_current_markup_preserves_precise_data_and_ignores_model_rows():
         parse_snapshot(HTML, now=NOW + timedelta(days=2))
     with pytest.raises(ValueError):
         parse_snapshot("<html>failure</html>", now=NOW)
+
+
+def _refresh_cli(monkeypatch, tmp_path, *, old_age_hours=48, html=None, extra=()):
+    now = datetime.now(UTC)
+    previous = snapshot(row("previous"))
+    previous["generated_at"] = (now - timedelta(hours=old_age_hours)).isoformat()
+    destination = tmp_path / "evidence.json"
+    destination.write_text(json.dumps(previous))
+    source = tmp_path / "leaderboard.html"
+    source.write_text(HTML.replace("2026-10-09T15:03:09.610Z", now.isoformat()) if html is None else html)
+    monkeypatch.setattr(refresh, "EVIDENCE_PATH", destination)
+    monkeypatch.setattr("sys.argv", ["refresh", "--html", str(source), "--write", *extra])
+    return destination
+
+
+def test_daily_refresh_does_not_rewrite_fresh_evidence(monkeypatch, tmp_path):
+    destination = _refresh_cli(monkeypatch, tmp_path, old_age_hours=1,
+                               html="not even parsed", extra=("--min-age-hours", "24"))
+    before = destination.read_bytes()
+    refresh.main()
+    assert destination.read_bytes() == before
+
+
+@pytest.mark.parametrize("age", [25, -1])
+def test_scheduled_refresh_replaces_old_or_future_evidence(monkeypatch, tmp_path, age):
+    destination = _refresh_cli(monkeypatch, tmp_path, old_age_hours=age,
+                               extra=("--min-age-hours", "24"))
+    refresh.main()
+    assert json.loads(destination.read_text())["providers"][0]["provider"] == "cerebras"
+
+
+def test_manual_refresh_is_immediate(monkeypatch, tmp_path):
+    destination = _refresh_cli(monkeypatch, tmp_path, old_age_hours=1)
+    refresh.main()
+    assert json.loads(destination.read_text())["providers"][0]["provider"] == "cerebras"
+
+
+@pytest.mark.parametrize("html", ["<html>upstream unavailable</html>", HTML])
+def test_failed_or_stale_refresh_preserves_previous_snapshot(monkeypatch, tmp_path, html):
+    destination = _refresh_cli(monkeypatch, tmp_path, html=html)
+    before = destination.read_bytes()
+    with pytest.raises(ValueError):
+        refresh.main()
+    assert destination.read_bytes() == before
+
+
+def test_failed_atomic_publication_preserves_previous_snapshot(monkeypatch, tmp_path):
+    destination = _refresh_cli(monkeypatch, tmp_path)
+    before = destination.read_bytes()
+    files = set(tmp_path.iterdir())
+    def fail_replace(*args):
+        raise OSError("publication failed")
+    monkeypatch.setattr(type(destination), "replace", fail_replace)
+    with pytest.raises(OSError, match="publication failed"):
+        refresh.main()
+    assert destination.read_bytes() == before
+    assert set(tmp_path.iterdir()) == files
+
+
+def test_negative_refresh_cadence_is_rejected(monkeypatch, tmp_path):
+    destination = _refresh_cli(monkeypatch, tmp_path, extra=("--min-age-hours", "-1"))
+    before = destination.read_bytes()
+    with pytest.raises(SystemExit):
+        refresh.main()
+    assert destination.read_bytes() == before
 
 
 def test_cloudflare_fallback_preference_preserves_measurements_and_explicit_choices(monkeypatch):

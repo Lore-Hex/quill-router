@@ -320,6 +320,20 @@ jobs:
       - name: Record model route changes and upcoming schedules
         run: uv run python scripts/update_model_changes.py
 
+      - name: Refresh measured provider routing evidence
+        id: routing_evidence
+        # Keep routing evidence fresh without inventing scores for new hosts.
+        # A failed read preserves the previous snapshot and cannot block prices.
+        continue-on-error: true
+        run: uv run python scripts/update_provider_throughput_rank.py --write --min-age-hours 24
+
+      - name: Report retained routing evidence
+        if: steps.routing_evidence.outcome == 'failure'
+        run: |
+          echo "::warning title=Routing evidence refresh failed::Keeping the previous routing snapshot; provider rankings were not refreshed."
+          echo "### Routing evidence refresh failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "The previous snapshot is retained. Review the refresh step; no new ranking was published." >> "$GITHUB_STEP_SUMMARY"
+
       # No local test pass here. GitHub suppresses push-triggered CI for
       # GITHUB_TOKEN commits, so the commit step below dispatches ci.yml on the
       # exact generated SHA and publishes only after that full run (lint incl.
@@ -337,6 +351,7 @@ jobs:
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
             src/trusted_router/data/speech_pricing.json \
+            src/trusted_router/data/provider_routing_evidence.json \
             src/trusted_router/data/provider_models/ \
             src/trusted_router/data/model_changes.jsonl \
             src/trusted_router/data/model_changes_state.json \

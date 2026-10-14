@@ -10,6 +10,7 @@ import argparse
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 import httpx
@@ -56,7 +57,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--html", help="Read a saved seven-day leaderboard page")
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--min-age-hours", type=int, default=0,
+                        help="Skip a scheduled write while validated evidence is younger than this")
     args = parser.parse_args()
+    if args.min_age_hours < 0:
+        parser.error("--min-age-hours must be nonnegative")
+    if args.write and args.min_age_hours and EVIDENCE_PATH.exists():
+        generated, _ = validate_snapshot(json.loads(EVIDENCE_PATH.read_text()))
+        age = datetime.now(UTC) - generated
+        if timedelta(0) <= age < timedelta(hours=args.min_age_hours):
+            print("Routing evidence is current; no refresh due")
+            return
     if args.html:
         html = Path(args.html).read_text()
     else:
@@ -66,7 +77,15 @@ def main() -> None:
     payload = parse_snapshot(html)
     encoded = json.dumps(payload, indent=2) + "\n"
     if args.write:
-        EVIDENCE_PATH.write_text(encoded)
+        temporary = None
+        try:
+            with NamedTemporaryFile("w", dir=EVIDENCE_PATH.parent, delete=False) as output:
+                temporary = Path(output.name)
+                output.write(encoded)
+            temporary.replace(EVIDENCE_PATH)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         print(f"updated {EVIDENCE_PATH}: {len(payload['providers'])} providers")
     else:
         print(encoded)

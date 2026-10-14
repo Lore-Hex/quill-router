@@ -35,7 +35,8 @@
       Capacity acceptance measures requests not rejected for provider overload. Effective throughput is provider-reported
       output tokens divided by complete request time, so buffered delivery cannot inflate the result.</p>
     <p>Models need 10 availability samples and providers need 30, each with at least 3 measured first tokens, to receive a rank.
-      Thin availability and throughput measurements stay visible below the ranked set as warming.
+      Thin availability and throughput measurements stay visible below the ranked set as limited evidence.
+      This describes measurements in the selected window, not provider activation, and does not disable routing.
       Unsupported route and probe-configuration rows are reported separately and do not count as provider downtime.
       No prompt or output content is ever stored.</p>
     {% if snapshot.window == '7d' %}<p>This balanced evidence sample covers seven days. It is not today's availability or a complete traffic census.</p>{% endif %}
@@ -48,7 +49,7 @@
     <label class="lb-search">Search<input type="search" data-lb-search placeholder="Provider or model" autocomplete="off"></label>
     <label>Provider<select data-lb-provider><option value="">All providers</option>{% for p in snapshot.providers|sort(attribute='provider') %}<option value="{{ p.provider }}">{{ p.provider }}</option>{% endfor %}</select></label>
     <label>Sort by<select data-lb-sort><option value="rank">Rank</option><option value="ttft">Lowest TTFT</option><option value="throughput">Highest throughput</option><option value="completion">Highest completion</option><option value="samples">Most samples</option></select></label>
-    <label>Evidence<select data-lb-evidence><option value="all">All measurements</option><option value="qualified">Ranked</option><option value="warming">Warming</option><option value="config">Excluded attempts</option></select></label>
+    <label>Evidence<select data-lb-evidence><option value="all">All measurements</option><option value="qualified">Ranked</option><option value="warming">Limited evidence</option><option value="config">Excluded attempts</option></select></label>
   </div>
   {% for kind in ['providers', 'models'] %}
   <section id="lb-{{ kind }}" class="lb-panel" data-lb-panel="{{ kind }}" aria-labelledby="tab-{{ kind }}">
@@ -67,13 +68,13 @@
             {% if kind == 'models' %}<a class="lb-model" href="/models/{{ row.model }}/performance">{{ row.model }}</a>{% endif %}
             {{ provider_identity(row.provider, row.provider, "/providers/" ~ row.provider) }}
             {% if kind == 'providers' %}<small>{{ row.model_count }} models</small>{% endif %}
-            {% if not row.rank_eligible %}<span class="lb-badge">warming</span>{% endif %}
+            {% if not row.rank_eligible %}<span class="lb-badge" title="Not enough measurements in this window to assign a rank. This does not disable routing.">Limited evidence</span>{% endif %}
             {% if row.excluded_count %}<span class="lb-badge lb-warning">{{ row.excluded_count }} excluded</span>{% endif %}
           </td>
           <td data-label="Completion">{{ percent(row.completion_rate) }}</td>
           <td data-label="p50 TTFT">{% if row.p50_ttft_ms is not none %}{{ row.p50_ttft_ms }} ms{% else %}Not measured{% endif %}</td>
           <td data-label="Effective throughput">{% if row.p50_tokens_per_second is not none and row.throughput_sample_count %}{{ '%.0f'|format(row.p50_tokens_per_second) }} tok/s{% else %}Not measured{% endif %}
-            <small>{{ row.throughput_sample_count }} samples{% if row.throughput_sample_count < 3 %}, warming{% endif %}</small></td>
+            <small>{{ row.throughput_sample_count }} samples{% if row.throughput_sample_count < 3 %}, limited evidence{% endif %}</small></td>
           <td data-label="Availability samples">{{ row.sample_count }}<small>{{ row.ttft_sample_count }} with TTFT</small></td>
           <td class="lb-detail-cell"><details class="lb-details"><summary aria-label="Measurements for {{ row.model|default(row.provider) }}">More</summary>
             <dl>
@@ -91,7 +92,7 @@
       {% endfor %}
       </tbody>
     </table>
-    {% if not snapshot[kind] %}<p class="lb-empty">Measurements are warming up. Waiting for the next published sample.</p>{% endif %}
+    {% if not snapshot[kind] %}<p class="lb-empty">No measurements published for this window yet.</p>{% endif %}
     <p class="lb-empty" data-lb-empty hidden>No measurements match these filters.</p>
   </section>
   {% endfor %}

@@ -99,6 +99,10 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert "time-to-first-byte" not in body.lower()
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
+    assert "Limited evidence" in body
+    assert "not provider activation, and does not disable routing" in body
+    assert ">warming<" not in body
+    assert "Not enough measurements in this window to assign a rank" in body
 
 
 def test_leaderboard_page_separates_config_exclusions_from_errors() -> None:

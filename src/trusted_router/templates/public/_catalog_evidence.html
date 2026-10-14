@@ -55,7 +55,7 @@
             <strong>{% if model.p50_ttft_ms is not none %}{{ model.p50_ttft_ms }} ms TTFT{% else %}measured{% endif %}</strong>
             <span class="table-note">{{ model.measurement_provider }}{% if model.p50_tokens_per_second is not none %} · {{ '%.0f'|format(model.p50_tokens_per_second) }} tok/s{% endif %}{% if model.availability is not none %} · {{ '%.2f'|format(model.availability * 100) }}% available{% endif %} · n={{ model.sample_count }}</span>
             {% else %}
-            <span class="muted-copy">Warming up</span>
+            <span class="muted-copy">No measurements yet</span>
             {% endif %}
           </td>
         </tr>
@@ -69,7 +69,7 @@
     <div class="seo-provider-row">
       {{ provider_identity(provider.slug, provider.name, provider.detail_href, subtitle=provider.privacy) }}
       <span>{{ provider.model_count }} models</span>
-      {% if provider.sample_count %}<span>{% if provider.p50_ttft_ms is not none %}{{ provider.p50_ttft_ms }} ms p50{% else %}measured{% endif %} · n={{ provider.sample_count }}</span>{% else %}<span>measurements warming up</span>{% endif %}
+      {% if provider.sample_count %}<span>{% if provider.p50_ttft_ms is not none %}{{ provider.p50_ttft_ms }} ms p50{% else %}measured{% endif %} · n={{ provider.sample_count }}</span>{% else %}<span>No measurements yet</span>{% endif %}
     </div>
     {% endfor %}
   </div>

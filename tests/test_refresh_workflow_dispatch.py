@@ -19,6 +19,19 @@ PUBLICATION_COMMANDS = {
 }
 
 
+def test_routing_evidence_refresh_uses_catalog_publication_gates():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
+    steps = workflow["jobs"]["refresh"]["steps"]
+    evidence = next(step for step in steps if step.get("id") == "routing_evidence")
+    publication = next(step for step in steps if step.get("name") == "Commit, verify, and push if changed")
+    assert evidence["continue-on-error"] is True
+    assert "update_provider_throughput_rank.py --write --min-age-hours 24" in evidence["run"]
+    assert steps.index(evidence) < steps.index(publication)
+    assert "src/trusted_router/data/provider_routing_evidence.json" in publication["run"]
+    assert any(step.get("if") == "steps.routing_evidence.outcome == 'failure'"
+               and "GITHUB_STEP_SUMMARY" in step.get("run", "") for step in steps)
+
+
 def publication_prerequisites() -> dict[str, str]:
     commands = {
         name: shutil.which(name) for name, kind in PUBLICATION_COMMANDS.items() if kind != "fake"
@@ -242,6 +255,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
     for name in (
         "src/trusted_router/data/openrouter_snapshot.json",
         "src/trusted_router/data/speech_pricing.json",
+        "src/trusted_router/data/provider_routing_evidence.json",
         "src/trusted_router/data/provider_models/fixture.json",
         "src/trusted_router/data/model_changes.jsonl",
         "src/trusted_router/data/model_changes_state.json",
