@@ -180,6 +180,8 @@ import tempfile
 from pathlib import Path
 f = os.open({str(path)!r}, os.O_RDONLY)
 os.dup2(f, 3)
+from trusted_router import launch_descriptor_state
+launch_descriptor_state.claim()
 from trusted_router.services.async_settle_shadow_launch_descriptor import read_fd
 assert read_fd().mode == 'fd3'
 '''

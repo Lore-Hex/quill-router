@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlencode
 from uuid import uuid4
 
 from trusted_router.services.async_settle_shadow_launch_descriptor import (
@@ -53,11 +52,13 @@ async def startup_call(operation: Callable[[], Any], seconds: float) -> Any:
 
     def work() -> None:
         try:
-            result.set_result(operation())
+            value = operation()
         except BaseException as error:
-            result.set_exception(error)
-        finally:
             _STARTUP_WORKER.release()
+            result.set_exception(error)
+        else:
+            _STARTUP_WORKER.release()
+            result.set_result(value)
 
     try:
         threading.Thread(target=work, name="startup-input", daemon=True).start()
@@ -181,7 +182,6 @@ class Harness:
         self.attempt_emitted: set[tuple[str, int]] = set()
         self.attempt_emitted_order: deque[tuple[str, int]] = deque()
         self._attempt_count = self.attempt_projected = self.attempt_overflow = 0
-        self.native_attempts: Any = None
         self.attempt_lock = threading.Lock()
 
     def correlate(self, descriptor: Descriptor) -> bool:
@@ -414,7 +414,7 @@ class Harness:
 
     @property
     def attempt_count(self) -> int:
-        return self.native_attempts.started if self.native_attempts is not None else self._attempt_count
+        return self._attempt_count
 
     @property
     def missing_attempts(self) -> int:
@@ -533,28 +533,10 @@ async def retain_ready(bucket: str, key: str, raw: bytes) -> Acknowledgement:
 
 async def retain_object(bucket: str, key: str, raw: bytes) -> Acknowledgement:
     """Reuse the existing bounded object worker, retaining its generation reply."""
-    from trusted_router.storage_gcp_shadow_attachments import AuthRequest, GCSAttachments, Lifetime
-
-    class ReadyObjects(GCSAttachments):
-        def _request(self, method: str, key: str, body: bytes | None, lifetime: Lifetime) -> bytes:
-            import google.auth
-
-            headers = {"Content-Type": "application/json"}
-            url = self.endpoint+"upload/storage/v1/b/"+self.bucket+"/o?"+urlencode(
-                dict(uploadType="media", name=key, ifGenerationMatch=0))
-            auth = AuthRequest(lifetime)
-            credentials, _ = google.auth.default(request=cast(Any, auth),
-                scopes=["https://www.googleapis.com/auth/devstorage.read_write"])
-            lifetime.remaining()
-            credentials.before_request(auth, "POST", url, headers)
-            lifetime.remaining()
-            status, _, response = lifetime.exchange("POST", url, body, headers)
-            lifetime.remaining()
-            require(status in {200, 201})
-            return response
+    from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
 
     require(type(raw) is bytes and 0 < len(raw) <= MANIFEST_BYTES)
-    transport = ReadyObjects(bucket)
+    transport = GCSAttachments(bucket)
     response = await asyncio.to_thread(transport.request, "POST", key, raw, 9.)
     require(response is not None)
     metadata = json.loads(response or b"")
@@ -654,14 +636,15 @@ def bind_service(harness: Harness, service: Any, runtime: Any = None) -> None:
         runtime.retain_startup_attempts(harness)
 
 
-def regional_attestation_resource(settings: Any) -> str:
+def regional_attestation_resource(settings: Any, released: str | None = None) -> str:
     from trusted_router.enclave_regions import ENCLAVE_REGIONS
     from trusted_router.synthetic.probes import configured_targets
 
-    require(settings.effective_serving_region in ENCLAVE_REGIONS)
     cfg = settings.model_copy(update={"regions": ",".join(ENCLAVE_REGIONS),
         "synthetic_regional_probes_enabled": True, "synthetic_gateway_region_targets": ""})
-    regional = [t for t in configured_targets(cfg) if t.name == settings.effective_serving_region]
+    regional = [t for t in configured_targets(cfg) if t.name in ENCLAVE_REGIONS
+                and (t.api_base_url.removesuffix("/v1") + "/attestation" == released
+                     if released is not None else t.name == settings.effective_serving_region)]
     require(len(regional) == 1 and not regional[0].connect_host)
     return str(regional[0].api_base_url.removesuffix("/v1") + "/attestation")
 
@@ -690,33 +673,46 @@ def dependency_operations(service: Any, manifest: dict[str, Any], *, settings: A
     if resolver is not None:
         accepted = accepted | resolver.accepted_image_digests()
 
-    async def operation(target: dict[str, Any], deadline_us: int) -> bool:
-        key = canonical(target)
-        require(key in targets and key not in used and 0 < deadline_us <= 10_000_000)
-        used.add(key)
-        require(target["region"] == settings.effective_serving_region)
-        async with asyncio.timeout(deadline_us/1_000_000):
-            if target["operation"] == "read":
-                require(target["resource"] == settings.spanner_database_id)
-                store = service.store if service is not None else await asyncio.to_thread(idle_observation_store)
-                budget = Budget(store.clock()+deadline_us/1_000_000, store.clock)
-                await asyncio.to_thread(store.read, HEALTH_KIND, "local/fleet", budget)
-                budget.remaining(deadline_us/1_000_000)
-                return True
-            require(target["operation"] == "transport")
-            resource = regional_attestation_resource(settings)
-            require(target["resource"] == resource)
-            import httpx
+    async def one_get(resource: str, seconds: float) -> bool:
+        import httpx
 
-            from trusted_router.receipt_keys import gcp_attestation_image_digest
+        from trusted_router.receipt_keys import gcp_attestation_image_digest
 
-            async with httpx.AsyncClient(timeout=deadline_us/1_000_000, follow_redirects=False) as client:
+        # Leave part of the outer worker budget for stream and loop closing.
+        async with asyncio.timeout(seconds):
+            async with httpx.AsyncClient(timeout=seconds, follow_redirects=False) as client:
                 async with client.stream("GET", resource) as response:
                     require(response.status_code == 200)
                     raw = bytearray()
                     async for chunk in response.aiter_bytes():
                         raw.extend(chunk)
                         require(len(raw) <= 65536)
-            image_digest = gcp_attestation_image_digest(raw.decode("ascii"))
-            return bool(accepted) and image_digest in accepted
+        image_digest = gcp_attestation_image_digest(raw.decode("ascii"))
+        return bool(accepted) and image_digest in accepted
+
+    def perform(target: dict[str, Any], deadline: float) -> bool:
+        started = time.monotonic()
+        seconds = deadline-started
+        require(seconds > 0)
+        if target["operation"] == "read":
+            require(target["resource"] == settings.spanner_database_id)
+            store = service.store if service is not None else idle_observation_store()
+            budget = Budget(store.clock() + max(0., seconds-(time.monotonic()-started)), store.clock)
+            store.read(HEALTH_KIND, "local/fleet", budget)
+            budget.remaining(seconds)
+            return True
+        require(target["operation"] == "transport")
+        resource = regional_attestation_resource(settings, target["resource"])
+        remaining = seconds-(time.monotonic()-started)
+        require(remaining > 0)
+        # Imports, target resolution, client/context construction and GET all
+        # belong to the bounded startup worker, including its private loop.
+        return asyncio.run(one_get(resource, remaining-min(.1, remaining*.1)))
+
+    async def operation(target: dict[str, Any], deadline_us: int) -> bool:
+        key = canonical(target)
+        require(key in targets and key not in used and 0 < deadline_us <= 10_000_000)
+        used.add(key)
+        require(target["region"] == settings.effective_serving_region)
+        return bool(await startup_call(partial(perform, target, time.monotonic()+deadline_us/1_000_000), deadline_us/1_000_000))
     return operation

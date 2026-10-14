@@ -509,6 +509,8 @@ if SUPPLIED:
  source.write(b'not-a-descriptor');source.seek(0)
  os.dup2(source.fileno(),3)
 import trusted_router
+from trusted_router import launch_descriptor_state
+launch_descriptor_state.claim()
 import asyncio
 from types import SimpleNamespace
 from trusted_router.services import async_settle_shadow_startup_harness as module

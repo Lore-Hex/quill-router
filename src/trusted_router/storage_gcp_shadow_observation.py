@@ -418,3 +418,16 @@ def _monotonic_counts(previous: Any, value: Any, name: str = "") -> None:
                 _monotonic_counts(old, new)
     elif type(previous) is bool and previous:
         require(value is True, "counter_erasure")
+
+
+def startup_instance() -> str:
+    """One bounded platform instance read for the released startup mapping."""
+    import urllib.request
+
+    request = urllib.request.Request(
+        "http://metadata.google.internal/computeMetadata/v1/instance/id",
+        headers={"Metadata-Flavor": "Google"},
+    )
+    with urllib.request.urlopen(request, timeout=1) as response:  # noqa: S310 - fixed platform URL
+        raw = response.read(129)
+    return raw.decode("ascii")

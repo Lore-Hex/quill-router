@@ -8,12 +8,11 @@ import json
 import os
 import select
 import time
-import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from trusted_router.launch_descriptor_state import INHERITED_FD
+from trusted_router import launch_descriptor_state
 from trusted_router.services.async_settle_shadow_startup_records import (
     canonical,
     closed,
@@ -42,7 +41,19 @@ def parse(raw: bytes, mode: str = "fd3") -> Descriptor:
     return Descriptor(value, mode, raw)
 
 
-def read_fd(fd: int | None = INHERITED_FD, timeout: float = .25) -> Descriptor | None:
+def read_fd(fd: int | None = None, timeout: float = .25) -> Descriptor | None:
+    if fd is not None:
+        return _read_fd(fd, timeout)
+    try:
+        owned = launch_descriptor_state.take()
+        value = _read_fd(owned, timeout)
+        require(owned is None or value is not None)
+        return value
+    finally:
+        launch_descriptor_state.close()
+
+
+def _read_fd(fd: int | None, timeout: float) -> Descriptor | None:
     """None means absent; any present but unfinished input raises ValueError."""
     if fd is None:
         return None
@@ -67,19 +78,14 @@ def read_fd(fd: int | None = INHERITED_FD, timeout: float = .25) -> Descriptor |
 
 
 def metadata_instance() -> str:
-    request = urllib.request.Request(
-        "http://metadata.google.internal/computeMetadata/v1/instance/id",
-        headers={"Metadata-Flavor": "Google"},
-    )
-    # Same platform endpoint/header pattern as gcs_singleflight, one bounded read.
-    with urllib.request.urlopen(request, timeout=1) as response:  # noqa: S310 - fixed platform URL
-        raw = response.read(129)
-    value = raw.decode("ascii")
+    from trusted_router.storage_gcp_shadow_observation import startup_instance
+
+    value = startup_instance()
     identifier(value)
     return value
 
 
-def acquire(mapping: dict[str, Any], *, fd: int | None = INHERITED_FD,
+def acquire(mapping: dict[str, Any], *, fd: int | None = None,
             environ: Mapping[str, str] | None = None,
             instance_reader: Callable[[], str] = metadata_instance) -> Descriptor:
     inherited = read_fd(fd)

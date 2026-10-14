@@ -246,7 +246,6 @@ class Port:
     """
     def __init__(self, service: Service) -> None:
         self.service = service
-        self.startup_attempts: Any = None
         self.lost = StickyLoss()
         self.fold_cells: dict[str, tuple[Any, ...]] = {}
         self.fold_obligations: dict[Reservation, str] = {}

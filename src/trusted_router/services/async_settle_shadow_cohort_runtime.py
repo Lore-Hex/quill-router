@@ -39,7 +39,6 @@ from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.services.async_settle_shadow_admission import unknown
 from trusted_router.services.async_settle_shadow_cohort import (
     AuthorizeInput,
-    NativeAttempts,
     authorize,
     has_v2_capability,
 )
@@ -299,7 +298,6 @@ class Runtime:
         self.tokens, self.refilled, self.pending, self.queued_bytes = 10., time.monotonic(), 0, 32*4096
         self.stopped = False
         self.startup_admission = SimpleNamespace(ready=True)
-        self.native_attempts: NativeAttempts | None = None
         self.startup_attempt_result: Callable[[Any, str], None] | None = None
         self.startup_attempt_start: Callable[[], None] | None = None
         self.decisions: dict[str, bytes] = {}
@@ -312,17 +310,18 @@ class Runtime:
             startup_ready = self.startup_admission.ready
             observed_us = time.time_ns()//1000
             capability = tuple(request.headers.getlist("X-TR-Settlement-Shadow-Policy"))
+            capable = has_v2_capability(capability)
             original = None
-            if replay and has_v2_capability(capability):
+            if replay and capable:
                 try:
                     original = retained_replay_decision(self.decisions, auth.id)
                 except ValueError:
                     # The replay still receives its own unresolved receipt below.
                     pass
-            if not startup_ready or replay or not has_v2_capability(capability):
+            if not startup_ready or replay or not capable:
                 inputs = AuthorizeInput(observed_us, authorization_identity(auth, self.async_runtime, typed),
                     self.settings.source_revision, receipt_dimensions(auth.provider, body.route_type, body.stream), None, None, False, False,
-                    "missing_context" if not startup_ready else "replay" if has_v2_capability(capability) else "header_absent")
+                    "missing_context" if not startup_ready else "replay" if capable else "header_absent")
             else:
                 inputs = map_requested_facts(body=body, authorization=auth, endpoints=endpoints,
                     typed=typed, federated=federated, runtime=self.async_runtime,
@@ -341,35 +340,50 @@ class Runtime:
             fields = authorize(self.settings, capability,
                 self.port, inputs, additions, self.signer, replay=replay,
                 original_decision=original, retained_original=True, original_locator=original["receipt_locator"] if original else None,
-                finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize)
+                finalized_event=retain if not replay else None, deferred=True)
             additions.update(compared_handoff_fields(fields, auth))
         except Exception as error:
-            if inputs is not None and inputs.native_attempt is not None:
-                inputs.native_attempt.result = "timeout" if isinstance(error, TimeoutError) else "failed"
+            if inputs is not None:
+                inputs.result = "timeout" if isinstance(error, TimeoutError) else "failed"
             self.port.lost.set()
         finally:
-            if inputs is not None and inputs.native_attempt is not None:
-                inputs.native_attempt.finished = True
+            if inputs is not None and inputs.started:
+                self.defer_input(inputs, capable)
 
     def retain_startup_attempts(self, harness: Any) -> None:
-        harness.native_attempts = self.native_attempts = self.port.startup_attempts = NativeAttempts()
         self.startup_attempt_result = harness.attempt_result
         self.startup_attempt_start = harness.attempt_start
 
-    def collect_native_attempts(self) -> None:
-        """Called only by the prestarted worker, including its idle polls."""
-        retained = self.native_attempts
-        if retained is None:
+    def defer_input(self, inputs: AuthorizeInput, capable: bool) -> None:
+        # Transfer the already-owned input through the native bounded queue.
+        size = 2*EVENT.limit
+        if self.admit(size):
+            if inputs.reservation is not None and inputs.event is not None:
+                self.port.fail_fold(inputs.reservation)
             return
-        while retained.pending and retained.pending[0].finished:
-            inputs = retained.pending.popleft()
-            try:
-                if self.startup_attempt_start is not None:
-                    self.startup_attempt_start()
-                if inputs.reservation is not None and inputs.result is not None and self.startup_attempt_result is not None:
-                    self.startup_attempt_result(inputs.reservation, inputs.result)
-            except Exception:  # noqa: S110 - record availability does not change the native result
-                pass
+        if not self.dispatch(self.input_work, inputs, capable, size):
+            if inputs.reservation is not None and inputs.event is not None:
+                self.port.fail_fold(inputs.reservation)
+            self.release(size)
+
+    def input_work(self, inputs: AuthorizeInput, capable: bool, size: int) -> None:
+        try:
+            if capable:
+                try:
+                    if self.startup_attempt_start is not None:
+                        self.startup_attempt_start()
+                    if inputs.reservation is not None and self.startup_attempt_result is not None:
+                        self.startup_attempt_result(inputs.reservation, inputs.result)
+                except Exception:  # noqa: S110 - record availability does not change the native result
+                    pass
+            if inputs.reservation is not None and inputs.event is not None:
+                self.fold_complete(inputs.reservation, inputs.event, (), None)
+        except Exception:
+            if inputs.reservation is not None and inputs.event is not None:
+                self.port.fail_fold(inputs.reservation)
+            raise
+        finally:
+            self.release(size)
 
     def admit(self, size: int) -> str | None:
         if not self.guard.acquire(blocking=False):
@@ -458,7 +472,6 @@ class Runtime:
 
     def drain(self) -> None:
         while True:
-            self.collect_native_attempts()
             try:
                 action, args = self.queue.get(timeout=.05)
             except Empty:
@@ -696,8 +709,6 @@ class Runtime:
     def join(self) -> None:
         """Test/shutdown drain only; never called on the request path."""
         self.queue.join()
-        if self.native_attempts is not None and self.dispatch(self.collect_native_attempts):
-            self.queue.join()
 
 
 

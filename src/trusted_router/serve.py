@@ -20,6 +20,11 @@ Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 
 from __future__ import annotations
 
+from trusted_router import launch_descriptor_state
+
+if __name__ == "__main__":
+    launch_descriptor_state.claim()
+
 import logging
 import math
 import os
@@ -121,10 +126,13 @@ def build_config(environ: dict[str, str] | None = None) -> uvicorn.Config:
 
 
 def main() -> int:
-    config = build_config()
-    server = DrainingServer(config, drain_seconds=drain_seconds_from_env())
-    server.run()
-    return 0
+    try:
+        config = build_config()
+        server = DrainingServer(config, drain_seconds=drain_seconds_from_env())
+        server.run()
+        return 0
+    finally:
+        launch_descriptor_state.close()
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point

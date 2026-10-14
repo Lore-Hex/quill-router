@@ -1,11 +1,36 @@
-"""Retain the inherited descriptor before the application imports its runtime."""
-import errno
+"""Serving bridge for an explicitly delivered launch descriptor."""
+from __future__ import annotations
+
 import os
 
-# Package initialization runs before serving libraries can allocate descriptor 3.
-# Retain a duplicate so subsequent descriptor reuse cannot change this input.
-try:
-    INHERITED_FD: int | None = os.dup(3)
-except OSError as error:
-    # An unavailable supplied input is recorded by the background startup task.
-    INHERITED_FD = None if error.errno == errno.EBADF else -1
+from trusted_router import LAUNCH_FD_PRESENT
+
+INHERITED_FD: int | None = None
+_claimed = False
+
+
+def claim() -> None:
+    """Called by the serving entry point before importing serving libraries."""
+    global INHERITED_FD, _claimed
+    if _claimed:
+        return
+    _claimed = True
+    if LAUNCH_FD_PRESENT:
+        # Transfer fd 3 itself. No duplicate can outlive the serving owner.
+        INHERITED_FD = 3
+
+
+def close() -> None:
+    """Release the transferred input after reading or at serving exit."""
+    global INHERITED_FD
+    fd, INHERITED_FD = INHERITED_FD, None
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def take() -> int | None:
+    """The reader borrows the owned input; close runs even on an invalid record."""
+    return INHERITED_FD

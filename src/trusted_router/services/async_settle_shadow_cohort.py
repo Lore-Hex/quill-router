@@ -5,7 +5,6 @@ starts a task, reads storage, consults a catalog or issues an exclusion proof.
 """
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -65,26 +64,11 @@ class AuthorizeInput:
     server_facts: dict[str, Any] | None = None
     server_candidates: list[dict[str, Any]] | None = None
     validated_snapshot: bool = False
-    native_attempt: NativeAttempt | None = field(default=None, init=False, repr=False, compare=False)
-
-
-@dataclass
-class NativeAttempt:
-    reservation: Reservation | None = None
-    result: str | None = None
-    finished: bool = False
-
-
-@dataclass
-class NativeAttempts:
-    """Bounded producer references, consumed by the existing comparison worker."""
-    pending: deque[NativeAttempt] = field(default_factory=lambda: deque(maxlen=8192))
-    started: int = 0
-
-    def retain(self, inputs: AuthorizeInput) -> None:
-        inputs.native_attempt = NativeAttempt()
-        self.started += 1
-        self.pending.append(inputs.native_attempt)
+    # Native completion travels with the producer's existing deferred work.
+    started: bool = field(default=False, init=False, repr=False, compare=False)
+    reservation: Reservation | None = field(default=None, init=False, repr=False, compare=False)
+    event: dict[str, Any] | None = field(default=None, init=False, repr=False, compare=False)
+    result: str = field(default="rejected", init=False, repr=False, compare=False)
 
 
 def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePort,
@@ -94,21 +78,21 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
               original_decision: dict[str, Any] | None = None,
               retained_original: bool = False,
               finalized_event: Callable[[bytes], None] | None = None,
-              finish_obligation: Callable[[Reservation, dict[str, Any]], None] | None = None) -> dict[str, Any]:
+              finish_obligation: Callable[[Reservation, dict[str, Any]], None] | None = None,
+              deferred: bool = False) -> dict[str, Any]:
     """Return additive metadata only after the exact fitted slot is finalized.
 
     No mutation of caller additions or billing DTOs. A replay records its own
     report obligation and never calls the signer or reconstructs prices.
     """
     def finish(reservation: Reservation, event: dict[str, Any]) -> None:
-        if finish_obligation is not None:
+        if deferred:
+            inputs.event = event
+        elif finish_obligation is not None:
             finish_obligation(reservation, event)
         else:
             require(port.fold_counts(reservation.day, receipt_bucket(event)), "counter_overflow")
             port.complete(reservation)
-    def report(reservation: Reservation, result: str) -> None:
-        if inputs.native_attempt is not None:
-            inputs.native_attempt.reservation, inputs.native_attempt.result = reservation, result
     reservation = None
     prepared = None
     finalized = False
@@ -116,13 +100,8 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
         if not in_v2_cohort(settings.async_settle_shadow_policy, inputs.identity["workspace_id"],
                             settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
             return {}
-        retained = getattr(port, "startup_attempts", None)
-        if retained is not None and has_v2_capability(capability):
-            try:
-                retained.retain(inputs)
-            except Exception:  # noqa: S110 - unavailable records do not change the native operation
-                pass
-        reservation = port.reserve(inputs.observed_us)
+        inputs.started = True
+        reservation = inputs.reservation = port.reserve(inputs.observed_us)
         if reservation is None:
             return {}
         if replay and has_v2_capability(capability) and (original_page is not None or original_decision is not None):
@@ -141,10 +120,9 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                     original_locator=original_locator, revision=inputs.revision)
                 event = EVENT.parse(raw)
             require(event["identity"] == committed_identity(inputs.identity), "authorization_link_gap")
-            require(port.finalize(reservation, event, fold_owed=finish_obligation is not None) is not None, "unfinished_slot")
+            require(port.finalize(reservation, event, fold_owed=deferred or finish_obligation is not None) is not None, "unfinished_slot")
             finalized = True
             finish(reservation, event)
-            report(reservation, "rejected")
             return {}
         prepared = prepare_authorization(reservation, identity=committed_identity(inputs.identity),
             revision=inputs.revision, dimensions=inputs.dimensions, facts=inputs.facts,
@@ -152,7 +130,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
             complete_supported_context=inputs.complete_supported_context,
             reason="header_absent" if not has_v2_capability(capability) else "replay" if replay else inputs.reason,
             server_facts=inputs.server_facts, server_candidates=inputs.server_candidates,
-            native_request=finish_obligation is not None)
+            native_request=deferred or finish_obligation is not None)
         metadata: dict[str, Any] = {}
         if prepared.decision.eligibility == "eligible":
             require(signer is not None, "missing_signer")
@@ -197,14 +175,14 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                          proof_kind="none", comparison=None, prediction=None, retry_original=None,
                          completion_of=None, booking=dict(outcome="not_attempted", reference=None, winner=None))
             prepared = type(prepared)(prepared.decision, event)
-        finalized_body = port.finalize(reservation, event, fold_owed=finish_obligation is not None)
+        finalized_body = port.finalize(reservation, event, fold_owed=deferred or finish_obligation is not None)
         require(finalized_body is not None, "unfinished_slot")
         assert finalized_body is not None
         finalized = True
         finish(reservation, event)
         if finalized_event is not None:
             finalized_event(finalized_body)
-        report(reservation, "accepted" if metadata else "rejected")
+        inputs.result = "accepted" if metadata else "rejected"
         return metadata
     except Exception as error:
         loss = getattr(port, "lost", None)
@@ -219,10 +197,9 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                 } else "missing_context"
                 event = {**prepared.event, "eligibility": "unknown", "facts": None, "candidates": None,
                          "diagnostic": dict(reason=reason, required_bytes=0, candidate_count=0)}
-                if port.finalize(reservation, event, fold_owed=finish_obligation is not None) is not None:
+                if port.finalize(reservation, event, fold_owed=deferred or finish_obligation is not None) is not None:
                     finish(reservation, event)
             except Exception:  # noqa: S110 - the journal keeps the unfinished slot
                 pass
-        if reservation is not None:
-            report(reservation, "timeout" if isinstance(error, TimeoutError) else "failed")
+        inputs.result = "timeout" if isinstance(error, TimeoutError) else "failed"
         return {}
