@@ -8,7 +8,23 @@ const assert = require('node:assert/strict');
   const markets = JSON.parse(fs.readFileSync(path.join(__dirname, 'markets.json')));
   const output = process.argv[2] || '/tmp/token-exchange-build';
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({reducedMotion: 'reduce'});
+  const tracking = new Map();
+  async function newPage(options) {
+    const page = await browser.newPage(options);
+    tracking.set(page, []);
+    await page.route('https://trustedrouter.com/token-exchange/events', async route => {
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON();
+        assert(['exchange.landing_viewed', 'exchange.landing_engaged'].includes(body.event));
+        assert.equal(typeof body.visitor_id, 'string');
+        assert(!JSON.stringify(body).includes('should-not-pass'));
+        tracking.get(page).push(body);
+      }
+      return route.fulfill({status:204, headers:{'Access-Control-Allow-Origin':'http://127.0.0.1:8089'}});
+    });
+    return page;
+  }
+  const page = await newPage({reducedMotion: 'reduce'});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   for (const market of markets) {
@@ -101,7 +117,7 @@ const assert = require('node:assert/strict');
     assert.equal(socialImage.readUInt32BE(20), 630);
   }
   // Address-bar height changes must not stretch the hero or move its actions.
-  const mobile = await browser.newPage({viewport:{width:390,height:700}, reducedMotion:'reduce'});
+  const mobile = await newPage({viewport:{width:390,height:700}, reducedMotion:'reduce'});
   const heroGeometry = () => mobile.locator('.hero').evaluate(hero => {
     const rect = hero.getBoundingClientRect();
     const actions = hero.querySelector('.actions').getBoundingClientRect();
@@ -127,7 +143,7 @@ const assert = require('node:assert/strict');
   await mobile.evaluate(() => document.fonts.ready);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await mobile.close();
-  const fallback = await browser.newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
+  const fallback = await newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
   await fallback.goto('http://127.0.0.1:8089/new-york/');
   assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
   assert.equal(await fallback.getByRole('button', {name:'Menu',exact:true}).isVisible(), false);
@@ -136,7 +152,7 @@ const assert = require('node:assert/strict');
   assert(await fallback.locator('#brochure-form a[href^="mailto:"]').isVisible());
   await fallback.close();
   // The brochure form against a stand-in for trustedrouter.com: preflight, a rejected address, then a download.
-  const brochure = await browser.newPage({viewport:{width:1440,height:900}});
+  const brochure = await newPage({viewport:{width:1440,height:900}});
   let brochureRequests = 0;
   await brochure.route('https://trustedrouter.com/token-exchange/brief', async route => {
     const request = route.request();
@@ -148,6 +164,7 @@ const assert = require('node:assert/strict');
     assert.equal(body.resource, 'brochure');
     assert.equal(body.website, '');
     assert.deepEqual(body.campaign, {utm_source:'linkedin', utm_campaign:'ny-launch'});
+    assert.equal(body.visitor_id, tracking.get(brochure)[0].visitor_id);
     // A reply the page cannot read, as when an outer layer refuses the request.
     if (body.email === 'blocked@example.com') return route.abort();
     if (body.email === 'nope@invalid') return route.fulfill({status:422, headers:{...cors, 'Content-Type':'application/json'}, body:JSON.stringify({ok:false, error:'invalid_email'})});
@@ -171,6 +188,7 @@ const assert = require('node:assert/strict');
   assert.equal(download.suggestedFilename(), 'NYTE-Buyer-Deck.pdf');
   await brochure.locator('#brochure-status[data-state="success"]').waitFor();
   assert.equal(brochureRequests, 3);
+  assert(tracking.get(page).length >= markets.length * 3);
   await brochure.close();
   assert.deepEqual(errors, []);
   await browser.close();

@@ -219,6 +219,7 @@ def test_actions_surface_owns_only_anonymous_form_submissions() -> None:
         "/support/inquiry",
         "/trustedos/inquiry",
         "/token-exchange/brief",
+        "/token-exchange/events",
     }
 
 

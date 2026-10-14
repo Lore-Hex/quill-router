@@ -143,9 +143,10 @@ def build(output: Path) -> None:
     assets = output / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     version = hashlib.sha256(
-        (HERE / "exchange.css").read_bytes() + (HERE / "exchange.js").read_bytes() + (HERE / "live-evidence.js").read_bytes()
+        (HERE / "exchange.css").read_bytes() + (HERE / "exchange.js").read_bytes()
+        + (HERE / "live-evidence.js").read_bytes() + (HERE / "analytics.js").read_bytes()
     ).hexdigest()[:12]
-    for name in ("exchange.css", "exchange.js", "live-evidence.js"):
+    for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js"):
         shutil.copyfile(HERE / name, assets / name)
     # Shared public pages. The provider deck itself remains private.
     for page in ("providers", "badge"):

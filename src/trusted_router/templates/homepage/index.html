@@ -34,7 +34,12 @@
 <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
 <script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
 </head><body><div class="page">{% include "public/_nav.html" %}
-<main id="main">{% include "homepage/top.html" %}
+<main id="main">
+<a class="exchange-banner" data-token-exchange-banner href="https://nytokenexchange.com/?utm_source=trustedrouter.com&amp;utm_medium=referral&amp;utm_campaign=token-exchange-launch&amp;utm_content=homepage-banner">
+  <span class="exchange-banner-copy"><strong>New York Token Exchange</strong><span>Enterprise AI. A market built for you.</span></span>
+  <span class="exchange-banner-action">Explore <span aria-hidden="true">&rarr;</span></span>
+</a>
+{% include "homepage/top.html" %}
 {% include "homepage/models.html" %}
 {% include "homepage/migrate.html" %}
 {% include "homepage/request.html" %}

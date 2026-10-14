@@ -130,6 +130,7 @@ _ACQUISITION_CLOUD_FIELDS = (
     "first_creative_id",
     "landing_path",
     "page_path",
+    "site_domain",
     "experiment_id",
     "experiment_cell_id",
     "has_gclid",

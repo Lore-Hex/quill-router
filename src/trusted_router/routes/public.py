@@ -29,6 +29,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 from starlette.types import Scope
@@ -128,6 +129,7 @@ from trusted_router.domains import (
     request_hostname,
     status_hostname_for_domain,
 )
+from trusted_router.exchange_analytics import ExchangeEvent, accept_event
 from trusted_router.marketing_experiments import (
     GOOGLE_SEARCH_CELLS_BY_ID,
     GOOGLE_SEARCH_EXPERIMENT_ID,
@@ -817,6 +819,34 @@ async def _handle_enterprise_brief_preflight(request: Request) -> Response:
     return Response(status_code=204, headers={**_brief_headers(exchange_origin), **_BRIEF_PREFLIGHT_HEADERS})
 
 
+async def _handle_exchange_event(settings: Settings, request: Request) -> Response:
+    origin = _exchange_origin(request)
+    headers = _brief_headers(origin)
+    if origin is None:
+        return Response(status_code=403, headers=headers)
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+        return Response(status_code=415, headers=headers)
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 2048:
+            return Response(status_code=413, headers=headers)
+        body.extend(chunk)
+    try:
+        event = ExchangeEvent.model_validate_json(body)
+    except ValidationError:
+        # Do not echo a rejected payload, which could contain private text.
+        return Response(status_code=422, headers=headers)
+    if not accept_event(_inquiry_client_identity(request, settings)):
+        return Response(status_code=429, headers={**headers, "Retry-After": "60"})
+    campaign = exchange_site_campaign(request, event.campaign)
+    touch = {**exchange_site_touch(origin + "/", campaign), "page_path": event.page}
+    log_exchange_site_funnel_event(
+        request, event.event, touch,
+        visitor_id=str(event.visitor_id),
+    )
+    return Response(status_code=204, headers=headers)
+
+
 async def _handle_enterprise_brief(settings: Settings, request: Request) -> Response:
     """Deliver an allowlisted resource only after SES accepts the inquiry.
 
@@ -912,7 +942,17 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         log.error("enterprise_brief.delivery_unavailable")
         return error("delivery_unavailable", 503)
     if exchange_origin is not None:
-        log_exchange_site_funnel_event(request, event, exchange_site_touch(page_url, campaign))
+        if payload.get("tracking_disabled") is not True:
+            try:
+                visitor = uuid.UUID(str(payload.get("visitor_id", "")), version=4)
+                visitor_id = str(visitor) if str(visitor) == payload.get("visitor_id") else None
+            except ValueError:
+                visitor_id = None
+            touch = exchange_site_touch(page_url, campaign)
+            if visitor_id:
+                log_exchange_site_funnel_event(request, event, touch, visitor_id=visitor_id)
+            else:
+                log_exchange_site_funnel_event(request, event, touch)
     else:
         log_browser_funnel_event(request, event)
     return FileResponse(
@@ -925,6 +965,14 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
 
 def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
     """Register anonymous actions on their credential-minimal bulkhead."""
+
+    @app.post("/token-exchange/events", include_in_schema=False)
+    async def exchange_event(request: Request) -> Response:
+        return await _handle_exchange_event(settings, request)
+
+    @app.options("/token-exchange/events", include_in_schema=False)
+    async def exchange_event_preflight(request: Request) -> Response:
+        return await _handle_enterprise_brief_preflight(request)
 
     @app.post("/trustedos/inquiry", include_in_schema=False)
     async def trustedos_inquiry(request: Request) -> JSONResponse:

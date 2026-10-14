@@ -22,6 +22,7 @@ class MarketingEventRequest(BaseModel):
         "home.code_copied",
         "home.faq_opened",
         "home.catalog_row_clicked",
+        "home.token_exchange_clicked",
         "home.cta_clicked.hero",
         "home.cta_clicked.migration",
         "home.cta_clicked.closing",

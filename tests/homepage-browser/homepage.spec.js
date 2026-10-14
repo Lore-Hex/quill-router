@@ -1,5 +1,20 @@
 const { test, expect } = require("@playwright/test");
 
+test("exchange banner is visible, fits and records the outbound click", async ({ page }, testInfo) => {
+  await page.goto("/?utm_source=homepage-browser-test");
+  const banner = page.locator('[data-token-exchange-banner]');
+  await expect(banner).toBeVisible();
+  expect(await banner.boundingBox()).toMatchObject({x:0});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath('exchange-banner.png')});
+  await page.route('https://nytokenexchange.com/**', route => route.fulfill({body:'Exchange destination'}));
+  const event = page.waitForRequest(request => request.url().endsWith('/analytics/events')
+    && request.postDataJSON()?.event === 'home.token_exchange_clicked');
+  await banner.click();
+  expect((await event).postDataJSON()).toEqual({event:'home.token_exchange_clicked'});
+  await expect(page).toHaveURL(/nytokenexchange\.com\/\?utm_source=trustedrouter.com/);
+});
+
 test("new homepage searches models and opens the existing sign-in dialog", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
