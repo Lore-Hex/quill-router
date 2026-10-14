@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.types import ErrorType
@@ -19,7 +21,6 @@ def require_new_account_creation(settings: Settings) -> None:
         )
 
 
-
 def starter_credit_for_email(email: str, starter_credit_microdollars: int) -> int:
     """Starter credit a new account with this address receives.
 
@@ -30,3 +31,23 @@ def starter_credit_for_email(email: str, starter_credit_microdollars: int) -> in
     if domain.startswith("hotmail."):
         return 0
     return starter_credit_microdollars
+
+
+# A GitHub account younger than this receives no starter credit.
+GITHUB_STARTER_CREDIT_MIN_ACCOUNT_AGE = timedelta(days=30)
+
+
+def github_account_old_enough(created_at: str | None, *, now: datetime | None = None) -> bool:
+    """Whether a GitHub account created at `created_at` may receive starter credit.
+
+    A missing, unparseable or timezone-less creation time is not old enough.
+    """
+    if not created_at:
+        return False
+    try:
+        created = datetime.fromisoformat(created_at)
+    except ValueError:
+        return False
+    if created.tzinfo is None:
+        return False
+    return (now or datetime.now(UTC)) - created >= GITHUB_STARTER_CREDIT_MIN_ACCOUNT_AGE
