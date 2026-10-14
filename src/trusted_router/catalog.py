@@ -595,11 +595,28 @@ def model_eu_focused_provider_available(model: Model) -> bool:
     )
 
 
+def _routing_pool_discovery(model: Model) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """supported_parameters and input_modalities a routing pool can promise,
+    or nothing for any other model. Orchestration models (synth, advisors,
+    private proxies) run several calls in the gateway, each with its own
+    parameters, so their rows are not derived from routes."""
+    if orchestration_role(model.id) != "routing_pool":
+        return (), ()
+    # routing imports this module and brings in the control plane's settings,
+    # which lightweight importers of the catalog (analytics workers) lack.
+    from trusted_router.routing import routing_pool_discovery
+
+    return routing_pool_discovery(model.id)
+
+
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
     capabilities = [endpoint_capabilities(model, endpoint) for endpoint in endpoints]
+    # A routing pool has no routes of its own; it publishes what a request
+    # naming it is sure to get on the routes it can reach.
+    pool_parameters, pool_modalities = _routing_pool_discovery(model)
     # Discovery fields are a union over the model's own routes. A private
     # proxy (for example a named decision model) is served through another
     # model's routes, so it keeps its own declarations instead.
@@ -609,6 +626,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         else tuple(dict.fromkeys((
             *model.input_modalities,
             *(value for endpoint in endpoints for value in (endpoint.input_modalities or ())),
+            *pool_modalities,
         )))
     )
     named_chain = NAMED_DECISION_MODEL_PROVIDERS.get(model.id)
@@ -640,6 +658,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         ),
         model.supported_parameters,
         *(endpoint.supported_parameters for endpoint in endpoints),
+        pool_parameters,
     )
 
     # For meta routers, derive prompt/completion price from the candidate range
