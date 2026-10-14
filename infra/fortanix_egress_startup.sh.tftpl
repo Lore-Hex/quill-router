@@ -10,8 +10,7 @@
 # and expose nothing else. The rules are rebuilt on every boot.
 set -euo pipefail
 
-# Without nftables there are no rules to load, so this retries until the
-# install succeeds.
+# Each step retries until it succeeds; forwarding goes on only after both.
 until command -v nft > /dev/null; do
   apt-get update -q && apt-get install -y -q nftables || sleep 30
 done
@@ -19,7 +18,7 @@ done
 # Forwarding is closed by default: only a new connection from the VPC to a
 # Fortanix address on port 443, and the packets of connections already
 # admitted, pass. The VM has one interface, so the rules name none.
-nft -f - <<RULES
+until nft -f - <<RULES
 table ip fortanix_egress
 delete table ip fortanix_egress
 table ip fortanix_egress {
@@ -34,6 +33,9 @@ table ip fortanix_egress {
   }
 }
 RULES
+do
+  sleep 30
+done
 
 # Forwarding goes on after the rules load. The image's
 # 60-gce-network-security.conf turns it off; this file sorts after it, so it

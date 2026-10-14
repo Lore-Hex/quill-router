@@ -31,7 +31,11 @@ def test_only_the_gateways_route_their_fortanix_connections_through_the_vm() -> 
     assert 'tags = ["quill-enclave"]' in route
     assert "for_each = toset(local.fortanix_destinations)" in route
     assert "dest_range = each.value" in route
-    assert "next_hop_instance = google_compute_instance.fortanix_egress.self_link" in route
+    # By name and zone, not the computed self_link: a replacement VM then
+    # leaves the route in place instead of replacing it.
+    assert "next_hop_instance = google_compute_instance.fortanix_egress.name" in route
+    assert "next_hop_instance_zone = local.fortanix_egress_zone" in route
+    assert "self_link" not in route
     vm = _block('resource "google_compute_instance" "fortanix_egress"')
     assert "can_ip_forward = true" in vm
     # The gateways' tag on the VM would route its own forwarded packets back
@@ -46,7 +50,7 @@ def test_the_vm_forwards_only_the_routed_destinations() -> None:
     vm = _block('resource "google_compute_instance" "fortanix_egress"')
     # Sorted, so reordering the list does not change the script and replace the VM.
     assert 'destinations = join(", ", sort(local.fortanix_destinations))' in vm
-    rules = SCRIPT[SCRIPT.index("nft -f - <<RULES\n") : SCRIPT.index("\nRULES\n")]
+    rules = SCRIPT[SCRIPT.index("until nft -f - <<RULES\n") : SCRIPT.index("\nRULES\n")]
     assert [line.strip() for line in rules.splitlines()[1:]] == [
         "table ip fortanix_egress",
         "delete table ip fortanix_egress",
@@ -67,7 +71,7 @@ def test_the_vm_forwards_only_the_routed_destinations() -> None:
 def test_forwarding_turns_on_only_after_the_rules_load() -> None:
     steps = [
         "until command -v nft",
-        "\nnft -f - <<RULES\n",
+        "\nuntil nft -f - <<RULES\n",
         'echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-fortanix-egress.conf',
         "sysctl --quiet -w net.ipv4.ip_forward=1",
     ]

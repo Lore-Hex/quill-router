@@ -91,18 +91,20 @@ resource "google_compute_instance" "fortanix_egress" {
 # Only VMs tagged quill-enclave, the gateways' instance templates' tag
 # (quill-cloud-proxy tools/deploy-gcp-mig.sh), use these routes. A /32 is
 # more specific than the default route, so it wins although each gateway
-# has its own external address. A replacement VM with the same name and zone
-# becomes the next hop without a change to the route.
+# has its own external address. The route names the VM by name and zone,
+# which are known before a replacement VM exists, so replacing the VM leaves
+# the route in place and GCP points it at the new VM.
 resource "google_compute_route" "fortanix_egress" {
   for_each = toset(local.fortanix_destinations)
 
-  project           = local.gcp_project_id
-  name              = "tr-fortanix-egress-${replace(replace(each.value, ".", "-"), "/", "-")}"
-  description       = "The gateways' connections to Fortanix leave from tr-fortanix-egress's reserved address (infra/fortanix_egress.tf)."
-  network           = "default"
-  dest_range        = each.value
-  next_hop_instance = google_compute_instance.fortanix_egress.self_link
-  tags              = ["quill-enclave"]
+  project                = local.gcp_project_id
+  name                   = "tr-fortanix-egress-${replace(replace(each.value, ".", "-"), "/", "-")}"
+  description            = "The gateways' connections to Fortanix leave from tr-fortanix-egress's reserved address (infra/fortanix_egress.tf)."
+  network                = "default"
+  dest_range             = each.value
+  next_hop_instance      = google_compute_instance.fortanix_egress.name
+  next_hop_instance_zone = local.fortanix_egress_zone
+  tags                   = ["quill-enclave"]
 }
 
 output "fortanix_egress_address" {
