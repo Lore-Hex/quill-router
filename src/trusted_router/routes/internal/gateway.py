@@ -5062,16 +5062,25 @@ def _settle_leased_authorization(
             undecided,
         )
         return {"data": _intent_durable_gateway_data(authorization, intent)}
-    result = typed_store.typed_finalize_leased_result(
-        authorization.id,
-        success=decision.success,
-        actual_microdollars=decision.charge,
-        selected_usage_type=selected_usage_type,
-        generation=decision.generation,
-        authorization_snapshot=authorization,
-        refund_benchmark=refund_benchmark if not decision.success else None,
-        mark_intent=intent.intent_kind,
-    )
+    try:
+        result = typed_store.typed_finalize_leased_result(
+            authorization.id,
+            success=decision.success,
+            actual_microdollars=decision.charge,
+            selected_usage_type=selected_usage_type,
+            generation=decision.generation,
+            authorization_snapshot=authorization,
+            refund_benchmark=refund_benchmark if not decision.success else None,
+            mark_intent=intent.intent_kind,
+        )
+    except Exception:
+        # The lease took the charge and the intent is durable: the drain
+        # writes the records, as today's two-commit settle defers after an
+        # inline finalize failure. Also a drain that claimed the row first.
+        logger.exception(
+            "fastpath pilot records deferred after a decided terminal authorization_id=%s", authorization.id,
+        )
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
     if result is None:
         refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
         _release_user_model_slot_safely(refreshed)

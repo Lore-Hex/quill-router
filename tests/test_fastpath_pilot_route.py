@@ -348,6 +348,90 @@ def test_the_intent_is_durable_before_the_front_door_is_asked(door: _Door) -> No
     assert settled_row is not None and settled_row.settled
 
 
+def test_a_record_failure_after_a_decided_terminal_is_left_to_the_drain(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    original = storage_gcp.SpannerStore.typed_finalize_leased_result
+    calls = {"n": 0}
+
+    def flaky(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise DeadlineExceeded("spanner")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(storage_gcp.SpannerStore, "typed_finalize_leased_result", flaky)
+    data = gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())["data"]
+    assert data["disposition"] == "intent_durable"
+    row = _pending_intents(database, authorized["authorization_id"])[0]
+    assert row["status"] == "pending"
+    # The drain finishes it with the records, and the row is done.
+    from trusted_router.services import settle_outbox_drain
+
+    row["next_attempt_at"] = "2020-01-01T00:00:00Z"
+    settle_outbox_drain.drain_settle_outbox(10)
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and authorization.settled
+    assert _pending_intents(database, authorization.id)[0]["status"] == "done"
+    assert database.gateway_authorizations[authorization.id]["terminal_at"] is not None
+
+
+def test_the_drain_marks_a_losing_intent_done_without_asking_the_front_door(door: _Door) -> None:
+    from trusted_router.services import settle_outbox_drain
+
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
+    # A sibling refund intent, pending, for the same authorization (the
+    # done settle row has no body any more; a pending row carries one).
+    database.settle_outbox[(authorized["authorization_id"], "refund")] = dict(
+        database.settle_outbox[(authorized["authorization_id"], "settle")],
+        intent_kind="refund", status="pending", actual_cost_micro=0, next_attempt_at="2020-01-01T00:00:00Z",
+        lease_owner=None, leased_until=None, attempts=0, terminal_at=None,
+        settle_body=_settle_body(authorized, success=False).model_dump_json(exclude_none=True),
+        selected_usage_type="Credits", settle_origin="typed",
+    )
+    doors_before = len(door.seen)
+    settle_outbox_drain.drain_settle_outbox(10)
+    assert len(door.seen) == doors_before
+    assert database.settle_outbox[(authorized["authorization_id"], "refund")]["status"] == "done"
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and authorization.finalization_outcome == "settled"
+
+
+def test_the_drain_parks_a_leased_intent_when_the_store_is_away(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+    from trusted_router.services import settle_outbox_drain
+
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/settle"] = {"Status": "recorded"}
+    gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
+    door.answers["/v1/settle"] = dict(WON)
+
+    def away(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raise DeadlineExceeded("spanner")
+
+    monkeypatch.setattr(storage_gcp.SpannerStore, "typed_finalize_leased_result", away)
+    row = _pending_intents(database, authorized["authorization_id"])[0]
+    attempts_before = row.get("attempts") or 0
+    row["next_attempt_at"] = "2020-01-01T00:00:00Z"
+    settle_outbox_drain.drain_settle_outbox(10)
+    row = _pending_intents(database, authorized["authorization_id"])[0]
+    assert row["status"] == "pending" and (row.get("attempts") or 0) == attempts_before
+    assert not (store.get_gateway_authorization(authorized["authorization_id"]) or authorization_absent()).settled
+
+
+def authorization_absent() -> Any:
+    raise AssertionError("the authorization row is gone")
+
+
 def test_the_drain_finishes_a_leased_intent_the_front_door_decides_later(door: _Door) -> None:
     from trusted_router.services import settle_outbox_drain
 

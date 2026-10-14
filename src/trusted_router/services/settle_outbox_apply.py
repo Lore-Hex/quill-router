@@ -479,6 +479,10 @@ def _apply_leased(
     from trusted_router.routes.internal.gateway import _fastpath_front_door
     from trusted_router.services import fastpath_settle
 
+    if auth.settled:
+        # Its records are written (by the route, or by the other kind's
+        # intent that won): this row is done, with nothing more to ask.
+        return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
     charge = fastpath_settle.charge_for(success=success, actual_cost=row.actual_cost_micro, selected_usage_type=usage_type)
     try:
         decision = fastpath_settle.forward_terminal(
@@ -492,15 +496,20 @@ def _apply_leased(
             undecided,
         )
         return ApplyOutcome.ERROR
-    result = typed_store.typed_finalize_leased_result(
-        auth.id,
-        success=decision.success,
-        actual_microdollars=decision.charge,
-        selected_usage_type=usage_type,
-        generation=decision.generation,
-        authorization_snapshot=auth,
-        mark_intent=None,
-    )
+    try:
+        result = typed_store.typed_finalize_leased_result(
+            auth.id,
+            success=decision.success,
+            actual_microdollars=decision.charge,
+            selected_usage_type=usage_type,
+            generation=decision.generation,
+            authorization_snapshot=auth,
+            mark_intent=None,
+        )
+    except _TRANSIENT_STORE_EXCS:
+        # The store, not the row: parked, as the typed path parks it, with
+        # no attempt spent.
+        return ApplyOutcome.PARK_TYPED_UNAVAILABLE
     if result is None:
         return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
     return ApplyOutcome.SETTLED_NOW

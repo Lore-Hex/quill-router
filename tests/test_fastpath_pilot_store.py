@@ -172,8 +172,9 @@ def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
     assert finalized.finalized_cost_microdollars == 700
     stored = store.get_gateway_authorization(authorization.id)
     assert stored is not None and stored.settled and stored.finalized_generation_id == "gen-1"
-    # The row's retention clock is armed.
-    assert db.gateway_authorizations[authorization.id]["terminal_at"] is not None
+    # Retention is the outbox's: the drain's done-mark arms it afterwards,
+    # so this commit (the drain's shape, no intent of its own) leaves it unarmed.
+    assert db.gateway_authorizations[authorization.id]["terminal_at"] is None
     assert stored.fastpath_envelope == "sealed-1"
     assert _credit_rows(db, workspace.id) == credit_before, "the lease booked the usage, not this commit"
     assert _reservations(db, workspace.id) == []

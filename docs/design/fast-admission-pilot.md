@@ -55,7 +55,12 @@ and the drain asks the front door again later (`_apply_leased` in
 `services/settle_outbox_apply.py`), since the enclave does not retry a
 non-streaming terminal itself. Decided, the records commit in one commit
 with the intent resolved, so the refill attachment and the row's
-retention clock are as today's. A BYOK terminal (the key's own provider
+retention clock are as today's (the outbox's own rule: armed only once no
+sibling intent is outstanding); a record commit that fails after the
+front door decided is answered `intent_durable` too, and the drain writes
+the records. The drain marks a row done without asking the front door
+once the authorization is settled, and parks a row, spending no attempt,
+when the store is away. A BYOK terminal (the key's own provider
 paid) charges the lease nothing, as today's path books nothing. A hold
 admitted whose authorization row then could not be written is refunded
 at once, best effort, so it does not wait for the lease to drain.

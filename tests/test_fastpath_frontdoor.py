@@ -178,6 +178,57 @@ def test_a_slow_membership_read_cannot_hold_the_caller_past_the_budget() -> None
     assert real_time.monotonic() - started < 1.0
 
 
+def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_later() -> None:
+    import threading as real_threading
+    import time as real_time
+
+    gate = real_threading.Event()
+    sent: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        gate.wait(5.0)
+        return httpx.Response(200, json=ADMIT)
+
+    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=0.2, transport=httpx.MockTransport(handle))
+    # Hold every worker on a call that never answers in time.
+    holders = [
+        real_threading.Thread(target=client.authorize, kwargs={"workspace_id": "ws", "request": f"r{i}", "estimate": 1, "stream": False, "boot": b"b"})
+        for i in range(fd.WORKERS)
+    ]
+    for h in holders:
+        h.start()
+    real_time.sleep(0.05)
+    started = real_time.monotonic()
+    assert client.authorize(workspace_id="ws", request="late", estimate=1, stream=False, boot=b"b") is None
+    assert real_time.monotonic() - started < 0.1, "no worker free: today's path at once"
+    gate.set()
+    for h in holders:
+        h.join(5.0)
+    # The call with no worker was never sent, not even after the workers freed.
+    assert len(sent) == fd.WORKERS
+    client.close()
+
+
+def test_a_late_answer_does_not_reset_the_breaker() -> None:
+    clock = [0.0]
+    client = fd.FrontDoorClient(
+        lambda _b: ("10.0.0.1:8080",), timeout_seconds=1.5, clock=lambda: clock[0],
+        transport=_transport({"10.0.0.1:8080": _Door({"/v1/authorize": ADMIT})}),
+    )
+    breaker = client._breakers.setdefault("10.0.0.1:8080", fd._Breaker())
+    breaker.failures = 4
+    # The door answers, but the clock says the caller's budget is spent.
+    deadline = clock[0] + 1.5
+    clock[0] = deadline + 0.1
+    assert client._call_within("/v1/authorize", {"Workspace": "ws"}, deadline) is None
+    assert breaker.failures == 4
+    # And a failure past the deadline opens nothing further either.
+    clock[0] = deadline + 0.2
+    client._failed(breaker, deadline)
+    assert breaker.failures == 4
+
+
 def test_a_body_that_is_not_json_counts_as_a_failure() -> None:
     client = _client({"10.0.0.1:8080": _Door(raw=b"<html>")})
     assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None

@@ -5004,10 +5004,11 @@ class SpannerStore:
         """The pilot's finalize: the records of a terminal whose money the
         fast path booked (docs/design/fast-admission-pilot.md). ONE commit
         marks the authorization settled with its finalization facts, writes
-        the generation record, the activity row and the benchmark, resolves
-        the pending settle-outbox intent of kind `mark_intent` (the route's
-        own; the drain resolves its row itself afterwards) and starts the
-        row's retention clock; it claims no reservation, releases no hold,
+        the generation record, the activity row and the benchmark, and
+        resolves the pending settle-outbox intent of kind `mark_intent` (the
+        route's own; the drain resolves its row itself afterwards), which
+        arms the row's retention as the outbox does; it claims no
+        reservation, releases no hold,
         books no usage and pays no markup, since the lease did the booking
         and the pilot's cohort has no markups. None when the authorization
         is not a leased one or is settled already (the caller answers the
@@ -5015,7 +5016,6 @@ class SpannerStore:
         from trusted_router.storage_gcp_batch_dml import execute_batch_dml
         from trusted_router.storage_gcp_generation_records import generation_insert_statement
         from trusted_router.storage_gcp_request_records import (
-            complete_gateway_authorization_retention,
             gateway_authorization_settled_statement,
         )
         from trusted_router.storage_gcp_settle_outbox import mark_done_unleased_tx
@@ -5066,23 +5066,15 @@ class SpannerStore:
                 counts.append((1,))
             execute_batch_dml(transaction, statements, counts)
             if mark_intent is not None:
-                # The route's pending intent, resolved in this commit. Its
-                # reservation retention does not apply (a lease has none);
-                # the statements it would add are dropped, and the
-                # authorization's clock is armed below.
+                # The route's pending intent, resolved in this commit, and
+                # with it the row's retention as the outbox keeps it: armed
+                # only once no sibling intent is outstanding, and no
+                # reservation retention, since a lease has none. The drain's
+                # row is its own to mark, afterwards, by the same rule.
                 if not mark_done_unleased_tx(
                     transaction, pt, authorization_id=authorization_id, intent_kind=mark_intent,
-                    retention_statements=[],
                 ):
                     raise RuntimeError(f"leased finalize found no pending {mark_intent} intent")
-            # The retention clock: guarded by the outbox only when this
-            # commit resolved the intent (the drain's row is still pending
-            # until it marks it).
-            armed = complete_gateway_authorization_retention(
-                transaction, pt, authorization_id, terminal_at=now, outbox_available=mark_intent is not None,
-            )
-            if armed != 1:
-                raise RuntimeError(f"leased finalize armed retention on {armed} rows")
 
         run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_settle_leased")
         return (

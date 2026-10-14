@@ -179,6 +179,9 @@ class FrontDoorClient:
         # the caller's wait is bounded by the budget whatever the SDK or the
         # socket do; a call left behind ends on its own timeouts.
         self._workers = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="fastpath-front-door")
+        # One permit per worker: a call with no free worker is today's path
+        # at once, never queued to start later with a budget of its own.
+        self._permits = threading.BoundedSemaphore(WORKERS)
 
     def close(self) -> None:
         self._workers.shutdown(wait=False)
@@ -249,11 +252,17 @@ class FrontDoorClient:
         """One JSON call within one budget for the whole call, the membership
         read included: the caller waits at most the budget. None when no
         front door answered 200 with a JSON object in time."""
+        if not self._permits.acquire(blocking=False):
+            logger.warning("fastpath %s: every worker busy", path)
+            return None
+        deadline = self._clock() + self._budget
         try:
-            future = self._workers.submit(self._call_within, path, body)
+            future = self._workers.submit(self._call_within, path, body, deadline)
         except RuntimeError:
+            self._permits.release()
             logger.warning("fastpath %s: no worker", path)
             return None
+        future.add_done_callback(lambda _f: self._permits.release())
         try:
             return future.result(timeout=self._budget)
         except FutureTimeout:
@@ -263,11 +272,13 @@ class FrontDoorClient:
             logger.exception("fastpath %s failed", path)
             return None
 
-    def _call_within(self, path: str, body: dict[str, Any]) -> dict[str, Any] | None:
+    def _call_within(self, path: str, body: dict[str, Any], deadline: float) -> dict[str, Any] | None:
         """The call itself, tried on at most DOORS_PER_CALL front doors the
         breakers allow, in turn from a rotating start, each request given what
-        remains of the budget."""
-        deadline = self._clock() + self._budget
+        remains of the budget. Past the deadline nothing is sent, and an
+        answer that comes late changes no breaker: the caller has gone."""
+        if self._clock() >= deadline:
+            return None
         addresses = tuple(self._front_doors(self._budget))
         if not addresses:
             logger.warning("fastpath %s: no serving front door", path)
@@ -294,28 +305,37 @@ class FrontDoorClient:
                     timeout=httpx.Timeout(remaining, connect=min(CONNECT_TIMEOUT_SECONDS, remaining)),
                 )
             except httpx.HTTPError as exc:
-                breaker.record_failure(self._clock())
+                self._failed(breaker, deadline)
                 logger.warning("fastpath %s via %s failed: %s", path, address, type(exc).__name__)
                 continue
             if response.status_code != 200:
                 # 400 and 500 are the front door's own answers to a bad body or
                 # a bad encode, not its health; 502 is an owner it could not
                 # reach. None is retried on another front door.
-                breaker.record_failure(self._clock())
+                self._failed(breaker, deadline)
                 logger.warning("fastpath %s via %s answered %d", path, address, response.status_code)
                 continue
             try:
                 answer = response.json()
             except ValueError:
-                breaker.record_failure(self._clock())
+                self._failed(breaker, deadline)
                 logger.warning("fastpath %s via %s answered no JSON", path, address)
                 continue
             if not isinstance(answer, dict):
-                breaker.record_failure(self._clock())
+                self._failed(breaker, deadline)
                 continue
+            if self._clock() >= deadline:
+                # Too late for the caller, and too slow to count as health.
+                self._failed(breaker, deadline, late=True)
+                return None
             breaker.record_success()
             return answer
         return None
+
+    def _failed(self, breaker: _Breaker, deadline: float, *, late: bool = False) -> None:
+        now = self._clock()
+        if late or now < deadline:
+            breaker.record_failure(now)
 
 
 def _bytes(value: bytes) -> str:
