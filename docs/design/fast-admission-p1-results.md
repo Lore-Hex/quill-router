@@ -185,8 +185,9 @@ The authorize path between the two releases is unchanged
 record and the alert line), and the node is idle during a run (load
 average 0.11 on two vCPUs, the logging agent at six percent, no journal
 line per request). The admission itself costs a few hundred
-microseconds over the floor; the nodes replaced on 2026-10-13 22:23Z
-sit further apart than the pair of runs 1 and 2 did.
+microseconds over the floor. The pair of runs 1 and 2 was replaced on
+2026-10-13 22:23Z and its hop was not measured; the floor is read
+before every run from now on, with the command above.
 
 **The audits.** Usage booked after run 3, 2,178,353 micro-credits; after
 run 4, 4,260,009; after run 5, 12,180,547 (12.18 USD of the 100 funded),
