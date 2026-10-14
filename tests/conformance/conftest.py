@@ -287,6 +287,19 @@ _NATIVE_STORE_KNOWN_GAPS: dict[tuple[str, str], str] = {
 
 _FAKE_ONLY_GAPS: dict[tuple[str, str], str] = {}
 
+_SPANNER_PG_ABUSE_LATCH = (
+    "PostgresStore's abuse latch inserts its trust event ON CONFLICT on the "
+    "partial index tr_trust_event_adverse_dedup; the Spanner PG adapter rejects "
+    "a null-filtered index as a conflict target, so the latch cannot run there"
+)
+
+#: PostgresStore pointed at the Spanner PG adapter, under the same strict-xfail
+#: contract as the native gaps above.
+_SPANNER_PG_KNOWN_GAPS: dict[tuple[str, str], str] = {
+    ("store", "test_store_semantics.py::test_abuse_latch_keeps_an_earlier_migration_pause"): _SPANNER_PG_ABUSE_LATCH,
+    ("store", "test_store_semantics.py::test_abuse_clear_keeps_a_later_migration_pause"): _SPANNER_PG_ABUSE_LATCH,
+}
+
 
 # These tests currently have exactly ONE parameter: the backend. Enumerate
 # those full IDs explicitly. Additional parameters/IDs require registry review;
@@ -297,6 +310,7 @@ _BACKEND_KNOWN_GAPS = {
     for backend, gaps in (
         ("spanner-fake", {**_NATIVE_STORE_KNOWN_GAPS, **_FAKE_ONLY_GAPS}),
         ("spanner-emulator", _NATIVE_STORE_KNOWN_GAPS),
+        ("spanner-pg", _SPANNER_PG_KNOWN_GAPS),
     )
 }
 
