@@ -145,6 +145,24 @@ def test_streamlake_qwen_retirement_is_observation_dated_and_provider_scoped() -
     assert not retired("streamlake", "qwen/qwen3.8-flash", "qwen3.8-flash", at=cutoff)
 
 
+def test_streamlake_qwen3_235b_instruct_retirement_is_observation_dated_and_scoped() -> None:
+    cutoff = provider_lifecycle.STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT
+    assert cutoff == datetime(2026, 10, 10, 19, 39, tzinfo=UTC)
+    retired = provider_lifecycle.provider_model_retired
+    model, native = "qwen/qwen3-235b-a22b-instruct-2507", "Qwen3-235B-A22B-Instruct-2507"
+    assert not retired("streamlake", model, native, at=cutoff - timedelta(microseconds=1))
+    assert retired("streamlake", model, at=cutoff)
+    assert retired("streamlake", "other-canonical-alias", native, at=cutoff)
+    assert not retired("novita", model, native, at=cutoff)
+    # StreamLake still serves the Thinking variant.
+    assert not retired(
+        "streamlake",
+        "qwen/qwen3-235b-a22b-thinking-2507",
+        "Qwen3-235B-A22B-Thinking-2507",
+        at=cutoff,
+    )
+
+
 @pytest.mark.parametrize("usage", ["Credits", "BYOK"])
 def test_stale_streamlake_qwen_catalog_cannot_reenable_retired_route(
     monkeypatch: pytest.MonkeyPatch, usage: str,
