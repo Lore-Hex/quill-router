@@ -178,9 +178,9 @@ def test_descriptor_actual_fd_three(tmp_path):
     code = f'''import os
 import tempfile
 from pathlib import Path
-from trusted_router.services.async_settle_shadow_launch_descriptor import read_fd
 f = os.open({str(path)!r}, os.O_RDONLY)
 os.dup2(f, 3)
+from trusted_router.services.async_settle_shadow_launch_descriptor import read_fd
 assert read_fd().mode == 'fd3'
 '''
     result = subprocess.run([sys.executable, '-c', code], env={**os.environ, 'PYTHONPATH': 'src'},  # noqa: S603 - fixed child script
@@ -223,7 +223,13 @@ async def test_failed_check_never_adopts_pass(criterion):
     m = manifest()
     if records.SOURCES[criterion]:
         source = records.SOURCES[criterion][0]
-        m['artifacts'][m['selections'][criterion][source]]['checks'][records.CHECKS[criterion][0]] = 'fail'
+        declared = m['artifacts'][m['selections'][criterion][source]]
+        declared['checks'][records.CHECKS[criterion][0]] = 'fail'
+        declared['conclusion'] = 'fail'
+        Path(declared['path']).write_bytes(records.canonical({k: v for k, v in declared.items() if k != 'path'}))
+        loaded = ReleaseManifest(records.canonical(m))
+        loaded.test_directory = m.test_directory
+        m = loaded
     else:
         async def unfinished():
             raise TimeoutError
@@ -231,9 +237,13 @@ async def test_failed_check_never_adopts_pass(criterion):
     await h.run(descriptor(), m)
     assert not h.admission.ready
     assert all(json.loads(raw)['kind'] != 'a3_traffic_ready' for raw in lines)
+    if records.SOURCES[criterion]:
+        assert h.adopted[criterion]['checks'][records.CHECKS[criterion][0]] == 'fail'
+        assert sum(json.loads(raw).get('criterion') == criterion for raw in lines) == 1
     first = copy.deepcopy(h.adopted)
     await h.adopt(criterion)
     assert h.adopted == first
+    assert not h.admission.ready and h.ready_raw is None
 
 
 @pytest.mark.parametrize('criterion', records.CHECKS)

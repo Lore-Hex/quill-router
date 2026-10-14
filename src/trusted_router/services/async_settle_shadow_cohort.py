@@ -5,8 +5,9 @@ starts a task, reads storage, consults a catalog or issues an exclusion proof.
 """
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from trusted_router.async_settle_shadow_binding import AUDIENCE, LIFETIME, ShadowSigner
@@ -50,7 +51,7 @@ def require_shadow_snapshot_bounds(snapshot: dict[str, Any]) -> None:
         require(IDENTITY.fullmatch(candidate["model_id"]) is not None, "identity")
 
 
-@dataclass(frozen=True)
+@dataclass
 class AuthorizeInput:
     observed_us: int
     identity: dict[str, Any]
@@ -64,6 +65,26 @@ class AuthorizeInput:
     server_facts: dict[str, Any] | None = None
     server_candidates: list[dict[str, Any]] | None = None
     validated_snapshot: bool = False
+    native_attempt: NativeAttempt | None = field(default=None, init=False, repr=False, compare=False)
+
+
+@dataclass
+class NativeAttempt:
+    reservation: Reservation | None = None
+    result: str | None = None
+    finished: bool = False
+
+
+@dataclass
+class NativeAttempts:
+    """Bounded producer references, consumed by the existing comparison worker."""
+    pending: deque[NativeAttempt] = field(default_factory=lambda: deque(maxlen=8192))
+    started: int = 0
+
+    def retain(self, inputs: AuthorizeInput) -> None:
+        inputs.native_attempt = NativeAttempt()
+        self.started += 1
+        self.pending.append(inputs.native_attempt)
 
 
 def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePort,
@@ -73,8 +94,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
               original_decision: dict[str, Any] | None = None,
               retained_original: bool = False,
               finalized_event: Callable[[bytes], None] | None = None,
-              finish_obligation: Callable[[Reservation, dict[str, Any]], None] | None = None,
-              attempt_result: Callable[[Reservation, str], None] | None = None) -> dict[str, Any]:
+              finish_obligation: Callable[[Reservation, dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """Return additive metadata only after the exact fitted slot is finalized.
 
     No mutation of caller additions or billing DTOs. A replay records its own
@@ -87,11 +107,8 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
             require(port.fold_counts(reservation.day, receipt_bucket(event)), "counter_overflow")
             port.complete(reservation)
     def report(reservation: Reservation, result: str) -> None:
-        if attempt_result is not None:
-            try:
-                attempt_result(reservation, result)
-            except Exception:  # noqa: S110 - startup records never change the returned fields
-                pass
+        if inputs.native_attempt is not None:
+            inputs.native_attempt.reservation, inputs.native_attempt.result = reservation, result
     reservation = None
     prepared = None
     finalized = False
@@ -99,6 +116,12 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
         if not in_v2_cohort(settings.async_settle_shadow_policy, inputs.identity["workspace_id"],
                             settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
             return {}
+        retained = getattr(port, "startup_attempts", None)
+        if retained is not None and has_v2_capability(capability):
+            try:
+                retained.retain(inputs)
+            except Exception:  # noqa: S110 - unavailable records do not change the native operation
+                pass
         reservation = port.reserve(inputs.observed_us)
         if reservation is None:
             return {}

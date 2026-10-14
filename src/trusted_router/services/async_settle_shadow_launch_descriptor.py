@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from trusted_router.launch_descriptor_state import INHERITED_FD
 from trusted_router.services.async_settle_shadow_startup_records import (
     canonical,
     closed,
@@ -41,8 +42,11 @@ def parse(raw: bytes, mode: str = "fd3") -> Descriptor:
     return Descriptor(value, mode, raw)
 
 
-def read_fd(fd: int = 3, timeout: float = .25) -> Descriptor | None:
+def read_fd(fd: int | None = INHERITED_FD, timeout: float = .25) -> Descriptor | None:
     """None means absent; any present but unfinished input raises ValueError."""
+    if fd is None:
+        return None
+    require(fd != -1)
     try:
         os.fstat(fd)
     except OSError as error:
@@ -75,7 +79,7 @@ def metadata_instance() -> str:
     return value
 
 
-def acquire(mapping: dict[str, Any], *, fd: int = 3,
+def acquire(mapping: dict[str, Any], *, fd: int | None = INHERITED_FD,
             environ: Mapping[str, str] | None = None,
             instance_reader: Callable[[], str] = metadata_instance) -> Descriptor:
     inherited = read_fd(fd)

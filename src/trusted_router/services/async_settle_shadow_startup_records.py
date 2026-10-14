@@ -213,7 +213,7 @@ def validate_check(v: dict[str, Any]) -> None:
             integer(d["attempts"], 1, 1)
             integer(d["deadline_us"], 0, 10_000_000)
             integer(d["elapsed_us"], 0, d["deadline_us"])
-            integer(d["observed_at_us"], v["boot_at_us"] + d["elapsed_us"], v["completed_at_us"])
+            integer(d["observed_at_us"], v["boot_at_us"], v["completed_at_us"] - d["elapsed_us"])
             identifier(d["resource"])
             key = (d["operation"], d["resource"], d["region"])
             require(key not in seen)

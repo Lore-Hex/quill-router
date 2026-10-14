@@ -9,7 +9,9 @@ import threading
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
+from concurrent.futures import Future
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlencode
@@ -38,6 +40,37 @@ from trusted_router.services.async_settle_shadow_startup_records import (
 MANIFEST_ENV = "TR_ASYNC_SETTLE_SHADOW_STARTUP_MANIFEST"
 PROCESS_START_US = time.time_ns() // 1000
 MANIFEST_BYTES = 262144
+ORIGINAL_READ_SECONDS = 1.0
+REGISTRY_SECONDS = 1.0
+_STARTUP_WORKER = threading.BoundedSemaphore(1)
+
+
+async def startup_call(operation: Callable[[], Any], seconds: float) -> Any:
+    """One process-wide worker; a late call keeps its slot until it finishes."""
+    started = time.monotonic()
+    require(_STARTUP_WORKER.acquire(blocking=False))
+    result: Future[Any] = Future()
+
+    def work() -> None:
+        try:
+            result.set_result(operation())
+        except BaseException as error:
+            result.set_exception(error)
+        finally:
+            _STARTUP_WORKER.release()
+
+    try:
+        threading.Thread(target=work, name="startup-input", daemon=True).start()
+    except Exception:
+        _STARTUP_WORKER.release()
+        raise
+    async with asyncio.timeout(seconds):
+        while not result.done():
+            await asyncio.sleep(.005)
+        require(time.monotonic() - started <= seconds)
+        return result.result()
+
+
 IDLE_OBSERVER_REASON = "no observer ran in this process"
 
 
@@ -147,7 +180,8 @@ class Harness:
         self.attempt_pages: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
         self.attempt_emitted: set[tuple[str, int]] = set()
         self.attempt_emitted_order: deque[tuple[str, int]] = deque()
-        self.attempt_count = self.attempt_projected = self.attempt_overflow = 0
+        self._attempt_count = self.attempt_projected = self.attempt_overflow = 0
+        self.native_attempts: Any = None
         self.attempt_lock = threading.Lock()
 
     def correlate(self, descriptor: Descriptor) -> bool:
@@ -218,6 +252,7 @@ class Harness:
             require({t["operation"] for t in targets} == {"transport", "read"})
             observations = []
             for target in targets:
+                observed_at_us = self.now()
                 started = self.monotonic()
                 assert self.ports.dependency is not None
                 async with asyncio.timeout(10):
@@ -227,7 +262,7 @@ class Harness:
                 require(matched is True and 0 <= elapsed <= 10_000_000)
                 observations.append(dict(**target, boot=self.boot, config_sha256=m["config_sha256"],
                     attempts=1, marker_matches=True, elapsed_us=elapsed, deadline_us=10_000_000,
-                    observed_at_us=self.now()))
+                    observed_at_us=observed_at_us))
             return dict(dependencies=observations, clock_basis=self.clock_basis)
         if criterion == "observer_freshness":
             require(self.ports.observer is not None)
@@ -273,9 +308,10 @@ class Harness:
             closed(public, "authority_epoch config_sha256 source_revision descriptor_ids")
             require(public["config_sha256"] == m["config_sha256"] and public["source_revision"] == m["revision"])
             require(public["descriptor_ids"] == m["config"]["descriptor_ids"])
-            require(type(public["descriptor_ids"]) is list and 1 <= len(public["descriptor_ids"]) <= 32)
+            require(type(public["descriptor_ids"]) is list and 1 <= len(public["descriptor_ids"]) <= 16)
             for item in public["descriptor_ids"]:
                 identifier(item)
+            require(len(set(public["descriptor_ids"])) == len(public["descriptor_ids"]))
             return dict(effective_pins=m["effective_pins"], source_revision=m["revision"],
                 authority_epoch=public["authority_epoch"],
                 public_descriptors=self.originals.retain("public_descriptors", m.public_original),
@@ -322,7 +358,7 @@ class Harness:
             self.files["manifest.json"] = manifest.original
             for artifact_id, declared in manifest["artifacts"].items():
                 try:
-                    raw = await asyncio.to_thread(read_original, declared["path"])
+                    raw = await startup_call(partial(read_original, declared["path"]), ORIGINAL_READ_SECONDS)
                     require(sum(map(len, self.files.values()))+len(raw) <= 1048576)
                     manifest.artifact_originals[artifact_id] = raw
                     self.files["artifacts/"+hashlib.sha256(raw).hexdigest()+".json"] = raw
@@ -377,11 +413,15 @@ class Harness:
         self.file_acknowledgements[key] = ack
 
     @property
+    def attempt_count(self) -> int:
+        return self.native_attempts.started if self.native_attempts is not None else self._attempt_count
+
+    @property
     def missing_attempts(self) -> int:
         return self.attempt_count - self.attempt_projected
 
     def attempt_start(self) -> None:
-        self.attempt_count += 1
+        self._attempt_count += 1
 
     def attempt_result(self, reservation: Any, result: str) -> None:
         if not self.attempt_lock.acquire(blocking=False):
@@ -448,7 +488,7 @@ class Harness:
                     continue
                 self.attempt_pages[key] = (event["event_at_us"], ref)
                 if results is not None and sequence in results:
-                    self.attempt_count += 1
+                    self._attempt_count += 1
                     self.attempts[key] = (event["event_at_us"], results[sequence])
                 if key not in self.attempts:
                     self.missing.add("NativeAttemptResults")
@@ -538,12 +578,12 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
     async def begin() -> None:
         try:
             async with asyncio.timeout(2):
-                descriptor = await asyncio.to_thread(read_fd)
+                descriptor = await startup_call(read_fd, .3)
                 if descriptor is not None:
                     require(harness.correlate(descriptor))
-                manifest = await asyncio.to_thread(load_manifest, os.environ.get(MANIFEST_ENV, ""))
+                manifest = await startup_call(partial(load_manifest, os.environ.get(MANIFEST_ENV, "")), 1.)
                 if descriptor is None:
-                    descriptor = await asyncio.to_thread(instance_descriptor, manifest["launch"])
+                    descriptor = await startup_call(partial(instance_descriptor, manifest["launch"]), 1.1)
                     require(harness.correlate(descriptor))
             # Actual deployed settings, including the dormant OFF values.
             pins = dict(TR_ASYNC_SETTLE_ENABLED=str(settings.async_settle_enabled).lower(),
@@ -557,8 +597,12 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
                 async def retain_other(key: str, raw: bytes) -> Acknowledgement:
                     return await retain_object(settings.async_settle_shadow_attachment_bucket, key, raw)
                 harness.ports.retain_original = retain_other
-            harness.ports.dependency = dependency_operations(service, manifest, settings=settings,
-                resolver=getattr(app.state, "stage_d_policy_resolver", None))
+            try:
+                harness.ports.dependency = await startup_call(partial(dependency_operations,
+                    service, manifest, settings=settings,
+                    resolver=getattr(app.state, "stage_d_policy_resolver", None)), REGISTRY_SECONDS)
+            except Exception:
+                harness.missing.add("DependencyRegistry")
             await harness.run(descriptor, manifest)
         except Exception:
             harness.missing.add("ReleaseStartupInputs")
@@ -607,8 +651,7 @@ def bind_service(harness: Harness, service: Any, runtime: Any = None) -> None:
             harness.retained_page(page)
     service.acknowledged = acknowledged
     if runtime is not None:
-        runtime.startup_attempt_result = harness.attempt_result
-        runtime.startup_attempt_start = harness.attempt_start
+        runtime.retain_startup_attempts(harness)
 
 
 def regional_attestation_resource(settings: Any) -> str:

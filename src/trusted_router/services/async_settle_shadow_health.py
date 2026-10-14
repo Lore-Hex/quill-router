@@ -246,6 +246,7 @@ class Port:
     """
     def __init__(self, service: Service) -> None:
         self.service = service
+        self.startup_attempts: Any = None
         self.lost = StickyLoss()
         self.fold_cells: dict[str, tuple[Any, ...]] = {}
         self.fold_obligations: dict[Reservation, str] = {}
@@ -490,9 +491,12 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     if admission.startup_retention and outcome == "publications" and claim is not None:
         claim_raw = store.startup_claim_raw
         publication_raw = store.startup_publication_raw
-        if claim_raw is not None and publication_raw is not None:
+        if claim_raw is not None and publication_raw is not None and value is not None:
+            interval_ns = value["observed_at_ns"] - claim["claim_at_ns"]
+            if type(interval_ns) is not int or not 0 <= interval_ns <= 500_000_000 or interval_ns % 1000:
+                return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason, None)
             originals = dict(claim_raw=claim_raw, publication_raw=publication_raw,
-                publication_elapsed_us=elapsed, claim_at_ns=claim["claim_at_ns"],
+                publication_elapsed_us=interval_ns // 1000, claim_at_ns=claim["claim_at_ns"],
                 published_at_ns=value["observed_at_ns"] if value else None)
     return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason, originals)
 
@@ -1099,10 +1103,12 @@ class Service:
             if closure is not None:
                 with self.lock:
                     self.final_attempted.add(day)
-            close_started = round(self.store.clock()*1_000_000) if self.startup_close is not None else 0
-            phase_start, phase_export = self.startup_close_phases.get(day, (preparation_started, export_started))
-            spans = dict(preparation=[phase_start, phase_export],
-                export_wait=[phase_export, close_started])
+            close_started = round(started*1_000_000) if self.startup_close is not None else 0
+            spans = None
+            if self.startup_close is not None:
+                phase_start, phase_export = self.startup_close_phases.get(day, (preparation_started, export_started))
+                spans = dict(preparation=[phase_start, phase_export],
+                    export_wait=[phase_export, close_started])
             close_original = closure
             result_original = None
             completed = False
@@ -1110,9 +1116,9 @@ class Service:
                 try:
                     yield partial(self.store.flush, pages, counter, closure, budget)
                 finally:
-                    if self.startup_close is not None:
-                        spans["close"] = [close_started, round(self.store.clock()*1_000_000)]
-                elapsed = max(0, round((self.store.clock()-started)*1_000_000))
+                    elapsed = max(0, round((self.store.clock()-started)*1_000_000))
+                    if spans is not None:
+                        spans["close"] = [close_started, close_started + elapsed]
                 if closure is not None:
                     observed = int(self.store.wall()*1_000_000)
                     result = Row.build(CLOSE_RESULT_KIND, counter.key, dict(v=2, policy_version=POLICY,
@@ -1135,7 +1141,7 @@ class Service:
                         try:
                             yield partial(self.store.close_result, result, budget)
                         finally:
-                            if self.startup_close is not None:
+                            if spans is not None:
                                 spans["result"] = [result_started, round(self.store.clock()*1_000_000)]
                     except Exception:
                         self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, None))
@@ -1182,7 +1188,7 @@ class Service:
                                        day, self.journal.boot, isinstance(error, UnknownCommit))
                 return
             finally:
-                if close_original is not None and self.startup_close is not None:
+                if close_original is not None and self.startup_close is not None and spans is not None:
                     spans["final_pass"] = [close_started, round(self.store.clock()*1_000_000)]
                     try:
                         self.startup_close(day=day, interval_end_us=end_us, spans=spans,

@@ -33,12 +33,13 @@ from trusted_router.async_settle_shadow_v2_contract import (
 from trusted_router.async_settle_shadow_v2_evidence import EVENT, PREDICTION, committed_identity
 from trusted_router.async_settle_shadow_v2_schema import POLICY, require, sha256
 from trusted_router.billing_snapshot import Eligibility, exclusion
-from trusted_router.config import Settings, in_v2_cohort
+from trusted_router.config import Settings
 from trusted_router.detached_jws import canonical
 from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.services.async_settle_shadow_admission import unknown
 from trusted_router.services.async_settle_shadow_cohort import (
     AuthorizeInput,
+    NativeAttempts,
     authorize,
     has_v2_capability,
 )
@@ -298,6 +299,7 @@ class Runtime:
         self.tokens, self.refilled, self.pending, self.queued_bytes = 10., time.monotonic(), 0, 32*4096
         self.stopped = False
         self.startup_admission = SimpleNamespace(ready=True)
+        self.native_attempts: NativeAttempts | None = None
         self.startup_attempt_result: Callable[[Any, str], None] | None = None
         self.startup_attempt_start: Callable[[], None] | None = None
         self.decisions: dict[str, bytes] = {}
@@ -305,20 +307,11 @@ class Runtime:
 
     def authorize_http(self, request: Any, body: Any, auth: GatewayAuthorization, additions: dict[str, Any],
                        endpoints: list[Any], *, typed: bool, federated: bool, replay: bool) -> None:
-        attempt: list[tuple[Reservation, str]] | None = None
+        inputs: AuthorizeInput | None = None
         try:
             startup_ready = self.startup_admission.ready
             observed_us = time.time_ns()//1000
             capability = tuple(request.headers.getlist("X-TR-Settlement-Shadow-Policy"))
-            if (self.startup_attempt_result is not None and has_v2_capability(capability)
-                    and in_v2_cohort(self.settings.async_settle_shadow_policy, auth.workspace_id,
-                        self.settings.async_settle_enabled, self.settings.async_settle_shadow_workspace_ids)):
-                attempt = []
-                if self.startup_attempt_start is not None:
-                    try:
-                        self.startup_attempt_start()
-                    except Exception:  # noqa: S110 - recorder availability does not change admission
-                        pass
             original = None
             if replay and has_v2_capability(capability):
                 try:
@@ -348,19 +341,35 @@ class Runtime:
             fields = authorize(self.settings, capability,
                 self.port, inputs, additions, self.signer, replay=replay,
                 original_decision=original, retained_original=True, original_locator=original["receipt_locator"] if original else None,
-                finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize,
-                attempt_result=(lambda reservation, result: attempt.append((reservation, result))) if attempt is not None else None)
+                finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize)
             additions.update(compared_handoff_fields(fields, auth))
         except Exception as error:
-            if attempt:
-                attempt[-1] = (attempt[-1][0], "timeout" if isinstance(error, TimeoutError) else "failed")
+            if inputs is not None and inputs.native_attempt is not None:
+                inputs.native_attempt.result = "timeout" if isinstance(error, TimeoutError) else "failed"
             self.port.lost.set()
         finally:
-            if attempt and self.startup_attempt_result is not None:
-                try:
-                    self.startup_attempt_result(*attempt[-1])
-                except Exception:  # noqa: S110 - record collection cannot change admission
-                    pass
+            if inputs is not None and inputs.native_attempt is not None:
+                inputs.native_attempt.finished = True
+
+    def retain_startup_attempts(self, harness: Any) -> None:
+        harness.native_attempts = self.native_attempts = self.port.startup_attempts = NativeAttempts()
+        self.startup_attempt_result = harness.attempt_result
+        self.startup_attempt_start = harness.attempt_start
+
+    def collect_native_attempts(self) -> None:
+        """Called only by the prestarted worker, including its idle polls."""
+        retained = self.native_attempts
+        if retained is None:
+            return
+        while retained.pending and retained.pending[0].finished:
+            inputs = retained.pending.popleft()
+            try:
+                if self.startup_attempt_start is not None:
+                    self.startup_attempt_start()
+                if inputs.reservation is not None and inputs.result is not None and self.startup_attempt_result is not None:
+                    self.startup_attempt_result(inputs.reservation, inputs.result)
+            except Exception:  # noqa: S110 - record availability does not change the native result
+                pass
 
     def admit(self, size: int) -> str | None:
         if not self.guard.acquire(blocking=False):
@@ -449,6 +458,7 @@ class Runtime:
 
     def drain(self) -> None:
         while True:
+            self.collect_native_attempts()
             try:
                 action, args = self.queue.get(timeout=.05)
             except Empty:
@@ -686,6 +696,8 @@ class Runtime:
     def join(self) -> None:
         """Test/shutdown drain only; never called on the request path."""
         self.queue.join()
+        if self.native_attempts is not None and self.dispatch(self.collect_native_attempts):
+            self.queue.join()
 
 
 

@@ -292,6 +292,7 @@ async def test_attempt_start_without_result_is_counted(monkeypatch):
     try:
         shell.authorize_http(request([('X-TR-Settlement-Shadow-Policy', 'shadow-v2')]), body,
             ctx.authorization, additions(), [endpoint()], typed=True, federated=False, replay=False)
+        shell.join()
         assert h.attempt_count == h.missing_attempts == 1
         assert not h.attempts and not lines
     finally:
@@ -474,7 +475,7 @@ async def test_busy_attempt_recorder_preserves_admission(monkeypatch):
         with h.attempt_lock:
             shell.authorize_http(request([('X-TR-Settlement-Shadow-Policy', 'shadow-v2')]), body,
                 ctx.authorization, values, [endpoint()], typed=True, federated=False, replay=False)
-        shell.join()
+            shell.join()
         assert values.get('billing_shadow_binding')
         assert h.attempt_count == h.missing_attempts == h.attempt_overflow == 1
         assert not svc.port.lost.is_set() and not lines
