@@ -162,3 +162,30 @@ def payloadgraph_shared_lookup_cache():
     checked.cache_clear()
     looked_up.cache_clear()
     indexes.clear()
+
+
+PACKAGE_MODULES = frozenset('test_async_settle_shadow_v2_' + name + '.py' for name in (
+    'gates', 'gate_export', 'gate_a2', 'gate_cli', 'gate_loading', 'gate_complete',
+    'gate_retained', 'gate_window'))
+
+
+def live_objects() -> int:
+    import gc
+    gc.collect()
+    return len(gc.get_objects())
+
+
+def release_data_caches() -> None:
+    from tests import shadow_v2_gate_a2_fixture as a2
+    from tests import shadow_v2_gate_fixture_generator as generator
+    from trusted_router import async_settle_shadow_v2_gate_preimages as preimages
+    from trusted_router import async_settle_shadow_v2_gate_prior as prior
+
+    for cached in (a2.fixture_bytes, a2._transport_object, a2._shared_prior_chain,
+                   generator._variants, preimages._entry_digest):
+        cached.cache_clear()
+        assert cached.cache_info().currsize == 0
+    prior._VERIFIED.clear()
+    assert not prior._VERIFIED
+    generator.TYPED_PORTS.clear()
+    assert not generator.TYPED_PORTS

@@ -324,3 +324,35 @@ def deterministic_shadow_budgets(request, monkeypatch):
     monkeypatch.setattr(request_body_limit, 'asyncio', SimpleNamespace(
         get_running_loop=lambda: SimpleNamespace(time=lambda: 16.0),
         wait_for=receive_without_elapsed_budget))
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _p5_cache_lifetime(request):
+    """Release P5 fixture data after all other module fixtures finish."""
+    from tests.shadow_v2_gate_cache import PACKAGE_MODULES, live_objects, release_data_caches
+
+    if request.node.path.name not in PACKAGE_MODULES:
+        yield
+        return
+    # Count after importing the common function-fixture support. Its SDK and
+    # fake classes are permanent imports, not P5 fixture data. No fixture data
+    # is built or cached here.
+    from importlib import import_module
+    for name in ('tests.fakes.postgres', 'tests.fakes.spanner',
+                 'trusted_router.storage_postgres',
+                 'trusted_router.storage_gcp_async_admission',
+                 'trusted_router.storage_gcp_async_settle_shadow',
+                 'trusted_router.services.async_settle_shadow'):
+        import_module(name)
+    before = live_objects()
+    baseline = getattr(request.session, '_p5_objects_before', before)
+    request.session._p5_objects_before = baseline
+    yield
+    release_data_caches()
+    after = live_objects()
+    # A fixed allowance for pytest reports and modules first imported by tests.
+    module_margin = package_margin = 35000
+    print(f'P5 objects {request.node.path.name}: baseline={baseline} before={before} after={after} '
+          f'module_margin={module_margin} package_margin={package_margin}')
+    assert after <= before + module_margin, (request.node.path.name, before, after, module_margin)
+    assert after <= baseline + package_margin, (request.node.path.name, baseline, after, package_margin)

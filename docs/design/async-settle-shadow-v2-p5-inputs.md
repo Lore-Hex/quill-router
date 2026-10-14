@@ -219,3 +219,38 @@ and tools boundary: unexpected load/evaluate/render failures yield a fixed
 proof and scope survive, otherwise the applicable proof-first diagnostic.
 The optional window constrains containment; it does not replace report scope.
 No contract, fixture or pin changes accompany these internal seams.
+
+## P5 test data lifetime and oracle scheduling
+
+The production input table above is unchanged in round 14. The all-paths decoder
+property retains all ten sibling-check lexemes and all twenty agreement-check
+lexemes at the same native paths. Its test ids divide the original traversal
+into sixteen disjoint ranges for each lexeme; the root remains omitted only
+from the sibling check. Per-case timing lives in `.test_durations`.
+
+| Test data | Lifetime check |
+|---|---|
+| Fixture byte tables, parsed variants, last transport, original prior chain, typed ports | Shared `_p5_cache_lifetime` fixture in `tests/conftest.py` clears these at module teardown and measures live objects after collection |
+| Entry-digest inputs and prior-report results | Shared module teardown clears both package-level tables |
+| Boundary loaded graphs and evaluated results | `BoundaryCache.installed` clears both tables after restoring the original functions |
+| Schema, validation, original-byte, root and inventory lookup tables | Existing module fixtures clear their tables and restore function identities before the shared lifetime check |
+
+The shared check allows at most 35,000 additional live objects within a module,
+and at most 35,000 above the count before the first package
+module in each process, for reports and first-use imports. The one-process follow-on checks
+exercise the frame-cache cases and the original format-checking routes after
+all eight modules. The existing subprocess check remains selected by the
+oracle job.
+The baseline is taken after importing the six common function-fixture support
+modules (fake database helpers and the shared shadow-clock modules), before any
+P5 fixture data is built. This excludes permanent first-use support imports from
+the data-lifetime measurement without increasing its fixed allowance.
+
+The final default cache-lifetime case leaves 40,000 nested entries in the
+transport helper cache. The shared teardown releases them; removing that fixture
+on a scratch copy makes the independent object-count check fail.
+
+The generated boundary family and seven-day family use class-scoped data.
+Their large loaded graphs are released when each family completes; the
+seven-day family is collected last. The assertions and generated cases are
+unchanged.
