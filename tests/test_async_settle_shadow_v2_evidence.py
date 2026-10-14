@@ -460,7 +460,10 @@ print(json.dumps({"routes": [(getattr(r, "path", None), sorted(getattr(r, "metho
     for mode in ("absent", "present"):
         result = subprocess.run([sys.executable, "-c", script, mode], cwd=root,  # noqa: S603 - fixed local probe
             env={**os.environ, "PYTHONPATH": str(root / "src"), "TR_STORAGE_BACKEND": "memory", "TR_ENVIRONMENT": "test"},
-            capture_output=True, text=True, timeout=60, check=False)
+            # Each subprocess imports trusted_router.main once; that takes about 15 s
+            # on an idle machine and exceeded 60 s on 2026-10-14 when a local gate ran
+            # at load 15-20. The bound only needs to catch a hang.
+            capture_output=True, text=True, timeout=180, check=False)
         assert result.returncode == 0, result.stderr
         outputs.append(json.loads(result.stdout.splitlines()[-1]))
     assert outputs[0] == outputs[1]
