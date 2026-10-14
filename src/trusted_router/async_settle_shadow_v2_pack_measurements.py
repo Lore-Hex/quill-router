@@ -59,7 +59,7 @@ def operation_join(files: Files, *, counter_ref: dict[str, Any], trace_refs: lis
             require(operation['id'] not in ids and start_us <= operation['at_us'] < end_us, 'artifact_gap')
             ids.add(operation['id'])
             require(operation['operation'] in ('workspace_reads', 'health_reads', 'claims', 'scans',
-                'publications', 'begin', 'commit', 'rollback', 'stream', 'metadata', 'mutation', 'cleanup'), 'artifact_gap')
+                'publications', 'startup', 'close', 'export', 'begin', 'commit', 'rollback', 'stream', 'metadata', 'mutation', 'cleanup'), 'artifact_gap')
             for field in ('logical_count', 'native_rpcs', 'rows', 'bytes', 'elapsed_us'):
                 require(type(operation[field]) is int and operation[field] >= 0, 'artifact_gap')
             totals[operation['operation']] += operation['logical_count']

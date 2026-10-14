@@ -156,9 +156,9 @@ def envelope(files: PackFiles, *, stage: str, payload: dict[str, Any], source: d
 
 
 def export_costs(accounting: list[Any], sink_operations: list[dict[str, Any]], *,
-                 approved: dict[str, Any]) -> dict[str, int]:
+                 approved: dict[str, Any], include_partial: bool = False) -> dict[str, int]:
     """Native reads and sink receipts stay separate from reviewed ceilings."""
-    require(bool(accounting) and all(result.complete for result in accounting), 'artifact_gap')
+    require(bool(accounting) and (include_partial or all(result.complete for result in accounting)), 'artifact_gap')
     for operation in sink_operations:
         a2.EXPORT_OPERATION(operation)
     totals = dict(native_rpcs=sum(result.native_rpcs for result in accounting)

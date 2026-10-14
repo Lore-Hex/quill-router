@@ -158,18 +158,20 @@ def test_review_never_creates_human_record_and_seal_checks_original(tmp_path):
 def test_every_coverage_population_missing_and_conflict_retained(tmp_path, stream):
     calls = Counter()
     def get(key):
+        assert source.expected == {name + '/' + key for name in a1.COVERAGE_STREAMS
+                                   for key in ('missing', 'conflict')}
         calls[key] += 1
         return (b'one', b'two') if key.endswith('/conflict') else ()
     source = ExactPages(get)
-    expected = {name: [] for name in a1.COVERAGE_STREAMS}
-    expected[stream] = ['missing', 'conflict']
+    expected = {name: ['missing', 'conflict'] for name in a1.COVERAGE_STREAMS}
     files = PackFiles(tmp_path)
     result = coverage(files, source, day=DAY, expected=expected)
     entries = result[stream][0]['entries']
     assert [(e['key'], e['state']) for e in entries] == [('conflict', 'conflict'), ('missing', 'missing')]
     assert len([p for p in files.refs if p.startswith('candidates/')]) == 2
     coverage(files, source, day=DAY, expected=expected)
-    assert calls == Counter({stream + '/missing': 1, stream + '/conflict': 1})
+    assert calls == Counter({name + '/' + key: 1 for name in a1.COVERAGE_STREAMS
+                             for key in ('missing', 'conflict')})
     with pytest.raises(ValueError):
         source.read('not-planned')
 

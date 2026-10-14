@@ -28,6 +28,13 @@ def check_scope(name: str, stage: str) -> tuple[str, ...]:
     return tuple(sorted(checks))
 
 
+# Section 15.6 requires native records for each check of these criteria.
+NATIVE_CRITERIA = frozenset(('deployment_inventory', 'authorization_transport_measurements',
+    'maximum_header_hops', 'fleet_load_budget', 'publisher_poll_freshness', 'lifecycle_cpu',
+    'a1_time_domain', 'a1_accounting_dormancy', 'health', 'a1_close_handoff',
+    'a1_provenance_export_load', 'live', 'd2_d3_capacity_slo', 'policy_rollback_status'))
+
+
 def procedure_result(files: PackFiles, plan: dict[str, Any], *, capture_root: Path) -> dict[str, Any]:
     """Only original completed check records supply conclusions.
 
@@ -45,13 +52,19 @@ def procedure_result(files: PackFiles, plan: dict[str, Any], *, capture_root: Pa
     result_ref = selected[0]
     completed = ci_originals(files, run=plan['run'], job=plan['job'], artifact=plan['artifact'],
                             result=result_ref, revision=plan['router_revision'])
+    require('enclave_ci' in plan, 'MissingEnclaveMetadata')
+    enclave = plan['enclave_ci']
+    enclave_completed = ci_originals(files, **enclave, revision=plan['enclave_revision'])
+    require(enclave_completed == completed, 'artifact_gap')
+    enclave_result = retained_json(files.read(enclave['result']))
     result = retained_json(files.read(result_ref))
+    require(enclave_result['procedures'] == result['procedures'], 'artifact_gap')
     require(result['enclave_revision'] == plan['enclave_revision'], 'artifact_gap')
     supplied = result['procedures']
     require(tuple(sorted(supplied)) == scope, 'artifact_gap')
     require(tuple(sorted(plan['checks'])) == scope, 'artifact_gap')
     sources = [plan['run'], plan['job'], plan['artifact'], result_ref,
-               files.refs[prefix + '/ci/selection.json']]
+               files.refs[prefix + '/ci/selection.json'], *enclave.values()]
     checks = []
     for check in scope:
         ref = supplied[check]
@@ -62,6 +75,7 @@ def procedure_result(files: PackFiles, plan: dict[str, Any], *, capture_root: Pa
         require(original['completed_at_us'] <= completed and original['complete'] is True, 'artifact_gap')
         require(original['conclusion'] in ('pass', 'fail'), 'artifact_gap')
         require(original['kind'] in ('ci_procedure', 'native_trial'), 'artifact_gap')
+        require(name not in NATIVE_CRITERIA or original['kind'] == 'native_trial', 'NativeProcedureRequired')
         dependencies = original['sources']
         require(bool(dependencies), 'artifact_gap')
         for dependency in dependencies:
@@ -72,10 +86,13 @@ def procedure_result(files: PackFiles, plan: dict[str, Any], *, capture_root: Pa
             config = retained_json(files.read(original['configuration']))
             require(config['router_revision'] == plan['router_revision'] and
                     config['enclave_revision'] == plan['enclave_revision'], 'artifact_gap')
+            require(config['resource'] == original['resource'] and config['region'] == original['region'],
+                    'artifact_gap')
             require(bool(original['operations']), 'artifact_gap')
             for operation in original['operations']:
                 measured = retained_json(files.read(operation))
-                require(measured['resource'] == original['resource'] and measured['complete'] is True,
+                require(measured['resource'] == original['resource'] and measured['region'] == original['region']
+                        and measured['configuration'] == original['configuration'] and measured['complete'] is True,
                         'artifact_gap')
                 require(original['started_at_us'] <= measured['start_us'] < measured['end_us']
                         <= original['completed_at_us'], 'artifact_gap')

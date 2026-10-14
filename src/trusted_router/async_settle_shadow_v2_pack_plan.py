@@ -116,7 +116,9 @@ def review_subjects(files: PackFiles, subjects: Mapping[str, dict[str, Any]], *,
         files.read(ref)
     required = sorted({name for names in required_stages.values() for name in names})
     require(set(required) <= set(criteria), 'artifact_gap')
-    plan = dict(artifacts={path: ref['sha256'] for path, ref in sorted(files.refs.items())},
+    plan = dict(artifacts={path: ref['sha256'] for path, ref in sorted(files.refs.items())
+                if path not in ('loading/release-plan.json', 'review/subjects.json', 'review/sealed.json')
+                and not path.startswith(('inputs/', 'gate/'))},
                 criteria=criteria, verifiers=verifiers, required=required,
                 required_stages=required_stages)
     ref = files.obj('loading/release-plan.json', plan)

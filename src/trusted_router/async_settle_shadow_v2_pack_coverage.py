@@ -155,7 +155,8 @@ def handoff(day: str, boot: str, result: dict[str, Any] | None) -> dict[str, Any
 def obligations(files: PackFiles, closure: dict[str, Any], pages: list[dict[str, Any]], *,
                 original: Callable[[dict[str, Any]], tuple[dict[str, Any], str] | None],
                 terminal: Callable[[dict[str, Any]], tuple[dict[str, Any], dict[str, Any]] | None],
-                complete_through_us: int) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+                complete_through_us: int, closure_present: bool = True
+                ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     """Issue-day horizons survive report selection and require forward originals.
 
     TerminalReconciliation is a caller seam: the callback supplies only terminals
@@ -193,6 +194,9 @@ def obligations(files: PackFiles, closure: dict[str, Any], pages: list[dict[str,
         files.obj(f"obligations/{closure['day']}/{closure['boot']}/{len(result) + 1:05d}.json",
                   value, joins.AUTHORIZATION_OBLIGATION_PAGE)
         result.append(value)
+    if not closure_present:
+        missing.append('writer_closure_gap')
+        return result, {}, missing
     projection = joins.obligation_projection(closure, ordered)
     files.obj(f"obligations/{closure['day']}/{closure['boot']}/projection.json", projection, joins.OBLIGATION_PROJECTION)
     return result, projection, missing

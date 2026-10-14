@@ -27,7 +27,8 @@ from trusted_router.detached_jws import canonical
 
 def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
                 fixtures: dict[str, dict[str, Any]], cohort: dict[str, Any],
-                source_shas: dict[str, str], complete_through_us: int) -> dict[str, Any]:
+                source_shas: dict[str, str], complete_through_us: int,
+                reconciliation: TerminalReconciliation | None = None) -> dict[str, Any]:
     """Producer outputs select all roots; caller-supplied assembly is not read."""
     for name in PRODUCERS:
         require(name in producers and bool(producers[name]), 'MissingProducer:' + name)
@@ -39,6 +40,15 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     budget = producers['Budget']
     for name, result in (('Inventory', inventory), ('Readiness', ready), ('Shutdown', shutdown)):
         require(result.get('complete') is True, 'MissingProducer:' + name)
+    from trusted_router.async_settle_shadow_v2_collect_ports import day_bounds
+    left, right = day_bounds(day)
+    boots = [b for b in inventory['boots'] if b['start_us'] < right and b['end_us'] > left]
+    require(bool(boots), 'writer_roster_gap')
+    writer_keys = [day + '/' + b['boot'] for b in boots if b['role'] == 'router']
+    ledger_keys = [a2.L(*(str(b[k]) for k in ('role', 'boot', 'revision', 'region', 'boot_at_us')))
+                   for b in boots]
+    require(len(writer_keys) == len(set(writer_keys)) and len(ledger_keys) == len(set(ledger_keys)),
+            'writer_roster_gap')
     rows = native['rows']
     attachments = native.get('attachments', [])
     data = defaultdict(list)
@@ -50,7 +60,15 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
         data[row['id']].append(raw)
     receipts = [v for _, v, _ in by_kind[p1.KINDS[2]]]
     samples = [v for _, v, _ in by_kind[p1.KINDS[0]]]
-    terminal = TerminalReconciliation(receipts, samples)
+    terminal = reconciliation or TerminalReconciliation(receipts, samples)
+    if reconciliation is not None:
+        # Preserve support originals without rewriting their coordinates.
+        from trusted_router.async_settle_shadow_v2_schema import sha256
+        for page, _ in reconciliation.events.values():
+            files.put('support/receipts/' + sha256(page), canonical(page))
+        for group in reconciliation.samples.values():
+            for sample in group:
+                files.put('support/samples/' + sha256(sample), canonical(sample))
     batches = [(key, v) for key, v, _ in by_kind['health_basis']]
     # Export attachment kind names retain the native object spelling.
     if not batches:
@@ -70,10 +88,16 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     obligation_keys = []
     horizon_ends: list[int] = []
     missing = []
-    for _key, closure, _ in by_kind[p1.KINDS[4]]:
+    closure_missing = []
+    for key in writer_keys:
+        selected = [v for k, v, _ in by_kind[p1.KINDS[4]] if k == key]
+        present = len(selected) == 1
+        closure = selected[0] if present else dict(day=day, boot=key.split('/')[1])
+        if not present:
+            closure_missing.append(key)
         pages = [page for page in receipts if page['day'] == day and page['boot'] == closure['boot']]
         made, _, gaps = obligations(files, closure, pages, original=terminal.original,
-            terminal=terminal.terminal, complete_through_us=complete_through_us)
+            terminal=terminal.terminal, complete_through_us=complete_through_us, closure_present=present)
         missing.extend(gaps)
         for page in made:
             name = day + '/' + closure['boot'] + '/' + page['page_seq']
@@ -112,13 +136,19 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     preimages: dict[str, Any] = {}
     for qualified, kind in (('manifest.counter_root', p1.KINDS[3]), ('manifest.closure_root', p1.KINDS[4]),
                             ('manifest.receipts_root', p1.KINDS[2])):
-        preimages[qualified] = [dict(key=a2.L(*key.split('/')), bodies=[raw]) for key, _, raw in by_kind[kind]]
+        expected_keys = population.receipt_keys if kind == p1.KINDS[2] else writer_keys
+        preimages[qualified] = [dict(key=a2.L(*key.split('/')),
+            bodies=[raw for found, _, raw in by_kind[kind] if found == key]) for key in expected_keys]
+        if not expected_keys:
+            missing.append(qualified + ':empty')
     ledger_entries = []
     for ref in ready['ledgers']:
         raw = files.read(ref)
         ledger = a1.PREREQUISITE_LEDGER.parse(raw)
         key = a2.L(*(str(ledger[k]) for k in ('role', 'boot', 'revision', 'region', 'boot_at_us')))
         ledger_entries.append(dict(key=key, bodies=[raw]))
+    ledger_entries = [dict(key=key, bodies=[raw for entry in ledger_entries
+        if entry['key'] == key for raw in entry['bodies']]) for key in ledger_keys]
     preimages['manifest.prerequisite_ledger_root'] = ledger_entries
     preimages['proof.ledger_root'] = ledger_entries
     preimages['proof.publisher_slot_trace_sha256'] = [dict(
@@ -139,7 +169,10 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     # This is the frozen whole-day call. Its dict is released on return.
     artifacts = files.originals()
     manifest, proof = assemble_day(files, manifest, proof, artifacts=artifacts, preimages=preimages,
-        expected_closed={name: not missing and not population.missing and not population.tails for name in PRODUCERS},
+        expected_closed=dict(NativeExport=not missing and not population.missing and not population.tails
+            and not closure_missing, Inventory=inventory['complete'], Readiness=ready['complete']
+            and all(len(e['bodies']) == 1 for e in ledger_entries), Shutdown=shutdown['complete'],
+            Budget=True, ExternalPack=True, History=True),
         horizon_ends=horizon_ends, complete_through_us=complete_through_us)
     del artifacts, preimages
     data.clear()
@@ -148,4 +181,8 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     transport = {**native, 'proof': a1.PROOF_MANIFEST.serialize(proof).decode(),
         'ledgers': [files.read(ref).decode() for ref in ready['ledgers']],
         'rows': [*rows, dict(kind=p1.KINDS[5], id=day + '/manifest-v2', raw=a1.MANIFEST.serialize(manifest).decode())]}
-    return dict(subject=subject, transport=transport, manifest=manifest)
+    return dict(subject=subject, transport=transport, manifest=manifest,
+        support_days=terminal.support_days([day]),
+        missing=sorted(set(missing + list(population.missing)
+            + ['closure:' + key for key in closure_missing]
+            + ['receipt_tail:' + t.key for t in population.tails])))

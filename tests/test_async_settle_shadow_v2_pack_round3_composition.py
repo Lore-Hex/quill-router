@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.async_settle.round3.shadow_v2_window import collect_day
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_pack_round3_captures import collector_capture, writer_capture
 from tests.test_async_settle_shadow_v2_pack import DAY, REV, START, review
 from tests.test_async_settle_shadow_v2_pack_round3_budget import budget_capture
@@ -22,6 +23,22 @@ def stage_capture(root, capture):
     files = DayFiles(root)
     captured, pins = collector_capture(files, capture)
     budget = budget_capture(files, capture)
+    for name in ('pre_allowances', 'post_allowances'):
+        allowance = json.loads(files.read(budget[name]))
+        allowance.update(export_bytes=10000000, export_write_bytes=10000000, export_operations=10000)
+        budget[name] = files.obj('trial/composed-' + name, allowance)
+    closed = json.loads(files.read(captured['Shutdown']))
+    budget['shutdown'] = [dict(measurement=entry['measurement'],
+        original=files.refs['shutdown/' + entry['day'] + '/' + entry['boot'] + '/span-original.json'])
+        for entry in closed['entries']]
+    trial = json.loads(files.read(budget['trial_record']))
+    trial.update(shutdown=budget['shutdown'], shutdown_inventory=captured['Shutdown'])
+    budget['trial_record'] = files.obj('trial/composed-record', trial)
+    budget['trial_review'] = review(files, budget['trial_record'], 'reviews/composed-trial')
+    values = json.loads(files.read(budget['pre_allowances']))
+    budget['export_ceilings'] = files.obj('trial/export-ceilings', dict(native_rpcs=10000, **{k: values[k]
+        for k in ('export_passes', 'export_operations', 'export_bytes', 'export_write_bytes')}))
+    budget['export_review'] = review(files, budget['export_ceilings'], 'reviews/export-ceilings')
     captured['Budget'] = files.obj('captures/Budget', budget)
     native_root = capture['native_root']
     for path in sorted(native_root.rglob('*')):
@@ -33,8 +50,15 @@ def stage_capture(root, capture):
         original = files.put('writer-objects/' + key, capture['objects'].read(ref))
         objects.append(dict(kind='health_basis' if key.startswith('health-basis-batches/') else 'publisher_trace',
             id=key, original=original))
-    captured['NativeExport'] = files.obj('captures/NativeExport', dict(bundle='native-export/bundle.json',
-        accounting=files.refs['native-export/accounting.json'], prefix='native-export/', object_plan=capture['object_plan'], objects=[]))
+    passed = dict(id='initial', bundle='native-export/bundle.json',
+        accounting=files.refs['native-export/accounting.json'], prefix='native-export/', object_plan=capture['object_plan'])
+    captured['NativeExport'] = files.obj('captures/NativeExport', dict(**passed, passes=[passed], output_receipts=[], objects=[]))
+    from trusted_router.async_settle_shadow_v2_pack_daypack import bind_accounting
+    inventory_source = json.loads(files.read(captured['Inventory']))
+    bound = bind_accounting(files, json.loads(files.read(inventory_source['deployment'])),
+        day=DAY, accounting=[passed['accounting']])
+    bound_ref = files.obj(DAY + '/deployment-with-accounting.json', bound)
+    bound_review = review(files, bound_ref, 'reviews/deployment-accounting')
     procedures, approvals = [], {}
     for name in REQUIRED_STAGES['fleet-budgets-pre']:
         item = procedure_capture(files, name, 'fleet-budgets-pre')
@@ -70,7 +94,7 @@ def stage_capture(root, capture):
             file_digest(original.keyset) if original.keys else None]
     # Fresh outputs are recomputed; only captured originals enter this list.
     refs = [ref for path, ref in files.refs.items() if not path.startswith('external/')]
-    return dict(day=DAY, captures=captured, files=refs, fixtures=fixtures, cohort=cohort,
+    return dict(day=DAY, days=[DAY], pass_ids=['initial'], deployment_accounting_review=bound_review, captures=captured, files=refs, fixtures=fixtures, cohort=cohort,
         source_shas=dict(router=REV, enclave=REV), complete_through_us=START + 172805000000,
         checkpoint='fleet-budgets-pre', required_stages={s: list(n) for s, n in REQUIRED_STAGES.items()},
         verifiers=verifiers, predecessors=[])
@@ -88,7 +112,9 @@ def test_source_composition_real_writer_and_collectors(tmp_path, composed):
     root, plan = composed
     output = tmp_path / 'output'
     result = collect_day(root / 'capture', output, plan)
-    assert result['complete']
+    assert not result['complete']
+    assert 'IncompleteDay:' + DAY in result['missing']
+    assert result['gate']['verdict'] == 'BLOCKED'
     readiness = json.loads((root / 'capture/captures/Readiness').read_bytes())
     assert 'reader_originals' not in readiness
     assert readiness['proofs']
@@ -122,17 +148,35 @@ def test_window_command_sequence_from_captures(tmp_path, composed, capsys):
     collected = tmp_path / 'collected'
     commands = [
         ['collect', '--plan', str(plan_path), '--stage', 'pre', '--out', str(collected)],
-        ['review-inputs', '--plan', str(plan_path), '--stage', 'pre', '--input', str(collected),
-            '--out', str(tmp_path / 'review')],
-        ['pack', '--plan', str(plan_path), '--stage', 'pre', '--input', str(collected),
+        ['review-inputs', '--plan', str(plan_path), '--input', str(collected)],
+        ['pack', '--plan', str(plan_path), '--input', str(collected),
             '--out', str(tmp_path / 'pack')]]
-    assert main(commands[0]) == 0, capsys.readouterr().out
+    assert main(commands[0]) == 1, capsys.readouterr().out
     assert main(commands[1]) == 1, capsys.readouterr().out
     subjects = json.loads((collected / 'review/subjects.json').read_bytes())['subjects']
     files = PackFiles(collected)
     selected['daily_reviews'] = {day: review(files, ref, 'review/daily-' + day) for day, ref in subjects.items()}
     plan_path.write_bytes(canonical(dict(stages={'pre': selected})))
-    assert main(commands[2]) == 0, capsys.readouterr().out
+    # The independent reviewer uses the final release list, including daily records.
+    assert main(['review-inputs', '--plan', str(plan_path), '--input', str(collected),
+                 '--out', str(tmp_path / 'final-review')]) == 1
+    import hashlib
+    selected['release_plan_sha256'] = hashlib.sha256(
+        (tmp_path / 'final-review/loading/release-plan.json').read_bytes()).hexdigest()
+    plan_path.write_bytes(canonical(dict(stages={'pre': selected})))
+    assert main(commands[2]) == 1, capsys.readouterr().out
+    from trusted_router.async_settle_shadow_v2_pack_plan import check_plan
+    output = PackFiles(tmp_path / 'pack')
+    result = json.loads((output.root / 'result.json').read_bytes())
+    refs = {r['path'] for r in check_plan(output, result['inputs'])}
+    bundle_names = {r['name'] for r in json.loads((output.root / 'bundle.json').read_bytes())['preimages']}
+    released = json.loads((output.root / 'loading/release-plan.json').read_bytes())['artifacts']
+    for decision in selected['daily_reviews'].values():
+        path = decision['record']['path']
+        assert path in refs and path in bundle_names and path in released
+    assert (output.root / 'review/sealed.json').exists()
+    assert not result['complete'] and 'IncompleteDay:' + DAY in result['missing']
+
     assert (tmp_path / 'pack/bundle.json').exists()
     (tmp_path / 'commands.json').write_bytes(canonical(commands))
 
@@ -200,7 +244,7 @@ def test_composed_original_byte_matrix_base_defect(tmp_path, assembled, case):
         failures=[dict(gap=f.gap, rule=f.rule, subject=f.subject, count=f.count, days=list(f.days))
                   for f in result.failures], counts=result.gate_report['failure_counts'] if result.gate_report else None,
         unavailable=rendered.diagnostic() if isinstance(rendered, UnavailableGateOutput) else None)
-    expected = json.loads(Path('tests/shadow_v2_pack_round3_base_results.json').read_bytes())
+    expected = json.loads(Path('tests/shadow_v2_pack_round4_base_results.json').read_bytes())
     # BASE DEFECT BLOCK: this is today's exact rendered result, including the
     # unavailable cap-only report. Adopt corrected-loader expectations deliberately.
     # Cap-only correction must retain the supplied proof and report the absent day

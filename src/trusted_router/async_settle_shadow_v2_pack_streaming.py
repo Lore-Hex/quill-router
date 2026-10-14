@@ -1,9 +1,9 @@
 """Bounded original-file spool, input pages and captured transport splitting."""
 from __future__ import annotations
 
-import hashlib
+import heapq
 import json
-import sqlite3
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, TextIO
@@ -16,18 +16,17 @@ from trusted_router.detached_jws import canonical
 
 
 class OriginalSpool:
-    """Keep bytes on disk and sort the finite original index in SQLite."""
+    """Keep bytes and an exact-key index on disk; merge bounded sorted runs."""
 
     def __init__(self, root: Path):
         root.mkdir(parents=True, exist_ok=False)
         self.root = root
         self.files = Files(root)
-        self.db = sqlite3.connect(root / 'index.sqlite')
-        self.db.execute('PRAGMA cache_size=-512')
-        self.db.execute('CREATE TABLE originals (path TEXT PRIMARY KEY, digest TEXT, size INTEGER, producer TEXT)')
+        self.names = root / '.original-index-names'
+        self.names.touch()
 
     def close(self) -> None:
-        self.db.close()
+        pass
 
     def __enter__(self) -> OriginalSpool:
         return self
@@ -45,18 +44,36 @@ class OriginalSpool:
     def put(self, path: str, raw: bytes, *, producer: str) -> dict[str, Any]:
         require(len(raw) <= 262144, 'artifact_gap')
         target = (self.root / path).resolve()
-        require(target.is_relative_to(self.root.resolve()) and path != 'index.sqlite', 'artifact_gap')
-        old = self.db.execute('SELECT digest, size FROM originals WHERE path=?', (path,)).fetchone()
-        digest = hashlib.sha256(raw).hexdigest()
-        require(old is None or old == (digest, len(raw)), 'artifact_gap')
+        require(target.is_relative_to(self.root.resolve()) and not path.startswith('.original-index'), 'artifact_gap')
+        existed = target.exists()
         ref = self.files.put(path, raw)
-        if old is None:
-            self.db.execute('INSERT INTO originals VALUES (?, ?, ?, ?)', (path, digest, len(raw), producer))
+        if not existed:
+            with self.names.open('a') as names:
+                names.write(json.dumps(ref) + '\n')
         return ref
 
     def references(self) -> Iterator[dict[str, Any]]:
-        for path, digest, size in self.db.execute('SELECT path, digest, size FROM originals ORDER BY path'):
-            yield dict(path=path, sha256=digest, bytes=size)
+        # Original paths are the exact-key index; sort bounded reference runs.
+        with tempfile.TemporaryDirectory(dir=self.root) as scratch:
+            runs: list[Path] = []
+            batch = []
+            with self.names.open() as names:
+                for line in names:
+                    batch.append(json.loads(line))
+                    if len(batch) == 1024:
+                        run = Path(scratch) / str(len(runs))
+                        run.write_text(''.join(json.dumps(p) + '\n' for p in sorted(batch, key=lambda ref: ref['path'])))
+                        runs.append(run)
+                        batch.clear()
+            if batch:
+                run = Path(scratch) / str(len(runs))
+                run.write_text(''.join(json.dumps(p) + '\n' for p in sorted(batch, key=lambda ref: ref['path'])))
+                runs.append(run)
+            from contextlib import ExitStack
+            with ExitStack() as stack:
+                streams = [stack.enter_context(run.open()) for run in runs]
+                yield from heapq.merge(*(map(json.loads, stream) for stream in streams),
+                                       key=lambda ref: ref['path'])
 
     def leaves(self, out: PackFiles) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []

@@ -22,13 +22,15 @@ from trusted_router.detached_jws import canonical
 
 def compare_export_accounting_streamed(files: Files, reference: dict[str, Any], bundle: Path, *,
                               day: str, object_plan: Mapping[str, str | None],
-                              prefix: str = '', require_native: bool = True) -> AccountingResult:
+                              prefix: str = '', require_native: bool = True,
+                              collector_plan: Mapping[str, dict[str, Any]] | None = None) -> AccountingResult:
     """Reference parser for G1/G7; plans precede captured presence lookup.
 
     Paths inside each exporter pass are relative to that pass's original spool.
     Prefixing a FILE_REF here locates bytes; it never rewrites captured objects.
     Unsuccessful pages and all received candidates remain inventory inputs.
     """
+    collector_plan = collector_plan or {}
     low, high = bounds(day)
     expected_ranges = set(DAY_KINDS)
     missing: list[str] = []
@@ -78,8 +80,11 @@ def compare_export_accounting_streamed(files: Files, reference: dict[str, Any], 
         need(p['key'] in object_plan and (object_plan[p['key']] is None or
              p['generation'] == object_plan[p['key']]), 'planned_generation:' + p['key'])
     transport: Counter[tuple[str, str, str, int]] = Counter()
+    native_keys = set()
     with bundle.open(encoding='utf-8') as source:
         for group, row in CapturedJSON(source).members():
+            if group == 'rows':
+                native_keys.add((row['kind'], row['id']))
             if group in ('rows', 'attachments'):
                 raw = row['raw'].encode()
                 transport[row['kind'], row['id'], roots.file_digest(raw), len(raw)] += 1
@@ -95,13 +100,21 @@ def compare_export_accounting_streamed(files: Files, reference: dict[str, Any], 
         originals[entry['kind'], entry['key'], roots.file_digest(raw), len(raw)] += 1
     need(originals == transport, 'bundle_originals')
     need(all(n == 1 for n in Counter((e['kind'], e['key']) for e in entries).values()), 'duplicate_candidates')
+    need(all(e['metadata'].get('source') != 'supplied_collector_original'
+             for e in entries if (e['kind'], e['key']) in native_keys), 'native_member_label')
+    collectors = [e for e in entries if e['metadata'].get('source') == 'supplied_collector_original']
+    need({e['key'] for e in collectors} == set(collector_plan), 'planned_collector_attachments')
+    for entry in collectors:
+        need(entry['kind'] not in expected_ranges and (entry['kind'], entry['key']) not in native_keys and
+            collector_plan.get(entry['key']) == dict(kind=entry['kind'], sha256=entry['sha256'], bytes=entry['bytes']),
+            'collector_original')
     reads = streams['reads']
     snapshots = {p.get('snapshot') for p in reads if p.get('source') == 'rows'}
     need(len(snapshots) == 1 and None not in snapshots and 0 not in snapshots, 'pass_snapshot')
     need(all(p.get('source') in ('rows', 'object') for p in reads), 'unplanned_read')
     for kind in sorted(expected_ranges):
         pages = [p for p in reads if p.get('source') == 'rows' and p.get('kind') == kind]
-        rows = [e for e in entries if e['kind'] == kind and e['metadata'].get('source') != 'supplied_collector_original']
+        rows = [e for e in entries if e['kind'] == kind and (e['kind'], e['key']) in native_keys]
         cursor = ''
         offset = 0
         need(bool(pages), 'range_missing:' + kind)
@@ -160,6 +173,11 @@ def compare_export_accounting_streamed(files: Files, reference: dict[str, Any], 
         body_bytes=sum(p.get('body_bytes', 0) for p in reads),
         elapsed_us=sum(p.get('elapsed_us', 0) for p in reads))
     need(root['operations'] == actual, 'operation_totals')
+    native_entries = [e for e in entries if e not in collectors]
+    need(actual['body_bytes'] == sum(e['bytes'] for e in native_entries), 'native_body_totals')
+    need(sum(p.get('key_bytes', 0) for p in reads if p['source'] == 'rows') ==
+         sum(e['key_bytes'] for e in native_entries if (e['kind'], e['key']) in native_keys),
+         'native_key_totals')
     need(root['entry_count'] == len(entries) and root['source_operations'] == len(reads)
          and root['source_body_bytes'] == sum(e['bytes'] for e in entries)
          and root['source_key_bytes'] == sum(e['key_bytes'] for e in entries), 'source_totals')

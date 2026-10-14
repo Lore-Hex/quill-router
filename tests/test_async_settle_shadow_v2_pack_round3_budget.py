@@ -14,12 +14,10 @@ from tests.test_async_settle_shadow_v2_pack import (
     BOOT,
     DAY,
     REV,
-    START,
     peaks,
     review,
     shutdown_data,
 )
-from tests.test_async_settle_shadow_v2_pack_round2 import monitoring
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router.async_settle_shadow_v2_gate_inputs import ALLOWANCES, COMPONENTS, TOTALS
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
@@ -45,17 +43,32 @@ def budget_capture(files, capture):
                 operations.append(dict(id=str(entry['slot']) + '-' + name, at_us=entry['slot'] * 2000000,
                     operation=name, logical_count=1, native_rpcs=entry['rpc_count'] if index == 0 else 0,
                     rows=1, bytes=24, elapsed_us=1, slot=entry['slot']))
-    native = files.obj('trial/native-operations', dict(day=DAY, boot=BOOT, start_us=start,
-        end_us=end, complete=True, operations=operations))
+
     config = files.obj('trial/configuration', dict(workspace_count=1, fleet_cap=4,
         regional_caps={'us-central1': 4}, surge=1, publishers=2))
-    baselines = monitoring(files, 'trial/baseline', (.2, .21))
-    trials = monitoring(files, 'trial/cpu', (.22, .25), minute=1)
-    def series(pages, minute):
-        return dict(pages=pages, metric='cpu', metric_labels={},
-            resource=dict(type='spanner_instance', labels=dict(node='one')),
-            start_ns=(START + minute * 60000000) * 1000 + 1,
-            end_ns=(START + minute * 60000000 + 2000000) * 1000 + 1, interval_ns=1000000000)
+    from datetime import UTC, datetime
+    resource = dict(type='spanner_instance', labels=dict(node='one'))
+    for name, at in (('startup', start), ('close', end - 1), ('export', end - 1)):
+        operations.append(dict(id=name, at_us=at, operation=name, logical_count=1,
+            native_rpcs=1, rows=0, bytes=0, elapsed_us=1, slot=None))
+    native = files.obj('trial/native-operations', dict(day=DAY, boot=BOOT, start_us=start,
+        end_us=end, complete=True, operations=operations, configuration=config,
+        resource=resource, region='us-central1'))
+    def series(left, right, values, name):
+        points = []
+        def stamp(us):
+            return datetime.fromtimestamp(us / 1000000, UTC).isoformat().replace('+00:00', 'Z')
+        interval = (right - left) // len(values)
+        assert interval * len(values) == right - left
+        for i, at in enumerate(range(left, right, interval)):
+            points.append(dict(interval=dict(startTime=stamp(at), endTime=stamp(at + interval)),
+                               value=dict(doubleValue=values[i % len(values)])))
+        ref = files.obj('trial/' + name, dict(timeSeries=[dict(metric=dict(type='cpu', labels={}),
+            resource=resource, metricKind='GAUGE', valueType='DOUBLE', points=points)]))
+        return dict(pages=[dict(page_token='', original=ref)], metric='cpu', metric_labels={},
+            resource=resource, start_ns=left * 1000, end_ns=right * 1000, interval_ns=interval * 1000)
+    baseline = series(start - (end-start), start, (.2, .21), 'baseline')
+    trial = series(start, end, (.22, .25), 'cpu')
     allowances = {name: dict(numerator=99, denominator=1) for name in ALLOWANCES} | dict.fromkeys(TOTALS, 99)
     component = dict.fromkeys(COMPONENTS, 1)
     pre_allow = files.obj('trial/pre-allowances', dict(**allowances, component_us=component))
@@ -110,13 +123,30 @@ def budget_capture(files, capture):
             interval=dict(start_us=start, end_us=end), operations=[], load_segments=[dict(
                 fields=dict(day=DAY, boot=BOOT, region='us-central1', start_us=start, end_us=end,
                     role='router', contender=True, workspace_count=1), derivations=derivations)])
-    return dict(configuration=config, baseline=series(baselines, 0), trial=series(trials, 1),
+    plan = dict(configuration=config, baseline=baseline, trial=trial,
         approved_increment=dict(numerator=5, denominator=1), pre_allowances=pre_allow, post_allowances=post_allow,
-        post_scope=files.obj('trial/scope', dict(scope='isolated_trial', closed=True, resource='fake-native-database',
+        post_scope=files.obj('trial/scope', dict(scope='isolated_trial', closed=True, resource=resource, region='us-central1',
             start_us=start, end_us=end, boots=[BOOT])),
         writer_operations=[dict(counter_ref=counter_ref, trace_refs=trace_refs, operation_refs=[native],
             contender=True, start_us=start, end_us=end)], shutdown=[dict(measurement=measured_ref, original=original_ref)],
         components=components, measured_sources=[native, counter_ref, *trace_refs], pre=spec(pre_ref), post=spec(post_ref))
+    from trusted_router.async_settle_shadow_v2_pack_sources import publisher_projection
+    from trusted_router.async_settle_shadow_v2_pack_trial import native_peaks
+    computed = native_peaks(files, plan, plan['pre']['load_segments'][0]['fields'], json.loads(files.read(config)),
+        publisher_projection(fleet_cap=4, surge=1, publishers=2), dict(trial_peak=dict(numerator=25, denominator=1)))
+    for name, value in computed.items():
+        derivations[name] = dict(kind='measured', original=files.obj('trial/computed/' + name, dict(value=value)), field=['value'])
+    record = dict(scope='isolated_trial', resource=resource, region='us-central1', start_us=start, end_us=end,
+        boots=[BOOT], population=[dict(day=DAY, boot=BOOT)], configuration=config, shutdown=plan['shutdown'],
+        baseline={k: baseline[k] for k in ('resource', 'start_ns', 'end_ns', 'interval_ns')},
+        trial={k: trial[k] for k in ('resource', 'start_ns', 'end_ns', 'interval_ns')})
+    plan['component_spans'] = {name: [files.obj('trial/spans/' + name, dict(component=name,
+        start_us=start, end_us=start + 1, configuration=config, resource=resource, region='us-central1'))]
+        for name in COMPONENTS}
+    plan['trial_record'] = files.obj('trial/approved-record', record)
+    plan['trial_review'] = review(files, plan['trial_record'], 'trial/approved-record-review')
+    return plan
+
 
 
 @pytest.fixture(scope='module')
@@ -152,14 +182,35 @@ def test_budget_complete_originals_to_envelopes(tmp_path, captured):
         assert all(linked[ref['path']] == ref for ref in references(plan))
         assert 'budget/source-links.json' in linked
         segments = graph.detail(emitted['v2_load']['segments'], 'segments')
-        for name, derivation in plan[stage]['load_segments'][0]['derivations'].items():
-            assert segments[0]['peaks'][name] == json.loads(files.read(derivation['original']))['value']
-        assert fraction(segments[0]['peaks']['cpu_percent']) == 21 + 5
+        assert len(segments) > 1
+        assert all(s['start_us'] < s['end_us'] for s in segments)
+        assert segments[0]['start_us'] == plan[stage]['interval']['start_us']
+        assert segments[-1]['end_us'] == plan[stage]['interval']['end_us']
+        assert fraction(segments[0]['peaks']['cpu_percent']) == 22
+        assert max(fraction(s['peaks']['cpu_percent']) for s in segments) == 25
         assert json.loads(files.read(emitted['v2_load']['limits'])) == json.loads(files.read(plan[stage]['limits']))
     assert result.post['pre_envelope_sha256'] == sha256(result.pre)
     assert json.loads((tmp_path / 'budget/source-links.json').read_bytes()) == plan
     for name, value in json.loads(files.read(plan['pre_allowances'])).items():
         assert result.measurements[name] == value
+
+    for damage in ('scope', 'shutdown'):
+        files = PackFiles(tmp_path / ('negative-' + damage))
+        bad = budget_capture(files, captured)
+        if damage == 'scope':
+            value = json.loads(files.read(bad['post_scope']))
+            value['closed'] = False
+            bad['post_scope'] = files.obj('bad/scope', value)
+        else:
+            value = json.loads(files.read(bad['shutdown'][0]['measurement']))
+            value['result_us'] = 0
+            bad['shutdown'][0]['measurement'] = files.obj('bad/shutdown', value)
+            record = json.loads(files.read(bad['trial_record']))
+            record['shutdown'] = bad['shutdown']
+            bad['trial_record'] = files.obj('bad/record', record)
+            bad['trial_review'] = review(files, bad['trial_record'], 'bad/review')
+        with pytest.raises(ValueError):
+            CapturedBudget.build(files, bad, checkpoint='fleet-budgets-pre')
 
 
 @pytest.mark.parametrize('name', a2.PEAKS.fields)

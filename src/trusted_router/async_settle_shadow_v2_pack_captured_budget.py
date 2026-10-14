@@ -49,6 +49,14 @@ class CapturedBudget:
         require(scope['scope'] == expected_scope and scope['closed'] is True and bool(scope['resource']), 'artifact_gap')
         require(0 < scope['end_us'] - scope['start_us'] <= 3600000000 or expected_scope == 'production_warmup',
                 'artifact_gap')
+        from trusted_router.async_settle_shadow_v2_pack_trial import (
+            changed_intervals,
+            component_spans,
+            native_peaks,
+            trial_record,
+        )
+        trial_record(files, plan, scope)
+        component_spans(files, plan)
         joins = [operation_join(files, **item) for item in plan['writer_operations']]
         require(bool(joins), 'artifact_gap')
         for item in plan['shutdown']:
@@ -62,6 +70,7 @@ class CapturedBudget:
             require(bool(spec['load_segments']), 'artifact_gap')
             for segment in spec['load_segments']:
                 peaks = segment['peaks']
+                require(peaks == native_peaks(files, plan, segment, config, projection, cpu), 'MeasuredPeaks')
                 require(peaks['configured_routers'] == config['fleet_cap'] + config['surge']
                     and peaks['configured_publishers'] == config['publishers'], 'artifact_gap')
                 require(peaks['configured_reads_per_second'] == projection['observer_reads'] and
@@ -77,6 +86,8 @@ class CapturedBudget:
             if stage == 'post':
                 require(spec['interval'] == dict(start_us=scope['start_us'], end_us=scope['end_us']), 'artifact_gap')
                 require({s['boot'] for s in spec['load_segments']} == set(scope['boots']), 'artifact_gap')
+            spec['load_segments'] = [{**piece, 'peaks': native_peaks(files, plan, piece, config, projection, cpu)}
+                for segment in spec['load_segments'] for piece in changed_intervals(files, plan, segment)]
             kwargs[stage] = spec
         allowances = retained_json(files.read(plan['pre_allowances']))
         ceilings = files.obj('budget/reviewed-ceilings.json',

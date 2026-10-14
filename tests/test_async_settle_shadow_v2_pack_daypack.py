@@ -136,3 +136,22 @@ def test_post_links_canonical_pre_not_filename(tmp_path):
     artifacts['proof.post_budget_sha256'] = a2.BUDGET_ENVELOPE.serialize(post)
     with pytest.raises(ValueError):
         assemble(files, manifest, proof, artifacts, preimages)
+
+
+@pytest.mark.parametrize('edge', ['manifest', 'downstream-report'])
+def test_frozen_proof_attachment_walk_limitation(tmp_path, edge):
+    """The frozen validator does not resolve proof attachments; block that claim.
+
+    The manifest example deliberately leaves an old attachment digest after the
+    forward reference changes. It is not a byte-consistent circular digest.
+    """
+    files, manifest, proof, artifacts, preimages = grammar_inputs(tmp_path)
+    manifest, proof = assemble(files, manifest, proof, artifacts, preimages)
+    artifacts = files.originals()
+    raw = a1.MANIFEST.serialize(manifest) if edge == 'manifest' else b'{"report":"downstream"}'
+    proof['attachments'] = [dict(sha256=roots.file_digest(raw), bytes=len(raw))]
+    artifacts['proof_manifest'] = a1.PROOF_MANIFEST.serialize(proof)
+    manifest['proof_manifest_sha256'] = roots.file_digest(artifacts['proof_manifest'])
+    artifacts['back-reference'] = a1.MANIFEST.serialize(manifest) if edge == 'manifest' else raw
+    # BASE LIMITATION: acceptance is recorded exactly, never presented as rejection.
+    contract.validate_preimages(manifest, proof, artifacts=artifacts, roots=preimages)
