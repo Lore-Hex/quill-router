@@ -57,7 +57,8 @@ def api_error(
 
 def assert_workspace_billing_active(workspace: Any) -> None:
     """Quiesce guard for the typed-billing migration (and a general billing kill
-    switch): raise 503 + Retry-After if the workspace is billing-paused. Call at
+    switch): operational pauses raise 503 + Retry-After; explicit abuse blocks
+    raise non-retryable 403. Call at
     EVERY entry point that starts new billable work or mints an API key — gateway
     authorize/validate, and every key-creation path (/v1/keys, console keys, OAuth
     code exchange, chat-browser key issuance) — so a paused workspace truly drains
@@ -66,6 +67,10 @@ def assert_workspace_billing_active(workspace: Any) -> None:
     if workspace_billing_paused(workspace):
         from trusted_router.types import ErrorType
 
+        # Abuse is an access decision, even when a maintenance pause also exists.
+        # Never expose the operator's free-text evidence or invite automatic retry.
+        if "abuse" in workspace.billing_pause_causes:
+            raise api_error(403, "Workspace access is suspended", ErrorType.FORBIDDEN)
         raise api_error(
             503,
             "Workspace billing is paused",

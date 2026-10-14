@@ -127,3 +127,63 @@ def test_billing_paused_defaults_false_back_compat() -> None:
     ws = Workspace(id="w", name="n", owner_user_id="u")
     assert ws.billing_paused is False
     assert ws.billing_pause_reason == ""
+
+
+@pytest.mark.parametrize("causes", [["abuse"], ["abuse", "migration"], ["abuse", "principal_recovery"]])
+def test_abuse_suspension_is_forbidden_not_retryable(causes: list[str]) -> None:
+    from fastapi import HTTPException
+
+    from trusted_router.errors import assert_workspace_billing_active
+
+    workspace = Workspace(
+        id="blocked", name="Blocked", owner_user_id="owner",
+        billing_pause_causes=causes, billing_pause_reason="private operator evidence",
+    )
+    with pytest.raises(HTTPException) as raised:
+        assert_workspace_billing_active(workspace)
+    assert raised.value.status_code == 403
+    assert raised.value.detail["error"]["type"] == "forbidden"
+    assert raised.value.headers is None
+    assert "private operator evidence" not in str(raised.value.detail)
+    assert workspace.billing_pause_causes == sorted(causes)
+
+
+@pytest.mark.parametrize("causes", [["migration"], ["principal_recovery"], ["unknown_cause"]])
+def test_operational_pauses_remain_retryable(causes: list[str]) -> None:
+    from fastapi import HTTPException
+
+    from trusted_router.errors import assert_workspace_billing_active
+
+    workspace = Workspace(id="paused", name="Paused", owner_user_id="owner", billing_pause_causes=causes)
+    with pytest.raises(HTTPException) as raised:
+        assert_workspace_billing_active(workspace)
+    assert raised.value.status_code == 503
+    assert raised.value.headers == {"Retry-After": "30"}
+
+
+def test_abuse_blocks_new_work_and_keys_but_preserves_settlement() -> None:
+    email = "abuse-pause@example.com"
+    client, key = _client_and_key(email)
+    workspace = STORE.get_workspace(STORE.get_key_by_hash(key["hash"]).workspace_id)
+    auth = _authorize(client, key["hash"])
+    assert auth.status_code == 200
+    authorization_id = auth.json()["data"]["authorization_id"]
+    workspace.billing_pause_causes = ["abuse"]
+    workspace.billing_paused = True
+
+    responses = [
+        _authorize(client, key["hash"]),
+        client.post("/v1/internal/gateway/validate", json={"api_key_hash": key["hash"], "route_type": "chat"}),
+        client.post("/v1/keys", headers={"x-trustedrouter-user": email}, json={"name": "blocked"}),
+    ]
+    for response in responses:
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["type"] == "forbidden"
+        assert "retry-after" not in response.headers
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={"authorization_id": authorization_id, "actual_input_tokens": 10,
+              "actual_output_tokens": 5, "request_id": "abuse-existing-settle", "elapsed_seconds": 1.0},
+    )
+    assert settle.status_code == 200, settle.text
+    assert workspace.billing_pause_causes == ["abuse"]

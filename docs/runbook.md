@@ -1209,6 +1209,13 @@ per-shard headroom from an overage settle must return a clean 402, never a
 
 ## <a id="reshard-interrupted"></a>One workspace 503s "Workspace billing is paused" (interrupted reshard)
 
+An explicit `abuse` pause is different: authorize, validate and key creation
+return `403 forbidden` without `Retry-After`, even when another pause cause is
+also present. It is an access restriction, not a temporary service outage.
+Do not unpause an abuse-restricted workspace to clear an availability alert.
+Existing authorized work still settles. Other pause causes retain the retryable
+503 behavior and billing alerts below; no alert threshold is relaxed.
+
 Symptom: every request from exactly ONE workspace returns
 `503 Workspace billing is paused` with `Retry-After: 30`, while every other
 tenant is healthy. Key creation for that workspace fails the same way
