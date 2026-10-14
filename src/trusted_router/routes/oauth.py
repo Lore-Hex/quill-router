@@ -46,7 +46,11 @@ from trusted_router.oauth_provider import (
     exchange_code,
     fetch_user,
 )
-from trusted_router.signup_gate import require_new_account_creation, starter_credit_for_email
+from trusted_router.signup_gate import (
+    github_account_old_enough,
+    require_new_account_creation,
+    starter_credit_for_email,
+)
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -159,6 +163,15 @@ class _PersistedLogin:
     attribution: tuple[str, int] | None
 
 
+def _starter_credit(provider: OAuthProvider, info: OAuthUserInfo, settings: Settings) -> int:
+    """Starter credit for a direct (non-delegated) OAuth signup."""
+    if provider.slug == "github" and not github_account_old_enough(
+        info.provider_account_created_at
+    ):
+        return 0
+    return starter_credit_for_email(info.email, settings.signup_trial_credit_microdollars)
+
+
 def _persist_login(
     provider: OAuthProvider,
     settings: Settings,
@@ -205,9 +218,7 @@ def _persist_login(
             # don't deref None silently.
             result = STORE.signup(
                 email=info.email,
-                trial_credit_microdollars=starter_credit_for_email(
-                    info.email, settings.signup_trial_credit_microdollars
-                ),
+                trial_credit_microdollars=_starter_credit(provider, info, settings),
                 email_verified=True,
             )
             if result is not None:

@@ -588,14 +588,24 @@ async def test_github_callback_creates_session(github_client: TestClient) -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("email", "expected_credit"), [
-    ("gh@example.com", 300_000),
-    ("andreakennedy364852@hotmail.com", 0),
-    ("Someone@HOTMAIL.co.uk", 0),
+@pytest.mark.parametrize(("email", "account_age_days", "expected_credit"), [
+    ("gh@example.com", 400, 300_000),
+    ("gh@example.com", 31, 300_000),
+    ("gh@example.com", 29, 0),
+    ("gh@example.com", 0, 0),
+    ("gh@example.com", None, 0),
+    ("andreakennedy364852@hotmail.com", 400, 0),
+    ("Someone@HOTMAIL.co.uk", 400, 0),
 ])
-async def test_github_signup_records_account_age_and_withholds_hotmail_credit(
-    github_client: TestClient, email: str, expected_credit: int,
+async def test_github_signup_records_account_age_and_gates_starter_credit(
+    github_client: TestClient, email: str, account_age_days: int | None, expected_credit: int,
 ) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    created_at = (
+        None if account_age_days is None
+        else (datetime.now(UTC) - timedelta(days=account_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     state = _begin_oauth(github_client, "github")
 
     async def fake_exchange(**_: Any) -> str:
@@ -610,7 +620,7 @@ async def test_github_signup_records_account_age_and_withholds_hotmail_credit(
             email_verified=True,
             display_name="Alice",
             provider_login="alice-gh",
-            provider_account_created_at="2026-10-13T09:00:00Z",
+            provider_account_created_at=created_at,
         )
 
     with (
@@ -631,7 +641,7 @@ async def test_github_signup_records_account_age_and_withholds_hotmail_credit(
     user = STORE.get_user(user.id)
     assert user is not None
     assert user.github_login == "alice-gh"
-    assert user.github_account_created_at == "2026-10-13T09:00:00Z"
+    assert user.github_account_created_at == created_at
 
 # ── Wallet / SIWE ───────────────────────────────────────────────────────────
 
