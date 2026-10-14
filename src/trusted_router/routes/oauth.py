@@ -46,7 +46,7 @@ from trusted_router.oauth_provider import (
     exchange_code,
     fetch_user,
 )
-from trusted_router.signup_gate import require_new_account_creation
+from trusted_router.signup_gate import require_new_account_creation, starter_credit_for_email
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -205,7 +205,9 @@ def _persist_login(
             # don't deref None silently.
             result = STORE.signup(
                 email=info.email,
-                trial_credit_microdollars=settings.signup_trial_credit_microdollars,
+                trial_credit_microdollars=starter_credit_for_email(
+                    info.email, settings.signup_trial_credit_microdollars
+                ),
                 email_verified=True,
             )
             if result is not None:
@@ -230,6 +232,13 @@ def _persist_login(
         # verified-at-creation still get marked here, once.
         if not existing_user.email_verified:
             STORE.mark_user_email_verified(user_id)
+
+    if first_time and info.provider_login:
+        # Kept on the user, not the opt-out-able acquisition record, so abuse
+        # review always sees which GitHub account (and how old) signed up.
+        STORE.set_user_github_identity(
+            user_id, info.provider_login, info.provider_account_created_at
+        )
 
     raw_token, _ = STORE.create_auth_session(
         user_id=user_id,

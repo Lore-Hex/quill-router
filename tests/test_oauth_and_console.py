@@ -516,6 +516,7 @@ async def test_github_oauth_helpers_use_verified_primary_email(httpx_mock) -> No
             "email": "fallback@example.com",
             "name": "Alice",
             "avatar_url": "https://example.test/alice.png",
+            "created_at": "2011-01-25T18:44:36Z",
         },
     )
     httpx_mock.add_response(
@@ -529,6 +530,8 @@ async def test_github_oauth_helpers_use_verified_primary_email(httpx_mock) -> No
     info = await fetch_user(provider=GITHUB, access_token=token)
     assert info.email == "primary@example.com"
     assert info.email_verified is True
+    assert info.provider_login == "alice"
+    assert info.provider_account_created_at == "2011-01-25T18:44:36Z"
     for request in httpx_mock.get_requests():
         if str(request.url) in {github_user_url, github_emails_url}:
             assert request.headers["authorization"] == "Bearer github-access-token"
@@ -582,6 +585,53 @@ async def test_github_callback_creates_session(github_client: TestClient) -> Non
     assert resp.status_code == 302
     assert resp.headers["location"] == "/console/welcome?first=1"
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("email", "expected_credit"), [
+    ("gh@example.com", 300_000),
+    ("andreakennedy364852@hotmail.com", 0),
+    ("Someone@HOTMAIL.co.uk", 0),
+])
+async def test_github_signup_records_account_age_and_withholds_hotmail_credit(
+    github_client: TestClient, email: str, expected_credit: int,
+) -> None:
+    state = _begin_oauth(github_client, "github")
+
+    async def fake_exchange(**_: Any) -> str:
+        return "gh-tok"  # noqa: S105
+
+    async def fake_fetch_user(**_: Any) -> Any:
+        from trusted_router.oauth_provider import OAuthUserInfo
+
+        return OAuthUserInfo(
+            sub="42",
+            email=email,
+            email_verified=True,
+            display_name="Alice",
+            provider_login="alice-gh",
+            provider_account_created_at="2026-10-13T09:00:00Z",
+        )
+
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
+        resp = github_client.get(
+            f"/github_oauth_callback?code=c&state={state}",
+            # Privacy opt-out skips acquisition tracking, never abuse review.
+            headers={"DNT": "1", "Sec-GPC": "1"},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 302
+    user = STORE.find_user_by_email(email)
+    assert user is not None
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    assert live_credit_summary(workspace.id)["total_credits"] == expected_credit
+    user = STORE.get_user(user.id)
+    assert user is not None
+    assert user.github_login == "alice-gh"
+    assert user.github_account_created_at == "2026-10-13T09:00:00Z"
 
 # ── Wallet / SIWE ───────────────────────────────────────────────────────────
 

@@ -1379,6 +1379,17 @@ class InMemoryStore:
             user.phone_last_refused = phone
             return user
 
+    def set_user_github_identity(
+        self, user_id: str, login: str, account_created_at: str | None
+    ) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            user.github_login = login
+            user.github_account_created_at = account_created_at
+            return user
+
     def clear_user_phone(self, user_id: str) -> User | None:
         with self._lock:
             user = self.users.get(user_id)

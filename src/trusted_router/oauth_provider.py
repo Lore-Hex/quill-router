@@ -29,6 +29,10 @@ class OAuthUserInfo:
     email: str
     email_verified: bool
     display_name: str | None = None
+    # Provider-side account identity, kept for abuse review. GitHub reports
+    # both; Google reports neither.
+    provider_login: str | None = None
+    provider_account_created_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +221,10 @@ async def _fetch_github_user(access_token: str, client: httpx.AsyncClient) -> OA
         email=primary_email,
         email_verified=verified,
         display_name=user.get("name") if isinstance(user.get("name"), str) else login,
+        provider_login=login,
+        provider_account_created_at=(
+            user.get("created_at") if isinstance(user.get("created_at"), str) else None
+        ),
     )
 
 

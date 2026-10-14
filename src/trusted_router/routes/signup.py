@@ -7,7 +7,7 @@ from trusted_router.acquisition import record_signup_attribution
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.schemas import SignupRequest
-from trusted_router.signup_gate import require_new_account_creation
+from trusted_router.signup_gate import require_new_account_creation, starter_credit_for_email
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -31,7 +31,9 @@ def register_signup_routes(router: APIRouter) -> None:
         result = STORE.signup(
             email=str(body.email).lower(),
             workspace_name=body.name,
-            trial_credit_microdollars=settings.signup_trial_credit_microdollars,
+            trial_credit_microdollars=starter_credit_for_email(
+                str(body.email), settings.signup_trial_credit_microdollars
+            ),
         )
         if result is None:
             raise api_error(
