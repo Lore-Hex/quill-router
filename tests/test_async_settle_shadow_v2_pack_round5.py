@@ -20,7 +20,7 @@ from trusted_router.detached_jws import canonical
 @pytest.fixture(scope='module')
 def eight_day_sources(tmp_path_factory):
     root = tmp_path_factory.mktemp('eight-real-days')
-    days = [f'2026-10-{n:02d}' for n in range(7, 15)]
+    days = [f'2026-10-{n:02d}' for n in range(7, 17)]
     plans = {}
     for day in days:
         plans[day] = captured_day(root / day, day)
@@ -29,7 +29,12 @@ def eight_day_sources(tmp_path_factory):
     previous = []
     for stage in ('transport', 'fleet-budgets-pre', 'shadow-serving', 'fleet-budgets'):
         previous = [make_predecessor(files, 'prior/' + stage, previous)]
-    selected = dict(days=days[:6], day_plans=plans, predecessors=previous,
+    bundle = json.loads((root / days[0] / 'writer/native-complete/bundle.json').read_bytes())
+    row = max((row for row in bundle['rows'] if 'sample' in row['kind']),
+        key=lambda row: json.loads(row['raw'])['observed_at_us'])
+    seed = files.put('window/seed', row['raw'].encode())
+    start = json.loads(row['raw'])['observed_at_us']
+    selected = dict(interval=dict(seed=seed, start_us=start, end_us=start + 7 * 86400000000), days=days[:8], day_plans=plans, predecessors=previous,
         checkpoint='shadow-serving', required_stages=plans[days[0]]['required_stages'],
         verifiers=plans[days[0]]['verifiers'])
     plan = dict(default_stage='window', stages=dict(window=selected))
@@ -45,7 +50,9 @@ def test_real_eight_day_public_window_and_pack(tmp_path, eight_day_sources):
     result = command.window('collect', plan, source=source, out=collected)
     assert result.get('kind') == 'window', result
     days = sorted(selected['day_plans'])
-    assert len(days) == 8 and result['inputs']['days'] == days
+    assert len(selected['days']) == 8 and len(days) == 10 and result['inputs']['days'] == days
+    assert selected['interval']['start_us'] % 86400000000 > 0
+    assert selected['interval']['end_us'] - selected['interval']['start_us'] == 7 * 86400000000
     assert len(result['inputs']['predecessors']) == 4
     for day in days:
         child = json.loads((collected / 'day-inputs' / day / 'stage/result.json').read_bytes())
@@ -73,11 +80,11 @@ def test_real_eight_day_public_window_and_pack(tmp_path, eight_day_sources):
 def test_real_window_missing_support_is_recorded(tmp_path, eight_day_sources):
     source, plan = eight_day_sources
     plan = copy.deepcopy(plan)
-    del plan['stages']['window']['day_plans']['2026-10-14']
+    del plan['stages']['window']['day_plans']['2026-10-16']
     result = command.window('collect', plan, source=source, out=tmp_path / 'out')
     assert not result['complete']
-    assert 'MissingSupportDay:2026-10-14' in result['missing']
-    assert '2026-10-14' in result['inputs']['days']
+    assert 'MissingSupportDay:2026-10-16' in result['missing']
+    assert '2026-10-16' in result['inputs']['days']
 
 
 def test_record_spool_memory_and_repeatable_lookup(tmp_path):

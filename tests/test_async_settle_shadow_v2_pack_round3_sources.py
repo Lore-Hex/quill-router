@@ -63,10 +63,10 @@ def test_reader_reference_cannot_come_from_presence(tmp_path):
     assert 'page:' + record['page'] in index.missing
 
 
-def procedure_capture(files, name, stage):
+def procedure_capture(files, name, stage, enclave_revision=REV):
     prefix = 'capture/' + stage + '/' + name
     scope = check_scope(name, stage)
-    config = files.obj(prefix + '/config', dict(router_revision=REV, enclave_revision=REV,
+    config = files.obj(prefix + '/config', dict(router_revision=REV, enclave_revision=enclave_revision,
         resource='fake-native-database', region='us-central1'))
     operation = files.obj(prefix + '/operation', dict(resource='fake-native-database', region='us-central1', configuration=config, complete=True,
         start_us=START, end_us=START + 1, native_rpcs=3))
@@ -75,8 +75,8 @@ def procedure_capture(files, name, stage):
         procedures[check] = files.obj(prefix + '/' + check, dict(criterion=name, check=check,
             kind='native_trial', resource='fake-native-database', region='us-central1', started_at_us=START,
             completed_at_us=START + 2, complete=True, conclusion='pass', router_revision=REV,
-            enclave_revision=REV, configuration=config, operations=[operation], sources=[operation]))
-    result = dict(revision=REV, enclave_revision=REV, run_id=1, job_id=2, artifact_id=3,
+            enclave_revision=enclave_revision, configuration=config, operations=[operation], sources=[operation]))
+    result = dict(revision=REV, enclave_revision=enclave_revision, run_id=1, job_id=2, artifact_id=3,
         conclusion='success', completed_at=DAY + 'T00:00:01Z', procedures=procedures)
     raw = canonical(result)
     archive = files.root / (prefix + '/download.zip')
@@ -90,8 +90,12 @@ def procedure_capture(files, name, stage):
         artifact=files.obj(prefix + '/artifact', dict(id=3, workflow_run=dict(id=1, head_sha=REV), expired=False)))
     enclave_ci = {key: files.obj(prefix + '/enclave-' + key, json.loads(files.read(ref)))
                   for key, ref in refs.items()}
-    enclave_ci['result'] = files.obj(prefix + '/enclave-result', result)
-    return dict(enclave_ci=enclave_ci, name=name, stage=stage, checks=list(scope), router_revision=REV, enclave_revision=REV,
+    for key in ('run', 'job', 'artifact'):
+        value = json.loads(files.read(enclave_ci[key]))
+        (value['workflow_run'] if key == 'artifact' else value)['head_sha'] = enclave_revision
+        enclave_ci[key] = files.obj(prefix + '/selected-enclave-' + key, value)
+    enclave_ci['result'] = files.obj(prefix + '/enclave-result', {**result, 'revision': enclave_revision})
+    return dict(enclave_ci=enclave_ci, name=name, stage=stage, checks=list(scope), router_revision=REV, enclave_revision=enclave_revision,
         archive=archive.relative_to(files.root).as_posix(), archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
         member=dict(name='exact/result.json', bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest()), **refs)
 

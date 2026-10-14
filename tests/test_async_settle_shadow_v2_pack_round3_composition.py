@@ -19,7 +19,7 @@ from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles
 from trusted_router.async_settle_shadow_v2_pack_procedures import REQUIRED_STAGES, procedure_result
 
 
-def stage_capture(root, capture):
+def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre'):
     files = DayFiles(root)
     captured, pins = collector_capture(files, capture)
     budget = budget_capture(files, capture)
@@ -52,7 +52,7 @@ def stage_capture(root, capture):
             id=key, original=original))
     passed = dict(id='initial', bundle='native-export/bundle.json',
         accounting=files.refs['native-export/accounting.json'], prefix='native-export/', object_plan=capture['object_plan'])
-    captured['NativeExport'] = files.obj('captures/NativeExport', dict(**passed, passes=[passed], output_receipts=[], objects=[]))
+    captured['NativeExport'] = files.obj('captures/NativeExport', dict(**passed, passes=[passed], output_receipts=budget['output_receipts'], objects=[]))
     from trusted_router.async_settle_shadow_v2_pack_daypack import bind_accounting
     inventory_source = json.loads(files.read(captured['Inventory']))
     bound = bind_accounting(files, json.loads(files.read(inventory_source['deployment'])),
@@ -60,11 +60,11 @@ def stage_capture(root, capture):
     bound_ref = files.obj(DAY + '/deployment-with-accounting.json', bound)
     bound_review = review(files, bound_ref, 'reviews/deployment-accounting')
     procedures, approvals = [], {}
-    for name in REQUIRED_STAGES['fleet-budgets-pre']:
-        item = procedure_capture(files, name, 'fleet-budgets-pre')
+    for name in REQUIRED_STAGES[checkpoint]:
+        item = procedure_capture(files, name, checkpoint)
         procedure_result(files, item, capture_root=root)
-        path = 'external/fleet-budgets-pre/' + name + '/result.json'
-        approvals['fleet-budgets-pre/' + name] = review(files, files.refs[path], 'reviews/external/' + name)
+        path = 'external/' + checkpoint + '/' + name + '/result.json'
+        approvals[checkpoint + '/' + name] = review(files, files.refs[path], 'reviews/external/' + name)
         procedures.append(item)
     captured['ExternalPack'] = files.obj('captures/ExternalPack', dict(procedures=procedures, approvals=approvals))
     old = files.obj('old/payload', dict(rows=[], days=[DAY], proof={}, resets=[], serving=[], manifests={}))
@@ -96,7 +96,7 @@ def stage_capture(root, capture):
     refs = [ref for path, ref in files.refs.items() if not path.startswith('external/')]
     return dict(day=DAY, days=[DAY], pass_ids=['initial'], deployment_accounting_review=bound_review, captures=captured, files=refs, fixtures=fixtures, cohort=cohort,
         source_shas=dict(router=REV, enclave=REV), complete_through_us=START + 172805000000,
-        checkpoint='fleet-budgets-pre', required_stages={s: list(n) for s, n in REQUIRED_STAGES.items()},
+        checkpoint=checkpoint, required_stages={s: list(n) for s, n in REQUIRED_STAGES.items()},
         verifiers=verifiers, predecessors=[])
 
 
@@ -244,14 +244,9 @@ def test_composed_original_byte_matrix_base_defect(tmp_path, assembled, case):
         failures=[dict(gap=f.gap, rule=f.rule, subject=f.subject, count=f.count, days=list(f.days))
                   for f in result.failures], counts=result.gate_report['failure_counts'] if result.gate_report else None,
         unavailable=rendered.diagnostic() if isinstance(rendered, UnavailableGateOutput) else None)
-    expected = json.loads(Path('tests/shadow_v2_pack_round4_base_results.json').read_bytes())
-    # BASE DEFECT BLOCK: this is today's exact rendered result, including the
-    # unavailable cap-only report. Adopt corrected-loader expectations deliberately.
-    # Cap-only correction must retain the supplied proof and report the absent day
-    # manifest at its original day/key; it must not lose all subjects at container.
-    # D1 must consume original compared sample/receipt joins; no new file is made.
-    # G1/G7 must consume original range/accounting changes; stage projections must
-    # preserve pre/trial scope. Binary archive parts remain in the input plan.
+    expected = json.loads(Path('tests/shadow_v2_pack_round6_base_results.json').read_bytes())
+    # Exact current results after generated transport records and aligned launch times.
+    # The projection-page mismatch remains an existing loader result.
     assert actual == expected['vectors'][expected['cases'][case]]
 
 

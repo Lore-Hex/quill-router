@@ -136,3 +136,41 @@ class RecordView:
             if offset == index:
                 return value
         raise IndexError(index)
+
+
+def sorted_operations(values: Iterator[dict[str, Any]], root: Path) -> Path:
+    """Sort bounded runs with sixteen input files per merge, preserving repeats."""
+    import heapq
+    from contextlib import ExitStack
+    root.mkdir(parents=True, exist_ok=True)
+    runs: list[Path] = []
+    batch: list[dict[str, Any]] = []
+    def emit() -> None:
+        path = root / f'run-{len(runs):06d}'
+        with path.open('wb') as output:
+            for value in sorted(batch, key=lambda value: value['at_us']):
+                output.write(canonical(value) + b'\n')
+        runs.append(path)
+        batch.clear()
+    for value in values:
+        batch.append(value)
+        if len(batch) == 512:
+            emit()
+    if batch or not runs:
+        emit()
+    level = 0
+    while len(runs) > 1:
+        merged = []
+        for offset in range(0, len(runs), 16):
+            target = root / f'merge-{level}-{offset}'
+            sources = runs[offset:offset + 16]
+            with ExitStack() as stack, target.open('wb') as output:
+                streams = [map(json.loads, stack.enter_context(path.open())) for path in sources]
+                for value in heapq.merge(*streams, key=lambda value: value['at_us']):
+                    output.write(canonical(value) + b'\n')
+            for path in sources:
+                path.unlink()
+            merged.append(target)
+        runs = merged
+        level += 1
+    return runs[0]

@@ -61,7 +61,7 @@ def collector_capture(files, capture):
         payload = row['jsonPayload']
         payload['at_us'] = counter['started_at_us'] if payload['event'] == 'start' else counter['flushed_at_us']
     for row in fake.records['startup']:
-        row.update(process_start_us=counter['started_at_us'] + 1, recorded_at_us=counter['started_at_us'] + 2)
+        row.update(process_start_us=counter['started_at_us'], recorded_at_us=counter['started_at_us'] + 2)
     _, inv = inventory(files, binding, fake, queries)
     _, inv = inventory(files, binding, fake, queries, review(files, inv.deployment))
     pins, startup = readiness_sources(files, inv)

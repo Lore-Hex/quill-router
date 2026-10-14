@@ -120,6 +120,7 @@ class TerminalReconciliation:
                  *, spool: Path | None = None):
         from trusted_router.async_settle_shadow_v2_pack_records import RecordGroups, RecordMap
         self.scratch: Any = None
+        self.day_status: dict[str, bool] = {}
         self.events: Any = {} if spool is None else RecordMap(spool / 'events')
         self.terminals: Any = {} if spool is None else RecordGroups(spool / 'terminals')
         self.samples: Any = {} if spool is None else RecordGroups(spool / 'samples')
@@ -224,3 +225,23 @@ class TerminalReconciliation:
             if terminal is not None:
                 days.add(terminal[0]['day'])
         return tuple(sorted(days))
+
+
+    def required_through(self, selected: list[str]) -> dict[str, int]:
+        """Keep the original issue horizon when comparing support-day completion."""
+        required: dict[str, int] = {}
+        for (day, _, _), (page, event) in self.events.items():
+            if day not in selected or event['phase'] not in ('authorize', 'replay'):
+                continue
+            args = {}
+            if event['phase'] == 'replay':
+                found = self.original(event['retry_original'])
+                require(found is not None, 'authorization_link_gap')
+                assert found is not None
+                args = dict(original_page=found[0], original_event_seq=found[1])
+            obligation = joins.authorization_obligation(page, event['seq'], **args)
+            horizon = obligation['horizon_at_us']
+            for number in range(event['event_at_us'] // 86400000000, (horizon - 1) // 86400000000 + 1):
+                key = day_at(number * 86400000000)
+                required[key] = max(required.get(key, 0), min(horizon, (number + 1) * 86400000000))
+        return required

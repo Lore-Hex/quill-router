@@ -6,27 +6,14 @@ from typing import Any
 
 from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
 from trusted_router.async_settle_shadow_v2_pack_external import (
-    REQUIRED_STAGES as EARLIER_STAGES,
-)
-from trusted_router.async_settle_shadow_v2_pack_external import (
+    REQUIRED_STAGES,  # noqa: F401
     ci_originals,
     proof_result,
 )
 from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles
-from trusted_router.async_settle_shadow_v2_pack_scope import check_scope as earlier_checks
+from trusted_router.async_settle_shadow_v2_pack_scope import check_scope
 from trusted_router.async_settle_shadow_v2_pack_sources import archive_members
 from trusted_router.async_settle_shadow_v2_schema import require
-
-REQUIRED_STAGES = {stage: tuple(names) for stage, names in EARLIER_STAGES.items()}
-REQUIRED_STAGES['pre-flip'] = (*REQUIRED_STAGES['pre-flip'], 'live', 'rare_cases')
-
-
-def check_scope(name: str, stage: str) -> tuple[str, ...]:
-    checks = earlier_checks(name, stage)
-    if stage == 'pre-flip' and name in ('live', 'rare_cases'):
-        checks = (*checks, 'drain_handover')
-    return tuple(sorted(checks))
-
 
 # Section 15.6 requires native records for each check of these criteria.
 NATIVE_CRITERIA = frozenset(('deployment_inventory', 'authorization_transport_measurements',
@@ -55,7 +42,8 @@ def procedure_result(files: PackFiles, plan: dict[str, Any], *, capture_root: Pa
     require('enclave_ci' in plan, 'MissingEnclaveMetadata')
     enclave = plan['enclave_ci']
     enclave_completed = ci_originals(files, **enclave, revision=plan['enclave_revision'])
-    require(enclave_completed == completed, 'artifact_gap')
+    router_completed = completed
+    completed = max(completed, enclave_completed)
     enclave_result = retained_json(files.read(enclave['result']))
     result = retained_json(files.read(result_ref))
     require(enclave_result['procedures'] == result['procedures'], 'artifact_gap')
@@ -72,7 +60,7 @@ def procedure_result(files: PackFiles, plan: dict[str, Any], *, capture_root: Pa
         require(original['check'] == check and original['criterion'] == name, 'artifact_gap')
         require(original['router_revision'] == plan['router_revision'] and
                 original['enclave_revision'] == plan['enclave_revision'], 'artifact_gap')
-        require(original['completed_at_us'] <= completed and original['complete'] is True, 'artifact_gap')
+        require(original['completed_at_us'] <= min(router_completed, enclave_completed) and original['complete'] is True, 'artifact_gap')
         require(original['conclusion'] in ('pass', 'fail'), 'artifact_gap')
         require(original['kind'] in ('ci_procedure', 'native_trial'), 'artifact_gap')
         require(name not in NATIVE_CRITERIA or original['kind'] == 'native_trial', 'NativeProcedureRequired')

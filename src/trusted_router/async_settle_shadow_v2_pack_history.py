@@ -44,6 +44,12 @@ def history(files: PackFiles, *, payload: dict[str, Any], source: dict[str, Any]
     approval(files, reviews[0], reviewed_history)
     require(reviewed == dict(rows=data['rows'], resets=data['resets'],
                             resolutions=data['proof'].get('resolved_mismatches', [])), 'artifact_gap')
+    for resolution in data['proof'].get('resolved_mismatches', []):
+        support_originals = [ref for ref in dependencies if ref['sha256'] == resolution['artifact_sha256']]
+        decisions = [item for item in approvals if item['subject_sha256'] == resolution['artifact_sha256']]
+        require(len(support_originals) == len(decisions) == 1, 'ResolutionSupport')
+        files.read(support_originals[0])
+        approval(files, decisions[0], support_originals[0])
     retained, _, result = retained_call(files, entry='shadow_report.collect_rollbacks', payload=payload,
         dependencies=[*dependencies, reviewed_history], source=source, prefix='history')
     require(not any(gap.endswith(':missing_support') for gap in result['report']['gaps']), 'artifact_gap')

@@ -9,26 +9,14 @@ from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a1_health as health
 from trusted_router.async_settle_shadow_v2_collect_ports import Files
 from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
-from trusted_router.async_settle_shadow_v2_pack_budget import (
-    budget_measurements,
-    envelope,
-    nominal,
-    shutdown,
-)
+from trusted_router.async_settle_shadow_v2_pack_budget import nominal
 from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles
-from trusted_router.async_settle_shadow_v2_pack_sources import (
-    compare_cpu,
-    derived_peaks,
-    equal_allowances,
-    monitoring_series,
-    publisher_projection,
-)
 from trusted_router.async_settle_shadow_v2_schema import require
 
 
 def operation_join(files: Files, *, counter_ref: dict[str, Any], trace_refs: list[dict[str, Any]],
                    operation_refs: list[dict[str, Any]], contender: bool,
-                   start_us: int, end_us: int) -> dict[str, Any]:
+                   start_us: int, end_us: int, role_intervals: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     counter = a1.COUNTER.parse(files.read(counter_ref))
     require((counter['started_at_us'], counter['flushed_at_us']) == (start_us, end_us)
             and counter['closed'], 'artifact_gap')
@@ -44,8 +32,38 @@ def operation_join(files: Files, *, counter_ref: dict[str, Any], trace_refs: lis
     last: int | None = (end_us - 1) // 2000000
     if not contender or first is None or last is None or first > last:
         first = last = None
-    health.validate_publisher_traces(counter['publisher'], traces, day=counter['day'], boot=counter['boot'],
-                                     first_slot=first, last_slot=last)
+    if role_intervals is None:
+        health.validate_publisher_traces(counter['publisher'], traces, day=counter['day'], boot=counter['boot'],
+                                         first_slot=first, last_slot=last)
+    else:
+        expected_slots = [slot for interval in role_intervals if interval['contender']
+            for slot in range((interval['start_us'] + 1999999) // 2000000, (interval['end_us'] - 1) // 2000000 + 1)]
+        require([t['slot'] for t in traces] == expected_slots, 'publisher_trace_gap')
+        if not expected_slots or expected_slots == list(range(expected_slots[0], expected_slots[-1] + 1)):
+            health.validate_publisher_traces(counter['publisher'], traces, day=counter['day'], boot=counter['boot'],
+                first_slot=expected_slots[0] if expected_slots else None,
+                last_slot=expected_slots[-1] if expected_slots else None)
+        else:
+            publisher = counter['publisher']
+            health.validate_publisher_final(publisher)
+            role_totals = dict(scheduled_slots=len(traces), missed_slots=0, claim_attempts=0, lost_claims=0,
+                publications=0, failures=0, unknown_outcomes=0, late_cycles=0)
+            cycle_counts = [0] * len(publisher['cycle_us']['counts'])
+            for trace in traces:
+                health.PUBLISHER_SLOT_TRACE(trace)
+                require((trace['day'], trace['boot']) == (counter['day'], counter['boot']), 'publisher_trace_gap')
+                key = dict(missed='missed_slots', lost_claim='lost_claims', published='publications', failed='failures')[trace['outcome']]
+                role_totals[key] += 1
+                role_totals['claim_attempts'] += trace['outcome'] != 'missed'
+                role_totals['unknown_outcomes'] += trace['unknown_outcome']
+                role_totals['late_cycles'] += trace['late_cycle']
+                if trace['cycle_us'] is not None:
+                    cycle_counts[sum(trace['cycle_us'] > edge for edge in publisher['cycle_us']['bounds_us'])] += 1
+            require(all(publisher[k] == value for k, value in role_totals.items()) and
+                publisher['cycle_us']['counts'] == cycle_counts and
+                sum(publisher['rpc_us']['counts']) == sum(t['rpc_count'] for t in traces), 'publisher_accounting_gap')
+            require(sum(t['observed_at_ns'] is not None for t in traces) <= publisher['scans'] <=
+                publisher['claims'] <= publisher['claim_attempts'] - publisher['lost_claims'], 'publisher_accounting_gap')
     require(bool(operation_refs), 'artifact_gap')
     totals: Counter[str] = Counter()
     slots: Counter[int] = Counter()
@@ -85,38 +103,6 @@ class BudgetSourceAssembly:
 
     @classmethod
     def build(cls, files: PackFiles, plan: dict[str, Any], *, checkpoint: str) -> BudgetSourceAssembly:
-        config = retained_json(files.read(plan['configuration']))
-        require(config['workspace_count'] == 1 and config['fleet_cap'] == sum(config['regional_caps'].values()),
-                'artifact_gap')
-        projection = publisher_projection(fleet_cap=config['fleet_cap'], surge=config['surge'],
-                                          publishers=config['publishers'])
-        baseline = monitoring_series(files, **plan['baseline'])
-        trial = monitoring_series(files, **plan['trial'])
-        cpu = compare_cpu(baseline, trial, plan['approved_increment'])
-        equal_allowances(files, plan['pre_allowances'], plan['post_allowances'])
-        scope = retained_json(files.read(plan['post_scope']))
-        expected_scope = 'isolated_trial' if checkpoint == 'fleet-budgets-pre' else 'production_warmup'
-        require(scope['scope'] == expected_scope and scope['closed'] is True and bool(scope['resource']), 'artifact_gap')
-        require(0 < scope['end_us'] - scope['start_us'] <= 3600000000 or expected_scope == 'production_warmup',
-                'artifact_gap')
-        joins = [operation_join(files, **item) for item in plan['writer_operations']]
-        require(bool(joins), 'artifact_gap')
-        for item in plan['shutdown']:
-            shutdown(retained_json(files.read(item['measurement'])), retained_json(files.read(item['original'])))
-        require(bool(plan['shutdown']), 'artifact_gap')
-        kwargs = {}
-        for stage in ('pre', 'post'):
-            spec = dict(plan[stage])
-            spec['load_segments'] = [{**segment['fields'], 'peaks': derived_peaks(files, segment['derivations'])}
-                                      for segment in spec['load_segments']]
-            require(bool(spec['load_segments']), 'artifact_gap')
-            if stage == 'post':
-                require(spec['interval'] == dict(start_us=scope['start_us'], end_us=scope['end_us']), 'artifact_gap')
-                require({s['boot'] for s in spec['load_segments']} == set(scope['boots']), 'artifact_gap')
-            kwargs[stage] = spec
-        measured = budget_measurements(files, reviewed=plan['pre_allowances'],
-            component_source=plan['components'], measured_sources=plan['measured_sources'])
-        files.obj('budget/source-comparison.json', dict(configured=projection, cpu=cpu, writers=joins, post_scope=scope))
-        pre = envelope(files, stage='pre', **kwargs['pre'])
-        post = envelope(files, stage='post', pre=pre, **kwargs['post'])
-        return cls(pre, post, measured, tuple(files.refs.values()))
+        from trusted_router.async_settle_shadow_v2_pack_captured_budget import CapturedBudget
+        result = CapturedBudget.build(files, plan, checkpoint=checkpoint)
+        return cls(result.pre, result.post, result.measurements, result.sources)

@@ -52,6 +52,9 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
             'writer_roster_gap')
     rows = native['rows']
     attachments = native.get('attachments', [])
+    generated = RecordSpool(files.root / '.composition-generated')
+    def attach(kind: str, key: str, raw: bytes) -> None:
+        generated.append(dict(kind=kind, id=key, raw=raw.decode()))
     data = RecordSpool(files.root / '.composition-data')
     records = RecordSpool(files.root / '.composition-kinds')
     def by_kind(kind: str) -> Any:
@@ -102,20 +105,29 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
         if not present:
             closure_missing.append(key)
         pages = [page for page in receipts if page['day'] == day and page['boot'] == closure['boot']]
-        made, _, gaps = obligations(files, closure, pages, original=terminal.original,
+        made, projection, gaps = obligations(files, closure, pages, original=terminal.original,
             terminal=terminal.terminal, complete_through_us=complete_through_us, closure_present=present)
         missing.extend(gaps)
+        if projection:
+            name = day + '/' + closure['boot']
+            obligation_keys.append(name)
+            add('authorization_obligation/' + name, canonical(projection))
+            attach('authorization_obligation', name, canonical(projection))
         for page in made:
             name = day + '/' + closure['boot'] + '/' + page['page_seq']
             obligation_keys.append(name)
             add('authorization_obligation/' + name, canonical(page))
+            attach('authorization_obligation', name, canonical(page))
             horizon_ends.extend(e['horizon_at_us'] for e in page['entries'])
     for boot in inventory['boots']:
         if boot['role'] != 'router':
             continue
         key = day + '/' + boot['boot']
         result = [v for row_key, v, _ in by_kind(a1.KINDS[-1]) if row_key == key]
-        add('handoff_accounting/' + key, canonical(handoff(day, boot['boot'], result[0] if len(result) == 1 else None)))
+        raw = canonical(handoff(day, boot['boot'], result[0] if len(result) == 1 else None))
+        files.put('handoff/' + key + '.json', raw)
+        add('handoff_accounting/' + key, raw)
+        attach('handoff_accounting', key, raw)
     for key, _, raw in by_kind(p1.KINDS[3]):
         add('counter/' + key, raw)
     for key, _, raw in by_kind(a1.KINDS[-1]):
@@ -127,6 +139,15 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     population = populations(source, day=day, boots=tuple(inventory['boots']),
         contender_segments=budget['segments'], basis_keys=list(basis.keys), obligation_keys=obligation_keys)
     covered = coverage(files, source, day=day, expected=population.expected)
+    for stream, pages in covered.items():
+        for page in pages:
+            attach('coverage', day + '/' + stream + '/' + page['page_seq'], canonical(page))
+    support_days = terminal.support_days([day])
+    support_status = getattr(terminal, 'day_status', {})
+    support_missing = ['MissingSupportDay:' + d for d in support_days if d != day and d not in support_status]
+    support_missing.extend('IncompleteSupportDay:' + d for d in support_days
+                           if d != day and d in support_status and not support_status[d])
+    missing.extend(support_missing)
     rosters: dict[str, dict[str, Any]] = {'router': {}, 'enclave': {}}
     for boot in inventory['boots']:
         rosters[boot['role']][boot['boot']] = dict(revision=boot['revision'], region=boot['region'],
@@ -177,16 +198,16 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
         expected_closed=dict(NativeExport=not missing and not population.missing and not population.tails
             and not closure_missing, Inventory=inventory['complete'], Readiness=ready['complete']
             and all(len(e['bodies']) == 1 for e in ledger_entries), Shutdown=shutdown['complete'],
-            Budget=True, ExternalPack=True, History=True),
+            Budget=True, ExternalPack=True, History=True, Support=not support_missing),
         horizon_ends=horizon_ends, complete_through_us=complete_through_us)
     del preimages
     subject = files.obj('days/' + day + '/subject.json', dict(day=day,
         manifest=files.refs[day + '/manifest-v2.json'], producers={name: producers[name] for name in ('ExternalPack', 'History')}, coverage=covered))
-    transport = {**native, 'proof': a1.PROOF_MANIFEST.serialize(proof).decode(),
+    transport = {**native, 'attachments': chain(attachments, generated), 'proof': a1.PROOF_MANIFEST.serialize(proof).decode(),
         'ledgers': [files.read(ref).decode() for ref in ready['ledgers']],
         'rows': chain(rows, [dict(kind=p1.KINDS[5], id=day + '/manifest-v2', raw=a1.MANIFEST.serialize(manifest).decode())])}
     return dict(subject=subject, transport=transport, manifest=manifest,
-        support_days=terminal.support_days([day]),
+        support_days=support_days,
         missing=sorted(set(missing + list(population.missing)
             + ['closure:' + key for key in closure_missing]
             + ['receipt_tail:' + t.key for t in population.tails])))

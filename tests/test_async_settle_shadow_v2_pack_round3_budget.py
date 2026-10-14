@@ -69,7 +69,7 @@ def budget_capture(files, capture):
             resource=resource, start_ns=left * 1000, end_ns=right * 1000, interval_ns=interval * 1000)
     baseline = series(start - (end-start), start, (.2, .21), 'baseline')
     trial = series(start, end, (.22, .25), 'cpu')
-    allowances = {name: dict(numerator=99, denominator=1) for name in ALLOWANCES} | dict.fromkeys(TOTALS, 99)
+    allowances = {name: dict(numerator=99, denominator=1) for name in ALLOWANCES} | dict.fromkeys(TOTALS, 10000000)
     component = dict.fromkeys(COMPONENTS, 1)
     pre_allow = files.obj('trial/pre-allowances', dict(**allowances, component_us=component))
     post_allow = files.obj('trial/post-allowances', dict(**allowances, component_us=component))
@@ -130,21 +130,46 @@ def budget_capture(files, capture):
         writer_operations=[dict(counter_ref=counter_ref, trace_refs=trace_refs, operation_refs=[native],
             contender=True, start_us=start, end_us=end)], shutdown=[dict(measurement=measured_ref, original=original_ref)],
         components=components, measured_sources=[native, counter_ref, *trace_refs], pre=spec(pre_ref), post=spec(post_ref))
-    from trusted_router.async_settle_shadow_v2_pack_sources import publisher_projection
-    from trusted_router.async_settle_shadow_v2_pack_trial import native_peaks
-    computed = native_peaks(files, plan, plan['pre']['load_segments'][0]['fields'], json.loads(files.read(config)),
-        publisher_projection(fleet_cap=4, surge=1, publishers=2), dict(trial_peak=dict(numerator=25, denominator=1)))
+    computed = dict(values)
+    computed.update(simultaneous_routers=1, simultaneous_publishers=1,
+        startup_operations_1s=1, close_operations_1s=1, export_operations_1s=1,
+        cpu_percent=dict(numerator=25, denominator=1))
+    def peak(field, name):
+        return max((sum(o[field] for o in operations if o['operation'] == name
+            and at <= o['at_us'] < at + 1000000) for at in {o['at_us'] for o in operations}), default=0)
+    for name, operation in [('trust_rows_per_second', 'workspace_reads'), ('health_rows_per_second', 'health_reads')]:
+        computed[name] = dict(numerator=peak('rows', operation), denominator=1)
+    for name in ('claim', 'scan', 'publication', 'export'):
+        computed[name + '_operations_per_second'] = dict(numerator=peak('logical_count',
+            name + 's' if name != 'export' else name), denominator=1)
+    computed['export_bytes_per_second'] = dict(numerator=peak('bytes', 'export'), denominator=1)
     for name, value in computed.items():
         derivations[name] = dict(kind='measured', original=files.obj('trial/computed/' + name, dict(value=value)), field=['value'])
     record = dict(scope='isolated_trial', resource=resource, region='us-central1', start_us=start, end_us=end,
-        boots=[BOOT], population=[dict(day=DAY, boot=BOOT)], configuration=config, shutdown=plan['shutdown'],
+        boots=[BOOT], population=[dict(day=DAY, boot=BOOT, start_us=start, end_us=end, region='us-central1', contender=True)], configuration=config, shutdown=plan['shutdown'],
         baseline={k: baseline[k] for k in ('resource', 'start_ns', 'end_ns', 'interval_ns')},
         trial={k: trial[k] for k in ('resource', 'start_ns', 'end_ns', 'interval_ns')})
     plan['component_spans'] = {name: [files.obj('trial/spans/' + name, dict(component=name,
         start_us=start, end_us=start + 1, configuration=config, resource=resource, region='us-central1'))]
         for name in COMPONENTS}
+    record['platform'] = files.obj('trial/platform', dict(complete=True, resource=resource,
+        boots=[{k: b[k] for k in ('day', 'boot', 'start_us', 'end_us', 'region')} for b in record['population']]))
+    record['roles'] = files.obj('trial/roles', dict(complete=True, configuration=config,
+        intervals=[{k: b[k] for k in ('day', 'boot', 'start_us', 'end_us', 'contender')} for b in record['population']]))
+    record['operation_population'] = files.obj('trial/operation-population', dict(configuration=config,
+        complete=True, operations=[dict(day=DAY, boot=BOOT, id=o['id'], operation=o['operation'], at_us=o['at_us'])
+            for o in operations if o['operation'] in ('startup', 'close', 'export')]))
     plan['trial_record'] = files.obj('trial/approved-record', record)
     plan['trial_review'] = review(files, plan['trial_record'], 'trial/approved-record-review')
+    target = files.put('trial/export-output', b'x')
+    receipt = files.obj('trial/export-receipt', dict(object=target, at_us=end - 1, operation='put',
+        native_rpcs=1, bytes=1, elapsed_us=1, **{'pass': 1}))
+    plan['output_receipts'] = [receipt]
+    plan['output_plan'] = files.obj('trial/output-plan', dict(passes=[dict(day=DAY, start_us=start, end_us=end,
+        outputs=[dict(object=target, operation='put')], **{'pass': 1})], later_passes=[dict(depends_on=1,
+        groups=['coverage', 'roots', 'review', 'report'], native_rpcs=64, export_operations=1000,
+        export_bytes=1000000, export_write_bytes=1000000, **{'pass': 2})]))
+    plan['output_plan_review'] = review(files, plan['output_plan'], 'trial/output-plan-review')
     return plan
 
 
@@ -183,6 +208,8 @@ def test_budget_complete_originals_to_envelopes(tmp_path, captured):
         assert 'budget/source-links.json' in linked
         segments = graph.detail(emitted['v2_load']['segments'], 'segments')
         assert len(segments) > 1
+        for field in ('startup_operations_1s', 'close_operations_1s', 'export_operations_1s'):
+            assert max(s['peaks'][field] for s in segments) == 1
         assert all(s['start_us'] < s['end_us'] for s in segments)
         assert segments[0]['start_us'] == plan[stage]['interval']['start_us']
         assert segments[-1]['end_us'] == plan[stage]['interval']['end_us']
@@ -193,6 +220,12 @@ def test_budget_complete_originals_to_envelopes(tmp_path, captured):
     assert json.loads((tmp_path / 'budget/source-links.json').read_bytes()) == plan
     for name, value in json.loads(files.read(plan['pre_allowances'])).items():
         assert result.measurements[name] == value
+
+    changed = copy.deepcopy(plan)
+    name = next(iter(changed['component_spans']))
+    changed['component_spans'][name] = []
+    with pytest.raises(ValueError, match='ComponentSpan'):
+        CapturedBudget.build(files, changed, checkpoint='fleet-budgets-pre')
 
     for damage in ('scope', 'shutdown'):
         files = PackFiles(tmp_path / ('negative-' + damage))

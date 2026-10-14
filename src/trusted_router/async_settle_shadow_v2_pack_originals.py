@@ -37,3 +37,13 @@ class DayFiles(PackFiles):
 
     def originals(self) -> dict[str, bytes]:
         return {**super().originals(), **{path: self.original(ref) for path, ref in self.large.items()}}
+
+
+@dataclass
+class ScopedOutputs(PackFiles):
+    """Write new graph records under a scope; read original paths unchanged."""
+    prefix: str = ''
+
+    def put(self, path: str, raw: bytes, schema: Schema | None = None) -> dict[str, Any]:
+        # Retained captures are content-addressed lookup records in the existing loader.
+        return super().put(path if path.startswith('loading/retained-output/') else self.prefix + path, raw, schema)

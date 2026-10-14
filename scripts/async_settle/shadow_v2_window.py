@@ -68,7 +68,7 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
         ('bundle', 'accounting', 'prefix', 'object_plan')) for p in native_spec['passes']), 'FinitePassPlan')
     comparisons = []
     accounting_roots = []
-    accounting_missing = []
+    accounting_missing: list[str] = []
     for passed in native_spec['passes']:
         accounting_roots.append(passed['accounting'])
         passed_bundle = (source / passed['bundle']).resolve()
@@ -99,6 +99,7 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
         {(plan['day'], b['boot']) for b in inventory['boots'] if b['role'] == 'router'},
         'BudgetWriterPopulation')
     measured_export_costs(files, budget_source, comparisons, native_spec['output_receipts'])
+    budget_source['output_receipts'] = native_spec['output_receipts']
     budget_source['export_accounting'] = dict(roots=accounting_roots, receipts=native_spec['output_receipts'],
         totals=files.refs['budget/export-compared-totals.json'])
     measured = CapturedBudget.build(files, budget_source, checkpoint=plan['checkpoint'])
@@ -113,10 +114,14 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
             approval=external['approvals'][stage + '/' + name]))
     external_pack(files, stage=plan['checkpoint'], required_stages=plan['required_stages'], supplied=supplied)
     history(files, **retained_json(files.read(captures['History'])))
-    budget_plan = retained_json(files.read(captures['Budget']))
+    budget_prefix = budget_source.get('output_prefix', '' if plan['checkpoint'] in ('fleet-budgets-pre', 'transport') else 'production/')
+    compared_budget = retained_json(files.read(files.refs[budget_prefix + 'budget/source-comparison.json']))
     from trusted_router.async_settle_shadow_v2_pack_sources import derived_peaks
-    segments = [{**s['fields'], 'peaks': derived_peaks(files, s['derivations'])}
-                for s in budget_plan['post']['load_segments']]
+    budget_plan = retained_json(files.read(captures['Budget']))
+    segments = [{**segment, 'peaks': derived_peaks(files, next(s['derivations']
+        for s in budget_plan['post']['load_segments'] if s['fields']['boot'] == segment['boot']
+        and s['fields']['start_us'] <= segment['start_us'] < s['fields']['end_us']))}
+        for segment in compared_budget['segments']]
     producers = dict(NativeExport=native, Inventory=inventory, Readiness=ready, Shutdown=shutdown,
         Budget=dict(pre=files.refs['proof.pre_budget_sha256'], post=files.refs['proof.post_budget_sha256'],
             segments=segments), ExternalPack=files.refs['proof.external_proofs_sha256'],
@@ -143,9 +148,14 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
     (out / 'stage').mkdir(exist_ok=True)
     missing.extend(write_composed_transport(files, result.pop('transport'), out / 'stage/transport.json'))
     planned = input_plan(files, list(files.refs.values()), days=[plan['day']], predecessors=plan['predecessors'])
+    from trusted_router.async_settle_shadow_v2_pack_passes import compare_later_files
+    compare_later_files(files, budget_source, [ref for path, ref in files.refs.items() if
+        path.startswith(('coverage/', 'obligations/', 'handoff/', 'review/', 'days/'))
+        or '/roots/' in path or path in ('proof_manifest', 'loading/release-plan.json')])
     checked = evaluate_stage(out / 'stage/transport.json', out, plan['checkpoint'])
+    source_missing = sorted(set(missing))
     missing.extend(checked['missing'])
-    return dict(complete=not missing, missing=sorted(set(missing)), gate=checked, review=review,
+    return dict(source_missing=source_missing, complete=not missing, missing=sorted(set(missing)), gate=checked, review=review,
         checkpoint=plan['checkpoint'], inputs=planned, subject=result['subject'],
         transport_sha256=transport_digest(out / 'stage/transport.json'))
 
@@ -163,7 +173,20 @@ def evaluate_stage(bundle: Path, out: Path, stage: str, release_sha256: str | No
     release = None
     if release_sha256 is not None:
         release = decode_release_plan((out / 'loading/release-plan.json').read_bytes(), release_sha256)
-    ports = shadow_v2_ports(b'[]', b'[]', release=release)
+    descriptors = []
+    descriptor_missing = []
+    for name in ('certificate-public.json', 'binding-public.json'):
+        path = out / 'loading' / name
+        if path.is_file():
+            raw = path.read_bytes()
+            if release is not None:
+                require(release.artifacts.get('loading/' + name) == hashlib.sha256(raw).hexdigest(),
+                        'DescriptorReview:' + name)
+            descriptors.append(raw)
+        else:
+            descriptor_missing.append('MissingDescriptor:' + name)
+            descriptors.append(b'[]')
+    ports = shadow_v2_ports(*descriptors, release=release)
     loaded = load(bundle.read_bytes(), ports)
     result = evaluate(loaded, ports, gate=stage)
     rendered = render(result)
@@ -172,7 +195,7 @@ def evaluate_stage(bundle: Path, out: Path, stage: str, release_sha256: str | No
     value = dict(verdict=result.verdict, gaps=list(result.gaps),
         failures=[dict(gap=f.gap, rule=f.rule, subject=f.subject, count=f.count, days=list(f.days))
                   for f in result.failures], loading=loaded.a2_streams.get('loading_issues', []))
-    missing = list(result.gaps)
+    missing = [*descriptor_missing, *result.gaps]
     if isinstance(rendered, UnavailableGateOutput):
         value['unavailable'] = rendered.diagnostic()
         missing.append('UnavailableGateOutput')
@@ -293,7 +316,7 @@ def window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None
     files.capture(Files(source), captured['inputs']['inventory_pages'])
     files.capture(Files(source), [b['bundle'] for b in captured['inputs']['bundles']])
     files.obj('inputs/plan.json', captured['inputs'])
-    missing = list(captured.get('missing', []))
+    missing = list(captured.get('source_missing', captured.get('missing', [])))
     decisions = selected.get('daily_reviews', {})
     from trusted_router.async_settle_shadow_v2_collect_ports import approval
     for day, subject in captured['review']['subjects'].items():

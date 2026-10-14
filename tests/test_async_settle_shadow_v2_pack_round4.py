@@ -198,6 +198,13 @@ def test_composed_pass_list_and_output_receipts(tmp_path, capture, damage):
         receipt = dict(object=target, at_us=START, operation='put', native_rpcs=10001,
                        bytes=1, elapsed_us=1, **{'pass': 1})
         native['output_receipts'] = [files.obj('test-output-receipt', receipt)]
+        budget = json.loads(files.read(plan['captures']['Budget']))
+        output_plan = json.loads(files.read(budget['output_plan']))
+        output_plan['passes'][0]['outputs'] = [dict(object=target, operation='put')]
+        budget['output_plan'] = files.obj('changed/output-plan', output_plan)
+        budget['output_plan_review'] = review(files, budget['output_plan'], 'changed/output-review')
+        plan['captures']['Budget'] = files.obj('changed/budget', budget)
+        plan['files'].extend([budget['output_plan'], budget['output_plan_review']['record'], plan['captures']['Budget']])
         plan['captures']['NativeExport'] = files.obj('captures/changed-native', native)
         plan['files'].extend([target, native['output_receipts'][0], plan['captures']['NativeExport']])
         inventory = json.loads(files.read(plan['captures']['Inventory']))
@@ -238,6 +245,14 @@ def test_startup_burst_inside_long_interval_blocks(tmp_path, capture):
     startup = next(o for o in raw['operations'] if o['operation'] == 'startup')
     raw['operations'].append({**startup, 'id': 'second-startup', 'at_us': startup['at_us'] + 1})
     item['operation_refs'] = [files.obj('changed/burst', raw)]
+    from tests.test_async_settle_shadow_v2_pack import review
+    record = json.loads(files.read(plan['trial_record']))
+    population = json.loads(files.read(record['operation_population']))
+    population['operations'].append(dict(day=raw['day'], boot=raw['boot'], id='second-startup',
+        at_us=startup['at_us'] + 1, operation='startup'))
+    record['operation_population'] = files.obj('changed/population', population)
+    plan['trial_record'] = files.obj('changed/record', record)
+    plan['trial_review'] = review(files, plan['trial_record'], 'changed/review')
     assert item['end_us'] - item['start_us'] > 4000000
     assert plan['pre']['load_segments'][0]['fields']['end_us'] == item['end_us']
     with pytest.raises(ValueError, match='MeasuredPeaks'):

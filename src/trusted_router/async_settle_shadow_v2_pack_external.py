@@ -8,21 +8,13 @@ from trusted_router.async_settle_shadow_v2_collect_inventory import timestamp
 from trusted_router.async_settle_shadow_v2_collect_ports import TAGS, CIPort, Pass, Query, approval
 from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
 from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles
+from trusted_router.async_settle_shadow_v2_pack_policy import (  # noqa: F401
+    BUDGET,
+    REQUIRED_STAGES,
+    STAGES,
+    TRANSPORT,
+)
 from trusted_router.async_settle_shadow_v2_schema import require
-
-# Each slash-separated table name is a separate requirement.
-TRANSPORT = tuple('deployment_inventory authorization_transport_measurements maximum_header_hops '
-    'shared_fixtures v2_wire a1_contract a2_contract frozen_pricing_crash_mutations '
-    'a1_time_domain a1_accounting_dormancy health a1_report_obligations a1_completion_context durability '
-    'a1_close_handoff a1_provenance_export_load p4a_fail_closed partition_wire candidate_backing '
-    'original_receipt_locator money_echo demand budget_boot serialization bootstrap window live rare_cases '
-    'a2_report_commitment a2_failure_counts a2_roots_preimages a2_verifier_purity a2_packaging_delegation_cost '
-    'policy_rollback_status'.split())
-BUDGET = ('fleet_load_budget', 'publisher_poll_freshness', 'lifecycle_cpu')
-REQUIRED_STAGES = {'transport': TRANSPORT, 'fleet-budgets-pre': BUDGET, 'fleet-budgets': BUDGET,
-                   'pre-flip': ('d2_d3_capacity_slo', 'policy_rollback_status', 'attestation', 'exposure_acceptance'),
-                   'post-flip': ('policy_rollback_status', 'attestation', 'exposure_acceptance')}
-STAGES = ('transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip')
 
 
 def policy(stages: dict[str, list[str]]) -> None:
