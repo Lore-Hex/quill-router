@@ -63,6 +63,9 @@ from trusted_router.catalog import (
     endpoint_meets_privacy_requirement,
     endpoint_zero_data_retention,
 )
+from trusted_router.catalog import (
+    MONITOR_MODEL_ID as MONITOR_MODEL_ID,
+)
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings, in_v2_cohort
 from trusted_router.custom_model_billing import (
@@ -171,6 +174,9 @@ from trusted_router.schemas import (
     GatewayValidateRequest,
 )
 from trusted_router.scopes import SCOPE_INFERENCE
+
+# Stable injected ports also consumed by the byte-pinned gateway regression oracle.
+from trusted_router.security import lookup_hash_api_key as lookup_hash_api_key
 from trusted_router.services import federation
 from trusted_router.services.broadcast import (
     drain_broadcast_queue,
