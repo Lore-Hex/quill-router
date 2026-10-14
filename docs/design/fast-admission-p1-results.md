@@ -173,8 +173,8 @@ answers are each run's first requests, before its first lease.
 | 5 | 2.64 / 3.65 / 9.57 ms | 13 / 42 ms | 26 / 62 / 143 ms |
 
 The admission's cost stays under the 10 ms budget at every quantile at
-four generations a second, the slowest single admission of 7,200 at
-9.6 ms. Its p50 is higher than runs 1 and 2's 1.6 ms on release
+four generations a second, the slowest of the three runs' 4,186
+admissions at 9.6 ms. Its p50 is higher than runs 1 and 2's 1.6 ms on release
 `bfa94e22e`, with the same mix and the same generator placement, and
 the reason is the network, not the fast path: the generator on
 `tr-fastpath-1` sends to both front doors, and from there an empty
@@ -182,18 +182,20 @@ the reason is the network, not the fast path: the generator on
 `tr-fastpath-2`, a zone away (p50 of 30 each, measured after run 5).
 The authorize path between the two releases is unchanged
 (`git log bfa94e22e..f96c21395 -- fastpath/` touches the heartbeat
-record and the alert line), and the node is idle during a run (load
-average 0.11 on two vCPUs, the logging agent at six percent, no journal
-line per request). The admission itself costs a few hundred
-microseconds over the floor. The pair of runs 1 and 2 was replaced on
+record and the alert line), and the observed load during run 4 was low
+(load average 0.11 on two vCPUs, the logging agent at six percent, no
+journal line per request). The admission itself, the gateway's
+authorization call included, costs a few hundred microseconds over the
+floor. The pair of runs 1 and 2 was replaced on
 2026-10-13 22:23Z and its hop was not measured; the floor is read
 before every run from now on, with the command above.
 
 **The audits.** Usage booked after run 3, 2,178,353 micro-credits; after
 run 4, 4,260,009; after run 5, 12,180,547 (12.18 USD of the 100 funded),
 each equal to the leases' consumption, no fault usage, every winner
-decided once. The charges are heavy-tailed: of run 3's 595 settles, most
-charged 8 micro-credits and the largest 429,406, the sum 1,206,288.
+decided once. The charges are heavy-tailed: of run 3's 595 terminals won
+(589 settles, 6 refunds), most charged 8 micro-credits and the largest
+429,406, the sum 1,206,288.
 
 **The stops exercised at one generation a second**, between runs 3 and 4,
 as the runbook requires before the rate rises:
