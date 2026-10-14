@@ -62,10 +62,17 @@ def assert_workspace_billing_active(workspace: Any) -> None:
     authorize/validate, and every key-creation path (/v1/keys, console keys, OAuth
     code exchange, chat-browser key issuance) — so a paused workspace truly drains
     to zero holds before a flip. Settle is intentionally NOT guarded (it routes by
-    reservation origin and must still finalize in-flight work)."""
+    reservation origin and must still finalize in-flight work).
+
+    An abuse pause lasts until an operator clears it, so it answers the
+    non-retryable 403 `billing_paused` that the authorize fold already returns,
+    with no Retry-After. Migration and principal-recovery pauses are transient
+    and keep 503 + Retry-After."""
     if workspace_billing_paused(workspace):
         from trusted_router.types import ErrorType
 
+        if "abuse" in (getattr(workspace, "billing_pause_causes", None) or ()):
+            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN)
         raise api_error(
             503,
             "Workspace billing is paused",
