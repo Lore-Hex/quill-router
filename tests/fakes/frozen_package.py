@@ -293,6 +293,10 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
     Frames come only from held roots, never an interpreter-stack enumeration.
     Before 3.13, locals require native GC traversal through an owned finished
     frame or its reached generator/coroutine owner; other frames fail closed.
+    External module globals and process registries bound the leg. Frame globals
+    and builtins are boundaries unless their dictionary identity belongs to a
+    leg module or an explicit root (including an explicitly rooted module).
+    This includes unregistered namespaces; f_back still reaches deeper frames.
     """
     pending, visited = list(roots), {}
     boundaries = {}
@@ -301,6 +305,13 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         # External module globals and the two process registries are outside the
         # leg. Explicit module roots override the module-global boundary.
         explicit = {id(root) for root in pending}
+        leg_globals = {id(vars(loaded)): vars(loaded)
+                       for name, loaded in list(sys.modules.items())
+                       if issubclass(type(loaded), ModuleType)
+                       and (id(loaded) in explicit
+                            or any(_in_namespace(name, ns) for ns in namespaces))}
+        leg_globals.update((id(vars(root)), vars(root)) for root in pending
+                           if issubclass(type(root), ModuleType))
         boundaries = {id(vars(loaded)): vars(loaded)
                       for name, loaded in list(sys.modules.items())
                       if issubclass(type(loaded), ModuleType) and id(loaded) not in explicit
@@ -323,6 +334,10 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         yield value
         value_type = type(value)
         if value_type is FrameType:
+            if namespaces:
+                for namespace in (value.f_globals, value.f_builtins):
+                    if id(namespace) not in leg_globals and id(namespace) not in explicit:
+                        boundaries[id(namespace)] = namespace
             # Before 3.13, f_locals synchronizes into a user-populated dict and
             # can invoke a colliding key's __eq__. Never materialize it. An
             # owned finished frame traverses its code and locals natively; a

@@ -1654,6 +1654,69 @@ def test_guard_held_frame_cache(monkeypatch, kind):
         del root, frame
 
 
+@pytest.mark.parametrize('namespace_name', ['__channelexec__', ALIAS + '.storage_errors'])
+@pytest.mark.parametrize('table_location', ['globals', 'builtins'])
+def test_reference_walk_unregistered_frame_globals(monkeypatch, namespace_name, table_location):
+    from tests.fakes.frozen_package import _references
+
+    frozen = module('storage_errors')
+    table = [object() for _ in range(100_000)]
+    namespace = {'__name__': namespace_name, '__builtins__': {}}
+    namespace['table' if table_location == 'globals' else '__builtins__'] = (
+        table if table_location == 'globals' else {'table': table})
+    reached = []
+
+    def check(frame):
+        assert frame.f_globals is vars(frozen)
+        assert frame.f_back.f_globals is namespace
+        monkeypatch.setattr(frozen, 'review_frame_root', frame, raising=False)
+        expected = (pytest.raises(AssertionError, match='opaque frame')
+                    if sys.version_info < (3, 13) else nullcontext())
+        with expected:
+            reached.extend(_references([frozen], namespaces=(ALIAS,)))
+
+    # Capture while both callers are active, as in test_guard_held_frame_cache.
+    # The table is held only by the unregistered caller's globals or builtins.
+    code = compile('def capture(check):\n check(__import__("sys")._getframe())\n',
+                   '<leg-frame-witness>', 'exec')
+    functions = {}
+    exec(code, vars(frozen), functions)
+    namespace.update(capture=functions['capture'], check=check)
+    exec(compile('def call():\n capture(check)\n', '<caller-frame-witness>', 'exec'), namespace)
+    try:
+        namespace['call']()
+        reached_ids = {id(value) for value in reached}
+        assert id(table) not in reached_ids
+        assert not any(id(value) in reached_ids for value in table)
+        assert len(reached) < 5_000
+    finally:
+        monkeypatch.delattr(frozen, 'review_frame_root', raising=False)
+        reached.clear()
+
+
+def test_reference_walk_leg_frame_globals(monkeypatch):
+    from tests.fakes.frozen_package import _references
+
+    frozen = module('storage_errors')
+    marker = object()
+    monkeypatch.setattr(frozen, 'review_frame_marker', marker, raising=False)
+    functions = {}
+    exec(compile('def capture():\n return __import__("sys")._getframe()\n',
+                 '<leg-globals-witness>', 'exec'), vars(frozen), functions)
+    root = functions['capture']()
+    assert root.f_globals is vars(frozen)
+    reached = []
+    try:
+        expected = (pytest.raises(AssertionError, match='opaque frame')
+                    if sys.version_info < (3, 13) else nullcontext())
+        with expected:
+            reached.extend(_references([root], namespaces=(ALIAS,)))
+        assert any(value is marker for value in reached)
+    finally:
+        reached.clear()
+        root.clear()
+
+
 @pytest.mark.parametrize('kind', ['frame', 'traceback', 'generator', 'coroutine', 'async_generator'])
 def test_reference_walk_native_frames(kind):
     from tests.fakes.frozen_package import _references
