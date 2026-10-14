@@ -166,6 +166,9 @@ class User:
     phone_code_sent_at: str | None = None
     phone_code_channel: str | None = None
     identity_status: str = "none"
+    # GitHub account the user signed up with, kept for abuse review.
+    github_login: str | None = None
+    github_account_created_at: str | None = None
     identity_verified_at: str | None = None
     identity_verified_name: str | None = None
     veriff_session_id: str | None = None
@@ -1714,8 +1717,6 @@ class AcquisitionAttribution:
     signup_provider: str
     starter_credit_microdollars: int = 0
     signup_at: str = field(default_factory=iso_now)
-    provider_login: str | None = None
-    provider_account_created_at: str | None = None
     milestones: dict[str, str] = field(default_factory=dict)
     purchase_count: int = 0
     purchase_microdollars: int = 0

@@ -619,6 +619,8 @@ async def test_github_signup_records_account_age_and_withholds_hotmail_credit(
     ):
         resp = github_client.get(
             f"/github_oauth_callback?code=c&state={state}",
+            # Privacy opt-out skips acquisition tracking, never abuse review.
+            headers={"DNT": "1", "Sec-GPC": "1"},
             follow_redirects=False,
         )
     assert resp.status_code == 302
@@ -626,11 +628,10 @@ async def test_github_signup_records_account_age_and_withholds_hotmail_credit(
     assert user is not None
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     assert live_credit_summary(workspace.id)["total_credits"] == expected_credit
-    record = STORE.get_acquisition_attribution(workspace.id)
-    assert record is not None
-    assert record.starter_credit_microdollars == expected_credit
-    assert record.provider_login == "alice-gh"
-    assert record.provider_account_created_at == "2026-10-13T09:00:00Z"
+    user = STORE.get_user(user.id)
+    assert user is not None
+    assert user.github_login == "alice-gh"
+    assert user.github_account_created_at == "2026-10-13T09:00:00Z"
 
 # ── Wallet / SIWE ───────────────────────────────────────────────────────────
 

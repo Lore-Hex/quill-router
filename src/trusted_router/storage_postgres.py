@@ -2431,6 +2431,20 @@ class PostgresStore:
 
         return self._run_transaction(txn)
 
+    def set_user_github_identity(
+        self, user_id: str, login: str, account_created_at: str | None
+    ) -> User | None:
+        def txn(conn: Any) -> User | None:
+            user = self._read_entity_tx(conn, "user", user_id, User, for_update=True)
+            if user is None:
+                return None
+            user.github_login = login
+            user.github_account_created_at = account_created_at
+            self._write_entity_tx(conn, "user", user.id, user)
+            return user
+
+        return self._run_transaction(txn)
+
     def clear_user_phone(self, user_id: str) -> User | None:
         self._not_implemented("clear_user_phone")
 

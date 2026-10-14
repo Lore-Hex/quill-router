@@ -233,6 +233,13 @@ def _persist_login(
         if not existing_user.email_verified:
             STORE.mark_user_email_verified(user_id)
 
+    if first_time and info.provider_login:
+        # Kept on the user, not the opt-out-able acquisition record, so abuse
+        # review always sees which GitHub account (and how old) signed up.
+        STORE.set_user_github_identity(
+            user_id, info.provider_login, info.provider_account_created_at
+        )
+
     raw_token, _ = STORE.create_auth_session(
         user_id=user_id,
         provider=provider.slug,
@@ -326,8 +333,6 @@ async def _handle_callback(
             user_id=login.user_id,
             verified_email=info.email,
             signup_path=_from_target(request),
-            provider_login=info.provider_login,
-            provider_account_created_at=info.provider_account_created_at,
         )
 
     target = next_target or ("/console/welcome?first=1" if first_time else "/console/api-keys")
