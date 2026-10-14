@@ -409,7 +409,7 @@ def test_final_registry_publishes_replacing_manifest_route_features(monkeypatch,
     for key, endpoint in registered.items():
         monkeypatch.setitem(catalog.MODEL_ENDPOINTS, key, endpoint)
     bypass_catalog_caches(monkeypatch)
-    response = client.get("/v1/models")
+    response = client.get("/v1/models?include=endpoints")
     assert response.status_code == 200
     published = next(row for row in response.json()["data"] if row["id"] == model_id)
     routes = published["trustedrouter"]["endpoints"]

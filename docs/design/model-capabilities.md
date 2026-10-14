@@ -1,8 +1,10 @@
 # Model request capabilities
 
-`GET /v1/models` publishes the same five fields at
-`trustedrouter.capabilities` and `trustedrouter.endpoints[].capabilities`.
-Endpoint discovery also publishes `data[].trustedrouter.capabilities`.
+`GET /v1/models` publishes the same five fields at `trustedrouter.capabilities`,
+and `GET /v1/models?include=endpoints` also at
+`trustedrouter.endpoints[].capabilities`. Endpoint discovery
+(`GET /v1/models/{author}/{slug}/endpoints`) publishes
+`data[].trustedrouter.capabilities`.
 The public contract is at `/docs#model-capabilities`.
 
 ## Rules
@@ -32,7 +34,7 @@ The public contract is at `/docs#model-capabilities`.
 - Default routing does not filter by parameters. With
   `provider.require_parameters: true`, routing keeps only routes whose own
   `supported_parameters` include every parameter sent. Check per-route values
-  first (`trustedrouter.endpoints[].capabilities` and `supported_parameters`),
+  first (endpoint discovery's `capabilities` and `supported_parameters`),
   because some routes declare less than the model supports.
   It checks names, not effort values or image input;
   clients should pin a suitable provider when values differ. Each field is

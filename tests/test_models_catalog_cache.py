@@ -94,7 +94,9 @@ def test_v1_models_varies_strong_etag_by_content_encoding(client: TestClient) ->
 def test_picker_projection_preserves_picker_contract_at_a_fraction_of_the_wire_size(
     client: TestClient,
 ) -> None:
-    full = client.get("/v1/models")
+    # The complete catalog the picker replaces; the default list now omits
+    # per-route detail itself.
+    full = client.get("/v1/models?include=endpoints")
     picker = client.get("/v1/models/picker")
 
     assert picker.status_code == 200

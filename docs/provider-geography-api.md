@@ -22,7 +22,8 @@ All 99 current providers have records; not all disclose their inference
 countries or headquarters. New providers get explicit unknown fields until
 evidence is reviewed.
 
-`GET /v1/models` publishes `trustedrouter.endpoints[].inference_location`.
+`GET /v1/models?include=endpoints` publishes
+`trustedrouter.endpoints[].inference_location`.
 `GET /v1/models/<model>/endpoints` publishes
 `data[].trustedrouter.inference_location`. These records are provider-specific;
 the union of endpoints is not a per-request location guarantee.

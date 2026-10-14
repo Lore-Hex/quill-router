@@ -54,7 +54,7 @@ def _route(monkeypatch, model, provider, **kwargs):
 def test_public_models_exact_capabilities(client, monkeypatch, model_id, provider, efforts, vision):
     model = _model(monkeypatch, model_id, provider)
     _route(monkeypatch, model, provider, input_modalities=("text", "image") if vision else ("text",))
-    response = client.get("/v1/models")
+    response = client.get("/v1/models?include=endpoints")
     assert response.status_code == 200
     rows = [row for row in response.json()["data"] if row["id"] == model_id]
     assert len(rows) == 1
@@ -71,7 +71,7 @@ def test_public_models_exact_capabilities(client, monkeypatch, model_id, provide
 
 @pytest.mark.catalog_as_built
 def test_catalog_models_publish_verified_unions_and_unknown_effort(client):
-    response = client.get("/v1/models")
+    response = client.get("/v1/models?include=endpoints")
     assert response.status_code == 200
     rows = {row["id"]: row for row in response.json()["data"]}
     expected = {
@@ -98,7 +98,7 @@ def test_catalog_models_publish_verified_unions_and_unknown_effort(client):
 
 @pytest.mark.catalog_as_built
 def test_whole_catalog_capabilities_agree_with_legacy_declarations(client):
-    response = client.get("/v1/models")
+    response = client.get("/v1/models?include=endpoints")
     assert response.status_code == 200
     rows = response.json()["data"]
     concrete = [row for row in rows if "capabilities" in row["trustedrouter"]]
@@ -146,7 +146,7 @@ def test_gpt_55_verified_tools_keep_openai_with_require_parameters(client):
 
 @pytest.mark.catalog_as_built
 def test_reviewed_tools_contracts_publish_and_keep_provider_routes(client):
-    response = client.get("/v1/models")
+    response = client.get("/v1/models?include=endpoints")
     assert response.status_code == 200
     rows = {row["id"]: row for row in response.json()["data"]}
     prefs = RoutePreferences(require_parameters=True, requested_parameters=frozenset({"tools"}))
@@ -220,7 +220,7 @@ def test_tools_only_contract_preserves_unknown_effort_and_declared_parameter(cli
     )
     assert [route.id for _, route in catalog_endpoint_candidates(model, prefs)] == [endpoint.id]
 
-    response = client.get("/v1/models")
+    response = client.get("/v1/models?include=endpoints")
     assert response.status_code == 200
     row = next(row for row in response.json()["data"] if row["id"] == model.id)
     [published] = row["trustedrouter"]["endpoints"]
@@ -335,7 +335,7 @@ def test_unknown_endpoint_effort_is_json_null_on_both_catalog_routes(client, mon
     model = _model(monkeypatch, "deepseek/deepseek-v4-flash-0731", "deepseek")
     _route(monkeypatch, model, "novita", supported_parameters=("tools", "reasoning_effort"))
     expected = dict(reasoning_effort=None, tools=True, seed=False, vision=False, confidential=False)
-    response = client.get("/v1/models")
+    response = client.get("/v1/models?include=endpoints")
     assert response.status_code == 200
     rows = [row for row in response.json()["data"] if row["id"] == model.id]
     assert len(rows) == 1

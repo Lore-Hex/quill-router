@@ -65,14 +65,31 @@ from trusted_router.routing import catalog_endpoint_candidates, provider_route_p
 
 _PUBLIC_CATALOG_CACHE_CONTROL = "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
 
+# Per-route detail that the default GET /v1/models list leaves out. On
+# 2026-10-10 the list was 4.25 MB for 656 models, and trustedrouter.endpoints
+# was 2.87 MB of it. Clients that cap the decoded catalog at 4 MiB (OpenClaw)
+# reported TrustedRouter unavailable. provider_policy is provider prose
+# repeated on every row of that provider; its URL stays in the list.
+# ?include=endpoints restores both, byte for byte, and
+# GET /v1/models/{author}/{slug}/endpoints serves one model's routes.
+_LIST_OMITTED_TRUSTEDROUTER_FIELDS = frozenset({"endpoints", "provider_policy"})
+_INCLUDE_ENDPOINTS = "endpoints"
+
 
 @dataclass(frozen=True)
 class _PublicCatalogPayload:
+    # Complete rows, for in-process readers and ?include=endpoints.
     shapes: tuple[dict[str, Any], ...]
+    # Default list representation, without per-route detail.
     body: bytes
     etag: str
     gzip_body: bytes
     gzip_etag: str
+    # ?include=endpoints representation: the complete rows.
+    full_body: bytes
+    full_etag: str
+    full_gzip_body: bytes
+    full_gzip_etag: str
     picker_body: bytes
     picker_etag: str
     picker_gzip_body: bytes
@@ -95,6 +112,28 @@ def _content_etag(body: bytes) -> str:
 def _weak_etag_value(value: str) -> str:
     value = value.strip()
     return value[2:].lstrip() if value.startswith("W/") else value
+
+
+def _list_model_shape(shape: dict[str, Any]) -> dict[str, Any]:
+    trustedrouter = shape.get("trustedrouter")
+    if not isinstance(trustedrouter, dict):
+        return shape
+    return {
+        **shape,
+        "trustedrouter": {
+            key: value
+            for key, value in trustedrouter.items()
+            if key not in _LIST_OMITTED_TRUSTEDROUTER_FIELDS
+        },
+    }
+
+
+def _includes_endpoints(request: Request) -> bool:
+    return any(
+        token.strip().lower() == _INCLUDE_ENDPOINTS
+        for raw in request.query_params.getlist("include")
+        for token in raw.split(",")
+    )
 
 
 def _picker_model_shape(shape: dict[str, Any]) -> dict[str, Any]:
@@ -139,9 +178,11 @@ def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
             trustedrouter["last_route_change_at"] = last_changes.get(model.id)
         shapes.append(shape)
     frozen_shapes = tuple(shapes)
-    body = _json_bytes({"data": frozen_shapes})
+    full_body = _json_bytes({"data": frozen_shapes})
+    body = _json_bytes({"data": [_list_model_shape(shape) for shape in frozen_shapes]})
     picker_body = _json_bytes({"data": [_picker_model_shape(shape) for shape in frozen_shapes]})
     gzip_body = gzip.compress(body, compresslevel=6, mtime=0)
+    full_gzip_body = gzip.compress(full_body, compresslevel=6, mtime=0)
     picker_gzip_body = gzip.compress(picker_body, compresslevel=6, mtime=0)
     return _PublicCatalogPayload(
         shapes=frozen_shapes,
@@ -149,6 +190,10 @@ def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
         etag=_content_etag(body),
         gzip_body=gzip_body,
         gzip_etag=_content_etag(gzip_body),
+        full_body=full_body,
+        full_etag=_content_etag(full_body),
+        full_gzip_body=full_gzip_body,
+        full_gzip_etag=_content_etag(full_gzip_body),
         picker_body=picker_body,
         picker_etag=_content_etag(picker_body),
         picker_gzip_body=picker_gzip_body,
@@ -497,17 +542,45 @@ def register_catalog_routes(router: APIRouter) -> None:
             "do not send reasoning_effort. Default routing does not filter by parameters. "
             "With provider.require_parameters: true, routing keeps only routes whose own "
             "supported_parameters include every parameter sent. Check the per-route values "
-            "first: trustedrouter.endpoints[].capabilities and the route's supported_parameters. "
+            "first: trustedrouter.endpoints[].capabilities (with ?include=endpoints) or "
+            "trustedrouter.capabilities from GET /v1/models/{author}/{slug}/endpoints, "
+            "and the route's supported_parameters. "
             "This filters parameter names, not effort values or image input; pin a suitable "
             "provider when values differ. Confidential routing requires "
             "provider.min_privacy: \"confidential\". Routing aliases omit the object. "
+            "The list omits per-route detail: trustedrouter.endpoints and the model-level "
+            "trustedrouter.provider_policy text (trustedrouter.provider_policy_url remains). "
+            "Add ?include=endpoints for rows with both. "
             "See https://trustedrouter.com/docs#model-capabilities for scope and routing rules."
         ),
-        openapi_extra={"servers": inference_servers()},
+        openapi_extra={
+            "servers": inference_servers(),
+            "parameters": [
+                {
+                    "name": "include",
+                    "in": "query",
+                    "required": False,
+                    "description": (
+                        "endpoints: also return trustedrouter.endpoints and "
+                        "trustedrouter.provider_policy for every model."
+                    ),
+                    "schema": {"type": "string", "enum": [_INCLUDE_ENDPOINTS]},
+                }
+            ],
+        },
     )
     async def models(request: Request) -> Response:
         catalog_payload = _current_catalog_payload()
+        include_endpoints = _includes_endpoints(request)
         if not _has_public_model_filters(request):
+            if include_endpoints:
+                return _cached_json_response(
+                    request,
+                    catalog_payload.full_body,
+                    catalog_payload.full_etag,
+                    gzip_body=catalog_payload.full_gzip_body,
+                    gzip_etag=catalog_payload.full_gzip_etag,
+                )
             return _cached_json_response(
                 request,
                 catalog_payload.body,
@@ -515,7 +588,10 @@ def register_catalog_routes(router: APIRouter) -> None:
                 gzip_body=catalog_payload.gzip_body,
                 gzip_etag=catalog_payload.gzip_etag,
             )
-        body = _json_bytes({"data": _public_model_shapes(request)})
+        shapes = _public_model_shapes(request)
+        if not include_endpoints:
+            shapes = [_list_model_shape(shape) for shape in shapes]
+        body = _json_bytes({"data": shapes})
         compressed = gzip.compress(body, compresslevel=6, mtime=0)
         return _cached_json_response(
             request,
@@ -596,6 +672,13 @@ def register_catalog_routes(router: APIRouter) -> None:
                         ),
                         "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
                         "inference_location": inference_location_metadata(endpoint.provider, endpoint.model_id),
+                        # The remaining per-route facts from the list's
+                        # trustedrouter.endpoints, which the default list omits.
+                        "renewable_energy_inference": PROVIDERS[
+                            endpoint.provider
+                        ].renewable_energy_inference,
+                        "energy_policy_url": PROVIDERS[endpoint.provider].energy_policy_url,
+                        "request_price_microdollars": endpoint.request_price_microdollars,
                         "provider_policy": endpoint_provider_policy(endpoint),
                         "provider_policy_url": endpoint_provider_policy_url(endpoint),
                         "usage_type": endpoint.usage_type,
