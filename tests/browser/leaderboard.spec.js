@@ -41,6 +41,8 @@ test("numeric sorting keeps absent measurements last and filters unranked routes
   await page.locator("[data-lb-evidence]").selectOption("qualified");
   await expect(page.locator("[data-lb-count]")).toHaveText("1-25 of 60 models");
   await page.locator("[data-lb-evidence]").selectOption("warming");
+  await expect(page.locator("[data-lb-evidence] option:checked")).toHaveText("Limited evidence");
+  await expect(page.locator("#lb-models [data-lb-row]:visible .lb-badge").first()).toHaveAttribute("title", /does not disable routing/);
   await expect(page.locator("#lb-models [data-lb-row]:visible").first()).toContainText("model-60");
   await expect(page.locator("#lb-models [data-lb-row]:visible").last()).toContainText("needs-configuration");
   await page.locator("[data-lb-search]").fill("no-such-model");
