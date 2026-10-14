@@ -168,6 +168,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "zai-org/GLM-5.2-FP8"}]}
     if "api.reka.ai" in url:
         return {"data": [{"id": "reka-edge-2603"}]}
+    if "eu.api.nextbit256.com" in url:
+        return {"data": [{"id": "gemma4:26b-a4b", "datacenters": [{"country_code": "ES"}]}]}
     if "api.nextbit256.com" in url:
         return {"data": [{"id": "deepseek:v4-flash-0731"}]}
     if "api.akashml.com" in url:
