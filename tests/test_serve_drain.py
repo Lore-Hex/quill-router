@@ -180,6 +180,12 @@ def test_drain_lines_reach_the_package_logger_when_run_as_main(
 
     import uvicorn
 
+    # This in-process entry supplies no launch input. Restore all bridge state
+    # afterward so it cannot claim the runner's fd 3 or retain an earlier owner.
+    monkeypatch.setattr(serve.launch_descriptor_state, "LAUNCH_FD_PRESENT", False)
+    monkeypatch.setattr(serve.launch_descriptor_state, "INHERITED_FD", None)
+    monkeypatch.setattr(serve.launch_descriptor_state, "_claimed", False)
+
     clock = [500.0]
     monkeypatch.setattr("time.monotonic", lambda: clock[0])
 
