@@ -79,24 +79,53 @@ def test_attempt_uses_native_start_and_exact_closed_page(monkeypatch):
         shell.worker.join(2)
 
 
-async def test_serving_runner_starts_harness_after_listener(monkeypatch):
-    from types import SimpleNamespace
+@pytest.mark.parametrize('application_reference', ['instance', 'import', 'factory'])
+async def test_serving_runner_starts_harness_after_listener(monkeypatch, application_reference):
+    import asyncio
+    import sys
+    from contextlib import asynccontextmanager
 
-    import uvicorn
+    from fastapi import FastAPI
 
-    from trusted_router import serve
+    from tests.test_async_settle_shadow_startup_harness_round8 import serving_server
     from trusted_router.services import async_settle_shadow_startup_harness as module
     order = []
-    async def startup(self, sockets=None):
-        order.append('listener')
-        self.started = True
-        self.lifespan = SimpleNamespace(app='app')
-    monkeypatch.setattr(uvicorn.Server, 'startup', startup)
-    monkeypatch.setattr(module, 'listener_started', lambda app: order.append('harness'))
-    server = serve.DrainingServer(uvicorn.Config('unused'), drain_seconds=0)
-    server.lifespan = SimpleNamespace(app='app')
-    await server.startup()
-    assert order == ['listener', 'harness']
+    @asynccontextmanager
+    async def lifespan(app):
+        order.append('application')
+        yield
+    app = FastAPI(lifespan=lifespan)
+    reference = app
+    if application_reference != 'instance':
+        value = app if application_reference == 'import' else lambda: app
+        monkeypatch.setattr(sys.modules[__name__], 'serving_app', value, raising=False)
+        reference = __name__ + ':serving_app'
+    server = serving_server(reference, factory=application_reference == 'factory')
+    assert server.lifespan.config is server.config
+    assert not hasattr(server.lifespan, 'app')
+    assert module.serving_application(server) is app
+    h, _, _ = fake_harness()
+    release = asyncio.Event()
+    async def begin():
+        await release.wait()
+    app.state.async_settle_shadow_startup = h
+    app.state.async_settle_shadow_startup_begin = begin
+    listener_started = module.listener_started
+    def record_start(resolved):
+        assert server.started
+        assert resolved is app
+        order.append('harness')
+        listener_started(resolved)
+    monkeypatch.setattr(module, 'listener_started', record_start)
+    try:
+        await server.startup(sockets=[])
+        assert order == ['application', 'harness']
+        assert h.task is not None and not h.task.done()
+    finally:
+        release.set()
+        if h.task is not None:
+            await h.task
+        await server.lifespan.shutdown()
 
 
 def test_native_attempt_without_result_stays_missing():
@@ -304,16 +333,15 @@ async def test_attempt_start_without_result_is_counted(monkeypatch):
 async def test_bound_slow_read_keeps_listener_available(monkeypatch):
     import asyncio
     import threading
-    from types import SimpleNamespace
 
     import httpx
     from fastapi import FastAPI
 
     from tests.test_async_settle_shadow_observation import service as make_service
     from tests.test_async_settle_shadow_startup_harness import manifest
+    from tests.test_async_settle_shadow_startup_harness_round8 import start_serving
     from trusted_router.services.async_settle_shadow_startup_harness import (
         dependency_operations,
-        listener_started,
     )
     svc = make_service()
     svc.settings.spanner_database_id = 'regional-store'
@@ -336,7 +364,7 @@ async def test_bound_slow_read_keeps_listener_available(monkeypatch):
     async def live():
         return {'live': True}
     try:
-        listener_started(SimpleNamespace(app=app))
+        await start_serving(app)
         assert await asyncio.to_thread(entered.wait, 1)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
             assert (await asyncio.wait_for(client.get('/live'), .2)).json() == {'live': True}
@@ -592,25 +620,25 @@ def test_regional_resource_uses_probe_inventory():
     ids=['matching', 'unknown', 'malformed', 'wrong-shape', 'oversized'])
 async def test_regional_transport_image_result_keeps_serving(monkeypatch, body, matched):
     import asyncio
-    from types import SimpleNamespace
 
     import httpx
     from fastapi import FastAPI
 
     from tests.test_async_settle_shadow_cohort import config
+    from tests.test_async_settle_shadow_startup_harness_round8 import start_serving
     from trusted_router.services.async_settle_shadow_startup_harness import (
         dependency_operations,
-        listener_started,
     )
     settings = config()
     settings.spend_lease_accepted_gcp_image_digests = 'sha256:'+'a'*64
     with RegionalEnclave(monkeypatch, body) as enclave:
         m = regional_manifest(monkeypatch, enclave.resource)
         operation = dependency_operations(None, m, settings=settings)
+        # This case checks the reply; operation deadlines are covered separately.
         result = []
         async def begin():
             try:
-                result.append(await operation(m['config']['dependencies']['router'][0], 1_000_000))
+                result.append(await operation(m['config']['dependencies']['router'][0], 10_000_000))
             except (ValueError, TimeoutError):
                 result.append(False)
         app = FastAPI()
@@ -620,29 +648,28 @@ async def test_regional_transport_image_result_keeps_serving(monkeypatch, body, 
         @app.get('/live')
         async def live():
             return {'live': True}
-        listener_started(SimpleNamespace(app=app))
+        await start_serving(app)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://router') as client:
             assert (await asyncio.wait_for(client.get('/live'), .5)).status_code == 200
             await h.task
             assert (await client.get('/live')).status_code == 200
-        assert result == [matched]
         assert enclave.requests == [('GET', '/attestation')]
+        assert result == [matched]
         with pytest.raises(ValueError):
-            await operation(m['config']['dependencies']['router'][0], 1_000_000)
+            await operation(m['config']['dependencies']['router'][0], 10_000_000)
 
 
 async def test_slow_regional_transport_keeps_listener_available(monkeypatch):
     import asyncio
     import time
-    from types import SimpleNamespace
 
     import httpx
     from fastapi import FastAPI
 
     from tests.test_async_settle_shadow_cohort import config
+    from tests.test_async_settle_shadow_startup_harness_round8 import start_serving
     from trusted_router.services.async_settle_shadow_startup_harness import (
         dependency_operations,
-        listener_started,
     )
     settings = config()
     with RegionalEnclave(monkeypatch, image_body(), slow=True) as enclave:
@@ -663,7 +690,7 @@ async def test_slow_regional_transport_keeps_listener_available(monkeypatch):
         @app.get('/live')
         async def live():
             return {'live': True}
-        listener_started(SimpleNamespace(app=app))
+        await start_serving(app)
         assert await asyncio.to_thread(enclave.entered.wait, 2)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://router') as client:
             assert (await asyncio.wait_for(client.get('/live'), .2)).json() == {'live': True}
@@ -677,7 +704,8 @@ async def test_slow_regional_transport_keeps_listener_available(monkeypatch):
 @pytest.mark.parametrize('with_service', [False, True])
 async def test_boot_adoptions_with_actual_observer_rule(monkeypatch, with_service):
     import hashlib
-    from types import SimpleNamespace
+
+    from fastapi import FastAPI
 
     from tests.test_async_settle_shadow_observation import NOW_US
     from tests.test_async_settle_shadow_observation import service as make_service
@@ -692,7 +720,7 @@ async def test_boot_adoptions_with_actual_observer_rule(monkeypatch, with_servic
     if not with_service:
         settings._async_settle_shadow_workspace_ids = frozenset()
     svc.store.wall = lambda: NOW_US/1e6
-    app = SimpleNamespace(state=SimpleNamespace())
+    app = FastAPI()
     if with_service:
         app.state.async_settle_shadow_observation = svc
     module.install(app, settings)

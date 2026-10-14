@@ -512,13 +512,13 @@ import trusted_router
 from trusted_router import launch_descriptor_state
 launch_descriptor_state.claim()
 import asyncio
-from types import SimpleNamespace
+from fastapi import FastAPI
 from trusted_router.services import async_settle_shadow_startup_harness as module
 from trusted_router.services import async_settle_shadow_launch_descriptor as launch
 from tests.test_async_settle_shadow_startup_harness import manifest
 from tests.test_async_settle_shadow_cohort import config
 async def main():
- app=SimpleNamespace(state=SimpleNamespace())
+ app=FastAPI()
  module.install(app,config(source_revision='a'*40))
  h=app.state.async_settle_shadow_startup
  h.emitter.write=lambda raw:None

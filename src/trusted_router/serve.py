@@ -78,8 +78,15 @@ class DrainingServer(uvicorn.Server):
     async def startup(self, sockets: list | None = None) -> None:
         await super().startup(sockets=sockets)
         if self.started:
-            from trusted_router.services.async_settle_shadow_startup_harness import listener_started
-            listener_started(self.lifespan.app)
+            try:
+                from trusted_router.services.async_settle_shadow_startup_harness import (
+                    listener_started,
+                    serving_application,
+                )
+                listener_started(serving_application(self))
+            except Exception:
+                # Startup records must not interrupt ordinary serving.
+                return
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         if sig == signal.SIGTERM and self.drain_deadline is None and self.drain_seconds > 0:

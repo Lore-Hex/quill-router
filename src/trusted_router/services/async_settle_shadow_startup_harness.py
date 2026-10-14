@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from fastapi import FastAPI
+from uvicorn import Server
+
 from trusted_router.services.async_settle_shadow_launch_descriptor import (
     Descriptor,
     instance_descriptor,
@@ -599,12 +602,18 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
     app.state.async_settle_shadow_startup_begin = begin
 
 
-def listener_started(app: Any) -> None:
+def serving_application(server: Server) -> FastAPI | None:
+    """Find the FastAPI instance in Uvicorn's loaded application chain."""
+    app = getattr(server.config, "loaded_app", None)
     for _ in range(8):
-        if hasattr(app, "state"):
-            break
+        if isinstance(app, FastAPI):
+            return app
         app = getattr(app, "app", None)
-    if app is None or not hasattr(app, "state"):
+    return None
+
+
+def listener_started(app: Any) -> None:
+    if not isinstance(app, FastAPI):
         return
     harness = getattr(app.state, "async_settle_shadow_startup", None)
     begin = getattr(app.state, "async_settle_shadow_startup_begin", None)

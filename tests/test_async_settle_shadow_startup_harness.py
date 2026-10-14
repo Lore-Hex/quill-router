@@ -20,7 +20,6 @@ from trusted_router.services.async_settle_shadow_startup_harness import (
     Harness,
     Ports,
     ReleaseManifest,
-    listener_started,
     load_manifest,
 )
 
@@ -312,7 +311,8 @@ async def test_listener_answers_while_harness_waits():
     @app.get('/live')
     async def live():
         return {'live': True}
-    listener_started(SimpleNamespace(app=app))
+    from tests.test_async_settle_shadow_startup_harness_round8 import start_serving
+    await start_serving(app)
     await asyncio.wait_for(entered.wait(), .2)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
         assert (await asyncio.wait_for(client.get('/live'), .2)).json() == {'live': True}
