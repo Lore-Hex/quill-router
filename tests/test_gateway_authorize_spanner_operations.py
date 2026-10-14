@@ -608,6 +608,8 @@ def test_warm_skip_key_authorize_hold_time_sequence(
     ("missing_workspace", 403, "Workspace is unavailable", "forbidden"),
     ("paused_workspace", 503, "Workspace billing is paused", "service_unavailable"),
     ("pause_causes", 503, "Workspace billing is paused", "service_unavailable"),
+    ("migration_pause", 503, "Workspace billing is paused", "service_unavailable"),
+    ("abuse_pause", 403, "billing_paused", "forbidden"),
 ])
 def test_metadata_changes_between_authorizes_fail_closed(
     change: str, status: int, message: str, error_type: str, fixed_operation_catalog: None,
@@ -636,7 +638,11 @@ def test_metadata_changes_between_authorizes_fail_closed(
         assert workspace is not None
         workspace.deleted = change == "deleted_workspace"
         workspace.billing_paused = change == "paused_workspace"
-        workspace.billing_pause_causes = ["operator"] if change == "pause_causes" else []
+        workspace.billing_pause_causes = {
+            "pause_causes": ["operator"],
+            "migration_pause": ["migration"],
+            "abuse_pause": ["migration", "abuse"],
+        }.get(change, [])
         store._write_entity("workspace", key.workspace_id, workspace)
     before = database.transaction_execute_update_calls
     with pytest.raises(HTTPException) as raised:

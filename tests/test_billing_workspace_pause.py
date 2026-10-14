@@ -68,6 +68,39 @@ def test_paused_workspace_rejects_authorize_and_validate(
     assert _authorize(client, key["hash"]).status_code == 200  # unpause restores
 
 
+
+def test_abuse_pause_answers_the_pinned_non_retryable_403() -> None:
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/speculation_v1/authorize-error-envelopes.json").read_text()
+    )
+    pinned_error = json.loads(fixture["cases"]["billing_paused"]["body_exact"])["error"]
+    client, key = _client_and_key("pause-abuse@example.com")
+    ws_id = STORE.get_key_by_hash(key["hash"]).workspace_id
+    assert _authorize(client, key["hash"]).status_code == 200
+
+    assert STORE.record_workspace_abuse_and_demote(
+        ws_id, abuse_ref="abuse-403", operator_identity="ops@example.com", reason="bot wave",
+    )
+    refusals = [
+        _authorize(client, key["hash"]),
+        client.post(
+            "/v1/internal/gateway/validate",
+            json={"api_key_hash": key["hash"], "route_type": "chat"},
+        ),
+    ]
+    for refusal in refusals:
+        assert refusal.status_code == 403, refusal.text
+        assert "retry-after" not in refusal.headers
+        assert refusal.json()["error"] == pinned_error
+
+    assert STORE.clear_workspace_abuse_pause(
+        ws_id, abuse_ref="abuse-403", operator_identity="ops@example.com", reason="cleared",
+    )
+    assert _authorize(client, key["hash"]).status_code == 200
+
 def test_settle_is_not_blocked_while_paused() -> None:
     """In-flight requests must still settle while paused (settle routes by
     reservation origin, not through the paused endpoints) — else holds strand."""
