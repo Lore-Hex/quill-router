@@ -46,13 +46,17 @@ def test_seo_evidence_counts_the_live_public_catalog(
         after_latest_cutover.isoformat(),
     )
     response = client.get("/openai-compatible-llm-api")
-    public_model_count = sum(model.id not in META_MODEL_IDS for model in MODELS.values())
-    public_model_ids = {model.id for model in MODELS.values() if model.id not in META_MODEL_IDS}
+    public_model_ids = {
+        model.id for model in MODELS.values()
+        if model.id not in META_MODEL_IDS and not model.internal_only
+    }
+    public_model_count = len(public_model_ids)
+    public_provider_count = sum(not provider.internal_only for provider in PROVIDERS.values())
     public_route_count = sum(len(endpoints_for_model(model_id)) for model_id in public_model_ids)
 
     assert response.status_code == 200
     assert f"<strong>{public_model_count}</strong><span>public models</span>" in response.text
-    assert f"<strong>{len(PROVIDERS)}</strong><span>providers</span>" in response.text
+    assert f"<strong>{public_provider_count}</strong><span>providers</span>" in response.text
     assert f"<strong>{public_route_count}</strong><span>configured routes</span>" in response.text
 
 

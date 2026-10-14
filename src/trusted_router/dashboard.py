@@ -3658,7 +3658,7 @@ def subprocessors_json(settings: Settings) -> str:
 
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
-    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()]
+    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values() if not model.internal_only]
     all_models.sort(key=_model_discovery_sort_key)
     models = all_models
     normalized_filter = model_filter.strip().lower()
@@ -3703,7 +3703,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             # Count the complete public provider catalog, not only providers with
             # a currently routable model. TrustedRouter itself is the router,
             # rather than an upstream provider.
-            total_provider_count=sum(slug != "trustedrouter" for slug in PROVIDERS),
+            total_provider_count=sum(provider.slug != "trustedrouter" for provider in providers_for_display()),
             initial_page_size=MODEL_DISCOVERY_PAGE_SIZE,
             active_filter=normalized_filter,
             model_filters=[
@@ -4104,7 +4104,7 @@ def public_providers_html(settings: Settings) -> str:
 
 def public_provider_detail_html(settings: Settings, provider_slug: str) -> str | None:
     provider = PROVIDERS.get(provider_slug)
-    if provider is None:
+    if provider is None or provider.internal_only:
         return None
     test_mode = settings.environment == "test"
     served_models = _provider_model_rows(provider_slug, test_mode=test_mode)
@@ -4159,7 +4159,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
 
 def public_provider_performance_html(settings: Settings, provider_slug: str) -> str | None:
     provider = PROVIDERS.get(provider_slug)
-    if provider is None:
+    if provider is None or provider.internal_only:
         return None
     measured = measured_for_provider(provider.slug, test_mode=settings.environment == "test")
     provider_row = measured.get("provider_row")
@@ -4226,7 +4226,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     Returns None when the model id isn't in the catalog (route handler
     converts that to a styled 404)."""
     model = MODELS.get(model_id)
-    if model is None:
+    if model is None or model.internal_only:
         return None
     test_mode = settings.environment == "test"
     seo_name = _seo_model_name(model)
@@ -4399,7 +4399,7 @@ def public_model_compare_index_html(settings: Settings, *, page: int = 1) -> str
 
 def public_model_section_html(settings: Settings, model_id: str, section: str) -> str | None:
     model = MODELS.get(model_id)
-    if model is None or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
+    if model is None or model.internal_only or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
         return None
     test_mode = settings.environment == "test"
     base_model_url = f"https://{settings.trusted_domain}/models/{model_id}"
@@ -4578,7 +4578,7 @@ def _sitemap_lastmod() -> str:
 
 def llms_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
-    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID)
+    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only)
     provider_count = len(providers_for_display())
     lines = [
         "# TrustedRouter",
@@ -5793,7 +5793,7 @@ def _benchmark_links(model: Model, *, test_mode: bool = False) -> list[dict[str,
 
 def _public_models_for_seo() -> list[Model]:
     return sorted(
-        [model for model in MODELS.values() if model.id not in META_MODEL_IDS],
+        [model for model in MODELS.values() if model.id not in META_MODEL_IDS and not model.internal_only],
         key=lambda model: model.id,
     )
 
@@ -5801,7 +5801,7 @@ def _public_models_for_seo() -> list[Model]:
 def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     """Return the complete public catalog used by the agent-facing full document."""
     models = sorted(
-        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID),
+        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only),
         key=lambda model: model.id,
     )
     return [_model_view(model, test_mode=test_mode) for model in models]

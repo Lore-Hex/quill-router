@@ -335,6 +335,8 @@ def catalog_endpoint_candidates(
     `supports_chat`; the OpenRouter-compatible endpoint catalog should be able
     to describe any served model while still honoring provider filters.
     """
+    if model.internal_only:
+        return []
     candidates = [(model, endpoint) for endpoint in endpoints_for_model(model.id)]
     candidates = _filter_candidates_soft_data_collection(
         candidates, prefs, _apply_endpoint_provider_filters

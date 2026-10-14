@@ -40,7 +40,6 @@ from trusted_router.auth import (
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
     MODELS,
-    MONITOR_MODEL_ID,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -68,7 +67,6 @@ from trusted_router.routing import (
     provider_route_preferences,
     resolve_model_alias,
 )
-from trusted_router.security import lookup_hash_api_key
 from trusted_router.services.inference import (
     run_chat,
     run_chat_candidates,
@@ -313,6 +311,7 @@ def register_inference_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> Any:
         body = await json_body(request)
+        _require_monitor_model_key(body, principal, settings)
         _validate_output_token_limit(body)
         model = _require_messages_model(body)
         _local_routes_meeting_privacy_floor(
@@ -1028,31 +1027,11 @@ def _require_monitor_model_key(
     principal: Principal,
     settings: Settings,
 ) -> None:
-    """Block any caller from requesting `trustedrouter/monitor` unless
-    they hold a configured internal probe API key. The monitor model is for
-    internal probing only; otherwise customers could hammer it for free
-    routing decisions."""
-    if not _requests_monitor_model(body):
-        return
+    from trusted_router.internal_model_access import require_internal_model_key
+
     api_key = principal.api_key
     api_key_lookup_hash = api_key.lookup_hash if api_key is not None else None
-    for expected in (settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key):
-        if expected and api_key_lookup_hash == lookup_hash_api_key(expected):
-            return
-    raise api_error(
-        403,
-        "trustedrouter/monitor is restricted to the synthetic monitor key",
-        ErrorType.FORBIDDEN,
-    )
-
-
-def _requests_monitor_model(body: dict[str, Any]) -> bool:
-    if str(body.get("model") or "").strip() == MONITOR_MODEL_ID:
-        return True
-    models = body.get("models")
-    if isinstance(models, list):
-        return any(str(model).strip() == MONITOR_MODEL_ID for model in models)
-    return False
+    require_internal_model_key(body, api_key_lookup_hash, settings)
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ from PIL import Image
 from scripts import generate_provider_og
 from scripts.generate_provider_og import CARD_VERSION, generate
 from tests.lifecycle_clock import LIFECYCLE_CLOCK_OVERRIDDEN
-from trusted_router.catalog import PROVIDERS
+from trusted_router.catalog import PROVIDERS, providers_for_display
 from trusted_router.config import Settings
 from trusted_router.provider_branding import (
     PROVIDER_BRANDS,
@@ -40,8 +40,9 @@ _needs_real_clock = pytest.mark.skipif(
 
 
 def test_every_catalog_provider_has_local_branding() -> None:
-    assert set(PROVIDER_BRANDS) == set(PROVIDERS)
-    for slug in PROVIDERS:
+    public_slugs = {provider.slug for provider in providers_for_display()}
+    assert set(PROVIDER_BRANDS) == public_slugs
+    for slug in public_slugs:
         logo = STATIC_DIR / provider_logo_url(slug).removeprefix("/static/")
         assert logo.is_file(), slug
         assert logo.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), slug
@@ -168,8 +169,9 @@ def test_provider_count_monitor_skips_only_caller_supplied_overrides(
 def test_every_provider_has_current_social_card() -> None:
     manifest = json.loads((STATIC_DIR / "og" / "providers" / "manifest.json").read_text())
     facts = {row.slug: row for row in all_provider_og_facts()}
-    assert set(manifest) == set(PROVIDERS)
-    for slug in PROVIDERS:
+    public_slugs = {provider.slug for provider in providers_for_display()}
+    assert set(manifest) == public_slugs
+    for slug in public_slugs:
         assert manifest[slug]["card_version"] == CARD_VERSION
         assert manifest[slug]["slug"] == slug
         assert manifest[slug]["name"] == PROVIDERS[slug].name
@@ -208,12 +210,12 @@ def test_provider_social_card_generation_is_idempotent(
     monkeypatch.setattr(generate_provider_og, "OUT_DIR", tmp_path)
     monkeypatch.setattr(generate_provider_og, "MANIFEST_PATH", tmp_path / "manifest.json")
     first_generated, first_unchanged = generate()
-    assert first_generated == len(PROVIDERS)
+    assert first_generated == len(providers_for_display())
     assert first_unchanged == 0
     generated, unchanged = generate()
 
     assert generated == 0
-    assert unchanged == len(PROVIDERS)
+    assert unchanged == len(providers_for_display())
 
 
 def test_hourly_catalog_refresh_keeps_provider_cards_current() -> None:

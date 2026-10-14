@@ -75,7 +75,7 @@ _DEFAULT_PROVIDER_SLUGS: tuple[str, ...] = (
 
 
 def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str, object]:
-    public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS]
+    public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS and not model.internal_only]
     public_model_ids = {model.id for model in public_models}
     public_endpoints = [
         endpoint
@@ -107,7 +107,7 @@ def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str,
     )
     return {
         "model_count": len(public_models),
-        "provider_count": len(PROVIDERS),
+        "provider_count": sum(not provider.internal_only for provider in PROVIDERS.values()),
         "route_count": len(public_endpoints),
         "zdr_route_count": sum(
             endpoint_zero_data_retention(endpoint) is True for endpoint in public_endpoints

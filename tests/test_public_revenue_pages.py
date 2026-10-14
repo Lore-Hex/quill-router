@@ -583,7 +583,10 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert 'href="/for-developers"' in body
     assert 'href="/docs/quickstart"' not in body
     assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
-    public_provider_count = sum(slug != "trustedrouter" for slug in PROVIDERS)
+    public_provider_count = sum(
+        slug != "trustedrouter" and not provider.internal_only
+        for slug, provider in PROVIDERS.items()
+    )
     assert f"{public_provider_count} providers" in body
 
     glm = body.index('data-model-id="z-ai/glm-5.3-flash"')

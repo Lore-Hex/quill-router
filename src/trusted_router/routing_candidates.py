@@ -542,6 +542,7 @@ def _meta_route_kind(model_id: str) -> str:
 def _is_regular_chat_model(model: Model) -> bool:
     return (
         model.id not in META_MODEL_IDS
+        and not model.internal_only
         and offers_chat(model)
         and (model.provider, model.id) not in INPUT_ONLY_PROVIDER_MODELS
     )

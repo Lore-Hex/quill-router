@@ -63,4 +63,4 @@ def provider_og_facts(provider_slug: str) -> ProviderOgFacts:
 
 
 def all_provider_og_facts() -> tuple[ProviderOgFacts, ...]:
-    return tuple(provider_og_facts(slug) for slug in sorted(PROVIDERS))
+    return tuple(provider_og_facts(slug) for slug in sorted(PROVIDERS) if not PROVIDERS[slug].internal_only)
