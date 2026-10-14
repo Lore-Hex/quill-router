@@ -1,4 +1,4 @@
-# Router startup records — round 2
+# Router startup records — round 3
 
 The package runs after the serving listener starts. Application construction
 installs the admission hold and allocates the boot; it does not wait for files,
@@ -30,7 +30,9 @@ its existing ObservationStore. It performs one HEALTH local/fleet exact-key
 read, with one attempt and a bounded budget. Target membership, region and
 configured database are checked. Operations run off the listener's task; the
 criterion's outer deadline remains at most ten seconds. There is no retry.
-The transport operation remains an explicit missing input, described below.
+The transport operation reads the regional enclave resource described below.
+Without P3, the read uses the configured database through the same ObservationStore
+adapter; it does not start an observer or publisher.
 
 Runtime.authorize_http samples admission time at its existing native start
 boundary. The recorder counts opted cohort starts, including starts that cannot
@@ -88,26 +90,62 @@ close-result rows keep their existing P3 keys and retention path. The release
 must configure the required retention duration and capture the generation
 replies; a local stdout record is not an object acknowledgement.
 
-## Runtime gaps still blocking completion
+## Regional transport operation
 
-**ReleasedDependencyOperations.transport:** this checkout has no configured
-settle-echo client or callable in the compared runtime. The adapter rejects the
-transport operation with this name instead of treating a generic round trip as
-the compared path. This blocks boot_transport and therefore ready for every
-boot. The missing implementation needs the released enclave client, its regional
-target and its existing marker/pin checks. No replacement path was introduced.
+The router does not make an outbound settle-echo call. The echo arrives on the
+enclave's calls to the router. Its regional transport dependency is the enclave
+endpoint itself. `regional_attestation_resource` selects this boot's region from
+`ENCLAVE_REGIONS` and `synthetic.probes.configured_targets(Settings)`, the same
+regional inventory and resolver used by `synthetic.shadow_probe.targets(Settings)`.
+The startup module does not import the cohort probe.
+The resource is `https://api-<region>.quillrouter.com/attestation`.
+The gateway source already referenced by this repository,
+`quill-cloud-proxy/enclave-go/cmd/enclave/main.go`, serves `GET /attestation`.
+No request field supplies the resource or region.
 
-**IdleObserverOriginals:** a no-cohort boot has no P3 service and thus no actual
-HEALTH_BASIS install. The unchanged observer criterion requires an installed
-original. Idle boots now have an allocated boot and coordinator, but cannot emit
-six completed adoptions from the available producers. With a valid descriptor
-and originals, they emit correlation and the available adoptions, including
-actual dormant pins. Completing six idle adoptions needs the specified idle
-producer, consistent with the existing empty-policy import rule. No absent
-observation is represented as passed.
+The operation makes one read-only GET, with no retry or redirect, a 65536-byte
+response limit and an absolute deadline of at most 10000000 us. It uses the
+existing `receipt_keys.gcp_attestation_image_digest` reader and compares the
+single image digest with the same loaded accepted-image set used by the router:
+`StageDPolicyResolver.accepted_image_digests()` plus
+`Settings.stage_d_accepted_gcp_digests`. It does not fetch a second pin source.
+A matching, well-formed response completes with attempts=1 and
+marker_matches=true. Missing pins, an unknown digest, a malformed response or
+a timeout leaves boot_transport missing. The listener continues serving.
+This is the startup image-marker comparison, not a new settle client.
 
-These are remaining runtime work, not release qualifications. The round is not
-a claim that all production startup criteria can pass.
+The interface sentence implemented is: “The independent released configuration
+has `dependencies.router` and `dependencies.enclave`, each a list of
+`{operation,resource,region}`.” Collectors must include this exact regional
+attestation resource in `dependencies.router` with operation `transport` and
+this boot's region, alongside the configured database `read` resource.
+
+## Idle observer rule
+
+`observer_freshness` requires this boot's own installed HEALTH_BASIS original.
+That original exists only when the P3 durable-observation service runs in this
+process. In the dormant stage, with no cohort configured, P3 need not run.
+Given the released startup inputs, that boot records a3_startup_correlation and
+five adoptions: transport, size and regional_load from the manifest,
+boot_transport from the regional operations, and marker_keys with the actual
+OFF pins. observer_freshness remains MISSING with the fixed reason
+`no observer ran in this process`. There is no observer record and no ready
+record. This is an ordinary dormant boot, with nothing opted.
+
+At activation, P3 runs on every router. Its own HEALTH_BASIS install supplies
+the sixth adoption. There is no synthetic idle record or replacement producer.
+
+## P3 retention hooks
+
+The store retains the already-built claim and publication Row.body buffers only
+when a startup consumer is installed and the existing write completed. It adds
+no store operation. The health-state helper only parses those originals and
+checks their existing publication join. The service retains the first usable
+install-time HEALTH_BASIS and carries the existing publisher reply buffers and
+measured cycle duration. These record steps are conditional on the startup
+consumer. The optional close callback retains existing close/result buffers;
+its extra clock samples also run only with a consumer. Existing P3 deadlines,
+scheduling, writes and absent-consumer behavior remain unchanged.
 
 ## Stage and seam ledger
 
@@ -126,11 +164,18 @@ a claim that all production startup criteria can pass.
   admission callable to its six checks and retained ready acknowledgement.
   This blocks activation of the complete compared route.
 
+- **Retention duration and capture configuration:** release setup must retain ready
+  originals and acknowledgements for at least 30 days and capture the complete
+  startup originals and generation replies.
+
 ## Validation
 
 The two package test modules use the real P3 service and compared Runtime with
 fakes at the store and transport boundaries. They cover original buffer identity,
 actual outcomes and PAGE acknowledgement, incomplete starts and closes, original
 file joins, generation replies, target selection and listener availability.
-The round-2 report at /tmp/v2-harness-author-2/report.md records the requested
-module runs, scratch-copy sensitivity checks and request-cost measurements.
+The round-3 report at /tmp/v2-harness-author-3/report.md records the requested
+module runs and scratch-copy sensitivity checks. Runtime HTTP tests use a real
+HTTP handler over connected sockets, because this runner cannot bind loopback
+ports; HTTPX parsing, response reads and deadlines remain in the tested path.
+Round-2 request-cost measurements remain in /tmp/v2-harness-author-2/report.md.

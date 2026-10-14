@@ -108,6 +108,7 @@ class ObservationStore:
         self.workspace_database = database
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
+        self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
         self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
@@ -175,7 +176,9 @@ class ObservationStore:
 
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
+        original = None
         def run(tx: Any) -> bool:
+            nonlocal original
             rows = self.query(tx, shadow_health_claim_read(), budget, CYCLE_SECONDS)
             require(len(rows) == 1, "point_bound")
             body, server = rows[0]
@@ -188,9 +191,13 @@ class ObservationStore:
                 return False
             row = Row.build(CLAIM_KIND, "local/publish", value)
             self.write(tx, [row], budget)
-            self.startup_claim_raw = row.body
+            if self.startup_retention:
+                original = row.body
             return True
-        return self.transaction(run, budget, CYCLE_SECONDS)
+        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed and self.startup_retention:
+            self.startup_claim_raw = original
+        return landed
 
     def publish(self, value: dict[str, Any], budget: Budget) -> bool:
         row = Row.build(HEALTH_KIND, "local/fleet", value)
@@ -202,7 +209,7 @@ class ObservationStore:
             self.write(tx, [row], budget)
             return True
         landed = self.transaction(run, budget, CYCLE_SECONDS)
-        if landed:
+        if landed and self.startup_retention:
             self.startup_publication_raw = row.body
         return landed
 

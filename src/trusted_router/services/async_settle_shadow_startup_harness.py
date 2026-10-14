@@ -38,6 +38,7 @@ from trusted_router.services.async_settle_shadow_startup_records import (
 MANIFEST_ENV = "TR_ASYNC_SETTLE_SHADOW_STARTUP_MANIFEST"
 PROCESS_START_US = time.time_ns() // 1000
 MANIFEST_BYTES = 262144
+IDLE_OBSERVER_REASON = "no observer ran in this process"
 
 
 @dataclass
@@ -133,6 +134,7 @@ class Harness:
         self.adopted: dict[str, dict[str, Any]] = {}
         self.finished: set[str] = set()
         self.missing: set[str] = set()
+        self.missing_reasons: dict[str, str] = {}
         self.correlated = False
         self.descriptor: Descriptor | None = None
         self.manifest: dict[str, Any] | None = None
@@ -285,6 +287,10 @@ class Harness:
             return
         self.finished.add(criterion)
         assert self.manifest is not None and self.descriptor is not None
+        if criterion == "observer_freshness" and self.ports.observer is None:
+            self.missing.add(criterion)
+            self.missing_reasons[criterion] = IDLE_OBSERVER_REASON
+            return
         try:
             inputs, checks = self.artifact_inputs(criterion)
             fields = await self.local_fields(criterion, checks)
@@ -551,8 +557,8 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
                 async def retain_other(key: str, raw: bytes) -> Acknowledgement:
                     return await retain_object(settings.async_settle_shadow_attachment_bucket, key, raw)
                 harness.ports.retain_original = retain_other
-            if service is not None:
-                harness.ports.dependency = dependency_operations(service, manifest)
+            harness.ports.dependency = dependency_operations(service, manifest, settings=settings,
+                resolver=getattr(app.state, "stage_d_policy_resolver", None))
             await harness.run(descriptor, manifest)
         except Exception:
             harness.missing.add("ReleaseStartupInputs")
@@ -589,6 +595,7 @@ def bind_service(harness: Harness, service: Any, runtime: Any = None) -> None:
             harness.originals.retain("originals.close_result", result.body)
         harness.shutdown_span(**fields)
 
+    service.startup_retention = service.store.startup_retention = True
     service.startup_close = closed_interval
     harness.ports.observer = observer
     harness.ports.validate_observer = validate_startup_observation
@@ -604,25 +611,69 @@ def bind_service(harness: Harness, service: Any, runtime: Any = None) -> None:
         runtime.startup_attempt_start = harness.attempt_start
 
 
-def dependency_operations(service: Any, manifest: dict[str, Any]) -> Callable[[dict[str, Any], int], Awaitable[bool]]:
-    """Bind an exact-key read to the installed observation client, once per boot."""
+def regional_attestation_resource(settings: Any) -> str:
+    from trusted_router.enclave_regions import ENCLAVE_REGIONS
+    from trusted_router.synthetic.probes import configured_targets
+
+    require(settings.effective_serving_region in ENCLAVE_REGIONS)
+    cfg = settings.model_copy(update={"regions": ",".join(ENCLAVE_REGIONS),
+        "synthetic_regional_probes_enabled": True, "synthetic_gateway_region_targets": ""})
+    regional = [t for t in configured_targets(cfg) if t.name == settings.effective_serving_region]
+    require(len(regional) == 1 and not regional[0].connect_host)
+    return str(regional[0].api_base_url.removesuffix("/v1") + "/attestation")
+
+
+def idle_observation_store() -> Any:
+    """Use the configured database for the one startup read, without starting P3."""
+    from trusted_router.storage import STORE, typed_billing_store
+    from trusted_router.storage_gcp_shadow_observation import ObservationStore
+
+    backend = typed_billing_store(STORE)
+    require(backend is not None)
+    return ObservationStore(cast(Any, backend)._database)
+
+
+def dependency_operations(service: Any, manifest: dict[str, Any], *, settings: Any = None,
+                          resolver: Any = None) -> Callable[[dict[str, Any], int], Awaitable[bool]]:
+    """One released regional GET and one exact-key database read per boot."""
     from trusted_router.async_settle_shadow_journal import HEALTH_KIND
     from trusted_router.storage_gcp_shadow_observation import Budget
 
+    settings = settings if settings is not None else service.settings
     targets = tuple(canonical(t) for t in manifest["config"]["dependencies"]["router"])
     used: set[bytes] = set()
+    # Same accepted set used by the router's existing gateway image check.
+    accepted = settings.stage_d_accepted_gcp_digests
+    if resolver is not None:
+        accepted = accepted | resolver.accepted_image_digests()
 
     async def operation(target: dict[str, Any], deadline_us: int) -> bool:
         key = canonical(target)
         require(key in targets and key not in used and 0 < deadline_us <= 10_000_000)
         used.add(key)
-        require(target["region"] == service.settings.effective_serving_region)
-        if target["operation"] == "read":
-            # The resource is the configured P3 database, never a request value.
-            require(target["resource"] == service.settings.spanner_database_id)
-            budget = Budget(service.store.clock()+deadline_us/1_000_000, service.store.clock)
-            await asyncio.to_thread(service.store.read, HEALTH_KIND, "local/fleet", budget)
-            budget.remaining(deadline_us/1_000_000)
-            return True
-        raise ValueError("ReleasedDependencyOperations.transport")
+        require(target["region"] == settings.effective_serving_region)
+        async with asyncio.timeout(deadline_us/1_000_000):
+            if target["operation"] == "read":
+                require(target["resource"] == settings.spanner_database_id)
+                store = service.store if service is not None else await asyncio.to_thread(idle_observation_store)
+                budget = Budget(store.clock()+deadline_us/1_000_000, store.clock)
+                await asyncio.to_thread(store.read, HEALTH_KIND, "local/fleet", budget)
+                budget.remaining(deadline_us/1_000_000)
+                return True
+            require(target["operation"] == "transport")
+            resource = regional_attestation_resource(settings)
+            require(target["resource"] == resource)
+            import httpx
+
+            from trusted_router.receipt_keys import gcp_attestation_image_digest
+
+            async with httpx.AsyncClient(timeout=deadline_us/1_000_000, follow_redirects=False) as client:
+                async with client.stream("GET", resource) as response:
+                    require(response.status_code == 200)
+                    raw = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        raw.extend(chunk)
+                        require(len(raw) <= 65536)
+            image_digest = gcp_attestation_image_digest(raw.decode("ascii"))
+            return bool(accepted) and image_digest in accepted
     return operation

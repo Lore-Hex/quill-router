@@ -197,7 +197,7 @@ class HealthObserver(Observer):
             elif self._success(None, started):
                 self.health = dict(value) if value is not None else None
                 svc = self.service
-                if svc is not None and svc.startup_observation is None and value is not None:
+                if svc is not None and svc.startup_retention and svc.startup_observation is None and value is not None:
                     try:
                         # This is the install producer, not a later cache snapshot.
                         basis = health_basis(self, svc.journal.boot, at=self.clock())
@@ -487,7 +487,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         outcome={"missed_slots": "missed", "lost_claims": "lost_claim", "publications": "published", "failures": "failed"}[outcome],
         unknown_outcome=unknown, late_cycle=late, rpc_count=len(rpc_durations), rpc_elapsed_us=sum(rpc_durations))
     originals = None
-    if outcome == "publications" and claim is not None:
+    if admission.startup_retention and outcome == "publications" and claim is not None:
         claim_raw = store.startup_claim_raw
         publication_raw = store.startup_publication_raw
         if claim_raw is not None and publication_raw is not None:
@@ -500,6 +500,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
 class Service:
     def __init__(self, settings: Settings, store: ObservationStore, transport: Transport | None = None) -> None:
         self.settings, self.store = settings, store
+        self.startup_retention = False
         self.startup_observation: dict[str, Any] | None = None
         self.startup_publication: dict[str, Any] | None = None
         self.startup_close: Callable[..., None] | None = None
@@ -1010,7 +1011,7 @@ class Service:
 
     def _flush(self, deadline: float, *, finals_only: bool = False) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
-        preparation_started = round(self.store.clock()*1_000_000)
+        preparation_started = round(self.store.clock()*1_000_000) if self.startup_close is not None else 0
         budget = Budget(deadline, self.store.clock)
         self.sync_fold_obligations()
         if self.closing_reason is not None and not self.state.shutdown:
@@ -1025,7 +1026,7 @@ class Service:
             for effect in effects:
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, stamp)
-        export_started = round(self.store.clock()*1_000_000)
+        export_started = round(self.store.clock()*1_000_000) if self.startup_close is not None else 0
         yield from self.upload(self.bases, budget)
         yield from self.upload(self.traces, budget)
         with self.lock:
@@ -1098,7 +1099,7 @@ class Service:
             if closure is not None:
                 with self.lock:
                     self.final_attempted.add(day)
-            close_started = round(self.store.clock()*1_000_000)
+            close_started = round(self.store.clock()*1_000_000) if self.startup_close is not None else 0
             phase_start, phase_export = self.startup_close_phases.get(day, (preparation_started, export_started))
             spans = dict(preparation=[phase_start, phase_export],
                 export_wait=[phase_export, close_started])
@@ -1109,7 +1110,8 @@ class Service:
                 try:
                     yield partial(self.store.flush, pages, counter, closure, budget)
                 finally:
-                    spans["close"] = [close_started, round(self.store.clock()*1_000_000)]
+                    if self.startup_close is not None:
+                        spans["close"] = [close_started, round(self.store.clock()*1_000_000)]
                 elapsed = max(0, round((self.store.clock()-started)*1_000_000))
                 if closure is not None:
                     observed = int(self.store.wall()*1_000_000)
@@ -1128,12 +1130,13 @@ class Service:
                         return
                     self.last_closure_ack = result.value()
                     self.handoff = (day, pages, closure, result)
-                    result_started = round(self.store.clock()*1_000_000)
+                    result_started = round(self.store.clock()*1_000_000) if self.startup_close is not None else 0
                     try:
                         try:
                             yield partial(self.store.close_result, result, budget)
                         finally:
-                            spans["result"] = [result_started, round(self.store.clock()*1_000_000)]
+                            if self.startup_close is not None:
+                                spans["result"] = [result_started, round(self.store.clock()*1_000_000)]
                     except Exception:
                         self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, None))
                         return  # Exactly one write; later exact read can establish landing.
@@ -1316,7 +1319,7 @@ class Service:
             await self.close_done.wait()
             return
         self.close_task = asyncio.current_task()
-        self.startup_preparation_started = round(self.store.clock()*1_000_000)
+        self.startup_preparation_started = round(self.store.clock()*1_000_000) if self.startup_close is not None else 0
         deadline = min(deadline or self.store.clock()+9, self.termination_deadline or self.store.clock()+9)
         if reason == "shutdown":
             self.termination_deadline = deadline
