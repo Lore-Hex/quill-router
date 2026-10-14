@@ -72,8 +72,86 @@ ceiling and the pending-work stop are held by the watch's tests, not
 exercised live, for the reasons the runbook states; the spend stop and
 the lost-view start are the live exercises before the rate rises.
 
+## Run 2: one generation a second, the stage's own subscriptions
+
+2026-10-13, the watch from 20:27Z until it stopped the stage at
+20:32:30Z (below); the generator started 300 generations, one a second,
+five minutes of a planned ten. Same mix, same rate, the watch on
+`auditor` and `stager`.
+
+| | |
+|---|---|
+| generations started | 300 (none refused for lack of room in flight) |
+| authorize admitted | 296 |
+| authorize busy | 4, the first requests, before the first lease was granted |
+| settles won / refunds won | 281 / 4 |
+| streams complete / cancelled by the stop | 131 / 11 |
+| heartbeats accepted | 204 |
+
+| | p50 | p90 | p99 | max |
+|---|---|---|---|---|
+| authorize admitted | 1.60 ms | 1.96 ms | 2.33 ms | 4.05 ms |
+| heartbeat | 21 ms | 36 ms | 49 ms | 79 ms |
+| settle (terminal, to the owner's answer) | 51 ms | 73 ms | 137 ms | 1.08 s |
+
+The admission's cost is run 1's again, under the 10 ms budget by a
+factor of four at the p99.
+
+**The audit** after the run: exit 0, no problem; usage booked 972,058
+micro-credits (0.97 USD) equal to the leases' consumption, reservations
+55,681 on three leases revoked by the stop and draining, four leases
+closed, credits 100,000,000 unchanged.
+
+**The stop.** The watch stopped the stage at 20:32:30Z: six packs' work
+had been pending longer than five minutes. Those packs were run 1's: the
+holds of the three leases run 1's stop revoked, streams cut off before
+their terminals and reaped by the auditor once their last heartbeat's
+deadline, 30 seconds, and the grace, a minute, had passed. Every reaped
+hold's winner alerted `no_boot_binding`,
+because a hold made by heartbeats alone had no boot binding on its row,
+so the reap's record stated none and the winner's pack could not finish.
+The watch knows a pack's age only from its own first look, so run 2's,
+started empty at 20:27Z, found them pending for more than five minutes at
+20:32:30Z, one polling interval past. Closing a lease does not wait for
+its packs (the three leases run 2's stop revoked closed on their own
+later), but the packs stay pending, and run 2's own cut-off streams,
+reaped afterwards, added theirs. The ceiling worked as W3 means it to:
+it stopped the stage once the packs had been seen pending for more than
+five minutes, at the first 30-second poll past the ceiling.
+
+## What the two runs found
+
+Three defects, each fixed on main and on the nodes before run 3:
+
+1. **A reaped hold's boot binding** (above). The fix took two releases,
+   since an auditor from before a record field refuses a record carrying
+   it and the settle after that record is then acknowledged past a gap:
+   first every auditor reads the authorization's boot binding on a hold's
+   first heartbeat record (#1751, release `2eef83dec`), then the owner
+   states it there (#1754, release `4f58c6efa`), pinned once both nodes
+   ran the reader. `docs/runbooks/fastpath-deploy.md` now says how a
+   record field is added. The packs run 2 left pending are from before
+   the fix; they stay pending until an operator marks their work done,
+   which the audit reports and the watch's ceiling would stop run 3 on.
+2. **The nodes' journal never reached Cloud Logging** (#1752). The alerts
+   of run 2 were found in a node's journal over SSH, 2,222 lines, none in
+   Cloud Logging, which W7's alerting reads: the image had no logging
+   agent. The startup script now installs the Ops Agent with a journald
+   receiver before the release is looked up, and the entries carry
+   `labels.unit` and `labels.fastpath_alert`.
+3. **The alerts' severity** (#1757, release `f96c21395`). Shipped, the
+   alerts arrived as `INFO`: the severity written inside the line's JSON,
+   the agent's special field included, is outranked by the journal's
+   priority. An alert line now carries systemd's `<3>` prefix, which the
+   journal reads as the err priority and strips, and the entries arrive as
+   `ERROR`.
+
+Each was found by a mechanism the stage is meant to exercise (the
+pending-work ceiling, the alerts' path, the alerts' severity) and none by
+the accounting, which held in both runs.
+
 ## Next
 
-Run 2 at the same rate for the full ten minutes with the corrected
-subscriptions, then the spend-stop exercise, then the rate raised by
-steps.
+Run 3 at the same rate for the full ten minutes on release `f96c21395`,
+after the legacy pending packs are handled; then the spend-stop exercise,
+then the rate raised by steps.
