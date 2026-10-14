@@ -175,11 +175,18 @@ answers are each run's first requests, before its first lease.
 The admission's cost stays under the 10 ms budget at every quantile at
 four generations a second, the slowest single admission of 7,200 at
 9.6 ms. Its p50 is higher than runs 1 and 2's 1.6 ms on release
-`bfa94e22e`, on the same nodes, the same mix and the same generator
-placement; the node is idle meanwhile (load average 0.11 on two vCPUs
-during run 4, the logging agent at six percent, no journal line per
-request), so the difference is not contention, and it is the next thing
-to read in the owner's timings before the rate rises further.
+`bfa94e22e`, with the same mix and the same generator placement, and
+the reason is the network, not the fast path: the generator on
+`tr-fastpath-1` sends to both front doors, and from there an empty
+`/owner/ping` answers in 0.41 ms from its own node and 2.54 ms from
+`tr-fastpath-2`, a zone away (p50 of 30 each, measured after run 5).
+The authorize path between the two releases is unchanged
+(`git log bfa94e22e..f96c21395 -- fastpath/` touches the heartbeat
+record and the alert line), and the node is idle during a run (load
+average 0.11 on two vCPUs, the logging agent at six percent, no journal
+line per request). The admission itself costs a few hundred
+microseconds over the floor; the nodes replaced on 2026-10-13 22:23Z
+sit further apart than the pair of runs 1 and 2 did.
 
 **The audits.** Usage booked after run 3, 2,178,353 micro-credits; after
 run 4, 4,260,009; after run 5, 12,180,547 (12.18 USD of the 100 funded),
