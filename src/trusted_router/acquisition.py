@@ -287,6 +287,8 @@ def record_signup_attribution(
     user_id: str | None = None,
     verified_email: str | None = None,
     signup_path: str | None = None,
+    provider_login: str | None = None,
+    provider_account_created_at: str | None = None,
 ) -> None:
     if _privacy_signal_enabled(request):
         return
@@ -318,6 +320,8 @@ def record_signup_attribution(
         signup_provider=signup_provider,
         starter_credit_microdollars=max(0, starter_credit_microdollars),
         signup_at=occurred_at,
+        provider_login=provider_login,
+        provider_account_created_at=provider_account_created_at,
         google_click_id_kind=(context.google_click_id_kind if encrypted_google_click_id else None),
         encrypted_google_click_id=encrypted_google_click_id,
         google_click_expires_at=(

@@ -1714,6 +1714,8 @@ class AcquisitionAttribution:
     signup_provider: str
     starter_credit_microdollars: int = 0
     signup_at: str = field(default_factory=iso_now)
+    provider_login: str | None = None
+    provider_account_created_at: str | None = None
     milestones: dict[str, str] = field(default_factory=dict)
     purchase_count: int = 0
     purchase_microdollars: int = 0

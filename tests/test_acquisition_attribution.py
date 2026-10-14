@@ -939,3 +939,11 @@ def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
     assert purchased is not None
     assert purchased.purchase_count == 1
     assert purchased.purchase_microdollars == 12_345_678
+
+
+def test_email_signup_gives_hotmail_no_starter_credit(client: TestClient) -> None:
+    hotmail = client.post("/v1/signup", json={"email": "farm123@hotmail.com", "name": "H"})
+    other = client.post("/v1/signup", json={"email": "real@example.com", "name": "R"})
+    assert hotmail.status_code == other.status_code == 201
+    assert hotmail.json()["data"]["trial_credit_microdollars"] == 0
+    assert other.json()["data"]["trial_credit_microdollars"] > 0

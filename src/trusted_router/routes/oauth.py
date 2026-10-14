@@ -46,7 +46,7 @@ from trusted_router.oauth_provider import (
     exchange_code,
     fetch_user,
 )
-from trusted_router.signup_gate import require_new_account_creation
+from trusted_router.signup_gate import require_new_account_creation, starter_credit_for_email
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -205,7 +205,9 @@ def _persist_login(
             # don't deref None silently.
             result = STORE.signup(
                 email=info.email,
-                trial_credit_microdollars=settings.signup_trial_credit_microdollars,
+                trial_credit_microdollars=starter_credit_for_email(
+                    info.email, settings.signup_trial_credit_microdollars
+                ),
                 email_verified=True,
             )
             if result is not None:
@@ -324,6 +326,8 @@ async def _handle_callback(
             user_id=login.user_id,
             verified_email=info.email,
             signup_path=_from_target(request),
+            provider_login=info.provider_login,
+            provider_account_created_at=info.provider_account_created_at,
         )
 
     target = next_target or ("/console/welcome?first=1" if first_time else "/console/api-keys")
