@@ -155,6 +155,7 @@ PROVIDER_SLUGS = [
     "sail_research",
     "reka",
     "nextbit",
+    "nextbit_eu",
     "akashml",
     "mancer",
     "abliterate",
@@ -201,6 +202,7 @@ PROVIDER_SLUGS = [
 # Product adapters own independent availability and prices. Aliases here map
 # Python module names to public provider identities, never across products.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
+    "nextbit_eu": ("nextbit-eu",),
     "system1models_eu": ("system1models-eu",),
     "confidential_ai": ("confidential-ai",),
     "gemini": ("google-ai-studio",),

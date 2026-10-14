@@ -21,6 +21,8 @@ EXPLICIT_MODEL_MAP = {
     "deepseek:v4-flash-0731": "deepseek/deepseek-v4-flash-0731",
     "euryale:33-70b": "sao10k/l3.3-70b-euryale-v2.3",
     "gemma-2:27b-it": "google/gemma-2-27b-it",
+    "gemma3:12b-it": "google/gemma-3-12b-it",
+    "gemma3:27b": "google/gemma-3-27b-it",
     "gemma4:26b-a4b": "google/gemma-4-26b-a4b-it",
     "mythomax:13b": "gryphe/mythomax-l2-13b",
     "qwen3:14b": "qwen/qwen3-14b",
