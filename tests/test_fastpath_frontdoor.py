@@ -210,23 +210,72 @@ def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_
     client.close()
 
 
-def test_a_late_answer_does_not_reset_the_breaker() -> None:
+def test_a_late_answer_changes_no_breaker_either_way() -> None:
     clock = [0.0]
+
+    def answers_late(request: httpx.Request) -> httpx.Response:
+        clock[0] += 1.6  # the door answers after the caller's budget
+        return httpx.Response(200, json=ADMIT)
+
     client = fd.FrontDoorClient(
         lambda _b: ("10.0.0.1:8080",), timeout_seconds=1.5, clock=lambda: clock[0],
-        transport=_transport({"10.0.0.1:8080": _Door({"/v1/authorize": ADMIT})}),
+        transport=httpx.MockTransport(answers_late),
     )
     breaker = client._breakers.setdefault("10.0.0.1:8080", fd._Breaker())
     breaker.failures = 4
-    # The door answers, but the clock says the caller's budget is spent.
     deadline = clock[0] + 1.5
-    clock[0] = deadline + 0.1
+    # A good answer, late: not health (no reset) and not a failure (no open).
     assert client._call_within("/v1/authorize", {"Workspace": "ws"}, deadline) is None
     assert breaker.failures == 4
-    # And a failure past the deadline opens nothing further either.
-    clock[0] = deadline + 0.2
-    client._failed(breaker, deadline)
+
+    def fails_late(request: httpx.Request) -> httpx.Response:
+        clock[0] += 1.6
+        raise httpx.ReadTimeout("slow", request=request)
+
+    client = fd.FrontDoorClient(
+        lambda _b: ("10.0.0.1:8080",), timeout_seconds=1.5, clock=lambda: clock[0],
+        transport=httpx.MockTransport(fails_late),
+    )
+    breaker = client._breakers.setdefault("10.0.0.1:8080", fd._Breaker())
+    breaker.failures = 4
+    deadline = clock[0] + 1.5
+    assert client._call_within("/v1/authorize", {"Workspace": "ws"}, deadline) is None
     assert breaker.failures == 4
+    # A start past the deadline sends nothing at all.
+    sent: list[str] = []
+
+    def records(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        return httpx.Response(200, json=ADMIT)
+
+    client = fd.FrontDoorClient(
+        lambda _b: ("10.0.0.1:8080",), timeout_seconds=1.5, clock=lambda: clock[0],
+        transport=httpx.MockTransport(records),
+    )
+    assert client._call_within("/v1/authorize", {"Workspace": "ws"}, clock[0] - 0.1) is None
+    assert sent == []
+
+
+def test_a_call_whose_thread_cannot_start_is_never_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading as real_threading
+
+    sent: list[str] = []
+
+    def records(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        return httpx.Response(200, json=ADMIT)
+
+    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=0.5, transport=httpx.MockTransport(records))
+
+    def cannot_start(self: Any) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(real_threading.Thread, "start", cannot_start)
+    assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
+    monkeypatch.undo()
+    # The permit came back, and the call that could not start never runs.
+    assert client.authorize(workspace_id="ws", request="r2", estimate=1, stream=False, boot=b"b") is not None
+    assert sent == ["/v1/authorize"]
 
 
 def test_a_body_that_is_not_json_counts_as_a_failure() -> None:

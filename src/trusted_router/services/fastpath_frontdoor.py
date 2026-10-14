@@ -29,8 +29,6 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -175,16 +173,15 @@ class FrontDoorClient:
         self._breakers: dict[str, _Breaker] = {}
         self._turn = 0
         self._lock = threading.Lock()
-        # The whole call, the membership read included, runs on a worker so
-        # the caller's wait is bounded by the budget whatever the SDK or the
-        # socket do; a call left behind ends on its own timeouts.
-        self._workers = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="fastpath-front-door")
-        # One permit per worker: a call with no free worker is today's path
-        # at once, never queued to start later with a budget of its own.
+        # The whole call, the membership read included, runs on a thread of
+        # its own so the caller's wait is bounded by the budget whatever the
+        # SDK or the socket do; a call left behind ends on its own timeouts.
+        # One permit per thread: a call with no permit is today's path at
+        # once, and nothing is ever queued to start later with a budget of
+        # its own.
         self._permits = threading.BoundedSemaphore(WORKERS)
 
     def close(self) -> None:
-        self._workers.shutdown(wait=False)
         self._client.close()
 
     # -- authorize --------------------------------------------------------
@@ -256,21 +253,30 @@ class FrontDoorClient:
             logger.warning("fastpath %s: every worker busy", path)
             return None
         deadline = self._clock() + self._budget
+        done = threading.Event()
+        answer: list[dict[str, Any] | None] = [None]
+
+        def run() -> None:
+            try:
+                answer[0] = self._call_within(path, body, deadline)
+            except Exception:  # noqa: BLE001 - a front door call must not fail the request
+                logger.exception("fastpath %s failed", path)
+            finally:
+                done.set()
+                self._permits.release()
+
+        worker = threading.Thread(target=run, name="fastpath-front-door", daemon=True)
         try:
-            future = self._workers.submit(self._call_within, path, body, deadline)
+            worker.start()
         except RuntimeError:
+            # Not started, so nothing runs later: the permit comes back now.
             self._permits.release()
-            logger.warning("fastpath %s: no worker", path)
+            logger.warning("fastpath %s: no thread", path)
             return None
-        future.add_done_callback(lambda _f: self._permits.release())
-        try:
-            return future.result(timeout=self._budget)
-        except FutureTimeout:
+        if not done.wait(self._budget):
             logger.warning("fastpath %s: budget spent", path)
             return None
-        except Exception:  # noqa: BLE001 - a front door call must not fail the request
-            logger.exception("fastpath %s failed", path)
-            return None
+        return answer[0]
 
     def _call_within(self, path: str, body: dict[str, Any], deadline: float) -> dict[str, Any] | None:
         """The call itself, tried on at most DOORS_PER_CALL front doors the
@@ -325,16 +331,17 @@ class FrontDoorClient:
                 self._failed(breaker, deadline)
                 continue
             if self._clock() >= deadline:
-                # Too late for the caller, and too slow to count as health.
-                self._failed(breaker, deadline, late=True)
+                # Too late for the caller, who has gone: neither health nor
+                # failure, the breaker is left as it was.
                 return None
             breaker.record_success()
             return answer
         return None
 
-    def _failed(self, breaker: _Breaker, deadline: float, *, late: bool = False) -> None:
+    def _failed(self, breaker: _Breaker, deadline: float) -> None:
+        """A failure counts only while the caller is still waiting."""
         now = self._clock()
-        if late or now < deadline:
+        if now < deadline:
             breaker.record_failure(now)
 
 
