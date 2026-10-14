@@ -328,7 +328,7 @@ def deterministic_shadow_budgets(request, monkeypatch):
 
 @pytest.fixture(scope='module', autouse=True)
 def _p5_cache_lifetime(request):
-    """Release P5 fixture data after all other module fixtures finish."""
+    """Release transient P5 data and count the remaining shared originals."""
     from tests.shadow_v2_gate_cache import PACKAGE_MODULES, live_objects, release_data_caches
 
     if request.node.path.name not in PACKAGE_MODULES:
@@ -344,15 +344,23 @@ def _p5_cache_lifetime(request):
                  'trusted_router.storage_gcp_async_settle_shadow',
                  'trusted_router.services.async_settle_shadow'):
         import_module(name)
+    # This is the default-selection object budget. Oracle selections retain
+    # long-family graphs while their teardown reports are still alive; their
+    # separate CI job has a time cap, not this default-suite object margin.
+    oracle_selection = any(item.path == request.node.path and
+                           item.get_closest_marker('proof_oracle')
+                           for item in request.session.items)
     before = live_objects()
     baseline = getattr(request.session, '_p5_objects_before', before)
     request.session._p5_objects_before = baseline
     yield
-    release_data_caches()
+    release_data_caches(shared=oracle_selection)
     after = live_objects()
     # A fixed allowance for pytest reports and modules first imported by tests.
     module_margin = package_margin = 35000
     print(f'P5 objects {request.node.path.name}: baseline={baseline} before={before} after={after} '
-          f'module_margin={module_margin} package_margin={package_margin}')
+          f'module_margin={module_margin} package_margin={package_margin} oracle={oracle_selection}')
+    if oracle_selection:
+        return
     assert after <= before + module_margin, (request.node.path.name, before, after, module_margin)
     assert after <= baseline + package_margin, (request.node.path.name, baseline, after, package_margin)

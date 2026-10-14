@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
@@ -58,8 +59,6 @@ def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, 
     Do not run v1 binary64 measurements through the integer-only A2 decoder.
     Duplicate fields and nonfinite numbers must not disappear before delegation.
     """
-    require(type(raw) is bytes and len(raw) <= limit, 'artifact_gap')
-
     try:
         value, issues = decode_original(raw, limit, allow_float=allow_float,
             max_depth=max_depth + 1, bounded_integers=bounded_integers)
@@ -100,6 +99,15 @@ MAX_TRANSPORT_DEPTH = 16
 _INVALID = object()
 
 
+class DecoderStatus(Enum):
+    """Internal decoder outcomes, separate from JSON member paths."""
+
+    DISAGREEMENT = auto()
+
+
+DecodeIssue = tuple[Any, ...] | DecoderStatus
+
+
 def same_decoded(left: Any, right: Any) -> bool:
     """Compare types and insertion order as well as scalar values, iteratively."""
     pending = [(left, right)]
@@ -122,7 +130,7 @@ def same_decoded(left: Any, right: Any) -> bool:
 
 def decode_original(raw: bytes, limit: int, *, allow_float: bool = False,
                     max_depth: int = MAX_TRANSPORT_DEPTH, bounded_integers: bool = True
-                    ) -> tuple[Any, list[tuple[Any, ...]]]:
+                    ) -> tuple[Any, list[DecodeIssue]]:
     """The only original-byte decoder: clean requires both decoders to agree.
 
     Standard rejection never discards locally recovered siblings. A local clean
@@ -148,14 +156,15 @@ def decode_original(raw: bytes, limit: int, *, allow_float: bool = False,
                               parse_float=finite, parse_constant=invalid, strict=True)
     except (ValueError, UnicodeError, RecursionError, OverflowError):
         pass
-    value, issues = _local_values(raw, allow_float=allow_float,
+    value, paths = _local_values(raw, allow_float=allow_float,
         max_depth=max_depth, bounded_integers=bounded_integers)
+    issues: list[DecodeIssue] = list(paths)
     if not issues and (standard is _INVALID or not same_decoded(value, standard)):
-        issues.append(('transport', 'decoder-disagreement'))
+        issues.append(DecoderStatus.DISAGREEMENT)
     return value, issues
 
 
-def transport_values(raw: bytes, limit: int) -> tuple[dict[str, Any], list[tuple[Any, ...]]]:
+def transport_values(raw: bytes, limit: int) -> tuple[dict[str, Any], list[DecodeIssue]]:
     value, issues = decode_original(raw, limit)
     require(type(value) is dict)
     return value, issues
@@ -386,13 +395,15 @@ def transport_children(raw: bytes, limit: int) -> tuple[dict[str, Any], list[Loa
         elif valid(child, 'transport/' + key):
             cleaned[key] = child
     for error in errors:
-        # Segments remain typed until rendering: an untrusted member named
-        # 'rows/0' can never masquerade as the first rows element.
+        if error is DecoderStatus.DISAGREEMENT:
+            reject('transport/decoder-disagreement')
+            continue
+        # Member paths remain typed until rendering. A name containing '/'
+        # stays a single segment, separate from an array index.
+        assert isinstance(error, tuple)
         parts = error
         key = parts[1] if len(parts) > 1 else ''
-        if parts == ('transport', 'decoder-disagreement'):
-            reject('transport/decoder-disagreement')
-        elif key not in allowed:
+        if key not in allowed:
             reject('transport/extra')
         elif key in arrays and len(parts) > 2 and type(parts[2]) is int and type(value.get(key)) is list:
             index = parts[2]

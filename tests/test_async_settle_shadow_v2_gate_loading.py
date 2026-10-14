@@ -1274,3 +1274,80 @@ def test_round13_inventory_cache_key_and_copy() -> None:
     finally:
         with pytest.raises(StopIteration):
             next(generator)
+
+
+@pytest.mark.parametrize('boundary', ['decode_original', 'transport_values', 'transport_children', 'retained_json'])
+def test_round15_original_byte_limit_precedes_decoders(monkeypatch: Any, boundary: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router import async_settle_shadow_v2_gate_loading as loading
+    standard = Mock(wraps=loading.json.loads)
+    local = Mock(wraps=loading._local_values)
+    monkeypatch.setattr(loading.json, 'loads', standard)
+    monkeypatch.setattr(loading, '_local_values', local)
+    decode = getattr(loading, boundary)
+    assert decode(b'{}', limit=2) == ({} if boundary == 'retained_json' else ({}, []))
+    assert standard.call_count == local.call_count == 1
+    standard.reset_mock()
+    local.reset_mock()
+    with pytest.raises(ValueError, match='^artifact_gap$'):
+        decode(b'{}', limit=1)
+    assert standard.call_count == local.call_count == 0
+
+
+@pytest.mark.parametrize('member', ['extra', 'decoder-disagreement'])
+@pytest.mark.parametrize('token', [b':', b'NaN', b'"\\q"', b'1.0'],
+    ids=['colon', 'constant', 'escape', 'float'])
+@pytest.mark.parametrize('boundary', ['library', 'report', 'pilot'])
+def test_round15_member_name_is_not_decoder_status(
+        round12_original: Any, tmp_path: Any, member: str, token: bytes, boundary: str) -> None:
+    _, raw, ports = round12_original
+    candidate = raw.rstrip()[:-1] + b',"' + member.encode() + b'":' + token + b'}'
+    assert_round15_failure_subject(candidate, ports, tmp_path, boundary, 'transport/extra')
+
+
+def assert_round15_failure_subject(raw: bytes, ports: Any, path: Any, boundary: str, subject: str) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import tool
+    from trusted_router.async_settle_shadow_v2_gate_result import run
+    if boundary == 'library':
+        result, rendered = run(raw, ports, gate='transport')
+        assert json.loads(rendered[0])['verdict'] == 'BLOCKED'
+        report = result.gate_report
+        failures = [dict(gap=f.gap, subject=f.subject) for f in result.failures]
+    else:
+        assert tool(raw, ports, path, boundary, gate='transport')['verdict'] == 'BLOCKED'
+        report = json.loads((path / 'out/report.json').read_bytes())
+        files = {roots.file_digest(file.read_bytes()): file.read_bytes()
+                 for file in (path / 'out').rglob('*') if file.is_file()}
+        failures = []
+        tail = report['failures']['tail_sha256']
+        while tail is not None:
+            page = roots.STREAMS['failures'][1].parse(files[tail])
+            failures.extend(page['entries'])
+            tail = page['previous_sha256']
+    tally = report['failure_counts']['evidence_schema_gap']
+    assert tally['count'] == tally['listed'] == 1 and tally['complete'] is True
+    assert [f['subject'] for f in failures if f['gap'] == 'evidence_schema_gap'] == [a2.O('a2_file', subject)]
+
+
+@pytest.mark.parametrize('boundary', ['library', 'report', 'pilot'])
+def test_round15_clean_disagreement_keeps_fixed_subject(
+        round12_original: Any, tmp_path: Any, monkeypatch: Any, boundary: str) -> None:
+    from trusted_router import async_settle_shadow_v2_gate_loading as loading
+    _, raw, ports = round12_original
+    local = loading._local_values
+    def different(original: bytes, **options: Any) -> Any:
+        value, issues = local(original, **options)
+        if original == raw:
+            assert not issues
+            value = dict(reversed(list(value.items())))
+        return value, issues
+    monkeypatch.setattr(loading, '_local_values', different)
+    _, issues = loading.decode_original(raw, len(raw))
+    assert issues == [loading.DecoderStatus.DISAGREEMENT]
+    assert not isinstance(issues[0], tuple)
+    _, wrapper_issues = loading.transport_values(raw, len(raw))
+    assert wrapper_issues == issues
+    assert_round15_failure_subject(raw, ports, tmp_path, boundary, 'transport/decoder-disagreement')

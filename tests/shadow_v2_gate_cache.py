@@ -175,16 +175,21 @@ def live_objects() -> int:
     return len(gc.get_objects())
 
 
-def release_data_caches() -> None:
+def release_data_caches(*, shared: bool = True) -> None:
+    """Release large transient graphs; keep small shared originals across modules."""
     from tests import shadow_v2_gate_a2_fixture as a2
     from tests import shadow_v2_gate_fixture_generator as generator
     from trusted_router import async_settle_shadow_v2_gate_preimages as preimages
     from trusted_router import async_settle_shadow_v2_gate_prior as prior
 
-    for cached in (a2.fixture_bytes, a2._transport_object, a2._shared_prior_chain,
-                   generator._variants, preimages._entry_digest):
+    caches = (a2._transport_object, generator._variants)
+    if shared:
+        caches += (a2.fixture_bytes, a2._shared_prior_chain, preimages._entry_digest)
+    for cached in caches:
         cached.cache_clear()
         assert cached.cache_info().currsize == 0
+    # Prior-result keys include module-local parser functions. Those entries
+    # cannot be reused by the next module and would retain old closures.
     prior._VERIFIED.clear()
     assert not prior._VERIFIED
     generator.TYPED_PORTS.clear()

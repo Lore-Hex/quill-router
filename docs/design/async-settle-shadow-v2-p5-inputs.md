@@ -2,7 +2,7 @@
 
 This table is checked against every dataclass field in `gate_inputs.py`, including inherited fields. It describes the production original-byte loader boundary, not permission to construct arbitrary trusted typed views in a caller. Ports and release pins are explicit trust roots. Schema validation alone is not semantic approval; the listed P5 checks bind the original bytes.
 
-All package-owned original-byte JSON decoding passes through `gate_loading.decode_original`: strict standard decoding (duplicate pairs and nonfinite numbers rejected, original byte limit) must agree with the local decoder on values, key order and number types for a clean result. Local issues preserve independently framed siblings. An otherwise clean disagreement adds the fixed root subject `transport/decoder-disagreement` with `evidence_schema_gap`. The decoder-call inventory test enumerates local scanner calls and the unchanged retained v1 tool exceptions; frozen contract schema parsers retain their own boundary.
+All package-owned original-byte JSON decoding passes through `gate_loading.decode_original`: strict standard decoding (duplicate pairs and nonfinite numbers rejected, original byte limit) must agree with the local decoder on values, key order and number types for a clean result. Local issues preserve independently framed siblings. An otherwise clean disagreement adds the fixed root subject `transport/decoder-disagreement` with `evidence_schema_gap`. The internal `DecoderStatus.DISAGREEMENT` marker is separate from member-path tuples and is rendered only by `transport_children`. An ordinary malformed member named `decoder-disagreement` keeps the same single `transport/extra` subject as any unknown member. Default regressions check the exact byte limit and one byte over it at all four loading entry points, with neither decoder called for oversized bytes. The decoder-call inventory test enumerates local scanner calls and the unchanged retained v1 tool exceptions; frozen contract schema parsers retain their own boundary.
 
 Prior gates resolve through their original report, complete DETAIL streams, input leaves and original preimages. `gate_prior._resolve` calls the frozen output/preimage validators, verifies the ledger and release plan, binds revisions/configuration/cohort and pre-budget identity, reconstructs the prior transport through the same loader (including approval-time materialization), evaluates the same stage at the committed completion, and requires exact rendered report-byte equality before supplying that completion. Content-keyed acceptance caching retains original immutable bytes and rechecks current bindings and checkout pins.
 
@@ -222,7 +222,7 @@ No contract, fixture or pin changes accompany these internal seams.
 
 ## P5 test data lifetime and oracle scheduling
 
-The production input table above is unchanged in round 14. The all-paths decoder
+The production input fields above are unchanged in round 15. The all-paths decoder
 property retains all ten sibling-check lexemes and all twenty agreement-check
 lexemes at the same native paths. Its test ids divide the original traversal
 into sixteen disjoint ranges for each lexeme; the root remains omitted only
@@ -230,17 +230,20 @@ from the sibling check. Per-case timing lives in `.test_durations`.
 
 | Test data | Lifetime check |
 |---|---|
-| Fixture byte tables, parsed variants, last transport, original prior chain, typed ports | Shared `_p5_cache_lifetime` fixture in `tests/conftest.py` clears these at module teardown and measures live objects after collection |
-| Entry-digest inputs and prior-report results | Shared module teardown clears both package-level tables |
+| Parsed variants, last transport, typed ports and prior-result tables | `_p5_cache_lifetime` clears these at module teardown and measures live objects after collection |
+| Fixture byte tables, original prior chain and entry-digest inputs | Shared across modules; included in the unchanged 35,000-object check. The seven-day family still performs a full release after its large graph |
 | Boundary loaded graphs and evaluated results | `BoundaryCache.installed` clears both tables after restoring the original functions |
 | Schema, validation, original-byte, root and inventory lookup tables | Existing module fixtures clear their tables and restore function identities before the shared lifetime check |
 
-The shared check allows at most 35,000 additional live objects within a module,
+For the default selection, the shared check allows at most 35,000 additional live objects within a module,
 and at most 35,000 above the count before the first package
 module in each process, for reports and first-use imports. The one-process follow-on checks
 exercise the frame-cache cases and the original format-checking routes after
 all eight modules. The existing subprocess check remains selected by the
-oracle job.
+oracle job. A selection containing oracle pieces still performs a full data-cache
+release and records counts, but does not apply the default selection’s 35,000-object
+margin while long-family graphs and teardown reports remain live. Its CI time cap
+is unchanged.
 The baseline is taken after importing the six common function-fixture support
 modules (fake database helpers and the shared shadow-clock modules), before any
 P5 fixture data is built. This excludes permanent first-use support imports from
