@@ -14,6 +14,7 @@ from trusted_router.errors import api_error
 from trusted_router.money import dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.services.stripe_fees import stripe_processing_fee
+from trusted_router.services.stripe_radar import payment_account_signals
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -71,6 +72,7 @@ def create_checkout_session(
     )
     if settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key
+        payment_metadata.update(payment_account_signals(workspace, initiating_user_id))
         session_args: dict[str, Any] = {
             "mode": "payment",
             "success_url": success_url,
