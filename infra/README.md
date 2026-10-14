@@ -239,7 +239,7 @@ the network starts, such a packet keeps its gateway's private source address
 and cannot leave from the reserved address, so missing rules stop Fortanix
 traffic and expose nothing else.
 
-The routes match Fortanix's addresses, not its hostname. If `poc1.armet.ai`
+The routes match Fortanix's addresses, not its hostname. If `ctf.armet.ai`
 resolves elsewhere, the gateways' connections leave from their own addresses
 again and Fortanix refuses them. To follow the change, edit
 `fortanix_destinations` in a pull request. Its apply replaces the VM and the
