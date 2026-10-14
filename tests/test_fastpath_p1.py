@@ -148,14 +148,15 @@ def test_node_ships_its_journal_to_cloud_logging() -> None:
     assert parser == {"type": "parse_json", "field": "MESSAGE"}
     fields = logging["processors"]["fastpath_fields"]
     assert fields["type"] == "modify_fields"
-    # The unit is always in a journal record; a severity moved from the
-    # payload would clear the journal's priority on every line that states
-    # none, so the service writes its alerts' severity under the agent's
-    # special field instead, and the agent moves no severity.
+    # The unit is always in a journal record, and the entry's severity is
+    # the journal's priority (a severity in the JSON, the agent's special
+    # field included, is outranked by it), so the service writes its alerts
+    # with the err priority prefix systemd reads, and the agent moves no
+    # severity.
     assert set(fields["fields"]) == {'labels."unit"'}
     assert fields["fields"]['labels."unit"'] == {"move_from": "jsonPayload._SYSTEMD_UNIT"}
     service = (ROOT / "fastpath" / "internal" / "service" / "service.go").read_text(encoding="utf-8")
-    assert '"logging.googleapis.com/severity": "ERROR"' in service
+    assert '"<3>"+string(line)' in service and '"logging.googleapis.com/severity"' not in service
     pipeline = logging["service"]["pipelines"]["fastpath"]
     assert pipeline == {"receivers": list(logging["receivers"]), "processors": ["fastpath_json", "fastpath_fields"]}
     # Order: install, then the configuration written, then the agent

@@ -783,15 +783,19 @@ var alertOutput io.Writer = os.Stderr
 // happened, never a record's contents.
 func writeAlert(w io.Writer, subject, what string) {
 	line, err := json.Marshal(map[string]any{
-		"severity":                        "ERROR",
-		"logging.googleapis.com/severity": "ERROR",
-		"message":                         "fastpath alert: " + what,
-		"subject":                         subject,
-		"logging.googleapis.com/labels":   map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+		"message":                       "fastpath alert: " + what,
+		"subject":                       subject,
+		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
 	})
 	if err != nil {
 		log.Printf("alert: %s: %s", subject, what)
 		return
 	}
-	fmt.Fprintln(w, string(line))
+	// The line's severity is the journal's priority: systemd reads a
+	// service's stdout line's "<3>" prefix as PRIORITY=3 (err) and strips
+	// it, and the Ops Agent's journald receiver maps that priority to the
+	// entry's ERROR. A severity written inside the JSON instead, the
+	// agent's special field included, is parsed but outranked by the
+	// priority (seen in Cloud Logging as INFO alerts, 2026-10-14).
+	fmt.Fprintln(w, "<3>"+string(line))
 }
