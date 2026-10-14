@@ -74,9 +74,10 @@ the lost-view start are the live exercises before the rate rises.
 
 ## Run 2: one generation a second, the stage's own subscriptions
 
-2026-10-13 20:27Z to 20:32:30Z, five minutes of a planned ten: the watch
-stopped the stage (below). Same mix, same rate, the watch on `auditor`
-and `stager`.
+2026-10-13, the watch from 20:27Z until it stopped the stage at
+20:32:30Z (below); the generator started 300 generations, one a second,
+five minutes of a planned ten. Same mix, same rate, the watch on
+`auditor` and `stager`.
 
 | | |
 |---|---|
@@ -102,14 +103,20 @@ micro-credits (0.97 USD) equal to the leases' consumption, reservations
 closed, credits 100,000,000 unchanged.
 
 **The stop.** The watch stopped the stage at 20:32:30Z: six packs' work
-had been pending longer than five minutes. The pending work was the
-auditor's own: every hold reaped by the auditor (a stream the stop cut
-off before its terminal) had a winner whose pack alerted
-`no_boot_binding`, because a hold made by heartbeats alone had no boot
-binding on its row, so the reap's record stated none and the winner's
-pack could not finish; the packs stayed pending and the revoked leases
-stayed draining. The ceiling worked as W3 means it to: it found the fast
-path's own defect within five minutes of the first reap.
+had been pending longer than five minutes. Those packs were run 1's: the
+holds of the three leases run 1's stop revoked, streams cut off before
+their terminals and reaped by the auditor once their life and the grace
+had passed. Every reaped hold's winner alerted `no_boot_binding`,
+because a hold made by heartbeats alone had no boot binding on its row,
+so the reap's record stated none and the winner's pack could not finish.
+The watch knows a pack's age only from its own first look, so run 2's,
+started empty at 20:27Z, found them pending for more than five minutes at
+20:32:30Z, one polling interval past. Closing a lease does not wait for
+its packs (the three leases run 2's stop revoked closed on their own
+later), but the packs stay pending, and run 2's own cut-off streams,
+reaped afterwards, added theirs. The ceiling worked as W3 means it to:
+it found the fast path's defect within five minutes of the watch's first
+look at it.
 
 ## What the two runs found
 
