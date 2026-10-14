@@ -110,13 +110,17 @@ def check_plan(files: Files, plan: dict[str, Any]) -> list[dict[str, Any]]:
 
 def review_subjects(files: PackFiles, subjects: Mapping[str, dict[str, Any]], *,
                     criteria: dict[str, list[str]], required_stages: dict[str, list[str]],
-                    verifiers: dict[str, Any]) -> dict[str, Any]:
+                    verifiers: dict[str, Any], window: bool = False) -> dict[str, Any]:
     """Prepare exact subjects and a release plan; no review decision is created."""
     for ref in subjects.values():
         files.read(ref)
     required = sorted({name for names in required_stages.values() for name in names})
     require(set(required) <= set(criteria), 'artifact_gap')
+    # A window reviews child input plans, whose bounded leaves enumerate every
+    # original. Repeating every child filename here would exceed FILE_REF's
+    # bound. Daily transports retain their own full release lists.
     plan = dict(artifacts={path: ref['sha256'] for path, ref in sorted(files.refs.items())
+                if not (window and path.startswith('day-inputs/'))
                 if path not in ('loading/release-plan.json', 'review/subjects.json', 'review/sealed.json')
                 and not path.startswith(('inputs/', 'gate/'))},
                 criteria=criteria, verifiers=verifiers, required=required,

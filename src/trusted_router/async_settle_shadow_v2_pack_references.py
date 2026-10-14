@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from trusted_router import async_settle_shadow_v2_a1_health as health
@@ -115,10 +116,18 @@ class BasisReferenceIndex:
 class TerminalReconciliation:
     """Index originals before invoking the frozen contextual terminal join."""
 
-    def __init__(self, pages: Iterable[dict[str, Any]], samples: Iterable[dict[str, Any]]):
-        self.events: dict[tuple[str, str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
-        self.terminals: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
-        self.samples: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    def __init__(self, pages: Iterable[dict[str, Any]], samples: Iterable[dict[str, Any]],
+                 *, spool: Path | None = None):
+        from trusted_router.async_settle_shadow_v2_pack_records import RecordGroups, RecordMap
+        self.scratch: Any = None
+        self.events: Any = {} if spool is None else RecordMap(spool / 'events')
+        self.terminals: Any = {} if spool is None else RecordGroups(spool / 'terminals')
+        self.samples: Any = {} if spool is None else RecordGroups(spool / 'samples')
+        def append(groups: Any, key: Any, value: Any) -> None:
+            if spool is None:
+                groups.setdefault(key, []).append(value)
+            else:
+                groups.append(key, value)
         for page in pages:
             p1.PAGE(page)
             for event in page['events']:
@@ -126,11 +135,11 @@ class TerminalReconciliation:
                 require(key not in self.events, 'authorization_terminal_conflict')
                 self.events[key] = page, event
                 if event['phase'] in ('settle', 'refund'):
-                    self.terminals.setdefault(sha256(event['identity']), []).append((page, event))
+                    append(self.terminals, sha256(event['identity']), (page, event))
         for sample in samples:
             p1.SAMPLE(sample)
             loc = sample['original_terminal_receipt']
-            self.samples.setdefault((loc['day'], loc['boot'], loc['event_seq']), []).append(sample)
+            append(self.samples, (loc['day'], loc['boot'], loc['event_seq']), sample)
 
     def original(self, reference: dict[str, Any]) -> tuple[dict[str, Any], str] | None:
         found = self.events.get((reference['day'], reference['boot'], reference['event_seq']))
@@ -189,7 +198,7 @@ class TerminalReconciliation:
                 and event['identity'] == issuance['identity'] and event['decision'] == issuance['decision'],
                 'authorization_terminal_conflict')
         args = {}
-        if found[0] is not issue_page:
+        if (found[0]['day'], found[0]['boot'], found[1]['seq']) != (issue_page['day'], issue_page['boot'], origin['event_seq']):
             args = dict(original_page=found[0], original_event_seq=found[1]['seq'])
         locator = joins.event_locator(page, event['seq'])
         joins.validate_terminal_join(obligation, issue_page, page, locator, **args)

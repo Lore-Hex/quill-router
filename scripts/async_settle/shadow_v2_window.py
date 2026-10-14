@@ -79,10 +79,11 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
         comparisons.append(compared)
         accounting_missing.extend(passed['id'] + ':' + gap for gap in compared.missing)
     # The original export is never edited; collector objects enter the composed graph.
-    native = retained_json(bundle_path.read_bytes(), limit=2621440000)
-    native['attachments'] = [*native.get('attachments', []), *[
-        dict(kind=item['kind'], id=item['id'], raw=files.read(item['original']).decode())
-        for item in native_spec.get('objects', [])]]
+    from trusted_router.async_settle_shadow_v2_pack_records import captured_native
+    native = captured_native(bundle_path, out / '.composition-native')
+    for item in native_spec.get('objects', []):
+        native['attachments'].append(dict(kind=item['kind'], id=item['id'],
+            raw=files.read(item['original']).decode()))
     inventory, ready, shutdown = (retained_json(files.read(captures[name]))
                                    for name in ('Inventory', 'Readiness', 'Shutdown'))
     from trusted_router.async_settle_shadow_v2_pack_passes import (
@@ -275,7 +276,7 @@ def window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None
         (out / 'stage/result.json').write_bytes(canonical(result))
         return result
     assert captured is not None
-    if 'inputs' not in captured:
+    if 'inputs' not in captured or 'review' not in captured:
         result = dict(complete=False, missing=[*captured['missing'], 'IncompleteCapture'])
         (out / 'result.json').write_bytes(canonical(result))
         return result
@@ -303,7 +304,8 @@ def window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None
         approval(files, decisions[day], subject)
     previous = retained_json(Files(source).read(captured['review']['release_plan']))
     subjects = review_subjects(files, captured['review']['subjects'], criteria=previous['criteria'],
-        required_stages=previous['required_stages'], verifiers=previous['verifiers'])
+        required_stages=previous['required_stages'], verifiers=previous['verifiers'],
+        window=captured.get('kind') == 'window')
     if command == 'review-inputs':
         return dict(complete=False, missing=sorted(set([*missing, 'ReleaseReview'])), review=subjects)
     require(command == 'pack', 'artifact_gap')

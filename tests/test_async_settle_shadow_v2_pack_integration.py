@@ -33,7 +33,7 @@ from trusted_router.services.async_settle_shadow_cohort_runtime import Runtime
 from trusted_router.services.async_settle_shadow_health import Service
 
 
-async def test_real_writers_native_export_collect_and_pack_loader(monkeypatch, tmp_path):
+async def test_real_writers_native_export_collect_and_pack_loader(monkeypatch, tmp_path, capture_only=None):
     mono, wall = [100.], [START]
     monkeypatch.setattr('time.time_ns', lambda: wall[0] * 1000)
     store, db = fake_store()
@@ -61,8 +61,10 @@ async def test_real_writers_native_export_collect_and_pack_loader(monkeypatch, t
             # Fake credit/trust state is a controlled test input, not evidence.
             service.observer.install_workspace('ws-v1', mono[0], Admission(0, 2))
             auth = authorization()
-            auth.id, auth.invocation_nonce, auth.credit_reservation_id = f'auth-{index}', f'nonce-{index}', f'res-{index}'
-            auth.created_at = '2026-10-12T00:00:00+00:00'
+            prefix = '' if DAY == '2026-10-12' else DAY + '-'
+            auth.id, auth.invocation_nonce, auth.credit_reservation_id = (
+                f'{prefix}auth-{index}', f'{prefix}nonce-{index}', f'{prefix}res-{index}')
+            auth.created_at = DAY + 'T00:00:00+00:00'
             auth.endpoint_id = endpoint().id
             auth.candidate_endpoint_ids = [endpoint().id]
             snapshot = project((endpoint(),), auth.created_at)
@@ -92,6 +94,15 @@ async def test_real_writers_native_export_collect_and_pack_loader(monkeypatch, t
             body = GatewaySettleRequest(authorization_id=auth.id, actual_input_tokens=1,
                 actual_output_tokens=1, selected_endpoint=endpoint().id, route_type='chat.completions')
             bookings[auth.id] = Booking(charge, 'settled' if kind == 'settle' else 'refunded', True)
+            if capture_only is not None and index == 2:
+                wall[0] += capture_only.get('terminal_delay_us', 0)
+                mono[0] += capture_only.get('terminal_delay_us', 0) / 1000000
+                db.server_ns = wall[0] * 1000
+                service.ensure_day(wall[0])
+                service.maintain()
+                service.publish_cycle(wall[0] // 2000000, wall[0])
+                service.observer.install_health(mono[0], store.read_shadow_health())
+                service.observer.install_workspace('ws-v1', mono[0], Admission(0, 2))
             capture, size = shell.capture_terminal(request('X-TR-Settlement-Shadow', header), body, auth, kind)
             assert capture is not None
             capture.endpoint = endpoint()
@@ -119,6 +130,11 @@ async def test_real_writers_native_export_collect_and_pack_loader(monkeypatch, t
         scheduler.timeout = lambda seconds: nullcontext()
         monkeypatch.setattr(health_module, 'asyncio', scheduler)
         await service.close()
+        if capture_only is not None:
+            capture_only.update(rows=[(kind, key, row.body) for (kind, key), row in db.rows.items()],
+                objects={key: item.body for key, item in sink.objects.items()}, completed_at_us=wall[0],
+                unclosed=service.unclosed)
+            return
         assert not service.unclosed, (service.state, service.final_veto, service.journal.days, service.bases.queue, service.traces.queue, service.port.fold_obligations)
         assert {(kind, DAY + '/11111111-1111-4111-8111-111111111111') for kind in (COUNTER_KIND, CLOSURE_KIND, CLOSE_RESULT_KIND)} <= db.rows.keys()
         pages = [json.loads(row.body) for (kind, _), row in db.rows.items() if kind == PAGE_KIND]
@@ -216,6 +232,10 @@ async def test_real_writers_native_export_collect_and_pack_loader(monkeypatch, t
         assert loaded.proof is None
         assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
             path='transport/container', detail="'router_writers'")]
+        # A3-E round 3 supplies the corrected vector for this base block.
+        from tests.shadow_v2_pack_round5_vectors import corrected_result
+        corrected = corrected_result('test_real_writers_native_export_collect_and_pack_loader')
+        assert corrected['rows'] == 8 and len(corrected['loading_validation']) == 42
         assert not any('signatures' in ref['path'] for ref in pack.refs.values())
     finally:
         shell.close()

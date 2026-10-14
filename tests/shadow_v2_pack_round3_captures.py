@@ -68,7 +68,7 @@ def collector_capture(files, capture):
     # C1 must preserve the original reader basis emitted by the writer.
     basis = max((basis for key, ref in capture['objects'].refs.items()
         if key.startswith('health-basis-batches/') for basis in json.loads(capture['objects'].read(ref))['bases']),
-        key=lambda b: b['read_at_ns'])
+        key=lambda b: b['read_at_ns'] or -1)
     for record in startup.records['readiness']:
         if record.get('criterion') == 'observer_freshness':
             record.update(health_basis=files.obj('native/actual-reader-basis', basis),

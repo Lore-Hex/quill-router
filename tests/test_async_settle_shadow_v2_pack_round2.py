@@ -257,6 +257,11 @@ def test_current_loader_cap_result_is_expected_base_defect():
     assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
         path='transport/container', detail="'router_writers'")], 'A3-E base changed; update this expectation deliberately'
 
+    # Expected after the A3-E correction; current output above remains asserted.
+    from tests.shadow_v2_pack_round5_vectors import corrected_result
+    corrected = corrected_result('test_current_loader_cap_result_is_expected_base_defect')
+    assert corrected['rows'] == 1 and len(corrected['loading_validation']) == 25
+
 
 def test_stage_registers_every_producer_source_fixture_and_review(tmp_path):
     from trusted_router.async_settle_shadow_v2_pack_stage import (
@@ -466,6 +471,11 @@ def test_cap_survives_split_transport_with_expected_base_result(tmp_path):
     loaded = load(restored.read_bytes())
     assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
         path='transport/container', detail="'router_writers'")]
+
+    # Expected after the A3-E correction; current output above remains asserted.
+    from tests.shadow_v2_pack_round5_vectors import corrected_result
+    corrected = corrected_result('test_cap_survives_split_transport_with_expected_base_result')
+    assert corrected['rows'] == 1 and len(corrected['loading_validation']) == 25
 
 
 def test_unnamed_basis_inside_named_page_is_gap():

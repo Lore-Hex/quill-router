@@ -12,7 +12,7 @@ from trusted_router.async_settle_shadow_v2_schema import require
 
 def review_days(files: PackFiles, *, days: list[str], subjects: dict[str, dict[str, Any]],
                 criteria: dict[str, list[str]], required_stages: dict[str, list[str]],
-                verifiers: dict[str, Any]) -> dict[str, Any]:
+                verifiers: dict[str, Any], window: bool = False) -> dict[str, Any]:
     require(set(subjects) == set(days) and len(days) == len(set(days)), 'ReleaseReviewAssembly')
     require(all(set(names) <= set(required_stages.get(stage, []))
                 for stage, names in REQUIRED_STAGES.items()), 'artifact_gap')
@@ -30,4 +30,4 @@ def review_days(files: PackFiles, *, days: list[str], subjects: dict[str, dict[s
         value = retained_json(files.read(subjects[day]))
         require(value.get('day') == day, 'ReleaseReviewAssembly')
         files.obj('review/days/' + day + '.json', dict(day=day, subject=subjects[day], state='awaiting_review'))
-    return review_subjects(files, subjects, criteria=scoped, required_stages=required_stages, verifiers=verifiers)
+    return review_subjects(files, subjects, criteria=scoped, required_stages=required_stages, verifiers=verifiers, window=window)

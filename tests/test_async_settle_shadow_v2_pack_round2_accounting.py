@@ -99,7 +99,7 @@ async def test_real_writer_loader_original_deletion_matrix_is_base_defect(monkey
                 item['raw'] = canonical(root).decode()
         vectors['changed-' + damage] = changed
     assert len(vectors) >= 17
-    for name, value in vectors.items():
+    for case, (name, value) in enumerate(vectors.items()):
         # Save every exact negative byte input for inspection before loading it.
         raw = canonical(value)
         target = tmp_path / 'negatives' / (name.replace('/', '_') + '.json')
@@ -108,6 +108,10 @@ async def test_real_writer_loader_original_deletion_matrix_is_base_defect(monkey
         loaded = load(raw)
         assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
             path='transport/container', detail="'router_writers'")], name
+        from tests.shadow_v2_pack_round5_vectors import corrected_result
+        corrected = corrected_result('test_real_writer_loader_original_deletion_matrix_is_base_defect', case)
+        assert corrected['rows'] == len(value['rows'])
+        assert len(corrected['loading_validation']) == [36, 42, 36, 40, 41, 41, *([42] * 11)][case]
         result = render(evaluate(loaded, gate='transport'))
         assert isinstance(result, UnavailableGateOutput), name
     # This is the present-base diagnostic matrix, not rendered §7.5 counts.

@@ -77,16 +77,16 @@ def procedure_capture(files, name, stage):
             completed_at_us=START + 2, complete=True, conclusion='pass', router_revision=REV,
             enclave_revision=REV, configuration=config, operations=[operation], sources=[operation]))
     result = dict(revision=REV, enclave_revision=REV, run_id=1, job_id=2, artifact_id=3,
-        conclusion='success', completed_at='2026-10-12T00:00:01Z', procedures=procedures)
+        conclusion='success', completed_at=DAY + 'T00:00:01Z', procedures=procedures)
     raw = canonical(result)
     archive = files.root / (prefix + '/download.zip')
     with zipfile.ZipFile(archive, 'w') as output:
         output.writestr('exact/result.json', raw)
         output.writestr('different/result.json', b'{}')
     refs = dict(run=files.obj(prefix + '/run', dict(id=1, head_sha=REV, status='completed',
-        conclusion='success', updated_at='2026-10-12T00:00:02Z')),
+        conclusion='success', updated_at=DAY + 'T00:00:02Z')),
         job=files.obj(prefix + '/job', dict(id=2, run_id=1, head_sha=REV, status='completed',
-            name='a passing job title', conclusion='success', completed_at='2026-10-12T00:00:01Z')),
+            name='a passing job title', conclusion='success', completed_at=DAY + 'T00:00:01Z')),
         artifact=files.obj(prefix + '/artifact', dict(id=3, workflow_run=dict(id=1, head_sha=REV), expired=False)))
     enclave_ci = {key: files.obj(prefix + '/enclave-' + key, json.loads(files.read(ref)))
                   for key, ref in refs.items()}

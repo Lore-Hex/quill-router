@@ -11,7 +11,7 @@ from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
 from trusted_router.async_settle_shadow_v2_gate_release import decode_release_plan
 from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles, check_plan, input_plan
 from trusted_router.async_settle_shadow_v2_pack_references import TerminalReconciliation
-from trusted_router.async_settle_shadow_v2_pack_stage import references
+from trusted_router.async_settle_shadow_v2_pack_stage import PRODUCERS, references
 from trusted_router.async_settle_shadow_v2_pack_streaming import CapturedJSON, split_transport
 from trusted_router.async_settle_shadow_v2_schema import day as parse_day
 from trusted_router.async_settle_shadow_v2_schema import require
@@ -26,8 +26,12 @@ def local_root(source: Path, path: str) -> Path:
 
 def reconciliation(source: Path, plans: dict[str, Any]) -> TerminalReconciliation:
     """Read the finite original day exports before choosing the support dates."""
-    pages: list[dict[str, Any]] = []
-    samples: list[dict[str, Any]] = []
+    from tempfile import TemporaryDirectory
+
+    from trusted_router.async_settle_shadow_v2_pack_records import RecordSpool
+    scratch = TemporaryDirectory(prefix='shadow-window-')
+    pages = RecordSpool(Path(scratch.name) / 'pages')
+    samples = RecordSpool(Path(scratch.name) / 'samples')
     for day, spec in sorted(plans.items()):
         parse_day(day)
         require(spec['day'] == day and spec['days'] == [day], 'FiniteDayPlan')
@@ -41,7 +45,9 @@ def reconciliation(source: Path, plans: dict[str, Any]) -> TerminalReconciliatio
                     continue
                 require(row['id'].startswith(day + '/'), 'DaySourcePopulation')
                 (samples if row['kind'] == p1.KINDS[0] else pages).append(retained_json(row['raw'].encode()))
-    return TerminalReconciliation(pages, samples)
+    joined = TerminalReconciliation(pages, samples, spool=Path(scratch.name) / 'joined')
+    joined.scratch = scratch
+    return joined
 
 
 def predecessors(source: Files, files: PackFiles, roots: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -89,11 +95,28 @@ def collect_window(source: Path, out: Path, plan: dict[str, Any],
     for day in selected:
         parse_day(day)
     require(set(selected) <= set(plan['day_plans']), 'MissingSelectedDay')
+    # Check all declared producer roots before starting expensive daily work.
+    # The callback-only compatibility tests have only a NativeExport root.
+    for spec in plan['day_plans'].values():
+        if 'files' not in spec:
+            continue
+        capture_files = Files(local_root(source, spec.get('source_root', '.')))
+        for producer in PRODUCERS:
+            require(bool(spec['captures'].get(producer)), 'MissingProducer:' + producer)
+            try:
+                capture_files.read(spec['captures'][producer])
+            except (OSError, ValueError) as exc:
+                raise ValueError('MissingProducer:' + producer) from exc
     joined = reconciliation(source, plan['day_plans'])
     days = joined.support_days(selected)
     files = PackFiles(out)
     previous = predecessors(Files(source), files, plan['predecessors'])
     missing = ['MissingSupportDay:' + day for day in days if day not in plan['day_plans']]
+    if missing:
+        diagnostic = files.obj('window/missing-days.json', dict(days=selected, support_days=list(days), missing=missing))
+        planned = input_plan(files, [*files.refs.values()], days=list(days), predecessors=previous)
+        return dict(complete=False, kind='window', missing=missing, inputs=planned,
+            window=diagnostic, checkpoint=plan['checkpoint'])
     children, subjects = {}, {}
     for day in days:
         if day not in plan['day_plans']:
@@ -108,10 +131,11 @@ def collect_window(source: Path, out: Path, plan: dict[str, Any],
         registered = check_plan(Files(directory), result['inputs'])
         transport_refs = check_plan(Files(directory / 'transport-parts'), split['inputs'])
         for ref in [*registered, *references(result['inputs'])]:
-            files.put('day-inputs/' + day + '/' + ref['path'], Files(directory).read(ref))
+            path = 'day-inputs/' + day + '/' + ref['path']
+            files.refs[path] = {**ref, 'path': path}
         for ref in [*transport_refs, *references(split['inputs'])]:
-            files.put('day-inputs/' + day + '/transport-parts/' + ref['path'],
-                      Files(directory / 'transport-parts').read(ref))
+            path = 'day-inputs/' + day + '/transport-parts/' + ref['path']
+            files.refs[path] = {**ref, 'path': path}
         child = dict(day=day, complete=result['complete'], complete_through_us=spec['complete_through_us'],
             root='day-inputs/' + day, inputs=result['inputs'], transport=split,
             subject=result['subject'], gate=result['gate'])
@@ -128,7 +152,7 @@ def collect_window(source: Path, out: Path, plan: dict[str, Any],
         for criterion in names:
             criteria[criterion] = sorted(set(criteria.get(criterion, [])) | set(check_scope(criterion, name)))
     review = review_days(files, days=sorted(subjects), subjects=subjects, criteria=criteria,
-        required_stages=plan['required_stages'], verifiers=plan['verifiers'])
+        required_stages=plan['required_stages'], verifiers=plan['verifiers'], window=True)
     planned = input_plan(files, list(files.refs.values()), days=list(days), predecessors=previous)
     check_plan(files, planned)
     missing.append('MultiBundleLoading')

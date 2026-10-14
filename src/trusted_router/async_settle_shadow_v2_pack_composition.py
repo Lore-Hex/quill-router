@@ -1,7 +1,7 @@
 """One source-derived day graph over captured producer results."""
 from __future__ import annotations
 
-from collections import defaultdict
+from itertools import chain
 from typing import Any
 
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
@@ -19,6 +19,7 @@ from trusted_router.async_settle_shadow_v2_pack_coverage import (
 from trusted_router.async_settle_shadow_v2_pack_daypack import assemble_day
 from trusted_router.async_settle_shadow_v2_pack_originals import DayFiles
 from trusted_router.async_settle_shadow_v2_pack_readers import native_reader_index
+from trusted_router.async_settle_shadow_v2_pack_records import RecordSpool, RecordView
 from trusted_router.async_settle_shadow_v2_pack_references import TerminalReconciliation
 from trusted_router.async_settle_shadow_v2_pack_stage import PRODUCERS
 from trusted_router.async_settle_shadow_v2_schema import require
@@ -51,16 +52,21 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
             'writer_roster_gap')
     rows = native['rows']
     attachments = native.get('attachments', [])
-    data = defaultdict(list)
-    by_kind = defaultdict(list)
-    for row in rows + attachments:
+    data = RecordSpool(files.root / '.composition-data')
+    records = RecordSpool(files.root / '.composition-kinds')
+    def by_kind(kind: str) -> Any:
+        for row in records.lookup(kind):
+            raw = row['raw'].encode()
+            yield row['id'], retained_json(raw), raw
+    def add(key: str, raw: bytes) -> None:
+        data.append(raw.decode(), keys=(key,))
+    for row in chain(rows, attachments):
         raw = row['raw'].encode()
-        value = retained_json(raw)
-        by_kind[row['kind']].append((row['id'], value, raw))
-        data[row['id']].append(raw)
-    receipts = [v for _, v, _ in by_kind[p1.KINDS[2]]]
-    samples = [v for _, v, _ in by_kind[p1.KINDS[0]]]
-    terminal = reconciliation or TerminalReconciliation(receipts, samples)
+        records.append(row, keys=(row['kind'],))
+        add(row['id'], raw)
+    receipts = RecordView(lambda: (v for _, v, _ in by_kind(p1.KINDS[2])))
+    samples = RecordView(lambda: (v for _, v, _ in by_kind(p1.KINDS[0])))
+    terminal = reconciliation or TerminalReconciliation(receipts, samples, spool=files.root / '.composition-terminals')
     if reconciliation is not None:
         # Preserve support originals without rewriting their coordinates.
         from trusted_router.async_settle_shadow_v2_schema import sha256
@@ -69,7 +75,7 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
         for group in reconciliation.samples.values():
             for sample in group:
                 files.put('support/samples/' + sha256(sample), canonical(sample))
-    batches = [(key, v) for key, v, _ in by_kind['health_basis']]
+    batches = [(key, v) for key, v, _ in by_kind('health_basis')]
     # Export attachment kind names retain the native object spelling.
     if not batches:
         batches = [(row['id'], retained_json(row['raw'].encode())) for row in attachments
@@ -90,7 +96,7 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     missing = []
     closure_missing = []
     for key in writer_keys:
-        selected = [v for k, v, _ in by_kind[p1.KINDS[4]] if k == key]
+        selected = [v for k, v, _ in by_kind(p1.KINDS[4]) if k == key]
         present = len(selected) == 1
         closure = selected[0] if present else dict(day=day, boot=key.split('/')[1])
         if not present:
@@ -102,22 +108,22 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
         for page in made:
             name = day + '/' + closure['boot'] + '/' + page['page_seq']
             obligation_keys.append(name)
-            data['authorization_obligation/' + name].append(canonical(page))
+            add('authorization_obligation/' + name, canonical(page))
             horizon_ends.extend(e['horizon_at_us'] for e in page['entries'])
     for boot in inventory['boots']:
         if boot['role'] != 'router':
             continue
         key = day + '/' + boot['boot']
-        result = [v for row_key, v, _ in by_kind[a1.KINDS[-1]] if row_key == key]
-        data['handoff_accounting/' + key].append(canonical(handoff(day, boot['boot'], result[0] if len(result) == 1 else None)))
-    for key, _, raw in by_kind[p1.KINDS[3]]:
-        data['counter/' + key].append(raw)
-    for key, _, raw in by_kind[a1.KINDS[-1]]:
-        data['close_result/' + key].append(raw)
+        result = [v for row_key, v, _ in by_kind(a1.KINDS[-1]) if row_key == key]
+        add('handoff_accounting/' + key, canonical(handoff(day, boot['boot'], result[0] if len(result) == 1 else None)))
+    for key, _, raw in by_kind(p1.KINDS[3]):
+        add('counter/' + key, raw)
+    for key, _, raw in by_kind(a1.KINDS[-1]):
+        add('close_result/' + key, raw)
     for row in attachments:
         prefix = 'health_basis/' if row['id'].startswith('health-basis-batches/') else 'publisher_trace/'
-        data[prefix + row['id']].append(row['raw'].encode())
-    source = ExactPages(lambda key: tuple(data.get(key, [])))
+        add(prefix + row['id'], row['raw'].encode())
+    source = ExactPages(lambda key: tuple(raw.encode() for raw in data.lookup(key)))
     population = populations(source, day=day, boots=tuple(inventory['boots']),
         contender_segments=budget['segments'], basis_keys=list(basis.keys), obligation_keys=obligation_keys)
     covered = coverage(files, source, day=day, expected=population.expected)
@@ -138,7 +144,7 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
                             ('manifest.receipts_root', p1.KINDS[2])):
         expected_keys = population.receipt_keys if kind == p1.KINDS[2] else writer_keys
         preimages[qualified] = [dict(key=a2.L(*key.split('/')),
-            bodies=[raw for found, _, raw in by_kind[kind] if found == key]) for key in expected_keys]
+            bodies=[raw for found, _, raw in by_kind(kind) if found == key]) for key in expected_keys]
         if not expected_keys:
             missing.append(qualified + ':empty')
     ledger_entries = []
@@ -167,20 +173,18 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     for path, ref in aliases.items():
         files.put(path, files.original(ref))
     # This is the frozen whole-day call. Its dict is released on return.
-    artifacts = files.originals()
-    manifest, proof = assemble_day(files, manifest, proof, artifacts=artifacts, preimages=preimages,
+    manifest, proof = assemble_day(files, manifest, proof, artifacts=None, preimages=preimages,
         expected_closed=dict(NativeExport=not missing and not population.missing and not population.tails
             and not closure_missing, Inventory=inventory['complete'], Readiness=ready['complete']
             and all(len(e['bodies']) == 1 for e in ledger_entries), Shutdown=shutdown['complete'],
             Budget=True, ExternalPack=True, History=True),
         horizon_ends=horizon_ends, complete_through_us=complete_through_us)
-    del artifacts, preimages
-    data.clear()
+    del preimages
     subject = files.obj('days/' + day + '/subject.json', dict(day=day,
         manifest=files.refs[day + '/manifest-v2.json'], producers={name: producers[name] for name in ('ExternalPack', 'History')}, coverage=covered))
     transport = {**native, 'proof': a1.PROOF_MANIFEST.serialize(proof).decode(),
         'ledgers': [files.read(ref).decode() for ref in ready['ledgers']],
-        'rows': [*rows, dict(kind=p1.KINDS[5], id=day + '/manifest-v2', raw=a1.MANIFEST.serialize(manifest).decode())]}
+        'rows': chain(rows, [dict(kind=p1.KINDS[5], id=day + '/manifest-v2', raw=a1.MANIFEST.serialize(manifest).decode())])}
     return dict(subject=subject, transport=transport, manifest=manifest,
         support_days=terminal.support_days([day]),
         missing=sorted(set(missing + list(population.missing)

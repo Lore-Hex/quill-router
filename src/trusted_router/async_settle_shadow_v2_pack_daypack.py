@@ -210,7 +210,7 @@ def select_manifests(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def assemble_day(files: PackFiles, manifest_fields: dict[str, Any], proof_fields: dict[str, Any], *,
-                 artifacts: Mapping[str, bytes], preimages: dict[str, Any],
+                 artifacts: Mapping[str, bytes] | None, preimages: dict[str, Any],
                  expected_closed: Mapping[str, bool], horizon_ends: list[int],
                  complete_through_us: int) -> tuple[dict[str, Any], dict[str, Any]]:
     """The proof precedes the day manifest; reports are downstream outputs."""
@@ -220,7 +220,7 @@ def assemble_day(files: PackFiles, manifest_fields: dict[str, Any], proof_fields
     manifest, proof = dict(manifest_fields), dict(proof_fields)
     require(not manifest.get('complete') or complete, 'artifact_gap')
     require(not proof.get('complete') or complete, 'artifact_gap')
-    supplied = dict(artifacts)
+    supplied = files.originals() if artifacts is None else dict(artifacts)
     for qualified in (*contract.FILE_PREIMAGES, *contract.OBJECT_PREIMAGES):
         raw = supplied[qualified]
         owner, field = qualified.split('.')
