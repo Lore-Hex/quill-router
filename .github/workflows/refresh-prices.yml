@@ -186,6 +186,7 @@ jobs:
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
                       LYCEUM_API_KEY:trustedrouter-lyceum-api-key \
                       GREENFERENCE_API_KEY:trustedrouter-greenference-api-key \
+                      CORALBRICKS_API_KEY:trustedrouter-coralbricks-api-key \
                       BOUNDLESS_API_KEY:trustedrouter-boundless-api-key \
                       ZRO_API_KEY:trustedrouter-zro-api-key \
                       BYTEPLUS_API_KEY:trustedrouter-byteplus-api-key \

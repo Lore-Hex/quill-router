@@ -161,6 +161,15 @@
     "route_mode": "Prepaid",
     "slug": "confidential-ai"
   },
+  "coralbricks": {
+    "card_version": 2,
+    "model_count": 2,
+    "name": "CoralBricks",
+    "privacy": "Policy documented",
+    "route_count": 2,
+    "route_mode": "Prepaid",
+    "slug": "coralbricks"
+  },
   "crusoe": {
     "card_version": 2,
     "model_count": 13,
