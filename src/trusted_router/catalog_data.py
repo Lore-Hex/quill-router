@@ -2007,6 +2007,22 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://hyperbolic.ai/docs/overview/overview",
     ),
+    "coralbricks": Provider(
+        slug="coralbricks", name="CoralBricks", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_headquarters_country="US", renewable_energy_inference=False,
+        provider_policy=(
+            "Coral Bricks AI Inc. operates its own serving software on leased US infrastructure. "
+            "No training on customer content. Default content retention is up to 30 days and "
+            "metadata/log retention up to 45 days. Organization-level ZDR is available, but "
+            "TrustedRouter's setting and applicable agreement are not yet verified, so these "
+            "routes remain Standard. No confidential-compute or E2EE claim. TrustedRouter "
+            "disables paid cache retention; free engine prefix caching remains active. "
+            "Custom retained-cache TTLs are not supported. Inference is not declared 100% renewable."
+        ),
+        provider_policy_url="https://trust.coralbricks.ai/",
+    ),
     "greenference": Provider(
         slug="greenference",
         name="Greenference",
@@ -2365,6 +2381,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "lyceum",
         "amazon-bedrock",
         "greenference",
+        "coralbricks",
         "boundless",
         "zro",
         "privatemode",

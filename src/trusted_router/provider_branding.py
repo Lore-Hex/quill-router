@@ -95,6 +95,12 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
     "greenference": ProviderBrand("https://greenference.com/"),
+    "coralbricks": ProviderBrand("https://www.coralbricks.ai/", resources=(
+        ("API documentation", "https://www.coralbricks.ai/docs"),
+        ("Privacy policy", "https://www.coralbricks.ai/privacy"),
+        ("Trust center", "https://trust.coralbricks.ai/"),
+        ("Pricing", "https://www.coralbricks.ai/pricing"),
+    )),
     "boundless": ProviderBrand(
         "https://boundless.network/",
         description="OpenAI-compatible inference with model-specific input, output and cache-read pricing.",
