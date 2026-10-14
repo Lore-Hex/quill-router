@@ -22,6 +22,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "inception",
         "mancer",
         "nextbit",
+        "nextbit-eu",
         "reka",
         "sail-research",
         "sambanova",

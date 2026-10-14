@@ -83,6 +83,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "mancer": ProviderBrand("https://mancer.tech/"),
     "modal": ProviderBrand("https://modal.com/"),
     "nextbit": ProviderBrand("https://nextbit256.com/"),
+    "nextbit-eu": ProviderBrand("https://nextbit256.com/"),
     "perceptron": ProviderBrand("https://perceptron.cloud/"),
     "perplexity": ProviderBrand("https://www.perplexity.ai/"),
     "reka": ProviderBrand("https://www.reka.ai/"),

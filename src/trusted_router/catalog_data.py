@@ -178,7 +178,6 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "liquid",
             "mancer",
             "modal",
-            "nextbit",
             "perceptron",
             "perplexity",
             "reka",
@@ -1750,10 +1749,33 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's NextBit account. This route is Standard."
+            "NextBit's global API can use third-party infrastructure outside the EEA. "
+            "Its DPA permits exceptional legal retention for up to 30 days, so this "
+            "route remains Standard. Use NextBit (EU) for Spain-only processing and "
+            "zero content retention. No confidential-compute or E2EE claim is made."
         ),
-        provider_policy_url="https://nextbit256.com/",
+        provider_policy_url="https://www.nextbit256.com/docs/dpa",
+        provider_headquarters_country="ES",
+    ),
+    "nextbit-eu": Provider(
+        slug="nextbit-eu",
+        name="NextBit (EU)",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "NextBit's EU API processes inference exclusively in Spain. Its public DPA "
+            "sections 4 and 11 prohibit retaining prompts, outputs, or content logs and "
+            "using them for training; operational metadata is retained. This route uses "
+            "eu.api.nextbit256.com, never the global API. Special-category personal data "
+            "requires a separate agreement under section 13. No confidential-compute "
+            "or E2EE claim is made."
+        ),
+        provider_policy_url="https://www.nextbit256.com/docs/dpa",
+        provider_headquarters_country="ES",
     ),
     "akashml": Provider(
         slug="akashml",
@@ -2426,6 +2448,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sail-research",
         "reka",
         "nextbit",
+        "nextbit-eu",
         "akashml",
         "mancer",
         "aion-labs",
@@ -2984,6 +3007,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "system1models-eu",
+    "nextbit-eu",
     "mistral",
     "regolo",
     "google-vertex",

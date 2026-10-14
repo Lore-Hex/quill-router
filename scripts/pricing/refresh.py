@@ -155,6 +155,7 @@ PROVIDER_SLUGS = [
     "sail_research",
     "reka",
     "nextbit",
+    "nextbit_eu",
     "akashml",
     "mancer",
     "abliterate",

@@ -1031,7 +1031,7 @@ def _requested_model_ids(
             overrides["privacy_requirements"] = frozenset(requirements)
         if stripped == ZDR_MODEL_ID:
             overrides["order"] = (
-                "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
+                "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala,nextbit-eu"
             )
         elif stripped == E2E_MODEL_ID:
             overrides["order"] = "tinfoil,phala"

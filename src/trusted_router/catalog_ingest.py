@@ -1126,6 +1126,7 @@ def _supplemental_provider_models_and_endpoints(
         "sail-research",
         "reka",
         "nextbit",
+        "nextbit-eu",
         "akashml",
         "mancer",
         "aion-labs",
