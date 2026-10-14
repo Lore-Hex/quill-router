@@ -315,6 +315,49 @@ func TestDrainRowsAfterS(t *testing.T) {
 	}
 }
 
+// TestADrainLogRefundsWorkCarriesItsHoldsBootBinding: a refund row's
+// pending work states the boot binding its hold's row keeps, the owner's
+// statement on the first heartbeat record, since a refund has no full
+// record to read one from; a settle row's does not, its staged full record
+// stating it; and a refund row for a hold the member never saw carries none.
+func TestADrainLogRefundsWorkCarriesItsHoldsBootBinding(t *testing.T) {
+	l := load(t, "draining")
+	first := hb(1, "a", 1, 10)
+	first.Boot = boot
+	second := hb(2, "b", 1, 10)
+	second.Boot = boot
+	apply(t, l, Applied, first, second)
+	if _, err := l.Apply(tick(1, fence.Add(time.Hour)), start); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Committed(store.CommitResult{Ref: ref, NewVersion: 4, State: "draining"}); err != nil {
+		t.Fatal(err)
+	}
+	money := []byte(`{}`)
+	for _, r := range []store.DrainRow{
+		{AuthorizationID: "a", RecordID: "ra", Kind: "refund", Estimate: 100, Money: money, Cause: "unreachable"},
+		{AuthorizationID: "b", RecordID: "sb", Kind: "settle", Charge: 5, Estimate: 100, Digest: sum("full sb"),
+			Money: money, Cause: "past_cutoff"},
+		{AuthorizationID: "c", RecordID: "rc", Kind: "refund", Estimate: 100, Money: money, Cause: "unreachable"},
+	} {
+		if err := l.ApplyRow(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := l.Request()
+	want := []store.Winner{
+		{AuthorizationID: "a", Kind: "refund", FromDrain: true, RecordID: "ra",
+			Work: encoded(Work{V: 1, Estimate: 100, Boot: boot, Money: money, Cause: "unreachable"})},
+		{AuthorizationID: "b", Kind: "settle", Charge: 5, FromDrain: true, RecordID: "sb",
+			Work: encoded(Work{V: 1, Estimate: 100, Digest: sum("full sb"), Money: money, Cause: "past_cutoff"})},
+		{AuthorizationID: "c", Kind: "refund", FromDrain: true, RecordID: "rc",
+			Work: encoded(Work{V: 1, Estimate: 100, Money: money, Cause: "unreachable"})},
+	}
+	if !reflect.DeepEqual(req.Winners, want) {
+		t.Fatalf("the winners %+v, want %+v", req.Winners, want)
+	}
+}
+
 // TestAHandOffListsTheHoldsWhole: a manifest lists the open holds only with
 // every chunk it names applied and their holds' digest its own; a hold
 // decided already is not put again.

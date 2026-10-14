@@ -253,6 +253,173 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 	}
 }
 
+// TestADrainLogRefundsWorkIsDoneFromItsHoldsBootBinding: a refund the drain
+// log decides, for a hold the heartbeats alone made, has no full record to
+// read a boot binding from and none is staged for it: its work carries the
+// hold's, so the first sweep publishes its outcome, writes its disposition
+// record and marks its pack done, with no alert. A settle the drain log
+// decides still waits for its staged full record, and finishes from it.
+func TestADrainLogRefundsWorkIsDoneFromItsHoldsBootBinding(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	db, err := emulator.Database(ctx, storetest.UniqueID("drainrefund")[:20], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	f := newRuntimeFixtureOn(t, db)
+	a, err := store.NewAuthorizationID(f.ref.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := store.NewAuthorizationID(f.ref.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := f.runtime()
+	first := hb(1, a, 1, 10)
+	first.Boot = boot
+	handleAll(rt, on(t, f.ref, first))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	money := []byte(`{}`)
+	appendRow := func(term store.DrainTerminal) {
+		t.Helper()
+		term.Ref, term.Money = f.ref, money
+		if got, err := f.s.Append(ctx, term); err != nil || got.Refused != "" {
+			t.Fatalf("the front door's append of %s: %+v %v", term.RecordID, got, err)
+		}
+	}
+	// The front door's refund of a, its owner unreachable: no full record.
+	appendRow(store.DrainTerminal{AuthorizationID: a, RecordID: "refund-a", Kind: "refund", Estimate: 100,
+		Cause: "unreachable"})
+	n := int64(0)
+	tickAt := func(at time.Time) {
+		n++
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+		round(rt)
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second)) // the fence tick: S
+	tickAt(row.FenceTime.Time.Add(3 * time.Second)) // a's refund applied: its winner, in a pack of its own
+	// A settle of b, which the member never saw as a hold, in a later pack.
+	body := encoded(map[string]any{"a": b, "boot": []byte("boot-2")})
+	appendRow(store.DrainTerminal{AuthorizationID: b, RecordID: "settle-b", Kind: "settle", Charge: 5, Estimate: 100,
+		Digest: sum(string(body)), Cause: "past_cutoff"})
+	tickAt(row.FenceTime.Time.Add(4 * time.Second)) // b's settle applied
+	done := func() map[string]bool {
+		t.Helper()
+		packs, _, err := f.s.LoadWinners(ctx, f.ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, p := range packs {
+			for _, w := range p.Winners {
+				out[w.AuthorizationID] = p.WorkDoneAt.Valid
+			}
+		}
+		return out
+	}
+	won := map[string]store.Winner{}
+	packs, _, err := f.s.LoadWinners(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range packs {
+		for _, w := range p.Winners {
+			won[w.AuthorizationID] = w
+		}
+	}
+	wantA := store.Winner{AuthorizationID: a, Kind: "refund", FromDrain: true, RecordID: "refund-a",
+		Work: encoded(Work{V: 1, Estimate: 100, Boot: boot, Money: money, Cause: "unreachable"})}
+	wantB := store.Winner{AuthorizationID: b, Kind: "settle", Charge: 5, FromDrain: true, RecordID: "settle-b",
+		Work: encoded(Work{V: 1, Estimate: 100, Digest: sum(string(body)), Money: money, Cause: "past_cutoff"})}
+	if len(won) != 2 || !reflect.DeepEqual(won[a], wantA) || !reflect.DeepEqual(won[b], wantB) {
+		t.Fatalf("the winners %+v, want %+v and %+v", won, wantA, wantB)
+	}
+	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, a); err != nil || len(rows) != 1 {
+		t.Fatalf("a's drain-log rows: %+v %v", rows, err)
+	}
+
+	topic := &fakeTopic{}
+	var alerts []string
+	p, err := NewPending(PendingConfig{Store: f.s, Records: topic, Every: time.Hour, Limit: 1, Wait: time.Second,
+		Alert: func(auth, what string) { alerts = append(alerts, auth+": "+what) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first sweep: the refund's pack is done, nothing staged; the
+	// settle's waits for its full record.
+	p.sweep(ctx)
+	if got := done(); !got[a] || got[b] || len(alerts) != 0 {
+		t.Fatalf("after the first sweep: done %v, told %v", got, alerts)
+	}
+	if !slices.Equal(topic.sent, []string{a + "/outcome"}) {
+		t.Fatalf("the outcomes published: %v", topic.sent)
+	}
+	var refunded OutcomeRecord
+	if err := json.Unmarshal(topic.data[0], &refunded); err != nil {
+		t.Fatal(err)
+	}
+	if want := (OutcomeRecord{V: 1, Auth: a, Outcome: "refunded", Boot: boot}); !reflect.DeepEqual(refunded, want) {
+		t.Fatalf("the refund's outcome %+v, want %+v", refunded, want)
+	}
+	disposition, err := json.Marshal(DispositionRecord{V: 1, Auth: a, Outcome: "refunded", Boot: boot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := store.LeaseRecord{AuthorizationID: a, Kind: "disposition", Ref: f.ref, Outcome: "refunded",
+		Cost: spanner.NullInt64{Valid: true}, BootBinding: boot, Body: disposition}
+	if got := leaseRecords(t, db, a); len(got) != 1 || !reflect.DeepEqual(got["disposition"], want) {
+		t.Fatalf("the refund's records %+v, want %+v", got, want)
+	}
+	if got := leaseRecords(t, db, b); len(got) != 0 {
+		t.Fatalf("the settle's records before its full record was staged: %+v", got)
+	}
+	// Another sweep, the settle's record still not staged: nothing more.
+	p.sweep(ctx)
+	if got := done(); got[b] || len(alerts) != 0 || len(topic.sent) != 1 {
+		t.Fatalf("after the second sweep: done %v, told %v, published %v", got, alerts, topic.sent)
+	}
+	// The settle's full record staged: the next sweep finishes it from it.
+	stager, err := NewStager(f.s, func(auth, what string) { alerts = append(alerts, auth+": "+what) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	stager.Handle(ctx, &fakeStaged{auth: b, kind: settlelog.FullRecord, data: body})
+	p.sweep(ctx)
+	if got := done(); !got[b] || len(alerts) != 0 {
+		t.Fatalf("after the settle's full record was staged: done %v, told %v", got, alerts)
+	}
+	if !slices.Equal(topic.sent, []string{a + "/outcome", b + "/outcome"}) {
+		t.Fatalf("the outcomes published: %v", topic.sent)
+	}
+	var settled OutcomeRecord
+	if err := json.Unmarshal(topic.data[1], &settled); err != nil {
+		t.Fatal(err)
+	}
+	if want := (OutcomeRecord{V: 1, Auth: b, Outcome: "settled", Cost: 5, Boot: []byte("boot-2"),
+		Digest: sum(string(body))}); !reflect.DeepEqual(settled, want) {
+		t.Fatalf("the settle's outcome %+v, want %+v", settled, want)
+	}
+	cost := spanner.NullInt64{Int64: 5, Valid: true}
+	for _, kind := range []string{"generation", "activity"} {
+		want := store.LeaseRecord{AuthorizationID: b, Kind: kind, Ref: f.ref, Outcome: "settled", Cost: cost,
+			WinnerDigest: sum(string(body)), BootBinding: []byte("boot-2"), Body: body}
+		if got := leaseRecords(t, db, b)[kind]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("the settle's %s record %+v, want %+v", kind, got, want)
+		}
+	}
+}
+
 // fakePending is a store whose writes the test sees in order, and can
 // fail. Its staged records' bodies are body, or one that states a boot
 // binding.
