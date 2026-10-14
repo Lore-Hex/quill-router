@@ -49,7 +49,6 @@ def test_required_operation_deletion(tmp_path, captured, kind):  # noqa: F811
 
 
 def test_split_burst_retains_original_window(tmp_path, captured):  # noqa: F811
-    from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
     files = PackFiles(tmp_path)
     plan = budget_capture(files, captured)
     item = plan['writer_operations'][0]
@@ -67,10 +66,14 @@ def test_split_burst_retains_original_window(tmp_path, captured):  # noqa: F811
     plan['trial_review'] = review(files, plan['trial_record'], 'changed/review')
     for stage in ('pre', 'post'):
         plan[stage]['load_segments'][0]['derivations']['startup_operations_1s']['original'] = files.obj('changed/peak', {'value': 2})
-    result = CapturedBudget.build(files, plan, checkpoint='fleet-budgets-pre')
-    graph = PayloadGraph(files.originals())
-    segments = graph.detail(result.post['v2_load']['segments'], 'segments')
-    assert max(s['peaks']['startup_operations_1s'] for s in segments) == 2
+    with pytest.raises(ValueError, match='LifecyclePopulation'):
+        CapturedBudget.build(files, plan, checkpoint='fleet-budgets-pre')
+    from trusted_router.async_settle_shadow_v2_pack_sources import publisher_projection
+    from trusted_router.async_settle_shadow_v2_pack_trial import native_peaks
+    computed = native_peaks(files, plan, plan['post']['load_segments'][0]['fields'],
+        json.loads(files.read(plan['configuration'])), publisher_projection(fleet_cap=4, surge=1, publishers=2),
+        dict(trial_peak=dict(numerator=25, denominator=1)))
+    assert computed['startup_operations_1s'] == 2
 
 
 def test_legacy_entry_uses_current_builder(tmp_path, captured):  # noqa: F811
@@ -241,6 +244,10 @@ def test_support_completion_precedes_inner_flags(tmp_path, captured, monkeypatch
     from trusted_router.async_settle_shadow_v2_pack_composition import compose_day
     from trusted_router.async_settle_shadow_v2_pack_references import TerminalReconciliation
     plan = stage_capture(tmp_path / 'source', captured)
+    source_files = PackFiles(tmp_path / 'source')
+    plan['completion'] = source_files.obj('captures/support-completion', dict(
+        command='collect', complete=True, completed_at_us=plan['complete_through_us'] + 1))
+    plan['files'].append(plan['completion'])
     pages = [json.loads(r['raw']) for r in captured['bundle']['rows'] if r['kind'] == p1.KINDS[2]]
     samples = [json.loads(r['raw']) for r in captured['bundle']['rows'] if r['kind'] == p1.KINDS[0]]
     joined = TerminalReconciliation(pages, samples)
@@ -354,6 +361,8 @@ def test_final_review_replaces_provisional_diagnostics(tmp_path, generated_trans
     files = PackFiles(source)
     selected['daily_reviews'] = {day: review(files, ref, 'final-reviews/' + day)
         for day, ref in captured_result['review']['subjects'].items()}
+    selected['pack_completion'] = files.obj('final-completion', dict(command='pack', complete=True,
+        completed_at_us=json.loads(files.read(selected['completion']))['completed_at_us'] + 1))
     plan = dict(stages=dict(pre=selected))
     reviewed = command.window('review-inputs', plan, source=source, out=tmp_path / 'review')
     selected['release_plan_sha256'] = reviewed['review']['release_plan']['sha256']

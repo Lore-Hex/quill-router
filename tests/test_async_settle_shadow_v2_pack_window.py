@@ -141,7 +141,7 @@ def test_public_window_collect_review_and_final_plan(tmp_path, terminal_sources,
     from scripts.async_settle import shadow_v2_window as command
     source, selected = source_plan(tmp_path / 'source', terminal_sources)
     plan = dict(default_stage='window', stages=dict(window=selected))
-    monkeypatch.setattr(command, 'collect_day', day_collector([]))
+    monkeypatch.setattr(command, '_collect_day', day_collector([]))
     collected = tmp_path / 'collected'
     result = command.window('collect', plan, source=source.root, out=collected)
     assert result['kind'] == 'window' and not result['complete']

@@ -56,12 +56,12 @@ def compare_files(files: Files, plan: dict[str, Any],
     receipts = []
     for path, ref in sorted(actual.items()):
         reservation = expected[path]
-        raw = files.read(ref)
+        size = file_size(files, ref)
         require(reservation['operation'] == 'put' and reservation['operations'] == 1
                 and reservation['native_rpcs'] == 0, 'LaterOutputOperation')
-        require(type(reservation['bytes']) is int and len(raw) <= reservation['bytes'],
+        require(type(reservation['bytes']) is int and size <= reservation['bytes'],
                 'evidence_export_budget_gap')
-        receipts.append(dict(object=ref, operation='put', bytes=len(raw), native_rpcs=0,
+        receipts.append(dict(object=ref, operation='put', bytes=size, native_rpcs=0,
                              **{'pass': plan['output_pass']}))
     return dict(source_pass=plan['source_pass'], output_pass=plan['output_pass'],
                 totals_pass=plan['totals_pass'], receipts=receipts, measured=totals(receipts), reserved=reserved)
@@ -80,6 +80,29 @@ def following_totals(files: Files, records: list[dict[str, Any]], *,
             key = receipt['pass'], receipt['operation'], receipt['object']['path']
             require(key not in seen and receipt['pass'] == record['output_pass'], 'LaterOutputPopulation')
             seen.add(key)
-            require(len(files.read(receipt['object'])) == receipt['bytes'], 'LaterOutputBytes')
+            require(file_size(files, receipt['object']) == receipt['bytes'], 'LaterOutputBytes')
             receipts.append(receipt)
     return totals(receipts)
+
+
+def directory_references(root: Any) -> list[dict[str, Any]]:
+    """Measure every emitted file, including transport, pages and rendered reports."""
+    import hashlib
+    result = []
+    for path in sorted(root.rglob('*')):
+        if path.is_file():
+            with path.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            result.append(dict(path=path.relative_to(root).as_posix(), bytes=path.stat().st_size, sha256=digest))
+    return result
+
+
+def file_size(files: Files, ref: dict[str, Any]) -> int:
+    import hashlib
+    path = (files.root / ref['path']).resolve()
+    require(path.is_relative_to(files.root.resolve()), 'LaterOutputPath')
+    with path.open('rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    size = path.stat().st_size
+    require(digest == ref['sha256'] and size == ref['bytes'], 'LaterOutputBytes')
+    return size

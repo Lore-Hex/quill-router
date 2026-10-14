@@ -19,6 +19,14 @@ from trusted_router.async_settle_shadow_v2_pack_plan import (
 
 def execute(command: str, plan: dict[str, Any], source: Path, out: Path, *,
             release_sha256: str | None = None) -> dict[str, Any]:
+    from trusted_router.async_settle_shadow_v2_pack_outputs import OutputPass
+    output = OutputPass.begin(source, out, plan)
+    result = _execute(command, plan, source, out, release_sha256=release_sha256)
+    return output.finish(result, status='status.json')
+
+
+def _execute(command: str, plan: dict[str, Any], source: Path, out: Path, *,
+            release_sha256: str | None = None) -> dict[str, Any]:
     out.mkdir(parents=True, exist_ok=False)
     files = PackFiles(out)
     captured = Files(source)
@@ -90,7 +98,14 @@ def pack_captured(files: PackFiles, plan: dict[str, Any], *,
     rows.append(dict(kind=a1.KINDS[5], id=manifest['day'] + '/manifest-v2',
                      raw=a1.MANIFEST.serialize(manifest).decode()))
     transport['rows'] = rows
-    transport['preimages'] = [dict(name=path, raw=raw.decode()) for path, raw in files.originals().items()]
+    from trusted_router.async_settle_shadow_v2_pack_originals import release_dependency
+    transport['preimages'] = [dict(name=path, raw=raw.decode()) for path, raw in files.originals().items()
+                              if not release_dependency(path)]
+    from trusted_router.async_settle_shadow_v2_pack_completion import completion
+    if 'completion' not in plan:
+        return dict(complete=False, missing=['MissingComposedCompletion'])
+    transport['completed_at_us'] = completion(files, plan['completion'],
+        previous_us=transport['completed_at_us'], command='pack')
     raw = canonical(transport)
     with (files.root / 'bundle.json').open('xb') as output:
         output.write(raw)

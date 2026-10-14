@@ -22,7 +22,16 @@ class ExactPages:
     """One read of each enumerated source per pass, including absent sources."""
     get: Callable[[str], tuple[bytes, ...]]
     expected: set[str] = field(default_factory=set)
-    cached: dict[str, tuple[bytes, ...]] = field(default_factory=dict)
+    cached: Any = field(init=False)
+    scratch: Any = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from trusted_router.async_settle_shadow_v2_pack_records import RecordMap
+        self.scratch = TemporaryDirectory(prefix='exact-pages-')
+        self.cached = RecordMap(Path(self.scratch.name) / 'cache')
 
     @classmethod
     def from_files(cls, files: Files, references: Mapping[str, list[dict[str, Any]]]) -> ExactPages:
@@ -34,8 +43,8 @@ class ExactPages:
     def read(self, key: str) -> tuple[bytes, ...]:
         require(key in self.expected, 'artifact_gap')
         if key not in self.cached:
-            self.cached[key] = self.get(key)
-        return self.cached[key]
+            self.cached[key] = [raw.hex() for raw in self.get(key)]
+        return tuple(bytes.fromhex(raw) for raw in self.cached[key])
 
 
 @dataclass(frozen=True)

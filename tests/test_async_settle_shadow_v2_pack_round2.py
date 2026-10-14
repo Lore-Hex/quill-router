@@ -418,7 +418,7 @@ def test_window_pack_large_transport_uses_plan(tmp_path):
         preimages=[dict(name=f'original/{i}', raw='x' * 10000) for i in range(500)])))
     result = window('pack', dict(captured_transport='captured.json'), source=tmp_path, out=tmp_path / 'out')
     assert result['input_objects'] == 500
-    assert result['missing'] == ['MultiBundleLoading']
+    assert result['missing'] == ['MissingLaterFilePlan', 'MultiBundleLoading']
     plan = json.loads((tmp_path / 'out/transport-plan.json').read_bytes())
     assert len(plan['parts']) > 1
     assert check_plan(PackFiles(tmp_path / 'out'), plan['inputs'])

@@ -39,13 +39,15 @@ def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre', budget_prefi
         for entry in closed['entries']]
     trial = json.loads(files.read(budget['trial_record']))
     trial.update(shutdown=budget['shutdown'], shutdown_inventory=captured['Shutdown'])
+    lifecycle = json.loads(files.read(trial['lifecycle_work']))
+    lifecycle['shutdown'] = budget['shutdown']
+    trial['lifecycle_work'] = budget_files.obj('trial/composed-lifecycle', lifecycle)
     budget['trial_record'] = budget_files.obj('trial/composed-record', trial)
     budget['trial_review'] = review(budget_files, budget['trial_record'], 'reviews/composed-trial')
     values = json.loads(files.read(budget['pre_allowances']))
     budget['export_ceilings'] = budget_files.obj('trial/export-ceilings', dict(native_rpcs=10000, **{k: values[k]
         for k in ('export_passes', 'export_operations', 'export_bytes', 'export_write_bytes')}))
     budget['export_review'] = review(budget_files, budget['export_ceilings'], 'reviews/export-ceilings')
-    captured['Budget'] = files.obj('captures/Budget', budget)
     native_root = capture['native_root']
     native_prefix = budget_prefix + 'native-export/'
     for path in sorted(native_root.rglob('*')):
@@ -59,6 +61,9 @@ def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre', budget_prefi
             id=key, original=original))
     passed = dict(id='initial', bundle=native_prefix + 'bundle.json',
         accounting=files.refs[native_prefix + 'accounting.json'], prefix=native_prefix, object_plan=capture['object_plan'])
+    from tests.shadow_v2_pack_round8_work import timed_export
+    timed_export(budget_files, budget, passed)
+    captured['Budget'] = files.obj('captures/Budget', budget)
     captured['NativeExport'] = files.obj('captures/NativeExport', dict(**passed, passes=[passed], output_receipts=budget['output_receipts'], objects=[]))
     from trusted_router.async_settle_shadow_v2_pack_daypack import bind_accounting
     inventory_source = json.loads(files.read(captured['Inventory']))
@@ -102,9 +107,11 @@ def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre', budget_prefi
         files.put('verifiers/keys/' + file_digest(original.keyset), original.keyset)
         verifiers[original.entry_point] = [file_digest(original.source), file_digest(original.fixture),
             file_digest(original.keyset) if original.keys else None]
+    completion = files.obj('captures/completion', dict(command='collect', complete=True,
+        completed_at_us=START + 86400000010))
     # Fresh outputs are recomputed; only captured originals enter this list.
     refs = [ref for path, ref in files.refs.items() if not path.startswith('external/')]
-    return dict(day=DAY, days=[DAY], pass_ids=['initial'], deployment_accounting_review=bound_review, captures=captured, files=refs, fixtures=fixtures, cohort=cohort,
+    return dict(day=DAY, days=[DAY], completion=completion, pass_ids=['initial'], deployment_accounting_review=bound_review, captures=captured, files=refs, fixtures=fixtures, cohort=cohort,
         source_shas=dict(router=REV, enclave=REV), complete_through_us=START + 172805000000,
         checkpoint=checkpoint, required_stages={s: list(n) for s, n in REQUIRED_STAGES.items()},
         verifiers=verifiers, predecessors=[])
@@ -165,6 +172,7 @@ def test_window_command_sequence_from_captures(tmp_path, composed, capsys):
     assert main(commands[1]) == 1, capsys.readouterr().out
     subjects = json.loads((collected / 'review/subjects.json').read_bytes())['subjects']
     files = PackFiles(collected)
+    selected['pack_completion'] = files.obj('captures/pack-completion', dict(command='pack', complete=True, completed_at_us=START + 86400000011))
     selected['daily_reviews'] = {day: review(files, ref, 'review/daily-' + day) for day, ref in subjects.items()}
     plan_path.write_bytes(canonical(dict(stages={'pre': selected})))
     # The independent reviewer uses the final release list, including daily records.
@@ -179,7 +187,11 @@ def test_window_command_sequence_from_captures(tmp_path, composed, capsys):
     output = PackFiles(tmp_path / 'pack')
     result = json.loads((output.root / 'result.json').read_bytes())
     refs = {r['path'] for r in check_plan(output, result['inputs'])}
-    bundle_names = {r['name'] for r in json.loads((output.root / 'bundle.json').read_bytes())['preimages']}
+    final_bundle = json.loads((output.root / 'bundle.json').read_bytes())
+    collected_bundle = json.loads((collected / 'stage/transport.json').read_bytes())
+    assert final_bundle['completed_at_us'] == START + 86400000011
+    assert final_bundle['completed_at_us'] > collected_bundle['completed_at_us']
+    bundle_names = {r['name'] for r in final_bundle['preimages']}
     released = json.loads((output.root / 'loading/release-plan.json').read_bytes())['artifacts']
     for decision in selected['daily_reviews'].values():
         path = decision['record']['path']
@@ -188,6 +200,9 @@ def test_window_command_sequence_from_captures(tmp_path, composed, capsys):
     assert not result['complete'] and 'IncompleteDay:' + DAY in result['missing']
 
     assert (tmp_path / 'pack/bundle.json').exists()
+    assert json.loads((tmp_path / 'pack/bundle.json').read_bytes())['completed_at_us'] == START + 86400000011
+    assert not any('shutdown_inventory' in str(issue) and 'schema' in str(issue)
+        for issue in result['gate']['loading'])
     (tmp_path / 'commands.json').write_bytes(canonical(commands))
 
 
@@ -254,7 +269,7 @@ def test_composed_original_byte_matrix_base_defect(tmp_path, assembled, case):
         failures=[dict(gap=f.gap, rule=f.rule, subject=f.subject, count=f.count, days=list(f.days))
                   for f in result.failures], counts=result.gate_report['failure_counts'] if result.gate_report else None,
         unavailable=rendered.diagnostic() if isinstance(rendered, UnavailableGateOutput) else None)
-    expected = json.loads(Path('tests/shadow_v2_pack_round6_base_results.json').read_bytes())
+    expected = json.loads(Path('tests/shadow_v2_pack_round8_base_results.json').read_bytes())
     # Exact current results after generated transport records and aligned launch times.
     # The projection-page mismatch remains an existing loader result.
     assert actual == expected['vectors'][expected['cases'][case]]

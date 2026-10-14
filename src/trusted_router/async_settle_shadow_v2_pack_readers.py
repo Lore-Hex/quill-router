@@ -42,7 +42,14 @@ def native_reader_index(files: Files, *, records: Iterable[dict[str, Any]],
                 day=day_at(basis['read_at_ns'] // 1000),
                 health_slot=None if basis['body'] is None else basis['body']['slot'],
                 page=record.get('page')))
-    available = list(batches)
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from trusted_router.async_settle_shadow_v2_pack_records import RecordSpool
+    scratch = TemporaryDirectory(prefix='basis-readers-')
+    available = RecordSpool(Path(scratch.name) / 'batches')
+    for batch in batches:
+        available.append(batch)
     normalized = []
     missing = []
     for demand in demands:

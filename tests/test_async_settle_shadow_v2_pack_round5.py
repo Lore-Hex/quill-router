@@ -10,9 +10,8 @@ import pytest
 from scripts.async_settle import shadow_v2_window as command
 from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_pack_round5_captures import captured_day
-from tests.test_async_settle_shadow_v2_pack import review
 from tests.test_async_settle_shadow_v2_pack_window import make_predecessor
-from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles, check_plan
+from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles
 from trusted_router.async_settle_shadow_v2_pack_records import RecordSpool, captured_native
 from trusted_router.detached_jws import canonical
 
@@ -42,39 +41,22 @@ def eight_day_sources(tmp_path_factory):
     return root, plan
 
 
-def test_real_eight_day_public_window_and_pack(tmp_path, eight_day_sources):
+def test_short_daily_captures_block_declared_seven_day_window(tmp_path, eight_day_sources):
     source, plan = eight_day_sources
-    plan = copy.deepcopy(plan)
-    selected = plan['stages']['window']
     collected = tmp_path / 'collected'
     result = command.window('collect', plan, source=source, out=collected)
     assert result.get('kind') == 'window', result
-    days = sorted(selected['day_plans'])
-    assert len(selected['days']) == 8 and len(days) == 10 and result['inputs']['days'] == days
-    assert selected['interval']['start_us'] % 86400000000 > 0
-    assert selected['interval']['end_us'] - selected['interval']['start_us'] == 7 * 86400000000
+    assert len(result['inputs']['days']) == 10
+    assert result['manifest_complete'] is False and result['proof_complete'] is False
+    assert 'WindowWriterCoverage:us-central1' in result['missing']
+    assert 'FiniteWindowSchedule' in result['missing']
+    assert not (collected / 'day-inputs').exists()
     assert len(result['inputs']['predecessors']) == 4
-    for day in days:
-        child = json.loads((collected / 'day-inputs' / day / 'stage/result.json').read_bytes())
-        assert 'gate' in child and child['gate']['verdict'] == 'BLOCKED'
-        native = json.loads((collected / 'day-inputs' / day / 'stage/transport.json').read_bytes())
-        assert native['days'] == [day]
-        assert any('sample' in row['kind'] for row in native['rows'])
-    files = PackFiles(collected)
-    selected['daily_reviews'] = {day: review(files, ref, 'daily-reviews/' + day)
-        for day, ref in result['review']['subjects'].items()}
-    reviewed = command.window('review-inputs', plan, source=collected, out=tmp_path / 'review')
-    selected['release_plan_sha256'] = reviewed['review']['release_plan']['sha256']
-    packed = command.window('pack', plan, source=collected, out=tmp_path / 'pack')
-    assert packed['inputs']['days'] == days
-    refs = check_plan(PackFiles(tmp_path / 'pack'), packed['inputs'])
-    assert all(any(ref['path'] == 'daily-reviews/' + day for ref in refs) for day in days)
-    assert (tmp_path / 'pack/review/sealed.json').exists()
-    released = json.loads((tmp_path / 'pack/loading/release-plan.json').read_bytes())['artifacts']
-    assert all('window/days/' + day + '.json' in released for day in days)
-    for day in days:
-        child = json.loads((tmp_path / 'pack/window/days' / (day + '.json')).read_bytes())
-        assert check_plan(PackFiles(tmp_path / 'pack' / child['root']), child['inputs'])
+    for operation in ('review-inputs', 'pack'):
+        later = command.window(operation, plan, source=collected, out=tmp_path / operation)
+        assert later['complete'] is False
+        assert 'IncompleteCapture' in later['missing']
+        assert 'WindowWriterCoverage:us-central1' in later['missing']
 
 
 def test_real_window_missing_support_is_recorded(tmp_path, eight_day_sources):
@@ -130,7 +112,7 @@ def test_every_daily_producer_is_required(tmp_path, eight_day_sources, day, prod
     ref['path'] = 'absent/' + ref['path']
     result = command.window('collect', plan, source=source, out=tmp_path / 'out')
     assert not result['complete']
-    assert result['missing'] == ['MissingProducer:' + producer]
+    assert result['missing'] == ['MissingLaterFilePlan', 'MissingProducer:' + producer]
 
 
 def test_distinct_idle_and_terminated_original_histories(tmp_path):

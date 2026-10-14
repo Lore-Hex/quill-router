@@ -66,7 +66,10 @@ def measured_export_costs(files: PackFiles, plan: dict[str, Any], compared: list
     require(all(approved[k] == allowances[k] for k in
         ('export_passes', 'export_operations', 'export_bytes', 'export_write_bytes')), 'ExportCeilings')
     result = export_costs(compared, originals, approved=approved, include_partial=True)
-    if plan.get('following_output_records'):
+    required_prior = planned.get('following_output_records', [])
+    require(plan.get('following_output_records', []) == required_prior, 'FollowingOutputPopulation')
+    require(not planned.get('previous_output_pass') or bool(required_prior), 'FollowingOutputPopulation')
+    if required_prior:
         from trusted_router.async_settle_shadow_v2_pack_output_costs import following_totals
         carry = following_totals(files, [retained_json(files.read(ref))
             for ref in plan['following_output_records']], current_pass=passes[0]['pass'])
@@ -93,19 +96,72 @@ def measured_export_costs(files: PackFiles, plan: dict[str, Any], compared: list
     return result
 
 
-def compare_later_files(files: PackFiles, plan: dict[str, Any], references: list[dict[str, Any]]) -> dict[str, Any]:
-    """Compare individual staged files before the next local output pass.
-
-    A supplied reservation record is checked unchanged. Older plans reserve a
-    finite group ceiling; expand it into named file reservations before reading
-    the emitted bytes. Return receipts to the caller for the following pass.
-    """
-    from trusted_router.async_settle_shadow_v2_pack_output_costs import compare_files, reserve_files
-    planned = retained_json(files.read(plan['output_plan']))
-    later = planned['later_passes']
-    limits = {field: sum(p[field] for p in later) for field in
-        ('export_operations', 'export_bytes', 'export_write_bytes', 'native_rpcs')}
-    reservation = (retained_json(files.read(plan['later_file_plan'])) if 'later_file_plan' in plan
-        else reserve_files(references, source_pass=max(p['pass'] for p in planned['passes']), ceiling=limits))
+def compare_later_files(files: PackFiles, plan: dict[str, Any], references: list[dict[str, Any]], *,
+                        plan_files: Any = None) -> dict[str, Any]:
+    """Compare an independently reviewed individual output population."""
+    from trusted_router.async_settle_shadow_v2_pack_output_costs import compare_files
+    require('later_file_plan' in plan and 'later_file_review' in plan, 'MissingLaterFilePlan')
+    source = files if plan_files is None else plan_files
+    approval(source, plan['later_file_review'], plan['later_file_plan'])
+    reservation = retained_json(source.read(plan['later_file_plan']))
+    require(bool(reservation['reservations']), 'LaterOutputPopulation')
     measured = compare_files(files, reservation, references)
     return dict(plan=reservation, **measured)
+
+
+def compare_passes(files: Any, spec: dict[str, Any], capture: dict[str, Any]) -> tuple[list[Any], list[dict[str, Any]], list[str]]:
+    """The same independent pass population is required for selected and support days."""
+    from trusted_router.async_settle_shadow_v2_pack_accounting_stream import (
+        compare_export_accounting_streamed,
+    )
+    require(bool(capture['passes']) and len({p['id'] for p in capture['passes']})
+            == len(capture['passes']), 'FinitePassPlan')
+    require([p['id'] for p in capture['passes']] == spec['pass_ids'], 'FinitePassPlan')
+    require(len({p['accounting']['path'] for p in capture['passes']}) == len(capture['passes']),
+            'FinitePassPlan')
+    require(any(all(p.get(key) == capture.get(key) for key in
+        ('bundle', 'accounting', 'prefix', 'object_plan')) for p in capture['passes']), 'FinitePassPlan')
+    comparisons = []
+    accounting_roots = []
+    accounting_missing: list[str] = []
+    for passed in capture['passes']:
+        accounting_roots.append(passed['accounting'])
+        passed_bundle = (files.root / passed['bundle']).resolve()
+        require(passed_bundle.is_relative_to(files.root.resolve()) and passed_bundle.is_file(),
+                'MissingProducer:NativeExport:' + passed['id'])
+        compared = compare_export_accounting_streamed(files, passed['accounting'], passed_bundle,
+            day=spec['day'], object_plan=passed['object_plan'], prefix=passed.get('prefix', ''))
+        comparisons.append(compared)
+        accounting_missing.extend(passed['id'] + ':' + gap for gap in compared.missing)
+    return comparisons, accounting_roots, accounting_missing
+
+
+def compare_source_registrations(files: Any, spec: dict[str, Any]) -> None:
+    """Every referenced capture original must be registered before selection."""
+    from trusted_router.async_settle_shadow_v2_pack_stage import PRODUCERS, references
+    registered = {ref['path']: ref for ref in spec.get('files', [])}
+    require(len(registered) == len(spec.get('files', [])), 'SourceRegistration')
+    seen: dict[str, dict[str, Any]] = {}
+    for producer in PRODUCERS:
+        require(bool(spec['captures'].get(producer)), 'MissingProducer:' + producer)
+        pending = list(references(spec['captures'][producer]))
+        while pending:
+            ref = pending.pop()
+            if ref['path'] in seen:
+                require(seen[ref['path']] == ref, 'SourceRegistration:' + ref['path'])
+                continue
+            seen[ref['path']] = ref
+            try:
+                raw = files.read(ref)
+            except (OSError, ValueError) as exc:
+                raise ValueError('MissingProducer:' + producer + ':' + ref['path']) from exc
+            require(registered.get(ref['path']) == ref, 'SourceRegistration:' + ref['path'])
+            try:
+                value = retained_json(raw)
+            except ValueError:
+                continue
+            children = list(references(value))
+            if type(value) is dict and value.get('format') == 'shadow-v2-live-export-a3-n':
+                prefix = ref['path'].rsplit('/', 1)[0] + '/' if '/' in ref['path'] else ''
+                children = [{**child, 'path': prefix + child['path']} for child in children]
+            pending.extend(children)

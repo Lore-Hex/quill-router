@@ -48,9 +48,10 @@ def budget_capture(files, capture):
         regional_caps={'us-central1': 4}, surge=1, publishers=2))
     from datetime import UTC, datetime
     resource = dict(type='spanner_instance', labels=dict(node='one'))
-    for name, at in (('startup', start), ('close', end - 1), ('export', end - 1)):
-        operations.append(dict(id=name, at_us=at, operation=name, logical_count=1,
-            native_rpcs=1, rows=0, bytes=0, elapsed_us=1, slot=None))
+    for name, at in (('startup', start), ('close', end - 1), ('result', end - 1), ('export', end - 1)):
+        operations.append(dict(id=name, at_us=at, operation='close' if name == 'result' else name, logical_count=1,
+            native_rpcs=1, rows=0, bytes=int(name == 'export'), elapsed_us=1, slot=None))
+    operations[-1]['id'] = 'export:1:put:' + getattr(files, 'prefix', '') + 'trial/export-output'
     native = files.obj('trial/native-operations', dict(day=DAY, boot=BOOT, start_us=start,
         end_us=end, complete=True, operations=operations, configuration=config,
         resource=resource, region='us-central1'))
@@ -79,7 +80,7 @@ def budget_capture(files, capture):
     measurement['source'] = original_ref
     measured_ref = files.obj('trial/shutdown-measurement', measurement)
     values = peaks()
-    values.update(configured_routers=5, configured_publishers=2,
+    values.update(configured_routers=5, configured_publishers=2, close_operations_1s=2,
         reads_per_second=dict(numerator=5, denominator=4),
         pending_rows_per_second=dict(numerator=1001, denominator=4),
         configured_reads_per_second=dict(numerator=25, denominator=4),
@@ -132,7 +133,7 @@ def budget_capture(files, capture):
         components=components, measured_sources=[native, counter_ref, *trace_refs], pre=spec(pre_ref), post=spec(post_ref))
     computed = dict(values)
     computed.update(simultaneous_routers=1, simultaneous_publishers=1,
-        startup_operations_1s=1, close_operations_1s=1, export_operations_1s=1,
+        startup_operations_1s=1, close_operations_1s=2, export_operations_1s=1,
         cpu_percent=dict(numerator=25, denominator=1))
     def peak(field, name):
         return max((sum(o[field] for o in operations if o['operation'] == name
@@ -159,13 +160,16 @@ def budget_capture(files, capture):
     record['operation_population'] = files.obj('trial/operation-population', dict(configuration=config,
         complete=True, operations=[dict(day=DAY, boot=BOOT, id=o['id'], operation=o['operation'], at_us=o['at_us'])
             for o in operations if o['operation'] in ('startup', 'close', 'export')]))
+    record['lifecycle_work'] = files.obj('trial/lifecycle-work', dict(complete=True, platform=record['platform'],
+        shutdown=record['shutdown'], operations=[dict(day=DAY, boot=BOOT, **o) for o in operations
+            if o['operation'] in ('startup', 'close')]))
     plan['trial_record'] = files.obj('trial/approved-record', record)
     plan['trial_review'] = review(files, plan['trial_record'], 'trial/approved-record-review')
     target = files.put('trial/export-output', b'x')
     receipt = files.obj('trial/export-receipt', dict(object=target, at_us=end - 1, operation='put',
         native_rpcs=1, bytes=1, elapsed_us=1, **{'pass': 1}))
     plan['output_receipts'] = [receipt]
-    plan['output_plan'] = files.obj('trial/output-plan', dict(passes=[dict(day=DAY, start_us=start, end_us=end,
+    plan['output_plan'] = files.obj('trial/output-plan', dict(accounting_roots=[], passes=[dict(day=DAY, start_us=start, end_us=end,
         outputs=[dict(object=target, operation='put')], **{'pass': 1})], later_passes=[dict(depends_on=1,
         groups=['coverage', 'roots', 'review', 'report'], native_rpcs=64, export_operations=1000,
         export_bytes=1000000, export_write_bytes=1000000, **{'pass': 2})]))
@@ -209,7 +213,7 @@ def test_budget_complete_originals_to_envelopes(tmp_path, captured):
         segments = graph.detail(emitted['v2_load']['segments'], 'segments')
         assert len(segments) > 1
         for field in ('startup_operations_1s', 'close_operations_1s', 'export_operations_1s'):
-            assert max(s['peaks'][field] for s in segments) == 1
+            assert max(s['peaks'][field] for s in segments) == (2 if field == 'close_operations_1s' else 1)
         assert all(s['start_us'] < s['end_us'] for s in segments)
         assert segments[0]['start_us'] == plan[stage]['interval']['start_us']
         assert segments[-1]['end_us'] == plan[stage]['interval']['end_us']

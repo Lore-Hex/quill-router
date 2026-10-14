@@ -139,7 +139,7 @@ def test_post_links_canonical_pre_not_filename(tmp_path):
 
 
 @pytest.mark.parametrize('edge', ['manifest', 'downstream-report'])
-def test_frozen_proof_attachment_walk_limitation(tmp_path, edge):
+def test_frozen_attachment_reverse_references_with_old_digest(tmp_path, edge):
     """The frozen validator does not resolve proof attachments; block that claim.
 
     The manifest example deliberately leaves an old attachment digest after the

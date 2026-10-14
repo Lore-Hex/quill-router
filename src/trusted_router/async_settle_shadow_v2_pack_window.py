@@ -150,6 +150,18 @@ def collect_window(source: Path, out: Path, plan: dict[str, Any],
         return dict(complete=False, kind='window', missing=missing, inputs=planned,
             manifest_complete=False, proof_complete=False, predecessor_results=prior_result,
             window=diagnostic, checkpoint=plan['checkpoint'])
+    if interval is not None:
+        from trusted_router.async_settle_shadow_v2_pack_schedule import continuous_coverage
+        population_missing = continuous_coverage(source, plan['day_plans'], interval)
+        population_missing.append('FiniteWindowSchedule' if 'finite_schedule' not in plan else 'FiniteWindowScheduleUncompared')
+        missing.extend(population_missing)
+        if population_missing:
+            diagnostic = files.obj('window/incomplete-coverage.json', dict(days=selected,
+                support_days=list(days), interval=interval, missing=sorted(set(missing))))
+            planned = input_plan(files, list(files.refs.values()), days=list(days), predecessors=previous)
+            return dict(complete=False, kind='window', missing=sorted(set(missing)), inputs=planned,
+                manifest_complete=False, proof_complete=False, predecessor_results=prior_result,
+                window=diagnostic, checkpoint=plan['checkpoint'])
     children, subjects = {}, {}
     for day in days:
         if day not in plan['day_plans']:
@@ -204,6 +216,19 @@ def support_complete(files: Files, spec: dict[str, Any], capture: dict[str, Any]
     from trusted_router.async_settle_shadow_v2_pack_records import RecordSpool
     if 'files' not in spec:
         return False
+    from trusted_router.async_settle_shadow_v2_pack_passes import (
+        compare_passes,
+        compare_source_registrations,
+    )
+    try:
+        _, _, missing = compare_passes(files, spec, capture)
+        if missing:
+            return False
+        compare_source_registrations(files, spec)
+        for ref in spec['files']:
+            files.read(ref)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
     inventory, readiness, shutdown = (retained_json(files.read(spec['captures'][name]))
         for name in ('Inventory', 'Readiness', 'Shutdown'))
     if not all(result.get('complete') is True for result in (inventory, readiness, shutdown)):
@@ -243,6 +268,10 @@ def support_complete(files: Files, spec: dict[str, Any], capture: dict[str, Any]
             counters = list(records.lookup(p1.KINDS[3] + '/' + key))
             closures = list(records.lookup(p1.KINDS[4] + '/' + key))
             if len(counters) != 1 or len(closures) != 1:
+                return False
+            results = list(records.lookup(a1.KINDS[-1] + '/' + key))
+            entry = next(e for e in entries if (e['day'], e['boot']) == (spec['day'], boot['boot']))
+            if len(results) != 1 or files.read(entry['original_close']) != closures[0].encode() or files.read(entry['close_result']) != results[0].encode():
                 return False
             counter = a1.COUNTER.parse(counters[0].encode())
             if not counter['closed'] or receipt_chain(source, counter).tail is not None:

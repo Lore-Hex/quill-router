@@ -78,11 +78,10 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
         for group in reconciliation.samples.values():
             for sample in group:
                 files.put('support/samples/' + sha256(sample), canonical(sample))
-    batches = [(key, v) for key, v, _ in by_kind('health_basis')]
-    # Export attachment kind names retain the native object spelling.
-    if not batches:
-        batches = [(row['id'], retained_json(row['raw'].encode())) for row in attachments
-                   if row['id'].startswith('health-basis-batches/')]
+    def basis_batches() -> Any:
+        for key, value, _ in by_kind('health_basis'):
+            yield key, value
+    batches = RecordView(basis_batches)
     reader_records = {}
     for ref in ready['proofs']:
         check = a2.PROOF_RESULT.parse(files.read(ref))

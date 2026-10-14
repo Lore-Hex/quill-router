@@ -58,7 +58,11 @@ class BasisReferenceIndex:
                 (reader['day'], reader['boot'], reader['health_slot']))
             named_pages.add(reader['page'])
             page_demands.setdefault(reader['page'], set()).add(reader['basis_sha256'])
-        available = {}
+        from tempfile import TemporaryDirectory
+
+        from trusted_router.async_settle_shadow_v2_pack_records import RecordMap
+        scratch = TemporaryDirectory(prefix='basis-index-')
+        available = RecordMap(Path(scratch.name) / 'index')
         for key, page in batches:
             health.HEALTH_BASIS_BATCH(page)
             require(key == f"health-basis-batches/{page['day']}/{page['boot']}/{page['sequence']}", 'artifact_gap')
@@ -109,7 +113,7 @@ class BasisReferenceIndex:
                         pending.append(predecessor)
         missing.extend('basis:' + digest for digest in set(expected) - found)
         missing.extend('slot:' + '/'.join(map(str, item)) for item in slots - found_slots)
-        missing.extend('unreferenced_page:' + key for key in set(available) - selected)
+        missing.extend('unreferenced_page:' + key for key in {key for key, _ in available.items()} - selected)
         return cls(tuple(sorted(selected)), tuple(sorted(expected)), tuple(sorted(set(missing))))
 
 

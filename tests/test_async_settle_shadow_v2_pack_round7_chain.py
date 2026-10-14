@@ -92,7 +92,7 @@ def production_window(tmp_path_factory, chain_sources):
     return root, dict(default_stage='window', stages=dict(window=selected))
 
 
-def test_production_window_real_days(tmp_path, production_window):
+def test_short_window_keeps_real_predecessors_and_blocks_coverage(tmp_path, production_window):
     from scripts.async_settle.shadow_v2_window import window
     root, plan = production_window
     result = window('collect', plan, source=root, out=tmp_path / 'out')
@@ -106,13 +106,9 @@ def test_production_window_real_days(tmp_path, production_window):
                    for stage in STAGES]
     assert interval['start_us'] > max(prior_times)
     assert result['manifest_complete'] is False and result['proof_complete'] is False
-    for day in result['inputs']['days']:
-        directory = tmp_path / 'out/day-inputs' / day
-        manifest = json.loads((directory / day / 'manifest-v2.json').read_bytes())
-        proof = json.loads((directory / 'proof_manifest').read_bytes())
-        assert manifest['complete'] is False and proof['complete'] is False
-        assert (directory / 'proof.pre_budget_sha256').read_bytes() == (
-            root / 'prior/graphs/fleet-budgets-pre/proof.pre_budget_sha256').read_bytes()
+    assert 'WindowWriterCoverage:us-central1' in result['missing']
+    assert 'FiniteWindowSchedule' in result['missing']
+    assert not (tmp_path / 'out/day-inputs').exists()
 
 
 @pytest.mark.parametrize('day', ['2026-10-15', '2026-10-16'])
@@ -124,6 +120,6 @@ def test_production_window_each_support_missing(tmp_path, production_window, day
     plan = copy.deepcopy(original)
     del plan['stages']['window']['day_plans'][day]
     result = window('collect', plan, source=root, out=tmp_path / 'out')
-    assert result['missing'] == ['MissingSupportDay:' + day,
-        *('IncompletePredecessor:' + stage for stage in sorted(STAGES))]
+    assert result['missing'] == sorted(['MissingLaterFilePlan', 'MissingSupportDay:' + day,
+        *('IncompletePredecessor:' + stage for stage in sorted(STAGES))])
     assert result['manifest_complete'] is False and result['proof_complete'] is False

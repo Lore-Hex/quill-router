@@ -11,7 +11,8 @@ def test_cli_finite_plan_and_no_overwrite(tmp_path, capsys):
     plan = tmp_path / 'plan.json'
     plan.write_text(json.dumps(dict(files=[ref], days=['2026-10-12'], predecessors=[])))
     args = ['plan', '--plan', str(plan), '--input', str(source.root), '--out', str(tmp_path / 'out')]
-    assert main(args) == 0
+    assert main(args) == 1
+    assert 'MissingLaterFilePlan' in json.loads((tmp_path / 'out/status.json').read_bytes())['missing']
     before = {str(path): path.read_bytes() for path in (tmp_path / 'out').rglob('*') if path.is_file()}
     assert main(args) == 1
     after = {str(path): path.read_bytes() for path in (tmp_path / 'out').rglob('*') if path.is_file()}

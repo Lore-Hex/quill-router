@@ -47,3 +47,8 @@ class ScopedOutputs(PackFiles):
     def put(self, path: str, raw: bytes, schema: Schema | None = None) -> dict[str, Any]:
         # Retained captures are content-addressed lookup records in the existing loader.
         return super().put(path if path.startswith('loading/retained-output/') else self.prefix + path, raw, schema)
+
+
+def release_dependency(path: str) -> bool:
+    """Fixed checkout originals and their storage parts do not enter input leaves."""
+    return path in RELEASE_FILES or any(path.startswith('released/' + name + '/') for name in RELEASE_FILES)

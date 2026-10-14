@@ -9,49 +9,35 @@ from typing import Any
 
 from trusted_router.async_settle_shadow_v2_collect_ports import CHECKS, Files
 from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
-from trusted_router.async_settle_shadow_v2_pack_accounting_stream import (
-    compare_export_accounting_streamed,
-)
 from trusted_router.async_settle_shadow_v2_pack_captured_budget import CapturedBudget
 from trusted_router.async_settle_shadow_v2_pack_composition import compose_day
 from trusted_router.async_settle_shadow_v2_pack_external import external_pack
 from trusted_router.async_settle_shadow_v2_pack_history import history
-from trusted_router.async_settle_shadow_v2_pack_originals import DayFiles
+from trusted_router.async_settle_shadow_v2_pack_originals import DayFiles, release_dependency
 from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles, input_plan
 from trusted_router.async_settle_shadow_v2_pack_procedures import check_scope, procedure_result
 from trusted_router.async_settle_shadow_v2_pack_review import review_days
-from trusted_router.async_settle_shadow_v2_pack_stage import PRODUCERS, references
+from trusted_router.async_settle_shadow_v2_pack_stage import PRODUCERS
 from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
 
 
 def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
                 reconciliation: Any = None) -> dict[str, Any]:
+    from trusted_router.async_settle_shadow_v2_pack_outputs import OutputPass
+    output = OutputPass.begin(source, out, plan)
+    result = _collect_day(source, out, plan, reconciliation=reconciliation)
+    return output.finish(result, status='stage/collection-result.json')
+
+
+def _collect_day(source: Path, out: Path, plan: dict[str, Any], *,
+                reconciliation: Any = None) -> dict[str, Any]:
     """Recompute each package producer from finite captured originals."""
     captures = plan['captures']
     for producer in PRODUCERS:
         require(producer in captures and bool(captures[producer]), 'MissingProducer:' + producer)
-        pending = list(references(captures[producer]))
-        seen: dict[str, dict[str, Any]] = {}
-        while pending:
-            ref = pending.pop()
-            if ref['path'] in seen:
-                require(seen[ref['path']] == ref, 'MissingProducer:' + producer)
-                continue
-            seen[ref['path']] = ref
-            try:
-                raw = Files(source).read(ref)
-            except (OSError, ValueError) as exc:
-                raise ValueError('MissingProducer:' + producer + ':' + ref['path']) from exc
-            try:
-                value = retained_json(raw)
-            except ValueError:
-                continue
-            children = list(references(value))
-            if type(value) is dict and value.get('format') == 'shadow-v2-live-export-a3-n':
-                prefix = ref['path'].rsplit('/', 1)[0] + '/' if '/' in ref['path'] else ''
-                children = [{**child, 'path': prefix + child['path']} for child in children]
-            pending.extend(children)
+    from trusted_router.async_settle_shadow_v2_pack_passes import compare_source_registrations
+    compare_source_registrations(Files(source), plan)
     files = DayFiles(out)
     files.capture(Files(source), plan['files'])
     native_spec = retained_json(files.read(captures['NativeExport']))
@@ -59,25 +45,8 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
     require(bundle_path.resolve().is_relative_to(source.resolve()) and bundle_path.is_file(),
             'MissingProducer:NativeExport')
     require(plan['days'] == [plan['day']], 'FiniteDayPlan')
-    require(bool(native_spec['passes']) and len({p['id'] for p in native_spec['passes']})
-            == len(native_spec['passes']), 'FinitePassPlan')
-    require([p['id'] for p in native_spec['passes']] == plan['pass_ids'], 'FinitePassPlan')
-    require(len({p['accounting']['path'] for p in native_spec['passes']}) == len(native_spec['passes']),
-            'FinitePassPlan')
-    require(any(all(p.get(key) == native_spec.get(key) for key in
-        ('bundle', 'accounting', 'prefix', 'object_plan')) for p in native_spec['passes']), 'FinitePassPlan')
-    comparisons = []
-    accounting_roots = []
-    accounting_missing: list[str] = []
-    for passed in native_spec['passes']:
-        accounting_roots.append(passed['accounting'])
-        passed_bundle = (source / passed['bundle']).resolve()
-        require(passed_bundle.is_relative_to(source.resolve()) and passed_bundle.is_file(),
-                'MissingProducer:NativeExport:' + passed['id'])
-        compared = compare_export_accounting_streamed(Files(source), passed['accounting'], passed_bundle,
-            day=plan['day'], object_plan=passed['object_plan'], prefix=passed.get('prefix', ''))
-        comparisons.append(compared)
-        accounting_missing.extend(passed['id'] + ':' + gap for gap in compared.missing)
+    from trusted_router.async_settle_shadow_v2_pack_passes import compare_passes
+    comparisons, accounting_roots, accounting_missing = compare_passes(Files(source), plan, native_spec)
     # The original export is never edited; collector objects enter the composed graph.
     from trusted_router.async_settle_shadow_v2_pack_records import captured_native
     native = captured_native(bundle_path, out / '.composition-native')
@@ -145,17 +114,16 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
     if reconciliation is None:
         missing.extend('MissingSupportDay:' + d for d in result['support_days'] if d != plan['day'])
     # Stream registered originals into the transport without a second byte graph.
+    from trusted_router.async_settle_shadow_v2_pack_completion import completion
+    result['transport']['completed_at_us'] = completion(files, plan['completion'],
+        previous_us=native['completed_at_us'], command='collect')
     (out / 'stage').mkdir(exist_ok=True)
     missing.extend(write_composed_transport(files, result.pop('transport'), out / 'stage/transport.json'))
     planned = input_plan(files, list(files.refs.values()), days=[plan['day']], predecessors=plan['predecessors'])
-    from trusted_router.async_settle_shadow_v2_pack_passes import compare_later_files
-    later_output_costs = compare_later_files(files, budget_source, [ref for path, ref in files.refs.items() if
-        path.startswith(('coverage/', 'obligations/', 'handoff/', 'review/', 'days/'))
-        or '/roots/' in path or path in ('proof_manifest', 'loading/release-plan.json')])
     checked = evaluate_stage(out / 'stage/transport.json', out, plan['checkpoint'])
     source_missing = sorted(set(missing))
     missing.extend(checked['missing'])
-    return dict(later_output_costs=later_output_costs, source_missing=source_missing, complete=not missing, missing=sorted(set(missing)), gate=checked, review=review,
+    return dict(source_missing=source_missing, complete=not missing, missing=sorted(set(missing)), gate=checked, review=review,
         checkpoint=plan['checkpoint'], inputs=planned, subject=result['subject'],
         transport_sha256=transport_digest(out / 'stage/transport.json'))
 
@@ -224,19 +192,19 @@ def write_composed_transport(files: DayFiles, transport: dict[str, Any], target:
     transport.pop('preimages', None)
     missing = []
     for path, ref in files.refs.items():
+        if release_dependency(path):
+            continue
         try:
             raw = files.read(ref).decode()
         except UnicodeDecodeError:
             missing.append('UnavailableTransportInput:' + path)
             continue
         arrays['preimages'].append(dict(name=path, raw=raw))
-    for path, ref in files.large.items():
-        arrays['preimages'].append(dict(name=path, raw=files.original(ref).decode()))
     spool_transport(target, {**transport, **arrays})
     return missing
 
 
-def write_transport(files: PackFiles, original: Path, target: Path) -> list[str]:
+def write_transport(files: PackFiles, original: Path, target: Path, *, completion_ref: dict[str, Any]) -> list[str]:
     from trusted_router.async_settle_shadow_v2_export import SpoolArray, spool_transport
     from trusted_router.async_settle_shadow_v2_pack_streaming import CapturedJSON
     spool = target.parent / (target.stem + '-spool')
@@ -254,17 +222,37 @@ def write_transport(files: PackFiles, original: Path, target: Path) -> list[str]
                 metadata[name] = value
     missing = []
     for path, ref in sorted(files.refs.items()):
+        if release_dependency(path):
+            continue
         try:
             raw = files.read(ref).decode()
         except UnicodeDecodeError:
             missing.append('UnavailableTransportInput:' + path)
             continue
         arrays['preimages'].append(dict(name=path, raw=raw))
+    from trusted_router.async_settle_shadow_v2_pack_completion import completion
+    metadata['completed_at_us'] = completion(files, completion_ref,
+        previous_us=metadata['completed_at_us'], command='pack')
     spool_transport(target, {**metadata, **arrays})
     return missing
 
 
 def window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None,
+           stage: str | None = None) -> dict[str, Any]:
+    from trusted_router.async_settle_shadow_v2_pack_outputs import OutputPass
+    destination = out or source / (command + '-output' if command != 'review-inputs' else 'review-inputs')
+    require(not destination.exists(), 'artifact_gap')
+    selected_stage = stage or plan.get('default_stage')
+    if selected_stage is None and command != 'collect' and (source / 'stage/result.json').is_file():
+        selected_stage = retained_json((source / 'stage/result.json').read_bytes()).get('stage')
+    selected = plan.get('stages', {}).get(selected_stage, plan)
+    spec = selected.get('output_passes', {}).get(command, selected if 'stages' not in plan else {})
+    output = OutputPass.begin(source, destination, spec)
+    result = _window(command, plan, source=source, out=destination, stage=stage)
+    return output.finish(result, status='pass-result.json')
+
+
+def _window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None,
            stage: str | None = None) -> dict[str, Any]:
     require(command not in ACTION_SEAMS, ACTION_SEAMS.get(command, 'artifact_gap'))
     if command == 'pack' and 'captured_transport' in plan:
@@ -274,9 +262,9 @@ def window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None
         split = split_transport(source / plan['captured_transport'], out)
         return dict(complete=False, missing=['MultiBundleLoading'], input_objects=split['objects'])
     if 'stages' not in plan:
-        from scripts.async_settle.shadow_v2_pack import execute
+        from scripts.async_settle.shadow_v2_pack import _execute
         require(command in ('review-inputs', 'pack'), 'artifact_gap')
-        return execute(command, plan, source, out or source / 'review-inputs')
+        return _execute(command, plan, source, out or source / 'review-inputs')
     captured = None if command == 'collect' else retained_json((source / 'stage/result.json').read_bytes())
     if stage is None:
         stage = captured['stage'] if captured else plan.get('default_stage')
@@ -289,9 +277,9 @@ def window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None
         try:
             if 'day_plans' in selected:
                 from trusted_router.async_settle_shadow_v2_pack_window import collect_window
-                result = collect_window(source, out, selected, collect_day)
+                result = collect_window(source, out, selected, _collect_day)
             else:
-                result = collect_day(source, out, selected)
+                result = _collect_day(source, out, selected)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             result = dict(complete=False, missing=[str(exc)], checkpoint=selected.get('checkpoint'))
         (out / 'stage').mkdir(exist_ok=True)
@@ -348,7 +336,9 @@ def window(command: str, plan: dict[str, Any], *, source: Path, out: Path | None
         return result
     original = source / 'stage/transport.json'
     require(transport_digest(original) == captured['transport_sha256'], 'artifact_gap')
-    missing.extend(write_transport(files, original, out / 'bundle.json'))
+    require('pack_completion' in selected, 'MissingComposedCompletion')
+    files.capture(Files(source), [selected['pack_completion']])
+    missing.extend(write_transport(files, original, out / 'bundle.json', completion_ref=selected['pack_completion']))
     checked = evaluate_stage(out / 'bundle.json', out, selected['checkpoint'], digest)
     missing.extend(checked['missing'])
     result = dict(complete=not missing, missing=sorted(set(missing)), gate=checked,

@@ -196,24 +196,49 @@ def operation_population(files: PackFiles, plan: dict[str, Any], record: dict[st
     expected = retained_json(files.read(record['operation_population']))
     require(expected['configuration'] == record['configuration'] and expected['complete'] is True,
             'OperationPopulation')
-    actual = []
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from trusted_router.async_settle_shadow_v2_pack_records import RecordSpool, same_records
+    scratch = TemporaryDirectory(prefix='operation-population-')
+    actual = RecordSpool(Path(scratch.name) / 'actual')
+    export_actual = RecordSpool(Path(scratch.name) / 'exports')
+    lifecycle_actual = RecordSpool(Path(scratch.name) / 'lifecycle')
     for item in plan['writer_operations']:
         counter = retained_json(files.read(item['counter_ref']))
         for ref in item['operation_refs']:
             for operation in retained_json(files.read(ref))['operations']:
+                if operation['operation'] in ('startup', 'close'):
+                    lifecycle_actual.append(dict(day=counter['day'], boot=counter['boot'], **operation))
+                if operation['operation'] == 'export':
+                    export_actual.append(operation)
                 if operation['operation'] in ('startup', 'close', 'export'):
                     require(operation['logical_count'] > 0, 'OperationPopulation')
                     actual.append(dict(day=counter['day'], boot=counter['boot'],
                         id=operation['id'], operation=operation['operation'], at_us=operation['at_us']))
-    from trusted_router.detached_jws import canonical
-    require(sorted(map(canonical, actual)) == sorted(map(canonical, expected['operations'])),
+    require(same_records(actual, expected['operations']),
             'OperationPopulation')
     for boot in record['population']:
         selected = [o for o in expected['operations'] if (o['day'], o['boot']) == (boot['day'], boot['boot'])]
         require(any(o['operation'] == 'startup' and o['at_us'] == boot['start_us'] for o in selected),
                 'StartupPopulation')
         require(any(o['operation'] == 'close' for o in selected), 'ClosePopulation')
-    require(any(o['operation'] == 'export' for o in expected['operations']), 'ExportPopulation')
+    require('lifecycle_work' in record, 'MissingLifecycleWork')
+    native = retained_json(files.read(record['lifecycle_work']))
+    require(native['complete'] is True and native['platform'] == record['platform'] and
+        native['shutdown'] == record['shutdown'], 'LifecyclePopulation')
+    require(same_records(lifecycle_actual, native['operations']), 'LifecyclePopulation')
+    for boot in record['population']:
+        work = [o for o in native['operations'] if (o['day'], o['boot']) == (boot['day'], boot['boot'])]
+        startups = [o for o in work if o['operation'] == 'startup']
+        closes = [o for o in work if o['operation'] == 'close']
+        require(len(startups) == 1 and startups[0]['at_us'] == boot['start_us'] and
+            startups[0]['id'] == 'startup' and startups[0]['logical_count'] == 1, 'StartupPopulation')
+        require(len(closes) == 2 and {o['id'] for o in closes} == {'close', 'result'} and
+            all(o['logical_count'] == 1 and boot['start_us'] <= o['at_us'] < boot['end_us'] for o in closes), 'ClosePopulation')
+    from trusted_router.async_settle_shadow_v2_pack_work import export_work
+    required_exports = export_work(files, plan)
+    require(same_records(export_actual, required_exports), 'ExportPopulation')
 
 
 def writer_population(files: PackFiles, record: dict[str, Any]) -> list[dict[str, Any]]:

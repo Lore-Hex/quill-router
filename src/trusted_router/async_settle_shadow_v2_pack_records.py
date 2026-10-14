@@ -174,3 +174,17 @@ def sorted_operations(values: Iterator[dict[str, Any]], root: Path) -> Path:
         runs = merged
         level += 1
     return runs[0]
+
+
+def same_records(left: Any, right: Any) -> bool:
+    """Compare exact populations with bounded sorted runs, including repetitions."""
+    from itertools import zip_longest
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory(prefix='record-membership-') as directory:
+        def encoded(values: Any) -> Iterator[dict[str, Any]]:
+            for value in values:
+                yield dict(at_us=canonical(value).decode())
+        one = sorted_operations(encoded(left), Path(directory) / 'left')
+        two = sorted_operations(encoded(right), Path(directory) / 'right')
+        with one.open() as a, two.open() as b:
+            return all(x == y for x, y in zip_longest(a, b))

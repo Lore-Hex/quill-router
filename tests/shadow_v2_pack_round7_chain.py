@@ -29,7 +29,7 @@ def production_chain(root):
                 value = json.loads(files.read(budget[field]))
                 value['scope'] = 'production_warmup'
                 budget[field] = files.obj('production-input/' + field, value)
-            budget['trial_review'] = review(files, budget['trial_record'], 'production-input/review')
+            budget['trial_review'] = review(files, budget['trial_record'], 'production-input/review', at_us=budget['post']['interval']['end_us'] + 1)
             budget['approved_pre'] = approved
             plan['captures']['Budget'] = files.obj('production-input/Budget', budget)
             plan['files'] = list({r['path']: r for r in [*plan['files'], *files.refs.values()]}.values())
@@ -73,15 +73,15 @@ def production_chain(root):
                 graph.refs[ref['path']] = ref
             # Retained dependency pages enumerate all the plan originals.
             approved_ref = graph.put('proof.pre_budget_sha256', (output / 'proof.pre_budget_sha256').read_bytes())
-            approved_review = review(graph, approved_ref, 'earlier/review-envelope')
+            approved_review = review(graph, approved_ref, 'earlier/review-envelope', at_us=envelope['v2_load']['interval']['end_us'] + 1)
             registered = input_plan(graph, list(graph.refs.values()), days=[day], predecessors=[], prefix='earlier/inputs')
             input_ref = graph.refs['earlier/inputs/plan.json']
             budget = json.loads((inputs / plan['captures']['Budget']['path']).read_bytes())
             approved = dict(envelope=approved_ref, review=approved_review, inputs=registered,
-                inputs_ref=input_ref, inputs_review=review(graph, input_ref, 'earlier/review-inputs'),
+                inputs_ref=input_ref, inputs_review=review(graph, input_ref, 'earlier/review-inputs', at_us=envelope['v2_load']['interval']['end_us'] + 2),
                 allowances=budget['pre_allowances'], configuration=budget['configuration'])
             earlier = PackFiles(graph.root, refs=dict(graph.refs)), approved
-        checked = command.evaluate_stage(output / 'stage/transport.json', output, stage)
+        checked = result['gate']
         gate = graph.obj('stage/evaluated.json', checked)
         import hashlib
         raw = (output / 'stage/transport.json').read_bytes()
@@ -122,7 +122,7 @@ def link_production_day(root, plan, prior_root):
         value = json.loads(files.read(budget[field]))
         value['scope'] = 'production_warmup'
         budget[field] = files.obj('production-input/' + field, value)
-    budget['trial_review'] = review(files, budget['trial_record'], 'production-input/review')
+    budget['trial_review'] = review(files, budget['trial_record'], 'production-input/review', at_us=budget['post']['interval']['end_us'] + 1)
     budget['approved_pre'] = approved
     plan['captures']['Budget'] = files.obj('production-input/Budget', budget)
     plan['files'] = list({r['path']: r for r in [*plan['files'], *files.refs.values()]}.values())

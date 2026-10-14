@@ -46,9 +46,9 @@ BOOT = '11111111-1111-4111-8111-111111111111'
 REV = 'a' * 40
 
 
-def review(files, subject, path='review.json'):
+def review(files, subject, path='review.json', *, at_us=None):
     value = dict(**TAGS, subject_sha256=subject['sha256'], reviewer='fake-reviewer',
-                 reviewed_at_us=START, decision='approved')
+                 reviewed_at_us=START + 86400000000 if at_us is None else at_us, decision='approved')
     ref = files.obj(path, value, a2.REVIEW_RECORD)
     return {k: v for k, v in value.items() if k not in TAGS} | {'record': ref}
 

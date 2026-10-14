@@ -41,7 +41,8 @@ def input_plan(files: PackFiles, references: list[dict[str, Any]], *,
     require(bool(days) and days == sorted(set(days)), 'artifact_gap')
     for day in days:
         a2.day(day)
-    ordered = sorted(references, key=lambda ref: ref['path'])
+    from trusted_router.async_settle_shadow_v2_pack_originals import release_dependency
+    ordered = sorted((ref for ref in references if not release_dependency(ref['path'])), key=lambda ref: ref['path'])
     require(bool(ordered) and len({r['path'] for r in ordered}) == len(ordered), 'artifact_gap')
     for ref in [*ordered, *predecessors]:
         files.read(ref)
@@ -129,12 +130,18 @@ def review_subjects(files: PackFiles, subjects: Mapping[str, dict[str, Any]], *,
             require(namespace not in ('', '.') and not namespace.startswith('/')
                     and '..' not in namespace.split('/'), 'PredecessorReview')
             namespaces.append(namespace.rstrip('/') + '/')
-    plan = dict(artifacts={path: ref['sha256'] for path, ref in sorted(files.refs.items())
+    from trusted_router.async_settle_shadow_v2_pack_originals import release_dependency
+    plan: dict[str, Any] = dict(artifacts={path: ref['sha256'] for path, ref in sorted(files.refs.items())
+                if not release_dependency(path)
                 if not (window and path.startswith(tuple(namespaces)))
                 if path not in ('loading/release-plan.json', 'review/subjects.json', 'review/sealed.json')
                 and not path.startswith(('inputs/', 'gate/'))},
                 criteria=criteria, verifiers=verifiers, required=required,
                 required_stages=required_stages)
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+    for path, original in {**files.refs, **getattr(files, 'large', {})}.items():
+        if path in RELEASE_FILES:
+            plan['artifacts'][path] = original['sha256']
     ref = files.obj('loading/release-plan.json', plan)
     value = dict(subjects=dict(subjects), release_plan=ref,
                  state='awaiting_review', approval_required=True)

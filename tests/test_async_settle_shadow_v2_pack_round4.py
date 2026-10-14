@@ -255,7 +255,7 @@ def test_startup_burst_inside_long_interval_blocks(tmp_path, capture):
     plan['trial_review'] = review(files, plan['trial_record'], 'changed/review')
     assert item['end_us'] - item['start_us'] > 4000000
     assert plan['pre']['load_segments'][0]['fields']['end_us'] == item['end_us']
-    with pytest.raises(ValueError, match='MeasuredPeaks'):
+    with pytest.raises(ValueError, match='LifecyclePopulation'):
         CapturedBudget.build(files, plan, checkpoint='fleet-budgets-pre')
 
 
