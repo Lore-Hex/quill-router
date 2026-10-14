@@ -48,6 +48,10 @@ def normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             features.append("tools")
         if source.get("supports_reasoning") is True:
             features.append("reasoning")
+            reasoning = source.get("reasoning")
+            efforts = reasoning.get("supported_efforts") if isinstance(reasoning, dict) else None
+            if isinstance(efforts, list) and efforts and all(isinstance(value, str) and value for value in efforts):
+                features.append("reasoning-effort")
         normalized.append({
             **source,
             "pricing": {

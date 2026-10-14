@@ -16,6 +16,7 @@ def row(native="deepseek-v4.1-flash-fast"):
         "id": native, "context_length": 1048576,
         "supports_chat": True, "supports_tools": True,
         "supports_reasoning": True, "supports_image_input": native.startswith("deepseek"),
+        "reasoning": {"supported_efforts": ["low", "high", "max"]},
         "pricing": {"input_per_m": "0.01", "output_per_m": "1.20",
                     "cached_input_per_m": 0, "cache_write_per_m": "0.08"},
     }
@@ -41,6 +42,7 @@ def test_discovery_preserves_units_free_cache_native_id_and_capabilities(monkeyp
     assert deepseek["input_modalities"] == ["text", "image"]
     assert rows["z-ai/glm-5.3"]["input_modalities"] == ["text"]
     assert "tools" in deepseek["supported_features"]
+    assert "reasoning-effort" in deepseek["supported_features"]
     for request in requests:
         assert request["base_url"] == p.BASE_URL
         assert request["require_usage"] and request["require_message"]
@@ -93,6 +95,9 @@ def test_publication_privacy_prices_and_hourly_refresh(client):
     assert provider.provider_headquarters_country == "US"
     endpoint = MODEL_ENDPOINTS["deepseek/deepseek-v4.1-flash@coralbricks/prepaid"]
     assert endpoint.usage_type == "Credits"
+    assert "reasoning_effort" in endpoint.supported_parameters
+    assert endpoint.input_modalities == ("text", "image")
+    assert MODEL_ENDPOINTS["z-ai/glm-5.3@coralbricks/prepaid"].input_modalities == ("text",)
     assert endpoint.prompt_price_microdollars_per_million_tokens == 10550
     assert endpoint.completion_price_microdollars_per_million_tokens == 1266000
     # Zero-cost upstream cache reads retain the platform's published $0.01/M floor.
