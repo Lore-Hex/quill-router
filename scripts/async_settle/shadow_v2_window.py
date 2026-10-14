@@ -101,7 +101,7 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
     measured_export_costs(files, budget_source, comparisons, native_spec['output_receipts'])
     budget_source['output_receipts'] = native_spec['output_receipts']
     budget_source['export_accounting'] = dict(roots=accounting_roots, receipts=native_spec['output_receipts'],
-        totals=files.refs['budget/export-compared-totals.json'])
+        totals=files.refs[budget_source.get('output_prefix', '') + 'budget/export-compared-totals.json'])
     measured = CapturedBudget.build(files, budget_source, checkpoint=plan['checkpoint'])
     external = retained_json(files.read(captures['ExternalPack']))
     supplied = []
@@ -149,13 +149,13 @@ def collect_day(source: Path, out: Path, plan: dict[str, Any], *,
     missing.extend(write_composed_transport(files, result.pop('transport'), out / 'stage/transport.json'))
     planned = input_plan(files, list(files.refs.values()), days=[plan['day']], predecessors=plan['predecessors'])
     from trusted_router.async_settle_shadow_v2_pack_passes import compare_later_files
-    compare_later_files(files, budget_source, [ref for path, ref in files.refs.items() if
+    later_output_costs = compare_later_files(files, budget_source, [ref for path, ref in files.refs.items() if
         path.startswith(('coverage/', 'obligations/', 'handoff/', 'review/', 'days/'))
         or '/roots/' in path or path in ('proof_manifest', 'loading/release-plan.json')])
     checked = evaluate_stage(out / 'stage/transport.json', out, plan['checkpoint'])
     source_missing = sorted(set(missing))
     missing.extend(checked['missing'])
-    return dict(source_missing=source_missing, complete=not missing, missing=sorted(set(missing)), gate=checked, review=review,
+    return dict(later_output_costs=later_output_costs, source_missing=source_missing, complete=not missing, missing=sorted(set(missing)), gate=checked, review=review,
         checkpoint=plan['checkpoint'], inputs=planned, subject=result['subject'],
         transport_sha256=transport_digest(out / 'stage/transport.json'))
 

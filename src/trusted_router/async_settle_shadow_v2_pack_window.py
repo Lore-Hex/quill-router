@@ -128,14 +128,27 @@ def collect_window(source: Path, out: Path, plan: dict[str, Any],
     joined = reconciliation(source, plan['day_plans'], selected=selected)
     days = joined.support_days(selected)
     files = PackFiles(out)
-    previous = predecessors(Files(source), files, plan['predecessors'])
+    prior_result = None
+    if 'production_predecessors' in plan:
+        from scripts.async_settle.shadow_v2_window import evaluate_stage
+        from trusted_router.async_settle_shadow_v2_pack_predecessors import production_predecessors
+        prior_result = production_predecessors(source, files, plan['production_predecessors'], evaluate_stage)
+        previous = [v['descriptor'] for v in prior_result['graphs'].values()
+                    if v['descriptor']['path'] in files.refs]
+    else:
+        previous = predecessors(Files(source), files, plan['predecessors'])
+    if prior_result is not None:
+        files.obj('window/predecessor-inputs.json', previous)
     if interval is not None:
         files.capture(Files(source), [interval['seed']])
     missing = ['MissingSupportDay:' + day for day in days if day not in plan['day_plans']]
-    if missing:
+    if prior_result is not None and prior_result['missing']:
+        missing.extend(prior_result['missing'])
+    if any(reason.startswith('Missing') for reason in missing):
         diagnostic = files.obj('window/missing-days.json', dict(days=selected, support_days=list(days), missing=missing))
         planned = input_plan(files, [*files.refs.values()], days=list(days), predecessors=previous)
         return dict(complete=False, kind='window', missing=missing, inputs=planned,
+            manifest_complete=False, proof_complete=False, predecessor_results=prior_result,
             window=diagnostic, checkpoint=plan['checkpoint'])
     children, subjects = {}, {}
     for day in days:
@@ -177,6 +190,7 @@ def collect_window(source: Path, out: Path, plan: dict[str, Any],
     check_plan(files, planned)
     missing.append('MultiBundleLoading')
     return dict(complete=False, kind='window', missing=sorted(set(missing)), inputs=planned,
+        manifest_complete=False, proof_complete=False, predecessor_results=prior_result,
         window=stage, review=review, checkpoint=plan['checkpoint'])
 
 

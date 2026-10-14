@@ -119,8 +119,18 @@ def review_subjects(files: PackFiles, subjects: Mapping[str, dict[str, Any]], *,
     # A window reviews child input plans, whose bounded leaves enumerate every
     # original. Repeating every child filename here would exceed FILE_REF's
     # bound. Daily transports retain their own full release lists.
+    namespaces = ['day-inputs/']
+    if window and 'window/predecessor-inputs.json' in files.refs:
+        for descriptor in retained_json(files.read(files.refs['window/predecessor-inputs.json'])):
+            require(files.refs.get(descriptor['path']) == descriptor, 'PredecessorReview')
+            graph = retained_json(files.read(descriptor))
+            require(graph['format'] == 'shadow-v2-production-predecessor-1', 'PredecessorReview')
+            namespace = graph['source_root']
+            require(namespace not in ('', '.') and not namespace.startswith('/')
+                    and '..' not in namespace.split('/'), 'PredecessorReview')
+            namespaces.append(namespace.rstrip('/') + '/')
     plan = dict(artifacts={path: ref['sha256'] for path, ref in sorted(files.refs.items())
-                if not (window and path.startswith('day-inputs/'))
+                if not (window and path.startswith(tuple(namespaces)))
                 if path not in ('loading/release-plan.json', 'review/subjects.json', 'review/sealed.json')
                 and not path.startswith(('inputs/', 'gate/'))},
                 criteria=criteria, verifiers=verifiers, required=required,

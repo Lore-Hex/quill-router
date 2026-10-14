@@ -66,6 +66,12 @@ def measured_export_costs(files: PackFiles, plan: dict[str, Any], compared: list
     require(all(approved[k] == allowances[k] for k in
         ('export_passes', 'export_operations', 'export_bytes', 'export_write_bytes')), 'ExportCeilings')
     result = export_costs(compared, originals, approved=approved, include_partial=True)
+    if plan.get('following_output_records'):
+        from trusted_router.async_settle_shadow_v2_pack_output_costs import following_totals
+        carry = following_totals(files, [retained_json(files.read(ref))
+            for ref in plan['following_output_records']], current_pass=passes[0]['pass'])
+        for field, value in carry.items():
+            result[field] += value
     reserved = dict(result)
     later = planned['later_passes']
     require(bool(later), 'MissingLaterOutputPlan')
@@ -81,19 +87,25 @@ def measured_export_costs(files: PackFiles, plan: dict[str, Any], compared: list
     require(all(reserved[key] <= approved[key] for key in
         ('native_rpcs', 'export_passes', 'export_operations', 'export_bytes', 'export_write_bytes')),
         'evidence_export_budget_gap')
-    files.obj('budget/export-next-pass-ceilings.json', reserved)
-    files.obj('budget/export-compared-totals.json', result)
+    prefix = plan.get('output_prefix', '')
+    files.obj(prefix + 'budget/export-next-pass-ceilings.json', reserved)
+    files.obj(prefix + 'budget/export-compared-totals.json', result)
     return result
 
 
-def compare_later_files(files: PackFiles, plan: dict[str, Any], references: list[dict[str, Any]]) -> None:
-    """Check actual later file sizes against the finite next-pass reservation."""
+def compare_later_files(files: PackFiles, plan: dict[str, Any], references: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compare individual staged files before the next local output pass.
+
+    A supplied reservation record is checked unchanged. Older plans reserve a
+    finite group ceiling; expand it into named file reservations before reading
+    the emitted bytes. Return receipts to the caller for the following pass.
+    """
+    from trusted_router.async_settle_shadow_v2_pack_output_costs import compare_files, reserve_files
     planned = retained_json(files.read(plan['output_plan']))
     later = planned['later_passes']
     limits = {field: sum(p[field] for p in later) for field in
         ('export_operations', 'export_bytes', 'export_write_bytes', 'native_rpcs')}
-    unique = {ref['path']: ref for ref in references}
-    require(len(unique) == len(references), 'LaterOutputPopulation')
-    size = sum(ref['bytes'] for ref in unique.values())
-    require(len(unique) <= limits['export_operations'] and size <= limits['export_bytes']
-        and size <= limits['export_write_bytes'], 'evidence_export_budget_gap')
+    reservation = (retained_json(files.read(plan['later_file_plan'])) if 'later_file_plan' in plan
+        else reserve_files(references, source_pass=max(p['pass'] for p in planned['passes']), ceiling=limits))
+    measured = compare_files(files, reservation, references)
+    return dict(plan=reservation, **measured)

@@ -40,7 +40,7 @@ def writer_capture(path: Path) -> dict:
         object_plan=dict.fromkeys(keys, '7'), bundle=json.loads(exported.transport_path.read_bytes()), objects=captured)
 
 
-def collector_capture(files, capture):
+def collector_capture(files, capture, *, native_prefix='native/'):
     from dataclasses import asdict
 
     from tests.test_async_settle_shadow_v2_collect import (
@@ -71,7 +71,7 @@ def collector_capture(files, capture):
         key=lambda b: b['read_at_ns'] or -1)
     for record in startup.records['readiness']:
         if record.get('criterion') == 'observer_freshness':
-            record.update(health_basis=files.obj('native/actual-reader-basis', basis),
+            record.update(health_basis=files.obj(native_prefix + 'actual-reader-basis', basis),
                 completed_at_us=basis['read_at_ns'] // 1000 + 2,
                 installed_at_ns=basis['read_at_ns'] + basis['read_elapsed_ns'],
                 install_elapsed_us=basis['read_elapsed_ns'] // 1000)
@@ -83,11 +83,13 @@ def collector_capture(files, capture):
     originals = {}
     for name, needle in (('original_close', 'closure'), ('close_result', 'close_result')):
         row = next(r for r in capture['bundle']['rows'] if needle in r['kind'])
-        originals[name] = files.put('native/' + name, row['raw'].encode())
+        originals[name] = files.put(native_prefix + name, row['raw'].encode())
     result = json.loads(files.read(originals['close_result']))
     spans.records['shutdown'][0]['spans']['close'] = [500, 500 + result['elapsed_us']]
+    from trusted_router.async_settle_shadow_v2_pack_originals import ScopedOutputs
+    shutdown_files = ScopedOutputs(files.root, refs=files.refs, prefix=native_prefix.removesuffix('native/'))
     def shutdown(approved=None):
-        run = Pass(files)
+        run = Pass(shutdown_files)
         found = shut.collect(run, inventory=inv, logs=spans, query=Query('shutdown', 'named-service', day),
             originals={day + '/' + boot: originals}, review=approved)
         assert found.complete, run.missing

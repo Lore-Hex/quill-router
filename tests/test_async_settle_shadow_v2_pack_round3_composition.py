@@ -19,39 +19,46 @@ from trusted_router.async_settle_shadow_v2_pack_plan import PackFiles
 from trusted_router.async_settle_shadow_v2_pack_procedures import REQUIRED_STAGES, procedure_result
 
 
-def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre'):
+def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre', budget_prefix=''):
     files = DayFiles(root)
-    captured, pins = collector_capture(files, capture)
-    budget = budget_capture(files, capture)
+    captured, pins = collector_capture(files, capture, native_prefix=budget_prefix + 'native/')
+    from trusted_router.async_settle_shadow_v2_pack_originals import ScopedOutputs
+    budget_files = ScopedOutputs(root, refs=files.refs, prefix=budget_prefix) if budget_prefix else files
+    budget = budget_capture(budget_files, capture)
+    if budget_prefix:
+        budget['output_prefix'] = budget_prefix + 'generated/'
     for name in ('pre_allowances', 'post_allowances'):
         allowance = json.loads(files.read(budget[name]))
         allowance.update(export_bytes=10000000, export_write_bytes=10000000, export_operations=10000)
-        budget[name] = files.obj('trial/composed-' + name, allowance)
+        budget[name] = budget_files.obj('trial/composed-' + name, allowance)
     closed = json.loads(files.read(captured['Shutdown']))
+    if budget_prefix:
+        captured['Shutdown'] = files.obj(budget_prefix + 'captures/Shutdown', closed)
     budget['shutdown'] = [dict(measurement=entry['measurement'],
-        original=files.refs['shutdown/' + entry['day'] + '/' + entry['boot'] + '/span-original.json'])
+        original=files.refs[budget_prefix + 'shutdown/' + entry['day'] + '/' + entry['boot'] + '/span-original.json'])
         for entry in closed['entries']]
     trial = json.loads(files.read(budget['trial_record']))
     trial.update(shutdown=budget['shutdown'], shutdown_inventory=captured['Shutdown'])
-    budget['trial_record'] = files.obj('trial/composed-record', trial)
-    budget['trial_review'] = review(files, budget['trial_record'], 'reviews/composed-trial')
+    budget['trial_record'] = budget_files.obj('trial/composed-record', trial)
+    budget['trial_review'] = review(budget_files, budget['trial_record'], 'reviews/composed-trial')
     values = json.loads(files.read(budget['pre_allowances']))
-    budget['export_ceilings'] = files.obj('trial/export-ceilings', dict(native_rpcs=10000, **{k: values[k]
+    budget['export_ceilings'] = budget_files.obj('trial/export-ceilings', dict(native_rpcs=10000, **{k: values[k]
         for k in ('export_passes', 'export_operations', 'export_bytes', 'export_write_bytes')}))
-    budget['export_review'] = review(files, budget['export_ceilings'], 'reviews/export-ceilings')
+    budget['export_review'] = review(budget_files, budget['export_ceilings'], 'reviews/export-ceilings')
     captured['Budget'] = files.obj('captures/Budget', budget)
     native_root = capture['native_root']
+    native_prefix = budget_prefix + 'native-export/'
     for path in sorted(native_root.rglob('*')):
         if path.is_file() and path.name not in ('bundle.json', 'rows.jsonl', 'attachments.jsonl'):
-            files.put('native-export/' + path.relative_to(native_root).as_posix(), path.read_bytes())
-    (root / 'native-export/bundle.json').write_bytes((native_root / 'bundle.json').read_bytes())
+            files.put(native_prefix + path.relative_to(native_root).as_posix(), path.read_bytes())
+    (root / native_prefix / 'bundle.json').write_bytes((native_root / 'bundle.json').read_bytes())
     objects = []
     for key, ref in capture['objects'].refs.items():
         original = files.put('writer-objects/' + key, capture['objects'].read(ref))
         objects.append(dict(kind='health_basis' if key.startswith('health-basis-batches/') else 'publisher_trace',
             id=key, original=original))
-    passed = dict(id='initial', bundle='native-export/bundle.json',
-        accounting=files.refs['native-export/accounting.json'], prefix='native-export/', object_plan=capture['object_plan'])
+    passed = dict(id='initial', bundle=native_prefix + 'bundle.json',
+        accounting=files.refs[native_prefix + 'accounting.json'], prefix=native_prefix, object_plan=capture['object_plan'])
     captured['NativeExport'] = files.obj('captures/NativeExport', dict(**passed, passes=[passed], output_receipts=budget['output_receipts'], objects=[]))
     from trusted_router.async_settle_shadow_v2_pack_daypack import bind_accounting
     inventory_source = json.loads(files.read(captured['Inventory']))
@@ -60,12 +67,15 @@ def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre'):
     bound_ref = files.obj(DAY + '/deployment-with-accounting.json', bound)
     bound_review = review(files, bound_ref, 'reviews/deployment-accounting')
     procedures, approvals = [], {}
-    for name in REQUIRED_STAGES[checkpoint]:
-        item = procedure_capture(files, name, checkpoint)
-        procedure_result(files, item, capture_root=root)
-        path = 'external/' + checkpoint + '/' + name + '/result.json'
-        approvals[checkpoint + '/' + name] = review(files, files.refs[path], 'reviews/external/' + name)
-        procedures.append(item)
+    reached = ('transport', 'fleet-budgets-pre', 'fleet-budgets') if checkpoint == 'fleet-budgets' else (checkpoint,)
+    for procedure_stage in reached:
+        for name in REQUIRED_STAGES[procedure_stage]:
+            item = procedure_capture(files, name, procedure_stage)
+            procedure_result(files, item, capture_root=root)
+            path = 'external/' + procedure_stage + '/' + name + '/result.json'
+            review_path = 'reviews/external/' + (procedure_stage + '/' if len(reached) > 1 else '') + name
+            approvals[procedure_stage + '/' + name] = review(files, files.refs[path], review_path)
+            procedures.append(item)
     captured['ExternalPack'] = files.obj('captures/ExternalPack', dict(procedures=procedures, approvals=approvals))
     old = files.obj('old/payload', dict(rows=[], days=[DAY], proof={}, resets=[], serving=[], manifests={}))
     reviewed = files.obj('old/reviewed', dict(rows=[], resets=[], resolutions=[]))

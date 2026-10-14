@@ -10,7 +10,7 @@ from tests.shadow_v2_pack_round3_captures import writer_capture
 from tests.test_async_settle_shadow_v2_pack_round3_composition import stage_capture
 
 
-def captured_day(root, day):
+def captured_day(root, day, **stage_options):
     shift = (date.fromisoformat(day) - date(2026, 10, 12)).days * 86400000000
     modules = [importlib.import_module('tests.' + name) for name in (
         'test_async_settle_shadow_v2_pack', 'test_async_settle_shadow_observation', 'test_async_settle_shadow_v2_collect',
@@ -25,7 +25,7 @@ def captured_day(root, day):
                 if hasattr(module, field):
                     patch.setattr(module, field, getattr(module, field) + shift)
         capture = writer_capture(root / 'writer')
-        return stage_capture(root / 'capture', capture)
+        return stage_capture(root / 'capture', capture, **stage_options)
 
 
 def midnight_writer(root):
