@@ -621,6 +621,10 @@ ENV_VARS=(
   # Rollback: restore the two pilot IDs below and redeploy:
   # 45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
+  # The fast path's pilot (docs/design/fast-admission-pilot.md): Joseph's
+  # workspace, admitted by the front doors from the us-central1 control plane.
+  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  "TR_FASTPATH_PILOT_ENABLED=true"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
   # the spend-lease pilot's removal (2026-09); Settings keeps it False so only
