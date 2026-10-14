@@ -859,8 +859,9 @@ sets `TR_REAP_SNAPSHOT_BOOKING_ENABLED=true`; the code default is false.)
   snapshot, before its cutoff. The record reaps only that hold. A hold for
   which it issued no heartbeat record has no snapshot: that hold, a
   non-streaming request's or a stream's whose first heartbeat never came, is
-  released uncharged at its end of life plus the grace instead, so no hold
-  outlives the life the authorization gave it while its lease is renewed.
+  released uncharged at its end of life plus the grace instead, after the
+  same look at its drain-log rows as before a reap, so no hold outlives the
+  life the authorization gave it while its lease is renewed.
 - **Once the lease is draining,** the auditor publishes ticks, each carrying
   its time (§4.8). A hold with no terminal is reaped at the first tick past
   its deadline, as of that point in the log, plus the grace.

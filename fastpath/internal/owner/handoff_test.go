@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
 // releaseFixture is an owner with a store and the record topic, a grace of
@@ -151,8 +152,9 @@ func TestAStreamWithNoHeartbeatIsReleased(t *testing.T) {
 // returns to the lease; not a microsecond sooner; a hold that heartbeated is
 // left to the reap at its snapshot, and one with a terminal is untouched;
 // a settle arriving after the release is answered as the release, charging
-// nothing, and a heartbeat as decided, with no second record; and the
-// release needs no first-heartbeat allowance (§4.5).
+// nothing, and a heartbeat as decided, with no second record; a hold whose
+// settle awaits adoption from the drain log is adopted, not released; and
+// the release needs no first-heartbeat allowance (§4.5).
 func TestAHoldWithNoTerminalIsReleasedAtItsEndOfLife(t *testing.T) {
 	f, sp := releaseFixture(t)
 	ctx := context.Background()
@@ -218,6 +220,32 @@ func TestAHoldWithNoTerminalIsReleasedAtItsEndOfLife(t *testing.T) {
 	}
 	if again := terminals(t, f); len(again) != len(ts) {
 		t.Fatalf("records after the terminals that followed the releases: %+v", again)
+	}
+
+	// A hold whose terminal a front door appended to the drain log while the
+	// owner was out of reach, and whose adoption the read of a renewal
+	// within the cutoff failed, so the lease decides on, is not released at
+	// its end of life: the release reads the hold's rows first, the backstop
+	// before a reap, and adopts the settle instead.
+	d, dsp := releaseFixture(t)
+	drained := d.admit(t, 40, false)
+	dsp.mu.Lock()
+	dsp.expiry = start.Add(2 * time.Hour) // the lease outlives the hold's life
+	dsp.mu.Unlock()
+	renew(t, d)
+	dsp.appendRow("lease-1", store.DrainRow{AuthorizationID: drained, RecordID: "d1", Kind: "settle", Charge: 30,
+		Estimate: 40, Digest: sum("d1")}, start.Add(time.Second))
+	d.clock.advance(time.Hour + time.Minute)
+	dsp.mu.Lock()
+	dsp.failReads = 1 // the renewal's adoption read, within the cutoff
+	dsp.mu.Unlock()
+	renewAndReap(t, d)
+	if ts := terminals(t, d); len(ts) != 1 || ts[0].Kind != record.Settle || ts[0].Auth != drained || ts[0].Drain != "d1" ||
+		ts[0].Charge != 30 {
+		t.Fatalf("the terminals of a hold with a settle awaiting adoption: %+v", ts)
+	}
+	if b := d.lease.Books(); b.Consumed != 30 || b.Held != 0 || b.Open != 0 {
+		t.Fatalf("the books after the adoption: %+v", b)
 	}
 
 	// With no first-heartbeat allowance, a declared stream's hold is still
