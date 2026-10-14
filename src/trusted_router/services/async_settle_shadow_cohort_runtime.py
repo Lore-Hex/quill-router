@@ -7,7 +7,7 @@ import json
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from queue import Empty, Full, Queue
 from types import SimpleNamespace
 from typing import Any, NamedTuple, TypeVar
@@ -300,6 +300,7 @@ class Runtime:
         self.startup_admission = SimpleNamespace(ready=True)
         self.startup_attempt_result: Callable[[Any, str], None] | None = None
         self.startup_attempt_start: Callable[[], None] | None = None
+        self.opted_starts = self.opted_consumed = 0
         self.decisions: dict[str, bytes] = {}
         self.worker.start()  # install-time prestart; no request can start a thread
 
@@ -351,17 +352,29 @@ class Runtime:
                 self.defer_input(inputs, capable)
 
     def retain_startup_attempts(self, harness: Any) -> None:
+        harness.attempt_source = self
         self.startup_attempt_result = harness.attempt_result
         self.startup_attempt_start = harness.attempt_start
 
     def defer_input(self, inputs: AuthorizeInput, capable: bool) -> None:
-        # Transfer the already-owned input through the native bounded queue.
-        size = 2*EVENT.limit
+        # Count at the producer, before any queue or rate refusal. No per-start
+        # recorder or retained lookup is created on the request path.
+        if capable:
+            self.opted_starts += 1
+        # Only completion fields are needed after authorize returns. Clear the
+        # producer projection before charging and transferring its owned input.
+        inputs.identity = {}
+        inputs.dimensions = {}
+        inputs.facts = inputs.candidates = None
+        inputs.server_facts = inputs.server_candidates = None
+        size = len(canonical(asdict(inputs)))
         if self.admit(size):
+            self.port.lost.set()
             if inputs.reservation is not None and inputs.event is not None:
                 self.port.fail_fold(inputs.reservation)
             return
         if not self.dispatch(self.input_work, inputs, capable, size):
+            self.port.lost.set()
             if inputs.reservation is not None and inputs.event is not None:
                 self.port.fail_fold(inputs.reservation)
             self.release(size)
@@ -369,6 +382,9 @@ class Runtime:
     def input_work(self, inputs: AuthorizeInput, capable: bool, size: int) -> None:
         try:
             if capable:
+                self.opted_consumed += 1
+                if inputs.reservation is None:
+                    self.port.lost.set()
                 try:
                     if self.startup_attempt_start is not None:
                         self.startup_attempt_start()

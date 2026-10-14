@@ -183,6 +183,7 @@ class Harness:
         self.attempt_emitted_order: deque[tuple[str, int]] = deque()
         self._attempt_count = self.attempt_projected = self.attempt_overflow = 0
         self.attempt_lock = threading.Lock()
+        self.attempt_source: Any = None
 
     def correlate(self, descriptor: Descriptor) -> bool:
         if self.descriptor is not None:
@@ -269,38 +270,7 @@ class Harness:
             assert self.ports.observer is not None
             async with asyncio.timeout(1):
                 observed = await self.ports.observer()
-            # ObserverInstallOriginals supplies the exact retained producer buffers.
-            expected = "health_basis_raw installed_at_ns contender"
-            if observed.get("contender") is True:
-                expected += " claim_raw publication_raw publication_elapsed_us claim_at_ns published_at_ns"
-            closed(observed, expected)
-            require(self.ports.validate_observer is not None)
-            assert self.ports.validate_observer is not None
-            self.ports.validate_observer(observed)
-            basis = json.loads(observed["health_basis_raw"])
-            require(basis["reader_boot"] == self.boot and basis["source_state"] == "installed")
-            read_at, installed = basis["read_at_ns"], observed["installed_at_ns"]
-            integer(read_at, self.boot_at_us*1000)
-            integer(installed, read_at+basis["read_elapsed_ns"], self.now()*1000)
-            require((installed-read_at) % 1000 == 0)
-            elapsed = (installed-read_at)//1000
-            integer(elapsed, 0, 250_000)
-            fields = dict(health_basis=self.originals.retain("health_basis", observed["health_basis_raw"]),
-                install_elapsed_us=elapsed, contender=observed["contender"], installed_at_ns=installed,
-                clock_basis=self.clock_basis)
-            if observed["contender"]:
-                claim, publication = (json.loads(observed[k+"_raw"]) for k in ("claim", "publication"))
-                require(claim["owner_boot_id"] == self.boot == publication["publisher_boot_id"])
-                require(claim["slot"] == publication["slot"] and publication == basis["body"])
-                require(claim["claim_at_ns"] == observed["claim_at_ns"] and publication["observed_at_ns"] == observed["published_at_ns"])
-                integer(observed["claim_at_ns"], self.boot_at_us*1000, installed)
-                integer(observed["published_at_ns"], observed["claim_at_ns"], installed)
-                integer(observed["publication_elapsed_us"], 0, 500_000)
-                for name in ("claim", "publication"):
-                    fields[name] = self.originals.retain(name, observed[name+"_raw"])
-                for name in ("publication_elapsed_us", "claim_at_ns", "published_at_ns"):
-                    fields[name] = observed[name]
-            return fields
+            return await startup_call(partial(self.observer_fields, observed), 1.)
         if criterion == "marker_keys":
             require(isinstance(m, ReleaseManifest))
             assert isinstance(m, ReleaseManifest)
@@ -318,6 +288,40 @@ class Harness:
                 policy_sha256=m["policy_sha256"], fixture_sha256=m["fixture_sha256"])
         return {}
 
+    def observer_fields(self, observed: dict[str, Any]) -> dict[str, Any]:
+        # ObserverInstallOriginals supplies the exact retained producer buffers.
+        expected = "health_basis_raw installed_at_ns contender"
+        if observed.get("contender") is True:
+            expected += " claim_raw publication_raw publication_elapsed_us claim_at_ns published_at_ns"
+        closed(observed, expected)
+        require(self.ports.validate_observer is not None)
+        assert self.ports.validate_observer is not None
+        self.ports.validate_observer(observed)
+        basis = json.loads(observed["health_basis_raw"])
+        require(basis["reader_boot"] == self.boot and basis["source_state"] == "installed")
+        read_at, installed = basis["read_at_ns"], observed["installed_at_ns"]
+        integer(read_at, self.boot_at_us*1000)
+        integer(installed, read_at+basis["read_elapsed_ns"], self.now()*1000)
+        require((installed-read_at) % 1000 == 0)
+        elapsed = (installed-read_at)//1000
+        integer(elapsed, 0, 250_000)
+        fields = dict(health_basis=self.originals.retain("health_basis", observed["health_basis_raw"]),
+            install_elapsed_us=elapsed, contender=observed["contender"], installed_at_ns=installed,
+            clock_basis=self.clock_basis)
+        if observed["contender"]:
+            claim, publication = (json.loads(observed[k+"_raw"]) for k in ("claim", "publication"))
+            require(claim["owner_boot_id"] == self.boot == publication["publisher_boot_id"])
+            require(claim["slot"] == publication["slot"] and publication == basis["body"])
+            require(claim["claim_at_ns"] == observed["claim_at_ns"] and publication["observed_at_ns"] == observed["published_at_ns"])
+            integer(observed["claim_at_ns"], self.boot_at_us*1000, installed)
+            integer(observed["published_at_ns"], observed["claim_at_ns"], installed)
+            integer(observed["publication_elapsed_us"], 0, 500_000)
+            for name in ("claim", "publication"):
+                fields[name] = self.originals.retain(name, observed[name+"_raw"])
+            for name in ("publication_elapsed_us", "claim_at_ns", "published_at_ns"):
+                fields[name] = observed[name]
+        return fields
+
     async def adopt(self, criterion: str) -> None:
         if criterion in self.finished:
             return
@@ -328,13 +332,13 @@ class Harness:
             self.missing_reasons[criterion] = IDLE_OBSERVER_REASON
             return
         try:
-            inputs, checks = self.artifact_inputs(criterion)
+            inputs, checks = await startup_call(partial(self.artifact_inputs, criterion), 1.)
             fields = await self.local_fields(criterion, checks)
             record = dict(kind="a3_boot_check", boot=self.boot, role="router",
                 revision=self.descriptor.value["revision"], region=self.descriptor.value["region"],
                 boot_at_us=self.boot_at_us, criterion=criterion, completed_at_us=self.now(),
                 checks=checks, config_sha256=self.manifest["config_sha256"], inputs=inputs, **fields)
-            raw = self.emitter.emit(record)
+            raw = await startup_call(partial(self.emitter.emit, record), .3)
             if raw is not None:
                 self.files["adoptions/"+criterion+".json"] = raw
                 self.adopted[criterion] = record
@@ -349,7 +353,7 @@ class Harness:
         self.started = True
         try:
             if self.descriptor is None:
-                self.correlate(descriptor)
+                await startup_call(partial(self.correlate, descriptor), .3)
             require(self.correlated and self.descriptor == descriptor)
             self.manifest = manifest
             require(descriptor.value["revision"] == manifest["revision"] and descriptor.value["region"] == manifest["region"])
@@ -373,7 +377,8 @@ class Harness:
             at_us = self.now()
             # Do not invent a timestamp when the sampled clock has not advanced.
             require(at_us > max(r["completed_at_us"] for r in self.adopted.values()))
-            self.ready_raw = self.emitter.emit(dict(kind="a3_traffic_ready", boot=self.boot, at_us=at_us))
+            self.ready_raw = await startup_call(partial(self.emitter.emit,
+                dict(kind="a3_traffic_ready", boot=self.boot, at_us=at_us)), .3)
             require(self.ready_raw is not None and self.ports.retain_ready is not None)
             assert self.ready_raw is not None and self.ports.retain_ready is not None
             key = manifest["ready_key_prefix"]+"/"+self.boot+".json"
@@ -402,8 +407,8 @@ class Harness:
             check_acknowledgement(ack, key, raw)
             self.file_acknowledgements[key] = ack
         # The index lets capture resolve coordinates and the generation replies.
-        index = canonical({k: dict(generation=v.generation, sha256=v.sha256, bytes=v.bytes)
-                           for k, v in self.file_acknowledgements.items()})
+        index = await startup_call(lambda: canonical({k: dict(generation=v.generation, sha256=v.sha256, bytes=v.bytes)
+                           for k, v in self.file_acknowledgements.items()}), 1.)
         key = self.manifest["ready_key_prefix"]+"/"+self.boot+"/index.json"
         async with asyncio.timeout(10):
             ack = await self.ports.retain_original(key, index)
@@ -414,7 +419,7 @@ class Harness:
 
     @property
     def attempt_count(self) -> int:
-        return self._attempt_count
+        return self.attempt_source.opted_starts if self.attempt_source is not None else self._attempt_count
 
     @property
     def missing_attempts(self) -> int:
@@ -527,21 +532,23 @@ def check_acknowledgement(ack: Acknowledgement, key: str, raw: bytes) -> None:
 
 
 async def retain_ready(bucket: str, key: str, raw: bytes) -> Acknowledgement:
-    validate(json.loads(raw))
+    await startup_call(lambda: validate(json.loads(raw)), .3)
     return await retain_object(bucket, key, raw)
 
 
 async def retain_object(bucket: str, key: str, raw: bytes) -> Acknowledgement:
-    """Reuse the existing bounded object worker, retaining its generation reply."""
-    from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
+    """Import, construct and call the existing adapter in the bounded worker."""
+    def retain() -> Acknowledgement:
+        from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
 
-    require(type(raw) is bytes and 0 < len(raw) <= MANIFEST_BYTES)
-    transport = GCSAttachments(bucket)
-    response = await asyncio.to_thread(transport.request, "POST", key, raw, 9.)
-    require(response is not None)
-    metadata = json.loads(response or b"")
-    require(metadata["name"] == key and int(metadata["size"]) == len(raw))
-    return Acknowledgement(key, metadata["generation"], hashlib.sha256(raw).hexdigest(), len(raw))
+        require(type(raw) is bytes and 0 < len(raw) <= MANIFEST_BYTES)
+        transport = GCSAttachments(bucket)
+        response = transport.request("POST", key, raw, 9.)
+        require(response is not None)
+        metadata = json.loads(response or b"")
+        require(metadata["name"] == key and int(metadata["size"]) == len(raw))
+        return Acknowledgement(key, metadata["generation"], hashlib.sha256(raw).hexdigest(), len(raw))
+    return await startup_call(retain, 10.)
 
 
 def install(app: Any, settings: Any, runtime: Any = None) -> None:
@@ -560,13 +567,14 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
     async def begin() -> None:
         try:
             async with asyncio.timeout(2):
+                await startup_call(harness.emitter.prepare, .3)
                 descriptor = await startup_call(read_fd, .3)
                 if descriptor is not None:
-                    require(harness.correlate(descriptor))
+                    require(await startup_call(partial(harness.correlate, descriptor), .3))
                 manifest = await startup_call(partial(load_manifest, os.environ.get(MANIFEST_ENV, "")), 1.)
                 if descriptor is None:
                     descriptor = await startup_call(partial(instance_descriptor, manifest["launch"]), 1.1)
-                    require(harness.correlate(descriptor))
+                    require(await startup_call(partial(harness.correlate, descriptor), .3))
             # Actual deployed settings, including the dormant OFF values.
             pins = dict(TR_ASYNC_SETTLE_ENABLED=str(settings.async_settle_enabled).lower(),
                 TR_ASYNC_SETTLE_PROTECTION=str(settings.async_settle_protection).lower(),

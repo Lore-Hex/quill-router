@@ -9,7 +9,7 @@ import re
 import sys
 import threading
 from collections.abc import Callable
-from queue import Queue
+from queue import Full, Queue
 from typing import Any
 
 INVENTORY: dict[str, Any] = {'fields': {'a3_startup_correlation': 'kind instance launch boot role revision region process_start_us '
@@ -114,7 +114,7 @@ def identifier(value: Any) -> None:
 
 
 def integer(value: Any, minimum: int = 0, maximum: int = MAX_INT) -> None:
-    require(type(value) is int and minimum <= value <= maximum)
+    require(type(value) is int and max(0, minimum) <= value <= min(MAX_INT, maximum))
 
 
 def digest(value: Any) -> None:
@@ -259,6 +259,22 @@ def validate_span(v: dict[str, Any]) -> None:
     require(f[0] <= c[0] <= c[1] <= r[0] <= r[1] <= f[1])
 
 
+class OutputQueue(Queue[bytes]):
+    """A busy output queue drops a record instead of waiting for its mutex."""
+
+    def put_nowait(self, item: bytes) -> None:
+        if not self.mutex.acquire(blocking=False):
+            raise Full
+        try:
+            if self._qsize() >= self.maxsize:
+                raise Full
+            self._put(item)
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
+        finally:
+            self.mutex.release()
+
+
 def stdout_writer() -> Callable[[bytes], None]:
     # This base tree's package handler is stderr with a text prefix. Keep the
     # exact JSON line on stdout using the ordinary logging StreamHandler.
@@ -269,7 +285,7 @@ def stdout_writer() -> Callable[[bytes], None]:
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(handler)
-    pending: Queue[bytes] = Queue(64)
+    pending = OutputQueue(64)
 
     def drain() -> None:
         while True:
@@ -289,11 +305,16 @@ class Emitter:
         self.dropped = 0
         self.emitted = 0
 
+    def prepare(self) -> None:
+        """Called once by the bounded startup worker, before records are emitted."""
+        if self.write is None:
+            self.write = stdout_writer()
+
     def emit(self, value: dict[str, Any]) -> bytes | None:
         try:
             raw = validate(value)
-            if self.write is None:
-                self.write = stdout_writer()
+            require(self.write is not None)
+            assert self.write is not None
             self.write(raw)
             self.emitted += 1
             return raw

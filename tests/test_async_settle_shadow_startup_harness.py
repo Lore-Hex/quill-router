@@ -449,6 +449,8 @@ def test_default_writer_failure_cannot_fail_startup(monkeypatch):
     monkeypatch.setattr(records, 'stdout_writer', unavailable)
     emitter = records.Emitter()
     assert not calls
+    with pytest.raises(OSError):
+        emitter.prepare()
     assert emitter.emit(dict(kind='a3_traffic_ready', boot='one', at_us=1)) is None
     assert calls == ['writer'] and emitter.dropped == 1
 
