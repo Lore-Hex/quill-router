@@ -218,9 +218,8 @@ allow-listed. The GCP gateways' own external addresses are ephemeral, so
 - `tr-fortanix-egress`, an `e2-small` VM in us-west1-b that holds the address,
   with IP forwarding on. Its startup script forwards new connections from the
   VPC to Fortanix's addresses on port 443, rewritten to the VM's own address,
-  and drops every other forwarded packet. It saves the rules to
-  `/etc/nftables.conf` for `nftables.service`, which loads them at boot
-  before the network starts, and turns forwarding on only after they load.
+  and drops every other forwarded packet. It rebuilds the rules on every
+  boot and turns forwarding on after they load.
 - One route per Fortanix address, for VMs tagged `quill-enclave`, with the VM
   as next hop. Only gateways carry that tag (quill-cloud-proxy
   `tools/deploy-gcp-mig.sh`), and a /32 beats the default route even for a VM
@@ -234,7 +233,11 @@ ciphertext.
 The VM is the only path. While it is not running (a reboot, a replacement),
 GCP drops the gateways' packets to Fortanix rather than sending them by the
 default route. A replacement VM with the same name and zone becomes the next
-hop without a change to the routes.
+hop without a change to the routes. Only the gateways' packets to Fortanix
+reach the VM. Until its rules load, which on a reboot is a few seconds after
+the network starts, such a packet keeps its gateway's private source address
+and cannot leave from the reserved address, so missing rules stop Fortanix
+traffic and expose nothing else.
 
 The routes match Fortanix's addresses, not its hostname. If `poc1.armet.ai`
 resolves elsewhere, the gateways' connections leave from their own addresses

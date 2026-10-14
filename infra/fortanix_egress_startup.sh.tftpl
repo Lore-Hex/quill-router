@@ -3,9 +3,11 @@
 # attested gateways' connections to Fortanix here; this forwards them,
 # rewritten to this VM's internal address, so they leave from its reserved
 # external address, which Fortanix allow-lists. Nothing else is forwarded.
-# The rules are saved for nftables.service, which loads them at boot before
-# the network starts; the script rewrites them on every boot and turns
-# forwarding on only after they load.
+#
+# Only the gateways' packets to Fortanix are routed here. Until the rules
+# below load, such a packet keeps its gateway's private source address and
+# cannot leave from this VM's address, so missing rules stop Fortanix traffic
+# and expose nothing else. The rules are rebuilt on every boot.
 set -euo pipefail
 
 iface="$(ip -o -4 route show to default | awk '{print $5; exit}')"
@@ -19,7 +21,7 @@ done
 # Forwarding is closed by default: only a new connection from the VPC to a
 # Fortanix address on port 443, and the packets of connections already
 # admitted, pass.
-cat > /etc/nftables.conf <<RULES
+nft -f - <<RULES
 table ip fortanix_egress
 delete table ip fortanix_egress
 table ip fortanix_egress {
@@ -34,13 +36,12 @@ table ip fortanix_egress {
   }
 }
 RULES
-nft -f /etc/nftables.conf
-systemctl enable --quiet nftables.service
 
-# The image's 60-gce-network-security.conf turns forwarding off. This file
-# sorts after it, so forwarding stays on whenever the files are applied
-# again. The image turns redirects off for "all" and "default" only; this
-# turns them off on the interface itself.
+# Forwarding goes on after the rules load. The image's
+# 60-gce-network-security.conf turns it off; this file sorts after it, so it
+# stays on whenever the files are applied again. The image turns redirects
+# off for "all" and "default" only; this turns them off on the interface
+# itself.
 echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-fortanix-egress.conf
 sysctl --quiet -w net.ipv4.ip_forward=1 "net.ipv4.conf.$iface.send_redirects=0"
 
