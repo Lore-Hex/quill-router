@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -173,3 +174,17 @@ def test_internal_benchmarks_stay_private(monkeypatch, balanced: bool) -> None:
         readers["provider_balanced_benchmark_samples"] = lambda **kwargs: [private, public]
     monkeypatch.setattr(benchmark_samples, "STORE", SimpleNamespace(**readers))
     assert benchmark_samples.public_benchmark_samples(limit=10) == [public]
+
+
+def test_internal_tariff_does_not_block_public_refresh_or_exempt_public_routes(monkeypatch) -> None:
+    import datetime as dt
+
+    from scripts.check_price_coverage import audit
+
+    def failures() -> list[str]:
+        _, _, hard = audit(max_age_days=14, now=dt.datetime(2026, 6, 7, tzinfo=dt.UTC), check_model_discovery=False)
+        return [message for message in hard if "fortanix" in message]
+
+    assert failures() == []
+    monkeypatch.setitem(MODELS, MODEL, replace(MODELS[MODEL], internal_only=False))
+    assert any("NO price source" in message for message in failures())

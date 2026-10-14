@@ -1150,7 +1150,12 @@ def _run_audit(
     fetch_text: Callable[[str], str] = _fetch_text,
 ) -> tuple[list[str], list[str], list[str]]:
     """Return (warnings, info, hard_fail_warnings)."""
-    from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, MODELS
+    from trusted_router.catalog import (
+        GATEWAY_PREPAID_PROVIDER_SLUGS,
+        MODEL_ENDPOINTS,
+        MODELS,
+        PROVIDERS,
+    )
 
     scraper_modules = _scraper_slugs()
     scrapers = scraper_modules | {
@@ -1181,6 +1186,15 @@ def _run_audit(
         hard_fail_warnings.extend(video_prices.hard_failures)
 
     for slug in sorted(GATEWAY_PREPAID_PROVIDER_SLUGS):
+        provider = PROVIDERS.get(slug)
+        if provider is not None and provider.internal_only:
+            model_ids = {model.id for model in MODELS.values() if model.provider == slug}
+            model_ids.update(endpoint.model_id for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == slug)
+            if all(model_id in MODELS and MODELS[model_id].internal_only for model_id in model_ids):
+                # Operator-approved test tariffs are not verified public prices.
+                # Any public model/route removes this exemption and fails closed.
+                info.append(f"{slug}: internal-only test tariff; excluded from public price publication")
+                continue
         if slug == "telluvian":
             from trusted_router.polyphemus import MODEL_ID, SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 
