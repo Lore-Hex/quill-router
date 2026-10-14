@@ -63,6 +63,20 @@ as the apply of 2026-10-13 01:38Z did):
 FRONT=$(gcloud compute instances list --project=quill-cloud-proxy --filter="name~tr-fastpath" --format="value(networkInterfaces[0].networkIP)" | sed 's#^#http://#; s#$#:8080#' | paste -sd, -)
 ```
 
+0. **The floor.** The generator's latencies include the hop from this
+   node to each front door, a zone away for one of them, so read the
+   floor first and keep it with the run's numbers: an empty
+   `/owner/ping` from here, thirty samples per front door on one
+   connection, the median and the slowest; the first command is this
+   node's front door, the second the other's (`FRONT` lists two).
+
+   ```bash
+   curl -sS -o /dev/null -w '%{time_total}\n' $(for i in $(seq 1 30); do printf '%s/owner/ping ' "${FRONT%%,*}"; done) | sort -n | awk '{a[NR]=$1} END {printf "p50 %.2f ms max %.2f ms\n", a[int(NR/2)]*1000, a[NR]*1000}'
+   curl -sS -o /dev/null -w '%{time_total}\n' $(for i in $(seq 1 30); do printf '%s/owner/ping ' "${FRONT##*,}"; done) | sort -n | awk '{a[NR]=$1} END {printf "p50 %.2f ms max %.2f ms\n", a[int(NR/2)]*1000, a[NR]*1000}'
+   ```
+
+   On 2026-10-14 after run 5: 0.41 ms to this node's front door, 2.54 ms
+   to the other's (`fast-admission-p1-results.md`).
 1. **On.** `/opt/fastpath/fastpathctl -database $DB enable $WS`.
 2. **The load, under the watch.** One command: the watch opens its reads
    and takes its first look, and only then starts the generator it is

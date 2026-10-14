@@ -175,20 +175,24 @@ answers are each run's first requests, before its first lease.
 The admission's cost stays under the 10 ms budget at every quantile at
 four generations a second, the slowest of the three runs' 4,186
 admissions at 9.6 ms. Its p50 is higher than runs 1 and 2's 1.6 ms on release
-`bfa94e22e`, with the same mix and the same generator placement, and
-the reason is the network, not the fast path: the generator on
-`tr-fastpath-1` sends to both front doors, and from there an empty
-`/owner/ping` answers in 0.41 ms from its own node and 2.54 ms from
-`tr-fastpath-2`, a zone away (p50 of 30 each, measured after run 5).
-The authorize path between the two releases is unchanged
-(`git log bfa94e22e..f96c21395 -- fastpath/` touches the heartbeat
-record and the alert line), and the observed load during run 4 was low
-(load average 0.11 on two vCPUs, the logging agent at six percent, no
-journal line per request). The admission itself, the gateway's
-authorization call included, costs a few hundred microseconds over the
-floor. The pair of runs 1 and 2 was replaced on
-2026-10-13 22:23Z and its hop was not measured; the floor is read
-before every run from now on, with the command above.
+`bfa94e22e`, with the same mix and the same generator placement. What
+was measured after run 5: from `tr-fastpath-1`, where the generator
+runs, an empty `/owner/ping` (`fastpath/internal/frontdoor/http.go`, a
+204 and nothing else) answers in 0.41 ms from its own front door and
+2.54 ms from `tr-fastpath-2`'s, a zone away, p50 of 30 each; the
+generator sends every other request to each front door
+(`fastpath/internal/loadgen`), and a front door may forward an
+authorization to the other node's owner; the authorize path between
+the two releases is unchanged (`git log bfa94e22e..f96c21395 --
+fastpath/` touches the heartbeat record and the alert line); the
+observed load during run 4 was low (load average 0.11 on two vCPUs,
+the logging agent at six percent, no journal line per request). The
+pair of runs 1 and 2 was replaced on 2026-10-13 22:23Z and its hop was
+not measured, so the rise is most likely the hop but not established,
+and the pooled p50 is not the admission's cost over either floor. The
+runbook now reads both floors before every run (`fastpath-p1.md`, "The
+floor"), so later runs carry their baseline; the owner's own timing of
+an admission is the measurement that settles it.
 
 **The audits.** Usage booked after run 3, 2,178,353 micro-credits; after
 run 4, 4,260,009; after run 5, 12,180,547 (12.18 USD of the 100 funded),
