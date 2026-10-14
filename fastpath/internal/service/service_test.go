@@ -1748,15 +1748,18 @@ func TestAnAlertIsALineOfJSON(t *testing.T) {
 		t.Fatalf("the lines: %q", out.String())
 	}
 	for i, want := range []map[string]any{
-		{"severity": "ERROR", "logging.googleapis.com/severity": "ERROR", "message": "fastpath alert: " + auditor.AlertGap,
-			"subject":                       "lease-1",
+		{"message": "fastpath alert: " + auditor.AlertGap, "subject": "lease-1",
 			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "gap"}},
-		{"severity": "ERROR", "logging.googleapis.com/severity": "ERROR", "message": "fastpath alert: something new",
-			"subject":                       "gwa-2",
+		{"message": "fastpath alert: something new", "subject": "gwa-2",
 			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "other"}},
 	} {
+		// The journal's err priority prefixes the JSON; systemd strips it.
+		body, found := strings.CutPrefix(lines[i], "<3>")
+		if !found {
+			t.Fatalf("line %d without the priority prefix: %q", i, lines[i])
+		}
 		var got map[string]any
-		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil || !reflect.DeepEqual(got, want) {
+		if err := json.Unmarshal([]byte(body), &got); err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("line %d: %q: %v, want %v", i, lines[i], err, want)
 		}
 	}
