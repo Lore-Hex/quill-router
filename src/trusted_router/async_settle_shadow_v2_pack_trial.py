@@ -236,6 +236,8 @@ def operation_population(files: PackFiles, plan: dict[str, Any], record: dict[st
             startups[0]['id'] == 'startup' and startups[0]['logical_count'] == 1, 'StartupPopulation')
         require(len(closes) == 2 and {o['id'] for o in closes} == {'close', 'result'} and
             all(o['logical_count'] == 1 and boot['start_us'] <= o['at_us'] < boot['end_us'] for o in closes), 'ClosePopulation')
+    from trusted_router.async_settle_shadow_v2_pack_lifecycle import compare_lifecycle
+    compare_lifecycle(files, record, native)
     from trusted_router.async_settle_shadow_v2_pack_work import export_work
     required_exports = export_work(files, plan)
     require(same_records(export_actual, required_exports), 'ExportPopulation')

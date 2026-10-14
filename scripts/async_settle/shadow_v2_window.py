@@ -47,6 +47,7 @@ def _collect_day(source: Path, out: Path, plan: dict[str, Any], *,
     require(plan['days'] == [plan['day']], 'FiniteDayPlan')
     from trusted_router.async_settle_shadow_v2_pack_passes import compare_passes
     comparisons, accounting_roots, accounting_missing = compare_passes(Files(source), plan, native_spec)
+    require(not accounting_missing, ','.join(accounting_missing))
     # The original export is never edited; collector objects enter the composed graph.
     from trusted_router.async_settle_shadow_v2_pack_records import captured_native
     native = captured_native(bundle_path, out / '.composition-native')

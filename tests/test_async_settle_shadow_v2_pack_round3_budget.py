@@ -76,6 +76,12 @@ def budget_capture(files, capture):
     post_allow = files.obj('trial/post-allowances', dict(**allowances, component_us=component))
     components = files.obj('trial/components', {k: [v] for k, v in component.items()})
     measurement, original = shutdown_data()
+    # Explicit fake monotonic spans fit this finite captured boot; result remains two seconds.
+    original.update(clock='monotonic_us', clock_origin=dict(boot=BOOT, monotonic_at_boot_us=17))
+    original['spans'] = dict(preparation=[17, 117], export_wait=[117, 217],
+        final_pass=[217, 4000217], close=[217, 2000217], result=[2000217, 4000217])
+    from trusted_router.async_settle_shadow_v2_collect_shutdown import durations
+    measurement.update(durations(original))
     original_ref = files.obj('trial/shutdown-span', original)
     measurement['source'] = original_ref
     measured_ref = files.obj('trial/shutdown-measurement', measurement)
@@ -133,7 +139,7 @@ def budget_capture(files, capture):
         components=components, measured_sources=[native, counter_ref, *trace_refs], pre=spec(pre_ref), post=spec(post_ref))
     computed = dict(values)
     computed.update(simultaneous_routers=1, simultaneous_publishers=1,
-        startup_operations_1s=1, close_operations_1s=2, export_operations_1s=1,
+        startup_operations_1s=1, close_operations_1s=1, export_operations_1s=1,
         cpu_percent=dict(numerator=25, denominator=1))
     def peak(field, name):
         return max((sum(o[field] for o in operations if o['operation'] == name
@@ -174,6 +180,8 @@ def budget_capture(files, capture):
         groups=['coverage', 'roots', 'review', 'report'], native_rpcs=64, export_operations=1000,
         export_bytes=1000000, export_write_bytes=1000000, **{'pass': 2})]))
     plan['output_plan_review'] = review(files, plan['output_plan'], 'trial/output-plan-review')
+    from tests.shadow_v2_pack_round9_lifecycle import lifecycle_capture
+    lifecycle_capture(files, plan, record)
     return plan
 
 
@@ -213,7 +221,7 @@ def test_budget_complete_originals_to_envelopes(tmp_path, captured):
         segments = graph.detail(emitted['v2_load']['segments'], 'segments')
         assert len(segments) > 1
         for field in ('startup_operations_1s', 'close_operations_1s', 'export_operations_1s'):
-            assert max(s['peaks'][field] for s in segments) == (2 if field == 'close_operations_1s' else 1)
+            assert max(s['peaks'][field] for s in segments) == 1
         assert all(s['start_us'] < s['end_us'] for s in segments)
         assert segments[0]['start_us'] == plan[stage]['interval']['start_us']
         assert segments[-1]['end_us'] == plan[stage]['interval']['end_us']
@@ -244,6 +252,9 @@ def test_budget_complete_originals_to_envelopes(tmp_path, captured):
             bad['shutdown'][0]['measurement'] = files.obj('bad/shutdown', value)
             record = json.loads(files.read(bad['trial_record']))
             record['shutdown'] = bad['shutdown']
+            work = json.loads(files.read(record['lifecycle_work']))
+            work['shutdown'] = bad['shutdown']
+            record['lifecycle_work'] = files.obj('bad/lifecycle', work)
             bad['trial_record'] = files.obj('bad/record', record)
             bad['trial_review'] = review(files, bad['trial_record'], 'bad/review')
         with pytest.raises(ValueError):

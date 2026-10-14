@@ -39,11 +39,16 @@ def stage_capture(root, capture, *, checkpoint='fleet-budgets-pre', budget_prefi
         for entry in closed['entries']]
     trial = json.loads(files.read(budget['trial_record']))
     trial.update(shutdown=budget['shutdown'], shutdown_inventory=captured['Shutdown'])
+    from tests.shadow_v2_pack_round9_lifecycle import lifecycle_capture
+    lifecycle_capture(budget_files, budget, trial)
     lifecycle = json.loads(files.read(trial['lifecycle_work']))
     lifecycle['shutdown'] = budget['shutdown']
     trial['lifecycle_work'] = budget_files.obj('trial/composed-lifecycle', lifecycle)
     budget['trial_record'] = budget_files.obj('trial/composed-record', trial)
     budget['trial_review'] = review(budget_files, budget['trial_record'], 'reviews/composed-trial')
+    for stage in ('pre', 'post'):
+        budget[stage]['load_segments'][0]['derivations']['close_operations_1s'] = dict(kind='measured',
+            original=budget_files.obj('trial/composed-close-peak', dict(value=2)), field=['value'])
     values = json.loads(files.read(budget['pre_allowances']))
     budget['export_ceilings'] = budget_files.obj('trial/export-ceilings', dict(native_rpcs=10000, **{k: values[k]
         for k in ('export_passes', 'export_operations', 'export_bytes', 'export_write_bytes')}))
