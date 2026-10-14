@@ -1198,6 +1198,8 @@ class TypedBillingStore(Protocol):
         stage_d_boot_kid: str | None = ...,
         invocation_nonce: str | None = ...,
         created_at: datetime | None = ...,
+        fastpath_envelope: str | None = ...,
+        fastpath_end_of_life: str | None = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

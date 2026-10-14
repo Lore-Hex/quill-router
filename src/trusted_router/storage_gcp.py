@@ -4968,6 +4968,134 @@ class SpannerStore:
             activity_indexed=False,
         )  # already_settled / not_found
 
+    def _authorize_gateway_leased(
+        self,
+        *,
+        build_authorization: Any,
+        authorization_id: str | None,
+        fastpath_envelope: str,
+        fastpath_end_of_life: str | None,
+        created_at: dt.datetime | None,
+        window_decision: Any,
+    ) -> tuple[Any, GatewayAuthorization]:
+        """The pilot's authorize (docs/design/fast-admission-pilot.md): one
+        transaction inserting the typed authorization row, with the lease's
+        envelope in its payload and no reservation. The pilot takes only
+        requests with no idempotency key, no key cap and a typed request
+        record, so there is no idempotency read and no hold DML here."""
+        from trusted_router.storage_gcp_authorize import AuthorizeOutcome, AuthorizeVerdict
+        from trusted_router.storage_gcp_request_records import insert_gateway_authorization
+
+        if self.request_record_write_mode != "typed":
+            raise RuntimeError("a leased authorization needs the typed request record")
+        if authorization_id is None:
+            raise ValueError("a leased authorization needs its id up front")
+        when = created_at if created_at is not None else dt.datetime.now(dt.UTC)
+        authorization = build_authorization(authorization_id, "")
+        authorization.credit_reservation_id = None
+        authorization.fastpath_envelope = fastpath_envelope
+        authorization.fastpath_end_of_life = fastpath_end_of_life
+        authorization.created_at = when.isoformat().replace("+00:00", "Z")
+
+        def txn(transaction: Any) -> None:
+            insert_gateway_authorization(transaction, self._param_types, authorization, created_at=when)
+
+        run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_authorize_leased")
+        return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
+
+    def typed_finalize_leased_result(
+        self,
+        authorization_id: str,
+        *,
+        success: bool,
+        actual_microdollars: int,
+        selected_usage_type: UsageType | str,
+        generation: Generation | None = None,
+        authorization_snapshot: GatewayAuthorization | None = None,
+        refund_benchmark: ProviderBenchmarkSample | None = None,
+        mark_intent: str | None = None,
+    ) -> tuple[TypedFinalizeResult, GatewayAuthorization] | None:
+        """The pilot's finalize: the records of a terminal whose money the
+        fast path booked (docs/design/fast-admission-pilot.md). ONE commit
+        marks the authorization settled with its finalization facts, writes
+        the generation record, the activity row and the benchmark, and
+        resolves the pending settle-outbox intent of kind `mark_intent` (the
+        route's own; the drain resolves its row itself afterwards), which
+        arms the row's retention as the outbox does; it claims no
+        reservation, releases no hold,
+        books no usage and pays no markup, since the lease did the booking
+        and the pilot's cohort has no markups. None when the authorization
+        is not a leased one or is settled already (the caller answers the
+        stored disposition)."""
+        from trusted_router.storage_gcp_batch_dml import execute_batch_dml
+        from trusted_router.storage_gcp_generation_records import generation_insert_statement
+        from trusted_router.storage_gcp_request_records import (
+            gateway_authorization_settled_statement,
+        )
+        from trusted_router.storage_gcp_settle_outbox import mark_done_unleased_tx
+
+        authorization = (
+            copy.deepcopy(authorization_snapshot)
+            if authorization_snapshot is not None
+            else self.get_gateway_authorization(authorization_id)
+        )
+        if authorization is None or authorization.id != authorization_id:
+            return None
+        if authorization.fastpath_envelope is None or authorization.settled:
+            return None
+        activity_outbox = getattr(self, "_operational_analytics_outbox", None)
+        if activity_outbox is not None and not callable(
+            getattr(activity_outbox, "activity_insert_statement", None)
+        ):
+            activity_outbox = None
+        actual_usage_type = UsageType.coerce(selected_usage_type)
+        authorization.record_finalization(
+            success=success,
+            actual_microdollars=actual_microdollars,
+            selected_usage_type=actual_usage_type,
+            generation=generation,
+        )
+        benchmark = (
+            self.generation_store.benchmark_sample(generation)
+            if success and generation is not None
+            else refund_benchmark if not success else None
+        )
+        benchmark_outbox = self.generation_store.analytics_outbox
+        now = dt.datetime.now(dt.UTC)
+        pt = self._param_types
+        persist_generation = bool(getattr(self, "_generation_records_enabled", False))
+
+        def txn(transaction: Any) -> None:
+            statements = [gateway_authorization_settled_statement(pt, authorization)]
+            counts: list[tuple[int, ...]] = [(1,)]
+            if success and generation is not None:
+                if persist_generation:
+                    statements.append(generation_insert_statement(pt, generation, terminal_at=now))
+                    counts.append((1,))
+                if activity_outbox is not None:
+                    statements.append(activity_outbox.activity_insert_statement(generation))
+                    counts.append((1,))
+            if benchmark is not None and benchmark_outbox is not None:
+                statements.append(benchmark_outbox.enqueue_statement(benchmark))
+                counts.append((1,))
+            execute_batch_dml(transaction, statements, counts)
+            if mark_intent is not None:
+                # The route's pending intent, resolved in this commit, and
+                # with it the row's retention as the outbox keeps it: armed
+                # only once no sibling intent is outstanding, and no
+                # reservation retention, since a lease has none. The drain's
+                # row is its own to mark, afterwards, by the same rule.
+                if not mark_done_unleased_tx(
+                    transaction, pt, authorization_id=authorization_id, intent_kind=mark_intent,
+                ):
+                    raise RuntimeError(f"leased finalize found no pending {mark_intent} intent")
+
+        run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_settle_leased")
+        return (
+            TypedFinalizeResult(finalized=True, activity_indexed=True, request_record_typed=True),
+            authorization,
+        )
+
     def typed_settle_one_commit_result(
         self,
         authorization_id: str,
@@ -5192,6 +5320,8 @@ class SpannerStore:
         stage_d_boot_kid: str | None = None,
         invocation_nonce: str | None = None,
         created_at: dt.datetime | None = None,
+        fastpath_envelope: str | None = None,
+        fastpath_end_of_life: str | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
@@ -5342,6 +5472,22 @@ class SpannerStore:
                 )
             if cap_verdict == HEADROOM:
                 self._lifetime_cap_exhausted_keys.discard(key_hash)
+
+        if fastpath_envelope is not None:
+            # The fast path's pilot: the request is held under a lease the
+            # front door granted (the envelope), so no credit or key is
+            # reserved and no tr_reservation row exists; the authorization
+            # row alone is written, for the settle to price and record. It
+            # skips the synchronous headroom check below too: the lease's
+            # room, not the unleased balance, admitted it.
+            return self._authorize_gateway_leased(
+                build_authorization=build_authorization,
+                authorization_id=authorization_id,
+                fastpath_envelope=fastpath_envelope,
+                fastpath_end_of_life=fastpath_end_of_life,
+                created_at=created_at,
+                window_decision=window_decision,
+            )
 
         if has_credit_candidate and workspace_id in self._insufficient_credit_workspaces:
             credit_verdict = credit_exhaustion_precheck(

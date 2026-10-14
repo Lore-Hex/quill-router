@@ -11,6 +11,7 @@ returns already_settled=True without double-charging.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import datetime as dt
 import functools
 import hashlib
@@ -177,6 +178,7 @@ from trusted_router.scopes import SCOPE_INFERENCE
 
 # Stable injected ports also consumed by the byte-pinned gateway regression oracle.
 from trusted_router.security import lookup_hash_api_key as lookup_hash_api_key
+from trusted_router.services import fastpath_frontdoor as _fastpath
 from trusted_router.services import federation
 from trusted_router.services.broadcast import (
     drain_broadcast_queue,
@@ -237,7 +239,12 @@ from trusted_router.storage_errors import (
     transient_store_error_types,
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
-from trusted_router.storage_gcp_settle_outbox import ENQ_INSERTED, ENQ_REFRESHED
+from trusted_router.storage_gcp_settle_outbox import (
+    ENQ_EXISTS_TERMINAL,
+    ENQ_INSERTED,
+    ENQ_LEASED,
+    ENQ_REFRESHED,
+)
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
@@ -1677,6 +1684,7 @@ def _authorize_gateway_sync_impl(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
+            key_window_limits,
             remember_spend_window_decision,
             spend_window_headers,
             spend_window_limit_error_message,
@@ -1699,6 +1707,44 @@ def _authorize_gateway_sync_impl(
             else enforced_window_limits(api_key)  # {} in alert mode → never blocks
         )
         key_usage_shards = key_usage_shard_count(api_key)
+        # The fast path's pilot (docs/design/fast-admission-pilot.md): a
+        # request in the cohort is admitted by the front door under a lease,
+        # and the typed store then reserves nothing for it; any other answer,
+        # or no front door, is today's path. Decided here, with the estimate,
+        # the key's caps and the boot in hand, before any hold is taken.
+        admitted = _fastpath_admission(
+            settings,
+            workspace_id=workspace.id,
+            authorization_id=authorization_id,
+            estimate=estimate,
+            stream=bool(body.stream),
+            standard_endpoint_pricing=standard_endpoint_pricing,
+            # Every candidate priced in credits: a BYOK fallback books no
+            # credit usage today, and a lease would charge it.
+            credit_funded=has_credit_candidate
+            and all(UsageType.for_endpoint(e) == UsageType.CREDITS for _m, e in endpoint_candidates),
+            boot_verified=bool(boot_context["boot_verified"]),
+            boot_kid=boot_auth.kid if boot_auth is not None else None,
+            idempotency_key=presented_idempotency_key,
+            service_tier=body.service_tier,
+            key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
+            budget_strict=bool(api_key.budget_strict),
+            app_markup=app_markup_basis_points > 0,
+            # The leased settle writes its records, its resolved intent and
+            # its activity row in one commit: it needs the durable outboxes.
+            records_durable=settings.settle_outbox_enabled
+            and callable(
+                getattr(getattr(_typed_store, "_operational_analytics_outbox", None), "activity_insert_statement", None)
+            ),
+        )
+
+        def release_after_error() -> None:
+            release_user_model_slot_after_error()
+            if admitted is not None:
+                # Admitted under a lease, but no authorization row: give the
+                # hold back now, so it is not held until the lease drains.
+                _fastpath_release_after_failure(settings, admitted, authorization_id=authorization_id)
+
         try:
             with gateway_phase("store_ms", after="post_commit_ms"):
                 outcome, authorization = _typed_store.authorize_gateway_typed(
@@ -1770,9 +1816,15 @@ def _authorize_gateway_sync_impl(
                     ),
                     invocation_nonce=body.invocation_nonce,
                     created_at=pricing_effective_at,
+                    fastpath_envelope=admitted.envelope if admitted is not None else None,
+                    fastpath_end_of_life=(
+                        admitted.end_of_life.isoformat().replace("+00:00", "Z")
+                        if admitted is not None
+                        else None
+                    ),
                 )
         except conflict_store_error_types() as exc:
-            release_user_model_slot_after_error()
+            release_after_error()
             # The generic 503 request log cannot identify a tenant hot row.
             # Emit only safe billing metadata so an operator can reshard the
             # affected workspace without ever logging a key, prompt, or body.
@@ -1798,7 +1850,7 @@ def _authorize_gateway_sync_impl(
         except transient_store_error_types() as exc:
             from trusted_router.strict_budget import StrictBudgetBusy
 
-            release_user_model_slot_after_error()
+            release_after_error()
             # Keep enough tenant-safe context to distinguish a Spanner
             # deadline, service outage, session exhaustion, or retry failure.
             # The request body, raw key, prompt, and output stay out of logs.
@@ -1823,7 +1875,7 @@ def _authorize_gateway_sync_impl(
             )
             raise
         except BaseException:
-            release_user_model_slot_after_error()
+            release_after_error()
             raise
         window_decision = getattr(outcome, "rate_limit", None)
         remember_spend_window_decision(request, window_decision)
@@ -4194,6 +4246,22 @@ def _settle_gateway_authorization(
     # ONE commit. Any failure (declined, aborted, deadline, unknown outcome)
     # falls through to the durable two-commit settle below, unchanged; the
     # store method documents why an unknown outcome is safe to follow with it.
+    if authorization.fastpath_envelope is not None and _typed_store is not None:
+        # The fast path's pilot (docs/design/fast-admission-pilot.md): the
+        # hold is a lease's, so the terminal goes to the front door and then
+        # the records are written in one commit, the intent already
+        # resolved as the one-commit settle writes it; no claim, no release.
+        return _settle_leased_authorization(
+            authorization,
+            settings=settings,
+            success=success,
+            actual_cost=actual_cost,
+            selected_usage_type=selected_usage_type,
+            generation=generation,
+            refund_benchmark=refund_benchmark,
+            settle_intent=settle_intent,
+            typed_store=_typed_store,
+        )
     one_commit_result: TypedFinalizeResult | None = None
     one_commit_ms = 0.0
     settle_one_commit = (
@@ -4821,6 +4889,205 @@ def _record_user_model_gateway_outcome_safely(
             model_id,
             exc_info=True,
         )
+
+
+_fastpath_client: _fastpath.FrontDoorClient | None = None
+_fastpath_client_lock = threading.Lock()
+
+
+def _fastpath_front_door(settings: Settings) -> _fastpath.FrontDoorClient | None:
+    """The pilot's front door client (docs/design/fast-admission-pilot.md),
+    built once over the store's Spanner database, which holds the fleet's
+    membership; None without one, which is no pilot."""
+    global _fastpath_client  # noqa: PLW0603 - one client per process, as the federation client
+    if _fastpath_client is not None:
+        return _fastpath_client
+    database = getattr(STORE, "_database", None)
+    if database is None:
+        return None
+    with _fastpath_client_lock:
+        if _fastpath_client is None:
+            _fastpath_client = _fastpath.FrontDoorClient(
+                _fastpath.SpannerFrontDoors(database),
+                timeout_seconds=settings.fastpath_front_door_timeout_seconds,
+            )
+    return _fastpath_client
+
+
+def _fastpath_admission(
+    settings: Settings,
+    *,
+    workspace_id: str,
+    authorization_id: str,
+    estimate: int,
+    stream: bool,
+    standard_endpoint_pricing: bool,
+    credit_funded: bool,
+    boot_verified: bool,
+    boot_kid: str | None,
+    idempotency_key: str | None,
+    service_tier: str | None,
+    key_capped: bool,
+    budget_strict: bool,
+    app_markup: bool,
+    records_durable: bool,
+) -> _fastpath.Admitted | None:
+    """The pilot's admission, or None for today's path. The region is this
+    control plane's own: the front doors are reachable from the region the
+    fast path's nodes are in, whatever region the request routes to."""
+    reason = _fastpath.pilot_reason(
+        enabled=settings.fastpath_pilot_enabled,
+        workspace_id=workspace_id,
+        pilot_workspace_ids=settings.fastpath_pilot_workspace_ids,
+        region=settings.effective_serving_region,
+        pilot_region_ids=settings.fastpath_pilot_region_ids,
+        stream=stream,
+        standard_endpoint_pricing=standard_endpoint_pricing,
+        credit_funded=credit_funded,
+        boot_verified=boot_verified and bool(boot_kid),
+        idempotency_key=idempotency_key,
+        service_tier=service_tier,
+        key_capped=key_capped,
+        budget_strict=budget_strict,
+        app_markup=app_markup,
+        records_durable=records_durable,
+    )
+    if reason is not None:
+        if settings.fastpath_pilot_enabled and workspace_id in settings.fastpath_pilot_workspace_ids:
+            logger.info("fastpath pilot passed over reason=%s workspace_id=%s", reason, workspace_id)
+        return None
+    client = _fastpath_front_door(settings)
+    if client is None:
+        return None
+    assert boot_kid is not None
+    started = perf_counter()
+    admitted = client.authorize(
+        workspace_id=workspace_id,
+        request=authorization_id,
+        estimate=int(estimate),
+        stream=stream,
+        boot=boot_kid.encode("utf-8"),
+    )
+    logger.info(
+        "fastpath pilot authorize %s workspace_id=%s authorization_id=%s ms=%.1f",
+        "admitted" if admitted is not None else "passed",
+        workspace_id,
+        authorization_id,
+        (perf_counter() - started) * 1000,
+    )
+    return admitted
+
+
+def _fastpath_release_after_failure(settings: Settings, admitted: _fastpath.Admitted, *, authorization_id: str) -> None:
+    """A hold admitted under a lease whose authorization row was not
+    written: refunded at once, best effort, so the hold ends now rather
+    than when the lease drains. A refund that cannot be sent is logged; the
+    hold then ends with the lease (docs/design/fast-admission-pilot.md)."""
+    client = _fastpath_front_door(settings)
+    if client is None:
+        return
+    try:
+        terminal = client.refund(envelope=admitted.envelope, money={"charge": 0, "estimate": 0})
+    except _fastpath.FrontDoorUnavailable:
+        logger.error("fastpath pilot hold not released after a failed insert authorization_id=%s", authorization_id)
+        return
+    except Exception:  # noqa: BLE001 - a release after a failure must not mask the failure
+        logger.exception("fastpath pilot release after a failed insert authorization_id=%s", authorization_id)
+        return
+    if terminal.status in {_fastpath.WON, _fastpath.SETTLED, _fastpath.RECORDED}:
+        logger.warning(
+            "fastpath pilot hold released after a failed insert authorization_id=%s status=%s",
+            authorization_id,
+            terminal.status,
+        )
+        return
+    # failed, invalid: the hold was not given back; it ends with the lease
+    # (docs/design/fast-admission-pilot.md, what is not in the pilot).
+    logger.error(
+        "fastpath pilot hold NOT released after a failed insert authorization_id=%s status=%s",
+        authorization_id,
+        terminal.status,
+    )
+
+
+def _settle_leased_authorization(
+    authorization: GatewayAuthorization,
+    *,
+    settings: Settings,
+    success: bool,
+    actual_cost: int,
+    selected_usage_type: UsageType | str,
+    generation: Generation | None,
+    refund_benchmark: ProviderBenchmarkSample | None,
+    settle_intent: SettleOutboxRow | None,
+    typed_store: Any,
+) -> dict[str, Any]:
+    """The pilot's terminal (docs/design/fast-admission-pilot.md), durable
+    first as today's two-commit settle: the settle-outbox intent is pending
+    before the front door is asked, so a terminal the front door has not
+    decided (an owner out of reach, a drain-log `recorded`, a winner of
+    another kind) is answered as today's `intent_durable` and the drain asks
+    again later, with the frozen charge. Decided, the records are written
+    here in one commit with the intent resolved, and nothing booked: the
+    lease did the booking."""
+    from trusted_router.services import fastpath_settle
+
+    unavailable = api_error(
+        503, "Settlement unavailable; retry", ErrorType.SERVICE_UNAVAILABLE, headers={"Retry-After": "1"},
+    )
+    if settle_intent is None:
+        raise unavailable
+    charge = fastpath_settle.charge_for(success=success, actual_cost=actual_cost, selected_usage_type=selected_usage_type)
+    intent = dataclasses.replace(settle_intent, actual_cost_micro=charge)
+    try:
+        enqueued = spanner_settle_outbox().enqueue(intent, initial_delay_seconds=60)
+    except Exception:
+        logger.exception("fastpath pilot intent enqueue failed authorization_id=%s", authorization.id)
+        raise unavailable from None
+    if enqueued == ENQ_EXISTS_TERMINAL:
+        refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
+        _release_user_model_slot_safely(refreshed)
+        return {"data": _already_settled_gateway_data(refreshed)}
+    if enqueued == ENQ_LEASED:
+        # A drain holds the row: it asks the front door itself.
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
+    try:
+        decision = fastpath_settle.forward_terminal(
+            _fastpath_front_door(settings), authorization, success=success, charge=charge, generation=generation,
+        )
+    except fastpath_settle.Undecided as undecided:
+        logger.warning(
+            "fastpath pilot terminal undecided, left to the drain authorization_id=%s why=%s",
+            authorization.id,
+            undecided,
+        )
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
+    try:
+        result = typed_store.typed_finalize_leased_result(
+            authorization.id,
+            success=decision.success,
+            actual_microdollars=decision.charge,
+            selected_usage_type=selected_usage_type,
+            generation=decision.generation,
+            authorization_snapshot=authorization,
+            refund_benchmark=refund_benchmark if not decision.success else None,
+            mark_intent=intent.intent_kind,
+        )
+    except Exception:
+        # The lease took the charge and the intent is durable: the drain
+        # writes the records, as today's two-commit settle defers after an
+        # inline finalize failure. Also a drain that claimed the row first.
+        logger.exception(
+            "fastpath pilot records deferred after a decided terminal authorization_id=%s", authorization.id,
+        )
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
+    if result is None:
+        refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
+        _release_user_model_slot_safely(refreshed)
+        return {"data": _already_settled_gateway_data(refreshed)}
+    _finalize, finalized = result
+    _release_user_model_slot_safely(finalized)
+    return {"data": _already_settled_gateway_data(finalized)}
 
 
 def _already_settled_gateway_data(authorization: Any) -> dict[str, Any]:

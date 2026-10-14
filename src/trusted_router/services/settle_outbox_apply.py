@@ -461,6 +461,60 @@ def _provider_slug_from_endpoint_id(endpoint_id: str | None) -> str:
     return slug or "unknown"
 
 
+def _apply_leased(
+    row: SettleOutboxRow,
+    auth: GatewayAuthorization,
+    typed_store: Any,
+    *,
+    success: bool,
+    usage_type: UsageType,
+    generation: Generation | None,
+) -> str:
+    """The pilot's intent (docs/design/fast-admission-pilot.md): the terminal
+    the route could not get decided is asked of the front door again, with
+    the frozen charge; decided, its records are written and the row is the
+    drain's to mark done; undecided, the row stays pending for a later
+    pass."""
+    from trusted_router.config import get_settings
+    from trusted_router.routes.internal.gateway import _fastpath_front_door
+    from trusted_router.services import fastpath_settle
+
+    if auth.settled:
+        # Its records are written (by the route, or by the other kind's
+        # intent that won): this row is done, with nothing more to ask.
+        return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    charge = fastpath_settle.charge_for(success=success, actual_cost=row.actual_cost_micro, selected_usage_type=usage_type)
+    try:
+        decision = fastpath_settle.forward_terminal(
+            _fastpath_front_door(get_settings()), auth, success=success, charge=charge, generation=generation,
+        )
+    except fastpath_settle.Undecided as undecided:
+        logger.warning(
+            "settle outbox leased intent undecided authorization_id=%s intent_kind=%s why=%s",
+            row.authorization_id,
+            row.intent_kind,
+            undecided,
+        )
+        return ApplyOutcome.ERROR
+    try:
+        result = typed_store.typed_finalize_leased_result(
+            auth.id,
+            success=decision.success,
+            actual_microdollars=decision.charge,
+            selected_usage_type=usage_type,
+            generation=decision.generation,
+            authorization_snapshot=auth,
+            mark_intent=None,
+        )
+    except _TRANSIENT_STORE_EXCS:
+        # The store, not the row: parked, as the typed path parks it, with
+        # no attempt spent.
+        return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+    if result is None:
+        return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    return ApplyOutcome.SETTLED_NOW
+
+
 def _apply_typed(
     row: SettleOutboxRow,
     auth: GatewayAuthorization,
@@ -476,6 +530,8 @@ def _apply_typed(
         # MF4: park typed-origin work until typed storage is available. Returning
         # here is read-only: no legacy reroute, no auth mark, no hold release.
         return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+    if auth.fastpath_envelope is not None:
+        return _apply_leased(row, auth, typed_store, success=success, usage_type=usage_type, generation=generation)
     if auth.credit_reservation_id is None:
         return ApplyOutcome.RESERVATION_MISSING
 

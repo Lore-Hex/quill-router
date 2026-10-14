@@ -909,6 +909,12 @@ class GatewayAuthorization:
     finalized_output_tokens: int | None = None
     finalized_reasoning_tokens: int | None = None
     finalized_cached_input_tokens: int | None = None
+    # The fast path's pilot (docs/design/fast-admission-pilot.md): an
+    # authorization admitted under a lease has no credit reservation; it
+    # carries the front door's sealed envelope, which its terminal must
+    # present there, and the hold's end of life. Both live in the payload.
+    fastpath_envelope: str | None = None
+    fastpath_end_of_life: str | None = None
 
     def __post_init__(self) -> None:
         # JSON round-trip stores usage_type as a string; coerce so the field
