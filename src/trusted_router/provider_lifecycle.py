@@ -83,6 +83,10 @@ STREAMLAKE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
 # The live API returned UnavailableModel at this observation even though its
 # public catalog still listed the model. This is not an upstream cutover claim.
 STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT = datetime(2026, 10, 12, 16, 4, tzinfo=UTC)
+# From this observation on the live API answered HTTP 400 "The requested model
+# has been deprecated and is no longer available" (last success 2026-10-06).
+# Observation-dated, like the two above; not an upstream cutover claim.
+STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT = datetime(2026, 10, 10, 19, 39, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -318,6 +322,12 @@ _RETIREMENTS = (
         model_ids=frozenset({"qwen/qwen3-coder-next"}),
         upstream_ids=frozenset({"qwen3-coder-next"}),
         effective_at=STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({"qwen/qwen3-235b-a22b-instruct-2507"}),
+        upstream_ids=frozenset({"Qwen3-235B-A22B-Instruct-2507"}),
+        effective_at=STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT,
     ),
     # W&B's September notice gives October 5 without a time zone. Stop at
     # 00:00 UTC conservatively, only for these exact Serverless Inference ids.
