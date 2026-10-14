@@ -1006,6 +1006,21 @@ class Settings(BaseSettings):
     # Emergency kill added 2026-09-03: declares no request Stage D eligible.
     stage_d_eligibility_enabled: bool = False
     stage_d_pilot_workspace_ids: str = "45819281-0ce9-4811-a0cd-c660ab3a116d"
+    # The fast path's pilot (docs/design/fast-admission-pilot.md): an authorize
+    # for a workspace in the set, from a control plane in one of the regions,
+    # is admitted by the fast path's front door instead of a reservation, and
+    # its terminal forwarded there. Off by default; the set is empty by
+    # default; the front door's own switch (tr_fastpath_workspace) must also
+    # be on, or it answers `off` and the request takes today's path.
+    fastpath_pilot_enabled: bool = False
+    fastpath_pilot_workspaces: str = ""
+    fastpath_pilot_regions: str = "us-central1"
+    # The front door answers an admitted authorize in a few milliseconds; the
+    # owner behind it waits at most a second. A request past this budget
+    # takes today's path, so the budget is spent inline on a customer request.
+    fastpath_front_door_timeout_seconds: float = 1.5
+    _fastpath_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    _fastpath_pilot_region_ids: frozenset[str] = PrivateAttr(default=frozenset({"us-central1"}))
     stage_d_policy_refresh_seconds: int = 60
     stage_d_policy_cert_identity: str = (
         "https://github.com/Lore-Hex/quill-cloud-proxy/.github/workflows/"
@@ -1367,6 +1382,28 @@ class Settings(BaseSettings):
     @property
     def async_settle_shadow_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_shadow_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_fastpath_pilot(self) -> Settings:
+        ids = frozenset(part.strip() for part in self.fastpath_pilot_workspaces.split(",") if part.strip())
+        if len(ids) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids):
+            raise ValueError("invalid fast path pilot workspace set")
+        regions = frozenset(part.strip() for part in self.fastpath_pilot_regions.split(",") if part.strip())
+        if any(re.fullmatch(r"[a-z0-9\-]{1,32}", value) is None for value in regions):
+            raise ValueError("invalid fast path pilot region set")
+        if not 0 < self.fastpath_front_door_timeout_seconds <= 5:
+            raise ValueError("fast path front door timeout must be within (0, 5] seconds")
+        self._fastpath_pilot_workspace_ids = ids
+        self._fastpath_pilot_region_ids = regions
+        return self
+
+    @property
+    def fastpath_pilot_workspace_ids(self) -> frozenset[str]:
+        return self._fastpath_pilot_workspace_ids
+
+    @property
+    def fastpath_pilot_region_ids(self) -> frozenset[str]:
+        return self._fastpath_pilot_region_ids
 
     @model_validator(mode="after")
     def parse_pilot_workspaces(self) -> Settings:

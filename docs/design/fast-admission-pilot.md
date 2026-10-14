@@ -1,0 +1,116 @@
+# The fast path's pilot: Joseph's workspace
+
+The design's rollout step 8 (`fast-admission-and-batched-settlement.md`
+§8), as `fast-admission-production-rollout.md` asks: what the pilot enables,
+what it checks, and how it turns off. It starts on Joseph's own workspace,
+on his word (2026-10-14), after P1's runs 1 to 6 (`fast-admission-p1-results.md`).
+
+## Where the client lives
+
+In production the enclaves call the control plane's internal routes,
+`/internal/gateway/authorize`, `heartbeat`, `settle` and `refund`
+(`routes/internal/gateway.py`), and the control plane reserves credit in one
+Spanner transaction per request. The design has the enclave call the fast
+path itself in the end; for the pilot the control plane calls it, for three
+reasons found on 2026-10-14:
+
+- the enclave's measured image accepts one billing authority,
+  `https://trustedrouter.com` (`validateControlPlaneEndpoint` in
+  quill-cloud-proxy), and a new address or variable is a new image;
+- an AWS enclave reaches the control plane over vsock alone and cannot reach
+  a GCP VPC address at all;
+- the fast path's nodes are in GCP `us-central1`, where the control plane
+  that serves that region runs on the same network.
+
+So the pilot is the control plane in `us-central1` calling the front doors
+(`fastpath/internal/frontdoor`, internal addresses, port 8080) for a
+request in the cohort, and today's path everywhere else. The enclave is
+unchanged.
+
+## What it enables
+
+For an authorize in the cohort, the control plane asks a front door
+(`POST /v1/authorize` with the workspace, the authorization id as the
+request's hash, the estimate, the stream flag and the enclave boot's binding)
+and, if admitted, writes the authorization row with the sealed envelope in
+its payload and reserves nothing: no credit hold, no key hold, no
+`tr_reservation` row. The hold is the lease's. At settle or refund the control
+plane prices the actual charge as today, forwards the terminal to a front
+door (`/v1/settle` with the charge, the full record and the money fields;
+`/v1/refund`), and then writes the terminal's records alone: the
+authorization marked settled with its finalization facts, the generation
+record, the activity row and the benchmark row. It claims no reservation,
+releases no hold, books no usage and pays no markup; the lease booked the
+usage, and the audit (`fastpathctl audit`) holds it.
+
+The cohort, `pilot_reason` in `services/fastpath_frontdoor.py`, is the
+design's §4.11 at its narrowest: a credit-funded key on a standard route,
+not streaming, with a verified boot, no idempotency key, no service tier,
+no key cap or window, no strict budget, no app markup; a workspace in the
+pilot set; a control plane in a pilot region. Everything else stays on
+today's path, as does any request the front door does not admit: `off` (the
+workspace is not on the fast path's own switch), `busy` (no lease took it),
+`invalid`, a front door that failed, or none serving. A request is never
+refused for a fast path that is not there.
+
+The front doors are the fleet's serving members, `tr_fastpath_member`, read
+from Spanner and cached thirty seconds, so a node a deploy replaces is found
+by its new address; each has a breaker (five failures, thirty seconds).
+
+## The switches
+
+Three, all in the control plane's settings (`config.py`), none on by
+default, in the order they are turned on:
+
+1. `TR_FASTPATH_PILOT_WORKSPACES`: the pilot set, Joseph's workspace id.
+2. The fast path's own switch for that workspace:
+   `fastpathctl -database $DB enable WORKSPACE` (W1). The front door
+   answers `off` until it is on.
+3. `TR_FASTPATH_PILOT_ENABLED=true`: the client.
+
+`TR_FASTPATH_PILOT_REGIONS` is `us-central1` and stays so until the fast
+path has nodes elsewhere. `TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS` is the
+whole budget of one call, 1.5 s, spent inline on a customer request; past
+it the request takes today's path.
+
+## How it turns off
+
+Any one of: `TR_FASTPATH_PILOT_ENABLED=false` (every new authorize takes
+today's path at once; terminals of admitted requests still go to the front
+door, which keeps them); `fastpathctl disable WORKSPACE` (the front door
+answers `off`, the workspace's leases are revoked and drained, W2); the
+workspace removed from the set. A control-plane setting changes with a
+deploy; the fast path's switch changes at once.
+
+## What it checks
+
+- The audit after every hour of the pilot, and before and after a switch:
+  `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0.
+- The counter reconciler's combined identity on the workspace
+  (`storage_gcp_counter_reconcile.py`): reservations and bookings of the
+  leases with the synchronous holds.
+- `fastpathwatch -workspace WORKSPACE` with P1's ceilings, the spend
+  ceiling at a tenth of the workspace's credits.
+- The control plane's log line per authorize the pilot took or passed over
+  (`fastpath authorize <status>`), and the settle's.
+- Cloud Logging: no `fastpath_alert` entries for the workspace.
+
+## What is not in the pilot
+
+Streams (they join once registrations carry the heartbeat declaration,
+§4.11); any workspace but Joseph's; the 503 in place of 402 when a
+balance's headroom sits in leases (the fallback reserves today, so a large
+lease allocation on a small balance can refuse a request today's path
+would have taken; the pilot workspace's balance is large); the enclave
+calling the fast path itself; W7's alert policies.
+
+## The state on 2026-10-14
+
+Landed on one branch, each piece tested against the fake Spanner store and
+the route itself: the settings, the client, the cohort predicate, the typed
+store's leased authorize (`authorize_gateway_typed(..., fastpath_envelope=...)`)
+and leased finalize (`typed_finalize_leased_result`), and the route wiring
+(`_fastpath_admission` before the typed store call in
+`_authorize_gateway_sync_impl`; `_settle_leased_authorization` before the
+settle-outbox intent in `_settle_gateway_authorization`). The pilot set and
+the client switch are off until the deploy that follows is verified.
