@@ -23,7 +23,8 @@
         "streaming",
         "prompt_caching",
         "tools",
-        "reasoning"
+        "reasoning",
+        "reasoning-effort"
       ],
       "routable": true,
       "input_token_price_per_m": 10000,
@@ -51,7 +52,8 @@
         "streaming",
         "prompt_caching",
         "tools",
-        "reasoning"
+        "reasoning",
+        "reasoning-effort"
       ],
       "routable": true,
       "input_token_price_per_m": 1120000,
@@ -60,7 +62,7 @@
     }
   ],
   "source": "https://inference.coralbricks.ai/v1/models",
-  "generated_at": "2026-10-14T23:18:38Z",
+  "generated_at": "2026-10-14T23:31:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }
