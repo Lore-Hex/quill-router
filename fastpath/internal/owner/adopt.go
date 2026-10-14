@@ -73,10 +73,12 @@ func (l *Lease) adoptable() bool {
 // renewal rounds, so a record topic that is slow holds up no renewal: each
 // open hold whose last heartbeat's deadline plus the grace has passed is
 // reaped, unless the drain log has a terminal for it, which is adopted
-// instead. A lease past its cutoff, or whose drain log a renewal left to
-// adopt, is not reaped. Passes run one at a time, and each ends with ctx or
-// the owner, which waits for it to end when it stops. What Spanner or the
-// record topic fails is tried at the next pass.
+// instead; and each open hold with no heartbeat record issued is released
+// once its end of life plus the grace has passed (releaseDue). A lease past
+// its cutoff, or whose drain log a renewal left to adopt, is not reaped.
+// Passes run one at a time, and each ends with ctx or the owner, which waits
+// for it to end when it stops. What Spanner or the record topic fails is
+// tried at the next pass.
 func (o *Owner) Reap(ctx context.Context) error {
 	if o.cfg.Spanner == nil || o.cfg.Records == nil {
 		return errors.New("owner: no store or record topic to reap with")
@@ -114,28 +116,15 @@ func (o *Owner) Reap(ctx context.Context) error {
 	return nil
 }
 
-// releaseDue releases each stream's hold whose boot declares the heartbeat
-// at stream open and for which no heartbeat record was issued by its
-// admission plus the first-heartbeat allowance plus the grace (§4.5,
-// TerminalOrder's OwnerRelease): uncharged, its record naming its boot
-// binding. The test is that none was issued, not acknowledged: one issued
-// and not yet acknowledged may still be stored, so the hold is reaped at
-// its snapshot instead. With no allowance it releases none, and with an
-// allowance and a grace whose sum is past the longest duration, none
-// before their sum.
+// releaseDue releases each of the lease's holds due for release (released):
+// uncharged, its record naming its boot binding (§4.5, TerminalOrder's
+// OwnerRelease).
 func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
-	if allowance == 0 {
-		return
-	}
-	after := allowance + grace
-	if after < allowance {
-		after = math.MaxInt64
-	}
-	due := gather(l, func(h *hold) (string, bool) { return h.auth, released(h, now, after) })
+	due := gather(l, func(h *hold) (string, bool) { return h.auth, released(h, now, allowance, grace) })
 	slices.Sort(due)
 	for len(due) > 0 {
 		n := min(len(due), releaseBatch)
-		if !l.releaseSome(due[:n], now, after) {
+		if !l.releaseSome(due[:n], now, allowance, grace) {
 			return
 		}
 		due = due[n:]
@@ -179,20 +168,43 @@ func (l *Lease) scan(f func(h *hold), flush func()) {
 	flush()
 }
 
-// released: a hold due for release at now, after the first-heartbeat
-// allowance and the grace.
-func released(h *hold, now time.Time, after time.Duration) bool {
-	return h.openHeartbeat && !h.heartbeat && !now.Before(h.admitted.Add(after))
+// released: a hold for which no heartbeat record was issued is due for
+// release at now once its end of life plus the grace has passed (§4.5): no
+// terminal came in the life the Authorized answer gave the gateway, and
+// with no heartbeat issued nothing delivered was recorded, so there is no
+// snapshot to reap at and nothing to charge; a hold with a terminal has left
+// the lease's holds. A stream's hold whose boot declares the heartbeat at
+// stream open is due sooner, by its admission plus the first-heartbeat
+// allowance plus the grace, when there is an allowance. The test is that no
+// heartbeat record was issued, not acknowledged: one issued and not yet
+// acknowledged may still be stored, so the hold is reaped at its snapshot
+// instead. An allowance and a grace whose sum is past the longest duration
+// release none before their sum.
+func released(h *hold, now time.Time, allowance, grace time.Duration) bool {
+	if h.heartbeat {
+		return false
+	}
+	if !now.Before(h.endOfLife.Add(grace)) {
+		return true
+	}
+	if allowance == 0 || !h.openHeartbeat {
+		return false
+	}
+	after := allowance + grace
+	if after < allowance {
+		after = math.MaxInt64
+	}
+	return !now.Before(h.admitted.Add(after))
 }
 
 // releaseSome releases each of auths still open and due, under the lease's
 // lock, and reports whether the pass goes on: not after a decision fails, as
 // every one does once the lease is let go or handed off.
-func (l *Lease) releaseSome(auths []string, now time.Time, after time.Duration) bool {
+func (l *Lease) releaseSome(auths []string, now time.Time, allowance, grace time.Duration) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, auth := range auths {
-		if h := l.holds[auth]; h == nil || !released(h, now, after) {
+		if h := l.holds[auth]; h == nil || !released(h, now, allowance, grace) {
 			continue
 		}
 		if _, err := l.decide(auth, terminalOf{kind: record.Release}); err != nil {

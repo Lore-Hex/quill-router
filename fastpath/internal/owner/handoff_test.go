@@ -42,9 +42,9 @@ func reapPass(t *testing.T, f *fixture) {
 // TestAStreamWithNoHeartbeatIsReleased: a stream's hold whose boot declares
 // the heartbeat at stream open, and for which none was issued by its
 // admission plus the allowance plus the grace, is released uncharged, its
-// record naming its boot binding; not a microsecond sooner, and no hold
-// that heartbeated, does not stream, or whose boot declares nothing
-// (§4.5, TerminalOrder's OwnerRelease).
+// record naming its boot binding; not a microsecond sooner, and, before its
+// end of life, no hold that heartbeated, does not stream, or whose boot
+// declares nothing (§4.5, TerminalOrder's OwnerRelease).
 func TestAStreamWithNoHeartbeatIsReleased(t *testing.T) {
 	f, _ := releaseFixture(t)
 	ctx := context.Background()
@@ -141,6 +141,100 @@ func TestAStreamWithNoHeartbeatIsReleased(t *testing.T) {
 	reapPass(t, g)
 	if ts := terminals(t, g); len(ts) != 0 {
 		t.Fatalf("a release with no allowance: %+v", ts)
+	}
+}
+
+// TestAHoldWithNoTerminalIsReleasedAtItsEndOfLife: a hold with no heartbeat
+// record issued, of a request that does not stream or of a stream whose boot
+// declares nothing, is released uncharged once its end of life plus the
+// grace has passed, its record naming its boot binding, and its room
+// returns to the lease; not a microsecond sooner; a hold that heartbeated is
+// left to the reap at its snapshot, and one with a terminal is untouched;
+// a settle arriving after the release is answered as the release, charging
+// nothing, and a heartbeat as decided, with no second record; and the
+// release needs no first-heartbeat allowance (§4.5).
+func TestAHoldWithNoTerminalIsReleasedAtItsEndOfLife(t *testing.T) {
+	f, sp := releaseFixture(t)
+	ctx := context.Background()
+	plain := f.admit(t, 40, false)
+	undeclared := f.admit(t, 30, true)
+	settled := f.admit(t, 20, false)
+	beat := f.admit(t, 10, true)
+	if _, err := f.lease.Settle(ctx, settled, 5, sum("d")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.lease.Heartbeat(ctx, beat, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	// The record topic refuses the heartbeated hold's reap, so it stays
+	// open, with its snapshot, through every pass.
+	rec := f.owner.cfg.Records.(*fakeRecords)
+	rec.mu.Lock()
+	rec.failing = 1 << 20
+	rec.mu.Unlock()
+	// A hold's life is an hour; each renewal keeps the lease within its
+	// cutoff as the clock moves.
+	pass := func() {
+		t.Helper()
+		sp.mu.Lock()
+		sp.expiry = f.clock.Now().Add(10 * time.Minute)
+		sp.mu.Unlock()
+		renewAndReap(t, f)
+	}
+	f.clock.advance(time.Hour + time.Minute - time.Microsecond)
+	pass()
+	if ts := terminals(t, f); len(ts) != 1 || ts[0].Kind != record.Settle {
+		t.Fatalf("the terminals before the end of life and the grace passed: %+v", ts)
+	}
+	waitFor(t, "the settle's acknowledgement", func() bool { return f.lease.Books().Pending == 0 })
+	before := f.lease.Books()
+	f.clock.advance(time.Microsecond)
+	pass()
+	ts := terminals(t, f)
+	if len(ts) != 3 {
+		t.Fatalf("the terminals once the end of life and the grace passed: %+v", ts)
+	}
+	for i, want := range []struct {
+		auth     string
+		estimate int64
+	}{{plain, 40}, {undeclared, 30}} {
+		if r := ts[i+1]; r.Kind != record.Release || r.Auth != want.auth || r.Estimate != want.estimate || r.Charge != 0 ||
+			!bytes.Equal(r.Boot, boot) {
+			t.Fatalf("release %d: %+v; of %s, and not %s or %s", i, r, want.auth, settled, beat)
+		}
+	}
+	waitFor(t, "the releases' acknowledgements", func() bool { return f.lease.Books().Pending == 0 })
+	if b := f.lease.Books(); b.Held != before.Held-70 || b.Consumed != before.Consumed || b.Open != before.Open-2 ||
+		b.Free() != before.Free()+70 {
+		t.Fatalf("the books after the releases: %+v, before %+v", b, before)
+	}
+	if out, err := f.lease.Settle(ctx, plain, 25, sum("d")); err != nil || out != (Outcome{Kind: record.Release}) {
+		t.Fatalf("a settle after the release: %+v %v", out, err)
+	}
+	if _, err := f.lease.Heartbeat(ctx, undeclared, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); !errors.Is(err, ErrDecided) {
+		t.Fatalf("a heartbeat after the release: %v", err)
+	}
+	if again := terminals(t, f); len(again) != len(ts) {
+		t.Fatalf("records after the terminals that followed the releases: %+v", again)
+	}
+
+	// With no first-heartbeat allowance, a declared stream's hold is still
+	// released at its end of life.
+	g, gsp := releaseFixture(t)
+	g.owner.cfg.FirstHeartbeat = 0
+	declared, err := g.lease.Admit(Admission{Estimate: 40, Stream: true, Boot: boot, OpenHeartbeat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.clock.advance(time.Hour + time.Minute)
+	gsp.mu.Lock()
+	gsp.expiry = g.clock.Now().Add(10 * time.Minute)
+	gsp.mu.Unlock()
+	renewAndReap(t, g)
+	if ts := terminals(t, g); len(ts) != 1 || ts[0].Kind != record.Release || ts[0].Auth != declared.Auth {
+		t.Fatalf("the release with no allowance, at the end of life: %+v", ts)
 	}
 }
 

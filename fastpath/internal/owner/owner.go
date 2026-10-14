@@ -83,14 +83,17 @@ type Config struct {
 	// asks for none, and admits only under the leases it was given.
 	TopUps TopUps
 	// Grace is the reaper's grace (§4.5, §4.8): the owner reaps a hold
-	// whose last heartbeat's deadline plus it has passed. Records takes the
-	// full records of its reaps (§4.9); without it the owner reaps nothing.
+	// whose last heartbeat's deadline plus it has passed, and releases
+	// uncharged a hold with no heartbeat record issued whose end of life
+	// plus it has passed. Records takes the full records of its reaps
+	// (§4.9); without it the owner neither reaps nor releases.
 	Grace   time.Duration
 	Records RecordLog
 	// FirstHeartbeat is the first-heartbeat allowance (§4.5): a stream's
 	// hold admitted for a boot that declares the heartbeat at stream open,
 	// for which no heartbeat record was issued by its admission plus it
-	// plus Grace, is released uncharged. Zero releases none.
+	// plus Grace, is released uncharged, before its end of life. Zero
+	// releases none before then.
 	FirstHeartbeat time.Duration
 }
 

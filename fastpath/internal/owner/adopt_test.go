@@ -295,7 +295,8 @@ func TestAReapWaitsForItsFullRecord(t *testing.T) {
 }
 
 // TestAHoldWithNoHeartbeatIsNotReaped: it has no snapshot to reap at; a
-// stream that never heartbeated, and a request that never streams, wait.
+// stream that never heartbeated, and a request that never streams, wait
+// for their end of life (TestAHoldWithNoTerminalIsReleasedAtItsEndOfLife).
 func TestAHoldWithNoHeartbeatIsNotReaped(t *testing.T) {
 	f, _, rec := adoptFixture(t)
 	f.admit(t, 10, true)
