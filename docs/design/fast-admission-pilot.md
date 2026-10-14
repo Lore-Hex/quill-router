@@ -44,18 +44,21 @@ releases no hold, books no usage and pays no markup; the lease booked the
 usage, and the audit (`fastpathctl audit`) holds it. The records say what
 the fast path decided, never what the route asked: the owner's winner (its
 kind and charge), or the closed lease's disposition, and the generation
-and activity rows carry that charge too; a terminal the fast path has not
-decided (`recorded`, durable in the drain log with the lease's order still
-to decide; `failed`; `invalid`; a winner of another kind; a booking
-answered to a refund, which has no settle body to record) is answered 503
-with `Retry-After`, nothing written, and the enclave retries it from its
-own queue. The records commit with the settle-outbox intent already
-resolved, as the one-commit settle writes it, so the refill attachment
-and the row's retention clock are as today's. A BYOK terminal (the key's
-own provider paid) charges the lease nothing, as today's path books
-nothing. A hold admitted whose authorization row then could not be
-written is refunded at once, best effort, so it does not wait for the
-lease to drain.
+and activity rows carry that charge too. The terminal is durable before
+the front door is asked, as today's two-commit settle makes it: the
+settle-outbox intent is pending first, with the charge frozen. A terminal
+the fast path has not decided (`recorded`, durable in the drain log with
+the lease's order still to decide; `failed`; `invalid`; a winner of
+another kind; a booking answered to a refund, which has no settle body to
+record; no front door in reach) is answered as today's `intent_durable`,
+and the drain asks the front door again later (`_apply_leased` in
+`services/settle_outbox_apply.py`), since the enclave does not retry a
+non-streaming terminal itself. Decided, the records commit in one commit
+with the intent resolved, so the refill attachment and the row's
+retention clock are as today's. A BYOK terminal (the key's own provider
+paid) charges the lease nothing, as today's path books nothing. A hold
+admitted whose authorization row then could not be written is refunded
+at once, best effort, so it does not wait for the lease to drain.
 
 The cohort, `pilot_reason` in `services/fastpath_frontdoor.py`, is the
 design's §4.11 at its narrowest: a credit-funded key on a standard route,
@@ -113,6 +116,23 @@ deploy; the fast path's switch changes at once.
 - The control plane's log line per authorize the pilot took or passed over
   (`fastpath authorize <status>`), and the settle's.
 - Cloud Logging: no `fastpath_alert` entries for the workspace.
+
+## Two exposures the pilot carries
+
+Both are the fast path's to fix, filed as follow-ups, and stated here
+because the pilot runs with them:
+
+- A non-streaming hold with no terminal is never released by the owner:
+  it has no heartbeats, so adoption skips it and a healthy owner keeps
+  renewing its lease past the hold's end of life; it ends when the lease
+  drains. The pilot reaches this when a hold is admitted and its
+  authorization row is not written and the best-effort refund is not
+  taken (logged at error), or when a durable intent is never decided. The
+  audit shows such holds; W2's turn-off drains them.
+- A refund that reaches the drain log (the owner out of reach) becomes a
+  winner with no boot binding, so the auditor's pending work alerts
+  `no_boot_binding` on every sweep and that pack is never marked done;
+  the lease does not retire. Money is unaffected.
 
 ## What is not in the pilot
 

@@ -12,7 +12,7 @@ import pytest
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
-from trusted_router.storage_models import CreditProvenance, Generation, SettleOutboxRow
+from trusted_router.storage_models import CreditProvenance, Generation
 from trusted_router.types import UsageType
 
 
@@ -130,13 +130,6 @@ def test_a_leased_authorize_needs_its_id_up_front() -> None:
         )
 
 
-def _intent(authorization: Any, *, cost: int, kind: str = "settle") -> SettleOutboxRow:
-    return SettleOutboxRow(
-        authorization_id=authorization.id, intent_kind=kind, settle_origin="typed", actual_cost_micro=cost,
-        selected_usage_type="Credits", auto_refill_workspace_id=authorization.workspace_id if kind == "settle" else None,
-    )
-
-
 def _generation(authorization: Any, *, cost: int) -> Generation:
     return Generation(
         id="gen-1",
@@ -169,7 +162,7 @@ def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
 
     result = store.typed_finalize_leased_result(
         authorization.id, success=True, actual_microdollars=700, selected_usage_type="Credits",
-        generation=generation, authorization_snapshot=authorization, settle_intent=_intent(authorization, cost=700),
+        generation=generation, authorization_snapshot=authorization, mark_intent=None,
     )
 
     assert result is not None
@@ -179,10 +172,7 @@ def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
     assert finalized.finalized_cost_microdollars == 700
     stored = store.get_gateway_authorization(authorization.id)
     assert stored is not None and stored.settled and stored.finalized_generation_id == "gen-1"
-    # The intent is written already done, with its refill attachment, and
-    # the row's retention clock is armed.
-    intents = [row for row in db.settle_outbox.values() if row["authorization_id"] == authorization.id]
-    assert len(intents) == 1 and intents[0]["status"] == "done" and intents[0]["auto_refill_workspace_id"] == workspace.id
+    # The row's retention clock is armed.
     assert db.gateway_authorizations[authorization.id]["terminal_at"] is not None
     assert stored.fastpath_envelope == "sealed-1"
     assert _credit_rows(db, workspace.id) == credit_before, "the lease booked the usage, not this commit"
@@ -198,7 +188,7 @@ def test_a_leased_refund_marks_the_authorization_refunded_with_no_generation() -
     assert authorization is not None
     result = store.typed_finalize_leased_result(
         authorization.id, success=False, actual_microdollars=0, selected_usage_type="Credits",
-        generation=None, authorization_snapshot=authorization, settle_intent=_intent(authorization, cost=0, kind="refund"),
+        generation=None, authorization_snapshot=authorization, mark_intent=None,
     )
     assert result is not None
     _finalize, finalized = result
@@ -214,13 +204,13 @@ def test_a_second_leased_settle_is_a_replay_not_a_second_record() -> None:
     generation = _generation(authorization, cost=700)
     first = store.typed_finalize_leased_result(
         authorization.id, success=True, actual_microdollars=700, selected_usage_type="Credits",
-        generation=generation, authorization_snapshot=authorization, settle_intent=_intent(authorization, cost=700),
+        generation=generation, authorization_snapshot=authorization, mark_intent=None,
     )
     assert first is not None
     # From the stored row this time: it is settled, so nothing is written.
     again = store.typed_finalize_leased_result(
         authorization.id, success=True, actual_microdollars=900, selected_usage_type="Credits",
-        generation=generation, settle_intent=_intent(authorization, cost=900),
+        generation=generation, mark_intent=None,
     )
     assert again is None
     stored = store.get_gateway_authorization(authorization.id)

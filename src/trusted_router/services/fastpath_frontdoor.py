@@ -29,6 +29,8 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -51,6 +53,8 @@ CONNECT_TIMEOUT_SECONDS = 0.25
 # How many front doors one call may try within its budget: the fleet has
 # two, and a stale membership row must not spend the budget on a third.
 DOORS_PER_CALL = 2
+# Calls in flight at once; past it a call is today's path at once.
+WORKERS = 64
 
 ADMITTED = "admitted"
 BUSY = "busy"
@@ -171,8 +175,13 @@ class FrontDoorClient:
         self._breakers: dict[str, _Breaker] = {}
         self._turn = 0
         self._lock = threading.Lock()
+        # The whole call, the membership read included, runs on a worker so
+        # the caller's wait is bounded by the budget whatever the SDK or the
+        # socket do; a call left behind ends on its own timeouts.
+        self._workers = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="fastpath-front-door")
 
     def close(self) -> None:
+        self._workers.shutdown(wait=False)
         self._client.close()
 
     # -- authorize --------------------------------------------------------
@@ -237,10 +246,27 @@ class FrontDoorClient:
     # -- transport --------------------------------------------------------
 
     def _call(self, path: str, body: dict[str, Any]) -> dict[str, Any] | None:
-        """One JSON call, tried on at most DOORS_PER_CALL front doors the
-        breakers allow, in turn from a rotating start, within one budget for
-        the whole call, the membership read included. None when none answered
-        200 with a JSON object in time."""
+        """One JSON call within one budget for the whole call, the membership
+        read included: the caller waits at most the budget. None when no
+        front door answered 200 with a JSON object in time."""
+        try:
+            future = self._workers.submit(self._call_within, path, body)
+        except RuntimeError:
+            logger.warning("fastpath %s: no worker", path)
+            return None
+        try:
+            return future.result(timeout=self._budget)
+        except FutureTimeout:
+            logger.warning("fastpath %s: budget spent", path)
+            return None
+        except Exception:  # noqa: BLE001 - a front door call must not fail the request
+            logger.exception("fastpath %s failed", path)
+            return None
+
+    def _call_within(self, path: str, body: dict[str, Any]) -> dict[str, Any] | None:
+        """The call itself, tried on at most DOORS_PER_CALL front doors the
+        breakers allow, in turn from a rotating start, each request given what
+        remains of the budget."""
         deadline = self._clock() + self._budget
         addresses = tuple(self._front_doors(self._budget))
         if not addresses:

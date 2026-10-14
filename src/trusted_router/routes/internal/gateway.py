@@ -10,7 +10,6 @@ returns already_settled=True without double-charging.
 
 from __future__ import annotations
 
-import base64
 import copy
 import dataclasses
 import datetime as dt
@@ -240,7 +239,12 @@ from trusted_router.storage_errors import (
     transient_store_error_types,
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
-from trusted_router.storage_gcp_settle_outbox import ENQ_INSERTED, ENQ_REFRESHED
+from trusted_router.storage_gcp_settle_outbox import (
+    ENQ_EXISTS_TERMINAL,
+    ENQ_INSERTED,
+    ENQ_LEASED,
+    ENQ_REFRESHED,
+)
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
@@ -4990,8 +4994,17 @@ def _fastpath_release_after_failure(settings: Settings, admitted: _fastpath.Admi
     except Exception:  # noqa: BLE001 - a release after a failure must not mask the failure
         logger.exception("fastpath pilot release after a failed insert authorization_id=%s", authorization_id)
         return
-    logger.warning(
-        "fastpath pilot hold released after a failed insert authorization_id=%s status=%s",
+    if terminal.status in {_fastpath.WON, _fastpath.SETTLED, _fastpath.RECORDED}:
+        logger.warning(
+            "fastpath pilot hold released after a failed insert authorization_id=%s status=%s",
+            authorization_id,
+            terminal.status,
+        )
+        return
+    # failed, invalid: the hold was not given back; it ends with the lease
+    # (docs/design/fast-admission-pilot.md, what is not in the pilot).
+    logger.error(
+        "fastpath pilot hold NOT released after a failed insert authorization_id=%s status=%s",
         authorization_id,
         terminal.status,
     )
@@ -5009,139 +5022,55 @@ def _settle_leased_authorization(
     settle_intent: SettleOutboxRow | None,
     typed_store: Any,
 ) -> dict[str, Any]:
-    """The pilot's terminal (docs/design/fast-admission-pilot.md): the settle
-    or refund forwarded to the front door with the charge Python priced, then
-    the terminal's records written here in one commit, with the intent
-    already resolved, and nothing booked. A terminal the front door did not
-    decide answers 503 with Retry-After: the enclave retries it from its own
-    queue; the terminal the front door took is durable there."""
-    client = _fastpath_front_door(settings)
+    """The pilot's terminal (docs/design/fast-admission-pilot.md), durable
+    first as today's two-commit settle: the settle-outbox intent is pending
+    before the front door is asked, so a terminal the front door has not
+    decided (an owner out of reach, a drain-log `recorded`, a winner of
+    another kind) is answered as today's `intent_durable` and the drain asks
+    again later, with the frozen charge. Decided, the records are written
+    here in one commit with the intent resolved, and nothing booked: the
+    lease did the booking."""
+    from trusted_router.services import fastpath_settle
+
     unavailable = api_error(
         503, "Settlement unavailable; retry", ErrorType.SERVICE_UNAVAILABLE, headers={"Retry-After": "1"},
     )
-    if client is None or settle_intent is None:
+    if settle_intent is None:
         raise unavailable
-    envelope = str(authorization.fastpath_envelope)
-    estimate = int(authorization.estimated_microdollars)
-    # A BYOK fallback books no credit usage today (the key's owner pays the
-    # provider); a lease charges what it is told, so it is told nothing.
-    credit = UsageType.coerce(selected_usage_type) == UsageType.CREDITS
-    charge = int(actual_cost) if success and credit else 0
-    kind = "settle" if success else "refund"
-    money = {"charge": charge, "estimate": estimate}
-    boot_kid = authorization.stage_d_boot_kid or ""
-    if not boot_kid:
-        logger.error("fastpath pilot terminal without a boot binding authorization_id=%s", authorization.id)
+    charge = fastpath_settle.charge_for(success=success, actual_cost=actual_cost, selected_usage_type=selected_usage_type)
+    intent = dataclasses.replace(settle_intent, actual_cost_micro=charge)
     try:
-        if success:
-            full = json.dumps(
-                {
-                    "boot": base64.b64encode(boot_kid.encode("utf-8")).decode("ascii"),
-                    "kind": kind,
-                    "authorization_id": authorization.id,
-                    "workspace_id": authorization.workspace_id,
-                    "generation_id": generation.id if generation is not None else None,
-                    "model": authorization.model_id,
-                    "charge": charge,
-                    "estimate": estimate,
-                },
-                separators=(",", ":"),
-            ).encode("utf-8")
-            terminal = client.settle(envelope=envelope, charge=charge, full=full, money=money)
-        else:
-            terminal = client.refund(envelope=envelope, money=money)
-    except _fastpath.FrontDoorUnavailable:
-        logger.warning(
-            "fastpath pilot terminal unavailable authorization_id=%s kind=%s", authorization.id, kind,
-        )
+        enqueued = spanner_settle_outbox().enqueue(intent, initial_delay_seconds=60)
+    except Exception:
+        logger.exception("fastpath pilot intent enqueue failed authorization_id=%s", authorization.id)
         raise unavailable from None
-    logger.info(
-        "fastpath pilot terminal %s authorization_id=%s kind=%s won=%s charge=%d outcome=%s",
-        terminal.status,
-        authorization.id,
-        kind,
-        terminal.kind,
-        terminal.charge,
-        terminal.outcome,
-    )
-    # What the records say is what the fast path decided, never what this
-    # route asked: the owner's winner (its kind and charge), or the closed
-    # lease's disposition. Anything else is not final here.
-    if terminal.status == _fastpath.WON:
-        if terminal.kind != kind:
-            # Another terminal of this authorization won at the owner, and its
-            # own route writes the records; this one retries into the replay.
-            logger.error(
-                "fastpath pilot terminal lost to another kind authorization_id=%s kind=%s won=%s",
-                authorization.id,
-                kind,
-                terminal.kind,
-            )
-            raise unavailable
-        booked_success, booked = success, int(terminal.charge)
-        if booked != charge:
-            logger.warning(
-                "fastpath pilot winner's charge differs authorization_id=%s won=%d priced=%d",
-                authorization.id,
-                booked,
-                charge,
-            )
-    elif terminal.status == _fastpath.SETTLED:
-        # The lease closed before this terminal: the disposition is the
-        # outcome, a booking (settled, or the reaper's snapshot) or none. A
-        # booking's records need the settle's body, so only the settle
-        # route writes them; a refund answered with a booking retries.
-        if terminal.outcome in {"settled", "reaped_snapshot"} and terminal.cost_known:
-            if not success:
-                logger.error(
-                    "fastpath pilot refund answered with a booking authorization_id=%s outcome=%s",
-                    authorization.id,
-                    terminal.outcome,
-                )
-                raise unavailable
-            booked_success, booked = True, int(terminal.cost)
-        elif terminal.outcome in {"refunded", "released"}:
-            booked_success, booked = False, 0
-        else:
-            logger.error(
-                "fastpath pilot terminal after the lease closed with no outcome authorization_id=%s outcome=%s",
-                authorization.id,
-                terminal.outcome,
-            )
-            raise unavailable
+    if enqueued == ENQ_EXISTS_TERMINAL:
+        refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
+        _release_user_model_slot_safely(refreshed)
+        return {"data": _already_settled_gateway_data(refreshed)}
+    if enqueued == ENQ_LEASED:
+        # A drain holds the row: it asks the front door itself.
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
+    try:
+        decision = fastpath_settle.forward_terminal(
+            _fastpath_front_door(settings), authorization, success=success, charge=charge, generation=generation,
+        )
+    except fastpath_settle.Undecided as undecided:
         logger.warning(
-            "fastpath pilot terminal after the lease closed authorization_id=%s outcome=%s cost=%d priced=%d",
+            "fastpath pilot terminal undecided, left to the drain authorization_id=%s why=%s",
             authorization.id,
-            terminal.outcome,
-            booked,
-            charge,
+            undecided,
         )
-    else:
-        # recorded (durable in the drain log, the lease's order still to
-        # decide), failed, invalid, or a status this release does not know:
-        # nothing is written for a terminal the fast path has not decided.
-        # The enclave retries from its own queue until it is decided.
-        logger.warning(
-            "fastpath pilot terminal undecided authorization_id=%s status=%s", authorization.id, terminal.status,
-        )
-        raise unavailable
-    if generation is not None and booked_success and generation.total_cost_microdollars != booked:
-        # The records carry the charge the fast path booked, not the price.
-        generation = dataclasses.replace(generation, total_cost_microdollars=booked)
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
     result = typed_store.typed_finalize_leased_result(
         authorization.id,
-        success=booked_success,
-        actual_microdollars=booked,
+        success=decision.success,
+        actual_microdollars=decision.charge,
         selected_usage_type=selected_usage_type,
-        generation=generation if booked_success else None,
+        generation=decision.generation,
         authorization_snapshot=authorization,
-        refund_benchmark=refund_benchmark if not booked_success else None,
-        settle_intent=dataclasses.replace(
-            settle_intent,
-            intent_kind="settle" if booked_success else "refund",
-            actual_cost_micro=booked,
-            auto_refill_workspace_id=settle_intent.auto_refill_workspace_id if booked_success else None,
-        ),
+        refund_benchmark=refund_benchmark if not decision.success else None,
+        mark_intent=intent.intent_kind,
     )
     if result is None:
         refreshed = STORE.get_gateway_authorization(authorization.id) or authorization

@@ -165,6 +165,19 @@ def test_one_call_stays_within_its_budget_whatever_the_doors_do() -> None:
     assert [round(t, 2) for t in seen_timeouts] == [1.5]
 
 
+def test_a_slow_membership_read_cannot_hold_the_caller_past_the_budget() -> None:
+    import time as real_time
+
+    def slow_doors(_budget: float) -> tuple[str, ...]:
+        real_time.sleep(2.0)
+        return ("10.0.0.1:8080",)
+
+    client = fd.FrontDoorClient(slow_doors, timeout_seconds=0.2, transport=_transport({"10.0.0.1:8080": _Door({"/v1/authorize": ADMIT})}))
+    started = real_time.monotonic()
+    assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
+    assert real_time.monotonic() - started < 1.0
+
+
 def test_a_body_that_is_not_json_counts_as_a_failure() -> None:
     client = _client({"10.0.0.1:8080": _Door(raw=b"<html>")})
     assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
