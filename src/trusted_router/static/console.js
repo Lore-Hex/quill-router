@@ -258,6 +258,8 @@ async function runFirstActivationCall(button) {
     );
     result.hidden = false;
     markActivationComplete(flow);
+    button.closest(".activation-primary-action").hidden = true;
+    window.dispatchEvent(new Event("trustedrouter:first-call-success"));
     if (label)
       label.textContent = "Test passed";
     button.classList.add("activation-run-success");

@@ -75,13 +75,23 @@
           </div>
           <code data-result-output>PONG</code>
         </div>
+        <details class="activation-request-details"><summary>Request details</summary>
         <dl class="activation-result-grid">
           <div><dt>Model</dt><dd data-result-model>trustedrouter/cheap</dd></div>
           <div><dt>Provider</dt><dd data-result-provider>Selected automatically</dd></div>
           <div><dt>Latency</dt><dd data-result-latency>--</dd></div>
           <div><dt>Exact cost</dt><dd data-result-cost>$0.000000</dd></div>
         </dl>
-        <div class="activation-result-actions" data-success-actions>
+        </details>
+        <div class="activation-rewards-invitation" data-rewards-invitation hidden>
+          <h3>Your next million tokens.</h3>
+          <p>Five ways to earn. Start with GitHub.</p>
+          <div class="activation-result-actions">
+            <button class="btn primary" type="button" data-rewards-open data-rewards-success hidden>Unlock extra tokens</button>
+            <a class="btn" href="/console/api-keys">Continue to console</a>
+          </div>
+        </div>
+        <div class="activation-result-actions" data-success-actions data-rewards-default-actions>
           <a class="btn primary" href="#connect-your-app">Connect your app</a>
           <a class="btn" href="/console/credits">Add credits for production</a>
           <a class="activation-trust-link" href="https://trust.trustedrouter.com" target="_blank" rel="noopener">Verify the running gateway</a>

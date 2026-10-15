@@ -174,3 +174,69 @@ authorized. Git staging and commit use the supported sandbox escalation flow.
 No rebase was attempted with this uncommitted work. Dependency setup failures
 are environment blockers, not attributed to a source regression. Run all release
 gates in a supported environment and reconcile with current main before release.
+
+## UX revision (October 14, 2026)
+
+Removed user-facing "Optional" and honor-system copy at Jasmine's request.
+Each reward now starts with an outbound action button; opening its destination
+unlocks that action's claim button. Jasmine chose this per-reward UX over gating
+access to the whole product. Opening a link alone never issues a grant. This is
+a browser interaction gate, not proof of a follow; opened-link state resets on
+page reload while committed claims remain durable. Updated browser suite: 16/16
+passed, including per-action unlock, no grant on link open, retries and layouts.
+Required Python gates were retried and still stop at the locked PyTorch platform
+blocker. The local preview uses temporary runtime dependencies, not the CI lock.
+
+Placement review: the supplied mockup and feature plan point to the successful
+first-call screen. That timing mismatch is addressed by the October 15 invitation revision below. No separate
+marketing brief authorizing an all-actions product-access gate was found.
+
+Local preview reset repair: the temporary `/tmp/social_rewards_app_preview.py`
+harness now uses `clear_session_cookie` to clear both session and sign-in hint.
+Previously Start over left `tr_signed_in=1`, making homepage links redirect to
+Console and back without opening sign-in. HTML responses now disable caching and
+clear stale hints when the in-memory session no longer exists after a restart.
+Verified in the actual app: homepage signup opens the dialog, simulated Google
+signup reaches onboarding, first call succeeds, rewards opens after API keys,
+signed-in Console works, and Start over restores working signup controls.
+These changes repair the temporary preview harness, not production auth behavior.
+
+
+## Success-screen invitation (October 15, 2026)
+
+The first-call success screen now offers **Unlock extra tokens** beside
+**Continue to console**. It appears only when the successful result is visible
+and the server confirms eligibility, an enabled campaign and first-call evidence.
+The browser success event triggers a server reread; it cannot authorize a reward.
+The modal opens only after the invitation is clicked, with GitHub first.
+Displaying the invitation consumes the automatic offer so continuing to API keys
+does not immediately open another popup. Credits remains the return path;
+accounts whose first call happens externally retain the next-console offer.
+The key reveal is never automatically covered. Failed or ineligible first calls
+do not show the invitation, and standard setup actions remain available.
+
+Browser checks cover the invitation at 1440, 390 and 320px, server evidence,
+explicit opening, GitHub ordering and focus restoration. Full Python gates were
+retried with supported escalation and remain blocked by torch==2.12.0 lacking an
+Intel macOS wheel/source distribution. No push or deployment performed.
+
+## Visual simplification and deliberate claim step (October 15, 2026)
+
+Removed nested success/reward cards and the completed run button. Request
+metadata now lives under Request details. The reward invitation is an unboxed
+section with a short headline and two actions. Rewards uses monochrome platform
+marks, divider-separated rows and short Star/Follow/Subscribe buttons; removed
+all outbound arrow glyphs. Workspace and conversion details remain available
+under About these rewards.
+
+Opening a destination expands only that action's instructions and an unchecked,
+action-specific completion confirmation. Claim remains disabled until confirmed;
+unchecking locks it again. This browser gate does not verify platform follows.
+GitHub remains first. No OAuth scopes, external follows or production billing
+were changed. Real verification would be separate platform-integration work.
+
+All 19 browser tests passed; a focused follow-up also checks confirmation toggle
+behavior. TypeScript, CSS lint, JS syntax and diff whitespace checks passed.
+All three required Python gates still fail during dependency setup because
+locked torch==2.12.0 has no Intel macOS distribution. Actual local app inspected
+at desktop and 390px widths; local server uses the existing simulated harness.

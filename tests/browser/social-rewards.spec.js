@@ -42,8 +42,9 @@ async function rewardsPage(page, options = {}) {
     body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
       <link rel="stylesheet" href="/static/tokens.css"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/console.css">
       </head><body class="console"><main style="padding:32px"><h1>Credits</h1><p>Available $0.150000</p><button class="btn" data-rewards-open hidden>Social rewards</button>
+      ${options.welcome ? `<div data-call-result hidden>${fs.readFileSync(path.join(root, "src/trusted_router/templates/console/welcome.html"), "utf8").split('<div class="activation-rewards-invitation"')[1].split('<div class="activation-result-actions" data-success-actions data-rewards-default-actions>')[0].replace(/^/, '<div class="activation-rewards-invitation"')}</div>` : ""}
       ${options.reveal ? '<div class="console-key-reveal">One-time API key reveal</div>' : ""}</main>
-      ${fs.readFileSync(path.join(root, "src/trusted_router/templates/console/_social_rewards.html"), "utf8").replace(/\?v=\{\{.*?\}\}/g, "")}</body></html>`,
+      ${fs.readFileSync(path.join(root, "src/trusted_router/templates/console/_social_rewards.html"), "utf8").replace(/\{\{.*?\}\}/g, "test")}</body></html>`,
   }));
   await page.goto("http://127.0.0.1:18083/social-rewards-preview");
   return { state, requests };
@@ -104,10 +105,31 @@ test("outbound click does not claim; explicit attestation commits one action", a
   const popup = await popupPromise;
   await popup.close();
   expect(requests.filter((r) => r.url.endsWith("/claim"))).toHaveLength(0);
-  await page.getByRole("button", { name: "I’ve done this — claim reward" }).first().click();
+  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
+  await page.getByRole("button", { name: "Claim 200K tokens" }).first().click();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
   await expect(page.getByRole("button", { name: "✓ Claimed" })).toBeDisabled();
   expect(requests.find((r) => r.url.endsWith("/claim")).body).toEqual({ action: "github", attested: true });
+});
+
+test("reward button opens its destination before enabling only that claim", async ({ page }) => {
+  const { requests } = await rewardsPage(page);
+  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toHaveCount(0);
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).first().click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL("https://example.org/github");
+  await popup.close();
+  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeDisabled();
+  await expect(page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." })).not.toBeChecked();
+  const confirmation = page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." });
+  await confirmation.check();
+  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeEnabled();
+  await confirmation.uncheck();
+  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeDisabled();
+  expect(requests.filter((r) => r.url.endsWith("/claim"))).toHaveLength(0);
+  await expect(page.getByText("0 of 5 rewards claimed")).toBeVisible();
 });
 
 test("pending claim cannot repeat and a lost committed response reconciles", async ({ page }) => {
@@ -117,7 +139,11 @@ test("pending claim cannot repeat and a lost committed response reconciles", asy
     state.actions[0].claimed = true;
     await route.abort("failed");
   } });
-  await page.getByRole("button", { name: "I’ve done this — claim reward" }).first().click();
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).first().click();
+  await (await popupPromise).close();
+  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
+  await page.getByRole("button", { name: "Claim 200K tokens" }).first().click();
   await expect(page.getByRole("button", { name: "Adding reward…" })).toBeDisabled();
   release();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
@@ -131,7 +157,11 @@ test("failed claim is retryable with the same action", async ({ page }) => {
     state.actions[0].claimed = true;
     return route.fulfill({ json: state });
   } });
-  await page.getByRole("button", { name: "I’ve done this — claim reward" }).first().click();
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).first().click();
+  await (await popupPromise).close();
+  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
+  await page.getByRole("button", { name: "Claim 200K tokens" }).first().click();
   await page.getByRole("button", { name: "Retry claim" }).click();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
 });
@@ -151,14 +181,14 @@ test("ownership loss clears existing claims and disables the offer", async ({ pa
   state.eligible = false;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.getByText("This account is not eligible for this offer.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "I’ve done this — claim reward" })).toHaveCount(0);
+  await expect(page.locator("[data-rewards-list] button")).toHaveCount(0);
 });
 
 test("Credits shows paused and locked states without enabling claims", async ({ page }) => {
   await rewardsPage(page, { state: { enabled: false } });
   await page.getByRole("button", { name: "Social rewards", exact: true }).click();
   await expect(page.getByText("Rewards are currently paused. Your claimed rewards are safe.")).toBeVisible();
-  for (const button of await page.getByRole("button", { name: "I’ve done this — claim reward" }).all()) {
+  for (const button of await page.locator("[data-reward-start]").all()) {
     await expect(button).toBeDisabled();
   }
 });
@@ -185,5 +215,35 @@ for (const width of [1440, 390, 320]) {
     await expect(page.getByRole("button", { name: "Close social rewards", exact: true })).toBeFocused();
     await dialog.evaluate((node) => { node.scrollTop = 0; });
     await page.screenshot({ path: `/tmp/social-rewards-${width}.png` });
+  });
+}
+
+for (const width of [1440, 390, 320]) {
+  test(`first-call invitation requires server evidence and explicit opening at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { state, requests } = await rewardsPage(page, {
+      welcome: true, reveal: true, state: { first_call_complete: false },
+    });
+    const invitation = page.getByRole("button", { name: "Unlock extra tokens", exact: true });
+    await expect(invitation).not.toBeVisible();
+    const signalSuccess = () => page.evaluate(() => {
+      document.querySelector("[data-call-result]").hidden = false;
+      window.dispatchEvent(new Event("trustedrouter:first-call-success"));
+    });
+    await signalSuccess();
+    await expect(invitation).not.toBeVisible();
+    expect(requests.some((r) => r.url.endsWith("/shown"))).toBe(false);
+    state.first_call_complete = true;
+    await signalSuccess();
+    await expect(invitation).toBeVisible();
+    await expect.poll(() => state.dismissed).toBe(true);
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await expect(page.getByRole("link", { name: "Continue to console" })).toBeVisible();
+    await invitation.click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.locator("[data-rewards-list] li").first()).toHaveAttribute("data-reward-id", "github");
+    await page.keyboard.press("Escape");
+    await expect(invitation).toBeFocused();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
   });
 }
