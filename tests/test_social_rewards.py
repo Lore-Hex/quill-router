@@ -54,20 +54,20 @@ def _post(client, path="claim", **body):
                        headers={"Origin": "http://testserver"})
 
 
-def test_claim_requires_first_call_then_committed_grant_is_progress():
+def test_claim_before_first_call_is_committed_once():
     client, result, _ = _account(activated=False)
-    assert _post(client, action="github", attested=True).status_code == 409
-    record_successful_api_call(result.workspace.id, model="test", provider="test")
     response = _post(client, action="github", attested=True)
     assert response.status_code == 200
+    assert response.json()["first_call_complete"] is False
     assert response.json()["actions"][0]["claimed"] is True
     assert _post(client, action="github", attested=True).status_code == 200
     assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
 
 
 def test_claims_concurrent_fixed_total_and_destination():
-    client, result, settings = _account()
+    client, result, settings = _account(activated=False)
     other = STORE.create_workspace(result.user.id, "Other")
+    other_initial_credit = live_credit_summary(other.id)["total_credits"]
     token, _ = STORE.create_auth_session(user_id=result.user.id, provider="google", label="other",
                                          workspace_id=other.id, ttl_seconds=3600)
     client.cookies.set("tr_session", token)
@@ -75,7 +75,7 @@ def test_claims_concurrent_fixed_total_and_destination():
         list(pool.map(lambda a: claim(result.user.id, a, settings),
                       [action for action, _, _ in ACTIONS] * 4))
     assert live_credit_summary(result.workspace.id)["total_credits"] == 300_000
-    assert live_credit_summary(other.id)["total_credits"] == 0
+    assert live_credit_summary(other.id)["total_credits"] == other_initial_credit
     assert all(a["claimed"] for a in client.get("/console/social-rewards").json()["actions"])
 
 
