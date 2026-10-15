@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 from evidence import render_evidence, sector_art
 from member_badges import build_badges
+from press import build_press
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -104,6 +105,7 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
+            "media_kit_url": "https://nytokenexchange.com/media-kit" if market["slug"] == "new-york" else "https://trustedrouter.com/media-kit",
             "hero_headline": headline,
             "provider_ticker": provider_ticker(),
             "buyer_heading": html.escape(market.get("buyer_heading", "Buy capacity. Set your requirements.")).replace("Choose how it is served.", '<br>Choose how it is <span class="headline-accent">served.</span>').replace("Spend it", "Spend<br>it").replace("jurisdiction.", '<span class="headline-accent">jurisdiction.</span>').replace("Set your requirements.", '<br>Set your <span class="headline-accent">requirements.</span>'),
@@ -155,6 +157,7 @@ def build(output: Path) -> None:
     for name in ("badge.css", "badge.js"):
         shutil.copyfile(HERE / name, assets / name)
     build_badges(assets / "badges")
+    build_press(output)
     for name in ("nyte-routing-demo.mp4", "nyte-routing-demo-poster.jpg"):
         shutil.copyfile(HERE / "media" / name, assets / name)
     for art in sorted((HERE / "art").glob("*.webp")):
@@ -180,6 +183,7 @@ def build(output: Path) -> None:
         provider_page = (
             '<url><loc>https://nytokenexchange.com/providers</loc></url>'
             '<url><loc>https://nytokenexchange.com/badge</loc></url>'
+            '<url><loc>https://nytokenexchange.com/media-kit</loc></url>'
             if market["slug"] == "new-york" else ""
         )
         (folder / "sitemap.xml").write_text(
