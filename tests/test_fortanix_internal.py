@@ -90,12 +90,18 @@ def test_private_test_does_not_satisfy_byok_or_privacy_filters(provider) -> None
         chat_route_endpoint_candidates({"model": MODEL, "provider": provider}, Settings(environment="test"))
 
 
-@pytest.mark.parametrize("region", ["azure-australiaeast", "uaenorth", "unknown-region"])
+@pytest.mark.parametrize("region", ["unknown-region"])
 def test_non_allowlisted_cloud_is_explicitly_disabled(region: str) -> None:
     settings = Settings(environment="test", serving_region=region, synthetic_monitor_api_key=KEY)
     with pytest.raises(HTTPException) as error:
         require_internal_model_key({"model": MODEL}, lookup_hash_api_key(KEY), settings)
     assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize("region", ["us-central1", "aws-eu-west-3", "azure-australiaeast", "azure-uaenorth"])
+def test_every_gateway_cloud_admits_the_probe_key(region: str) -> None:
+    settings = Settings(environment="test", serving_region=region, synthetic_monitor_api_key=KEY)
+    require_internal_model_key({"model": MODEL}, lookup_hash_api_key(KEY), settings)
 
 
 @pytest.mark.parametrize("path", [
