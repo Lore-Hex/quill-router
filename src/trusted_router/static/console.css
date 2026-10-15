@@ -1719,3 +1719,52 @@ body.console {
   --adyen-sdk-border-radius-m: var(--tr-radius-control);
   --adyen-sdk-border-radius-l: var(--tr-radius-control);
 }
+
+/* Optional social rewards; native dialog retains keyboard focus and Escape. */
+.social-rewards {
+  color: var(--tr-color-text-primary);
+  background: var(--tr-color-surface-bg-alt);
+  border: 1px solid var(--tr-color-line-rule-soft);
+  border-radius: 8px;
+  padding: 0;
+  width: min(760px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  font-family: var(--tr-font-family-sans);
+}
+.social-rewards::backdrop { background: rgb(0 0 0 / 78%); }
+.social-rewards-head { padding: 28px 30px 20px; position: relative; }
+.social-rewards-close { position: absolute; right: 16px; top: 16px; font-size: 24px; }
+.social-rewards-eyebrow { color: var(--tr-color-text-tertiary); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin: 0 40px 14px 0; }
+.social-rewards h2 { font-size: clamp(24px, 4vw, 32px); line-height: 1.15; letter-spacing: -.025em; margin: 0 35px 14px 0; }
+.social-rewards-head > p:not(.social-rewards-eyebrow, .social-rewards-progress) { color: var(--tr-color-text-secondary); font-size: 14px; line-height: 1.5; }
+.social-rewards-progress { font-size: 18px; font-weight: 600; margin: 24px 0 12px; }
+.social-rewards progress { display: block; width: 100%; height: 6px; border: 0; border-radius: 4px; accent-color: var(--tr-color-accent-base); background: var(--tr-color-line-rule-soft); }
+.social-rewards progress::-webkit-progress-bar { background: var(--tr-color-line-rule-soft); border-radius: 4px; }
+.social-rewards progress::-webkit-progress-value { background: var(--tr-color-accent-base); border-radius: 4px; }
+.social-rewards-content { padding: 0 30px 24px; }
+.social-rewards-list { padding: 0; margin: 0; list-style: none; display: grid; gap: 10px; }
+.social-rewards-list li { border: 1px solid var(--tr-color-line-rule-soft); padding: 16px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; border-radius: 4px; }
+.social-rewards-list a { color: var(--tr-color-text-primary); font-size: 16px; font-weight: 600; line-height: 1.4; text-decoration: none; }
+.social-rewards-list a:hover { text-decoration: underline; }
+.social-rewards-list p { color: var(--tr-color-text-tertiary); font-size: 13px; line-height: 1.4; margin: 6px 0 0; }
+.social-rewards-controls { max-width: 240px; }
+.social-rewards-controls .btn { font-size: 13px; min-height: 44px; white-space: normal; }
+.social-rewards-controls p:empty { display: none; }
+.social-rewards-list .claimed { background: var(--tr-color-privacy-neutral-bg); }
+.social-rewards-list .claimed .btn { opacity: 1; background: transparent; color: var(--tr-color-accent-base); border-color: var(--tr-color-line-rule-soft); }
+.social-rewards-foot { padding: 20px 30px; border-top: 1px solid var(--tr-color-line-rule-soft); display: flex; gap: 24px; align-items: center; }
+.social-rewards-foot p { color: var(--tr-color-text-tertiary); font-size: 12px; line-height: 1.5; margin: 0; }
+.social-rewards-foot .btn { white-space: nowrap; min-height: 44px; }
+.social-rewards :focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 4px; }
+
+@media (max-width: 600px) {
+  .social-rewards-head { padding: 24px 18px 16px; }
+  .social-rewards-eyebrow { min-height: 44px; }
+  .social-rewards h2 { margin-right: 0; }
+  .social-rewards-content { padding: 0 18px 20px; }
+  .social-rewards-list li { grid-template-columns: 1fr; gap: 12px; padding: 14px; }
+  .social-rewards-controls { max-width: none; }
+  .social-rewards-controls .btn { width: 100%; }
+  .social-rewards-foot { padding: 20px 18px; flex-direction: column; align-items: stretch; gap: 16px; }
+}

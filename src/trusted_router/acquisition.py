@@ -429,7 +429,15 @@ def record_successful_api_call_safely(
     *,
     model: str,
     provider: str,
+    settings: Settings | None = None,
 ) -> None:
+    if settings is not None:
+        try:
+            from trusted_router.social_rewards import record_first_call
+
+            record_first_call(workspace_id, settings)
+        except Exception:  # noqa: BLE001 - product eligibility cannot fail inference.
+            log.warning("social_rewards.first_call_write_failed", exc_info=True)
     if not _usage_check_due(workspace_id):
         return
     try:

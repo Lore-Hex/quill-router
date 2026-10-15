@@ -40,6 +40,7 @@ BROWSER_EVENTS = frozenset(
         "signin_mode_switched", "signup_mode_switched",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
         "experiment_exposed",
+        "social_rewards_exposed", "social_reward_clicked",
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",
         "home.base_url_copied", "home.hero_agent_prompt_copied", "home.agent_prompt_copied",
         "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
@@ -56,6 +57,7 @@ CONVERSION_EVENTS = frozenset(
         "signup_completed", "api_key_created", "first_successful_api_call",
         "free_credit_exhausted", "checkout_started", "payment_method_saved",
         "credit_purchase_completed", "retained_api_usage_7d",
+        "social_reward_claimed",
     )
 )
 DIMENSIONS = (

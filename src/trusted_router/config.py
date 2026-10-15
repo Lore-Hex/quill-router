@@ -565,6 +565,13 @@ class Settings(BaseSettings):
     # first workspace. Wallet-only and secondary workspaces receive no grant.
     # $0.30 = 300,000 microdollars.
     signup_trial_credit_microdollars: int = 300_000
+    # Off on every deployment until policy and incident ownership are resolved.
+    # Only the explicitly named issuing plane can enroll or pay claims.
+    social_rewards_enabled: bool = False
+    social_rewards_plane_id: str = ""
+    social_rewards_issuer_id: str = "gcp-primary"
+    # Exact official channel must be confirmed before any reduced signup grant.
+    social_rewards_youtube_url: str = ""
 
     # Global, creation-only operational brake. Returning Google/GitHub/wallet
     # users continue to sign in; only the branches that would create a new

@@ -210,6 +210,7 @@ from trusted_router.storage_models import (
     RoutablePayoutProfile,
     SessionAuthContext,
     SettleOutboxRow,
+    SocialRewardEnrollment,
     TypedFinalizeResult,
     UserModelPayout,
     _is_expired,
@@ -732,6 +733,50 @@ class SpannerStore:
     ) -> list[BedrockGroupBuyPledge]:
         return self.bedrock_group_buy_store.list_private_pledges(limit=limit)
 
+    def get_social_reward_enrollment(self, user_id: str) -> SocialRewardEnrollment | None:
+        return self._read_entity("social_reward_enrollment", user_id, SocialRewardEnrollment)
+
+    def dismiss_social_rewards(self, user_id: str) -> bool:
+        def txn(transaction: Any) -> bool:
+            record = self._read_entity_tx(
+                transaction, "social_reward_enrollment", user_id, SocialRewardEnrollment
+            )
+            if record is None or record.dismissed:
+                return False
+            record.dismissed = True
+            self._write_entity_tx(transaction, "social_reward_enrollment", user_id, record)
+            return True
+
+        return self._run_in_transaction(txn)
+
+    def mark_social_reward_first_call(self, user_id: str) -> bool:
+        def txn(transaction: Any) -> bool:
+            record = self._read_entity_tx(
+                transaction, "social_reward_enrollment", user_id, SocialRewardEnrollment
+            )
+            if record is None or record.first_call_complete:
+                return False
+            record.first_call_complete = True
+            self._write_entity_tx(transaction, "social_reward_enrollment", user_id, record)
+            return True
+
+        return self._run_in_transaction(txn)
+
+    def has_credit_grant(self, workspace_id: str, event_id: str) -> bool:
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT kind FROM tr_trust_event WHERE workspace_id=@workspace_id "
+                    "AND event_id=@event_id",
+                    params={"workspace_id": workspace_id, "event_id": event_id},
+                    param_types={
+                        "workspace_id": self._param_types.STRING,
+                        "event_id": self._param_types.STRING,
+                    },
+                )
+            )
+        return bool(rows and rows[0][0] == "grant")
+
     def ensure_user(
         self,
         user_id: str,
@@ -739,7 +784,12 @@ class SpannerStore:
         *,
         trial_credit_microdollars: int | None = None,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> User:
+        if social_rewards_issuer is not None and (
+            not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
+        ):
+            raise ValueError("social rewards enrollment requires the 150000 signup grant")
         normalized_email = _normalize_email(email or user_id)
 
         def txn(transaction: Any) -> User:
@@ -782,6 +832,11 @@ class SpannerStore:
                 shard_count=credit.shard_count,
             )
             self._insert_owner_inventory_tx(transaction, new_user.id, workspace.id)
+            if social_rewards_issuer is not None:
+                self._write_entity_tx(
+                    transaction, "social_reward_enrollment", new_user.id,
+                    SocialRewardEnrollment(new_user.id, workspace.id, social_rewards_issuer),
+                )
             return new_user
 
         return self._run_in_transaction(txn)
@@ -830,6 +885,7 @@ class SpannerStore:
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> SignupResult | None:
         if self.find_user_by_email(email) is not None:
             return None
@@ -838,6 +894,7 @@ class SpannerStore:
             email=email,
             trial_credit_microdollars=trial_credit_microdollars,
             email_verified=email_verified,
+            social_rewards_issuer=social_rewards_issuer,
         )
         workspace = self.list_workspaces_for_user(user.id)[0]
         if workspace_name:

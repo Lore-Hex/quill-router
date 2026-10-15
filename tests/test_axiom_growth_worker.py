@@ -17,6 +17,19 @@ def event(name='signup_completed', **kwargs):
         'utm_source': 'google', **kwargs}, 'axiom')
 
 
+@pytest.mark.parametrize('name', [
+    'social_rewards_exposed', 'social_reward_clicked', 'social_reward_claimed',
+])
+def test_social_rewards_export_is_distinct_from_purchase_and_follower_verification(name):
+    row = project({
+        '_time': '2026-10-15T02:30:00Z', 'event': 'acquisition.' + name,
+        'anonymous_fingerprint': 'a' * 64, 'amount_microdollars': 30_000,
+    }, 'axiom' if name == 'social_reward_claimed' else 'cloud_logging')
+    assert row['event'] == 'acquisition.' + name
+    assert 'amount_microdollars' not in row  # Promotional grants are not purchases.
+    assert 'verified' not in row
+
+
 class FakeIO:
     def __init__(self, events=(), daily=(), fail=False):
         self.rows = list(events)
