@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -89,7 +90,10 @@ def test_publication_privacy_prices_and_hourly_refresh(client):
     from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 
     provider = PROVIDERS[p.SLUG]
+    # Provider defaults are distinct from our managed organization's opt-in.
     assert provider_privacy_tier(provider) == PRIVACY_TIER_STANDARD
+    assert provider.prepaid_zero_data_retention is True
+    assert provider.prepaid_zero_data_retention_effective_on == "2026-10-14"
     assert not provider.provider_e2ee and not provider.provider_confidential_compute
     assert not provider.renewable_energy_inference
     assert provider.provider_headquarters_country == "US"
@@ -107,9 +111,63 @@ def test_publication_privacy_prices_and_hourly_refresh(client):
     assert response.status_code == 200
     assert "CoralBricks" in response.text and "coralbricks.png" in response.text
     assert "paid cache retention" in response.text
+    assert "No content + no metadata" in response.text
+    assert "TR-funded routes" in response.text
+    assert "ZDR" in response.text
+    assert "Operational counters and billing records remain" in response.text
+    assert "routes remain Standard" not in response.text
     assert "divy@" not in response.text and "hitesh@" not in response.text
     root = Path(__file__).resolve().parents[1]
     assert "CORALBRICKS_API_KEY:trustedrouter-coralbricks-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
+
+
+@pytest.mark.parametrize("model_id", ["z-ai/glm-5.3", "deepseek/deepseek-v4.1-flash"])
+def test_managed_zdr_scope_and_routing_do_not_imply_confidential_or_byok(model_id):
+    from trusted_router.catalog import (
+        MODEL_ENDPOINTS,
+        MODELS,
+        PROVIDERS,
+        model_to_openrouter_shape,
+        provider_to_openrouter_shape,
+    )
+    from trusted_router.catalog_privacy import (
+        PRIVACY_TIER_CONFIDENTIAL,
+        PRIVACY_TIER_ZERO_RETENTION,
+        endpoint_meets_privacy_requirement,
+        endpoint_stores_content,
+        endpoint_zero_data_retention_scope,
+    )
+    from trusted_router.config import Settings
+    from trusted_router.routing import chat_route_endpoint_candidates
+
+    endpoint = MODEL_ENDPOINTS[f"{model_id}@coralbricks/prepaid"]
+    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+    assert not endpoint_stores_content(endpoint)
+    assert endpoint_zero_data_retention_scope(endpoint) == "trustedrouter_prepaid"
+
+    # No BYOK route is published, and a future one must not inherit our opt-in.
+    byok = replace(endpoint, usage_type="BYOK")
+    assert not endpoint_meets_privacy_requirement(byok, PRIVACY_TIER_ZERO_RETENTION)
+    assert endpoint_stores_content(byok)
+    assert endpoint_zero_data_retention_scope(byok) is None
+
+    provider_shape = provider_to_openrouter_shape(PROVIDERS[p.SLUG])
+    assert provider_shape["provider_zero_data_retention"] is False
+    assert provider_shape["prepaid_zero_data_retention"] is True
+    shape = model_to_openrouter_shape(MODELS[model_id])
+    routes = [item for item in shape["trustedrouter"]["endpoints"] if item["provider"] == p.SLUG]
+    assert routes
+    assert all(item["usage_type"] == "Credits" for item in routes)
+    assert all(item["provider_zero_data_retention"] is True for item in routes)
+    assert all(item["zero_data_retention_scope"] == "trustedrouter_prepaid" for item in routes)
+
+    candidates = chat_route_endpoint_candidates(
+        {"model": model_id, "provider": {"only": [p.SLUG], "allow_fallbacks": False, "min_privacy": "zdr"}},
+        Settings(environment="test"),
+    )
+    assert candidates
+    assert all(route.provider == p.SLUG and route.usage_type == "Credits" for _, route in candidates)
 
 
 def test_discovery_and_stale_policy_are_registered_once():
