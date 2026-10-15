@@ -384,11 +384,6 @@ def _iso_timestamp(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
-# A leased authorization's scope row expires this long after it is written:
-# past any hold's life, so the expired-reservation reaper never reaches it.
-LEASED_RESERVATION_EXPIRY_DAYS = 400
-
-
 class SpannerStore:
     """Production Spanner store with ClickHouse analytics.
 
@@ -5004,9 +4999,12 @@ class SpannerStore:
         answers the stored authorization as today's does, REPLAY or
         IDEMPOTENCY_MISMATCH by fingerprint, and two attempts at once
         conflict on the scope's unique index. The caller gives back the
-        hold it took for a replay. The row expires far past any hold's
-        life, so the expired-reservation reaper never finalizes a leased
-        authorization; the leased finalize claims it.
+        hold it took for a replay. The row expires as today's does, so a
+        leased authorization abandoned with no terminal gets today's
+        lifecycle (the reaper finalizes it released, holding nothing; the
+        lease ends the hold at its end of life), while a pending outbox
+        intent keeps the reaper off it; the leased finalize claims it with
+        the records.
         """
         from google.api_core.exceptions import AlreadyExists
 
@@ -5055,10 +5053,6 @@ class SpannerStore:
         authorization.fastpath_envelope = fastpath_envelope
         authorization.fastpath_end_of_life = fastpath_end_of_life
         authorization.created_at = when.isoformat().replace("+00:00", "Z")
-        # Past any hold's life and the reaper's reach: the lease ends the
-        # hold, and the leased finalize claims this row.
-        far = when + dt.timedelta(days=LEASED_RESERVATION_EXPIRY_DAYS)
-
         def txn(transaction: Any) -> None:
             statements = [
                 reservation_insert_statement(
@@ -5075,7 +5069,7 @@ class SpannerStore:
                     authorization_id=authorization_id,
                     idempotency_scope=scope,
                     idempotency_fingerprint=idempotency_fingerprint,
-                    expires_at=far,
+                    expires_at=expires_at,
                     created_at=when,
                 ),
                 gateway_authorization_insert_statement(pt, authorization, created_at=when),
@@ -5119,6 +5113,7 @@ class SpannerStore:
         is not a leased one or is settled already (the caller answers the
         stored disposition)."""
         from trusted_router.storage_gcp_batch_dml import execute_batch_dml
+        from trusted_router.storage_gcp_counter_dml import claim_reservation_statement
         from trusted_router.storage_gcp_generation_records import generation_insert_statement
         from trusted_router.storage_gcp_request_records import (
             gateway_authorization_settled_statement,

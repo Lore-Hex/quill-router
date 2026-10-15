@@ -81,10 +81,12 @@ holds nothing (credit 0, key 0) and carries the scope, the one unique
 index both paths claim, so a key used on today's path and then admitted,
 or the reverse, or admitted and retried with the pilot turned off, gets
 one authorization, two attempts at once conflict on that index, a retry's
-hold is given back, and a differing body is 409. The row expires far past
-any hold's life, so the expired-reservation reaper never finalizes a
-leased authorization; the leased finalize claims it with the records, and
-it retires with them. Everything else stays on
+hold is given back, and a differing body is 409. The row expires as
+today's does: a leased authorization abandoned with no terminal gets
+today's lifecycle (the reaper finalizes it released, holding nothing,
+while the lease ends the hold at its end of life; a pending outbox intent
+keeps the reaper off it), and the leased finalize claims it with the
+records, so it retires with them. Everything else stays on
 today's path, as does any request the front door does not admit: `off` (the
 workspace is not on the fast path's own switch), `busy` (no lease took it),
 `invalid`, a front door that failed, or none serving. A request is never

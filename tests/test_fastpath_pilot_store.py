@@ -150,6 +150,61 @@ def test_a_scope_row_that_landed_first_answers_a_leased_authorize() -> None:
     assert mismatch == AuthorizeOutcome.IDEMPOTENCY_MISMATCH and none is None
 
 
+def _typed_authorize(store: Any, workspace: Any, key: Any, *, authorization_id: str, fingerprint: str, envelope: str | None) -> tuple[Any, Any]:
+    return store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id=authorization_id, estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="raced-key", idempotency_fingerprint=fingerprint,
+        skip_key_limit=True, fastpath_envelope=envelope,
+        fastpath_end_of_life="2026-10-14T06:00:00Z" if envelope else None,
+    )
+
+
+def test_two_attempts_at_once_conflict_on_the_scope_and_the_loser_replays_the_winner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both attempts miss the scope on their first read (the winner has not
+    committed yet), then the winner commits: the loser's INSERT conflicts
+    on the scope's unique index and it replays the winner, on either path
+    order, with no second authorization."""
+    from trusted_router import storage_gcp_authorize, storage_gcp_counter_dml
+
+    real = storage_gcp_counter_dml.read_reservation_by_idempotency
+
+    def misses_once(counter: list[int]) -> Any:
+        def read(snapshot: Any, pt: Any, scope: str) -> Any:
+            counter[0] += 1
+            return None if counter[0] == 1 else real(snapshot, pt, scope)
+        return read
+
+    # Today's path won; the leased attempt's first read missed it.
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _o, winner = _typed_authorize(store, workspace, key, authorization_id="auth-win-1", fingerprint="body", envelope=None)
+    assert winner is not None
+    reads = [0]
+    monkeypatch.setattr(storage_gcp_counter_dml, "read_reservation_by_idempotency", misses_once(reads))
+    outcome, replayed = _typed_authorize(store, workspace, key, authorization_id="auth-lose-1", fingerprint="body", envelope="sealed")
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == winner.id
+    assert reads[0] == 2, "the first read missed, the conflict's read found the winner"
+    assert store.get_gateway_authorization("auth-lose-1") is None
+    assert len(_reservations(db, workspace.id)) == 1
+    monkeypatch.undo()
+
+    # The leased attempt won; today's path's first read missed it.
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _o, winner = _typed_authorize(store, workspace, key, authorization_id="auth-win-2", fingerprint="body", envelope="sealed")
+    assert winner is not None and winner.fastpath_envelope == "sealed"
+    reads = [0]
+    monkeypatch.setattr(storage_gcp_authorize, "read_reservation_by_idempotency", misses_once(reads))
+    outcome, replayed = _typed_authorize(store, workspace, key, authorization_id="auth-lose-2", fingerprint="body", envelope=None)
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == winner.id
+    assert store.get_gateway_authorization("auth-lose-2") is None
+    rows = _reservations(db, workspace.id)
+    assert len(rows) == 1 and rows[0]["credit_reserved_micro"] == 0
+    assert sum(row["reserved"] for row in _credit_rows(db, workspace.id)) == 0, "no hold survives the loss"
+
+
 def test_a_leased_authorize_needs_its_id_up_front() -> None:
     store, _db = _store()
     workspace, key = _funded_workspace(store)
