@@ -376,6 +376,25 @@ def _parse_time(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
+# The enclave sends an idempotency key on every authorize: the client's when
+# the client presented one, else one of its own, "tr-gateway-" and 32 hex
+# digits (quill-cloud-proxy, authorizationIdempotencyKey). Only the
+# client's keeps a request on today's path (design §4.3): a replay by scope
+# needs the reservation row a lease does not write.
+ENCLAVE_KEY_PREFIX = "tr-gateway-"
+
+
+def client_presented_key(key: str | None) -> str | None:
+    """The idempotency key the client presented, or None when the key is
+    the enclave's own."""
+    if not key:
+        return None
+    rest = key[len(ENCLAVE_KEY_PREFIX):] if key.startswith(ENCLAVE_KEY_PREFIX) else None
+    if rest is not None and len(rest) == 32 and all(c in "0123456789abcdef" for c in rest):
+        return None
+    return key
+
+
 def pilot_reason(
     *,
     enabled: bool,

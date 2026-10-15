@@ -389,6 +389,15 @@ def test_go_times_with_nanoseconds_and_without_a_zone_are_read_or_refused() -> N
     assert fd._parse_time(None) is None
 
 
+def test_the_enclaves_own_idempotency_key_is_not_the_clients() -> None:
+    assert fd.client_presented_key(None) is None
+    assert fd.client_presented_key("") is None
+    assert fd.client_presented_key("tr-gateway-" + "0123456789abcdef" * 2) is None
+    assert fd.client_presented_key("tr-gateway-" + "0123456789ABCDEF" * 2) == "tr-gateway-" + "0123456789ABCDEF" * 2
+    assert fd.client_presented_key("tr-gateway-short") == "tr-gateway-short"
+    assert fd.client_presented_key("my-order-42") == "my-order-42"
+
+
 _ELIGIBLE: dict[str, Any] = {
     "enabled": True,
     "workspace_id": "ws-1",

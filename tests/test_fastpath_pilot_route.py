@@ -134,6 +134,17 @@ def test_a_request_in_the_cohort_is_held_under_a_lease_and_reserves_nothing(door
     assert sent["Boot"] == base64.b64encode(b"boot-pilot").decode()
 
 
+def test_the_enclaves_own_idempotency_key_keeps_a_request_in_the_cohort(door: _Door) -> None:
+    store, database, key = _seed()
+    body = _body(key.hash, idempotency_key="tr-gateway-" + "ab" * 16)
+    data = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None and authorization.fastpath_envelope == "sealed-pilot"
+    assert authorization.idempotency_key == "tr-gateway-" + "ab" * 16
+    assert _credit(database)["reserved"] == 0
+    assert len(door.seen) == 1
+
+
 @pytest.mark.parametrize(
     ("settings", "body_overrides", "request_boot"),
     [
@@ -144,7 +155,7 @@ def test_a_request_in_the_cohort_is_held_under_a_lease_and_reserves_nothing(door
         (_pilot(), {"idempotency_key": "idem-1"}, True),
         (_pilot(), {}, False),
     ],
-    ids=["disabled", "workspace", "region", "stream", "idempotency", "no_boot"],
+    ids=["disabled", "workspace", "region", "stream", "client_idempotency", "no_boot"],
 )
 def test_a_request_outside_the_cohort_reserves_as_today(
     door: _Door, settings: Settings, body_overrides: dict[str, Any], request_boot: bool,

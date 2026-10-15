@@ -1725,7 +1725,7 @@ def _authorize_gateway_sync_impl(
             and all(UsageType.for_endpoint(e) == UsageType.CREDITS for _m, e in endpoint_candidates),
             boot_verified=bool(boot_context["boot_verified"]),
             boot_kid=boot_auth.kid if boot_auth is not None else None,
-            idempotency_key=presented_idempotency_key,
+            idempotency_key=_fastpath.client_presented_key(presented_idempotency_key),
             service_tier=body.service_tier,
             key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
             budget_strict=bool(api_key.budget_strict),
