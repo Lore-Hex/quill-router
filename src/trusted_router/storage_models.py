@@ -286,7 +286,38 @@ def workspace_billing_paused(workspace: object | None) -> bool:
 #: shard set must carry it across, and must never put it on the shards:
 #: dropped, it lets a quiesced workspace take new work; copied, it outlives the
 #: unpause, which edits the document only.
-DOCUMENT_ONLY_PAUSE_CAUSES = frozenset({"migration"})
+DOCUMENT_ONLY_PAUSE_CAUSES = frozenset({"migration", "federation"})
+
+#: Causes a federated shadow imports from its home plane's record: the home
+#: pause ("federation") and the home abuse suspension ("abuse"). A refresh
+#: replaces exactly these and keeps every cause set on this plane.
+FEDERATED_IMPORTED_PAUSE_CAUSES = frozenset({"federation", "abuse"})
+
+
+def refreshed_shadow(existing: Workspace, imported: Workspace) -> Workspace:
+    """A refreshed shadow: the home record's causes plus this plane's own.
+
+    A shadow written before the home pause had its own cause carries it as
+    "migration" with the home-plane reason; that one is imported, not local.
+    Returns a new Workspace and never mutates ``imported`` (callers retry)."""
+
+    local = set(existing.billing_pause_causes) - FEDERATED_IMPORTED_PAUSE_CAUSES
+    if (
+        not FEDERATED_IMPORTED_PAUSE_CAUSES & set(existing.billing_pause_causes)
+        and existing.billing_pause_reason == FEDERATED_WORKSPACE_PAUSE_REASON
+    ):
+        local.discard("migration")
+    causes = sorted(local | set(imported.billing_pause_causes))
+    reason = imported.billing_pause_reason or (
+        "" if existing.billing_pause_reason == FEDERATED_WORKSPACE_PAUSE_REASON
+        else existing.billing_pause_reason
+    )
+    return dataclasses.replace(
+        imported,
+        billing_pause_causes=causes,
+        billing_paused=bool(causes),
+        billing_pause_reason=reason if causes else "",
+    )
 
 
 def shard_pause_causes(causes: Iterable[str]) -> list[str]:
@@ -2168,9 +2199,11 @@ def federated_workspace_from_record(record: dict[str, Any]) -> Workspace:
         content_storage_enabled=False,
         billing_paused=paused,
         billing_pause_reason=FEDERATED_WORKSPACE_PAUSE_REASON if paused else "",
-        # A bare paused bit becomes the legacy "migration" cause in
-        # Workspace.__post_init__; only a suspension names "abuse".
-        billing_pause_causes=["abuse"] if suspended else [],
+        # The home pause is imported as its own cause, "federation", never as
+        # the local "migration" quiesce, so a refresh can tell them apart.
+        billing_pause_causes=(
+            ["abuse"] if suspended else ["federation"] if paused else []
+        ),
         # Same marker convention as ApiKey.federated_home: the home record's
         # revision when it sent one, otherwise a constant. Non-empty is what
         # makes this distinguishable from a locally-issued workspace.

@@ -172,6 +172,7 @@ from trusted_router.storage_models import (
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
+    refreshed_shadow,
     shard_pause_causes,
     utcnow,
 )
@@ -3223,12 +3224,17 @@ class PostgresStore:
         """
         if not workspace.id:
             raise ValueError("federated record carries no workspace_id")
-        existing = self._read_entity_tx(conn, "workspace", workspace.id, Workspace)
+        # Locked: the merge below keeps local causes from this read.
+        existing = self._read_entity_tx(
+            conn, "workspace", workspace.id, Workspace, for_update=True
+        )
         if existing is not None and not existing.federated_home:
             raise StoreConflict(
                 f"workspace {workspace.id} exists locally and is not federated; "
                 "refusing to overwrite it with a federated shadow"
             )
+        if existing is not None:
+            workspace = refreshed_shadow(existing, workspace)
         self._write_entity_tx(conn, "workspace", workspace.id, workspace)
         conn.execute(
             "INSERT INTO tr_credit_balance "
