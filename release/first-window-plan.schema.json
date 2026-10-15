@@ -1,0 +1,944 @@
+{
+  "$defs": {
+    "Archive": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": [
+            "router",
+            "enclave"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "run_id": {
+          "exclusiveMinimum": 0,
+          "title": "Run Id",
+          "type": "integer"
+        },
+        "artifact_id": {
+          "exclusiveMinimum": 0,
+          "title": "Artifact Id",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "max_bytes": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000000,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "out": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Out",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "run_id",
+        "artifact_id",
+        "sha256",
+        "max_bytes",
+        "out"
+      ],
+      "title": "Archive",
+      "type": "object"
+    },
+    "Artifacts": {
+      "additionalProperties": false,
+      "properties": {
+        "root": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Root",
+          "type": "string"
+        },
+        "release": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Release",
+          "type": "string"
+        },
+        "probe": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Probe",
+          "type": "string"
+        },
+        "trial": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Trial",
+          "type": "string"
+        },
+        "native": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Native",
+          "type": "string"
+        },
+        "bundle_plan": {
+          "$ref": "#/$defs/File"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "probe",
+        "trial",
+        "native",
+        "bundle_plan"
+      ],
+      "title": "Artifacts",
+      "type": "object"
+    },
+    "File": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "title": "File",
+      "type": "object"
+    },
+    "Interval": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "Interval",
+      "type": "object"
+    },
+    "Job": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "region": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Region",
+          "type": "string"
+        },
+        "scheduler": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Scheduler",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "region",
+        "scheduler"
+      ],
+      "title": "Job",
+      "type": "object"
+    },
+    "Launch": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "region": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Region",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "router",
+            "enclave"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "title": "End",
+          "type": "string"
+        },
+        "end_reason": {
+          "enum": [
+            "shutdown",
+            "hard_kill",
+            "opt_out"
+          ],
+          "title": "End Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "region",
+        "role",
+        "start",
+        "end",
+        "end_reason"
+      ],
+      "title": "Launch",
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "records_per_page": {
+          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "title": "Records Per Page",
+          "type": "integer"
+        },
+        "records_per_pass": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Records Per Pass",
+          "type": "integer"
+        },
+        "calls_per_pass": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Calls Per Pass",
+          "type": "integer"
+        },
+        "call_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "title": "Call Seconds",
+          "type": "integer"
+        },
+        "retries": {
+          "const": 0,
+          "title": "Retries",
+          "type": "integer"
+        },
+        "bytes_per_page": {
+          "exclusiveMinimum": 0,
+          "maximum": 262144,
+          "title": "Bytes Per Page",
+          "type": "integer"
+        },
+        "total_passes": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Total Passes",
+          "type": "integer"
+        },
+        "output_bytes": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000000000,
+          "title": "Output Bytes",
+          "type": "integer"
+        },
+        "trial_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Trial Seconds",
+          "type": "integer"
+        },
+        "cpu_increment_percent": {
+          "exclusiveMaximum": 45,
+          "exclusiveMinimum": 0,
+          "title": "Cpu Increment Percent",
+          "type": "integer"
+        },
+        "blocked_day_target_ppm": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "title": "Blocked Day Target Ppm",
+          "type": "integer"
+        },
+        "blocked_day_measurement": {
+          "$ref": "#/$defs/File"
+        }
+      },
+      "required": [
+        "records_per_page",
+        "records_per_pass",
+        "calls_per_pass",
+        "call_seconds",
+        "retries",
+        "bytes_per_page",
+        "total_passes",
+        "output_bytes",
+        "trial_seconds",
+        "cpu_increment_percent",
+        "blocked_day_target_ppm",
+        "blocked_day_measurement"
+      ],
+      "title": "Limits",
+      "type": "object"
+    },
+    "PlannedPass": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "day": {
+          "title": "Day",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "trial",
+            "warmup",
+            "daily",
+            "horizon",
+            "rerun"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "max_records": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Max Records",
+          "type": "integer"
+        },
+        "max_calls": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Max Calls",
+          "type": "integer"
+        },
+        "out": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Out",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "day",
+        "purpose",
+        "max_records",
+        "max_calls",
+        "out"
+      ],
+      "title": "PlannedPass",
+      "type": "object"
+    },
+    "Probe": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Project",
+          "type": "string"
+        },
+        "service_account": {
+          "pattern": "^[0-9]+-compute@developer\\.gserviceaccount\\.com$",
+          "title": "Service Account",
+          "type": "string"
+        },
+        "jobs": {
+          "items": {
+            "$ref": "#/$defs/Job"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Jobs",
+          "type": "array"
+        },
+        "warmup_minutes": {
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            10,
+            12,
+            15,
+            20,
+            30
+          ],
+          "title": "Warmup Minutes",
+          "type": "integer"
+        },
+        "window_minutes": {
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            10,
+            12,
+            15,
+            20,
+            30
+          ],
+          "title": "Window Minutes",
+          "type": "integer"
+        },
+        "repetitions": {
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Repetitions",
+          "type": "integer"
+        },
+        "max_invocations": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Max Invocations",
+          "type": "integer"
+        },
+        "max_requests": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000000,
+          "title": "Max Requests",
+          "type": "integer"
+        },
+        "max_spend_microdollars": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000000,
+          "title": "Max Spend Microdollars",
+          "type": "integer"
+        },
+        "secret_reference": {
+          "pattern": "^projects/[a-z0-9-]+/secrets/[a-z0-9-]+$",
+          "title": "Secret Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "service_account",
+        "jobs",
+        "warmup_minutes",
+        "window_minutes",
+        "repetitions",
+        "max_invocations",
+        "max_requests",
+        "max_spend_microdollars",
+        "secret_reference"
+      ],
+      "title": "Probe",
+      "type": "object"
+    },
+    "Region": {
+      "additionalProperties": false,
+      "properties": {
+        "region": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Region",
+          "type": "string"
+        },
+        "service": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Service",
+          "type": "string"
+        },
+        "cap": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Cap",
+          "type": "integer"
+        },
+        "surge": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Surge",
+          "type": "integer"
+        },
+        "publishers": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Publishers",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "region",
+        "service",
+        "cap",
+        "surge",
+        "publishers"
+      ],
+      "title": "Region",
+      "type": "object"
+    },
+    "Release": {
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "title": "Repository",
+          "type": "string"
+        },
+        "sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Sha",
+          "type": "string"
+        },
+        "image": {
+          "pattern": "^[a-z0-9.-]+/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$",
+          "title": "Image",
+          "type": "string"
+        },
+        "pin_file": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$",
+          "title": "Pin File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "sha",
+        "image",
+        "pin_file"
+      ],
+      "title": "Release",
+      "type": "object"
+    },
+    "Releases": {
+      "additionalProperties": false,
+      "properties": {
+        "router": {
+          "$ref": "#/$defs/Release"
+        },
+        "enclave": {
+          "$ref": "#/$defs/Release"
+        }
+      },
+      "required": [
+        "router",
+        "enclave"
+      ],
+      "title": "Releases",
+      "type": "object"
+    },
+    "Schedule": {
+      "additionalProperties": false,
+      "properties": {
+        "workspace_count": {
+          "const": 1,
+          "title": "Workspace Count",
+          "type": "integer"
+        },
+        "primary": {
+          "const": "us-central1",
+          "title": "Primary",
+          "type": "string"
+        },
+        "regions": {
+          "items": {
+            "$ref": "#/$defs/Region"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Regions",
+          "type": "array"
+        },
+        "fleet_cap": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Fleet Cap",
+          "type": "integer"
+        },
+        "surge": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Surge",
+          "type": "integer"
+        },
+        "k": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "K",
+          "type": "integer"
+        },
+        "launches": {
+          "items": {
+            "$ref": "#/$defs/Launch"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Launches",
+          "type": "array"
+        },
+        "churn_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Churn Limit",
+          "type": "integer"
+        },
+        "trial": {
+          "$ref": "#/$defs/Interval"
+        },
+        "warmup": {
+          "$ref": "#/$defs/Interval"
+        },
+        "window": {
+          "$ref": "#/$defs/Interval"
+        },
+        "horizon_end": {
+          "title": "Horizon End",
+          "type": "string"
+        },
+        "retention_days": {
+          "maximum": 3650,
+          "minimum": 30,
+          "title": "Retention Days",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "workspace_count",
+        "primary",
+        "regions",
+        "fleet_cap",
+        "surge",
+        "k",
+        "launches",
+        "churn_limit",
+        "trial",
+        "warmup",
+        "window",
+        "horizon_end",
+        "retention_days"
+      ],
+      "title": "Schedule",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "monitoring",
+            "lifecycle",
+            "boot_ledger",
+            "github_run",
+            "github_jobs",
+            "github_artifacts",
+            "github_job",
+            "github_artifact",
+            "trust",
+            "registry",
+            "health",
+            "attestation"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "resource": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "day": {
+          "title": "Day",
+          "type": "string"
+        },
+        "parser": {
+          "enum": [
+            "monitoring-v3",
+            "logging-v2",
+            "github-v3",
+            "released-json-v1"
+          ],
+          "title": "Parser",
+          "type": "string"
+        },
+        "url": {
+          "pattern": "^https://[A-Za-z0-9./_:@?=&%-]+$",
+          "title": "Url",
+          "type": "string"
+        },
+        "filter": {
+          "maxLength": 4096,
+          "title": "Filter",
+          "type": "string"
+        },
+        "interval": {
+          "$ref": "#/$defs/Interval"
+        },
+        "release_role": {
+          "enum": [
+            "router",
+            "enclave"
+          ],
+          "title": "Release Role",
+          "type": "string"
+        },
+        "completion_record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/File"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "resource",
+        "day",
+        "parser",
+        "url",
+        "filter",
+        "interval",
+        "release_role",
+        "completion_record"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "Trial": {
+      "additionalProperties": false,
+      "properties": {
+        "resource": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "project": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Project",
+          "type": "string"
+        },
+        "approval": {
+          "$ref": "#/$defs/File"
+        },
+        "harness": {
+          "const": "P6NativeQualification",
+          "title": "Harness",
+          "type": "string"
+        },
+        "measurement_recipe": {
+          "$ref": "#/$defs/File"
+        }
+      },
+      "required": [
+        "resource",
+        "project",
+        "approval",
+        "harness",
+        "measurement_recipe"
+      ],
+      "title": "Trial",
+      "type": "object"
+    },
+    "Workflow": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": [
+            "router",
+            "enclave"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "gate": {
+          "enum": [
+            "ci",
+            "attestation",
+            "rollout",
+            "health"
+          ],
+          "title": "Gate",
+          "type": "string"
+        },
+        "workflow": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+          "title": "Workflow",
+          "type": "string"
+        },
+        "run_id": {
+          "minimum": 0,
+          "title": "Run Id",
+          "type": "integer"
+        },
+        "jobs": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Jobs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "role",
+        "gate",
+        "workflow",
+        "run_id",
+        "jobs"
+      ],
+      "title": "Workflow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "p6-first-window-v1",
+      "title": "Version",
+      "type": "string"
+    },
+    "review": {
+      "enum": [
+        "REVIEW",
+        "approved"
+      ],
+      "title": "Review",
+      "type": "string"
+    },
+    "reviewer": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "releases": {
+      "$ref": "#/$defs/Releases"
+    },
+    "workspace": {
+      "const": "162e441a-5d13-414f-92bd-7c6cd805faa3",
+      "title": "Workspace",
+      "type": "string"
+    },
+    "attachment_bucket": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+      "title": "Attachment Bucket",
+      "type": "string"
+    },
+    "enclave_regions": {
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 4,
+      "title": "Enclave Regions",
+      "type": "array"
+    },
+    "schedule": {
+      "$ref": "#/$defs/Schedule"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits"
+    },
+    "passes": {
+      "items": {
+        "$ref": "#/$defs/PlannedPass"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Passes",
+      "type": "array"
+    },
+    "workflows": {
+      "items": {
+        "$ref": "#/$defs/Workflow"
+      },
+      "maxItems": 32,
+      "minItems": 4,
+      "title": "Workflows",
+      "type": "array"
+    },
+    "probe": {
+      "$ref": "#/$defs/Probe"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/Source"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Sources",
+      "type": "array"
+    },
+    "archives": {
+      "items": {
+        "$ref": "#/$defs/Archive"
+      },
+      "maxItems": 100,
+      "title": "Archives",
+      "type": "array"
+    },
+    "checkpoint": {
+      "enum": [
+        "fleet-budgets-pre",
+        "transport",
+        "fleet-budgets",
+        "shadow-serving"
+      ],
+      "title": "Checkpoint",
+      "type": "string"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/Artifacts"
+    },
+    "trial": {
+      "$ref": "#/$defs/Trial"
+    }
+  },
+  "required": [
+    "version",
+    "review",
+    "reviewer",
+    "releases",
+    "workspace",
+    "attachment_bucket",
+    "enclave_regions",
+    "schedule",
+    "limits",
+    "passes",
+    "workflows",
+    "probe",
+    "sources",
+    "archives",
+    "checkpoint",
+    "artifacts",
+    "trial"
+  ],
+  "title": "Plan",
+  "type": "object"
+}
