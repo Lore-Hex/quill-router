@@ -39,7 +39,15 @@ MODELS = {
     "glm-5.3": ("z-ai/glm-5.3", "GLM-5.3", 1_000_000, False),
     "glm-5.3-flash": ("z-ai/glm-5.3-flash", "GLM-5.3-Flash", 1_000_000, True),
     "gpt-oss-120b": ("openai/gpt-oss-120b", "gpt-oss-120b", 128_000, False),
+    "deepseek-ocr-2": ("deepseek/deepseek-ocr-2", "DeepSeek OCR 2", 8192, True),
+    "qwen3-embedding-4b": ("qwen/qwen3-embedding-4b", "Qwen3-Embedding 4B", 32_768, False),
+    "voxtral-mini-3b": ("mistralai/voxtral-mini-3b-2507", "Voxtral Mini 3B", 0, False),
+    "whisper-large-v3": ("openai/whisper-large-v3", "Whisper large-v3", 0, False),
 }
+_EMBEDDING_IDS = frozenset({"qwen/qwen3-embedding-4b"})
+_TRANSCRIPTION_MODELS = frozenset({"voxtral-mini-3b", "whisper-large-v3"})
+# Cleared only after a verified encrypted canary on the matching enclave release.
+_PENDING_ENCLAVE_MODELS = frozenset({"deepseek-ocr-2", "qwen3-embedding-4b"})
 UPSTREAM_ID_MAP = {row[0]: native for native, row in MODELS.items()}
 _DISCOVERED: dict[str, dict[str, Any]] = {}
 
@@ -61,7 +69,8 @@ def parse_prices(html: str, rate: Decimal) -> dict[str, ModelPrice]:
     required = {"model", "input", "output", "cached input"}
     for table in BeautifulSoup(html, "html.parser").find_all("table"):
         headers = [c.get_text(" ", strip=True).casefold() for c in table.find_all("th")]
-        if set(headers) != required or len(headers) != len(required):
+        embedding_table = set(headers) == {"model", "input"} and len(headers) == 2
+        if not embedding_table and (set(headers) != required or len(headers) != len(required)):
             continue
         for tr in table.find_all("tr"):
             cells = [c.get_text(" ", strip=True) for c in tr.find_all("td")]
@@ -73,6 +82,18 @@ def parse_prices(html: str, rate: Decimal) -> dict[str, ModelPrice]:
             model_id = names.get(row["model"].casefold())
             if model_id is None:
                 continue
+            if embedding_table:
+                if model_id not in _EMBEDDING_IDS:
+                    continue
+                if model_id in prices:
+                    raise RuntimeError("privatemode: duplicate token-price row")
+                prompt = _price(row["input"], rate)
+                if prompt <= 0:
+                    raise RuntimeError("privatemode: invalid embedding price")
+                prices[model_id] = ModelPrice(prompt, 0)
+                continue
+            if model_id in _EMBEDDING_IDS:
+                raise RuntimeError("privatemode: embedding listed with output token prices")
             cached = _price(row["cached input"], rate)
             price = ModelPrice(_price(row["input"], rate), _price(row["output"], rate),
                                prompt_cached_micro_per_m=cached)
@@ -107,16 +128,34 @@ def fetch() -> ProviderPricingResult:
     prices: dict[str, ModelPrice] = {}
     for native, (model_id, name, context, vision) in MODELS.items():
         available = native in native_ids and model_id in published
+        embedding = model_id in _EMBEDDING_IDS
+        reasoning_chat = native in {"glm-5.3", "glm-5.3-flash", "gpt-oss-120b"}
         row: dict[str, Any] = {
             "id": model_id, "upstream_id": native, "display_name": name,
             "context_length": context, "input_modalities": ["text", "image"] if vision else ["text"],
-            "supports_tools": True, "supports_reasoning": True,
+            "model_type": "embedding" if embedding else "chat",
+            "endpoints": ["embeddings"] if embedding else ["chat/completions"],
+            "output_modalities": ["embeddings"] if embedding else ["text"],
+            "supports_tools": reasoning_chat, "supports_reasoning": reasoning_chat,
             "routable": available,
         }
+        if native in _TRANSCRIPTION_MODELS:
+            row.update({
+                "model_type": "audio", "input_modalities": ["audio"],
+                "endpoints": ["audio/transcriptions"], "routable": False,
+                "routable_reason": "unsupported-endpoint-or-billing"
+                if native in native_ids else "delisted-upstream",
+            })
+            row.pop("context_length")
+            _DISCOVERED[model_id] = row
+            continue
         if not available:
             row["routable_reason"] = "delisted-upstream" if native not in native_ids else "price-unavailable"
         if available:
             prices[model_id] = published[model_id]
+            if native in _PENDING_ENCLAVE_MODELS:
+                row["routable"] = False
+                row["routable_reason"] = "attested-enclave-rollout-pending"
         _DISCOVERED[model_id] = row
     if not prices:
         raise RuntimeError("privatemode: no priced release-pinned models")

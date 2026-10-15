@@ -63,6 +63,7 @@ from trusted_router.catalog import (
     provider_is_routable,
     providers_for_display,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.competitor_comparisons import (
@@ -3658,7 +3659,8 @@ def subprocessors_json(settings: Settings) -> str:
 
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
-    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values() if not model.internal_only]
+    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()
+                  if not model.internal_only and not is_listing_alias(model.id, MODELS)]
     all_models.sort(key=_model_discovery_sort_key)
     models = all_models
     normalized_filter = model_filter.strip().lower()
@@ -4578,7 +4580,8 @@ def _sitemap_lastmod() -> str:
 
 def llms_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
-    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only)
+    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID
+                      and not model.internal_only and not is_listing_alias(model.id, MODELS))
     provider_count = len(providers_for_display())
     lines = [
         "# TrustedRouter",
@@ -5793,7 +5796,8 @@ def _benchmark_links(model: Model, *, test_mode: bool = False) -> list[dict[str,
 
 def _public_models_for_seo() -> list[Model]:
     return sorted(
-        [model for model in MODELS.values() if model.id not in META_MODEL_IDS and not model.internal_only],
+        [model for model in MODELS.values() if model.id not in META_MODEL_IDS
+         and not model.internal_only and not is_listing_alias(model.id, MODELS)],
         key=lambda model: model.id,
     )
 
@@ -5801,7 +5805,8 @@ def _public_models_for_seo() -> list[Model]:
 def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     """Return the complete public catalog used by the agent-facing full document."""
     models = sorted(
-        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only),
+        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID
+         and not model.internal_only and not is_listing_alias(model.id, MODELS)),
         key=lambda model: model.id,
     )
     return [_model_view(model, test_mode=test_mode) for model in models]
