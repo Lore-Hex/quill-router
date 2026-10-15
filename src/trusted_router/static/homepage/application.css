@@ -1,17 +1,18 @@
 /* Application integration only. Approved homepage styles remain separate. */
-:root{--exchange-banner-height:56px}
+:root{--exchange-banner-height:61px}
 .trh .hero{min-height:calc(var(--hero-vh,1svh) * 100 - var(--preview-bar-height) - var(--site-header-height) - var(--exchange-banner-height))}
 .exchange-banner{box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:24px;min-height:var(--exchange-banner-height);padding:12px 24px;background:#cce8d7;color:#10241a;font:400 16px/1.4 var(--sans);letter-spacing:0;border-bottom:1px solid #a8c9b5;transition:background-color .15s ease}
 .exchange-banner-copy{display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;min-width:0}
 .exchange-banner-copy strong{font-weight:650}
-.exchange-banner-action{display:flex;align-items:center;gap:8px;flex-shrink:0;font-weight:550;text-decoration:underline;text-underline-offset:4px}
+.exchange-banner-action{display:inline-flex;align-items:center;gap:8px;flex-shrink:0;min-height:36px;font-weight:600;font-size:15px;line-height:1;white-space:nowrap}
+.exchange-banner-arrow{display:inline-block;transition:transform .15s ease}
 .exchange-banner:hover{background:#e5fff2}
+.exchange-banner:hover .exchange-banner-arrow{transform:translateX(3px)}
 .page .exchange-banner:focus-visible{outline:3px solid #10241a!important;outline-offset:-6px!important}
 @media(max-width:700px){
- :root{--exchange-banner-height:68px}
- .exchange-banner{justify-content:space-between;gap:16px;padding:12px 20px}
+ :root{--exchange-banner-height:48px}
+ .exchange-banner{justify-content:space-between;gap:12px;padding:5px 16px;font-size:14px;line-height:1.25}
  .exchange-banner-copy>span{display:none}
- .exchange-banner-action{max-width:132px;flex-shrink:1}
 }
 .signin-modal{max-width:380px;box-shadow:0 24px 60px #0009}
 .signin-modal h2{margin:0 0 6px;font-size:24px}.signin-sub,.signin-foot{color:var(--muted);font-size:13px}

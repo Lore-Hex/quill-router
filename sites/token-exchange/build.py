@@ -75,14 +75,14 @@ PROVIDERS = [
 def provider_ticker(copies: int = 2) -> str:
     """One visible provider group plus a hidden copy so the CSS marquee loops without a gap.
 
-    The loop slides by one group; the row is at most 1024px wide and narrower than a group, so two groups cover it throughout."""
+    The loop slides by one group; the row is at most 980px wide and no wider than a group, so two groups cover it throughout."""
     groups = []
     for index in range(copies):
         link_attrs = ' tabindex="-1"' if index else ""
         group_attrs = ' aria-hidden="true"' if index else ""
         links = "".join(
             f'<a href="https://trustedrouter.com/providers"{link_attrs}>'
-            f'<img src="/assets/provider-{slug}.png" width="32" height="32" alt=""><span>{html.escape(name)}</span></a>'
+            f'<img src="/assets/provider-{slug}.png" width="24" height="24" alt=""><span>{html.escape(name)}</span></a>'
             for slug, name in PROVIDERS
         )
         groups.append(f'<div class="hero-provider-group"{group_attrs}>{links}</div>')
@@ -163,14 +163,11 @@ def build(output: Path) -> None:
     for source, target in {
         "fonts/archivo-latin.woff2": "archivo.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
-        "provider-logos/openai.png": "provider-openai.png",
-        "provider-logos/anthropic.png": "provider-anthropic.png",
-        "provider-logos/mistral.png": "provider-mistral.png",
-        "provider-logos/google-vertex.png": "provider-google-vertex.png",
-        "provider-logos/deepseek.png": "provider-deepseek.png",
-        "provider-logos/grok.png": "provider-grok.png",
     }.items():
         shutil.copyfile(static / source, assets / target)
+    for slug, _ in PROVIDERS:
+        name = f"provider-{slug}.png"
+        shutil.copyfile(static / "provider-logos" / f"{slug}.png", assets / name)
     for market in markets:
         image_name = f"og-{market['slug']}.png"
         shutil.copyfile(HERE / "social-images" / image_name, assets / image_name)
