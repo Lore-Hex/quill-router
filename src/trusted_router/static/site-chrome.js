@@ -68,7 +68,7 @@
     if (searchLoading) { $("#search-count").textContent = "Loading the model catalog…"; return; }
     if (searchFailed) { $("#search-count").textContent = "The catalog could not be loaded. Try again or browse all models."; return; }
     const needle = query.value.trim().toLowerCase();
-    const models = (searchModels || []).filter((m) => (m.name + " " + m.id).toLowerCase().includes(needle));
+    const models = (searchModels || []).filter((m) => window.TRModelSearch.matches(m.name + " " + m.id, needle));
     $("#search-count").textContent = models.length
       ? `${models.length} ${models.length === 1 ? "match" : "matches"}${models.length > 50 ? " · showing the first 50" : ""}`
       : "No matching models. Try another name or browse all models.";

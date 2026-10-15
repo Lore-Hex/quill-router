@@ -12,3 +12,4 @@
 </header></div>
 <dialog id="model-search" aria-labelledby="search-title"><div class="search-head"><h2 id="search-title">Find a model</h2><button type="button" data-close-search aria-label="Close model search">×</button></div><label for="model-query">Search the model catalog</label><input id="model-query" type="search" placeholder="Model name or ID" autocomplete="off"><p class="search-note"><a href="/models">Browse the full catalog →</a></p><p id="search-count" role="status"></p><button type="button" class="catalog-search" id="search-retry" hidden>Try again</button><div id="search-results"></div></dialog>
 <script id="site-chrome-data" type="application/json" nonce="{{ csp_nonce() }}">{{ {"publisher_icons": publisher_icons()}|tojson }}</script>
+<script defer src="/static/model-search.js?v={{ static_version|default('local') }}"></script>
