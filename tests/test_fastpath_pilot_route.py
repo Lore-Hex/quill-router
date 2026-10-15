@@ -134,15 +134,28 @@ def test_a_request_in_the_cohort_is_held_under_a_lease_and_reserves_nothing(door
     assert sent["Boot"] == base64.b64encode(b"boot-pilot").decode()
 
 
-def test_the_enclaves_own_idempotency_key_keeps_a_request_in_the_cohort(door: _Door) -> None:
+def test_a_leased_authorization_replays_by_its_idempotency_key_and_gives_the_second_hold_back(door: _Door) -> None:
+    """The enclave retries an authorize with the same key after a lost
+    answer, and a client may present one: the stored authorization answers,
+    no second row is written, and the hold the retry took is refunded."""
     store, database, key = _seed()
-    body = _body(key.hash, idempotency_key="tr-gateway-" + "ab" * 16)
-    data = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
-    authorization = store.get_gateway_authorization(data["authorization_id"])
-    assert authorization is not None and authorization.fastpath_envelope == "sealed-pilot"
-    assert authorization.idempotency_key == "tr-gateway-" + "ab" * 16
-    assert _credit(database)["reserved"] == 0
-    assert len(door.seen) == 1
+    for presented in ("tr-gateway-" + "ab" * 16, "client-order-42"):
+        body = _body(key.hash, idempotency_key=presented)
+        first = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+        seen_before = len(door.seen)
+        again = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+        assert again["authorization_id"] == first["authorization_id"]
+        assert again.get("idempotent_replay") is True
+        authorization = store.get_gateway_authorization(first["authorization_id"])
+        assert authorization is not None and authorization.fastpath_envelope == "sealed-pilot"
+        assert authorization.idempotency_key == presented
+        # The retry was admitted by the front door, then its hold refunded.
+        assert [path for path, _sent in door.seen[seen_before:]] == ["/v1/authorize", "/v1/refund"]
+        assert _credit(database)["reserved"] == 0
+    # A different body under a used key is a mismatch, as today.
+    with pytest.raises(Exception, match="") as caught:
+        gateway._authorize_gateway_sync(_request(), _body(key.hash, idempotency_key="client-order-42", max_output_tokens=7), _pilot())
+    assert getattr(caught.value, "status_code", None) == 409
 
 
 @pytest.mark.parametrize(
@@ -152,10 +165,9 @@ def test_the_enclaves_own_idempotency_key_keeps_a_request_in_the_cohort(door: _D
         (_pilot(fastpath_pilot_workspaces="ws-other"), {}, True),
         (_pilot(fastpath_pilot_regions="europe-west4"), {}, True),
         (_pilot(), {"stream": True}, True),
-        (_pilot(), {"idempotency_key": "idem-1"}, True),
         (_pilot(), {}, False),
     ],
-    ids=["disabled", "workspace", "region", "stream", "client_idempotency", "no_boot"],
+    ids=["disabled", "workspace", "region", "stream", "no_boot"],
 )
 def test_a_request_outside_the_cohort_reserves_as_today(
     door: _Door, settings: Settings, body_overrides: dict[str, Any], request_boot: bool,

@@ -4979,34 +4979,86 @@ class SpannerStore:
         *,
         build_authorization: Any,
         authorization_id: str | None,
+        workspace_id: str,
+        key_hash: str,
+        idempotency_key: str | None,
+        idempotency_fingerprint: str | None,
         fastpath_envelope: str,
         fastpath_end_of_life: str | None,
         created_at: dt.datetime | None,
         window_decision: Any,
-    ) -> tuple[Any, GatewayAuthorization]:
+    ) -> tuple[Any, GatewayAuthorization | None]:
         """The pilot's authorize (docs/design/fast-admission-pilot.md): one
         transaction inserting the typed authorization row, with the lease's
-        envelope in its payload and no reservation. The pilot takes only
-        requests with no idempotency key, no key cap and a typed request
-        record, so there is no idempotency read and no hold DML here."""
+        envelope in its payload and no reservation, and the idempotency
+        index row of its scope, so a replay of the key (the enclave's retry,
+        or a client's) answers the stored authorization as today's path
+        does: REPLAY, or IDEMPOTENCY_MISMATCH when the body differs. The
+        caller gives back the hold it took for a replay. No hold DML here:
+        the pilot takes only uncapped keys and typed request records."""
+        from google.api_core.exceptions import AlreadyExists
+
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome, AuthorizeVerdict
-        from trusted_router.storage_gcp_request_records import insert_gateway_authorization
+        from trusted_router.storage_gcp_batch_dml import execute_batch_dml
+        from trusted_router.storage_gcp_counter_dml import entity_insert_statement
+        from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
+        from trusted_router.storage_gcp_request_records import (
+            gateway_authorization_insert_statement,
+        )
 
         if self.request_record_write_mode != "typed":
             raise RuntimeError("a leased authorization needs the typed request record")
         if authorization_id is None:
             raise ValueError("a leased authorization needs its id up front")
+
+        def replay() -> tuple[Any, GatewayAuthorization | None] | None:
+            if idempotency_key is None:
+                return None
+            # The scope's index row names the authorization; the typed row
+            # is read by id (the legacy lookup reads the legacy entity).
+            ref = self._read_entity(
+                "gateway_authorization_idempotency",
+                _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key),
+                dict,
+            )
+            existing = self.get_gateway_authorization(str(ref["authorization_id"])) if ref else None
+            if existing is None:
+                return None
+            if existing.idempotency_fingerprint != idempotency_fingerprint:
+                return AuthorizeVerdict(AuthorizeOutcome.IDEMPOTENCY_MISMATCH, rate_limit=window_decision), None
+            return AuthorizeVerdict(AuthorizeOutcome.REPLAY, rate_limit=window_decision), existing
+
+        replayed = replay()
+        if replayed is not None:
+            return replayed
         when = created_at if created_at is not None else dt.datetime.now(dt.UTC)
         authorization = build_authorization(authorization_id, "")
         authorization.credit_reservation_id = None
         authorization.fastpath_envelope = fastpath_envelope
         authorization.fastpath_end_of_life = fastpath_end_of_life
         authorization.created_at = when.isoformat().replace("+00:00", "Z")
+        pt = self._param_types
 
         def txn(transaction: Any) -> None:
-            insert_gateway_authorization(transaction, self._param_types, authorization, created_at=when)
+            statements = [gateway_authorization_insert_statement(pt, authorization, created_at=when)]
+            if idempotency_key is not None:
+                statements.append(entity_insert_statement(
+                    pt,
+                    "gateway_authorization_idempotency",
+                    _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key),
+                    _json_body({"authorization_id": authorization.id}),
+                ))
+            execute_batch_dml(transaction, statements, [(1,)] * len(statements))
 
-        run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_authorize_leased")
+        try:
+            run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_authorize_leased")
+        except AlreadyExists:
+            # The scope's row landed first (a concurrent retry): its
+            # authorization answers, and the caller gives this hold back.
+            replayed = replay()
+            if replayed is None:
+                raise
+            return replayed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
 
     def typed_finalize_leased_result(
@@ -5489,6 +5541,10 @@ class SpannerStore:
             return self._authorize_gateway_leased(
                 build_authorization=build_authorization,
                 authorization_id=authorization_id,
+                workspace_id=workspace_id,
+                key_hash=key_hash,
+                idempotency_key=idempotency_key,
+                idempotency_fingerprint=idempotency_fingerprint,
                 fastpath_envelope=fastpath_envelope,
                 fastpath_end_of_life=fastpath_end_of_life,
                 created_at=created_at,

@@ -389,15 +389,6 @@ def test_go_times_with_nanoseconds_and_without_a_zone_are_read_or_refused() -> N
     assert fd._parse_time(None) is None
 
 
-def test_the_enclaves_own_idempotency_key_is_not_the_clients() -> None:
-    assert fd.client_presented_key(None) is None
-    assert fd.client_presented_key("") is None
-    assert fd.client_presented_key("tr-gateway-" + "0123456789abcdef" * 2) is None
-    assert fd.client_presented_key("tr-gateway-" + "0123456789ABCDEF" * 2) == "tr-gateway-" + "0123456789ABCDEF" * 2
-    assert fd.client_presented_key("tr-gateway-short") == "tr-gateway-short"
-    assert fd.client_presented_key("my-order-42") == "my-order-42"
-
-
 _ELIGIBLE: dict[str, Any] = {
     "enabled": True,
     "workspace_id": "ws-1",
@@ -408,7 +399,6 @@ _ELIGIBLE: dict[str, Any] = {
     "standard_endpoint_pricing": True,
     "credit_funded": True,
     "boot_verified": True,
-    "idempotency_key": None,
     "service_tier": None,
     "key_capped": False,
     "budget_strict": False,
@@ -427,7 +417,6 @@ def test_the_narrowest_cohort_is_eligible_and_each_departure_names_itself() -> N
         ("standard_endpoint_pricing", False, "pricing"),
         ("credit_funded", False, "funding"),
         ("boot_verified", False, "boot"),
-        ("idempotency_key", "idem-1", "idempotency"),
         ("service_tier", "priority", "service_tier"),
         ("key_capped", True, "key_cap"),
         ("budget_strict", True, "key_cap"),

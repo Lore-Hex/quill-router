@@ -1725,7 +1725,6 @@ def _authorize_gateway_sync_impl(
             and all(UsageType.for_endpoint(e) == UsageType.CREDITS for _m, e in endpoint_candidates),
             boot_verified=bool(boot_context["boot_verified"]),
             boot_kid=boot_auth.kid if boot_auth is not None else None,
-            idempotency_key=_fastpath.client_presented_key(presented_idempotency_key),
             service_tier=body.service_tier,
             key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
             budget_strict=bool(api_key.budget_strict),
@@ -1932,8 +1931,9 @@ def _authorize_gateway_sync_impl(
         if outcome == AuthorizeOutcome.REPLAY:
             # concurrent-race replay: respond from the STORED authorization.
             # Our provisional slot belongs to the id that lost the race, not
-            # to the stored authorization — give it back.
-            release_user_model_slot_after_error()
+            # to the stored authorization — give it back; and the hold a
+            # lease granted this attempt, which the stored one does not use.
+            release_after_error()
             return _replay_response(authorization, endpoint_candidates)
         credit_reservation_id = authorization.credit_reservation_id
     else:
@@ -4925,7 +4925,6 @@ def _fastpath_admission(
     credit_funded: bool,
     boot_verified: bool,
     boot_kid: str | None,
-    idempotency_key: str | None,
     service_tier: str | None,
     key_capped: bool,
     budget_strict: bool,
@@ -4945,7 +4944,6 @@ def _fastpath_admission(
         standard_endpoint_pricing=standard_endpoint_pricing,
         credit_funded=credit_funded,
         boot_verified=boot_verified and bool(boot_kid),
-        idempotency_key=idempotency_key,
         service_tier=service_tier,
         key_capped=key_capped,
         budget_strict=budget_strict,

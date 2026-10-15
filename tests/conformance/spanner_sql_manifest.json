@@ -4614,6 +4614,7 @@
     "storage_gcp:SpannerStore.reserve_earnings_cashout.txn": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
     "storage_gcp:SpannerStore.release_earnings_cashout.txn": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
     "storage_gcp:SpannerStore.ensure_earnings_account.txn": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
+    "storage_gcp:SpannerStore._authorize_gateway_leased.txn": "b3fd816793b090777b7d7ae87a07b133386e10d02ff9a69fa8ce57c4230a5431",
     "storage_gcp:SpannerStore.typed_finalize_leased_result.txn": "a30bae5a7e6ad7e4ffbc1f1c630718798cc156b36ed0da7f1eb94d36555ffe50",
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",

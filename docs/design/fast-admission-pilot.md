@@ -67,13 +67,16 @@ at once, best effort, so it does not wait for the lease to drain.
 
 The cohort, `pilot_reason` in `services/fastpath_frontdoor.py`, is the
 design's §4.11 at its narrowest: a credit-funded key on a standard route,
-not streaming, with a verified boot, no idempotency key, no service tier,
+not streaming, with a verified boot, no service tier,
 no key cap or window (alert-only windows included), no strict budget, no
 app markup, every candidate priced in credits (a BYOK fallback books no
 credit usage, and a lease would charge it); a workspace in the pilot set;
 a control plane in a pilot region, with the settle outbox and the durable
 activity outbox on (the leased settle writes both in its own commit).
-Everything else stays on
+An idempotency key does not exclude a request: the enclave sends one on
+every authorize, and a leased authorization replays by its scope as
+today's does (the index row of the scope is written with the
+authorization row; a retry's hold is given back). Everything else stays on
 today's path, as does any request the front door does not admit: `off` (the
 workspace is not on the fast path's own switch), `busy` (no lease took it),
 `invalid`, a front door that failed, or none serving. A request is never
