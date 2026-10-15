@@ -75,7 +75,7 @@ const site = http.createServer((req,res) => {
       assert.equal(await page.locator('.service-history').count(),0);
       assert.equal(await page.locator('.health-bar').count(),0);
       assert.match(await page.locator('[data-live-caption]').textContent(),/service status/);
-      assert(await page.getByRole('link',{name:'Service status ↗',exact:true}).isVisible());
+      assert(await page.getByRole('link',{name:'Service status',exact:true}).isVisible());
     };
     mode='stale';await reload(pages[0]);await quiet(pages[0]);
     assert.equal(await pages[0].locator('[data-live-attestation]').textContent(),'');

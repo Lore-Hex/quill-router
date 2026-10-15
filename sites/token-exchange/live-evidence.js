@@ -40,7 +40,7 @@
     return el;
   };
   const unavailable = () => {
-    prices.replaceChildren(link('Browse Tinfoil model routes ↗', 'https://trustedrouter.com/models?filter=e2e'));
+    prices.replaceChildren(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
     if (caption) caption.textContent = statusCaption;
     state.textContent = '';
@@ -69,7 +69,7 @@
       const col = link('', `https://trustedrouter.com/models/${encodeURI(row.model)}#provider-tinfoil`);
       col.className = 'privacy-column';
       const choice = node('div', undefined, 'privacy-choice');
-      choice.append(node('h3', row.label + ' ↗'), node('p', 'Tinfoil'));
+      choice.append(node('h3', row.label), node('p', 'Tinfoil'));
       col.append(choice, node('div', 'Confidential + E2EE', 'privacy-provider'), node('div', `$${row.input} / $${row.output}`, 'privacy-price'));
       prices.append(col);
     }
@@ -77,7 +77,7 @@
       priceUnit.hidden = !prices.childElementCount;
       priceUnit.textContent = `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
     }
-    if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes ↗', 'https://trustedrouter.com/models?filter=e2e'));
+    if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
     const components = Array.isArray(payload.components) ? payload.components : [];
     // A landing page is not an incident dashboard. If any source is unhealthy

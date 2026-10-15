@@ -28,7 +28,7 @@ const assert=require('node:assert/strict');
       assert(Array.isArray(prices)&&prices.length>0,'Outage rig needs available catalog prices');
       const expectedPrices=prices.map(row=>({
         href:`https://trustedrouter.com/models/${encodeURI(row.model)}#provider-tinfoil`,
-        label:row.label+' ↗',
+        label:row.label,
         price:`$${row.input} / $${row.output}`,
       }));
       assert.deepEqual(await renderedPrices(page),expectedPrices);
