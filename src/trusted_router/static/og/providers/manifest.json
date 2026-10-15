@@ -550,10 +550,10 @@
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 16,
+    "model_count": 17,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 16,
+    "route_count": 17,
     "route_mode": "Prepaid",
     "slug": "nscale"
   },
