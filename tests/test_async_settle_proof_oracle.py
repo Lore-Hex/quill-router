@@ -1688,7 +1688,8 @@ def test_reference_walk_unregistered_frame_globals(monkeypatch, namespace_name, 
         reached_ids = {id(value) for value in reached}
         assert id(table) not in reached_ids
         assert not any(id(value) in reached_ids for value in table)
-        assert len(reached) < 5_000
+        # Other imports affect the visit count, so compare against the table size.
+        assert len(reached) < len(table)
     finally:
         monkeypatch.delattr(frozen, 'review_frame_root', raising=False)
         reached.clear()
