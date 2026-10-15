@@ -73,6 +73,12 @@ class RoutePreferences:
     privacy_requirements: frozenset[int] = frozenset()
     require_parameters: bool = False
     requested_parameters: frozenset[str] = frozenset()
+    # The requested parameters every route must take whatever
+    # require_parameters says (CAPABILITY_REQUIRED_PARAMETERS).
+    capability_parameters: frozenset[str] = frozenset()
+    # Models in the candidate list only because a routing pool the request
+    # names contains them: routing, not the caller, chose them.
+    pool_model_ids: frozenset[str] = frozenset()
     input_modalities: frozenset[str] = frozenset()
     max_prompt_price_microdollars_per_million_tokens: int | None = None
     max_completion_price_microdollars_per_million_tokens: int | None = None
@@ -158,6 +164,41 @@ _PARAMETER_CAPABILITY_ALIASES: dict[str, frozenset[str]] = {
     "reasoning": frozenset({"reasoning", "reasoning_effort"}),
     "response_format": frozenset({"response_format", "structured_outputs"}),
 }
+
+# Parameters that decide what KIND of response comes back. A route that does
+# not take one still answers, without an error, but with something else: prose
+# instead of a tool call, free text instead of the requested JSON. So routing
+# never sends one to a route the catalog says lacks it, whatever
+# provider.require_parameters says (_takes_capability_parameters). Each maps
+# to the declarations of the capability it needs; tool_choice is part of tool
+# calling, which a route declares as `tools`. Sampling and effort controls
+# (temperature, seed, reasoning, ...) change how an answer is produced, not
+# its kind, so only require_parameters filters them.
+_TOOL_CALLING = frozenset({"tools"})
+_STRUCTURED_OUTPUT = frozenset({"response_format", "structured_outputs"})
+CAPABILITY_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
+    "tools": _TOOL_CALLING,
+    "tool_choice": _TOOL_CALLING,
+    "response_format": _STRUCTURED_OUTPUT,
+    "structured_outputs": _STRUCTURED_OUTPUT,
+}
+
+# Capabilities whose route declarations are complete enough that a route
+# not declaring one, while another route of its model does, is taken to lack
+# it. Tool calling's were filled per host from provider model APIs (#1578)
+# and reviewed provider docs (data/request_capabilities.json, #1579).
+# Structured output's were not: the makers' own routes (Google AI Studio and
+# Vertex, Z.AI, Moonshot, Alibaba, MiniMax) declare it on none of 50 routes
+# while a third-party host of the same model does. For it only the model's
+# declaration counts.
+_ROUTE_DECLARED_CAPABILITIES = frozenset({_TOOL_CALLING})
+
+# Route types whose requested_parameters the gateway derives from the very
+# request being routed (or a body that names no route type). Orchestration
+# sub-calls (fusion.*, advisor.*, subagent.*, *.web_search*) carry their
+# parent's list while dropping or replacing its tools and response_format, so
+# there the list does not describe the call and filters nothing.
+_ROUTE_TYPES_DESCRIBED_BY_REQUESTED_PARAMETERS = frozenset({None, "chat.completions", "responses"})
 
 # OpenRouter-style model-id suffixes. Append `:nitro` to a model id to
 # re-sort the upstream provider list by throughput-first (equivalent to
@@ -277,11 +318,7 @@ def chat_route_endpoint_candidates(
         candidates, prefs, _apply_endpoint_provider_filters
     )
     if not filtered:
-        raise api_error(
-            400,
-            "No route candidates match the requested provider filters",
-            ErrorType.MODEL_NOT_SUPPORTED,
-        )
+        raise _no_route_error(candidates, prefs)
     candidates = _sort_endpoint_candidates(filtered, prefs)
     if not prefs.allow_fallbacks and not defer_no_fallback_selection:
         candidates = candidates[:1]
@@ -388,9 +425,9 @@ def routing_pool_discovery(
 
     - A parameter is published when every model the pool can route to has at
       least one pool route that accepts it, by the same test
-      provider.require_parameters applies. Default routing does not filter by
-      parameters, so the pool never claims more than its weakest model, and a
-      model's routes follow the same contract as naming that model directly.
+      provider.require_parameters applies. So the pool never claims more than
+      its weakest model, and a model's routes follow the same contract as
+      naming that model directly.
       With provider.require_parameters: true, a request sending a published
       parameter keeps every model in the pool.
     - An input modality is published when any of the pool's routes accepts it.
@@ -675,6 +712,11 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
             ErrorType.BAD_REQUEST,
         )
     requested_parameters = _requested_parameters(body)
+    capability_parameters = (
+        frozenset(name for name in requested_parameters if name in CAPABILITY_REQUIRED_PARAMETERS)
+        if body.get("route_type") in _ROUTE_TYPES_DESCRIBED_BY_REQUESTED_PARAMETERS
+        else frozenset()
+    )
     max_prompt_price, max_completion_price = _max_token_prices(raw.get("max_price"))
 
     return RoutePreferences(
@@ -691,6 +733,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         provider_jurisdiction=provider_jurisdiction,
         require_parameters=require_parameters,
         requested_parameters=requested_parameters,
+        capability_parameters=capability_parameters,
         input_modalities=_requested_input_modalities(body),
         max_prompt_price_microdollars_per_million_tokens=max_prompt_price,
         max_completion_price_microdollars_per_million_tokens=max_completion_price,
@@ -806,6 +849,8 @@ def _routing_for_body(
         settings,
         include_fallback_models=prefs.allow_fallbacks,
     )
+    if "pool_model_ids" in overrides:
+        prefs = dataclasses.replace(prefs, pool_model_ids=overrides["pool_model_ids"])
     if "sort" in overrides:
         prefs = dataclasses.replace(prefs, sort=overrides["sort"])
     if "order" in overrides:
@@ -949,6 +994,8 @@ def _requested_model_ids(
 ) -> tuple[list[str], dict[str, Any]]:
     ids: list[str] = []
     overrides: dict[str, Any] = {}
+    pool_ids: set[str] = set()
+    named_ids: set[str] = set()
 
     def take(raw: str) -> None:
         stripped, ovr = _strip_variant_suffix(raw)
@@ -992,7 +1039,9 @@ def _requested_model_ids(
             provider_order = ",".join(EU_FOCUSED_PROVIDER_ORDER)
             overrides["order"] = provider_order
             overrides["only"] = provider_order
-        ids.extend(_expand_model_id(stripped, settings))
+        expanded = _expand_model_id(stripped, settings)
+        (pool_ids if expanded != [stripped] else named_ids).update(expanded)
+        ids.extend(expanded)
 
     model_id = str(body.get("model") or "").strip()
     if model_id:
@@ -1018,6 +1067,8 @@ def _requested_model_ids(
 
     if not ids:
         raise api_error(400, "model is required", ErrorType.BAD_REQUEST)
+    if pool_ids - named_ids:
+        overrides["pool_model_ids"] = frozenset(pool_ids - named_ids)
     return ids, overrides
 
 
@@ -1074,6 +1125,7 @@ def _required_privacy_postures(prefs: RoutePreferences) -> frozenset[int]:
 def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) -> list[Model]:
     out: list[Model] = []
     privacy_requirements = _required_privacy_postures(prefs)
+    declared_by_model: dict[str, frozenset[str]] = {}
     for model in candidates:
         provider = PROVIDERS[model.provider]
         if prefs.only and model.provider not in prefs.only:
@@ -1099,11 +1151,13 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             continue
         if (
             prefs.require_parameters
+            or prefs.capability_parameters
             or prefs.input_modalities
             or prefs.max_prompt_price_microdollars_per_million_tokens is not None
             or prefs.max_completion_price_microdollars_per_million_tokens is not None
         ) and not any(
             _endpoint_matches_parameter_and_price_filters(endpoint, prefs)
+            and _takes_capability_parameters(model, endpoint, prefs, declared_by_model)
             for endpoint in model_endpoints
         ):
             continue
@@ -1142,6 +1196,7 @@ def _apply_endpoint_provider_filters(
 ) -> list[tuple[Model, ModelEndpoint]]:
     out: list[tuple[Model, ModelEndpoint]] = []
     privacy_requirements = _required_privacy_postures(prefs)
+    declared_by_model: dict[str, frozenset[str]] = {}
     for model, endpoint in candidates:
         provider = PROVIDERS[endpoint.provider]
         if prefs.only and endpoint.provider not in prefs.only:
@@ -1161,8 +1216,94 @@ def _apply_endpoint_provider_filters(
             continue
         if not _endpoint_matches_parameter_and_price_filters(endpoint, prefs):
             continue
+        if not _takes_capability_parameters(model, endpoint, prefs, declared_by_model):
+            continue
         out.append((model, endpoint))
     return out
+
+
+def _takes_capability_parameters(
+    model: Model,
+    endpoint: ModelEndpoint,
+    prefs: RoutePreferences,
+    declared_by_model: dict[str, frozenset[str]],
+) -> bool:
+    """Whether a route may serve every capability-required parameter the
+    request sends (CAPABILITY_REQUIRED_PARAMETERS). A route that declares one
+    takes it. A route that does not is refused only on the catalog's evidence:
+
+    - another route of the same model declares it, for a capability whose
+      route declarations are kept per host (_ROUTE_DECLARED_CAPABILITIES); or
+    - neither the model nor any of its routes declares it, and routing chose
+      the model from a pool (prefs.pool_model_ids).
+
+    Otherwise the model's own declaration, or the caller naming the model,
+    stands for the route: GPT-4, Azure's GPT-5.6 deployments and Doubao Seed
+    call tools while the catalog declares tools for none of them, so silence
+    is a gap, not a refusal. `declared_by_model` caches each model's route
+    declarations for one call.
+    """
+    for parameter in prefs.capability_parameters:
+        accepted = CAPABILITY_REQUIRED_PARAMETERS[parameter]
+        if not accepted.isdisjoint(endpoint.supported_parameters):
+            continue
+        if model.id not in declared_by_model:
+            declared_by_model[model.id] = frozenset(
+                name
+                for route in endpoints_for_model(model.id)
+                for name in route.supported_parameters
+            )
+        if not accepted.isdisjoint(declared_by_model[model.id]):
+            if accepted in _ROUTE_DECLARED_CAPABILITIES:
+                return False
+        elif accepted.isdisjoint(model.supported_parameters) and model.id in prefs.pool_model_ids:
+            return False
+    return True
+
+
+def _no_route_error(
+    candidates: list[tuple[Model, ModelEndpoint]],
+    prefs: RoutePreferences,
+) -> HTTPException:
+    """The 400 for a request no candidate route survives. When the provider
+    filters alone keep a route, the capability-required parameters emptied
+    the list, and the error names them."""
+
+    def kept(parameters: frozenset[str]) -> bool:
+        return bool(
+            _filter_candidates_soft_data_collection(
+                candidates,
+                dataclasses.replace(prefs, capability_parameters=parameters),
+                _apply_endpoint_provider_filters,
+            )
+        )
+
+    if not prefs.capability_parameters or not kept(frozenset()):
+        return api_error(
+            400,
+            "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    unsupported = sorted(
+        parameter
+        for parameter in prefs.capability_parameters
+        if not kept(frozenset({parameter}))
+    )
+    if unsupported:
+        named = ", ".join(unsupported)
+        plural = "s" if len(unsupported) > 1 else ""
+        text = f"No route for the requested model supports the parameter{plural}: {named}"
+    else:
+        # Each parameter has a route, but no route takes them all.
+        unsupported = sorted(prefs.capability_parameters)
+        named = ", ".join(unsupported)
+        text = f"No route for the requested model supports these parameters together: {named}"
+    return api_error(
+        400,
+        text,
+        ErrorType.MODEL_NOT_SUPPORTED,
+        extra={"param": unsupported[0], "unsupported_parameters": unsupported},
+    )
 
 
 def _endpoint_supports_requested_parameters(
