@@ -61,6 +61,7 @@ DEEPINFRA_MIMO_V25_RETIREMENT_AT = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
 DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
 DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
 DEEPINFRA_GRANITE_42_RETIREMENT_AT = datetime(2026, 10, 18, 0, 0, tzinfo=UTC)
+DEEPINFRA_INKLING_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
 XIAOMI_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
@@ -900,6 +901,17 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"ibm-granite/granite-4.2-3b", "ibm-granite/granite-4.2-30b"}),
         effective_at=DEEPINFRA_GRANITE_42_RETIREMENT_AT,
         replacement_model_ids=("ibm-granite/granite-4.2-8b",),
+    ),
+    # DeepInfra's October 15 notice deprecates Inkling on 2026-10-22 and
+    # redirects later requests to the different Inkling-Small weights. Retire
+    # DeepInfra's route at 00:00 UTC (date only) instead of accepting the
+    # substitution; other providers' Inkling routes are unaffected.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"thinkingmachines/inkling"}),
+        upstream_ids=frozenset({"thinkingmachines/Inkling"}),
+        effective_at=DEEPINFRA_INKLING_RETIREMENT_AT,
+        replacement_model_ids=("thinkingmachines/inkling-small",),
     ),
     # Google Cloud's October 5 notice: Vertex (Gemini Enterprise) requests to
     # Gemini 3.6 Flash fail with 404 from November 19, 2026 and to Gemini 3.7
