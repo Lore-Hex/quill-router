@@ -1149,10 +1149,6 @@ class TypedBillingStore(Protocol):
     surface must stay backend-symmetric.
     """
 
-    def get_leased_authorization_by_idempotency(
-        self, workspace_id: str, key_hash: str, idempotency_key: str,
-    ) -> GatewayAuthorization | None: ...
-
     def authorize_gateway_typed(
         self,
         *,

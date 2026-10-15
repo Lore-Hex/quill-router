@@ -384,12 +384,9 @@ def _iso_timestamp(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
-# The pilot's idempotency index row, replaced when it names an authorization
-# retention retired (docs/design/fast-admission-pilot.md).
-_LEASED_INDEX_REPLACE_SQL = (
-    "UPDATE tr_entities SET body=@body, updated_at=PENDING_COMMIT_TIMESTAMP() "
-    "WHERE kind=@kind AND id=@id"
-)
+# A leased authorization's scope row expires this long after it is written:
+# past any hold's life, so the expired-reservation reaper never reaches it.
+LEASED_RESERVATION_EXPIRY_DAYS = 400
 
 
 class SpannerStore:
@@ -4991,6 +4988,8 @@ class SpannerStore:
         key_hash: str,
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        reservation_usage_type: str,
+        expires_at: Any,
         fastpath_envelope: str,
         fastpath_end_of_life: str | None,
         created_at: dt.datetime | None,
@@ -4998,17 +4997,25 @@ class SpannerStore:
     ) -> tuple[Any, GatewayAuthorization | None]:
         """The pilot's authorize (docs/design/fast-admission-pilot.md): one
         transaction inserting the typed authorization row, with the lease's
-        envelope in its payload and no reservation, and the idempotency
-        index row of its scope, so a replay of the key (the enclave's retry,
-        or a client's) answers the stored authorization as today's path
-        does: REPLAY, or IDEMPOTENCY_MISMATCH when the body differs. The
-        caller gives back the hold it took for a replay. No hold DML here:
-        the pilot takes only uncapped keys and typed request records."""
+        envelope in its payload, and a reservation row that holds nothing
+        (credit 0, key 0) and carries the idempotency scope: the one scope
+        today's path claims, so a replay of the key on either path, the
+        enclave's retry after a lost answer, a client's, the pilot on or off,
+        answers the stored authorization as today's does, REPLAY or
+        IDEMPOTENCY_MISMATCH by fingerprint, and two attempts at once
+        conflict on the scope's unique index. The caller gives back the
+        hold it took for a replay. The row expires far past any hold's
+        life, so the expired-reservation reaper never finalizes a leased
+        authorization; the leased finalize claims it.
+        """
         from google.api_core.exceptions import AlreadyExists
 
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome, AuthorizeVerdict
         from trusted_router.storage_gcp_batch_dml import execute_batch_dml
-        from trusted_router.storage_gcp_counter_dml import entity_insert_statement
+        from trusted_router.storage_gcp_counter_dml import (
+            read_reservation_by_idempotency,
+            reservation_insert_statement,
+        )
         from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
         from trusted_router.storage_gcp_request_records import (
             gateway_authorization_insert_statement,
@@ -5018,88 +5025,74 @@ class SpannerStore:
             raise RuntimeError("a leased authorization needs the typed request record")
         if authorization_id is None:
             raise ValueError("a leased authorization needs its id up front")
-
-        stale_index = False
+        scope = (
+            _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
+            if idempotency_key is not None
+            else None
+        )
+        pt = self._param_types
 
         def replay() -> tuple[Any, GatewayAuthorization | None] | None:
-            """The scope's earlier authorization, leased (the index row) or
-            reserved (today's tr_reservation scope): one scope, two tables."""
-            nonlocal stale_index
-            if idempotency_key is None:
+            if scope is None:
                 return None
-            existing, stale = self._leased_authorization_by_scope(workspace_id, key_hash, idempotency_key)
-            stale_index = stale
-            if existing is None:
-                existing = self.get_typed_authorization_by_idempotency(workspace_id, key_hash, idempotency_key)
+            with self._database.snapshot() as snapshot:
+                existing = read_reservation_by_idempotency(snapshot, pt, scope)
             if existing is None:
                 return None
-            if existing.idempotency_fingerprint != idempotency_fingerprint:
+            if existing["idempotency_fingerprint"] != idempotency_fingerprint:
                 return AuthorizeVerdict(AuthorizeOutcome.IDEMPOTENCY_MISMATCH, rate_limit=window_decision), None
-            return AuthorizeVerdict(AuthorizeOutcome.REPLAY, rate_limit=window_decision), existing
+            stored = self.get_gateway_authorization(str(existing["authorization_id"]))
+            if stored is None:
+                return None
+            return AuthorizeVerdict(AuthorizeOutcome.REPLAY, rate_limit=window_decision), stored
 
         replayed = replay()
         if replayed is not None:
             return replayed
         when = created_at if created_at is not None else dt.datetime.now(dt.UTC)
-        authorization = build_authorization(authorization_id, "")
-        authorization.credit_reservation_id = None
+        reservation_id = str(uuid.uuid4())
+        authorization = build_authorization(authorization_id, reservation_id)
         authorization.fastpath_envelope = fastpath_envelope
         authorization.fastpath_end_of_life = fastpath_end_of_life
         authorization.created_at = when.isoformat().replace("+00:00", "Z")
-        pt = self._param_types
+        # Past any hold's life and the reaper's reach: the lease ends the
+        # hold, and the leased finalize claims this row.
+        far = when + dt.timedelta(days=LEASED_RESERVATION_EXPIRY_DAYS)
 
         def txn(transaction: Any) -> None:
-            statements = [gateway_authorization_insert_statement(pt, authorization, created_at=when)]
-            if idempotency_key is not None:
-                index_id = _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
-                body = _json_body({"authorization_id": authorization.id})
-                if stale_index:
-                    # The row names an authorization retention retired: it
-                    # is this authorization's now.
-                    statements.append((
-                        _LEASED_INDEX_REPLACE_SQL,
-                        {"kind": "gateway_authorization_idempotency", "id": index_id, "body": body},
-                        {"kind": pt.STRING, "id": pt.STRING, "body": pt.STRING},
-                    ))
-                else:
-                    statements.append(entity_insert_statement(pt, "gateway_authorization_idempotency", index_id, body))
+            statements = [
+                reservation_insert_statement(
+                    pt,
+                    reservation_id=reservation_id,
+                    workspace_id=workspace_id,
+                    key_hash=key_hash,
+                    ws_shard=UNSHARDED,
+                    credit_shard=UNSHARDED,
+                    key_shard=UNSHARDED,
+                    credit_reserved_micro=0,
+                    key_reserved_micro=0,
+                    hold_usage_type=reservation_usage_type,
+                    authorization_id=authorization_id,
+                    idempotency_scope=scope,
+                    idempotency_fingerprint=idempotency_fingerprint,
+                    expires_at=far,
+                    created_at=when,
+                ),
+                gateway_authorization_insert_statement(pt, authorization, created_at=when),
+            ]
             execute_batch_dml(transaction, statements, [(1,)] * len(statements))
 
         try:
             run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_authorize_leased")
         except AlreadyExists:
-            # The scope's row landed first (a concurrent retry): its
-            # authorization answers, and the caller gives this hold back.
+            # The scope's row landed first (a concurrent attempt, on either
+            # path): its authorization answers, and the caller gives this
+            # hold back.
             replayed = replay()
             if replayed is None:
                 raise
             return replayed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
-
-    def _leased_authorization_by_scope(
-        self, workspace_id: str, key_hash: str, idempotency_key: str,
-    ) -> tuple[GatewayAuthorization | None, bool]:
-        """The leased authorization the scope's index row names, and whether
-        the row is stale (it names an authorization retention retired)."""
-        from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
-
-        ref = self._read_entity(
-            "gateway_authorization_idempotency",
-            _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key),
-            dict,
-        )
-        if not ref:
-            return None, False
-        existing = self.get_gateway_authorization(str(ref["authorization_id"]))
-        return existing, existing is None
-
-    def get_leased_authorization_by_idempotency(
-        self, workspace_id: str, key_hash: str, idempotency_key: str,
-    ) -> GatewayAuthorization | None:
-        """The pilot's replay for a request taking today's path: the leased
-        authorization an earlier attempt of the same scope got, if any."""
-        existing, _stale = self._leased_authorization_by_scope(workspace_id, key_hash, idempotency_key)
-        return existing
 
     def typed_finalize_leased_result(
         self,
@@ -5166,6 +5159,14 @@ class SpannerStore:
         def txn(transaction: Any) -> None:
             statements = [gateway_authorization_settled_statement(pt, authorization)]
             counts: list[tuple[int, ...]] = [(1,)]
+            if authorization.credit_reservation_id:
+                # The scope row, holding nothing, claimed with the records so
+                # it is terminal with them; its retention the done-mark's.
+                statements.append(claim_reservation_statement(
+                    pt, str(authorization.credit_reservation_id), actual_micro=0,
+                    settled_usage_type=str(actual_usage_type), defer_retention=True,
+                ))
+                counts.append((1,))
             if success and generation is not None:
                 if persist_generation:
                     statements.append(generation_insert_statement(pt, generation, terminal_at=now))
@@ -5585,6 +5586,8 @@ class SpannerStore:
                 key_hash=key_hash,
                 idempotency_key=idempotency_key,
                 idempotency_fingerprint=idempotency_fingerprint,
+                reservation_usage_type=str(usage),
+                expires_at=expires_at,
                 fastpath_envelope=fastpath_envelope,
                 fastpath_end_of_life=fastpath_end_of_life,
                 created_at=created_at,
