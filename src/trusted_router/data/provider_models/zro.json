@@ -76,7 +76,8 @@
         "prompt_caching"
       ],
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-10-15"
     },
     {
       "display_name": "GLM-5.3",
@@ -191,7 +192,7 @@
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-10-14T02:11:04Z",
+  "generated_at": "2026-10-15T00:51:45Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }
