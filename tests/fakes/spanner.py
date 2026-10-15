@@ -4051,6 +4051,8 @@ def _execute_sql(
             rows = [
                 row for row in rows if row.get("workspace_id") == params["workspace_id"]
             ]
+        if "event_id" in params:
+            rows = [row for row in rows if row.get("event_id") == params["event_id"]]
         if "ids" in params:
             wanted = set(params["ids"])
             rows = [row for row in rows if row.get("workspace_id") in wanted]

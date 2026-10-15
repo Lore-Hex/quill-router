@@ -428,6 +428,10 @@ ENV_VARS=(
   # Exactly $0.30 once per newly created email/social OAuth account. Wallet-only
   # accounts stay at $0. Keep this explicit so stale env cannot change policy.
   "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"
+  # Launch requires policy resolution and an accepted incident owner.
+  "TR_SOCIAL_REWARDS_ENABLED=false"
+  "TR_SOCIAL_REWARDS_PLANE_ID=gcp-primary"
+  "TR_SOCIAL_REWARDS_ISSUER_ID=gcp-primary"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   # Owner notifications. The identifiers here are not secrets — the numbers are
   # public and the ids name resources, not authorise them — so they live in

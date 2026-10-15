@@ -95,6 +95,7 @@ from trusted_router.storage_models import (
     RoutablePayoutProfile,
     SessionAuthContext,
     SignupResult,
+    SocialRewardEnrollment,
     SyntheticProbeSample,
     SyntheticRollup,
     TrustEvent,
@@ -171,6 +172,7 @@ class InMemoryStore:
         self.trust_tier3_min_paid_microdollars = int(
             trust_tier3_min_paid_microdollars
         )
+        self.social_reward_enrollments: dict[str, SocialRewardEnrollment] = {}
         self.users: dict[str, User] = {}
         self._company_affiliation_documents: dict[str, dict[str, Any]] = {}
         self._company_affiliation_directory: Any = None
@@ -259,6 +261,7 @@ class InMemoryStore:
         with self._lock:
             self._company_affiliation_documents.clear()
             self._company_affiliation_directory = None
+            self.social_reward_enrollments.clear()
             self.users.clear()
             self.user_ids_by_email.clear()
             self.user_ids_by_wallet.clear()
@@ -425,6 +428,32 @@ class InMemoryStore:
         with self._lock:
             return self.gateway_boots.get(kid)
 
+    def get_social_reward_enrollment(self, user_id: str) -> SocialRewardEnrollment | None:
+        with self._lock:
+            record = self.social_reward_enrollments.get(user_id)
+            return dataclasses.replace(record) if record is not None else None
+
+    def dismiss_social_rewards(self, user_id: str) -> bool:
+        with self._lock:
+            record = self.social_reward_enrollments.get(user_id)
+            if record is None or record.dismissed:
+                return False
+            record.dismissed = True
+            return True
+
+    def mark_social_reward_first_call(self, user_id: str) -> bool:
+        with self._lock:
+            record = self.social_reward_enrollments.get(user_id)
+            if record is None or record.first_call_complete:
+                return False
+            record.first_call_complete = True
+            return True
+
+    def has_credit_grant(self, workspace_id: str, event_id: str) -> bool:
+        with self._lock:
+            event = self.trust_events.get((workspace_id, event_id))
+            return event is not None and event.kind == "grant"
+
     def ensure_user(
         self,
         user_id: str,
@@ -432,7 +461,12 @@ class InMemoryStore:
         *,
         trial_credit_microdollars: int | None = None,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> User:
+        if social_rewards_issuer is not None and (
+            not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
+        ):
+            raise ValueError("social rewards enrollment requires the 150000 signup grant")
         with self._lock:
             normalized_email = _normalize_email(email or user_id)
             existing_id = self.user_ids_by_email.get(normalized_email)
@@ -444,11 +478,15 @@ class InMemoryStore:
                 id=new_id, email=normalized_email, email_verified=email_verified
             )
             self.user_ids_by_email[normalized_email] = new_id
-            self.create_workspace(
+            workspace = self.create_workspace(
                 owner_user_id=new_id,
                 name="Personal Workspace",
                 trial_credit_microdollars=trial_credit_microdollars,
             )
+            if social_rewards_issuer is not None:
+                self.social_reward_enrollments[new_id] = SocialRewardEnrollment(
+                    new_id, workspace.id, social_rewards_issuer
+                )
             return self.users[new_id]
 
     def grant_provider_access(
@@ -494,6 +532,7 @@ class InMemoryStore:
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> SignupResult | None:
         """Atomically create a new account end-to-end. Returns None if the
         email is already registered."""
@@ -505,6 +544,7 @@ class InMemoryStore:
                 email=email,
                 trial_credit_microdollars=trial_credit_microdollars,
                 email_verified=email_verified,
+                social_rewards_issuer=social_rewards_issuer,
             )
             workspace = self.list_workspaces_for_user(user.id)[0]
             if workspace_name:

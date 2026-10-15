@@ -153,6 +153,7 @@ from trusted_router.storage_models import (
     RoutablePayoutProfile,
     SessionAuthContext,
     SignupResult,
+    SocialRewardEnrollment,
     SyntheticProbeSample,
     SyntheticRollup,
     TrustEvent,
@@ -1425,6 +1426,45 @@ class PostgresStore:
         self._run_transaction(operation)
         self._company_affiliation_directory = None
 
+    def get_social_reward_enrollment(self, user_id: str) -> SocialRewardEnrollment | None:
+        return self._read_entity("social_reward_enrollment", user_id, SocialRewardEnrollment)
+
+    def dismiss_social_rewards(self, user_id: str) -> bool:
+        def txn(conn: Any) -> bool:
+            record = self._read_entity_tx(
+                conn, "social_reward_enrollment", user_id, SocialRewardEnrollment,
+                for_update=True,
+            )
+            if record is None or record.dismissed:
+                return False
+            record.dismissed = True
+            self._write_entity_tx(conn, "social_reward_enrollment", user_id, record)
+            return True
+
+        return self._run_transaction(txn)
+
+    def mark_social_reward_first_call(self, user_id: str) -> bool:
+        def txn(conn: Any) -> bool:
+            record = self._read_entity_tx(
+                conn, "social_reward_enrollment", user_id, SocialRewardEnrollment,
+                for_update=True,
+            )
+            if record is None or record.first_call_complete:
+                return False
+            record.first_call_complete = True
+            self._write_entity_tx(conn, "social_reward_enrollment", user_id, record)
+            return True
+
+        return self._run_transaction(txn)
+
+    def has_credit_grant(self, workspace_id: str, event_id: str) -> bool:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT kind FROM tr_trust_event WHERE workspace_id=%s AND event_id=%s",
+                (workspace_id, event_id),
+            ).fetchone()
+        return bool(row is not None and row[0] == "grant")
+
     def ensure_user(
         self,
         user_id: str,
@@ -1432,7 +1472,12 @@ class PostgresStore:
         *,
         trial_credit_microdollars: int | None = None,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> User:
+        if social_rewards_issuer is not None and (
+            not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
+        ):
+            raise ValueError("social rewards enrollment requires the 150000 signup grant")
         normalized_email = normalize_email(email or user_id)
 
         def ensure(conn: Any) -> User:
@@ -1461,12 +1506,17 @@ class PostgresStore:
                 normalized_email,
                 {"user_id": user.id},
             )
-            self._create_workspace_tx(
+            workspace = self._create_workspace_tx(
                 conn,
                 user.id,
                 "Personal Workspace",
                 trial_credit_microdollars,
             )
+            if social_rewards_issuer is not None:
+                self._write_entity_tx(
+                    conn, "social_reward_enrollment", user.id,
+                    SocialRewardEnrollment(user.id, workspace.id, social_rewards_issuer),
+                )
             return user
 
         return self._run_transaction(ensure)
@@ -1534,6 +1584,7 @@ class PostgresStore:
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> SignupResult | None:
         self._not_implemented("signup")
 

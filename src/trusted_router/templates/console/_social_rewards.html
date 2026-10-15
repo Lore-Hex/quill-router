@@ -1,0 +1,20 @@
+<dialog class="social-rewards" id="social-rewards" aria-labelledby="social-rewards-title" aria-describedby="social-rewards-intro">
+  <div class="social-rewards-head">
+    <button class="btn social-rewards-close" type="button" data-rewards-close aria-label="Close social rewards">×</button>
+    <p class="social-rewards-eyebrow">Optional social rewards</p>
+    <h2 id="social-rewards-title" tabindex="-1">Earn approximately 1M extra tokens</h2>
+    <p id="social-rewards-intro">Five ways to support TrustedRouter. Complete an action, then tell us you’ve done it to claim your reward. All actions use the honor system.</p>
+    <p class="social-rewards-progress" data-rewards-progress aria-live="polite">0 of 5 rewards claimed</p>
+    <progress data-rewards-meter max="5" value="0" aria-label="Rewards claimed"></progress>
+    <p class="social-rewards-destination" data-rewards-destination></p>
+  </div>
+  <div class="social-rewards-content">
+    <p data-rewards-notice role="status" hidden></p>
+    <ul class="social-rewards-list" data-rewards-list></ul>
+  </div>
+  <div class="social-rewards-foot">
+    <p>Token equivalents based on DeepSeek V4 Flash 0731 via DeepInfra with equal input/output usage. Actual tokens available vary by model, route, and pricing. Estimates show rewards earned, not your remaining balance.</p>
+    <button class="btn" type="button" data-rewards-close>Skip for now</button>
+  </div>
+</dialog>
+<script defer src="/static/social-rewards.js?v={{ static_version|default('local') }}"></script>

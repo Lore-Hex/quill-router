@@ -103,6 +103,8 @@ COMMON_ENV=(
   "TR_ENVIRONMENT=canary"
   "TR_SERVICE_SURFACE=public"
   "TR_NEW_SIGNUPS_ENABLED=false"
+  "TR_SOCIAL_REWARDS_ENABLED=false"
+  "TR_SOCIAL_REWARDS_PLANE_ID=azure"
   "TR_ATTRIBUTION_COOKIE_SECRET=secretref:${ATTRIBUTION_SECRET_NAME}"
   # Public renders links from capability flags; it never owns OAuth clients.
   # Keep both explicit so production validation cannot silently infer from a
