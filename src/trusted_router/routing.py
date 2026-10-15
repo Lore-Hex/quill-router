@@ -430,7 +430,7 @@ def speech_route_endpoint_candidates(
         inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
         or inputs.preferences.max_completion_price_microdollars_per_million_tokens is not None
     ):
-        raise api_error(400, "Token-price limits do not apply to character-billed speech", ErrorType.BAD_REQUEST)
+        raise api_error(400, "Token-price limits do not apply to non-token-billed speech", ErrorType.BAD_REQUEST)
     model = MODELS[inputs.model_ids[0]]
     candidates = catalog_endpoint_candidates(model, inputs.preferences)
     candidates = [(m, e) for m, e in candidates if not e.is_byok]

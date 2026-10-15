@@ -5063,7 +5063,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         completion = _price(model.completion_price_microdollars_per_million_tokens)
     speech = SPEECH_MODELS.get(model.id)
     if speech and not speech.token_billed:
-        prompt = f"{format_money_precise(speech.customer_rate)}/M characters"
+        prompt = speech.non_token_price_label
         completion = "Included"
     cached_prices = _cached_prompt_prices(route_endpoints)
     if cached_prices:
@@ -5505,7 +5505,7 @@ def _model_detail_view(
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
                 "provider_logo_url": provider_logo_url(endpoint.provider),
-                "prompt_price": f"{format_money_precise(speech.customer_rate)}/M characters" if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "prompt_price": speech.non_token_price_label if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
                 "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range((endpoint,)),
                 "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
                     (endpoint,), "completion_price_microdollars_per_million_tokens"
@@ -6367,7 +6367,7 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                 "context_length": f"{model.context_length:,}",
                 "speech": speech_metadata(model.id) if speech else None,
                 "endpoint_count": len(endpoints),
-                "prompt_price": f"{format_money_precise(speech.customer_rate)}/M characters" if speech and not speech.token_billed else _endpoint_price_range(
+                "prompt_price": speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
                     endpoints,
                     "prompt_price_microdollars_per_million_tokens",
                 ),

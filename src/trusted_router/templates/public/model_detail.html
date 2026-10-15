@@ -36,7 +36,9 @@
         </td></tr>
         {% if model.speech %}
         <tr><th>Input limit</th><td>{{ model.speech.max_input_characters }} characters</td></tr>
-        {% if model.speech.billing_unit == 'input_characters' %}
+        {% if model.speech.billing_unit == 'request' %}
+        <tr><th>Price</th><td>${{ model.speech.request_price }}/request</td></tr>
+        {% elif model.speech.billing_unit == 'input_characters' %}
         <tr><th>Input price</th><td>${{ model.speech.input_character_price_per_million }}/M characters</td></tr>
         {% else %}
         <tr><th>Input price</th><td>${{ model.speech.input_token_price_per_million }}/M text tokens</td></tr>

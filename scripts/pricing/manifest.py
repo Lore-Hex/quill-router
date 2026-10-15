@@ -13,6 +13,7 @@ from scripts.pricing.base import (
     guard_manifest_prune,
     reconcile_manifest_tombstones,
 )
+from trusted_router.provider_manifest_policy import request_billed_speech_price_is_valid
 
 
 def guard_fixed_output_prices(
@@ -187,6 +188,7 @@ def write_discovered_chat_manifest(
         row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     present_rows: dict[str, dict[str, Any]] = {}
+    request_priced_ids: set[str] = set()
     updated: list[str] = []
     appended: list[str] = []
     for model_id, discovered in sorted(discovered_rows.items()):
@@ -256,7 +258,9 @@ def write_discovered_chat_manifest(
             row.pop("output_token_price_per_m", None)
             row.pop("cached_input_token_price_per_m", None)
             row.pop("price_tiers", None)
-            if (
+            if request_billed_speech_price_is_valid(discovered):
+                request_priced_ids.add(model_id)
+            elif (
                 row.get("routable") is not False
                 or row.get("routable_reason") == "price-unavailable"
             ):
@@ -267,7 +271,7 @@ def write_discovered_chat_manifest(
     rebuilt = reconcile_manifest_tombstones(
         rows,
         present_rows,
-        priced_ids=set(result.prices),
+        priced_ids=set(result.prices) | request_priced_ids,
         source=result.source,
     )
     # Discovery and tombstone recovery never have authority to clear an

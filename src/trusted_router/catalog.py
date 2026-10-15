@@ -722,12 +722,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
     if model.id in SPEECH_MODELS and not SPEECH_MODELS[model.id].token_billed:
-        # Do not advertise a character-billed service as free text generation.
-        pricing = {
-            "input_character": microdollars_per_million_tokens_to_token_decimal(
-                SPEECH_MODELS[model.id].customer_rate
-            ),
-        }
+        # Non-token tariffs must not appear to be free text generation.
+        pricing = SPEECH_MODELS[model.id].non_token_pricing
     # The endpoint payloads have always published input_cache_read; the model
     # headline never did, so /v1/models hid the cache-read discount on more
     # than a thousand endpoints. OR convention, same field name.

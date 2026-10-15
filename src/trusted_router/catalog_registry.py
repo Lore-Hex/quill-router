@@ -1345,7 +1345,7 @@ for _speech in SPEECH_MODELS.values():
         published_prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.input_token_cost),
         published_completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.output_token_cost),
         documentation=ModelDocumentation(
-            description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per input character, not per token.",
+            description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per request over an attested connection." if _speech.request_cost_microdollars else "Text-to-speech, billed per input character, not per token.",
             input_format="POST /v1/audio/speech with model, input (text), voice, and response_format.",
             output_format="Raw audio bytes. Errors are JSON. See supported response_formats.",
             example_input='{"model":"' + _speech.id + '","input":"Hello!","voice":"' + _speech.voices[0] + '","response_format":"' + _speech.formats[0] + '"}',

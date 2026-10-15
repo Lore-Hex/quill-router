@@ -39,6 +39,8 @@ EXPECTED_GEMINI_VOICES = (
 @pytest.mark.parametrize("path", ["/v1/models", "/v1/models?output_modalities=speech"])
 def test_speech_catalog_voice_lists(client: TestClient, path: str) -> None:
     expected = {
+        "qwen/qwen3-tts": "aiden dylan eric ono_anna ryan serena sohee uncle_fu vivian".split(),
+        "mistralai/voxtral-4b-tts-2603": "neutral_female neutral_male casual_female casual_male cheerful_female ar_male de_female de_male es_female es_male fr_female fr_male hi_female hi_male it_female it_male nl_female nl_male pt_female pt_male".split(),
         **{model: list(ELEVENLABS_VOICES) for model in ELEVENLABS_MODELS},
         "x-ai/grok-voice-tts-1.0": ["eve", "ara", "rex", "sal", "leo"],
         "mistralai/voxtral-mini-tts-2603": ["en_paul_neutral"],
@@ -132,7 +134,7 @@ def test_speech_catalog(client: TestClient) -> None:
         assert not MODELS[mid].supports_chat
         assert rows[mid]["architecture"]["modality"] == "text->speech"
         assert rows[mid]["trustedrouter"]["speech"]["billing_unit"] == (
-            "tokens" if spec.token_billed else "input_characters"
+            "tokens" if spec.token_billed else "request" if spec.provider == "tinfoil" else "input_characters"
         )
         assert ("prompt" in rows[mid]["pricing"]) == spec.token_billed
         assert rows[mid]["supported_voices"] == list(spec.voices)
@@ -159,7 +161,8 @@ def test_speech_bills_exact_frozen_quote_once(
     monkeypatch.setitem(
         SPEECH_MODELS,
         model,
-        replace(SPEECH_MODELS[model], cost_microdollars_per_million_characters=99_000_000),
+        replace(SPEECH_MODELS[model], cost_microdollars_per_million_characters=99_000_000,
+                request_cost_microdollars=99_000 if SPEECH_MODELS[model].request_cost_microdollars else 0),
     )
     replay = authorize(client, speech_key, model=model)
     assert replay.status_code == 200, replay.text
@@ -213,10 +216,11 @@ def test_speech_rejects_invalid_admission(
         {"actual_output_tokens": 1},
     ],
 )
+@pytest.mark.parametrize("model", ["x-ai/grok-voice-tts-1.0", "qwen/qwen3-tts", "mistralai/voxtral-4b-tts-2603"])
 def test_speech_rejects_underbilling_and_route_confusion(
-    client: TestClient, speech_key: str, changes: dict[str, Any]
+    client: TestClient, speech_key: str, changes: dict[str, Any], model: str
 ) -> None:
-    result = authorize(client, speech_key)
+    result = authorize(client, speech_key, model=model)
     assert result.status_code == 200, result.text
     result = client.post(
         "/v1/internal/gateway/settle", json=settlement(result.json()["data"], **changes)
@@ -224,8 +228,9 @@ def test_speech_rejects_underbilling_and_route_confusion(
     assert result.status_code == 400, result.text
 
 
-def test_speech_refund_accepts_generic_abort(client: TestClient, speech_key: str) -> None:
-    result = authorize(client, speech_key)
+@pytest.mark.parametrize("model", ["x-ai/grok-voice-tts-1.0", "qwen/qwen3-tts", "mistralai/voxtral-4b-tts-2603"])
+def test_speech_refund_accepts_generic_abort(client: TestClient, speech_key: str, model: str) -> None:
+    result = authorize(client, speech_key, model=model)
     assert result.status_code == 200, result.text
     result = client.post(
         "/v1/internal/gateway/refund",
@@ -381,12 +386,13 @@ def test_public_speech_guide_explains_billing_units_and_token_hold(client: TestC
     assert "Charges use input characters, not tokens" not in text
 
 
-def test_speech_public_prices_are_character_based(client: TestClient) -> None:
+def test_speech_public_prices_use_the_correct_billing_unit(client: TestClient) -> None:
     from trusted_router.dashboard import _model_detail_view, _model_view
 
     for mid in [mid for mid, spec in SPEECH_MODELS.items() if not spec.token_billed]:
         row = _model_view(MODELS[mid], test_mode=True)
-        assert str(row["prompt_price"]).endswith("/M characters")
+        unit = "/request" if SPEECH_MODELS[mid].request_cost_microdollars else "/M characters"
+        assert str(row["prompt_price"]).endswith(unit)
         assert row["completion_price"] == "Included"
         detail = _model_detail_view(MODELS[mid], test_mode=True)
         assert detail["speech"]
@@ -394,7 +400,7 @@ def test_speech_public_prices_are_character_based(client: TestClient) -> None:
             assert endpoint["prompt_price"] == row["prompt_price"]
         page = client.get(f"/models/{mid}")
         assert page.status_code == 200
-        assert "/M characters" in page.text
+        assert unit in page.text
 
 
 def test_elevenlabs_provider_page_labels_character_limits(client: TestClient) -> None:
