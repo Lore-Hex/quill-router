@@ -165,7 +165,7 @@
     "card_version": 2,
     "model_count": 2,
     "name": "CoralBricks",
-    "privacy": "Policy documented",
+    "privacy": "Zero retention",
     "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "coralbricks"
