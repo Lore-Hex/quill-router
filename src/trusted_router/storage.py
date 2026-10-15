@@ -112,6 +112,7 @@ from trusted_router.storage_models import (
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
+    refreshed_shadow,
 )
 from trusted_router.storage_oauth_apps import InMemoryOAuthApps
 from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
@@ -1495,6 +1496,8 @@ class InMemoryStore:
                     f"workspace {workspace.id} exists locally and is not federated; "
                     "refusing to overwrite it with a federated shadow"
                 )
+            if existing is not None:
+                workspace = refreshed_shadow(existing, workspace)
             self.workspaces[workspace.id] = workspace
             # setdefault, NOT assignment: re-federating a key must never reset
             # a balance a completed credit transfer already funded.
