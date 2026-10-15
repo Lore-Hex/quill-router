@@ -1694,6 +1694,68 @@ def test_reference_walk_unregistered_frame_globals(monkeypatch, namespace_name, 
         reached.clear()
 
 
+@pytest.mark.parametrize('path', ['globals', 'builtins'])
+def test_reference_walk_direct_leg_reference_with_frame(monkeypatch, path):
+    from tests.fakes.frozen_package import reject_live_references
+    from trusted_router.money import microdollars_to_float
+
+    frozen = module('storage_errors')
+    functions = {}
+    if path == 'globals':
+        namespace = {'__name__': 'detached_frame_globals', '__builtins__': {},
+                     'held_live': microdollars_to_float}
+        monkeypatch.setattr(frozen, 'review_direct_globals', namespace, raising=False)
+    else:
+        namespace = vars(frozen)
+        monkeypatch.setitem(FROZEN_BUILTINS, 'review_live', microdollars_to_float)
+    exec('def suspended():\n yield\n', namespace, functions)
+    owner = functions['suspended']()
+    next(owner)
+    # The last module entry reaches the frame before the independent dict path.
+    monkeypatch.setattr(frozen, 'review_held_owner', owner, raising=False)
+    try:
+        with pytest.raises(AssertionError) as error:
+            reject_live_references()
+        assert str(error.value) == (
+            'live reference in frozen namespace: trusted_router.money:microdollars_to_float')
+    finally:
+        owner.close()
+
+
+def test_reference_walk_overlapping_frame_globals(monkeypatch):
+    from tests.fakes.frozen_package import _references, reject_live_references
+    from trusted_router.money import microdollars_to_float
+
+    frozen = module('storage_errors')
+    table = [object() for _ in range(100_000)]
+    namespace = {'__name__': '__channelexec__', '__builtins__': {}, 'table': table}
+    functions = {}
+    exec('def suspended():\n yield\n', namespace, functions)
+    owner = functions['suspended']()
+    next(owner)
+    monkeypatch.setattr(frozen, 'review_direct_globals', namespace, raising=False)
+    monkeypatch.setattr(frozen, 'review_held_owner', owner, raising=False)
+    try:
+        reached = list(_references([frozen], namespaces=(ALIAS,)))
+        reached_ids = {id(value) for value in reached}
+        reached_order = [id(value) for value in reached]
+        assert reached_order.index(id(owner.gi_frame)) < reached_order.index(id(namespace))
+        assert id(table) in reached_ids
+        assert all(id(value) in reached_ids for value in table)
+        # Removing the table's entries removes exactly those visits.
+        namespace['table'] = []
+        without_table = list(_references([frozen], namespaces=(ALIAS,)))
+        assert len(reached) == len(without_table) + len(table)
+        namespace['table'] = table
+        table.append(microdollars_to_float)
+        with pytest.raises(AssertionError) as error:
+            reject_live_references()
+        assert str(error.value) == (
+            'live reference in frozen namespace: trusted_router.money:microdollars_to_float')
+    finally:
+        owner.close()
+
+
 def test_reference_walk_leg_frame_globals(monkeypatch):
     from tests.fakes.frozen_package import _references
 
