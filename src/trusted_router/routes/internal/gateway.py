@@ -1385,6 +1385,11 @@ def _authorize_gateway_sync_impl(
     # request at one tariff and bill it at another whenever a scheduled price
     # change fell between them.
     pricing_effective_at = dt.datetime.now(dt.UTC)
+    # The prompt estimate the hold is reserved on; chat routing also sends a
+    # request only to models whose window holds it.
+    input_tokens = body.estimated_input_tokens
+    if custom_model is not None and custom_model.hidden_prompt.strip():
+        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     user_model_candidate = None
     if user_model is not None:
         if is_image_request:
@@ -1412,6 +1417,8 @@ def _authorize_gateway_sync_impl(
     resolved_candidates = resolve_candidates(
         route_plan, candidate_request, region=region, at=pricing_effective_at,
         user_model_candidate=user_model_candidate,
+        prompt_tokens=input_tokens,
+        completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
     )
     effective_route_preferences = resolved_candidates.effective_preferences
     endpoint_candidates = resolved_candidates.candidates
@@ -1420,9 +1427,6 @@ def _authorize_gateway_sync_impl(
         folded_rows=folded_byok,
     )
     byok_providers = _byok_present_providers(endpoint_candidates, workspace.id, byok_configs)
-    input_tokens = body.estimated_input_tokens
-    if custom_model is not None and custom_model.hidden_prompt.strip():
-        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
     if is_transcription_request:
         additional_cost_reservation = transcription_quote

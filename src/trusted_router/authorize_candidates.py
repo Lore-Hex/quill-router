@@ -58,6 +58,7 @@ from trusted_router.routing import (
     NormalizedRoutingInputs,
     RoutePreferences,
     _apply_endpoint_provider_filters,
+    candidates_fitting_context,
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
@@ -253,6 +254,8 @@ def resolve_candidates(
     region: str,
     at: datetime,
     user_model_candidate: Candidate | None = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
 ) -> ResolvedCandidates:
     """The route type's candidates, reachable from the request's gateway region.
 
@@ -313,7 +316,9 @@ def resolve_candidates(
             defer_no_fallback_selection=True,
         )
         effective_preferences = resolved.effective_preferences
-        endpoint_candidates = resolved
+        endpoint_candidates = candidates_fitting_context(
+            resolved, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        )
         if not endpoint_candidates:
             raise api_error(
                 400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
