@@ -203,18 +203,23 @@ Failed sources are absent; embedded/stale release records are not republished.
 No checked-in evidence snapshot is used by the site build.
 
 The landing page shows measured service details only when every supplied
-component is operational, fresh and complete. Degraded, failed, unknown or stale
+component is operational, dated within one hour and complete. Degraded, failed, unknown or expired
 checks quietly return the whole service panel to its existing source link;
-there is no partial all-clear, warning badge or stale percentage. Historical
+there is no partial all-clear or warning badge. Measurements carry their original
+last-checked timestamps; the one-hour display window is not a current-health guarantee. Historical
 failure or missing-data buckets are never recolored or cherry-picked: the whole
 chart is omitted while the accurate uptime percentage remains. Full incident
 history stays available through the Service status link.
 
-Attestation details require an operational, fresh check and valid published
+Attestation details require an operational check dated within one hour and valid published
 release metadata; otherwise only the Published release link remains. Prices are
-independently sourced and remain visible when valid. A failed feed returns every
-panel to its source links. Successful refreshes restore details automatically.
-Checks older than six minutes, missing dates and future dates remain ineligible.
+independently sourced and remain visible when valid. A failed fetch retains the
+last response in the current tab only, bounded by its original timestamps.
+After one hour, panels return to their source links. Successful refreshes restore
+details automatically.
+Responses or checks older than one hour, missing dates and future dates remain ineligible.
+A successful newer response replaces the old response, including unavailable
+or unhealthy components; those components use the existing source links.
 The browser reassesses freshness every second and fetches every minute, matching
 the shorter server cache. Published measurements do not establish location.
 
@@ -227,7 +232,7 @@ NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-live.cjs /tmp/t
 
 The browser test serves New York and London as two local staging hostnames,
 stops the actual HTTP feed, and waits the real one-minute interval with pages
-left open. It checks quiet fallbacks, stale dates, rounding, state selection,
+left open. It checks bounded retention after transport failure, quiet fallbacks, expired dates, rounding, state selection,
 missing components, and responsive layout. This is staging verification, not
 proof of production deployment. Deploy the backend through the reviewed release
 workflow before publishing the static assets. Run all repository gates first.

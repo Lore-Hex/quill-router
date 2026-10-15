@@ -419,8 +419,8 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 }
 
 /* The page black, header and secondary button follow the homepage.
-   Copy is centred above a provider marquee in a 1024px window, like a logo strip: six equal
-   slots are about 1400px wide, so the window never shows a logo twice. It runs only while the hero is on screen,
+   Copy is centred above a compact homepage-style marquee. Each group fills the
+   desktop window, so the animation stays seamless at every width. It runs only while the hero is on screen,
    pauses on hover or keyboard focus, and is a static row for reduced motion or without JS. */
 :root{--bg:#050706;--text:#edf8f5}
 .masthead{background:#050706;backdrop-filter:none}
@@ -431,31 +431,33 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .hero-copy{flex:1 0 auto;min-height:0;justify-content:center;padding-block:40px 24px;padding-block:clamp(40px,6svh,76px) 24px}
 .hero .lead{margin:24px auto 28px}
 .hero-copy .actions{margin-top:0}
-.hero-providers{position:relative;z-index:1;width:100%;padding:16px 0 20px}
+.hero-providers{position:relative;z-index:1;width:100%;padding:24px 0}
 .hero-providers p{margin:0 0 12px;text-align:center;font-size:12px;line-height:1.6;color:var(--muted)}
-.hero-provider-row{max-width:1024px;width:calc(100% - 64px);margin-inline:auto;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
-.hero-provider-track{display:flex;width:max-content;margin-inline:auto;animation:provider-marquee 48s linear infinite;animation-play-state:paused}
+.hero-provider-row{max-width:980px;width:calc(100% - 64px);margin-inline:auto;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.hero-provider-track{display:flex;width:max-content;margin-inline:auto;animation:provider-marquee 40s linear infinite;animation-play-state:paused}
 .hero.is-animating .hero-provider-track{animation-play-state:running}
 /* Keyboard focus stops the slide and lets the row scroll, so the focused logo is always in view. */
 .hero-provider-row:focus-within{overflow-x:auto;mask-image:none}
 .hero-provider-row:focus-within .hero-provider-track{animation:none;transform:none}
 @media(hover:hover){.hero-provider-row:hover .hero-provider-track{animation-play-state:paused}}
-.hero-provider-group{display:flex;align-items:center;gap:40px;padding-inline:20px}
-.hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:12px;min-width:192px;min-height:36px;font-size:17px;color:var(--text);text-decoration:none;white-space:nowrap}
+.hero-provider-group{display:flex;align-items:center;gap:32px;padding-right:32px;flex-shrink:0;min-width:980px;justify-content:space-between}
+.hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:44px;font-size:14px;color:#d0ded7;text-shadow:0 1px 8px #050706;text-decoration:none;white-space:nowrap}
 .hero-provider-group a:hover{color:var(--mint)}
-.hero-provider-group img{width:32px;height:32px;object-fit:contain}
+.hero-provider-group img{width:24px;height:24px;flex:none;object-fit:contain;border-radius:5px}
 @keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 @media(max-width:1000px){
- .hero-provider-group{gap:32px;padding-inline:16px}
- .hero-provider-group a{min-width:152px;gap:10px;font-size:16px}
- .hero-provider-group img{width:28px;height:28px}
+ .hero-provider-group{gap:32px;padding:0 32px 0 0}
+ .hero-provider-group a{gap:10px;font-size:14px}
+ .hero-provider-group img{width:24px;height:24px}
 }
 @media(max-width:600px){
- .hero-copy{padding-block:40px 24px}
+ .hero{justify-content:center}
+ .hero-copy{flex:0 0 auto;padding-block:40px 24px}
+ .hero-providers{margin-top:32px;padding:24px 0;background:linear-gradient(180deg,#05070600,#05070699 30%,#05070699 70%,#05070600)}
  .hero-provider-row{width:100%}
- .hero-provider-group{gap:24px;padding-inline:12px}
- .hero-provider-group a{min-width:0;gap:10px;min-height:32px;font-size:15px}
- .hero-provider-group img{width:26px;height:26px}
+ .hero-provider-group{gap:32px;padding:0 32px 0 0;min-width:0}
+ .hero-provider-group a{min-width:0;gap:10px;min-height:44px;font-size:14px}
+ .hero-provider-group img{width:24px;height:24px}
 }
 /* After the breakpoints, so the static row keeps its compact slots at every width. */
 @media(prefers-reduced-motion:reduce){
@@ -464,7 +466,7 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
  .hero-provider-row{max-width:none;width:100%;overflow-x:auto;mask-image:none;scrollbar-width:thin}
  .hero-provider-group a{min-width:0}
 }
-@media(prefers-reduced-motion:reduce) and (max-width:1000px){.hero-provider-group{gap:24px;padding-inline:12px}}
+@media(prefers-reduced-motion:reduce) and (max-width:1000px){.hero-provider-group{gap:32px;padding:0 32px 0 0;min-width:0}}
 
 /* Hero and closing box share one photograph: the TrustedRouter river, cropped to water
    so it reads as texture rather than a place. The gradient arcs are retired. */

@@ -50,7 +50,7 @@ const site = http.createServer((req,res) => {
     });
     const pages=[];
     for (const domain of ['nytokenexchange.com','londontoken.exchange']) {
-      const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+      const page=await context.newPage();await page.clock.install();page.on('pageerror',e=>errors.push(e.message));
       await page.goto(`http://${domain}:8091/`);
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));
       assert.match(await page.locator('[data-live-services]').textContent(),/99.69%/);
@@ -129,6 +129,52 @@ const site = http.createServer((req,res) => {
     assert.equal(timedRequests,2);
     assert.equal(await timed.locator('.service-history').count(),2);
     await timedContext.close();
+    // Display age is independent of fetch age: retain a dated response only
+    // within one hour, and never carry old health over a newer adverse response.
+    const retainedContext=await browser.newContext({reducedMotion:'reduce'});
+    const retained=await retainedContext.newPage();
+    const retainedBase=new Date();let failTransport=false;let retainedAge=59*60000;
+    let adverse=false;
+    await retained.clock.install({time:retainedBase});await retained.clock.pauseAt(retainedBase);
+    await retained.route('https://trustedrouter.com/token-exchange/evidence/*.json',route=>{
+      if(failTransport) return route.abort('connectionrefused');
+      const data=evidence();
+      data.generated_at=retainedBase.toISOString();
+      const checked=new Date(retainedBase.getTime()-retainedAge).toISOString();
+      data.components.forEach(c=>{c.last_checked_at=checked;if(adverse)c.status='down';});
+      data.attestation_check.last_checked_at=checked;
+      if(adverse)data.attestation_check.status='down';
+      return route.fulfill({json:data});
+    });
+    await retained.goto('http://nytokenexchange.com:8091/');
+    await retained.waitForFunction(()=>document.querySelector('.service-history'));
+    assert.equal(await retained.locator('.build-digest').count(),1);
+    assert.match(await retained.locator('[data-live-price-unit]').textContent(),/Last checked/);
+    await retained.clock.runFor(61000);
+    await quiet(retained);
+    assert.equal(await retained.locator('.build-digest').count(),0);
+    // The prices have their own response timestamp, so they remain visible.
+    assert.equal(await retained.locator('.privacy-column').count(),3);
+    retainedAge=0;await reload(retained);
+    adverse=true;await retained.clock.runFor(61000);await quiet(retained);
+    assert.equal(await retained.locator('.build-digest').count(),0);
+    adverse=false;await reload(retained);
+    failTransport=true;
+    await retained.clock.runFor(61000);
+    assert.equal(await retained.locator('.service-history').count(),2);
+    assert.equal(await retained.locator('.build-digest').count(),1);
+    assert.equal(await retained.locator('.privacy-column').count(),3);
+    // Page-open aging expires values even when every subsequent fetch fails.
+    await retained.clock.fastForward(60*60000);
+    await quiet(retained);
+    assert.equal(await retained.locator('.build-digest').count(),0);
+    assert.equal(await retained.locator('.privacy-column').count(),0);
+    await retainedContext.close();
+    // A newly opened page has no stored last-good values after a transport failure.
+    const empty=await context.newPage();
+    await empty.route('https://trustedrouter.com/token-exchange/evidence/*.json',r=>r.abort('connectionrefused'));
+    await empty.goto('http://nytokenexchange.com:8091/');await quiet(empty);
+    assert.equal(await empty.locator('.privacy-column').count(),0);await empty.close();
     // Capture the quiet fallback and its recovery at each supported width.
     for(const page of pages) {
       states=['up','trust_degraded'];attestationState='trust_degraded';await reload(page);
@@ -150,15 +196,22 @@ const site = http.createServer((req,res) => {
     const started=Date.now();const before=feedRequests;
     await new Promise(r=>feed.close(r));
     console.log('Staging feed stopped; waiting for the real 60-second revalidation (no clock acceleration).');
+    await new Promise(resolve=>setTimeout(resolve,65000));
     for (const page of pages) {
-      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent === '' && document.querySelector('[data-live-services]').children.length === 0,{},{timeout:80000});
-      assert.equal(await page.locator('.health-bar').count(),0);
+      assert.equal(await page.locator('.service-history').count(),2);
+      assert.equal(await page.locator('.build-digest').count(),1);
+      assert.equal(await page.locator('.privacy-column').count(),3);
+    }
+    // Clock is shared by pages in this browser context: advance it once.
+    await pages[0].clock.fastForward(60*60000);
+    for (const page of pages) {
+      await quiet(page);
       assert.equal(await page.locator('.build-digest').count(),0);
-      assert(!((await page.locator('[data-live-prices]').textContent()).includes('$')));
+      assert.equal(await page.locator('.privacy-column').count(),0);
       await page.locator('.trust-evidence').screenshot({path:`/tmp/te-${new URL(page.url()).hostname}-failed.png`});
     }
     assert.equal(feedRequests,before);
     assert.deepEqual(errors,[]);
-    console.log(`PASS: feed stopped; both already-open domains returned to source links after ${((Date.now()-started)/1000).toFixed(1)}s.`);
+    console.log(`PASS: feed stopped; both already-open domains retained measurements across ${((Date.now()-started)/1000).toFixed(1)}s of real transport failure and expired after advancing past one hour.`);
   } finally { await browser.close();site.close();feed.close(); }
 })().catch(e=>{console.error(e);process.exit(1);});
