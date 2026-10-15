@@ -17,7 +17,6 @@ def render_evidence(profile='shared-gcp'):
     health = (
         '<div class="trust-evidence" data-evidence-profile="' + html.escape(profile, quote=True) + '">'
         '<figure class="uptime-panel evidence-reveal"><figcaption data-live-caption data-uptime-label="' + label.replace('service status', 'uptime') + ' · 24h">' + label + '</figcaption>'
-        '<p class="evidence-state" data-live-state></p>'
         '<div data-live-services></div><div class="evidence-footer"><a href="' + origin + '/status">Service status</a></div></figure>'
         '<section class="attestation-panel evidence-reveal" aria-labelledby="attestation-title">'
         '<h3 id="attestation-title">Attestation</h3><div data-live-attestation></div>'

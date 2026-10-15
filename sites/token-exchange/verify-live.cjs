@@ -54,7 +54,6 @@ const site = http.createServer((req,res) => {
       await page.goto(`http://${domain}:8091/`);
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));
       assert.match(await page.locator('[data-live-services]').textContent(),/99.69%/);
-      assert.equal(await page.locator('[data-live-state]').textContent(),'');
       assert.match(await page.locator('[data-live-prices]').textContent(),/\$0.07385 \/ \$0.2532/);
       assert(!((await page.locator('[data-live-services]').textContent()).includes('Model Inference')));
       for (const width of [320,390,1440]) {
@@ -71,7 +70,6 @@ const site = http.createServer((req,res) => {
       await page.waitForFunction(()=>document.querySelector('[data-live-prices]').textContent.includes('$'));
     };
     const quiet = async page => {
-      assert.equal(await page.locator('[data-live-state]').textContent(),'');
       assert.equal(await page.locator('.service-history').count(),0);
       assert.equal(await page.locator('.health-bar').count(),0);
       assert.match(await page.locator('[data-live-caption]').textContent(),/service status/);

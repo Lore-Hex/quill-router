@@ -6,7 +6,6 @@
   const prices = document.querySelector('[data-live-prices]');
   const priceUnit = document.querySelector('[data-live-price-unit]');
   const services = root.querySelector('[data-live-services]');
-  const state = root.querySelector('[data-live-state]');
   const attestation = root.querySelector('[data-live-attestation]');
   const caption = root.querySelector('[data-live-caption]');
   const statusCaption = caption?.textContent;
@@ -43,7 +42,6 @@
     prices.replaceChildren(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
     if (caption) caption.textContent = statusCaption;
-    state.textContent = '';
     if (priceUnit) priceUnit.hidden = true;
     attestation.replaceChildren();
   };
@@ -84,7 +82,6 @@
     // or incomplete, use the existing status link instead of a partial all-clear.
     const showServices = components.length > 0 && components.every(presentable);
     if (caption) caption.textContent = showServices ? caption.dataset.uptimeLabel : statusCaption;
-    state.textContent = '';
     for (const c of showServices ? components : []) {
       const row = node('div', undefined, 'service-history');
       const heading = node('div', undefined, 'service-heading');
