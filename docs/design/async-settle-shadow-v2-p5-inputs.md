@@ -264,6 +264,14 @@ empty transient tables. The existing 35,000 live-object allowances remain.
 The digest table and prior results are released in the default selection too;
 shared original bytes remain only in test-module holders.
 
+The window validation fixture imports every `async_settle_shadow_v2_gate*.py`
+module by filename before snapshotting and replacing digest aliases. Its undo
+therefore restores aliases regardless of which modules the selection initially
+loaded. The fixture then checks every loaded gate module for its temporary
+wrapper; the separate module checker still compares every digest alias with
+the restored roots function. A fresh-process default check runs one window
+case and both teardowns with no earlier package-test collection.
+
 The generated boundary family and seven-day family use class-scoped data.
 Their large loaded graphs are released when each family completes; the
 seven-day family is collected last. The assertions and generated cases are

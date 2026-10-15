@@ -1797,6 +1797,13 @@ These are proposed definitions, not a claim that the schemas exist (A2-S1–S8).
 
 #### 7.5.1 A2 ADD — Q1: the single GATE_REPORT
 
+`GATE_REPORT` requires independently decodable observation scope and report
+commitments. When these are unavailable, emit only a closed diagnostic with
+`policy_version="shadow-v2"`, `status="BLOCKED"`,
+`error="unavailable_required_report_commitments"`, and `condition`:
+`proof_manifest_absent_or_undecodable` takes precedence over
+`observation_scope_artifacts_absent_or_undecodable`. Emit one JSON line plus LF,
+exit nonzero, and produce no report artifacts.
 `GATE_REPORT` ≤65,536 bytes has exactly the common A2 tags and these fields.
 Reserve ≤49,152 bytes for failure_counts and ≤16,384 for all remaining fields/
 wrappers together; both and the total are conjunctive. Maximum-value fixtures
@@ -1805,7 +1812,7 @@ must establish fit; these are design limits, not measured serializer results:
 | Field | Exact type, bound and meaning |
 |---|---|
 | `gate`, `completed_at_us`, `proof_manifest_sha256`, `prerequisite_ledger_root` | Same enum/u/sha/sha as outer GATE_OUTPUT; exact equality required. |
-| `days` | Sorted unique day array, 1–32. Includes forward-join dates; `window` is INTERVAL for the requested observation window. |
+| `days` | Sorted unique day array, 1–32. Includes forward-join dates; `window` is INTERVAL for the independently established observation scope after interruption bounds. The requested interval is a containment constraint that filters no evidence and creates no elapsed coverage. |
 | `window` | Baseline INTERVAL; start < end. Supporting older reset history is not restricted to these dates. |
 | `rules` | Exactly keys G1…G11; each `pass\|fail\|unevaluable\|not_required`. Evaluate every rule; stage alone determines not_required by §8. Unevaluable required rules emit their named coverage failure; they cannot PASS. |
 | `comparator` | Exactly `{eligible,compared,exact,explained,mismatch,unevaluable,coverage}`. First six are nullable u; coverage is RATIO below. Counts include original and retry attempts, with unchanged comparator arithmetic. |

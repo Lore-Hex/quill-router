@@ -41,6 +41,12 @@ from trusted_router.detached_jws import canonical
 def validation_cache(request: Any):
     # The shared immutable fixture validates every distinct byte object once.
     # Keys include all arguments; mutations never inherit an old acceptance.
+    from importlib import import_module
+
+    # Load every gate module before snapshotting aliases: later imports would
+    # otherwise keep the temporary digest wrapper after patch.undo().
+    for path in sorted(Path(roots.__file__).parent.glob('async_settle_shadow_v2_gate*.py')):
+        import_module(f'trusted_router.{path.stem}')
     patch = pytest.MonkeyPatch()
     parse = request.getfixturevalue('payloadgraph_shared_lookup_cache')['parse']
     decode = Schema._decode
@@ -135,6 +141,10 @@ def validation_cache(request: Any):
     yield
     patch.undo()
     assert all(getattr(owner, name) is original for owner, name, original in originals)
+    stale = [name for name, module in tuple(sys.modules.items())
+             if name.startswith('trusted_router.async_settle_shadow_v2_gate')
+             and getattr(module, 'file_digest', None) is digest]
+    assert not stale, stale
     parsed.cache_clear()
     decoded_pages.clear()
     checked.clear()
@@ -347,6 +357,22 @@ def test_round16_module_release_subprocess() -> None:
         cwd=root, env={**os.environ, 'PYTEST_ADDOPTS': ''}, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
     assert result.returncode == 0, result.stdout
+
+
+def test_round17_window_lifecycle_subprocess() -> None:
+    """A fresh window-only process must finish fixture and module teardown."""
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).parents[1]
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:xdist',
+        '-p', 'no:cacheprovider',
+        'tests/test_async_settle_shadow_v2_gate_window.py::test_short_family_population'],
+        cwd=root, env={**os.environ, 'PYTEST_ADDOPTS': ''}, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+    assert result.returncode == 0, result.stdout
+    assert '1 passed' in result.stdout, result.stdout
 
 
 def test_bulk_trace_generator_preserves_original_bytes() -> None:
