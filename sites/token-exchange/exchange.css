@@ -468,6 +468,14 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 }
 @media(prefers-reduced-motion:reduce) and (max-width:1000px){.hero-provider-group{gap:32px;padding:0 32px 0 0;min-width:0}}
 
+/* Keep the desktop strip compact, including its scrollable reduced-motion form. */
+@media(min-width:601px){
+ .hero-providers{padding-block:12px}
+ .hero-providers p{margin-bottom:8px}
+ .hero-provider-row{max-width:980px;width:calc(100% - 64px)}
+}
+@media(min-width:601px) and (pointer:fine){.hero-provider-group a{min-height:32px}}
+
 /* Approved close aerial for the hero; the closing box keeps its original river crop. */
 .hero-photo{position:absolute;inset:0;z-index:-2;pointer-events:none;background:url('/assets/river-hero.webp') 50% 50%/cover no-repeat}
 .hero-photo::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.30)}
