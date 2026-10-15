@@ -151,6 +151,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     _apply_endpoint_provider_filters,
     _required_privacy_postures,
+    candidates_fitting_context,
     canonical_model_id,
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
@@ -1302,6 +1303,11 @@ def _authorize_gateway_sync_impl(
     # request at one tariff and bill it at another whenever a scheduled price
     # change fell between them.
     pricing_effective_at = dt.datetime.now(dt.UTC)
+    # The prompt estimate the hold is reserved on; chat routing also sends a
+    # request only to models whose window holds it.
+    input_tokens = body.estimated_input_tokens
+    if custom_model is not None and custom_model.hidden_prompt.strip():
+        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1368,7 +1374,11 @@ def _authorize_gateway_sync_impl(
             defer_no_fallback_selection=True,
         )
         effective_route_preferences = resolved_candidates.effective_preferences
-        endpoint_candidates = resolved_candidates
+        endpoint_candidates = candidates_fitting_context(
+            resolved_candidates,
+            prompt_tokens=input_tokens,
+            completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
+        )
         if not endpoint_candidates:
             raise api_error(
                 400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
@@ -1450,9 +1460,6 @@ def _authorize_gateway_sync_impl(
                 ErrorType.SERVICE_UNAVAILABLE,
                 headers={"Retry-After": "2"},
             )
-    input_tokens = body.estimated_input_tokens
-    if custom_model is not None and custom_model.hidden_prompt.strip():
-        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     service_tier = _requested_service_tier_or_error(body.service_tier)
     endpoint_candidates = _service_tier_endpoint_candidates_or_error(
         endpoint_candidates,

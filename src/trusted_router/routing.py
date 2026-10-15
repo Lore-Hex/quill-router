@@ -420,6 +420,70 @@ def routing_pool_discovery(
     return union_supported_parameters(published), tuple(modalities)
 
 
+def routing_pool_context_length(model_id: str, settings: Settings | None = None) -> int:
+    """The context window /v1/models may publish for a routing pool: the
+    largest window among the models the pool routes to, or 0 when it routes
+    to none. Routing sends a request only to models whose window holds it
+    (candidates_fitting_context), so a request up to this size has a model in
+    the pool and a larger one has none."""
+    return max(
+        (model.context_length for model, _endpoint in routing_pool_routes(
+            model_id, settings or _app_settings(),
+        )),
+        default=0,
+    )
+
+
+def candidates_fitting_context(
+    candidates: list[tuple[Model, ModelEndpoint]],
+    *,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """The candidates whose model's context window holds the request.
+
+    `prompt_tokens` is the estimate the hold is reserved on (the gateway's
+    chars/4 count of the messages, plus a custom model's hidden prompt), and
+    `completion_tokens` is the max_tokens the caller set, or 0 when it set
+    none: without one a provider answers in whatever room the window leaves.
+    A model whose window the catalog does not know (0) is kept. When no
+    candidate fits, the request is a 400 in OpenAI's context-length wording.
+    """
+    needed = prompt_tokens + completion_tokens
+    fitting = [
+        (model, endpoint)
+        for model, endpoint in candidates
+        if model.context_length <= 0 or needed <= model.context_length
+    ]
+    if candidates and not fitting:
+        raise context_length_error(
+            max(model.context_length for model, _endpoint in candidates),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    return fitting
+
+
+def context_length_error(window: int, *, prompt_tokens: int, completion_tokens: int) -> HTTPException:
+    """OpenAI's context_length_exceeded error, in this API's error envelope."""
+    if completion_tokens:
+        message = (
+            f"This model's maximum context length is {window} tokens. However, you "
+            f"requested {prompt_tokens + completion_tokens} tokens ({prompt_tokens} in the "
+            f"messages, {completion_tokens} in the completion). Please reduce the length "
+            "of the messages or completion."
+        )
+    else:
+        message = (
+            f"This model's maximum context length is {window} tokens. However, your "
+            f"messages resulted in {prompt_tokens} tokens. Please reduce the length of "
+            "the messages."
+        )
+    return api_error(
+        400, message, ErrorType.CONTEXT_LENGTH_EXCEEDED, extra={"param": "messages"},
+    )
+
+
 def speech_route_endpoint_candidates(
     inputs: NormalizedRoutingInputs,
 ) -> list[tuple[Model, ModelEndpoint]]:
