@@ -6,7 +6,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from trusted_router.async_settle_shadow_v2_activation_plan import Plan
+from trusted_router.async_settle_shadow_v2_activation_plan import (
+    ATTACHMENT_BUCKET,
+    Plan,
+    contained_path,
+)
 
 MONEY_OFF = dict(TR_ASYNC_SETTLE_ENABLED='false', TR_ASYNC_SETTLE_PROTECTION='false',
                  TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED='false')
@@ -21,7 +25,7 @@ def pins(plan: Plan, phase: str) -> dict[str, dict[str, str]]:
         'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': plan.workspace if active else '',
         'TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION': plan.schedule.primary if active else '',
         # Keep the export destination through close/export/retention on opt-out.
-        'TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET': plan.attachment_bucket},
+        'TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET': ATTACHMENT_BUCKET},
         enclave=dict(TR_ASYNC_SETTLE_SHADOW='on' if active else 'off', TR_ASYNC_SETTLE_NEGOTIATE='off'))
 
 
@@ -49,11 +53,12 @@ def prepare(plan: Plan, phase: str, router_root: Path, enclave_root: Path | None
     missing = []
     for role, root in (('router', router_root), ('enclave', enclave_root)):
         release = getattr(plan.releases, role)
-        if root is None or not (root / release.pin_file).is_file():
+        source = contained_path(root, release.pin_file) if root is not None else None
+        if source is None or not source.is_file():
             missing.append('P6EnclavePinSource' if role == 'enclave' else 'P6RouterPinSource')
             continue
-        raw = (root / release.pin_file).read_text()
-        (out / (role + '.patch')).write_text(patch(raw, release.pin_file, desired[role]))
+        raw = source.read_text()
+        contained_path(out, role + '.patch').write_text(patch(raw, release.pin_file, desired[role]))
     return dict(pins=desired, missing=missing)
 
 

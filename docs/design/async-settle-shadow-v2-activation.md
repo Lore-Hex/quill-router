@@ -1,4 +1,4 @@
-# P6 first-window activation — round 1
+# P6 first-window activation — round 2
 
 This package prepares and records the first-window actions in §15.8. It does
 not establish a production PASS. The example plan is a review worksheet: its
@@ -81,7 +81,7 @@ owner must consume/compare this schedule before removing its finite-window seam.
 | Router `TR_ASYNC_SETTLE_SHADOW_POLICY` | `shadow-v2` | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_WORKSPACES` | `162e441a-5d13-414f-92bd-7c6cd805faa3` | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION` | `us-central1` | empty |
-| Router `TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET` | Reviewed plan bucket | Same retained bucket |
+| Router `TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET` | `tr-async-settle-shadow-attachments-quill-cloud-proxy` | Same retained bucket |
 | Router `TR_ASYNC_SETTLE_ENABLED` | `false` | `false` |
 | Router `TR_ASYNC_SETTLE_PROTECTION` | `false` | `false` |
 | Router `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED` | `false` | `false` |
@@ -209,3 +209,19 @@ five-field schedule](https://docs.cloud.google.com/scheduler/docs/configuring/cr
 contains no year or end timestamp. Native readers follow the official
 [Monitoring time-series interface](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/list)
 and [GitHub artifact metadata/download interface](https://docs.github.com/en/rest/actions/artifacts).
+
+## Round 2 record checks
+
+The attachment destination is fixed in the package; the plan repeats that value.
+K equals the primary region's configured cap plus surge, with publishers agreeing
+with that complete eligible population. This plan has no exclusion source.
+Pin sources and default output parents resolve beneath their supplied root;
+archive output paths use the same check.
+
+Native passes charge the requested page allowance and call before each read,
+including rejected pages. `native-budget.json` records reserved and accepted
+records separately, with exact remaining call and record allowances. A response
+whose count cannot be established within the requested allowance stops the pass.
+A bounded page with a mismatched release still consumes its allowance. GitHub
+job/artifact pages require distinct ids and a constant total through completion;
+the release observer applies the same population check to its job pages.

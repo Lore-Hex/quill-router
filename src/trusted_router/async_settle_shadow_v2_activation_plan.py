@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+ATTACHMENT_BUCKET = 'tr-async-settle-shadow-attachments-quill-cloud-proxy'
 WORKSPACE = '162e441a-5d13-414f-92bd-7c6cd805faa3'
 Name = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$')]
 SHA = Annotated[str, Field(pattern=r'^[0-9a-f]{40}$')]
@@ -200,7 +201,7 @@ class Plan(Closed):
     reviewer: Name
     releases: Releases
     workspace: Literal['162e441a-5d13-414f-92bd-7c6cd805faa3']
-    attachment_bucket: Name
+    attachment_bucket: Literal['tr-async-settle-shadow-attachments-quill-cloud-proxy']
     enclave_regions: Annotated[list[Name], Field(min_length=4, max_length=32)]
     schedule: Schedule
     limits: Limits
@@ -219,7 +220,7 @@ class Plan(Closed):
         if s.fleet_cap != sum(r.cap for r in s.regions) or s.surge != sum(r.surge for r in s.regions):
             raise ValueError('configured fleet totals differ')
         primary = next((r for r in s.regions if r.region == s.primary), None)
-        if primary is None or s.k != primary.publishers:
+        if primary is None or s.k != primary.cap + primary.surge or s.k != primary.publishers:
             raise ValueError('primary contender count differs')
         if len(set(self.enclave_regions)) != len(self.enclave_regions) or not {'us-central1', 'us-east4', 'europe-west4', 'us-west1'} <= set(self.enclave_regions):
             raise ValueError('complete enclave region inventory required')
@@ -312,11 +313,15 @@ def load(path: Path, *, approved_sha256: str | None = None) -> Plan:
     return plan
 
 
-def read_file(root: Path, ref: File) -> bytes:
-    path = (root / ref.path).resolve()
+def contained_path(root: Path, relative: str) -> Path:
+    path = (root / relative).resolve()
     if not path.is_relative_to(root.resolve()):
         raise ValueError('file outside plan workspace')
-    raw = path.read_bytes()
+    return path
+
+
+def read_file(root: Path, ref: File) -> bytes:
+    raw = contained_path(root, ref.path).read_bytes()
     if hashlib.sha256(raw).hexdigest() != ref.sha256:
         raise ValueError('original digest differs')
     return raw

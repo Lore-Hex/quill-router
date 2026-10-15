@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from trusted_router.async_settle_shadow_v2_activation_plan import Archive, Plan
+from trusted_router.async_settle_shadow_v2_activation_plan import Archive, Plan, contained_path
 from trusted_router.async_settle_shadow_v2_collect_ports import Files
 from trusted_router.async_settle_shadow_v2_native_reads import ReadBudget, ReadTransport, deadline
 
@@ -56,11 +56,13 @@ class HTTPArchivePort:
 
 def capture_archive(plan: Plan, spec: Archive, files: Files, reader: ReadTransport,
                     download: ArchivePort, budget: ReadBudget) -> dict[str, Any]:
+    target = contained_path(files.root, spec.out)
     release = getattr(plan.releases, spec.role)
     url = f'https://api.github.com/repos/{release.repository}/actions/artifacts/{spec.artifact_id}'
-    if budget.calls + 3 > plan.limits.calls_per_pass or budget.records >= plan.limits.records_per_pass:
+    if budget.stopped or budget.calls + 3 > plan.limits.calls_per_pass or budget.records >= plan.limits.records_per_pass:
         raise ValueError('archive pass budget')
     budget.calls += 1
+    budget.records += 1
     reply = reader.read('GET', url, params={}, body=None, seconds=plan.limits.call_seconds,
                         max_bytes=plan.limits.bytes_per_page)
     metadata = files.put(f'archives/{spec.artifact_id}-metadata.json', reply.raw)
@@ -71,9 +73,8 @@ def capture_archive(plan: Plan, spec: Archive, files: Files, reader: ReadTranspo
             or value['workflow_run']['head_sha'] != release.sha or value['expired'] is not False
             or value['digest'] != 'sha256:' + spec.sha256 or value['size_in_bytes'] > spec.max_bytes):
         raise ValueError('archive release or original differs')
-    budget.records += 1
+    budget.recorded += 1
     budget.calls += 2
-    target = files.root / spec.out
     target.parent.mkdir(parents=True, exist_ok=True)
     result = download.download(url + '/zip', target, seconds=plan.limits.call_seconds,
                                max_bytes=spec.max_bytes)

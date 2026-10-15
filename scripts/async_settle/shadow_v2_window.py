@@ -366,10 +366,14 @@ def main(argv: list[str] | None = None) -> int:
         plan = retained_json(args.plan.read_bytes())
         source = args.input or args.plan.parent
         if plan.get('version') == 'p6-first-window-v1':
-            from trusted_router.async_settle_shadow_v2_activation_plan import load, read_file
+            from trusted_router.async_settle_shadow_v2_activation_plan import (
+                contained_path,
+                load,
+                read_file,
+            )
             activation = load(args.plan)
             plan = retained_json(read_file(args.plan.parent, activation.artifacts.bundle_plan))
-            source = args.input or (args.plan.parent / activation.artifacts.bundle_plan.path).parent
+            source = args.input or contained_path(args.plan.parent, activation.artifacts.bundle_plan.path).parent
         result = window(args.command, plan, source=source, out=args.out, stage=args.stage)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         result = dict(complete=False, missing=[str(exc)])

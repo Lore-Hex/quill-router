@@ -11,13 +11,13 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from trusted_router.async_settle_shadow_v2_activation_plan import Plan, Source
+from trusted_router.async_settle_shadow_v2_activation_plan import Plan, Source, contained_path
 from trusted_router.async_settle_shadow_v2_collect_ports import Files, Page, Query
 
 
@@ -93,7 +93,31 @@ class HTTPReadTransport:
 @dataclass
 class ReadBudget:
     calls: int = 0
-    records: int = 0
+    records: int = 0  # Requested allowance, charged before the read.
+    recorded: int = 0  # Rows accepted into retained collector records.
+    stopped: bool = False
+
+
+@dataclass
+class GitHubPopulation:
+    total: int | None = None
+    ids: set[int] = field(default_factory=set)
+
+    def add(self, total: Any, rows: list[dict[str, Any]], limit: int) -> bool:
+        if type(total) is not int or not 0 <= total <= limit:
+            raise ValueError('GitHub total record limit')
+        if self.total is not None and self.total != total:
+            raise ValueError('GitHub population changed')
+        ids: list[Any] = [row.get('id') for row in rows]
+        if any(type(value) is not int or value < 0 for value in ids):
+            raise ValueError('GitHub record id missing or invalid')
+        if len(set(ids)) != len(ids) or self.ids.intersection(ids):
+            raise ValueError('GitHub repeated record id')
+        if len(self.ids) + len(ids) > total or (not rows and len(self.ids) < total):
+            raise ValueError('GitHub population incomplete or extra')
+        self.total = total
+        self.ids.update(ids)
+        return len(self.ids) == total
 
 
 class BoundedFiles(Files):
@@ -102,6 +126,7 @@ class BoundedFiles(Files):
         self.remaining = max_bytes
 
     def put(self, path: str, raw: bytes, schema: Any = None) -> dict[str, Any]:
+        contained_path(self.root, path)
         if len(raw) > self.remaining:
             raise ValueError('native output byte budget')
         self.remaining -= len(raw)
@@ -117,7 +142,7 @@ class NativeClient:
         self.complete_through_us = complete_through_us
         self.budget = budget if budget is not None else ReadBudget()
         self._page_size: int | None = None
-        self._total: int | None = None
+        self._population = GitHubPopulation()
         self.calls = 0
         self.records = 0
         self.originals: list[dict[str, Any]] = []
@@ -130,7 +155,7 @@ class NativeClient:
         if not 0 < query.page_size <= limits.records_per_page or not 0 < query.deadline_seconds <= limits.call_seconds:
             raise ValueError('native query bounds')
         requested = query.page_size if source.kind in ('monitoring', 'lifecycle', 'boot_ledger', 'github_jobs', 'github_artifacts') else 1
-        if self.budget.calls >= limits.calls_per_pass or self.budget.records + requested > limits.records_per_pass or token in self._tokens:
+        if self.budget.stopped or self.budget.calls >= limits.calls_per_pass or self.budget.records + requested > limits.records_per_pass or token in self._tokens:
             raise ValueError('native pass bounds or repeated page')
         if self._page_size is not None and self._page_size != query.page_size:
             raise ValueError('native page size changed')
@@ -138,6 +163,8 @@ class NativeClient:
         self._tokens.add(token)
         self.calls += 1  # Failed attempts consume the same finite pass.
         self.budget.calls += 1
+        self.budget.records += requested
+        self.budget.stopped = True
         method, params, body = self.request(query, token)
         reply = self.transport.read(method, source.url, params=params, body=body,
                                     seconds=query.deadline_seconds, max_bytes=limits.bytes_per_page)
@@ -152,16 +179,43 @@ class NativeClient:
         if len(reply.raw) > limits.bytes_per_page:
             raise ValueError('native response byte limit')
         value = json.loads(reply.raw)
-        rows, next_token = self.records_from(value, reply.headers, token)
-        if len(rows) > query.page_size or self.budget.records + len(rows) > limits.records_per_pass:
+        # Establish the received row count before checking release fields. A
+        # bounded rejected population still consumes its requested allowance.
+        try:
+            count = self.response_count(value)
+        except (KeyError, TypeError, AttributeError):
+            raise ValueError('native response population unavailable') from None
+        if count > requested:
             raise ValueError('native record limit')
-        self.records += len(rows)
-        self.budget.records += len(rows)
+        self.budget.stopped = False
+        try:
+            rows, next_token = self.records_from(value, reply.headers, token)
+        except (KeyError, TypeError, AttributeError):
+            raise ValueError('native response fields unavailable') from None
+        if len(rows) > requested:
+            raise ValueError('native record limit')
         wrapped = json.dumps(dict(records=rows), separators=(',', ':')).encode()
         if len(wrapped) > 262144:
             raise ValueError('collector wrapper byte limit')
+        self.records += len(rows)
+        self.budget.recorded += len(rows)
         return Page(wrapped, next_token, next_token is None, reply.elapsed_us,
                     self.complete_through_us)
+
+    def response_count(self, value: Any) -> int:
+        if not isinstance(value, dict):
+            raise ValueError('native response population unavailable')
+        kind = self.source.kind
+        if kind == 'monitoring':
+            return sum(len(series.get('points', [])) for series in value.get('timeSeries', []))
+        key = {'lifecycle': 'entries', 'boot_ledger': 'entries',
+               'github_jobs': 'jobs', 'github_artifacts': 'artifacts'}.get(kind)
+        if key is None:
+            return 1
+        rows = value[key] if kind.startswith('github_') else value.get(key, [])
+        if not isinstance(rows, list):
+            raise ValueError('native response population unavailable')
+        return len(rows)
 
     def request(self, query: Query, token: str | None) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
         source = self.source
@@ -239,14 +293,8 @@ class NativeClient:
             link = headers.get('link', '')
             next_token = str(int(token or '1') + 1) if 'rel="next"' in link else None
             if source.kind in ('github_jobs', 'github_artifacts'):
-                total = value['total_count']
-                if type(total) is not int or total < 0 or total > self.plan.limits.records_per_pass:
-                    raise ValueError('GitHub total record limit')
-                if self._total is not None and self._total != total:
-                    raise ValueError('GitHub population changed')
-                self._total = total
-                consumed = self.records + len(rows)
-                if consumed > total or bool(next_token) != (consumed < total):
+                complete = self._population.add(value['total_count'], rows, self.plan.limits.records_per_pass)
+                if bool(next_token) == complete:
                     raise ValueError('GitHub continuation missing or extra')
                 if next_token:
                     import re

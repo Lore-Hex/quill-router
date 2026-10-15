@@ -845,7 +845,7 @@
       "type": "string"
     },
     "attachment_bucket": {
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@=-]{0,255}$",
+      "const": "tr-async-settle-shadow-attachments-quill-cloud-proxy",
       "title": "Attachment Bucket",
       "type": "string"
     },

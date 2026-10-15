@@ -72,7 +72,7 @@ def run_record(plan, workflow=None):
 
 def job_record(plan, workflow=None):
     workflow = workflow or plan.workflows[0]
-    return dict(name=workflow.jobs[0], head_sha=getattr(plan.releases, workflow.role).sha,
+    return dict(id=123, name=workflow.jobs[0], head_sha=getattr(plan.releases, workflow.role).sha,
         run_id=workflow.run_id, status='completed', conclusion='success', completed_at='2026-11-01T00:00:00Z')
 
 
@@ -558,3 +558,213 @@ def test_failed_attestation_workflow_cannot_be_omitted(plan, tmp_path):
             return Response(json.dumps(value).encode(), 200, {}, 10)
     with pytest.raises(ValueError, match='released workflow'):
         cli.observe_release(plan, 'shadow-opt-in', tmp_path, Workflows())
+
+
+@pytest.mark.parametrize('phase', ['shadow-opt-in', 'shadow-opt-out'])
+def test_round2_ruled_rollout_patch(plan, tmp_path, phase):
+    import difflib
+    import re
+
+    from trusted_router.async_settle_shadow_v2_activation_release import prepare
+    original = (ROOT / 'scripts/deploy/rollout.sh').read_text()
+    active = phase == 'shadow-opt-in'
+    # Independent ruled values: do not build this expectation from pins() or plan fields.
+    expected = {
+        'TR_ASYNC_SETTLE_SHADOW_POLICY': 'shadow-v2' if active else '',
+        'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': '162e441a-5d13-414f-92bd-7c6cd805faa3' if active else '',
+        'TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION': 'us-central1' if active else '',
+        'TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET': 'tr-async-settle-shadow-attachments-quill-cloud-proxy',
+        'TR_ASYNC_SETTLE_ENABLED': 'false',
+        'TR_ASYNC_SETTLE_PROTECTION': 'false',
+        'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED': 'false',
+    }
+    changed = original
+    for name, value in expected.items():
+        changed, count = re.subn(r'(?m)^(  "' + name + r'=)[^"\n]*(")$',
+                                lambda m, value=value: m[1] + value + m[2], changed)
+        assert count == 1
+    wanted = ''.join(difflib.unified_diff(original.splitlines(keepends=True), changed.splitlines(keepends=True),
+        fromfile='a/scripts/deploy/rollout.sh', tofile='b/scripts/deploy/rollout.sh')).encode()
+    prepare(plan, phase, ROOT, None, tmp_path)
+    assert (tmp_path / 'router.patch').read_bytes() == wanted
+    for name in ('TR_ASYNC_SETTLE_ENABLED', 'TR_ASYNC_SETTLE_PROTECTION', 'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED'):
+        line = f'  "{name}=false"\n'
+        assert line in original and line in changed
+
+
+def approved_plan_value():
+    def fill(item):
+        if isinstance(item, str):
+            return item.replace('REVIEW', 'reviewed').replace('0' * 64, '1' * 64).replace('0' * 40, '1' * 40).replace('000000000000-', '123456789012-')
+        if isinstance(item, dict):
+            return {key: fill(value) for key, value in item.items()}
+        if isinstance(item, list):
+            return [fill(value) for value in item]
+        return item
+    value = fill(json.loads(EXAMPLE.read_bytes()))
+    value['review'] = 'approved'
+    value['reviewer'] = 'independent-review'
+    for workflow in value['workflows']:
+        workflow['run_id'] = 123
+    return value
+
+
+def test_round2_other_bucket_refused(tmp_path):
+    value = approved_plan_value()
+    path = tmp_path / 'plan.json'
+    path.write_text(json.dumps(value))
+    load(path, approved_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    value['attachment_bucket'] = 'another-attachment-bucket'
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match='attachment_bucket'):
+        load(path, approved_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+
+
+def test_round2_failed_pages_charge_allowance(plan, tmp_path):
+    value = plan.model_dump()
+    selected = source(plan, 'github_jobs', url=f'https://api.github.com/repos/{plan.releases.router.repository}/actions/runs/5/jobs').model_dump()
+    value['sources'] = [dict(selected, id=f'jobs-{i}', url=selected['url'].replace('/runs/5/', f'/runs/{i + 5}/')) for i in range(101)]
+    plan = Plan.model_validate(value)
+    class FailedPages:
+        calls = 0
+        records = 0
+        def read(self, method, url, **kwargs):
+            self.calls += 1
+            run_id = int(url.split('/runs/')[1].split('/')[0])
+            rows = [dict(id=i, run_id=run_id, head_sha=plan.releases.router.sha, status='completed', conclusion='success', completed_at='2026-11-01T00:00:00Z') for i in range(100)]
+            rows[-1]['head_sha'] = 'a' * 40
+            self.records += len(rows)
+            return Response(json.dumps(dict(total_count=100, jobs=rows)).encode(), 200, {}, 1)
+    port = FailedPages()
+    result = cli.capture(plan, EXAMPLE.parent, tmp_path, port)
+    assert (port.calls, port.records, result['calls'], result['records']) == (100, 10000, 100, 0)
+    receipt = json.loads((tmp_path / 'native-budget.json').read_bytes())
+    assert receipt == dict(calls=100, reserved_records=10000, recorded_records=0,
+        remaining_calls=plan.limits.calls_per_pass - 100, remaining_records=0, stopped=False)
+    assert len(list(tmp_path.glob('native/jobs-*/index.json'))) == 100
+    assert not result['complete']
+
+
+@pytest.mark.parametrize('reply', [Response(b'{', 200, {}, 1), Response(b'{}', 503, {}, 1), TimeoutError(),
+    Response(json.dumps(dict(entries=[{}] * 101)).encode(), 200, {}, 1)])
+def test_round2_unaccountable_page_stops_pass(plan, tmp_path, reply):
+    selected = source(plan, 'lifecycle', parser='logging-v2', url='https://logging.googleapis.com/v2/entries:list',
+        filter='logName="projects/p/logs/platform" AND resource.labels.service_name="trusted-router"')
+    plan.sources = [selected, selected.model_copy(update={'id': 'second'})]
+    port = Recorded(reply, {})
+    result = cli.capture(plan, EXAMPLE.parent, tmp_path, port)
+    assert len(port.calls) == result['calls'] == 1
+    receipt = json.loads((tmp_path / 'native-budget.json').read_bytes())
+    assert receipt['stopped'] is True
+    assert receipt['reserved_records'] == 100
+    assert receipt['remaining_records'] == 9900
+    assert result['records'] == 0
+
+
+@pytest.mark.parametrize('kind', ['github_jobs', 'github_artifacts'])
+@pytest.mark.parametrize('issue', ['duplicate', 'changed_total', 'correct'])
+def test_round2_github_population(plan, tmp_path, kind, issue):
+    collection = 'jobs' if kind == 'github_jobs' else 'artifacts'
+    url = f'https://api.github.com/repos/{plan.releases.router.repository}/actions/runs/5/{collection}'
+    selected = source(plan, kind, url=url)
+    row = (dict(job_record(plan), id=123, run_id=5) if kind == 'github_jobs' else
+        dict(id=123, workflow_run=dict(id=5, head_sha=plan.releases.router.sha), expired=False))
+    first = Response(json.dumps(dict(total_count=2, **{collection: [row]})).encode(), 200,
+        {'link': f'<{url}?per_page=100&page=2>; rel="next"'}, 1)
+    last_row = dict(row, id=123 if issue == 'duplicate' else 124)
+    last = dict(total_count=3 if issue == 'changed_total' else 2, **{collection: [last_row]})
+    client = native(plan, tmp_path, Recorded(first, last), selected)
+    page = client.read(query(selected), None)
+    if issue == 'correct':
+        assert client.read(query(selected), page.next_token).eof
+        assert client.records == 2
+    else:
+        diagnostic = 'GitHub repeated record id' if issue == 'duplicate' else 'GitHub population changed'
+        with pytest.raises(ValueError, match=diagnostic):
+            client.read(query(selected), page.next_token)
+
+
+@pytest.mark.parametrize('issue', ['duplicate', 'changed_total', 'correct'])
+def test_round2_observer_population(plan, tmp_path, issue):
+    plan.limits.records_per_page = 1
+    plan.sources = []
+    values = []
+    for w in plan.workflows:
+        w.run_id = 5
+        w.jobs = ['first', 'second']
+        first = dict(job_record(plan, w), id=123, name='first')
+        second = dict(first, name='second', id=123 if issue == 'duplicate' else 124)
+        values.extend([run_record(plan, w), dict(total_count=2, jobs=[first]),
+            dict(total_count=3 if issue == 'changed_total' else 2, jobs=[second])])
+    port = Recorded(*values)
+    if issue == 'correct':
+        result = cli.observe_release(plan, 'shadow-opt-in', tmp_path, port)
+        assert 'P6LivePinProjection' in result['missing']
+        assert len(port.calls) == 3 * len(plan.workflows)
+    else:
+        diagnostic = 'GitHub repeated record id' if issue == 'duplicate' else 'GitHub population changed'
+        with pytest.raises(ValueError, match=diagnostic):
+            cli.observe_release(plan, 'shadow-opt-in', tmp_path, port)
+        assert len(port.calls) == 3
+
+
+def test_round2_understated_k_refused(plan):
+    primary = next(r for r in plan.schedule.regions if r.region == plan.schedule.primary)
+    assert plan.schedule.k == primary.cap + primary.surge == 24
+    value = plan.model_dump()
+    value['schedule']['regions'][0]['publishers'] = 1
+    value['schedule']['k'] = 1
+    with pytest.raises(ValueError, match='primary contender'):
+        Plan.model_validate(value)
+
+
+@pytest.mark.parametrize('role', ['router', 'enclave'])
+def test_round2_pin_source_containment(plan, tmp_path, role):
+    from trusted_router.async_settle_shadow_v2_activation_release import prepare
+    inside, outside, out = (tmp_path / name for name in ('inside', 'outside', 'output'))
+    for folder in (inside, outside, out):
+        folder.mkdir()
+    (inside / 'link').symlink_to(outside, target_is_directory=True)
+    original = ((ROOT / 'scripts/deploy/rollout.sh').read_text() if role == 'router' else
+        'ENV=(\n "TR_ASYNC_SETTLE_SHADOW=off"\n "TR_ASYNC_SETTLE_NEGOTIATE=off"\n)\n')
+    (outside / 'rollout.sh').write_text(original)
+    value = plan.model_dump()
+    value['releases'][role]['pin_file'] = 'link/rollout.sh'
+    selected = Plan.model_validate(value)
+    with pytest.raises(ValueError, match='outside plan workspace'):
+        prepare(selected, 'shadow-opt-in', inside if role == 'router' else ROOT,
+            inside if role == 'enclave' else None, out)
+    assert not (out / (role + '.patch')).exists()
+    assert (outside / 'rollout.sh').read_text() == original
+
+
+def test_round2_default_output_containment(plan, tmp_path):
+    inside, outside = tmp_path / 'inside', tmp_path / 'outside'
+    inside.mkdir()
+    outside.mkdir()
+    (inside / 'link').symlink_to(outside, target_is_directory=True)
+    value = plan.model_dump()
+    value['artifacts']['release'] = 'link/new-output'
+    path = inside / 'plan.json'
+    path.write_text(json.dumps(value))
+    assert cli.main(['release', '--plan', str(path), '--phase', 'shadow-opt-in']) == 1
+    assert not list(outside.iterdir())
+
+
+def test_round2_archive_output_containment(plan, tmp_path):
+    inside, outside = tmp_path / 'inside', tmp_path / 'outside'
+    inside.mkdir()
+    outside.mkdir()
+    (inside / 'link').symlink_to(outside, target_is_directory=True)
+    raw = b'recorded archive'
+    digest = hashlib.sha256(raw).hexdigest()
+    spec = Archive(role='router', run_id=5, artifact_id=7, sha256=digest, max_bytes=100, out='link/original.zip')
+    port = Recorded(dict(id=7, workflow_run=dict(id=5, head_sha=plan.releases.router.sha), expired=False,
+        digest='sha256:' + digest, size_in_bytes=len(raw)))
+    class Download:
+        def download(self, url, target, **kwargs):
+            target.write_bytes(raw)
+            return dict(bytes=len(raw), sha256=digest, calls=2, elapsed_us=1)
+    with pytest.raises(ValueError, match='outside plan workspace'):
+        capture_archive(plan, spec, Files(inside), port, Download(), ReadBudget())
+    assert not list(outside.iterdir())

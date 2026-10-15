@@ -17,7 +17,7 @@
     }
   },
   "workspace": "162e441a-5d13-414f-92bd-7c6cd805faa3",
-  "attachment_bucket": "REVIEW-attachment-bucket",
+  "attachment_bucket": "tr-async-settle-shadow-attachments-quill-cloud-proxy",
   "enclave_regions": [
     "us-central1",
     "us-east4",

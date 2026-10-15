@@ -12,11 +12,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from trusted_router.async_settle_shadow_v2_activation_plan import Plan, load, read_file, stamp
+from trusted_router.async_settle_shadow_v2_activation_plan import (
+    Plan,
+    contained_path,
+    load,
+    read_file,
+    stamp,
+)
 from trusted_router.async_settle_shadow_v2_activation_release import pins, prepare, workflow_record
-from trusted_router.async_settle_shadow_v2_collect_ports import Files, Pass, Query
+from trusted_router.async_settle_shadow_v2_collect_ports import Pass, Query
 from trusted_router.async_settle_shadow_v2_native_reads import (
     BoundedFiles,
+    GitHubPopulation,
     HTTPReadTransport,
     NativeClient,
     ReadBudget,
@@ -164,6 +171,9 @@ def capture(plan: Plan, root: Path, out: Path, transport: ReadTransport) -> dict
     budget = ReadBudget()
     current = Pass(files, limit=plan.limits.records_per_pass)
     for source in plan.sources:
+        if budget.stopped or budget.records >= plan.limits.records_per_pass or budget.calls >= plan.limits.calls_per_pass:
+            current.gap(source.id, 'native_pass_stopped' if budget.stopped else 'native_pass_allowance_exhausted')
+            break
         boundary = None
         if source.completion_record is not None:
             record = json.loads(read_file(root, source.completion_record))
@@ -180,11 +190,17 @@ def capture(plan: Plan, root: Path, out: Path, transport: ReadTransport) -> dict
         capture_archive,
     )
     for archive in plan.archives:
+        if budget.stopped or budget.records >= plan.limits.records_per_pass or budget.calls + 3 > plan.limits.calls_per_pass:
+            current.gap('archives', 'native_pass_stopped_or_allowance_exhausted')
+            break
         if archive.max_bytes > files.remaining:
             raise ValueError('archive output budget')
         files.remaining -= archive.max_bytes
         capture_archive(plan, archive, files, transport, HTTPArchivePort(headers), budget)
-    current.calls, current.records = budget.calls, budget.records
+    files.obj('native-budget.json', dict(calls=budget.calls, reserved_records=budget.records,
+        recorded_records=budget.recorded, remaining_calls=plan.limits.calls_per_pass - budget.calls,
+        remaining_records=plan.limits.records_per_pass - budget.records, stopped=budget.stopped))
+    current.calls, current.records = budget.calls, budget.recorded
     current.status('native-pass.json')
     return dict(complete=not current.missing, missing=current.missing,
                 records=current.records, calls=current.calls)
@@ -194,7 +210,7 @@ def observe_release(plan: Plan, phase: str, out: Path, transport: ReadTransport,
                     *, polls: int = 1, sleep: Any = time.sleep) -> dict[str, Any]:
     if not 1 <= polls <= plan.limits.calls_per_pass // max(1, len(plan.workflows) * 2):
         raise ValueError('release poll budget')
-    files = Files(out)
+    files = BoundedFiles(out, plan.limits.output_bytes)
     calls = 0
     records = 0
     def get(url: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -202,14 +218,14 @@ def observe_release(plan: Plan, phase: str, out: Path, transport: ReadTransport,
         if calls >= plan.limits.calls_per_pass or records + params.get('per_page', 1) > plan.limits.records_per_pass:
             raise ValueError('release call budget')
         calls += 1
+        records += params.get('per_page', 1)
         response = transport.read('GET', url, params=params, body=None,
             seconds=plan.limits.call_seconds, max_bytes=plan.limits.bytes_per_page)
         files.put(f'observed/{calls:05d}.json', response.raw)
         if response.status != 200 or response.elapsed_us > plan.limits.call_seconds * 1000000:
             raise ValueError('release read failed')
         value = json.loads(response.raw)
-        records += len(value['jobs']) if 'jobs' in value else 1
-        if records > plan.limits.records_per_pass:
+        if len(response.raw) > plan.limits.bytes_per_page or ('jobs' in value and len(value['jobs']) > params.get('per_page', 1)):
             raise ValueError('release record budget')
         return value
     for poll in range(polls):
@@ -224,16 +240,20 @@ def observe_release(plan: Plan, phase: str, out: Path, transport: ReadTransport,
                 pending = True
                 continue
             jobs = []
+            population = GitHubPopulation()
             page = 1
             while True:
                 response = get(base + '/jobs', dict(per_page=plan.limits.records_per_page, page=page, filter='latest'))
                 batch = response['jobs']
                 if len(batch) > plan.limits.records_per_page:
                     raise ValueError('release job page limit')
+                complete = population.add(response['total_count'], batch, plan.limits.records_per_pass)
+                if any(job.get('run_id') != run['id'] or job.get('head_sha') != release.sha for job in batch):
+                    raise ValueError('GitHub selected record differs')
                 jobs.extend(batch)
                 if len(jobs) > plan.limits.records_per_pass:
                     raise ValueError('release job pass limit')
-                if len(jobs) == response['total_count']:
+                if complete:
                     break
                 if not batch:
                     raise ValueError('incomplete job pages')
@@ -280,8 +300,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError('independent --plan-sha256 required')
     plan = load(args.plan, approved_sha256=args.plan_sha256 if live else None)
     root = args.plan.parent
-    planned_out = root / getattr(plan.artifacts, args.command)
-    out = args.out or (planned_out / args.phase if args.phase else planned_out)
+    planned_out = Path(getattr(plan.artifacts, args.command))
+    if args.phase:
+        planned_out /= args.phase
+    out = args.out or contained_path(root, str(planned_out))
     out.mkdir(parents=True, exist_ok=False)
     save(out, 'plan-record.json', dict(plan_sha256=hashlib.sha256(args.plan.read_bytes()).hexdigest(),
          command=args.command, phase=args.phase, apply=args.apply, reviewed=live))
