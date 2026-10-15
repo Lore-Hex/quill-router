@@ -152,10 +152,57 @@ def test_a_leased_authorization_replays_by_its_idempotency_key_and_gives_the_sec
         # The retry was admitted by the front door, then its hold refunded.
         assert [path for path, _sent in door.seen[seen_before:]] == ["/v1/authorize", "/v1/refund"]
         assert _credit(database)["reserved"] == 0
-    # A different body under a used key is a mismatch, as today.
+    # A different body under a used key is a mismatch, as today, and the
+    # hold the mismatching attempt took is given back.
+    seen_before = len(door.seen)
     with pytest.raises(Exception, match="") as caught:
         gateway._authorize_gateway_sync(_request(), _body(key.hash, idempotency_key="client-order-42", max_output_tokens=7), _pilot())
     assert getattr(caught.value, "status_code", None) == 409
+    assert [path for path, _sent in door.seen[seen_before:]] == ["/v1/authorize", "/v1/refund"]
+
+
+def test_one_idempotency_scope_across_both_admission_paths(door: _Door) -> None:
+    """A key first used on today's path (the front door busy) then admitted,
+    and a key first admitted then taking today's path: one authorization
+    either way."""
+    store, database, key = _seed()
+    # Today's path first: the front door is busy.
+    door.answers["/v1/authorize"] = {"Status": "busy"}
+    body = _body(key.hash, idempotency_key="reserved-first")
+    first = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert store.get_gateway_authorization(first["authorization_id"]).fastpath_envelope is None
+    door.answers["/v1/authorize"] = dict(ADMIT)
+    again = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert again["authorization_id"] == first["authorization_id"] and again.get("idempotent_replay") is True
+    assert [path for path, _sent in door.seen[-2:]] == ["/v1/authorize", "/v1/refund"]
+    # The pilot first: then the front door is busy on the retry.
+    body = _body(key.hash, idempotency_key="leased-first")
+    leased = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert store.get_gateway_authorization(leased["authorization_id"]).fastpath_envelope == "sealed-pilot"
+    door.answers["/v1/authorize"] = {"Status": "busy"}
+    reserved_before = _credit(database)["reserved"]
+    again = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert again["authorization_id"] == leased["authorization_id"] and again.get("idempotent_replay") is True
+    assert _credit(database)["reserved"] == reserved_before, "no second hold on today's path"
+    # And a differing body under the leased key on today's path is 409.
+    with pytest.raises(Exception, match="") as caught:
+        gateway._authorize_gateway_sync(_request(), _body(key.hash, idempotency_key="leased-first", max_output_tokens=7), _pilot())
+    assert getattr(caught.value, "status_code", None) == 409
+
+
+def test_a_stale_index_row_is_replaced_not_an_error(door: _Door) -> None:
+    """The typed authorization retires after its retention; its index row
+    did not. A later use of the key gets a new authorization, and the row
+    names it now."""
+    store, database, key = _seed()
+    body = _body(key.hash, idempotency_key="old-key")
+    first = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    # Retention retired the typed row.
+    del database.gateway_authorizations[first["authorization_id"]]
+    assert store.get_gateway_authorization(first["authorization_id"]) is None
+    second = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert second["authorization_id"] != first["authorization_id"]
+    assert store.get_leased_authorization_by_idempotency(WORKSPACE, key.hash, "old-key").id == second["authorization_id"]
 
 
 @pytest.mark.parametrize(

@@ -384,6 +384,14 @@ def _iso_timestamp(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
+# The pilot's idempotency index row, replaced when it names an authorization
+# retention retired (docs/design/fast-admission-pilot.md).
+_LEASED_INDEX_REPLACE_SQL = (
+    "UPDATE tr_entities SET body=@body, updated_at=PENDING_COMMIT_TIMESTAMP() "
+    "WHERE kind=@kind AND id=@id"
+)
+
+
 class SpannerStore:
     """Production Spanner store with ClickHouse analytics.
 
@@ -5011,17 +5019,18 @@ class SpannerStore:
         if authorization_id is None:
             raise ValueError("a leased authorization needs its id up front")
 
+        stale_index = False
+
         def replay() -> tuple[Any, GatewayAuthorization | None] | None:
+            """The scope's earlier authorization, leased (the index row) or
+            reserved (today's tr_reservation scope): one scope, two tables."""
+            nonlocal stale_index
             if idempotency_key is None:
                 return None
-            # The scope's index row names the authorization; the typed row
-            # is read by id (the legacy lookup reads the legacy entity).
-            ref = self._read_entity(
-                "gateway_authorization_idempotency",
-                _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key),
-                dict,
-            )
-            existing = self.get_gateway_authorization(str(ref["authorization_id"])) if ref else None
+            existing, stale = self._leased_authorization_by_scope(workspace_id, key_hash, idempotency_key)
+            stale_index = stale
+            if existing is None:
+                existing = self.get_typed_authorization_by_idempotency(workspace_id, key_hash, idempotency_key)
             if existing is None:
                 return None
             if existing.idempotency_fingerprint != idempotency_fingerprint:
@@ -5042,12 +5051,18 @@ class SpannerStore:
         def txn(transaction: Any) -> None:
             statements = [gateway_authorization_insert_statement(pt, authorization, created_at=when)]
             if idempotency_key is not None:
-                statements.append(entity_insert_statement(
-                    pt,
-                    "gateway_authorization_idempotency",
-                    _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key),
-                    _json_body({"authorization_id": authorization.id}),
-                ))
+                index_id = _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
+                body = _json_body({"authorization_id": authorization.id})
+                if stale_index:
+                    # The row names an authorization retention retired: it
+                    # is this authorization's now.
+                    statements.append((
+                        _LEASED_INDEX_REPLACE_SQL,
+                        {"kind": "gateway_authorization_idempotency", "id": index_id, "body": body},
+                        {"kind": pt.STRING, "id": pt.STRING, "body": pt.STRING},
+                    ))
+                else:
+                    statements.append(entity_insert_statement(pt, "gateway_authorization_idempotency", index_id, body))
             execute_batch_dml(transaction, statements, [(1,)] * len(statements))
 
         try:
@@ -5060,6 +5075,31 @@ class SpannerStore:
                 raise
             return replayed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
+
+    def _leased_authorization_by_scope(
+        self, workspace_id: str, key_hash: str, idempotency_key: str,
+    ) -> tuple[GatewayAuthorization | None, bool]:
+        """The leased authorization the scope's index row names, and whether
+        the row is stale (it names an authorization retention retired)."""
+        from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
+
+        ref = self._read_entity(
+            "gateway_authorization_idempotency",
+            _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key),
+            dict,
+        )
+        if not ref:
+            return None, False
+        existing = self.get_gateway_authorization(str(ref["authorization_id"]))
+        return existing, existing is None
+
+    def get_leased_authorization_by_idempotency(
+        self, workspace_id: str, key_hash: str, idempotency_key: str,
+    ) -> GatewayAuthorization | None:
+        """The pilot's replay for a request taking today's path: the leased
+        authorization an earlier attempt of the same scope got, if any."""
+        existing, _stale = self._leased_authorization_by_scope(workspace_id, key_hash, idempotency_key)
+        return existing
 
     def typed_finalize_leased_result(
         self,

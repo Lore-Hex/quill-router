@@ -75,8 +75,12 @@ a control plane in a pilot region, with the settle outbox and the durable
 activity outbox on (the leased settle writes both in its own commit).
 An idempotency key does not exclude a request: the enclave sends one on
 every authorize, and a leased authorization replays by its scope as
-today's does (the index row of the scope is written with the
-authorization row; a retry's hold is given back). Everything else stays on
+today's does. The scope is one string in two tables, today's
+`tr_reservation` row and the pilot's index row, written with the
+authorization row; a replay on either path reads both, so a key used on
+today's path and then admitted, or the reverse, gets one authorization;
+a retry's hold is given back, a differing body is 409, and an index row
+that names an authorization retention retired is replaced. Everything else stays on
 today's path, as does any request the front door does not admit: `off` (the
 workspace is not on the fast path's own switch), `busy` (no lease took it),
 `invalid`, a front door that failed, or none serving. A request is never

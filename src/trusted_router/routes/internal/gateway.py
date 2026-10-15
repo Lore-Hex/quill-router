@@ -1737,6 +1737,24 @@ def _authorize_gateway_sync_impl(
             ),
         )
 
+        if admitted is None and presented_idempotency_key and _fastpath_pilot_workspace(settings, workspace.id):
+            # A retry of a key the pilot admitted earlier, now taking today's
+            # path (a busy front door, the pilot turned off): the stored
+            # leased authorization answers, as today's scoped read would for
+            # a reserved one. One scope, two tables, one answer.
+            leased = _typed_store.get_leased_authorization_by_idempotency(
+                workspace.id, api_key.hash, presented_idempotency_key,
+            )
+            if leased is not None:
+                release_user_model_slot_after_error()
+                if leased.idempotency_fingerprint != request_fingerprint:
+                    raise api_error(
+                        409,
+                        "Idempotency key was already used for a different gateway request",
+                        ErrorType.CONFLICT,
+                    )
+                return _replay_response(leased, endpoint_candidates)
+
         def release_after_error() -> None:
             release_user_model_slot_after_error()
             if admitted is not None:
@@ -1919,7 +1937,8 @@ def _authorize_gateway_sync_impl(
             release_user_model_slot_after_error()
             raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED)
         if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
-            release_user_model_slot_after_error()
+            # The slot, and the hold a lease granted this attempt: given back.
+            release_after_error()
             raise api_error(
                 409,
                 "Idempotency key was already used for a different gateway request",
@@ -4912,6 +4931,15 @@ def _fastpath_front_door(settings: Settings) -> _fastpath.FrontDoorClient | None
                 timeout_seconds=settings.fastpath_front_door_timeout_seconds,
             )
     return _fastpath_client
+
+
+def _fastpath_pilot_workspace(settings: Settings, workspace_id: str) -> bool:
+    """Whether the pilot is on for this workspace on this control plane."""
+    return (
+        settings.fastpath_pilot_enabled
+        and workspace_id in settings.fastpath_pilot_workspace_ids
+        and settings.effective_serving_region in settings.fastpath_pilot_region_ids
+    )
 
 
 def _fastpath_admission(
