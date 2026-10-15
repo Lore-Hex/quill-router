@@ -1986,14 +1986,19 @@ PROVIDERS: dict[str, Provider] = {
     "coralbricks": Provider(
         slug="coralbricks", name="CoralBricks", supports_prepaid=True, supports_byok=False,
         stores_content=True, provider_zero_data_retention=False,
+        # Account owner confirmed the organization setting on 2026-10-14.
+        # Do not extend this opt-in to unrelated or future BYOK accounts.
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-10-14",
         provider_confidential_compute=False, provider_e2ee=False,
         provider_headquarters_country="US", renewable_energy_inference=False,
         provider_policy=(
             "Coral Bricks AI Inc. operates its own serving software on leased US infrastructure. "
-            "No training on customer content. Default content retention is up to 30 days and "
-            "metadata/log retention up to 45 days. Organization-level ZDR is available, but "
-            "TrustedRouter's setting and applicable agreement are not yet verified, so these "
-            "routes remain Standard. No confidential-compute or E2EE claim. TrustedRouter "
+            "TrustedRouter's account owner confirmed the organization-wide No content + no metadata "
+            "setting on October 14, 2026. Zero data retention applies to new requests through "
+            "TrustedRouter-funded routes, not every CoralBricks account. Operational counters "
+            "and billing records remain; the setting does not purge previously retained data. "
+            "No training on customer content. No confidential-compute or E2EE claim. TrustedRouter "
             "disables paid cache retention; free engine prefix caching remains active. "
             "Custom retained-cache TTLs are not supported. Inference is not declared 100% renewable."
         ),
