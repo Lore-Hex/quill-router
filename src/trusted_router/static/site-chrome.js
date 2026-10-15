@@ -3,6 +3,15 @@
 // swap stay in dashboard.js.
 (() => {
   "use strict";
+  // Search equivalence only. Never use this to select or rewrite an API model ID.
+  const compact = value => String(value).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  window.TRModelSearch = {
+    matches(text, query) {
+      const haystack = compact(text);
+      return String(query).trim().split(/\s+/).map(compact).filter(Boolean)
+        .every(term => haystack.includes(term));
+    },
+  };
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -68,7 +77,7 @@
     if (searchLoading) { $("#search-count").textContent = "Loading the model catalog…"; return; }
     if (searchFailed) { $("#search-count").textContent = "The catalog could not be loaded. Try again or browse all models."; return; }
     const needle = query.value.trim().toLowerCase();
-    const models = (searchModels || []).filter((m) => (m.name + " " + m.id).toLowerCase().includes(needle));
+    const models = (searchModels || []).filter((m) => window.TRModelSearch.matches(m.name + " " + m.id, needle));
     $("#search-count").textContent = models.length
       ? `${models.length} ${models.length === 1 ? "match" : "matches"}${models.length > 50 ? " · showing the first 50" : ""}`
       : "No matching models. Try another name or browse all models.";
