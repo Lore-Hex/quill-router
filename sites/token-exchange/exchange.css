@@ -468,10 +468,10 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 }
 @media(prefers-reduced-motion:reduce) and (max-width:1000px){.hero-provider-group{gap:32px;padding:0 32px 0 0;min-width:0}}
 
-/* Hero and closing box share one photograph: the TrustedRouter river, cropped to water
-   so it reads as texture rather than a place. The gradient arcs are retired. */
-.hero-photo{position:absolute;inset:0;z-index:-2;pointer-events:none;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
-.hero-photo::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 58% 46% at 50% 44%,rgba(5,7,6,.5),transparent 72%),linear-gradient(180deg,rgba(5,7,6,.8),rgba(5,7,6,.4) 40%,rgba(5,7,6,.25) 72%,rgba(5,7,6,.9))}
+/* Approved close aerial for the hero; the closing box keeps its original river crop. */
+.hero-photo{position:absolute;inset:0;z-index:-2;pointer-events:none;background:url('/assets/river-hero.webp') 50% 50%/cover no-repeat}
+.hero-photo::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.30)}
+@media(max-width:600px){.hero-photo::after{background:rgba(0,0,0,.20)}}
 .hero .lead{color:#edf8f5}
 .closing-art::before{content:"";position:absolute;inset:0;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
 .closing-art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,6,.94),rgba(5,7,6,.6) 55%,rgba(5,7,6,.35))}
@@ -514,8 +514,10 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 @media(max-width:600px){.brochure-inner h2{font-size:35px}}
 
 
-/* Link interaction stays clear without decorative arrow characters. */
-.privacy-column:hover h3,.privacy-column:focus-visible h3,
-.evidence-footer a:hover,.evidence-footer a:focus-visible{
+/* Persistent underlines identify links on touch screens and before hover. */
+.privacy-column h3,.evidence-footer a{
  text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:1px;
 }
+
+.privacy-column:hover h3,.privacy-column:focus-visible h3,
+.evidence-footer a:hover,.evidence-footer a:focus-visible{text-decoration-thickness:2px}

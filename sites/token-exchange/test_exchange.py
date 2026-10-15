@@ -506,7 +506,7 @@ class ExchangeTests(unittest.TestCase):
             referenced = set()
             for path in [*output.glob("*/index.html"), *output.glob("*.html"), *assets.glob("*.css"), *assets.glob("*.js")]:
                 referenced.update(re.findall(r"/assets/([A-Za-z0-9._-]+)", path.read_text()))
-            self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "mark.svg"}, referenced)
+            self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "river-hero.webp", "mark.svg"}, referenced)
             self.assertEqual({path.name for path in assets.iterdir()}, referenced)
 
 

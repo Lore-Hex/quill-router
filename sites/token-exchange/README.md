@@ -253,3 +253,17 @@ attestation disappear while independently sourced catalog prices remain.
 The Token Exchange Sites workflow runs the stale/mixed-state browser checks and
 the real one-minute upstream outage test on pull requests and main changes to
 the shared site or evidence backend. It does not publish the sites.
+
+## Hero artwork — October 15, 2026
+
+`art/river-hero.webp` is the approved regenerated close aerial river image,
+exported at 2880 × 1152 (WebP quality 88). The built-in image generator returned
+1983 × 793; the export uses Lanczos resampling, without adding generated detail.
+The hero uses a 30% black overlay on desktop and 20% at widths up to 600px.
+The closing section retains `art/river-close.webp`.
+
+The approved generation simplified the left half to one broad curving river
+channel, retaining blue-hour basalt, forest-green ridges and cool blue water.
+It is symbolic landscape artwork, not an identified location or company facility.
+Generation source: `exec-91d974ff-c8fe-4501-8b28-253437e0dd7a.png`, built-in image tool,
+October 15, 2026. Preserve this approved composition when optimizing exports.
