@@ -62,33 +62,28 @@ def market_links(markets: list[dict], current: dict) -> str:
     )
 
 
-# Match the homepage's featured model strip; links open each model's route details.
-FEATURED_MODELS = [
-    ("anthropic", "Claude Fable 5.1", "anthropic/claude-fable-5.1"),
-    ("openai", "GPT-6 Astra", "openai/gpt-6-astra"),
-    ("google-ai-studio", "Gemini 3.8 Flash", "google/gemini-3.8-flash"),
-    ("grok", "Grok 4.6", "x-ai/grok-4.6"),
-    ("deepseek", "DeepSeek V4 Pro", "deepseek/deepseek-v4-pro-0813"),
-    ("zai", "GLM 5.3", "z-ai/glm-5.3"),
-    ("kimi", "Kimi K3", "moonshotai/kimi-k3"),
-    ("minimax", "MiniMax M3", "minimax/minimax-m3"),
-    ("zai", "GLM 5.3 Flash", "z-ai/glm-5.3-flash"),
-    ("deepseek", "DeepSeek V4 Flash", "deepseek/deepseek-v4-flash-0731"),
+PROVIDERS = [
+    ("openai", "OpenAI"),
+    ("anthropic", "Anthropic"),
+    ("mistral", "Mistral"),
+    ("google-vertex", "Google Vertex AI"),
+    ("deepseek", "DeepSeek"),
+    ("grok", "xAI"),
 ]
 
 
 def provider_ticker(copies: int = 2) -> str:
-    """One visible model group plus a hidden copy so the CSS marquee loops without a gap.
+    """One visible provider group plus a hidden copy so the CSS marquee loops without a gap.
 
-    The loop slides by one group; the row is at most 980px wide and narrower than a group, so two groups cover it throughout."""
+    The loop slides by one group; the row is at most 980px wide and no wider than a group, so two groups cover it throughout."""
     groups = []
     for index in range(copies):
         link_attrs = ' tabindex="-1"' if index else ""
         group_attrs = ' aria-hidden="true"' if index else ""
         links = "".join(
-            f'<a href="https://trustedrouter.com/models/{model}"{link_attrs}>'
+            f'<a href="https://trustedrouter.com/providers"{link_attrs}>'
             f'<img src="/assets/provider-{slug}.png" width="24" height="24" alt=""><span>{html.escape(name)}</span></a>'
-            for slug, name, model in FEATURED_MODELS
+            for slug, name in PROVIDERS
         )
         groups.append(f'<div class="hero-provider-group"{group_attrs}>{links}</div>')
     return "".join(groups)
@@ -170,9 +165,9 @@ def build(output: Path) -> None:
         "trustedrouter-mark-dark.svg": "mark.svg",
     }.items():
         shutil.copyfile(static / source, assets / target)
-    for slug in {slug for slug, _, _ in FEATURED_MODELS}:
+    for slug, _ in PROVIDERS:
         name = f"provider-{slug}.png"
-        shutil.copyfile(static / "homepage" / name, assets / name)
+        shutil.copyfile(static / "provider-logos" / f"{slug}.png", assets / name)
     for market in markets:
         image_name = f"og-{market['slug']}.png"
         shutil.copyfile(HERE / "social-images" / image_name, assets / image_name)

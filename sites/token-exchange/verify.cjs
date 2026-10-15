@@ -68,7 +68,7 @@ const assert = require('node:assert/strict');
         assert((await page.request.get(url)).ok(), `${market.slug} artwork ${url} did not resolve at ${width}`);
       }
       assert.equal(await page.locator('.hero-provider-track').evaluate(el => getComputedStyle(el).animationName), 'none');
-      assert.equal(await page.locator('.hero-provider-group:first-child a').count(), 10);
+      assert.equal(await page.locator('.hero-provider-group:first-child a').count(), 6);
       assert.equal(await page.locator('.hero-provider-group[aria-hidden="true"] a:not([tabindex="-1"])').count(), 0);
       const footerNav = page.getByRole('navigation', {name:'Exchange markets', exact:true});
       assert.equal(await footerNav.getByRole('link').count(), markets.length);
