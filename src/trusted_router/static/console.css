@@ -1794,3 +1794,10 @@ body.console {
   .social-rewards-controls .btn { width: 100%; }
   .social-rewards-foot { padding: 14px 18px; gap: 12px; }
 }
+
+/* A quiet balance row keeps key setup as the primary onboarding task. */
+.activation-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; color: var(--muted); font-size: 13px; }
+.activation-balance strong { color: var(--tr-color-text-primary); margin-left: 6px; }
+.activation-rewards-link { padding: 0; border: 0; background: none; color: var(--tr-color-text-primary); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.activation-rewards-link:hover { text-decoration-thickness: 2px; }
+.activation-rewards-link:focus-visible { outline: 2px solid currentcolor; outline-offset: 5px; }

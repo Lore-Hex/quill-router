@@ -120,8 +120,6 @@ def require_offer(user_id: str, settings: Settings) -> SocialRewardEnrollment:
     enrollment = _eligible_enrollment(user_id, settings)
     if enrollment is None:
         raise HTTPException(403, "This account is not enrolled in this offer.")
-    if not _first_call_complete(enrollment):
-        raise HTTPException(409, "Complete your first successful API call to unlock rewards.")
     return enrollment
 
 

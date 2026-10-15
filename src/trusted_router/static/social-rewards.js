@@ -71,7 +71,9 @@
     const defaultActions = document.querySelector("[data-rewards-default-actions]");
     if (defaultActions) defaultActions.hidden = ready;
     openers.forEach((button) => {
-      button.hidden = button.hasAttribute("data-rewards-success") ? !ready : !state.eligible;
+      button.hidden = button.hasAttribute("data-rewards-success") ? !ready
+        : button.hasAttribute("data-rewards-early") ? !(state.eligible && state.enabled) || ready
+          : !state.eligible;
     });
     if (!state.eligible) {
       list.replaceChildren();
@@ -85,10 +87,10 @@
     dialog.querySelector("[data-rewards-progress]").textContent = `${count} of 5 rewards claimed`;
     dialog.querySelector("[data-rewards-meter]").value = count;
     dialog.querySelector("[data-rewards-destination]").textContent = `Rewards go to your initial workspace: ${state.workspace_name}.`;
-    notice.hidden = state.enabled && state.first_call_complete;
+    notice.hidden = state.enabled;
     notice.textContent = !state.enabled
       ? "Rewards are currently paused. Your claimed rewards are safe."
-      : "Make your first successful API call to unlock these rewards.";
+      : "";
     actions.forEach((action) => {
       let row = Array.from(list.children).find((item) => item.dataset.rewardId === action.id);
       if (!row) {
@@ -148,7 +150,7 @@
       const claimButton = row.querySelector("[data-reward-claim]");
       const checkbox = row.querySelector("input");
       const busy = pending.has(action.id);
-      const unavailable = Boolean(action.claimed || pending.size || !state.enabled || !state.first_call_complete);
+      const unavailable = Boolean(action.claimed || pending.size || !state.enabled);
       const expanded = activeAction === action.id && opened.has(action.id) && !action.claimed;
       row.querySelector(".social-rewards-controls").hidden = !expanded;
       button.disabled = unavailable;
@@ -167,7 +169,7 @@
   }
 
   async function claim(id) {
-    if (pending.size || !opened.has(id) || !confirmed.has(id) || !state?.eligible || !state.enabled || !state.first_call_complete) return;
+    if (pending.size || !opened.has(id) || !confirmed.has(id) || !state?.eligible || !state.enabled) return;
     generation += 1;
     pending.add(id); errors.delete(id); render(state);
     try {

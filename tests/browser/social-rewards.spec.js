@@ -42,7 +42,7 @@ async function rewardsPage(page, options = {}) {
     body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
       <link rel="stylesheet" href="/static/tokens.css"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/console.css">
       </head><body class="console"><main style="padding:32px"><h1>Credits</h1><p>Available $0.150000</p><button class="btn" data-rewards-open hidden>Social rewards</button>
-      ${options.welcome ? `<div data-call-result hidden>${fs.readFileSync(path.join(root, "src/trusted_router/templates/console/welcome.html"), "utf8").split('<div class="activation-rewards-invitation"')[1].split('<div class="activation-result-actions" data-success-actions data-rewards-default-actions>')[0].replace(/^/, '<div class="activation-rewards-invitation"')}</div>` : ""}
+      ${options.welcome ? `<button data-rewards-open data-rewards-early hidden>Earn extra tokens</button><div data-call-result hidden>${fs.readFileSync(path.join(root, "src/trusted_router/templates/console/welcome.html"), "utf8").split('<div class="activation-rewards-invitation"')[1].split('<div class="activation-result-actions" data-success-actions data-rewards-default-actions>')[0].replace(/^/, '<div class="activation-rewards-invitation"')}</div>` : ""}
       ${options.reveal ? '<div class="console-key-reveal">One-time API key reveal</div>' : ""}</main>
       ${fs.readFileSync(path.join(root, "src/trusted_router/templates/console/_social_rewards.html"), "utf8").replace(/\{\{.*?\}\}/g, "test")}</body></html>`,
   }));
@@ -247,3 +247,18 @@ for (const width of [1440, 390, 320]) {
     await expect(page.getByRole("dialog")).not.toBeVisible();
   });
 }
+
+ test("early invitation allows claims before activation without interrupting key setup", async ({ page }) => {
+  const { requests } = await rewardsPage(page, { welcome: true, reveal: true, state: { first_call_complete: false } });
+  await expect(page.getByRole("button", { name: "Earn extra tokens", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "Earn extra tokens", exact: true }).click();
+  const popup = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
+  await (await popup).close();
+  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeDisabled();
+  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
+  await page.getByRole("button", { name: "Claim 200K tokens" }).click();
+  await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
+  expect(requests.filter(r => r.url.endsWith("/claim"))).toHaveLength(1);
+});
