@@ -609,6 +609,18 @@ def _routing_pool_discovery(model: Model) -> tuple[tuple[str, ...], tuple[str, .
     return routing_pool_discovery(model.id)
 
 
+def published_context_length(model: Model) -> int:
+    """The context window a model's public rows show. A routing pool shows
+    the largest window among the models it routes to, since routing sends a
+    request only to models whose window holds it; a pool that routes to
+    nothing keeps its declared window. Every other model shows its own."""
+    if orchestration_role(model.id) != "routing_pool":
+        return model.context_length
+    from trusted_router.routing import routing_pool_context_length
+
+    return routing_pool_context_length(model.id) or model.context_length
+
+
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
@@ -617,6 +629,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     # A routing pool has no routes of its own; it publishes what a request
     # naming it is sure to get on the routes it can reach.
     pool_parameters, pool_modalities = _routing_pool_discovery(model)
+    context_length = published_context_length(model)
     # Discovery fields are a union over the model's own routes. A private
     # proxy (for example a named decision model) is served through another
     # model's routes, so it keeps its own declarations instead.
@@ -945,7 +958,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             if model.documentation is not None
             else f"{model.name} via TrustedRouter"
         ) + (f". {usage_estimation['description']}" if usage_estimation else ""),
-        "context_length": model.context_length,
+        "context_length": context_length,
         "architecture": {
             "modality": (
                 "text->embedding"
@@ -962,7 +975,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "pricing": pricing,
         **({"supported_voices": list(SPEECH_MODELS[model.id].voices)} if model.id in SPEECH_MODELS else {}),
         "top_provider": {
-            "context_length": model.context_length,
+            "context_length": context_length,
             "max_completion_tokens": None,
             "is_moderated": False,
         },
