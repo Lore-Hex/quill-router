@@ -32,6 +32,18 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "coralbricks": InferenceLocations(
+        locations=("United States",),
+        scope="Provider-declared US inference and data storage on leased infrastructure; no downstream inference operators.",
+        routing="Provider declares placement and failover remain within the US; individual regions are unspecified.",
+        provider_pinning="No documented per-request region parameter or serving-region response field.",
+        trustedrouter_pinning="Select provider.only=[coralbricks] with allow_fallbacks=false; no finer regional pin is available.",
+        declaration="United States (provider-declared); specific datacenter region is not exposed.",
+        evidence="Provider marketplace application dated 2026-10-14; country declaration, not attested location.",
+        reviewed_on="2026-10-14",
+        sources=(("API documentation", "https://www.coralbricks.ai/docs"),
+                 ("Trust center", "https://trust.coralbricks.ai/")),
+    ),
     "zro": InferenceLocations(
         locations=("Europe (countries unspecified)", "United States"),
         scope="Provider-declared inference locations, including third-party capacity. Authentication is routed through the EU.",

@@ -110,6 +110,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
     if "llm.eu.greenference.com" in url:
         return {"data": [{"id": "greenference/glm-5.3-flash"}]}
+    if "inference.coralbricks.ai" in url:
+        return {"data": [{"id": "deepseek-v4.1-flash-fast"}]}
     if "api.inference.boundless.network" in url or "zro.moonmath.ai" in url:
         return {"data": [{"id": "glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:
