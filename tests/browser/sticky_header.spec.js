@@ -30,13 +30,16 @@ for (const width of [1440, 880, 390, 320]) {
     // Check the pinned state before the rail reaches the end of its container.
     await page.evaluate(() => window.scrollTo(0, 900));
     const toc = page.locator(".content-toc");
-    if (await toc.isVisible()) {
+    if (width >= 1400) {
+      await expect(toc).toBeVisible();
       expect(await toc.evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(headerBottom);
       await toc.locator('a[href^="#"]').first().click();
       await expect.poll(() => page.evaluate(() => {
         const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
         return target && target.getBoundingClientRect().top >= document.querySelector(".trnav").getBoundingClientRect().bottom;
       })).toBe(true);
+    } else {
+      await expect(toc).toBeHidden();
     }
   });
 }
