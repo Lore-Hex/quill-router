@@ -4,8 +4,40 @@
   "source": "https://inference.baseten.co/v1/models",
   "generated_at": "2026-10-15T12:03:30Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 24,
+  "model_count": 25,
   "models": [
+    {
+      "id": "reflection/beam-1.0",
+      "upstream_id": "reflection/Beam-1.0",
+      "display_name": "Reflection: Beam 1.0",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 1300000,
+      "output_token_price_per_m": 4300000,
+      "cached_input_token_price_per_m": 130000,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "stop",
+        "max_tokens"
+      ],
+      "pricing_source": "https://inference.baseten.co/v1/models"
+    },
     {
       "id": "openai/gpt-oss-120b",
       "upstream_id": "openai/gpt-oss-120b",
