@@ -62,6 +62,28 @@ def test_ci_runs_python_suite_once_with_coverage() -> None:
     assert "--splits" in workflow and "--group" in workflow
 
 
+def test_ci_shards_record_durations_using_existing_split_weights() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    path = "durations-${{ matrix.shard }}.json"
+    for job_name, clock in (("test", "default"), ("test-post-cutover", "post-cutover")):
+        steps = jobs[job_name]["steps"]
+        test_index = next(i for i, step in enumerate(steps)
+                          if "uv run pytest" in step.get("run", ""))
+        assert steps[test_index - 1]["run"] == f"cp .test_durations {path}"
+        command = steps[test_index]["run"]
+        assert f"--store-durations --durations-path={path} --clean-durations" in command
+        assert "--splitting-algorithm least_duration" in command
+        assert "--splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}" in command
+        upload = next(step for step in steps
+                      if step.get("with", {}).get("name")
+                      == f"durations-{clock}-${{{{ matrix.shard }}}}")
+        assert steps.index(upload) > test_index
+        assert upload["if"] == "always()"
+        assert upload["uses"] == "actions/upload-artifact@v4"
+        assert upload["with"]["path"] == path
+        assert upload["with"]["retention-days"] == 7
+
+
 def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
     """The second full-suite pass: same tests, different clock.
 
