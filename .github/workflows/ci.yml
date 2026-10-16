@@ -240,7 +240,7 @@ jobs:
         # slice, so enforcing 70% there would fail on a perfectly covered
         # suite. The `coverage` job below combines them and enforces once.
         run: >-
-          uv run pytest -v -n 4 --dist loadgroup
+          uv run pytest -v -o faulthandler_timeout=900 -n 4 --dist loadgroup
           -m "not provider_health and not proof_oracle"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
@@ -373,7 +373,7 @@ jobs:
           '
       - name: Tests with every scheduled cutover already past
         run: >-
-          uv run pytest -v -n 4 --dist loadgroup
+          uv run pytest -v -o faulthandler_timeout=900 -n 4 --dist loadgroup
           -m "not provider_health and not proof_oracle"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
