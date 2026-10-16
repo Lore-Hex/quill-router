@@ -43,6 +43,9 @@ def test_github_account_of_unknown_or_impossible_age_is_not_old_enough(created_a
     ("farm@hotmail.com", 0),
     ("farm@HotMail.co.uk", 0),
     ("farm@nothotmail.com", 300_000),
+    ("farm@outlook.com", 0),
+    ("farm@OUTLOOK.fr", 0),
+    ("farm@notoutlook.com", 300_000),
 ])
 def test_starter_credit_for_email(email: str, credit: int) -> None:
     assert starter_credit_for_email(email, 300_000) == credit

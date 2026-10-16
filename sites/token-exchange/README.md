@@ -45,6 +45,39 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ## Build and Test
 
+### Public New York media kit
+
+`https://nytokenexchange.com/media-kit` (also `/media-kit.html`) is the public
+press resource. `press.json` is the shared source for page copy and the TXT/JSON
+fact sheets. `press.py` builds a deterministic ZIP from an explicit public-asset
+allowlist. It never includes the private commercial decks or the large demo MP4.
+The video remains available separately at its existing public URL.
+
+`press-assets/` holds the approved-mark derivatives (outlined SVGs and transparent
+PNGs) and an unmodified 1920 x 1080 homepage capture from October 15, 2026.
+Regenerate the logos with `uv run --no-project --with fonttools --with brotli
+sites/token-exchange/export_press_logos.py` and `rsvg-convert` installed.
+The normal build uses the checked-in exports and has no new dependencies.
+The social card and video still reuse the existing public source assets.
+
+Run `node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089` after
+building and serving the site. It checks 320/390/768/1440px layouts, images,
+clipboard success/denial, FAQ, ZIP download, video metadata and no-JS access.
+
+Publish only `media-kit`, `media-kit.html`, `assets/press.css`, `assets/press.js`,
+the generated `assets/press/` allowlist, and New York's sitemap and footer link.
+Back up existing objects and use generation preconditions. Both page objects
+need `text/html`; all objects use a five-minute public cache. If live homepage
+HTML differs from the build, change only its existing media-kit link, preserving
+all other bytes and asset versions. Do not publish unrelated market/homepage
+changes or alter DNS, certificates, routing, or inference services.
+
+Keep company facts free of invented funding, launch dates, office locations,
+customer endorsements or performance figures. Privacy properties are scoped to
+routes; roadmap capacity derivatives are not live products. For interviews and
+approved founder photography, the existing press contact is
+`help@trustedrouter.com`.
+
 ### Private provider deck request page
 
 `https://nytokenexchange.com/providers` is a public, request-only landing
