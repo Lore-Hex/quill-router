@@ -222,6 +222,22 @@ No contract, fixture or pin changes accompany these internal seams.
 
 ## P5 test data lifetime and oracle scheduling
 
+Round 20: CI run 38838857421 stopped in `live_objects()` at `gc.collect()`,
+called by `_p5_cache_counts` during setup of a worker's first P5 module after
+about 260 unrelated tests, including Spanner SDK tests. The dump is consistent
+with a native finalizer holding the GIL; it does not identify the native object.
+Python signal handlers and timeout threads cannot run while C code holds the
+GIL, so the signal timeout did not stop the worker. Live-object counts and their
+unchanged 35,000-object margins now run only when every selected session item
+belongs to `PACKAGE_MODULES`. Mixed sessions print why that check was skipped;
+module data release, restored lookup identities, and the unchanged 5,000-object
+reachable margin still run. The reference walk uses `gc.get_referents()` and
+does not call `gc.collect()`. The signal timeout marks remain unchanged.
+A separate covered step in the `spanner-emulator` job runs only the eight
+package modules with `-m "not proof_oracle" -n 2`, in fresh workers, with a
+five-minute limit. Its partial coverage has no floor; the full-suite combined
+coverage gate still requires 70%.
+
 The production input fields above are unchanged in round 16. The all-paths decoder
 property retains all ten sibling-check lexemes and all twenty agreement-check
 lexemes at the same native paths. Its test ids divide the original traversal

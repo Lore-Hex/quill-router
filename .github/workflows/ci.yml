@@ -83,6 +83,15 @@ jobs:
           tests/conformance/test_spanner_sql_acceptance.py
           tests/conformance/test_spanner_schema_audit.py
           tests/test_consolidate_starter_credit.py
+      # A fresh package-only process can collect live objects without native
+      # SDK leftovers from other tests. Mixed-suite workers skip that count.
+      - name: P5 package object budgets
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: >-
+          uv run pytest -q tests/test_async_settle_shadow_v2_gate*.py
+          -m "not proof_oracle" -n 2
+          --cov=trusted_router --cov-report= --cov-fail-under=0
       - name: Emulator logs
         if: failure()
         run: |
