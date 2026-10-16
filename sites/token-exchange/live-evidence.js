@@ -1,4 +1,4 @@
-/* All markets use one request-time feed. Never retain values after a failed fetch. */
+/* One request-time feed; dated measurements expire after one hour, including during fetch failures. */
 (() => {
   'use strict';
   const root = document.querySelector('[data-evidence-profile]');
@@ -6,12 +6,11 @@
   const prices = document.querySelector('[data-live-prices]');
   const priceUnit = document.querySelector('[data-live-price-unit]');
   const services = root.querySelector('[data-live-services]');
-  const state = root.querySelector('[data-live-state]');
   const attestation = root.querySelector('[data-live-attestation]');
   const caption = root.querySelector('[data-live-caption]');
   const statusCaption = caption?.textContent;
   const refreshMs = 60000;
-  const staleMs = 360000; // Twice the three-minute core probe schedule.
+  const staleMs = 60 * 60 * 1000; // Maximum display age, not a current-health guarantee.
   const endpoint = `https://trustedrouter.com/token-exchange/evidence/${root.dataset.evidenceProfile}.json`;
   let payload = null;
   let receivedAt = 0;
@@ -32,7 +31,7 @@
   const fresh = value => age(value) <= staleMs;
   const lastCheck = value => {
     if (!dated(value)) return '';
-    return `Last check ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
+    return `Last checked ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
   };
   const link = (label, url) => {
     const el = node('a', label);
@@ -40,10 +39,9 @@
     return el;
   };
   const unavailable = () => {
-    prices.replaceChildren(link('Browse Tinfoil model routes ↗', 'https://trustedrouter.com/models?filter=e2e'));
+    prices.replaceChildren(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
     if (caption) caption.textContent = statusCaption;
-    state.textContent = '';
     if (priceUnit) priceUnit.hidden = true;
     attestation.replaceChildren();
   };
@@ -54,11 +52,11 @@
   function render() {
     // Recheck age each second without replacing focused links every second.
     const dates = (Array.isArray(payload?.components) ? payload.components : []).map(c => fresh(c?.last_checked_at));
-    const key = JSON.stringify([receivedAt, Boolean(payload), Date.now() - receivedAt > refreshMs + 15000,
-      age(payload?.generated_at) > 2 * refreshMs + 15000, dates, fresh(payload?.attestation_check?.last_checked_at)]);
+    const key = JSON.stringify([receivedAt, Boolean(payload), Date.now() - receivedAt > staleMs,
+      age(payload?.generated_at) > staleMs, dates, fresh(payload?.attestation_check?.last_checked_at)]);
     if (key === renderedKey) return;
     renderedKey = key;
-    if (!payload || Date.now() - receivedAt > refreshMs + 15000 || age(payload.generated_at) > 2 * refreshMs + 15000) {
+    if (!payload || Date.now() - receivedAt > staleMs || age(payload.generated_at) > staleMs) {
       unavailable();
       return;
     }
@@ -69,19 +67,21 @@
       const col = link('', `https://trustedrouter.com/models/${encodeURI(row.model)}#provider-tinfoil`);
       col.className = 'privacy-column';
       const choice = node('div', undefined, 'privacy-choice');
-      choice.append(node('h3', row.label + ' ↗'), node('p', 'Tinfoil'));
+      choice.append(node('h3', row.label), node('p', 'Tinfoil'));
       col.append(choice, node('div', 'Confidential + E2EE', 'privacy-provider'), node('div', `$${row.input} / $${row.output}`, 'privacy-price'));
       prices.append(col);
     }
-    if (priceUnit) priceUnit.hidden = !prices.childElementCount;
-    if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes ↗', 'https://trustedrouter.com/models?filter=e2e'));
+    if (priceUnit) {
+      priceUnit.hidden = !prices.childElementCount;
+      priceUnit.textContent = `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
+    }
+    if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
     const components = Array.isArray(payload.components) ? payload.components : [];
     // A landing page is not an incident dashboard. If any source is unhealthy
     // or incomplete, use the existing status link instead of a partial all-clear.
     const showServices = components.length > 0 && components.every(presentable);
     if (caption) caption.textContent = showServices ? caption.dataset.uptimeLabel : statusCaption;
-    state.textContent = '';
     for (const c of showServices ? components : []) {
       const row = node('div', undefined, 'service-history');
       const heading = node('div', undefined, 'service-heading');
@@ -132,7 +132,8 @@
       payload = await response.json();
       receivedAt = Date.now();
     } catch (_) {
-      payload = null;
+      // Keep the last response in this tab only. Original timestamps still
+      // expire in render(); a successful newer response always replaces it.
     }
     render();
     refreshing = false;

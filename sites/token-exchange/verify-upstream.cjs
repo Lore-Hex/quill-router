@@ -28,7 +28,7 @@ const assert=require('node:assert/strict');
       assert(Array.isArray(prices)&&prices.length>0,'Outage rig needs available catalog prices');
       const expectedPrices=prices.map(row=>({
         href:`https://trustedrouter.com/models/${encodeURI(row.model)}#provider-tinfoil`,
-        label:row.label+' ↗',
+        label:row.label,
         price:`$${row.input} / $${row.output}`,
       }));
       assert.deepEqual(await renderedPrices(page),expectedPrices);
@@ -38,7 +38,7 @@ const assert=require('node:assert/strict');
     assert(response.ok());const stopped=Date.now();
     console.log('Actual upstream status HTTP server stopped; production backend and its 60s cache remain running.');
     await Promise.all(pages.map(async ({page,expectedPrices}) => {
-      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent === '' && document.querySelector('[data-live-services]').children.length === 0,{},{timeout:80000, polling:100});
+      await page.waitForFunction(()=>document.querySelector('[data-live-services]').children.length === 0,{},{timeout:80000, polling:100});
       assert.equal(await page.locator('.service-history').count(),0);
       assert.equal(await page.locator('.build-digest').count(),0);
       // Pricing is independently sourced from the backend catalog and stays valid.

@@ -69,8 +69,7 @@
       "upstream_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 131072,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 200000
     },
@@ -531,7 +530,7 @@
   ],
   "source": "https://inference.api.nscale.com/v1/models",
   "pricing_source": "https://docs.nscale.com/docs/ai-services/models",
-  "generated_at": "2026-10-15T00:51:45Z",
+  "generated_at": "2026-10-15T12:03:30Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23
 }

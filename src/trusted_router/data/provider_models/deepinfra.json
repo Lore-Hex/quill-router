@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for DeepInfra models whose live /v1/openai/models feed is ahead of the shared snapshot. Verified against https://api.deepinfra.com/v1/openai/models on 2026-06-20. DeepInfra uses mixed-case upstream author/model IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "deepinfra",
   "source": "https://api.deepinfra.com/v1/openai/models",
-  "generated_at": "2026-10-15T00:51:45Z",
-  "model_count": 121,
+  "generated_at": "2026-10-15T12:03:30Z",
+  "model_count": 122,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2438,6 +2438,8 @@
       "status": 1,
       "id": "thinkingmachines/inkling",
       "upstream_id": "thinkingmachines/Inkling",
+      "retirement_at": "2026-10-22T00:00:00Z",
+      "replacement_model_id": "thinkingmachines/inkling-small",
       "context_length": 524288,
       "max_output_tokens": 524288,
       "input_token_price_per_m": 950000,
@@ -2448,7 +2450,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "missing_since": "2026-10-15"
     },
     {
       "display_name": "thinkingmachines/Inkling-Small",
@@ -3248,6 +3251,34 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 900000,
       "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "stepfun-ai/Step-5-Preview",
+      "title": "stepfun-ai/Step-5-Preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/step-5-preview",
+      "upstream_id": "stepfun-ai/Step-5-Preview",
+      "supported_features": [
+        "tools",
+        "structured-outputs",
+        "json-mode",
+        "reasoning"
+      ],
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 2700000,
+      "cached_input_token_price_per_m": 50000
     }
   ],
   "price_scale": "microdollars_per_million"

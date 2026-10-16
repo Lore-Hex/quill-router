@@ -131,30 +131,41 @@ jobs:
     # while every sibling finished in under 9 minutes. pytest-timeout=600
     # bounds a hung TEST, but not collection, fixture teardown, or a wedged
     # xdist worker — this bounds the job whatever wedges.
-    timeout-minutes: 25
+    #
+    # 25 minutes then started cutting off shards that were finishing: on
+    # 2026-10-15 runs 38778257165, 38786461389 and 38809305127 cancelled
+    # five shards at 96-99% with no failing test, and rerunning two of them
+    # cancelled them again at the same point, so it was weight, not a wedge.
+    # A shard spends about five minutes before its first test (checkout, uv
+    # sync, collecting 36k tests under coverage, four workers) and its last
+    # few percent can take six minutes while one worker holds a long test.
+    # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
+    # finishing shard alone; main's slowest shard on twelve shards took
+    # 20.1 minutes (38808849971).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        # Six shards repeatedly reached 99% at the 25-minute cap on Oct 6.
-        # Spread the full coverage pass further without weakening its bounds.
-        # Eight then reached about 24.9 minutes twice in twelve green runs on
-        # main (Oct 11 and 12), so ten.
+        # Ten default shards and six post-cutover shards still reached the
+        # 25-minute cap: run 38778257165 on Oct 15 cancelled default shard 6
+        # and post-cutover shard 3 at 98-99%, with no failing test. Default
+        # shards 7 and 9 took 15.7 and 19.6 minutes on Oct 14 main-equivalent
+        # trees, before the stacked branch's 861 extra default cases.
         #
-        # Two instrumented runs (#1709) suggest the runner a shard lands on
-        # is the main source of variation: one speed factor per shard
-        # explains most of the difference between the two runs, and with it
-        # removed the eight shards' work differed by about 12%. Refreshing
-        # .test_durations from one run's raw timings did not improve the
-        # slowest job (18.2 and 20.4 minutes, on different runner draws), so
-        # the file is unchanged and ten shards reduce the work instead. On
-        # this tree the heaviest shard's estimated work falls from 2,530 to
-        # 2,282 normalised seconds, which the timing model puts at about 18
-        # minutes on a runner of factor 1.28 and 23 on one of factor 1.7.
-        # These are estimates, not timeout bounds, and exclude queue delay.
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        # Two instrumented runs (#1709) found runner speed varied by up to
+        # about 1.7x. Refreshing .test_durations from one run's raw timings
+        # did not improve the slowest job, so keep its relative balance and
+        # reduce the work: twelve default shards and eight post-cutover.
+        # On this tree the heaviest group's estimated single-worker work
+        # falls from 849 to 707 seconds for defaults (about 17%), and from
+        # 1,414 to 1,061 for post-cutover (25%).
+        # The committed weights understate real work; observed wall times
+        # are four to five times the estimates. These are estimates, not
+        # timeout bounds, and exclude queue delay.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     runs-on: ubuntu-latest
     env:
-      TEST_SHARDS: "10"
+      TEST_SHARDS: "12"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
@@ -318,14 +329,25 @@ jobs:
     # while every sibling finished in under 9 minutes. pytest-timeout=600
     # bounds a hung TEST, but not collection, fixture teardown, or a wedged
     # xdist worker — this bounds the job whatever wedges.
-    timeout-minutes: 25
+    #
+    # 25 minutes then started cutting off shards that were finishing: on
+    # 2026-10-15 runs 38778257165, 38786461389 and 38809305127 cancelled
+    # five shards at 96-99% with no failing test, and rerunning two of them
+    # cancelled them again at the same point, so it was weight, not a wedge.
+    # A shard spends about five minutes before its first test (checkout, uv
+    # sync, collecting 36k tests under coverage, four workers) and its last
+    # few percent can take six minutes while one worker holds a long test.
+    # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
+    # finishing shard alone; main's slowest shard on twelve shards took
+    # 20.1 minutes (38808849971).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-latest
     env:
-      TEST_SHARDS: "6"
+      TEST_SHARDS: "8"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7

@@ -73,11 +73,103 @@
       "input_token_price_per_m": 235095,
       "output_token_price_per_m": 764059,
       "cached_input_token_price_per_m": 58774
+    },
+    {
+      "display_name": "DeepSeek OCR 2",
+      "title": "deepseek-ocr-2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-ocr-2",
+      "upstream_id": "deepseek-ocr-2",
+      "context_length": 8192,
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": false,
+      "routable_reason": "attested-enclave-rollout-pending",
+      "input_token_price_per_m": 906167,
+      "output_token_price_per_m": 1494587,
+      "cached_input_token_price_per_m": 94148
+    },
+    {
+      "display_name": "Qwen3-Embedding 4B",
+      "title": "qwen3-embedding-4b",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-embedding-4b",
+      "upstream_id": "qwen3-embedding-4b",
+      "context_length": 32768,
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": false,
+      "routable_reason": "attested-enclave-rollout-pending",
+      "input_token_price_per_m": 152990,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Voxtral Mini 3B",
+      "title": "voxtral-mini-3b",
+      "model_type": "audio",
+      "input_modalities": [
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "audio/transcriptions"
+      ],
+      "status": 1,
+      "id": "mistralai/voxtral-mini-3b-2507",
+      "upstream_id": "voxtral-mini-3b",
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": false,
+      "routable_reason": "unsupported-endpoint-or-billing"
+    },
+    {
+      "display_name": "Whisper large-v3",
+      "title": "whisper-large-v3",
+      "model_type": "audio",
+      "input_modalities": [
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "audio/transcriptions"
+      ],
+      "status": 1,
+      "id": "openai/whisper-large-v3",
+      "upstream_id": "whisper-large-v3",
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": false,
+      "routable_reason": "unsupported-endpoint-or-billing"
     }
   ],
   "source": "https://docs.privatemode.ai/models/overview/",
   "pricing_source": "https://docs.privatemode.ai/pricing/",
-  "generated_at": "2026-10-15T00:51:45Z",
+  "generated_at": "2026-10-15T21:25:38Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3
+  "model_count": 7
 }

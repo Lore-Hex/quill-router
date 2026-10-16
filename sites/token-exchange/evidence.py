@@ -11,17 +11,16 @@ def render_evidence(profile='shared-gcp'):
         '<div class="catalogue evidence-reveal"><p class="catalogue-label">Confidential models</p>'
         '<p class="catalogue-summary">Tinfoil · Confidential + E2EE</p>'
         '<div class="privacy-comparison" data-live-prices>'
-        '<a href="https://trustedrouter.com/models?filter=e2e">Browse Tinfoil model routes ↗</a></div>'
+        '<a href="https://trustedrouter.com/models?filter=e2e">Browse Tinfoil model routes</a></div>'
         '<p class="pricing-unit" data-live-price-unit hidden>USD / 1M tokens · input / output</p></div>'
     )
     health = (
         '<div class="trust-evidence" data-evidence-profile="' + html.escape(profile, quote=True) + '">'
         '<figure class="uptime-panel evidence-reveal"><figcaption data-live-caption data-uptime-label="' + label.replace('service status', 'uptime') + ' · 24h">' + label + '</figcaption>'
-        '<p class="evidence-state" data-live-state></p>'
-        '<div data-live-services></div><div class="evidence-footer"><a href="' + origin + '/status">Service status ↗</a></div></figure>'
+        '<div data-live-services></div><div class="evidence-footer"><a href="' + origin + '/status">Service status</a></div></figure>'
         '<section class="attestation-panel evidence-reveal" aria-labelledby="attestation-title">'
         '<h3 id="attestation-title">Attestation</h3><div data-live-attestation></div>'
-        '<div class="evidence-footer"><a href="' + release + '">Published release ↗</a></div></section></div>'
+        '<div class="evidence-footer"><a href="' + release + '">Published release</a></div></section></div>'
     )
     return catalogue, health
 

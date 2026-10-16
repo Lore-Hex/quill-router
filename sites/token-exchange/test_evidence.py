@@ -26,8 +26,8 @@ class EvidenceTests(unittest.TestCase):
                 self.assertNotIn('health-bar up', page)
                 self.assertNotIn('≈ $', page)
                 self.assertNotIn('unavailable', page)
-                self.assertIn('Service status ↗', page)
-                self.assertIn('Browse Tinfoil model routes ↗', page)
+                self.assertIn('Service status', page)
+                self.assertIn('Browse Tinfoil model routes', page)
                 self.assertIn('data-live-price-unit hidden', page)
                 self.assertIn('https://trustedrouter.com/models?filter=e2e', page)
 

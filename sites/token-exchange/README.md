@@ -45,6 +45,39 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ## Build and Test
 
+### Public New York media kit
+
+`https://nytokenexchange.com/media-kit` (also `/media-kit.html`) is the public
+press resource. `press.json` is the shared source for page copy and the TXT/JSON
+fact sheets. `press.py` builds a deterministic ZIP from an explicit public-asset
+allowlist. It never includes the private commercial decks or the large demo MP4.
+The video remains available separately at its existing public URL.
+
+`press-assets/` holds the approved-mark derivatives (outlined SVGs and transparent
+PNGs) and an unmodified 1920 x 1080 homepage capture from October 15, 2026.
+Regenerate the logos with `uv run --no-project --with fonttools --with brotli
+sites/token-exchange/export_press_logos.py` and `rsvg-convert` installed.
+The normal build uses the checked-in exports and has no new dependencies.
+The social card and video still reuse the existing public source assets.
+
+Run `node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089` after
+building and serving the site. It checks 320/390/768/1440px layouts, images,
+clipboard success/denial, FAQ, ZIP download, video metadata and no-JS access.
+
+Publish only `media-kit`, `media-kit.html`, `assets/press.css`, `assets/press.js`,
+the generated `assets/press/` allowlist, and New York's sitemap and footer link.
+Back up existing objects and use generation preconditions. Both page objects
+need `text/html`; all objects use a five-minute public cache. If live homepage
+HTML differs from the build, change only its existing media-kit link, preserving
+all other bytes and asset versions. Do not publish unrelated market/homepage
+changes or alter DNS, certificates, routing, or inference services.
+
+Keep company facts free of invented funding, launch dates, office locations,
+customer endorsements or performance figures. Privacy properties are scoped to
+routes; roadmap capacity derivatives are not live products. For interviews and
+approved founder photography, the existing press contact is
+`help@trustedrouter.com`.
+
 ### Private provider deck request page
 
 `https://nytokenexchange.com/providers` is a public, request-only landing
@@ -203,18 +236,23 @@ Failed sources are absent; embedded/stale release records are not republished.
 No checked-in evidence snapshot is used by the site build.
 
 The landing page shows measured service details only when every supplied
-component is operational, fresh and complete. Degraded, failed, unknown or stale
+component is operational, dated within one hour and complete. Degraded, failed, unknown or expired
 checks quietly return the whole service panel to its existing source link;
-there is no partial all-clear, warning badge or stale percentage. Historical
+there is no partial all-clear or warning badge. Measurements carry their original
+last-checked timestamps; the one-hour display window is not a current-health guarantee. Historical
 failure or missing-data buckets are never recolored or cherry-picked: the whole
 chart is omitted while the accurate uptime percentage remains. Full incident
 history stays available through the Service status link.
 
-Attestation details require an operational, fresh check and valid published
+Attestation details require an operational check dated within one hour and valid published
 release metadata; otherwise only the Published release link remains. Prices are
-independently sourced and remain visible when valid. A failed feed returns every
-panel to its source links. Successful refreshes restore details automatically.
-Checks older than six minutes, missing dates and future dates remain ineligible.
+independently sourced and remain visible when valid. A failed fetch retains the
+last response in the current tab only, bounded by its original timestamps.
+After one hour, panels return to their source links. Successful refreshes restore
+details automatically.
+Responses or checks older than one hour, missing dates and future dates remain ineligible.
+A successful newer response replaces the old response, including unavailable
+or unhealthy components; those components use the existing source links.
 The browser reassesses freshness every second and fetches every minute, matching
 the shorter server cache. Published measurements do not establish location.
 
@@ -227,7 +265,7 @@ NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-live.cjs /tmp/t
 
 The browser test serves New York and London as two local staging hostnames,
 stops the actual HTTP feed, and waits the real one-minute interval with pages
-left open. It checks quiet fallbacks, stale dates, rounding, state selection,
+left open. It checks bounded retention after transport failure, quiet fallbacks, expired dates, rounding, state selection,
 missing components, and responsive layout. This is staging verification, not
 proof of production deployment. Deploy the backend through the reviewed release
 workflow before publishing the static assets. Run all repository gates first.
@@ -248,3 +286,17 @@ attestation disappear while independently sourced catalog prices remain.
 The Token Exchange Sites workflow runs the stale/mixed-state browser checks and
 the real one-minute upstream outage test on pull requests and main changes to
 the shared site or evidence backend. It does not publish the sites.
+
+## Hero artwork — October 15, 2026
+
+`art/river-hero.webp` is the approved regenerated close aerial river image,
+exported at 2880 × 1152 (WebP quality 88). The built-in image generator returned
+1983 × 793; the export uses Lanczos resampling, without adding generated detail.
+The hero uses a 30% black overlay on desktop and 20% at widths up to 600px.
+The closing section retains `art/river-close.webp`.
+
+The approved generation simplified the left half to one broad curving river
+channel, retaining blue-hour basalt, forest-green ridges and cool blue water.
+It is symbolic landscape artwork, not an identified location or company facility.
+Generation source: `exec-91d974ff-c8fe-4501-8b28-253437e0dd7a.png`, built-in image tool,
+October 15, 2026. Preserve this approved composition when optimizing exports.

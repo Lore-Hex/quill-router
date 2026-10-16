@@ -329,7 +329,20 @@ def test_authenticated_native_cancellation(stage, monkeypatch):
             transport.get("exact-key", 2., clock=lambda: 0.)
         assert cancelled == [stage]
         assert auth_calls == (["discovery"] if stage == "credential" else ["discovery", "refresh"])
-        assert not transport.active.locked()
+        # CI runs 38669637066, 38652762986, 38796162742, and 38788165425:
+        # the caller stops at its deadline; the quarantined worker releases
+        # the lock on exit, so allow bounded cleanup after cancellation.
+        cleanup_start = time.monotonic()
+        cleanup_deadline = cleanup_start + 5.
+        for attachment_worker in threading.enumerate():
+            if attachment_worker.name == "shadow-v2-attachment":
+                attachment_worker.join(max(0., cleanup_deadline - time.monotonic()))
+                assert not attachment_worker.is_alive(), (
+                    f"attachment worker still alive after {time.monotonic() - cleanup_start:.3f}s"
+                )
+        assert not transport.active.locked(), (
+            f"attachment lock still held after {time.monotonic() - cleanup_start:.3f}s"
+        )
     finally:
         server.shutdown()
         server.server_close()

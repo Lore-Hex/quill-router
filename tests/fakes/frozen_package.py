@@ -293,6 +293,10 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
     Frames come only from held roots, never an interpreter-stack enumeration.
     Before 3.13, locals require native GC traversal through an owned finished
     frame or its reached generator/coroutine owner; other frames fail closed.
+    External module globals and process registries bound the leg. Skip frame
+    edges to globals and builtins unless their dictionary identity belongs to
+    a leg module or an explicit root (including an explicitly rooted module).
+    Other paths to those dictionaries remain; f_back still reaches deeper frames.
     """
     pending, visited = list(roots), {}
     boundaries = {}
@@ -301,6 +305,13 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         # External module globals and the two process registries are outside the
         # leg. Explicit module roots override the module-global boundary.
         explicit = {id(root) for root in pending}
+        leg_globals = {id(vars(loaded)): vars(loaded)
+                       for name, loaded in list(sys.modules.items())
+                       if issubclass(type(loaded), ModuleType)
+                       and (id(loaded) in explicit
+                            or any(_in_namespace(name, ns) for ns in namespaces))}
+        leg_globals.update((id(vars(root)), vars(root)) for root in pending
+                           if issubclass(type(root), ModuleType))
         boundaries = {id(vars(loaded)): vars(loaded)
                       for name, loaded in list(sys.modules.items())
                       if issubclass(type(loaded), ModuleType) and id(loaded) not in explicit
@@ -322,6 +333,7 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         visited[identity] = value  # Strong references prevent visited-id reuse.
         yield value
         value_type = type(value)
+        edges = gc.get_referents(value)
         if value_type is FrameType:
             # Before 3.13, f_locals synchronizes into a user-populated dict and
             # can invoke a colliding key's __eq__. Never materialize it. An
@@ -346,10 +358,16 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
                     pending.append(localns)
                 elif not any(held is localns for held in gc.get_referents(value)):
                     raise AssertionError('opaque frame locals: no safe native locals traversal')
-            pending.extend((value.f_globals, value.f_back, value.f_code, value.f_trace))
-        # Always retain GC edges, including frames. Registry identity boundaries
-        # above apply equally to GC and supplemental edges.
-        pending.extend(gc.get_referents(value))
+            pending.extend((value.f_back, value.f_code, value.f_trace))
+            edges.extend((value.f_globals, value.f_builtins))
+            if namespaces:
+                # Bound only these frame edges; other paths still walk the dict.
+                edges = [held for held in edges
+                         if (held is not value.f_globals and held is not value.f_builtins)
+                         or id(held) in leg_globals or id(held) in explicit]
+        # Retain other GC edges. Registry identity boundaries above still apply
+        # equally to GC and supplemental edges.
+        pending.extend(edges)
         # Retain *all* native edges and yield the value before this fast path.
         # These exact scalar types have none of the supplemental native fields;
         # subclasses can own references and must take the full path.

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog_aliases import MODEL_LISTING_ALIASES
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes import catalog as catalog_routes
@@ -40,6 +41,8 @@ def _rebuilt_pre_projection_body() -> bytes:
         catalog_routes.timestamp(catalog_routes._utc_now())
     )
     for model in catalog_routes.MODELS.values():
+        if MODEL_LISTING_ALIASES.get(model.id) in catalog_routes.MODELS:
+            continue
         shape = catalog_routes.model_to_openrouter_shape(model)
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):

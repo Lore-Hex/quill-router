@@ -2,8 +2,8 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-10-15T00:51:45Z",
-  "model_count": 123,
+  "generated_at": "2026-10-15T12:03:30Z",
+  "model_count": 124,
   "models": [
     {
       "id": "01-ai/yi-large",
@@ -748,7 +748,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-10-15"
     },
     {
       "id": "nv-mistralai/mistral-nemo-12b-instruct",
@@ -2177,6 +2178,26 @@
       "status": 1,
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek-ai/deepseek-v4.1-flash",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "stepfun-ai/step-5-preview",
+      "title": "stepfun-ai/step-5-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/step-5-preview",
+      "upstream_id": "stepfun-ai/step-5-preview",
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000

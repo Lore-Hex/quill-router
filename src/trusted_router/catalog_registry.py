@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from trusted_router import provider_lifecycle
+from trusted_router.catalog_aliases import consolidate_model_routes
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
@@ -1688,6 +1689,8 @@ MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     at=CATALOG_RESOLVED_AT,
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
+
+consolidate_model_routes(MODELS, MODEL_ENDPOINTS)
 
 # Normalize the completed route inventory before any routing or public reader
 # sees it. Reviewed contracts update the declarations those readers share.

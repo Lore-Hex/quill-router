@@ -16,7 +16,7 @@ PRICES = """<table><tr><th>Model</th><th>Input</th><th>Output</th><th>Cached inp
 
 def test_prices_include_cached_rate_and_currency_reserve():
     prices = privatemode.parse_prices(PRICES, Decimal("1.20"))
-    assert set(prices) == set(privatemode.UPSTREAM_ID_MAP)
+    assert set(prices) == {"z-ai/glm-5.3", "z-ai/glm-5.3-flash", "openai/gpt-oss-120b"}
     flash = prices["z-ai/glm-5.3-flash"]
     assert flash.prompt_micro_per_m == 252000
     assert flash.completion_micro_per_m == 819000
@@ -100,7 +100,10 @@ def test_confidential_privatemode_has_only_reviewed_priced_credits_routes():
         assert route.upstream_id == upstream_id
         assert catalog.endpoint_privacy_tier(route) == catalog.PRIVACY_TIER_CONFIDENTIAL
         assert route.prompt_price_microdollars_per_million_tokens > 0
-        assert route.completion_price_microdollars_per_million_tokens > 0
+        if model_id in privatemode._EMBEDDING_IDS:
+            assert route.completion_price_microdollars_per_million_tokens == 0
+        else:
+            assert route.completion_price_microdollars_per_million_tokens > 0
 
 
 @pytest.mark.provider_health
