@@ -118,7 +118,7 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
         inventory = None
         cohort = None
         try:
-            graph.materialize(payloads)
+            graph.materialize_gate(payloads)
         except ADAPTATION_ERRORS as exc:
             graph.reject("loading/materialize", exc)
         try:

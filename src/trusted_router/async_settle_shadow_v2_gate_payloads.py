@@ -204,7 +204,8 @@ class PayloadGraph:
         except ValueError as exc:
             raise PayloadError(value['payload']['path'], 'evidence_schema_gap') from exc
 
-    def materialize(self, payloads: dict[str, dict[str, Any]]) -> None:
+    def materialize_gate(self, payloads: dict[str, dict[str, Any]]) -> None:
+        """Apply gate-stage dependency checks before shared payload assembly."""
         from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
         references: dict[str, list[dict[str, Any]]] = {}
         self.parsers.update(dependencies(self.files, payloads, self.ports, self.stage, self.ledgers, references=references))
@@ -225,6 +226,18 @@ class PayloadGraph:
                         raise PayloadError(path, 'artifact_gap')
             except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
                 self.reject(path, exc)
+        from trusted_router.async_settle_shadow_v2_gate_policy import closure
+        selected = {}
+        for path, value in payloads.items():
+            qualified = path.split('/', 1)[-1] if '/manifest.' in path else path
+            if qualified == 'proof.external_proofs_sha256':
+                value = {**value, 'requirements': [r for r in value['requirements'] if r['stage'] in closure(self.stage)],
+                         'pilot': value['pilot'] if self.stage in ('pre-flip', 'post-flip') else None}
+            selected[path] = value
+        self.materialize(selected)
+
+    def materialize(self, payloads: dict[str, dict[str, Any]]) -> None:
+        """Assemble shared A2 payloads; export spools keep their own path scope."""
         for path, value in payloads.items():
             try:
                 self.materialize_one(path, value)
@@ -239,10 +252,6 @@ class PayloadGraph:
 
     def materialize_one(self, path: str, value: dict[str, Any]) -> None:
         qualified = path.split('/', 1)[-1] if '/manifest.' in path else path
-        if qualified == 'proof.external_proofs_sha256':
-            from trusted_router.async_settle_shadow_v2_gate_policy import closure
-            value = {**value, 'requirements': [r for r in value['requirements'] if r['stage'] in closure(self.stage)],
-                     'pilot': value['pilot'] if self.stage in ('pre-flip', 'post-flip') else None}
         self.references(value)
         if qualified == 'proof.shutdown_inventory_sha256':
             require(value['complete'], 'artifact_gap')

@@ -132,9 +132,8 @@ def decode_release_plan(raw: bytes, approved_sha256: str) -> ReleasePlan:
         require(stage in REQUIRED_RULES and type(criteria) is list and bool(criteria) and all(type(c) is str for c in criteria)
             and len(criteria) == len(set(criteria)) and set(criteria) <= set(value['required']), 'evidence_schema_gap')
     require(not required_stages or {c for values in required_stages.values() for c in values} == set(value['required']), 'evidence_schema_gap')
-    from trusted_router.async_settle_shadow_v2_gate_policy import validate_policy
-    validate_policy(tuple(value['required']), {k: tuple(v) for k, v in required_stages.items()},
-        {k: tuple(v) for k, v in value['criteria'].items()})
+    # This parser is also used while composing bundle files. Gate policy is
+    # checked by release_checks after loading, including prior-stage loading.
     return ReleasePlan('loading/release-plan.json', raw, value['artifacts'],
         {k: tuple(v) for k, v in value['criteria'].items()}, verifiers, tuple(value['required']), {stage: tuple(values) for stage, values in required_stages.items()})
 

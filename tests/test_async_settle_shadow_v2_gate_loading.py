@@ -78,7 +78,7 @@ def test_retained_transport_rejects_ambiguous_or_nonfinite(raw: bytes) -> None:
 def test_retained_transport_preserves_binary64_and_original_lf() -> None:
     files, pre = budget_graph()
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre})
     assert graph.issues == []
     assert graph.decoded['pre.json'] == {'cpu': 20.5}
     assert graph.file(pre['retained']['payload']) == b'{"cpu":20.5}\n'
@@ -96,7 +96,7 @@ def test_every_delegated_file_requires_original_bytes(path: str, mutation: str) 
     else:
         files[path] = bytes([files[path][0] ^ 1]) + files[path][1:]
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre})
     expected = 'artifact_gap' if mutation == 'absent' else 'evidence_schema_gap'
     assert [(issue.gap, issue.path) for issue in graph.issues] == [(expected, path)]
 
@@ -120,7 +120,7 @@ def test_limits_original_schema_is_not_a_hash_only_check(mutation: str) -> None:
     pre['v2_load']['limits'] = reference(files, 'limits.json', raw)
     pre['v2_load']['approval'] = approval(files, pre['v2_load']['limits'])
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre})
     assert [issue.gap for issue in graph.issues] == ['evidence_schema_gap']
 
 
@@ -144,7 +144,7 @@ def test_review_binding_and_time(mutation: str) -> None:
     else:
         del files[record_path]
     graph = PayloadGraph(files, START)
-    graph.materialize({'proof.pre_budget_sha256': pre})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre})
     assert [issue.gap for issue in graph.issues] == [
         'artifact_gap' if mutation in ('wrong-subject', 'missing-record') else 'evidence_schema_gap']
 
@@ -156,7 +156,7 @@ def test_materialize_does_not_stop_after_first_bad_payload() -> None:
     second['retained']['entry_point'] = 'pilot_enablement.fleet_budgets'
     del files['output.json']
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre, 'proof.post_budget_sha256': second})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre, 'proof.post_budget_sha256': second})
     assert [(issue.gap, issue.path) for issue in graph.issues] == [
         ('artifact_gap', 'output.json')]
 
@@ -183,7 +183,7 @@ def test_load_segment_identity_and_interval(mutation: str) -> None:
     else:
         pre['v2_load']['segments'] = detail(files, values, 'segments')
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre})
     assert [issue.gap for issue in graph.issues] == ['evidence_schema_gap']
 
 
@@ -193,7 +193,7 @@ def test_post_links_exact_pre_envelope() -> None:
     post.update(stage='post', pre_envelope_sha256=roots.file_digest(b'foreign'))
     post['retained']['entry_point'] = 'pilot_enablement.fleet_budgets'
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre, 'proof.post_budget_sha256': post})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre, 'proof.post_budget_sha256': post})
     assert [(issue.gap, issue.path) for issue in graph.issues] == [('artifact_gap', 'proof.post_budget_sha256')]
 
 
@@ -214,7 +214,7 @@ def test_shutdown_close_rows_are_parsed_not_only_hashed() -> None:
     envelope = dict(**TAG, writers=detail(files, [entry], 'shutdown_writers'), measurements=measurements,
         approval=approval(files, measurements), complete=True)
     graph = PayloadGraph(files)
-    graph.materialize({'proof.shutdown_inventory_sha256': envelope})
+    graph.materialize_gate({'proof.shutdown_inventory_sha256': envelope})
     assert [issue.gap for issue in graph.issues] == ['evidence_schema_gap']
 
 
@@ -288,7 +288,7 @@ def test_committed_invalid_page_is_schema_gap_not_missing_file() -> None:
     ref['tail_sha256'] = sha256(page)
     pre['v2_load']['segments'] = ref
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre})
     assert [(i.gap, i.path) for i in graph.issues] == [('evidence_schema_gap', 'details/segments')]
 
 
@@ -299,7 +299,7 @@ def test_missing_page_is_artifact_gap() -> None:
     pre['v2_load']['segments'] = detail(files, [segment], 'segments')
     del files['details/segments']
     graph = PayloadGraph(files)
-    graph.materialize({'proof.pre_budget_sha256': pre})
+    graph.materialize_gate({'proof.pre_budget_sha256': pre})
     assert [i.gap for i in graph.issues] == ['artifact_gap']
 
 

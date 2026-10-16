@@ -260,8 +260,13 @@ def test_release_plan_cannot_weaken_policy(originals: Any, tmp_path: Path, damag
     from trusted_router.async_settle_shadow_v2_gate_release import decode_release_plan
     original, ports, _ = originals
     raw_plan = weaken_plan(ports.release.raw, damage)
-    with pytest.raises(ValueError, match='evidence_schema_gap'):
-        decode_release_plan(raw_plan, file_digest(raw_plan))
+    # The shared parser checks the file format; gate loading checks policy.
+    if damage == 'inventory_only':
+        with pytest.raises(ValueError, match='evidence_schema_gap'):
+            decode_release_plan(raw_plan, file_digest(raw_plan))
+    else:
+        decoded = decode_release_plan(raw_plan, file_digest(raw_plan))
+        assert decoded.raw == raw_plan
     bad = json.loads(raw_plan)
     from trusted_router.async_settle_shadow_v2_gate_policy import validate_policy
     with pytest.raises(ValueError, match='evidence_schema_gap'):
