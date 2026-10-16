@@ -48,7 +48,7 @@ def test_audio_quotes_are_not_text_tokens() -> None:
             TRANSCRIPTION_MODELS["openai/whisper-1"].quote(bad)
 
 
-@pytest.mark.parametrize("model", TRANSCRIPTION_MODELS)
+@pytest.mark.parametrize("model", [model for model, spec in TRANSCRIPTION_MODELS.items() if not spec.token_billed])
 def test_audio_frozen_quote_exactly_once(client: TestClient, transcription_key: str, model: str, monkeypatch: pytest.MonkeyPatch) -> None:
     response = authorize(client, transcription_key, model=model)
     assert response.status_code == 200, response.text
@@ -98,7 +98,7 @@ def test_audio_catalog_has_explicit_units(client: TestClient) -> None:
     assert set(rows) == set(TRANSCRIPTION_MODELS)
     for model, row in rows.items():
         assert row["pricing"] == TRANSCRIPTION_MODELS[model].pricing
-        assert "prompt" not in row["pricing"]
+        assert ("prompt" in row["pricing"]) == TRANSCRIPTION_MODELS[model].token_billed
         assert row["architecture"]["modality"] == "audio->transcription"
 
 
@@ -117,11 +117,13 @@ def test_public_audio_pages_use_audio_units(client: TestClient, model: str) -> N
     assert page.status_code == 200
     assert "7 MiB" in page.text
     assert TRANSCRIPTION_MODELS[model].price_label in page.text
-    assert "Prices are per one million tokens" not in page.text
+    if not TRANSCRIPTION_MODELS[model].token_billed:
+        assert "Prices are per one million tokens" not in page.text
     assert "provider\": {\"sort\": \"throughput\"}" not in page.text
     pricing = client.get("/models/" + model + "/pricing")
     assert pricing.status_code == 200
-    assert "USD per million tokens" not in pricing.text
+    if not TRANSCRIPTION_MODELS[model].token_billed:
+        assert "USD per million tokens" not in pricing.text
     assert TRANSCRIPTION_MODELS[model].price_label in pricing.text
     api = client.get("/models/" + model + "/api")
     assert api.status_code == 200

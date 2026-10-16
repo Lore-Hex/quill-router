@@ -24,6 +24,7 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.currency import ECB_FX_URL, eur_microdollars_per_million, usd_per_eur
 from scripts.pricing.manifest import write_discovered_chat_manifest
+from scripts.pricing.transcription import parse_price as parse_audio_price
 
 SLUG = "privatemode"
 CATALOG_URL = "https://api.privatemode.ai/v1/models"
@@ -47,7 +48,7 @@ MODELS = {
 _EMBEDDING_IDS = frozenset({"qwen/qwen3-embedding-4b"})
 _TRANSCRIPTION_MODELS = frozenset({"voxtral-mini-3b", "whisper-large-v3"})
 # Cleared only after a verified encrypted canary on the matching enclave release.
-_PENDING_ENCLAVE_MODELS = frozenset({"deepseek-ocr-2", "qwen3-embedding-4b"})
+_PENDING_ENCLAVE_MODELS: frozenset[str] = frozenset()
 UPSTREAM_ID_MAP = {row[0]: native for native, row in MODELS.items()}
 _DISCOVERED: dict[str, dict[str, Any]] = {}
 
@@ -124,7 +125,8 @@ def fetch() -> ProviderPricingResult:
         raise RuntimeError("privatemode: model catalog is empty or malformed")
     native_ids = {row.get("id") for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)}
     rate = usd_per_eur(fetch_html(ECB_FX_URL))
-    published = parse_prices(fetch_html(PRICING_URL), rate)
+    pricing_html = fetch_html(PRICING_URL)
+    published = parse_prices(pricing_html, rate)
     prices: dict[str, ModelPrice] = {}
     for native, (model_id, name, context, vision) in MODELS.items():
         available = native in native_ids and model_id in published
@@ -140,12 +142,15 @@ def fetch() -> ProviderPricingResult:
             "routable": available,
         }
         if native in _TRANSCRIPTION_MODELS:
+            minute_price = parse_audio_price(model_id, pricing_html, usd_eur_rate=rate) if native in native_ids else 0
             row.update({
                 "model_type": "audio", "input_modalities": ["audio"],
-                "endpoints": ["audio/transcriptions"], "routable": False,
-                "routable_reason": "unsupported-endpoint-or-billing"
-                if native in native_ids else "delisted-upstream",
+                "output_modalities": ["transcription"],
+                "endpoints": ["audio/transcriptions"], "routable": native in native_ids,
+                "billing_unit": "audio_minute", "audio_minute_price_microdollars": minute_price,
             })
+            if native not in native_ids:
+                row["routable_reason"] = "delisted-upstream"
             row.pop("context_length")
             _DISCOVERED[model_id] = row
             continue

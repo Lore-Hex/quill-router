@@ -290,6 +290,25 @@ def fetch() -> ProviderPricingResult:
         # working route or leaking zero token prices into the price index.
         request_micro = _microdollars_per_million(pricing.get("requestPrice", 0))
         if (
+            native_id == "voxtral-small-24b" and row.get("type") == "audio"
+            and "/v1/chat/completions" in row.get("endpoints", [])
+            and request_micro == 0
+        ):
+            input_micro = _microdollars_per_million(pricing.get("inputTokenPricePer1M"))
+            output_micro = _microdollars_per_million(pricing.get("outputTokenPricePer1M"))
+            if input_micro is None or output_micro is None or input_micro <= 0 or output_micro <= 0:
+                raise ValueError("Invalid Tinfoil audio token tariff")
+            prices[or_id] = ModelPrice(input_micro, output_micro)
+            discovered[or_id] = {
+                "id": or_id, "upstream_id": native_id,
+                "display_name": str(row.get("name") or native_id),
+                "model_type": "audio", "input_modalities": ["audio"],
+                "output_modalities": ["transcription"], "endpoints": ["audio/transcriptions"],
+                "routable": True, "billing_unit": "tokens",
+                "input_token_price_per_m": input_micro, "output_token_price_per_m": output_micro,
+            }
+            continue
+        if (
             native_id == "whisper-large-v3-turbo"
             and row.get("type") == "audio"
             and row.get("endpoints") == ["/v1/audio/transcriptions"]

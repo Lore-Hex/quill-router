@@ -11,7 +11,11 @@ PRICES = """<table><tr><th>Model</th><th>Input</th><th>Output</th><th>Cached inp
 <tr><td>GLM-5.3</td><td>EUR 1.55</td><td>EUR 7.74</td><td>EUR 0.15</td></tr>
 <tr><td>GLM-5.3-Flash</td><td>EUR 0.20</td><td>EUR 0.65</td><td>EUR 0.05</td></tr>
 <tr><td>gpt-oss-120b</td><td>EUR 0.43</td><td>EUR 1.70</td><td>EUR 0.04</td></tr>
-<tr><td>New unreviewed model</td><td>EUR 1</td><td>EUR 1</td><td>EUR 1</td></tr></table>"""
+<tr><td>New unreviewed model</td><td>EUR 1</td><td>EUR 1</td><td>EUR 1</td></tr></table>
+Prices per audio minute:
+<table><tr><th>Model</th><th>Audio</th></tr>
+<tr><td>Voxtral Mini 3B</td><td>EUR 0.004</td></tr>
+<tr><td>Whisper large-v3</td><td>EUR 0.014</td></tr></table>"""
 
 
 def test_prices_include_cached_rate_and_currency_reserve():
@@ -99,6 +103,13 @@ def test_confidential_privatemode_has_only_reviewed_priced_credits_routes():
         assert route.usage_type == "Credits"
         assert route.upstream_id == upstream_id
         assert catalog.endpoint_privacy_tier(route) == catalog.PRIVACY_TIER_CONFIDENTIAL
+        if upstream_id in privatemode._TRANSCRIPTION_MODELS:
+            from trusted_router.transcription import TRANSCRIPTION_MODELS
+
+            assert route.prompt_price_microdollars_per_million_tokens == 0
+            assert route.completion_price_microdollars_per_million_tokens == 0
+            assert TRANSCRIPTION_MODELS[model_id].quote(1000) > 0
+            continue
         assert route.prompt_price_microdollars_per_million_tokens > 0
         if model_id in privatemode._EMBEDDING_IDS:
             assert route.completion_price_microdollars_per_million_tokens == 0

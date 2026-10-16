@@ -212,6 +212,7 @@ from trusted_router.stage_d import (
     ESTIMATED_USAGE_SNAPSHOT_MODELS,
     ESTIMATED_USAGE_SNAPSHOT_REASON,
     SPEECH_SNAPSHOT_REASON,
+    TRANSCRIPTION_SNAPSHOT_REASON,
     billing_pricing_snapshot,
     canonical_pricing_snapshot,
     endpoint_pricing_document,
@@ -264,6 +265,12 @@ from trusted_router.storage_models import (
 )
 from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
+from trusted_router.transcription import (
+    MAX_INPUT_TOKENS as TRANSCRIPTION_MAX_INPUT_TOKENS,
+)
+from trusted_router.transcription import (
+    MAX_OUTPUT_TOKENS as TRANSCRIPTION_MAX_OUTPUT_TOKENS,
+)
 from trusted_router.transcription import TRANSCRIPTION_MODELS
 from trusted_router.types import ErrorType, UsageType
 from trusted_router.user_model_rules import (
@@ -1070,11 +1077,15 @@ def _authorize_gateway_sync_impl(
             body.model not in TRANSCRIPTION_MODELS or body.models
             or body.transcription_duration_ms is None
             or body.service_tier or body.inference_receipt or not body.request_fingerprint
-            or body.estimated_input_tokens != 0 or body.output_estimate != 1
             or body.additional_cost_reservation_microdollars
         ):
             raise api_error(400, "Invalid transcription authorization metadata", ErrorType.BAD_REQUEST)
-        transcription_quote = TRANSCRIPTION_MODELS[body.model].quote(body.transcription_duration_ms)
+        transcription_spec = TRANSCRIPTION_MODELS[body.model]
+        expected_input = TRANSCRIPTION_MAX_INPUT_TOKENS if transcription_spec.token_billed else 0
+        expected_output = TRANSCRIPTION_MAX_OUTPUT_TOKENS if transcription_spec.token_billed else 1
+        if body.estimated_input_tokens != expected_input or body.output_estimate != expected_output:
+            raise api_error(400, "Transcription requires its full usage limits reserved", ErrorType.BAD_REQUEST)
+        transcription_quote = transcription_spec.quote(body.transcription_duration_ms)
     elif body.transcription_duration_ms is not None:
         raise api_error(400, "Audio duration requires the transcription endpoint", ErrorType.BAD_REQUEST)
     if is_speech_request:
@@ -1551,8 +1562,8 @@ def _authorize_gateway_sync_impl(
         )
     )
     model_usage_type = UsageType.for_endpoint(endpoint)
-    if is_transcription_request or (is_speech_request and not speech_spec.token_billed):
-        # Characters are not tokens. The complete frozen quote is held below.
+    if (is_transcription_request and not transcription_spec.token_billed) or (is_speech_request and not speech_spec.token_billed):
+        # Duration/characters are not tokens. The complete frozen quote is held below.
         model_estimate = 0
     has_credit_candidate = any(
         UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
@@ -1669,7 +1680,11 @@ def _authorize_gateway_sync_impl(
         if app_markup_basis_points:
             raise api_error(400, "Speech does not support app markups", ErrorType.BAD_REQUEST)
         stage_d_reason = SPEECH_SNAPSHOT_REASON
-    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON}:
+    if is_transcription_request and transcription_spec.token_billed:
+        if app_markup_basis_points:
+            raise api_error(400, "Transcription does not support app markups", ErrorType.BAD_REQUEST)
+        stage_d_reason = TRANSCRIPTION_SNAPSHOT_REASON
+    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON}:
         pricing_snapshot = canonical_pricing_snapshot(
             endpoint_pricing_document(
                 effective_endpoint(candidate_endpoint, at=pricing_effective_at)
@@ -2098,7 +2113,7 @@ def _authorize_gateway_sync_impl(
             video_pricing_snapshot=video_snapshot,
             settlement=settlement,
             **({"pricing_snapshot": pricing_snapshot, "stage_d_reason": stage_d_reason}
-               if stage_d_reason == SPEECH_SNAPSHOT_REASON else {}),
+               if stage_d_reason in {SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON} else {}),
             expires_at=authorization_expires_at,
             # The outstanding increment rides the SAME transaction that
             # inserts the authorization, so an idempotent replay (which
@@ -3978,7 +3993,17 @@ def _settle_gateway_authorization(
         actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
     if authorization.model_id in TRANSCRIPTION_MODELS:
-        if success and (
+        transcription_spec = TRANSCRIPTION_MODELS[authorization.model_id]
+        if success and transcription_spec.token_billed:
+            if (
+                body.route_type != "audio.transcriptions" or additional_cost != 0
+                or not 0 < total_input <= TRANSCRIPTION_MAX_INPUT_TOKENS
+                or not 0 < output_tokens <= TRANSCRIPTION_MAX_OUTPUT_TOKENS
+                or cache_read or cache_creation or body.service_tier
+                or actual_cost > authorization.estimated_microdollars
+            ):
+                raise api_error(400, "Invalid transcription token settlement", ErrorType.BAD_REQUEST)
+        elif success and (
             body.route_type != "audio.transcriptions"
             or total_input or output_tokens or cache_read or cache_creation
             or body.service_tier
@@ -3988,7 +4013,8 @@ def _settle_gateway_authorization(
             raise api_error(400, "Transcription settlement must match its frozen audio quote", ErrorType.BAD_REQUEST)
         if not success and additional_cost:
             raise api_error(400, "Transcription refunds cannot charge for audio", ErrorType.BAD_REQUEST)
-        actual_cost = 0
+        if not transcription_spec.token_billed:
+            actual_cost = 0
     elif body.route_type == "audio.transcriptions":
         raise api_error(400, "Authorization is not for transcription", ErrorType.BAD_REQUEST)
     if authorization.model_id in SPEECH_MODELS:

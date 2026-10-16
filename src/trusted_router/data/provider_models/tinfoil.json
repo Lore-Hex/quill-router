@@ -275,18 +275,18 @@
         "audio"
       ],
       "output_modalities": [
-        "text"
+        "transcription"
       ],
       "endpoints": [
-        "audio/transcriptions",
-        "audio/translations",
-        "chat/completions"
+        "audio/transcriptions"
       ],
       "status": 1,
       "id": "mistralai/voxtral-small-24b",
       "upstream_id": "voxtral-small-24b",
-      "routable": false,
-      "routable_reason": "unsupported-endpoint-or-billing"
+      "routable": true,
+      "billing_unit": "tokens",
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000
     },
     {
       "display_name": "Nomic Embed Text",
@@ -308,8 +308,7 @@
       "context_length": 8192,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 0,
-      "routable": false,
-      "routable_reason": "attested-enclave-rollout-pending"
+      "routable": true
     },
     {
       "display_name": "GPT-OSS 120B",

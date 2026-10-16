@@ -76,7 +76,23 @@ def test_privatemode_prices_ocr_and_input_only_embedding(monkeypatch, httpx_mock
     embedding = saved["qwen/qwen3-embedding-4b"]
     assert embedding["model_type"] == "embedding"
     assert embedding["endpoints"] == ["embeddings"]
-    # Discovery must not enable a workload before the matching enclave rollout.
+    # These workloads now have verified encrypted adapters and live canaries.
     for row in (ocr, embedding):
-        assert row["routable"] is False
-        assert row["routable_reason"] == "attested-enclave-rollout-pending"
+        assert row["routable"] is True
+        assert "routable_reason" not in row
+
+
+def test_tinfoil_audio_token_prices_survive_manifest_writer(monkeypatch, tmp_path):
+    path = tmp_path / "tinfoil.json"
+    monkeypatch.setattr(tinfoil, "MANIFEST_PATH", path)
+    monkeypatch.setattr(tinfoil, "fetch_json", lambda _: {"data": [
+        {"id": "voxtral-small-24b", "type": "audio", "endpoints": ["/v1/chat/completions", "/v1/audio/transcriptions"],
+         "pricing": {"inputTokenPricePer1M": 0.2, "outputTokenPricePer1M": 0.6, "requestPrice": 0}},
+    ]})
+    tinfoil.write_provider_manifest(tinfoil.fetch())
+    row = json.loads(path.read_text())["models"][0]
+    assert row["routable"] is True
+    assert row["endpoints"] == ["audio/transcriptions"]
+    assert row["billing_unit"] == "tokens"
+    assert row["input_token_price_per_m"] == 200000
+    assert row["output_token_price_per_m"] == 600000
