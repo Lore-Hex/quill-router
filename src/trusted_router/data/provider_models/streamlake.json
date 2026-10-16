@@ -467,7 +467,8 @@
       "id": "qwen/qwen3-235b-a22b-thinking-2507",
       "upstream_id": "Qwen3-235B-A22B-Thinking-2507",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 4200000
     },
@@ -488,7 +489,8 @@
       "id": "qwen/qwen3-30b-a3b-instruct-2507",
       "upstream_id": "Qwen3-30B-A3B-Instruct-2507",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 107000,
       "output_token_price_per_m": 429000,
       "cached_input_token_price_per_m": 22000
@@ -578,7 +580,8 @@
       "id": "qwen/qwen3-vl-235b-a22b-instruct",
       "upstream_id": "Qwen3-VL-235B-A22B-Instruct",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 1400000,
       "cached_input_token_price_per_m": 57000
