@@ -23,10 +23,26 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ParamSpec, TypeVar, cast
 
-from google.api_core.exceptions import InternalServerError
+from google.api_core.exceptions import GoogleAPIError, InternalServerError
 
 T = TypeVar("T")
 P = ParamSpec("P")
+SPANNER_RPC_METHODS = (
+    "begin_transaction", "commit", "execute_sql", "execute_batch_dml",
+    "execute_streaming_sql", "read", "streaming_read", "rollback",
+)
+
+
+def spanner_failure_fields(exc: Exception) -> dict[str, str | int]:
+    """Fixed RPC names and bounded timings only; never exception text or SQL."""
+    method = getattr(exc, "tr_spanner_rpc_method", None)
+    elapsed = getattr(exc, "tr_spanner_rpc_elapsed_ms", None)
+    if type(method) is not str or method not in SPANNER_RPC_METHODS:
+        return {}
+    result: dict[str, str | int] = {"spanner_rpc_method": method}
+    if type(elapsed) is int and 0 <= elapsed <= 2_147_483_647:
+        result["spanner_rpc_elapsed_ms"] = elapsed
+    return result
 
 
 class SpannerTransportReset(InternalServerError):
@@ -214,16 +230,7 @@ def configure_spanner_rpc_deadlines(
             )
         return min(remaining, max_seconds)
 
-    for method_name in (
-        "begin_transaction",
-        "commit",
-        "execute_sql",
-        "execute_batch_dml",
-        "execute_streaming_sql",
-        "read",
-        "streaming_read",
-        "rollback",
-    ):
+    for method_name in SPANNER_RPC_METHODS:
         original = getattr(api, method_name, None)
         if not callable(original):
             continue
@@ -264,9 +271,12 @@ def configure_spanner_rpc_deadlines(
             counter = _SPANNER_RPC_COUNTER.get()
             if counter is not None:
                 counter.increment()
+            started = time.monotonic()
             try:
                 return _original(*args, **kwargs)
-            except InternalServerError as error:
+            except GoogleAPIError as error:
+                cast(Any, error).tr_spanner_rpc_method = _method_name
+                cast(Any, error).tr_spanner_rpc_elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
                 deadline = _SPANNER_RPC_DEADLINE.get()
                 # Only shadow sets the per-RPC cap. Billing keeps the SDK's
                 # reset retries, including its private, unbounded sleep. The

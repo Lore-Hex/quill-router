@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from trusted_router.storage_gcp_counters import (
@@ -9,6 +10,8 @@ from trusted_router.storage_gcp_counters import (
     distribute_credit_amount,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
+
+log = logging.getLogger(__name__)
 
 
 def rebalance_key_limit_headroom(
@@ -24,9 +27,9 @@ def rebalance_key_limit_headroom(
 
     The accepted hot path never calls this function. It runs only after every
     shard rejected an exact-cap reservation, which can mean either genuine
-    exhaustion or harmless escrow fragmentation. One transaction strongly
-    reads every shard, proves the global remaining allowance, and moves that
-    allowance without changing the sum of row limits.
+    exhaustion or harmless escrow fragmentation. A strong snapshot rejects
+    exhaustion without write-transaction locks. A transaction then rereads
+    every shard and moves allowance without changing the sum of row limits.
     """
     if shard_count < 2:
         return False
@@ -37,9 +40,9 @@ def rebalance_key_limit_headroom(
         return False
     pt = param_types
 
-    def txn(transaction: Any) -> bool:
+    def read_counters(reader: Any) -> tuple[list[int], list[int]] | None:
         rows = list(
-            transaction.execute_sql(
+            reader.execute_sql(
                 "SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok "
                 "FROM tr_key_limit WHERE key_hash=@kh AND shard>=0 "
                 "AND shard<@shard_count ORDER BY shard",
@@ -50,7 +53,7 @@ def rebalance_key_limit_headroom(
         if [int(row[0]) for row in rows] != list(range(shard_count)):
             raise RuntimeError("configured tr_key_limit usage shard set is incomplete")
         if any(row[1] is None for row in rows):
-            return False  # uncapped or inconsistent config; no exact escrow to move
+            return None  # uncapped or inconsistent config; no exact escrow to move
         include_values = {bool(row[5]) for row in rows}
         if len(include_values) != 1:
             raise RuntimeError("configured tr_key_limit include_byok values are inconsistent")
@@ -65,8 +68,29 @@ def rebalance_key_limit_headroom(
             usage + (byok_usage if include_byok else 0) + reserved
             for usage, byok_usage, reserved in counters
         ]
-        global_limit = sum(int(row[1]) for row in rows)
-        remaining = global_limit - sum(consumed)
+        return [int(row[1]) for row in rows], consumed
+
+    # An exhausted key needs no repair. A strong snapshot avoids taking shared
+    # locks on every allowance row while concurrent settlements release holds.
+    # A positive observation is only a hint: all counters are reread in the RW
+    # transaction below before moving any allowance.
+    try:
+        with database.snapshot() as snapshot:
+            observed = read_counters(snapshot)
+    except Exception as exc:
+        # An optimization cannot make the original transaction unavailable.
+        # The transaction still enforces every invariant and the RPC budget.
+        log.warning("key_escrow.snapshot_failed error_class=%s", type(exc).__name__)
+    else:
+        if observed is None or sum(observed[0]) - sum(observed[1]) < required:
+            return False
+
+    def txn(transaction: Any) -> bool:
+        current = read_counters(transaction)
+        if current is None:
+            return False
+        old_limits, consumed = current
+        remaining = sum(old_limits) - sum(consumed)
         if remaining < required:
             return False
 
@@ -76,14 +100,20 @@ def rebalance_key_limit_headroom(
             current + extra
             for current, extra in zip(consumed, headroom, strict=True)
         ]
-        transaction.insert_or_update(
-            table=KEY_LIMIT_TABLE,
-            columns=("key_hash", "shard", "limit_micro"),
-            values=[
-                (key_hash, shard, limits[shard])
-                for shard in range(shard_count)
-            ],
-        )
+        changed = [
+            (key_hash, shard, limits[shard])
+            for shard in range(shard_count)
+            if limits[shard] != old_limits[shard]
+        ]
+        if changed:
+            # Every row was proved present in this transaction. UPDATE limits
+            # the mutation to allowance; the incident's INSERT_OR_UPDATE lock
+            # samples also included omitted, hot settlement counter columns.
+            transaction.update(
+                table=KEY_LIMIT_TABLE,
+                columns=("key_hash", "shard", "limit_micro"),
+                values=changed,
+            )
         return True
 
     return bool(run_in_transaction_with_retry(database, txn))

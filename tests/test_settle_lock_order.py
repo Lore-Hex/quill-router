@@ -822,7 +822,7 @@ def test_lifetime_cap_exact_headroom_is_accepted(calls: list[tuple[Any, str]]) -
     assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
     assert sum(row["reserved"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
     assert sum(row["limit_micro"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
-    assert not _lifetime_snapshot_reads(db)
+    assert len(_lifetime_snapshot_reads(db)) == 1  # Cold escrow repair precheck.
     # Fragmented escrow was repaired; its provisional rejection must not cache.
     assert key.hash not in store._lifetime_cap_exhausted_keys
 
@@ -1067,8 +1067,9 @@ def test_lifetime_cap_snapshot_failure_defers_to_transaction(
     assert (authorization is not None) == (key_limit == 20_000)
     assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
     warnings = [record for record in caplog.records if record.levelname == "WARNING"]
-    assert len(warnings) == 1
+    assert len(warnings) == 2
     assert "key lifetime-cap snapshot failed" in warnings[0].message
+    assert warnings[1].message == "key_escrow.snapshot_failed error_class=RuntimeError"
     assert key.hash in store._lifetime_cap_exhausted_keys
     hold = 10_000 if authorization else 0
     assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) == hold
@@ -1100,7 +1101,7 @@ def test_lifetime_cap_precheck_rejection_keeps_window_decision(
             assert len(_lifetime_snapshot_reads(db)) == 1
         else:
             assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
-            assert not _lifetime_snapshot_reads(db)
+            assert len(_lifetime_snapshot_reads(db)) == 1  # Cold repair rejects read-only.
 
 
 @pytest.mark.parametrize("failure", ["window", "credit", "unavailable"])
