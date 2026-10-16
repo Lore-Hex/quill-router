@@ -34,7 +34,12 @@
           <span class="muted-copy">No AI IQ profile matched yet.</span>
           {% endif %}
         </td></tr>
-        {% if model.speech %}
+        {% if model.transcription %}
+        <tr><th>Input limit</th><td>7 MiB, up to 10 minutes</td></tr>
+        <tr><th>Input formats</th><td>{{ model.transcription.input_formats|join(', ') }}</td></tr>
+        <tr><th>Billing</th><td>{{ model.transcription.billing_unit|replace('_', ' ') }}</td></tr>
+        <tr><th>API</th><td><a href="/docs#transcription">Audio transcription</a></td></tr>
+        {% elif model.speech %}
         <tr><th>Input limit</th><td>{{ model.speech.max_input_characters }} characters</td></tr>
         {% if model.speech.billing_unit == 'request' %}
         <tr><th>Price</th><td>${{ model.speech.request_price }}/request</td></tr>

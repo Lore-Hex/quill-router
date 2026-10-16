@@ -41,7 +41,13 @@ def test_tinfoil_never_publishes_request_fees_as_zero_token_prices(monkeypatch, 
     ]})
     result = tinfoil.fetch()
     assert not result.prices
-    assert all(row.get("routable") is False for row in tinfoil._DISCOVERED_MANIFEST_ROWS.values())
+    rows = tinfoil._DISCOVERED_MANIFEST_ROWS
+    assert rows["openai/gpt-oss-120b"]["routable"] is False
+    transcription = rows["openai/whisper-large-v3-turbo"]
+    assert transcription["routable"] is True
+    assert transcription["billing_unit"] == "request"
+    assert transcription["fixed_request_price_microdollars"] == 10000
+    assert "input_token_price_per_m" not in transcription
 
 
 def test_privatemode_prices_ocr_and_input_only_embedding(monkeypatch, httpx_mock, tmp_path):

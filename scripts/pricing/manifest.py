@@ -13,7 +13,10 @@ from scripts.pricing.base import (
     guard_manifest_prune,
     reconcile_manifest_tombstones,
 )
-from trusted_router.provider_manifest_policy import request_billed_speech_price_is_valid
+from trusted_router.provider_manifest_policy import (
+    request_billed_speech_price_is_valid,
+    request_billed_transcription_price_is_valid,
+)
 
 
 def guard_fixed_output_prices(
@@ -258,7 +261,7 @@ def write_discovered_chat_manifest(
             row.pop("output_token_price_per_m", None)
             row.pop("cached_input_token_price_per_m", None)
             row.pop("price_tiers", None)
-            if request_billed_speech_price_is_valid(discovered):
+            if request_billed_speech_price_is_valid(discovered) or request_billed_transcription_price_is_valid(discovered):
                 request_priced_ids.add(model_id)
             elif (
                 row.get("routable") is not False

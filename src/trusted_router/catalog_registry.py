@@ -207,6 +207,7 @@ from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.request_capabilities import normalize_request_capabilities
 from trusted_router.speech import SPEECH_MODELS
+from trusted_router.transcription import TRANSCRIPTION_MODELS
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1353,6 +1354,31 @@ for _speech in SPEECH_MODELS.values():
         ),
     )
 
+for _transcription in TRANSCRIPTION_MODELS.values():
+    if _transcription.provider != "tinfoil":
+        # Text-provider agreements do not establish audio-specific retention.
+        _MODEL_PROVIDER_PRIVACY_OVERRIDES[(_transcription.id, _transcription.provider)] = ModelProviderPrivacyOverride(
+            privacy_tier=0, provider_zero_data_retention=False,
+            provider_confidential_compute=False, provider_e2ee=False,
+            provider_policy="Audio-specific retention commitments have not been verified.",
+            provider_policy_url=_transcription.pricing_source,
+        )
+    MODELS[_transcription.id] = Model(
+        id=_transcription.id, name=_transcription.name, provider=_transcription.provider,
+        upstream_id=_transcription.upstream_id, context_length=0,
+        supports_chat=False, supports_messages=False,
+        input_modalities=("audio",), output_modalities=("transcription",),
+        prepaid_available=True, byok_available=False,
+        supported_parameters=("language", "response_format", "timestamp_granularities"),
+        documentation=ModelDocumentation(
+            description="File transcription, billed per request or audio duration, not text tokens.",
+            input_format="POST /v1/audio/transcriptions with multipart file or base64 input_audio, and model. PCM WAV or MP3, at most 7 MiB and ten minutes.",
+            output_format="JSON text and usage; verbose_json adds supported timestamps.",
+            example_input='{"model":"' + _transcription.id + '","input_audio":{"data":"<base64>","format":"wav"}}',
+            example_output='{"text":"Hello","usage":{"seconds":1,"cost":0.01}}',
+        ),
+    )
+
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODELS[POLYPHEMUS_MODEL_ID] = Model(
     id=POLYPHEMUS_MODEL_ID,
@@ -1685,7 +1711,7 @@ HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
 HELD_PREPAID_SETTLEMENT_ENDPOINTS.update(_HELD_DECISION_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
-    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS),
+    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS) | frozenset(TRANSCRIPTION_MODELS),
     at=CATALOG_RESOLVED_AT,
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)

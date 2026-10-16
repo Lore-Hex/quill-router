@@ -19,7 +19,7 @@ ROUTE_COVERAGE: tuple[RouteCoverage, ...] = (
     RouteCoverage("/analytics/meta", "GET", "stub", "Analytics queries are not supported."),
     RouteCoverage("/analytics/query", "POST", "stub", "Analytics queries are not supported."),
     RouteCoverage("/audio/speech", "POST", "real", "Character-billed text-to-speech on the attested API origin."),
-    RouteCoverage("/audio/transcriptions", "POST", "stub", "Audio is not supported."),
+    RouteCoverage("/audio/transcriptions", "POST", "real", "Attested file transcription: PCM WAV or MP3, JSON or verbose JSON; no realtime or URL fetch."),
     RouteCoverage(
         "/auth/keys",
         "POST",

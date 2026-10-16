@@ -128,6 +128,7 @@ from trusted_router.seo_meta import (
 )
 from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.storage_models import BedrockGroupBuyPledge
+from trusted_router.transcription import TRANSCRIPTION_MODELS, transcription_metadata
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -5065,6 +5066,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     if speech and not speech.token_billed:
         prompt = speech.non_token_price_label
         completion = "Included"
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
+    if transcription:
+        prompt, completion = transcription.price_label, "Included"
     cached_prices = _cached_prompt_prices(route_endpoints)
     if cached_prices:
         cached_prompt = _price_values_range(cached_prices, include_zero=True)
@@ -5121,8 +5125,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "context_length_compact": _compact_token_count(model.context_length),
         "context_length_int": model.context_length,
         "prompt_price": prompt,
-        "cached_prompt_price": "Not applicable" if speech else cached_prompt,
+        "cached_prompt_price": "Not applicable" if speech or transcription else cached_prompt,
         "speech": speech_metadata(model.id) if speech else None,
+        "transcription": transcription_metadata(model.id) if transcription else None,
         "completion_price": completion,
         "prompt_price_sort": prompt_price_sort,
         "cached_price_sort": min(cached_prices) if cached_prices else None,
@@ -5483,6 +5488,7 @@ def _model_detail_view(
 ) -> dict[str, object]:
     publisher = _model_publisher(model)
     speech = SPEECH_MODELS.get(model.id)
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
     is_meta = model.id in META_MODEL_IDS
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
@@ -5505,9 +5511,9 @@ def _model_detail_view(
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
                 "provider_logo_url": provider_logo_url(endpoint.provider),
-                "prompt_price": speech.non_token_price_label if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
-                "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range((endpoint,)),
-                "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
+                "prompt_price": transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "cached_prompt_price": "Not applicable" if speech or transcription else _cached_prompt_price_range((endpoint,)),
+                "completion_price": "Included" if transcription or (speech and not speech.token_billed) else _endpoint_price_range(
                     (endpoint,), "completion_price_microdollars_per_million_tokens"
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
@@ -5554,6 +5560,7 @@ def _model_detail_view(
         "context_length_int": model.context_length,
         "fixed_price": fixed_price,
         "speech": speech_metadata(model.id) if speech else None,
+        "transcription": transcription_metadata(model.id) if transcription else None,
         "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
         "cached_prompt_price": (
             "selected route" if is_meta else _cached_prompt_price_range(endpoints)
@@ -6350,6 +6357,7 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
         if not endpoints:
             continue
         speech = SPEECH_MODELS.get(model.id)
+        transcription = TRANSCRIPTION_MODELS.get(model.id)
         rows.append(
             {
                 "id": model.id,
@@ -6366,13 +6374,14 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                 ),
                 "context_length": f"{model.context_length:,}",
                 "speech": speech_metadata(model.id) if speech else None,
+                "transcription": transcription_metadata(model.id) if transcription else None,
                 "endpoint_count": len(endpoints),
-                "prompt_price": speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
+                "prompt_price": transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
                     endpoints,
                     "prompt_price_microdollars_per_million_tokens",
                 ),
-                "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range(endpoints),
-                "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
+                "cached_prompt_price": "Not applicable" if speech or transcription else _cached_prompt_price_range(endpoints),
+                "completion_price": "Included" if transcription or (speech and not speech.token_billed) else _endpoint_price_range(
                     endpoints,
                     "completion_price_microdollars_per_million_tokens",
                 ),

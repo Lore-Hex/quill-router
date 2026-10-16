@@ -108,6 +108,17 @@ def request_billed_speech_price_is_valid(row: dict[str, Any]) -> bool:
     )
 
 
+def request_billed_transcription_price_is_valid(row: dict[str, Any]) -> bool:
+    return (
+        row.get("model_type") == "audio"
+        and row.get("endpoints") == ["audio/transcriptions"]
+        and row.get("billing_unit") == "request"
+        and type(row.get("fixed_request_price_microdollars")) is int
+        and row["fixed_request_price_microdollars"] > 0
+        and not {"input_token_price_per_m", "output_token_price_per_m", "cached_input_token_price_per_m", "price_tiers"}.intersection(row)
+    )
+
+
 def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
     model_type = row.get("model_type") or "chat"
     try:
@@ -117,6 +128,8 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
             return decision_manifest_price_is_valid(row)
         if model_type == "tts":
             return request_billed_speech_price_is_valid(row)
+        if model_type == "audio":
+            return request_billed_transcription_price_is_valid(row)
         if model_type == "image":
             fixed = row.get("fixed_output_price_microdollars")
             return (

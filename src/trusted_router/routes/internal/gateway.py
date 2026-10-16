@@ -161,6 +161,7 @@ from trusted_router.routing import (
     provider_route_preferences,
     resolved_route_preferences,
     speech_route_endpoint_candidates,
+    transcription_route_endpoint_candidates,
     video_route_endpoint_candidates,
 )
 from trusted_router.routing_state import ROUTING_STATE
@@ -263,6 +264,7 @@ from trusted_router.storage_models import (
 )
 from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
+from trusted_router.transcription import TRANSCRIPTION_MODELS
 from trusted_router.types import ErrorType, UsageType
 from trusted_router.user_model_rules import (
     GATEWAY_RESERVATION_TTL_SECONDS,
@@ -334,6 +336,7 @@ _ADDITIONAL_COST_ROUTE_TYPES = frozenset(
         "chat.completions.web_search.planner",
         "images",
         "audio.speech",
+        "audio.transcriptions",
         "videos",
     }
 )
@@ -1061,6 +1064,19 @@ def _authorize_gateway_sync_impl(
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
     is_speech_request = body.route_type == "audio.speech"
+    is_transcription_request = body.route_type == "audio.transcriptions"
+    if is_transcription_request:
+        if (
+            body.model not in TRANSCRIPTION_MODELS or body.models
+            or body.transcription_duration_ms is None
+            or body.service_tier or body.inference_receipt or not body.request_fingerprint
+            or body.estimated_input_tokens != 0 or body.output_estimate != 1
+            or body.additional_cost_reservation_microdollars
+        ):
+            raise api_error(400, "Invalid transcription authorization metadata", ErrorType.BAD_REQUEST)
+        transcription_quote = TRANSCRIPTION_MODELS[body.model].quote(body.transcription_duration_ms)
+    elif body.transcription_duration_ms is not None:
+        raise api_error(400, "Audio duration requires the transcription endpoint", ErrorType.BAD_REQUEST)
     if is_speech_request:
         if (
             body.model not in SPEECH_MODELS or body.models
@@ -1083,7 +1099,7 @@ def _authorize_gateway_sync_impl(
         raise api_error(400, "Speech usage requires the speech endpoint", ErrorType.BAD_REQUEST)
     def prepare_fingerprint() -> tuple[dict[str, Any], str]:
         fingerprint_body = dict(body_dict)
-        if is_video_request or is_image_request or is_speech_request:
+        if is_video_request or is_image_request or is_speech_request or is_transcription_request:
             # Provider quotes can change between retries. The enclave supplies a
             # keyed content fingerprint, so media idempotency binds to the logical
             # request without storing content or coupling replay to a fresh quote.
@@ -1333,6 +1349,10 @@ def _authorize_gateway_sync_impl(
             pricing_effective_at=pricing_effective_at,
             allowed_providers=video_allowed_providers,
         )
+    elif is_transcription_request:
+        if custom_model is not None:
+            raise api_error(400, "Custom models do not support transcription", ErrorType.MODEL_NOT_SUPPORTED)
+        endpoint_candidates = transcription_route_endpoint_candidates(normalized_routing)
     elif is_speech_request:
         if custom_model is not None:
             raise api_error(400, "Custom models do not support speech", ErrorType.MODEL_NOT_SUPPORTED)
@@ -1460,6 +1480,8 @@ def _authorize_gateway_sync_impl(
         estimated_input_tokens=input_tokens,
     )
     additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
+    if is_transcription_request:
+        additional_cost_reservation = transcription_quote
     if additional_cost_reservation:
         if body.route_type not in _ADDITIONAL_COST_ROUTE_TYPES:
             raise api_error(
@@ -1529,7 +1551,7 @@ def _authorize_gateway_sync_impl(
         )
     )
     model_usage_type = UsageType.for_endpoint(endpoint)
-    if is_speech_request and not speech_spec.token_billed:
+    if is_transcription_request or (is_speech_request and not speech_spec.token_billed):
         # Characters are not tokens. The complete frozen quote is held below.
         model_estimate = 0
     has_credit_candidate = any(
@@ -3955,6 +3977,20 @@ def _settle_gateway_authorization(
         )
         actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
+    if authorization.model_id in TRANSCRIPTION_MODELS:
+        if success and (
+            body.route_type != "audio.transcriptions"
+            or total_input or output_tokens or cache_read or cache_creation
+            or body.service_tier
+            or additional_cost != authorization.additional_cost_reservation_microdollars
+            or additional_cost <= 0
+        ):
+            raise api_error(400, "Transcription settlement must match its frozen audio quote", ErrorType.BAD_REQUEST)
+        if not success and additional_cost:
+            raise api_error(400, "Transcription refunds cannot charge for audio", ErrorType.BAD_REQUEST)
+        actual_cost = 0
+    elif body.route_type == "audio.transcriptions":
+        raise api_error(400, "Authorization is not for transcription", ErrorType.BAD_REQUEST)
     if authorization.model_id in SPEECH_MODELS:
         # A generic refund must still work, but a success may not omit the
         # character charge, smuggle token usage, or replay under another route.
