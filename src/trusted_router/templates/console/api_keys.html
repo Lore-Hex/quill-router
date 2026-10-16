@@ -40,6 +40,7 @@
   </div>
 </section>
 {% endif %}
+{% include "console/_social_rewards_invitation.html" %}
 {% if keys %}
 <section class="panel key-list-panel">
   <div class="panel-head">
@@ -104,7 +105,7 @@
     </div>
   </div>
 </section>
-<details class="panel key-create-panel" id="new-api-key">
+<details class="panel key-create-panel" id="new-api-key" hidden>
   <summary class="panel-head">Create API key</summary>
   <div class="panel-body">
     {{ create_key_form() }}

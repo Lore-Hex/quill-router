@@ -22,7 +22,7 @@
       observation_id: crypto.randomUUID() }).catch(() => {});
   }
   function openerPlacement(button) {
-    return button.hasAttribute("data-rewards-early") ? "api_key_setup"
+    return button.hasAttribute("data-rewards-early") || button.hasAttribute("data-rewards-api-keys") ? "api_key_setup"
       : button.hasAttribute("data-rewards-success") ? "first_request_success"
         : location.pathname === "/console/credits" ? "credits" : "console_fallback";
   }
@@ -96,6 +96,21 @@
 
   function render(next) {
     state = { ...next, dismissed: next.dismissed || locallyDismissed };
+    const keyCard = document.querySelector("[data-rewards-key-card]");
+    if (keyCard) {
+      keyCard.hidden = !state.eligible;
+      const claimed = (state.actions || []).filter((action) => action.claimed).length;
+      keyCard.querySelector("[data-rewards-key-title]").textContent = claimed === 5
+        ? "All five rewards claimed." : !state.enabled ? "Rewards are paused."
+          : claimed ? "Keep earning extra tokens." : "Your next million tokens.";
+      keyCard.querySelector("[data-rewards-key-description]").textContent = claimed === 5
+        ? "All five rewards have been added to your signup workspace."
+        : !state.enabled ? "Your progress is saved. Check back to finish your rewards."
+          : claimed ? `${5 - claimed} rewards left to claim. Pick up where you left off.`
+            : "Earn API credit by following us on social.";
+      keyCard.querySelector("[data-rewards-open]").textContent = claimed === 5 || !state.enabled
+        ? "View rewards" : "Earn extra tokens";
+    }
     const ready = Boolean(state.eligible && state.enabled && state.first_call_complete
       && document.querySelector("[data-call-result]:not([hidden])"));
     if (invitation) invitation.hidden = !ready;

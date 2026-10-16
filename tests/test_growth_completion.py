@@ -292,14 +292,13 @@ def test_worker_release_preserves_main_ci_gate_and_existing_configuration():
 
 @pytest.mark.parametrize('cell,label', [('run_request', 'Run my first API request'),
                                       ('get_answer', 'Get my first AI answer')])
-def test_welcome_renders_actual_assigned_treatment(client, cell, label, caplog, monkeypatch):
+def test_key_first_welcome_does_not_expose_removed_treatment(client, cell, label, caplog, monkeypatch):
     from trusted_router.acquisition import (
         ATTRIBUTION_COOKIE_NAME,
         AttributionContext,
         encode_attribution_cookie,
     )
     from trusted_router.marketing_experiments import ONBOARDING_EXPERIMENT_ID
-    from trusted_router.routes.console import welcome
     from trusted_router.storage import STORE
     user = STORE.ensure_user('experiment@example.test')
     token, _ = STORE.create_auth_session(user_id=user.id, provider='google',
@@ -311,12 +310,11 @@ def test_welcome_renders_actual_assigned_treatment(client, cell, label, caplog, 
              'experiment_id': ONBOARDING_EXPERIMENT_ID, 'experiment_cell_id': cell}
     client.cookies.set(ATTRIBUTION_COOKIE_NAME,
         encode_attribution_cookie(AttributionContext('a'*32, touch, touch, now), client.app.state.settings))
-    monkeypatch.setattr(welcome, 'live_credit_summary', lambda _: {'total_credits': 300000})
     caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
     response = client.get('/console/welcome?first=1')
-    assert response.status_code == 200 and label in response.text
+    assert response.status_code == 200 and label not in response.text
     assert 'data-copy-template-target="welcome-agent-message"' in response.text
-    assert len([r for r in caplog.records if r.getMessage() == 'acquisition.experiment_exposed']) == 1
+    assert not any(r.getMessage() == 'acquisition.experiment_exposed' for r in caplog.records)
     caplog.clear()
     client.cookies.delete('tr_pending_reveal')
     assert client.get('/console/welcome').status_code == 200
