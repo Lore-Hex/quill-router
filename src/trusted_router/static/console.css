@@ -1269,14 +1269,7 @@ body.console {
   min-width: 0;
 }
 
-.activation-step-number {
-  margin-left: auto;
-  color: var(--line);
-  font-size: 28px;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
+
 
 .activation-primary-action {
   display: flex;
@@ -1789,11 +1782,20 @@ body.console {
 
 /* A quiet balance row keeps key setup as the primary onboarding task. */
 .activation-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; color: var(--muted); font-size: 13px; }
-.activation-rewards-link { padding: 0; border: 0; background: none; color: var(--tr-color-text-primary); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.activation-rewards-link { min-height: 44px; padding: 10px 18px; background: transparent; color: var(--tr-color-text-primary); border: 1px solid var(--line); font: inherit; font-weight: 600; cursor: pointer; }
 .activation-rewards-link:hover { text-decoration-thickness: 2px; }
 .activation-rewards-link:focus-visible { outline: 2px solid currentcolor; outline-offset: 5px; }
 
 /* Key management: summaries first, editing on demand. */
+.key-rewards-invitation { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 24px; margin-bottom: 28px; border: 1px solid var(--tr-color-panel-mint-divider); border-left: 3px solid var(--tr-color-accent-base); border-radius: var(--tr-radius-control); background: var(--tr-color-surface-selected); }
+.key-rewards-invitation[hidden] { display: none; }
+.key-rewards-copy h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; }
+.key-rewards-copy > p:last-child { margin: 0; color: var(--muted); font-size: 13px; }
+.key-rewards-invitation > .btn { flex-shrink: 0; min-height: 44px; background: var(--tr-color-panel-mint-bg); color: var(--tr-color-panel-mint-ink); border-color: var(--tr-color-panel-mint-divider); }
+@media (max-width: 720px) {
+  .key-rewards-invitation { align-items: flex-start; flex-direction: column; gap: 16px; padding: 18px; margin-bottom: 24px; }
+  .key-rewards-copy h2 { font-size: 21px; }
+}
 .key-list-panel { background: transparent; border: 0; }
 .key-list-panel > .panel-head { padding: 0 0 18px; }
 .key-list-panel > .panel-body { padding: 0; }
@@ -1820,3 +1822,52 @@ body.console {
   .key-limit-editor[open] { min-width: 0; }
   .key-spending-options .key-budget-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Give onboarding tasks room without nesting another outlined card. */
+.activation-flow { gap: 28px; }
+.activation-test-panel, .activation-setup-panel { border: 0; background: transparent; box-shadow: none; }
+.activation-test-panel > .panel-head, .activation-setup-panel > .panel-head { padding: 0 0 16px; border: 0; }
+.activation-test-panel > .panel-body, .activation-setup-panel > .panel-body { padding: 0; }
+
+.activation-agent-options { margin-top: 16px; }
+.activation-agent-options > summary { padding: 16px 0; color: var(--tr-color-text-primary); cursor: pointer; font-size: 14px; font-weight: 400; }
+.activation-agent-options[open] > summary { margin-bottom: 12px; }
+.activation-entry-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+
+/* A completed request replaces its setup actions; only one rewards entry remains. */
+.activation-rewards-link[hidden] { display: none; }
+.activation-test-panel:has([data-call-result]:not([hidden])) > .panel-head,
+.activation-test-panel:has([data-call-result]:not([hidden])) .activation-entry-actions { display: none; }
+.activation-test-panel .activation-call-result { padding-top: 12px; }
+.activation-test-panel .activation-result-head { padding-bottom: 16px; }
+.activation-key-panel { border: 0; background: transparent; box-shadow: none; }
+.activation-key-panel > .panel-head { padding: 0 0 16px; border: 0; }
+.activation-key-panel > .panel-body { padding: 0; }
+.activation-key-panel .console-key-reveal { padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; }
+.activation-key-panel .signup-reveal-head { display: none; }
+.activation-key-panel .copy-status:empty { display: none; }
+.activation-key-panel .signup-foot { margin-top: 12px; }
+
+.activation-setup-summary { cursor: pointer; padding: 16px 0; color: var(--tr-color-text-primary); font-size: 14px; font-weight: 400; }
+.activation-setup-panel[open] > .panel-body { padding-top: 12px; }
+
+.key-create-panel[hidden] { display: none; }
+
+.key-first-onboarding { max-width: 720px; gap: 0; }
+.key-first-onboarding > .panel { margin: 0; }
+.key-first-onboarding .activation-key-panel > .panel-head { padding-bottom: 12px; }
+.key-first-onboarding .activation-key-panel h2 { font-size: 14px; font-weight: 400; color: var(--muted); }
+.key-first-onboarding .activation-setup-panel { margin-top: 8px; }
+.key-first-onboarding .activation-setup-summary { padding: 12px 0 12px 16px; min-height: 44px; box-sizing: border-box; border: 0; width: fit-content; max-width: 100%; color: var(--muted); position: relative; list-style: none; }
+.key-first-onboarding .activation-setup-summary::-webkit-details-marker { display: none; }
+.key-first-onboarding .activation-setup-summary::before { content: ""; position: absolute; left: 2px; top: 18px; width: 6px; height: 6px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(-45deg); }
+.key-first-onboarding .activation-setup-panel[open] > summary::before { transform: rotate(45deg); }
+.key-first-onboarding .activation-setup-summary:hover { color: var(--tr-color-text-primary); }
+.key-first-onboarding .activation-tabs { flex-wrap: wrap; }
+.key-first-onboarding .secret-copy-btn { background: var(--tr-color-panel-mint-bg); color: var(--tr-color-panel-mint-ink); border-color: var(--tr-color-panel-mint-divider); }
+.key-first-onboarding .key-rewards-invitation { flex-direction: column; align-items: flex-start; gap: 16px; margin: 36px 0 0; background: var(--tr-color-surface-selected); border: 0; border-radius: var(--tr-radius-control); padding: 24px; }
+.key-first-onboarding .key-rewards-copy h2 { font-size: 18px; color: var(--tr-color-accent-base); }
+.key-first-onboarding .key-rewards-invitation > .btn { background: transparent; color: var(--tr-color-accent-base); border: 1px solid var(--tr-color-accent-base); padding: 10px 16px; min-height: 44px; text-decoration: none; }
+.key-first-onboarding > .activation-console-link { justify-content: flex-start; justify-self: start; margin-top: 8px; padding: 10px 16px; min-height: 44px; background: transparent; color: var(--tr-color-text-primary); border: 1px solid var(--line); }
+
+.key-first-onboarding .activation-onboarding-agent pre { white-space: pre-wrap; overflow-wrap: anywhere; }

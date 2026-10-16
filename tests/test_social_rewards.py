@@ -64,6 +64,17 @@ def test_claim_before_first_call_is_committed_once():
     assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
 
 
+def test_console_renders_account_scoped_dismissal_and_api_keys_invitation():
+    client, result, _ = _account(activated=False)
+    for path in ("/console/api-keys", "/console/credits", "/console/welcome"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert f'data-rewards-user="{result.user.id}"' in response.text
+    page = client.get("/console/api-keys").text
+    assert "data-rewards-key-card" in page
+    assert "Your next million tokens." in page
+
+
 def test_claims_concurrent_fixed_total_and_destination():
     client, result, settings = _account(activated=False)
     other = STORE.create_workspace(result.user.id, "Other")

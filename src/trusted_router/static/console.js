@@ -207,7 +207,7 @@ async function runFirstActivationCall(button) {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
   if (label)
-    label.textContent = "Routing live request...";
+    label.textContent = "Testing your key...";
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 75000);
   let status = 0;
@@ -274,7 +274,7 @@ async function runFirstActivationCall(button) {
     showActivationError(flow, status);
     button.disabled = false;
     if (label)
-      label.textContent = "Try the live request again";
+      label.textContent = "Try again";
   } finally {
     window.clearTimeout(timeout);
     button.removeAttribute("aria-busy");
@@ -389,9 +389,16 @@ function initConsole() {
   if (checkoutMethod) {
     checkoutMethod.addEventListener("change", updateCheckoutMinimum);
   }
+  const createKeyPanel = document.getElementById("new-api-key");
+  if (createKeyPanel) {
+    createKeyPanel.addEventListener("toggle", () => {
+      if (!createKeyPanel.open) createKeyPanel.hidden = true;
+    });
+  }
   if (window.location.hash === "#new-api-key") {
     const panel = document.getElementById("new-api-key");
     if (panel) {
+      panel.hidden = false;
       panel.open = true;
       window.setTimeout(() => panel.querySelector('input[name="name"]')?.focus(), 100);
     }
@@ -405,6 +412,7 @@ function initConsole() {
       event.preventDefault();
       const panel = document.getElementById("new-api-key");
       if (panel) {
+        panel.hidden = false;
         panel.open = true;
         panel.scrollIntoView({ behavior: "smooth", block: "start" });
         const input = panel.querySelector('input[name="name"]');
@@ -413,6 +421,11 @@ function initConsole() {
         }
       }
       return;
+    }
+    const connectLink = target.closest('a[href="#connect-your-app"]');
+    if (connectLink) {
+      const setup = document.getElementById("connect-your-app");
+      if (setup) setup.open = true;
     }
     const runButton = target.closest('[data-action="run-first-call"]');
     if (runButton) {

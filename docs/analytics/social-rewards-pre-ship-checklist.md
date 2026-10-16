@@ -295,3 +295,70 @@ passed in the fallback environment. All three required uv gates were attempted
 and blocked by the pinned torch 2.12.0 distribution lacking an Intel macOS wheel.
 The fallback full suite stopped during collection with 43 missing-dependency
 errors; full-suite success and coverage are not established. No push or deploy.
+
+## API Keys Invitation Preview
+
+Added a compact, eligible-account rewards card above the key list, after any
+new-key reveal or empty-state creation form. It opens the existing rewards dialog,
+shows claimed progress, and handles paused/completed states without changing
+reward policy. Placement telemetry reuses `api_key_setup`.
+
+Real preview exposed an error in the prior dismissal template: shared rendering
+exposes `user`, not `ctx`. Corrected the dismissal account attribute to `user.id`
+and added a server-rendered regression for API Keys, Credits, and Welcome.
+
+Validation: 29 rewards browser tests passed (including invitation widths 1440,
+390, and 320); 12 targeted server-rendered console tests passed. Ruff passed.
+Desktop and phone previews inspected, including opening the dialog through ngrok.
+The preview is simulated; YouTube remains a preview placeholder.
+
+Compared with current GitHub main API Keys template: key creation, usage/budget
+summaries, editing, alerts, strict admission, disable/enable/delete, and new-key
+copy reminder remain. Earlier presentation changes removed suggested budget
+examples and the `GET /v1/key` explanatory note; these are candidates to restore
+inside the spending disclosure, not evidence-backed removals.
+
+A bounded read-only Axiom query on `trustedrouter-marketing` covering the prior
+30 days returned zero API Keys/rewards observation events. This does not show
+zero console usage or prove the redesign is better. The supplied top-pages image
+lists public landing pages and gives no API Keys control-level usage evidence.
+
+### Welcome screen visual simplification
+
+Restored the `GET /v1/key` remaining-budget tip inside new-key Spending limits and existing-key Edit limits. Removed duplicate decorative 02/03 labels, redundant eyebrows and Ready to run text from onboarding. Shortened the first-request explanation and removed outer borders from the test and connection sections. The early rewards entry is now a mint button, still available before first call under the same eligibility rules. No reward API or claiming behavior changed. Desktop and 390px preview inspected; no mobile horizontal overflow. Rewards browser suite: 29 passed. Full backend validation remains separate and incomplete.
+
+### Onboarding attention hierarchy
+
+Keep saving the one-time key and running the first request primary. Coding-agent instructions now live in a closed-by-default “Use with a coding agent” disclosure below the visible key/copy control. The early rewards button is an outlined secondary action next to the first-request button (wrapping below on phones), instead of preceding key setup. Removed arrows from first-request and early/API Keys reward CTAs. Immediate claiming, eligibility, dismissal, and post-success invitation rules are unchanged. Verified disclosure expansion/collapse and 390px layout in the preview.
+
+### Post-request success cleanup
+
+Success now replaces first-call instructions/actions, with added spacing before confirmation. Fixed the early rewards button's hidden-state CSS so it cannot remain alongside the post-success invitation. Moved PONG into Request details; invitation explains social rewards without prescribing GitHub first. Removed both decorative key containers on welcome while retaining the key field, Copy, workspace destination, one-time warning, and agent disclosure. Browser suite: 29 passed including early-entry disappearance after success; actual preview verified at desktop and 390px. No reward backend behavior changes.
+
+### Collapsed app setup
+
+Welcome setup examples now sit in a closed-by-default Connect your app disclosure, labeled Python, JavaScript or curl. Existing Connect your app anchor opens it. Removed redundant workspace caption beneath the one-time key and the first-request explanatory sentence. Default first-request CTA is Test my key, with Testing your key and Try again states. Reward rules unchanged. Actual preview verified for successful request and setup expansion/collapse at 390px without overflow.
+
+### Approved key-first onboarding (supersedes first-call UI above)
+
+User approved removing the welcome test step and progress tracker. Welcome now leads with Your API key and Copy, retains one-time reveal semantics, keeps coding-agent and SDK setup collapsed, and presents a secondary rewards invitation with existing progress/pause/eligibility handling. No request is required to open rewards. Removed exposure logging for the no-longer-rendered first-call button experiment. Ledger, eligibility, claim, dismissal and backend first-call recording rules unchanged. Phone preview verified at 390px; immediate rewards opening checked. Updated welcome regression expectations for the approved flow.
+
+### Invitation typography cleanup
+
+Removed the invitation eyebrow and separate claimed-count label; detailed progress remains in the dialog and remaining rewards still appear in the invitation sentence after a claim. Both optional setup disclosures use matching 14px regular type, without the extra SDK subtitle. Budget recommendation (not implemented): an optional Spending limits disclosure for the existing signup key, preserving current defaults and enforcement. Main snapshot has create/edit budget controls but none on welcome.
+
+### Layout-only polish
+
+Welcome content constrained to 720px; reduced one-time-save instruction emphasis; adjacent setup disclosure rows use consistent padding without the previous grid gap. Rewards CTA now sits below its copy; Continue is separately left-aligned below. Copy retains the sole filled-button treatment on the initial screen. No text, labels, or behavior changes. Desktop and 390px preview inspected; no horizontal overflow.
+
+### Visual QA: prioritize navigation over setup
+
+Combined coding-agent and SDK setup into one collapsed Connect your app disclosure. Coding agent is the first tab; Python, JavaScript and curl remain available through the existing tab mechanism. Removed the competing outlined setup controls; Continue stays outlined and Copy stays filled. Rewards box preserved. Inspected actual screenshots for collapsed/expanded desktop and 390px phone states, switched to Python, and corrected coding-agent message overflow with wrapping. No reward/backend behavior changes.
+
+### Compact mobile console navigation
+
+At widths up to 800px, console header shows the brand and Menu. Existing workspace selector, navigation, resource links and account controls move into a native modal drawer; desktop restores the same nodes to their original positions. No duplicate form state or navigation destinations. Escape/Close dismisses, navigation links close the drawer, focus returns to Menu, and background scrolling is locked. Without JavaScript, the prior navigation remains available. Desktop sidebar and rewards box styling unchanged. Visual QA covered 390px closed/open drawer and 1440px restored desktop; corrected inherited horizontal sidebar styles found during inspection. Added 320px/390px drawer regression checks for focus containment, dismissal, destinations and resize restoration.
+
+### Mobile navigation decision superseded
+
+User rejected the compact header/drawer because it deviates too far from live main. Reverted that entire shell change and its dedicated tests, restoring the preceding header/sidebar behavior. Key-first onboarding, setup grouping, and rewards presentation remain intact.
