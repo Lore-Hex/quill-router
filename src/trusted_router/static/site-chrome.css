@@ -244,6 +244,9 @@ html {
     gap: 0;
     margin: 0;
     padding: 16px 24px 24px;
+    max-height: calc(100dvh - var(--sticky-header-height));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
     border-bottom: 1px solid var(--tr-color-line-control);
     background: var(--tr-color-surface-control);
   }
@@ -251,6 +254,7 @@ html {
   .trnav nav.open { display: flex; }
 
   .trnav nav a {
+    flex-shrink: 0;
     min-height: 44px;
     padding: 16px 0;
   }
