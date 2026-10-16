@@ -41,6 +41,13 @@ def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: 
             == trusted["completion_price_microdollars_per_million_tokens"]
         )
         speech = trusted.get("speech", {})
+        if "request_price" in speech:
+            assert set(pricing) == {"request"}
+            assert Decimal(pricing["request"]) == Decimal(speech["request_price"])
+            assert Decimal(pricing["request"]) > 0
+            assert trusted["prompt_price_microdollars_per_million_tokens"] == 0
+            assert trusted["completion_price_microdollars_per_million_tokens"] == 0
+            continue
         if "input_character_price_per_million" in speech:
             assert "prompt" not in pricing and "completion" not in pricing
             assert Decimal(pricing["input_character"]) * 1_000_000 == Decimal(
