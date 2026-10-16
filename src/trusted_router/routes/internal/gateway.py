@@ -5043,13 +5043,23 @@ def _settle_leased_authorization(
     except Exception:
         logger.exception("fastpath pilot intent enqueue failed authorization_id=%s", authorization.id)
         raise unavailable from None
-    if enqueued == ENQ_EXISTS_TERMINAL:
-        refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
-        _release_user_model_slot_safely(refreshed)
-        return {"data": _already_settled_gateway_data(refreshed)}
     if enqueued == ENQ_LEASED:
         # A drain holds the row: it asks the front door itself.
         return {"data": _intent_durable_gateway_data(authorization, intent)}
+    # The pending intent fences the reaper (its transaction re-reads the
+    # outbox guard); this read sees a reap that committed before it. A
+    # terminal authorization answers its stored disposition and the front
+    # door is not asked: a reaped hold ends uncharged at its end of life.
+    try:
+        current = STORE.get_gateway_authorization(authorization.id)
+    except Exception:
+        logger.exception("fastpath pilot terminal read failed, left to the drain authorization_id=%s", authorization.id)
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
+    if enqueued == ENQ_EXISTS_TERMINAL or current is None or current.settled:
+        refreshed = current or authorization
+        _release_user_model_slot_safely(refreshed)
+        return {"data": _already_settled_gateway_data(refreshed)}
+    authorization = current
     try:
         decision = fastpath_settle.forward_terminal(
             _fastpath_front_door(settings), authorization, success=success, charge=charge, generation=generation,
