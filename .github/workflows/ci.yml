@@ -162,6 +162,10 @@ jobs:
         # The committed weights understate real work; observed wall times
         # are four to five times the estimates. These are estimates, not
         # timeout bounds, and exclude queue delay.
+        # Refresh durations from CI artifacts (including service-backed tests):
+        #   gh run download <run> -p 'durations-*' -D /tmp/ci-durations
+        #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/merged-durations.json
+        # Review the output, copy it to .test_durations, and commit.
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     runs-on: ubuntu-latest
     env:
@@ -215,6 +219,9 @@ jobs:
       # concurrent schema changes -- measured 14 setup errors under plain -n 4,
       # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
       # order-independent; grouping is what serializes the DDL.
+      - name: Copy split weights for this shard
+        # --durations-path is both the split input and the recording output.
+        run: cp .test_durations durations-${{ matrix.shard }}.json
       - name: Tests and coverage
         # least_duration is greedy per-test bin-packing. The default
         # duration_based_chunks cuts CONTIGUOUS slices of collection order,
@@ -229,8 +236,7 @@ jobs:
         # waiting for it. The critical path is the slowest shard, so balance is
         # the whole point -- 1164s of test time over 4 shards is ~291s each.
         #
-        # Regenerate after a large test-suite change:
-        #   uv run pytest -n 4 --dist loadgroup --store-durations --clean-durations
+        # Refresh from the CI duration artifacts as described above the matrix.
         # Stale durations degrade gracefully: unknown tests are distributed by
         # count, so a missing entry costs balance, not correctness.
         #
@@ -244,7 +250,15 @@ jobs:
           -m "not provider_health and not proof_oracle"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
+          --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
           --cov=trusted_router --cov-report=
+      - name: Upload this shard's durations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: durations-default-${{ matrix.shard }}
+          path: durations-${{ matrix.shard }}.json
+          retention-days: 7
       - name: Stash this shard's coverage
         # Renamed off the dotfile before upload. `.coverage` is hidden, and
         # upload-artifact only stopped skipping hidden files behind an opt-in
@@ -371,12 +385,23 @@ jobs:
               env.write(f"TR_LIFECYCLE_CLOCK_OVERRIDE={stamp}\n")
           print(f"lifecycle clock pinned to {stamp}")
           '
+      - name: Copy split weights for this shard
+        # --durations-path is both the split input and the recording output.
+        run: cp .test_durations durations-${{ matrix.shard }}.json
       - name: Tests with every scheduled cutover already past
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           -m "not provider_health and not proof_oracle"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
+          --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
+      - name: Upload this shard's durations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: durations-post-cutover-${{ matrix.shard }}
+          path: durations-${{ matrix.shard }}.json
+          retention-days: 7
 
   # Frozen reference tracing is intentionally separate from coverage tracing.
   # Both lifecycle clocks retain the complete matrix; no cloud identity needed.
