@@ -25,7 +25,7 @@ def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
         job = jobs[name]
         count = int(job["env"]["TEST_SHARDS"])
         assert job["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
-        assert job["timeout-minutes"] == 25
+        assert job["timeout-minutes"] == 35
         assert job["strategy"]["fail-fast"] is False
         assert "continue-on-error" not in job
     assert jobs["coverage"]["needs"] == "test"

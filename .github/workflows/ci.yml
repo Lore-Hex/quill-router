@@ -131,7 +131,18 @@ jobs:
     # while every sibling finished in under 9 minutes. pytest-timeout=600
     # bounds a hung TEST, but not collection, fixture teardown, or a wedged
     # xdist worker — this bounds the job whatever wedges.
-    timeout-minutes: 25
+    #
+    # 25 minutes then started cutting off shards that were finishing: on
+    # 2026-10-15 runs 38778257165, 38786461389 and 38809305127 cancelled
+    # five shards at 96-99% with no failing test, and rerunning two of them
+    # cancelled them again at the same point, so it was weight, not a wedge.
+    # A shard spends about five minutes before its first test (checkout, uv
+    # sync, collecting 36k tests under coverage, four workers) and its last
+    # few percent can take six minutes while one worker holds a long test.
+    # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
+    # finishing shard alone; main's slowest shard on twelve shards took
+    # 20.1 minutes (38808849971).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -318,7 +329,18 @@ jobs:
     # while every sibling finished in under 9 minutes. pytest-timeout=600
     # bounds a hung TEST, but not collection, fixture teardown, or a wedged
     # xdist worker — this bounds the job whatever wedges.
-    timeout-minutes: 25
+    #
+    # 25 minutes then started cutting off shards that were finishing: on
+    # 2026-10-15 runs 38778257165, 38786461389 and 38809305127 cancelled
+    # five shards at 96-99% with no failing test, and rerunning two of them
+    # cancelled them again at the same point, so it was weight, not a wedge.
+    # A shard spends about five minutes before its first test (checkout, uv
+    # sync, collecting 36k tests under coverage, four workers) and its last
+    # few percent can take six minutes while one worker holds a long test.
+    # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
+    # finishing shard alone; main's slowest shard on twelve shards took
+    # 20.1 minutes (38808849971).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
