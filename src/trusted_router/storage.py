@@ -2110,12 +2110,14 @@ class InMemoryStore:
             return "applied"
 
     def credit_workspace_once(
-        self, workspace_id: str, amount_microdollars: int, event_id: str
+        self, workspace_id: str, amount_microdollars: int, event_id: str,
+        *, required_owner_user_id: str | None = None,
     ) -> bool:
         return self.credit_workspace_typed_direct(
             workspace_id,
             amount_microdollars,
             event_id,
+            required_owner_user_id=required_owner_user_id,
             provenance=CreditProvenance(
                 source="grant",
                 provider="system",
@@ -2134,8 +2136,16 @@ class InMemoryStore:
         payment_amount_microdollars: int | None = None,
         currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
+        required_owner_user_id: str | None = None,
     ) -> bool:
         with self._lock:
+            # Serialize eligibility with the grant and ownership/deletion updates.
+            # Omitted by existing payment callers to preserve their semantics.
+            if required_owner_user_id is not None:
+                workspace = self.workspaces.get(workspace_id)
+                if (workspace is None or workspace.deleted
+                        or workspace.owner_user_id != required_owner_user_id):
+                    raise ValueError("credit_workspace_owner_mismatch")
             if event_id in self.stripe_events:
                 return False
             money = self.credit_money.get(workspace_id)

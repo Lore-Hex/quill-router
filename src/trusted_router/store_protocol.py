@@ -769,9 +769,11 @@ class Store(Protocol):
         payment_amount_microdollars: int | None = ...,
         currency: str | None = ...,
         lifetime_topup_user_id: str | None = ...,
+        required_owner_user_id: str | None = ...,
     ) -> bool: ...
     def credit_workspace_once(
-        self, workspace_id: str, amount_microdollars: int, event_id: str
+        self, workspace_id: str, amount_microdollars: int, event_id: str,
+        *, required_owner_user_id: str | None = ...,
     ) -> bool: ...
     def record_adverse_trust_event(
         self, event: AdverseTrustEvent

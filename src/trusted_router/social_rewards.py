@@ -127,9 +127,15 @@ def claim(user_id: str, action: str, settings: Settings) -> dict[str, Any]:
     enrollment = require_offer(user_id, settings)
     if action not in {item[0] for item in ACTIONS}:
         raise HTTPException(422, "Unknown reward action.")
-    credited = STORE.credit_workspace_once(
-        enrollment.workspace_id, ACTION_MICRODOLLARS, claim_event_id(user_id, action)
-    )
+    try:
+        credited = STORE.credit_workspace_once(
+            enrollment.workspace_id, ACTION_MICRODOLLARS, claim_event_id(user_id, action),
+            required_owner_user_id=user_id,
+        )
+    except ValueError as exc:
+        if str(exc) != "credit_workspace_owner_mismatch":
+            raise
+        raise HTTPException(403, "This workspace is no longer eligible for this offer.") from exc
     if credited:
         try:
             from trusted_router.acquisition import _log_conversion

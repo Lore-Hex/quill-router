@@ -41,6 +41,7 @@ BROWSER_EVENTS = frozenset(
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
         "experiment_exposed",
         "social_rewards_exposed", "social_reward_clicked",
+        "console_api_keys_viewed", "social_rewards_invitation_viewed", "social_rewards_opened",
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",
         "home.base_url_copied", "home.hero_agent_prompt_copied", "home.agent_prompt_copied",
         "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
@@ -72,7 +73,7 @@ EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_doma
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
 FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain",
-          "page_path",
+          "page_path", "device_category", "reward_placement", "reward_action", "observation_id",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
@@ -217,6 +218,21 @@ def project_event(
                 output["finish_reason"] = finish
         # Replayed delivery of one attempt event must not inflate attempts.
         identity = [source, event, fingerprint, attempt]
+    if event in {"acquisition.console_api_keys_viewed", "acquisition.social_rewards_invitation_viewed",
+                 "acquisition.social_rewards_opened", "acquisition.social_reward_clicked",
+                 "acquisition.social_reward_claimed"}:
+        if row.get("device_category") in {"desktop", "mobile", "tablet", "unknown"}:
+            output["device_category"] = row["device_category"]
+        if event == "acquisition.console_api_keys_viewed":
+            output["page_path"] = "/console/api-keys"
+        if row.get("reward_placement") in {"api_key_setup", "first_request_success", "credits", "console_fallback"}:
+            output["reward_placement"] = row["reward_placement"]
+        if row.get("reward_action") in {"github", "x_trustedrouter", "x_founder", "linkedin", "youtube"}:
+            output["reward_action"] = row["reward_action"]
+        if row.get("observation_id"):
+            observation = str(UUID(str(row["observation_id"])))
+            output["observation_id"] = observation
+            identity = [source, event, fingerprint, observation]
     output["event_id"] = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
     return output
 

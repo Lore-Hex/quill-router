@@ -15,26 +15,20 @@
   </ol>
 
   <div class="activation-balance">
-    <span>Starting credit <strong>${{ "%.2f"|format(trial_credit_microdollars / 1000000) }}</strong></span>
     <button class="activation-rewards-link" type="button" data-rewards-open data-rewards-early hidden>Earn extra tokens</button>
   </div>
 
   <section class="panel activation-key-panel">
     <div class="panel-head">
-      <div>
-        <p class="activation-eyebrow">Your API key</p>
-        <h2>Save it now</h2>
-      </div>
-      <span class="pill warn">one time reveal</span>
+      <h2>Save your key. It won’t be shown again.</h2>
     </div>
     <div class="panel-body">
       <div class="activation-code-panel activation-onboarding-agent">
-        <div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy message</button></div>
+        <div class="activation-code-head"><strong>Paste this into your coding agent.</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy message</button></div>
         <pre id="welcome-agent-message" data-copy-lines>{{ agent_chat_prompt(revealed_key) }}</pre>
         <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
       </div>
       {{ api_key_reveal(revealed_key, "welcome", workspace_name, False) }}
-      <p class="activation-security-note">This one-time reveal contains the complete key. TrustedRouter stores its salted hash.</p>
     </div>
   </section>
 

@@ -24,6 +24,7 @@ async function rewardsPage(page, options = {}) {
   await page.route("**/console/social-rewards**", async (route) => {
     const request = route.request();
     requests.push({ method: request.method(), url: request.url(), body: request.postDataJSON() });
+    if (request.method() === "GET" && options.status) return options.status(route, state);
     if (request.url().endsWith("/shown")) {
       const showNow = !state.dismissed;
       state.dismissed = true;
@@ -110,6 +111,54 @@ test("outbound click does not claim; explicit attestation commits one action", a
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
   await expect(page.getByRole("button", { name: "✓ Claimed" })).toBeDisabled();
   expect(requests.find((r) => r.url.endsWith("/claim")).body).toEqual({ action: "github", attested: true });
+});
+
+test("failed manual dismissal survives reload, retries, and still permits reopening", async ({ page }) => {
+  const { state, requests } = await rewardsPage(page, { state: { first_call_complete: false } });
+  const opener = page.getByRole("button", { name: "Social rewards", exact: true });
+  await opener.click();
+  let failDismissal = true;
+  await page.route("**/console/social-rewards/dismiss", async (route) => {
+    if (failDismissal) return route.abort();
+    state.dismissed = true;
+    return route.fulfill({ json: state });
+  });
+  await page.getByRole("button", { name: "Skip for now" }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(state.dismissed).toBe(false);
+  state.first_call_complete = true;
+  await page.reload();
+  await expect(opener).toBeVisible();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(requests.some((r) => r.url.endsWith("/shown"))).toBe(false);
+  failDismissal = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => state.dismissed).toBe(true);
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await opener.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+test("manual dismissal suppresses popups when browser storage is blocked", async ({ page }) => {
+  await page.addInitScript(() => {
+    Storage.prototype.getItem = Storage.prototype.setItem = () => { throw new Error("blocked"); };
+  });
+  const { state, requests } = await rewardsPage(page, { state: { first_call_complete: false } });
+  await page.getByRole("button", { name: "Social rewards", exact: true }).click();
+  await page.route("**/console/social-rewards/dismiss", (route) => route.abort());
+  await page.keyboard.press("Escape");
+  state.first_call_complete = true;
+  const response = page.waitForResponse((r) => r.url().endsWith("/console/social-rewards"));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await response;
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(requests.some((r) => r.url.endsWith("/shown"))).toBe(false);
+});
+
+test("another accounts local dismissal does not suppress this accounts offer", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("social-rewards-v1:dismissed:another-user", "1"));
+  await rewardsPage(page);
+  await expect(page.getByRole("dialog")).toBeVisible();
 });
 
 test("reward button opens its destination before enabling only that claim", async ({ page }) => {
@@ -261,4 +310,51 @@ for (const width of [1440, 390, 320]) {
   await page.getByRole("button", { name: "Claim 200K tokens" }).click();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
   expect(requests.filter(r => r.url.endsWith("/claim"))).toHaveLength(1);
+});
+
+test("analytics distinguish visible invitations, flow opens, and platform clicks", async ({ page }) => {
+  const { requests } = await rewardsPage(page, { welcome: true,
+    state: { first_call_complete: false, dismissed: true } });
+  const observations = () => requests.filter((r) => r.url.endsWith("/observe")).map((r) => r.body);
+  await expect.poll(() => observations().some((r) => r.event === "social_rewards_invitation_viewed"
+    && r.placement === "api_key_setup")).toBe(true);
+  await page.getByRole("button", { name: "Earn extra tokens", exact: true }).click();
+  await expect.poll(() => observations().some((r) => r.event === "social_rewards_opened"
+    && r.placement === "api_key_setup")).toBe(true);
+  await page.locator('[data-reward-id="github"] a').click();
+  await expect.poll(() => observations().some((r) => r.event === "social_reward_clicked"
+    && r.action === "github" && r.placement === "api_key_setup")).toBe(true);
+  expect(observations().filter((r) => r.event === "social_rewards_invitation_viewed"
+    && r.placement === "api_key_setup")).toHaveLength(1);
+  expect(new Set(observations().map((r) => r.observation_id)).size).toBe(observations().length);
+});
+
+
+test("lost claim response and unavailable reconciliation remain safely retryable", async ({ page }) => {
+  let claimed = false;
+  let failStatus = false;
+  let grants = 0;
+  const { requests } = await rewardsPage(page, {
+    status: (route, state) => failStatus
+      ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: state }),
+    claim: (route, state) => {
+      if (!claimed) {
+        claimed = true; grants += 1; state.actions[0].claimed = true; failStatus = true;
+        return route.abort("failed");
+      }
+      return route.fulfill({ json: state });
+    },
+  });
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
+  await (await popupPromise).close();
+  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
+  await page.getByRole("button", { name: "Claim 200K tokens" }).click();
+  await expect(page.getByRole("button", { name: "Retry claim" })).toBeEnabled();
+  failStatus = false;
+  await page.getByRole("button", { name: "Retry claim" }).click();
+  await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
+  expect(grants).toBe(1);
+  expect(requests.filter((r) => r.url.endsWith("/claim")).map((r) => r.body))
+    .toEqual([{ action: "github", attested: true }, { action: "github", attested: true }]);
 });
