@@ -4,12 +4,13 @@ from __future__ import annotations
 import logging
 from typing import Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StrictBool, field_validator
 
-from trusted_router.acquisition import log_browser_funnel_event
+from trusted_router.acquisition import log_browser_funnel_event, track_console
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
@@ -25,6 +26,14 @@ _HEADERS = {"Cache-Control": "private, no-store", "Vary": "Cookie"}
 class ActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     action: Literal["github", "x_trustedrouter", "x_founder", "linkedin", "youtube"]
+
+
+class ObservationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event: Literal["social_rewards_invitation_viewed", "social_rewards_opened", "social_reward_clicked"]
+    placement: Literal["api_key_setup", "first_request_success", "credits", "console_fallback"]
+    action: Literal["github", "x_trustedrouter", "x_founder", "linkedin", "youtube"] | None = None
+    observation_id: UUID
 
 
 class ClaimRequest(ActionRequest):
@@ -67,6 +76,19 @@ def _same_origin(request: Request, settings: Settings) -> None:
 
 
 def register(app: FastAPI) -> None:
+    @app.post("/console/social-rewards/observe")
+    def reward_observe(
+        request: Request, body: ObservationRequest, ctx: ConsoleDep, settings: SettingsDep,
+    ) -> JSONResponse:
+        _same_origin(request, settings)
+        require_offer(ctx.user.id, settings)
+        if (body.event == "social_reward_clicked") != (body.action is not None):
+            raise HTTPException(422, "Action is required only for platform clicks.")
+        track_console(request, settings, ctx.user.id, body.event,
+                      placement=body.placement, action=body.action or "",
+                      observation_id=str(body.observation_id))
+        return JSONResponse({"recorded": True}, headers=_HEADERS)
+
     @app.get("/console/social-rewards")
     def reward_status(ctx: ConsoleDep, settings: SettingsDep) -> JSONResponse:
         return JSONResponse(status(ctx.user.id, settings), headers=_HEADERS)

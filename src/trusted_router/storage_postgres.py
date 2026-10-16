@@ -4650,8 +4650,16 @@ class PostgresStore:
         payment_amount_microdollars: int | None = None,
         currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
+        required_owner_user_id: str | None = None,
     ) -> bool:
         def credit(conn: Any) -> bool:
+            # Serialize eligibility with the grant and ownership/deletion updates.
+            # Omitted by existing payment callers to preserve their semantics.
+            if required_owner_user_id is not None:
+                workspace = self._read_entity_tx(conn, "workspace", workspace_id, Workspace, for_update=True)
+                if (workspace is None or workspace.deleted
+                        or workspace.owner_user_id != required_owner_user_id):
+                    raise ValueError("credit_workspace_owner_mismatch")
             marker_body: dict[str, Any] = {
                 "created_at": iso_now(),
                 "workspace_id": workspace_id,
@@ -4742,11 +4750,13 @@ class PostgresStore:
         workspace_id: str,
         amount_microdollars: int,
         event_id: str,
+        *, required_owner_user_id: str | None = None,
     ) -> bool:
         return self.credit_workspace_typed_direct(
             workspace_id,
             amount_microdollars,
             event_id,
+            required_owner_user_id=required_owner_user_id,
             provenance=CreditProvenance(
                 source="grant",
                 provider="system",

@@ -1260,14 +1260,6 @@ body.console {
   margin-top: 14px;
 }
 
-.activation-security-note {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  text-wrap: pretty;
-}
-
 .activation-panel-head {
   align-items: flex-start;
   gap: 18px;
@@ -1797,7 +1789,34 @@ body.console {
 
 /* A quiet balance row keeps key setup as the primary onboarding task. */
 .activation-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; color: var(--muted); font-size: 13px; }
-.activation-balance strong { color: var(--tr-color-text-primary); margin-left: 6px; }
 .activation-rewards-link { padding: 0; border: 0; background: none; color: var(--tr-color-text-primary); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .activation-rewards-link:hover { text-decoration-thickness: 2px; }
 .activation-rewards-link:focus-visible { outline: 2px solid currentcolor; outline-offset: 5px; }
+
+/* Key management: summaries first, editing on demand. */
+.key-list-panel { background: transparent; border: 0; }
+.key-list-panel > .panel-head { padding: 0 0 18px; }
+.key-list-panel > .panel-body { padding: 0; }
+.key-label { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.key-list-panel .key-budget-current { margin: 0 0 8px; font-size: 13px; }
+.key-limit-editor > summary,
+.key-spending-options > summary { cursor: pointer; color: var(--tr-color-text-primary); font-size: 13px; padding: 8px 0; }
+.key-limit-editor[open] { min-width: 300px; }
+.key-limit-editor .key-budget-form { display: flex; flex-direction: column; align-items: stretch; margin: 8px 0; }
+.key-limit-editor .key-budget-form > .btn { align-self: flex-start; }
+.key-spending-options .key-budget-grid { margin: 12px 0; }
+.key-spending-options .budget-action-check { margin-top: 16px; }
+.key-create-panel > summary { cursor: pointer; font-size: 15px; font-weight: 600; }
+.key-create-panel:not([open]) { border: 0; }
+.key-create-panel:not([open]) > summary { padding: 12px 0; color: var(--muted); }
+.key-create-panel .form { max-width: 640px; }
+.key-create-panel .form > .btn { align-self: flex-start; width: auto; }
+
+@media (max-width: 720px) {
+  .key-list-panel .keys-table tr { border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 16px 0; }
+  .key-list-panel .keys-table td[data-col="Key"]::before,
+  .key-list-panel .keys-table td[data-col="Actions"]::before { display: none; }
+  .key-list-panel .keys-table td[data-col="Key"] strong { font-size: 16px; }
+  .key-limit-editor[open] { min-width: 0; }
+  .key-spending-options .key-budget-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

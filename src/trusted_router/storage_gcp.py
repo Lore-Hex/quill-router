@@ -3189,8 +3189,16 @@ class SpannerStore:
         payment_amount_microdollars: int | None = None,
         currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
+        required_owner_user_id: str | None = None,
     ) -> bool:
         def txn(transaction: Any) -> tuple[bool, tuple[AdverseTrustResult, ...]]:
+            # Serialize eligibility with the grant and ownership/deletion updates.
+            # Omitted by existing payment callers to preserve their semantics.
+            if required_owner_user_id is not None:
+                workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+                if (workspace is None or workspace.deleted
+                        or workspace.owner_user_id != required_owner_user_id):
+                    raise ValueError("credit_workspace_owner_mismatch")
             if self._read_entity_tx(transaction, "stripe_event", event_id, dict) is not None:
                 return False, ()
             amount = int(amount_microdollars)
@@ -3378,12 +3386,14 @@ class SpannerStore:
             return tuple(TrustInboxRow(*row) for row in rows)
 
     def credit_workspace_once(
-        self, workspace_id: str, amount_microdollars: int, event_id: str
+        self, workspace_id: str, amount_microdollars: int, event_id: str,
+        *, required_owner_user_id: str | None = None,
     ) -> bool:
         return self.credit_workspace_typed_direct(
             workspace_id,
             amount_microdollars,
             event_id,
+            required_owner_user_id=required_owner_user_id,
             provenance=CreditProvenance(
                 source="grant",
                 provider="system",

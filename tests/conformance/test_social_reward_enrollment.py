@@ -121,8 +121,22 @@ def test_spending_signup_credit_does_not_reset_campaign(store: Store, unique: st
     enrollment = store.get_social_reward_enrollment(user.id)
     assert enrollment is not None
     _, key = store.create_api_key(workspace_id=enrollment.workspace_id, name="spend", creator_user_id=user.id)
-    reservation = store.reserve(enrollment.workspace_id, key.hash, 150_000)
-    store.settle(reservation.id, 150_000)
+    if hasattr(store, "authorize_gateway_typed"):
+        outcome, authorization = store.authorize_gateway_typed(
+            workspace_id=enrollment.workspace_id, key_hash=key.hash, estimate=150_000,
+            has_credit_candidate=True, reservation_usage_type="Credits",
+            model_id="test", provider="test", requested_model_id="test",
+            candidate_model_ids=["test"], region=None, endpoint_id=None,
+            candidate_endpoint_ids=[], idempotency_key=None, idempotency_fingerprint=None,
+        )
+        assert authorization is not None, outcome
+        assert store.typed_finalize_gateway_authorization(
+            authorization.id, success=True, actual_microdollars=150_000,
+            selected_usage_type="Credits",
+        )
+    else:
+        reservation = store.reserve(enrollment.workspace_id, key.hash, 150_000)
+        store.settle(reservation.id, 150_000)
     for action in range(5):
         event = f"social-rewards:{user.id}:{action}"
         assert store.credit_workspace_once(enrollment.workspace_id, 30_000, event)
@@ -132,3 +146,40 @@ def test_spending_signup_credit_does_not_reset_campaign(store: Store, unique: st
     assert summary["total_credits"] == 300_000
     assert summary["total_usage"] == 150_000
     assert summary["available"] == 150_000
+
+
+@pytest.mark.parametrize('change', ['transfer', 'delete', 'missing'])
+def test_conditional_grant_rejects_invalid_owner_without_receipt(store: Store, unique: str, change: str) -> None:
+    user = store.ensure_user(f'guard-{unique}@example.com', trial_credit_microdollars=150_000,
+                             social_rewards_issuer='primary')
+    enrollment = store.get_social_reward_enrollment(user.id)
+    assert enrollment is not None
+    workspace_id = enrollment.workspace_id
+    if change == 'transfer':
+        other = store.ensure_user(f'new-owner-{unique}@example.com')
+        store.transfer_workspace_ownership(workspace_id, other.id)
+    elif change == 'delete':
+        store.update_workspace(workspace_id, deleted=True)
+    else:
+        workspace_id = f'missing-{unique}'
+    event = f'guard:{unique}:github'
+    with pytest.raises(ValueError, match='credit_workspace_owner_mismatch'):
+        store.credit_workspace_once(workspace_id, 30_000, event, required_owner_user_id=user.id)
+    assert not store.has_credit_grant(workspace_id, event)
+    summary = live_credit_summary(enrollment.workspace_id, store=store)
+    assert summary is not None and summary['total_credits'] == 150_000
+
+
+def test_conditional_grant_retains_exactly_once_behavior(store: Store, unique: str) -> None:
+    user = store.ensure_user(f'owner-{unique}@example.com', trial_credit_microdollars=150_000,
+                             social_rewards_issuer='primary')
+    enrollment = store.get_social_reward_enrollment(user.id)
+    assert enrollment is not None
+    event = f'owner:{unique}:github'
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: store.credit_workspace_once(
+            enrollment.workspace_id, 30_000, event, required_owner_user_id=user.id), range(4)))
+    assert results.count(True) == 1
+    assert store.has_credit_grant(enrollment.workspace_id, event)
+    summary = live_credit_summary(enrollment.workspace_id, store=store)
+    assert summary is not None and summary['total_credits'] == 180_000

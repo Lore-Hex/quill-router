@@ -6,11 +6,42 @@
   const list = dialog.querySelector("[data-rewards-list]");
   const notice = dialog.querySelector("[data-rewards-notice]");
   const openers = document.querySelectorAll("[data-rewards-open]");
+  const dismissalKey = `social-rewards-v1:dismissed:${dialog.dataset.rewardsUser}`;
+  let locallyDismissed = false;
+  try { locallyDismissed = localStorage.getItem(dismissalKey) === "1"; } catch { /* Storage may be blocked. */ }
   const pending = new Set();
   const errors = new Set();
   const opened = new Set();
   const confirmed = new Set();
   let activeAction;
+  let placement = "console_fallback";
+  const impressions = new Set();
+  function observe(event, action, source = placement) {
+    if (!crypto.randomUUID) return;
+    request("/observe", { event, placement: source, ...(action ? { action } : {}),
+      observation_id: crypto.randomUUID() }).catch(() => {});
+  }
+  function openerPlacement(button) {
+    return button.hasAttribute("data-rewards-early") ? "api_key_setup"
+      : button.hasAttribute("data-rewards-success") ? "first_request_success"
+        : location.pathname === "/console/credits" ? "credits" : "console_fallback";
+  }
+  const impressionObserver = typeof IntersectionObserver === "undefined" ? null
+    : new IntersectionObserver((entries) => {
+      entries.forEach(({ target, isIntersecting }) => {
+        const source = openerPlacement(target);
+        if (!isIntersecting || target.hidden || impressions.has(source)
+            || document.visibilityState !== "visible" || !state?.enabled || !state?.eligible) return;
+        impressions.add(source);
+        observe("social_rewards_invitation_viewed", null, source);
+      });
+    });
+  openers.forEach((button) => impressionObserver?.observe(button));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") openers.forEach((button) => {
+      impressionObserver?.unobserve(button); impressionObserver?.observe(button);
+    });
+  });
   const presentation = {
     github: ["GitHub", "Star the repository", "Star", "I starred Lore-Hex/quill-router on GitHub.", "On GitHub, sign in and select Star at the top of the repository."],
     x_trustedrouter: ["X", "Follow @TrustedRouter", "Follow", "I followed @TrustedRouter on X.", "On X, select Follow on the @TrustedRouter profile."],
@@ -64,7 +95,7 @@
   }
 
   function render(next) {
-    state = next;
+    state = { ...next, dismissed: next.dismissed || locallyDismissed };
     const ready = Boolean(state.eligible && state.enabled && state.first_call_complete
       && document.querySelector("[data-call-result]:not([hidden])"));
     if (invitation) invitation.hidden = !ready;
@@ -108,7 +139,7 @@
           opened.add(action.id);
           activeAction = action.id;
           render(state);
-          request("/clicked", { action: action.id }).catch(() => {});
+          observe("social_reward_clicked", action.id);
         });
         link.setAttribute("aria-label", `${action.label} (opens a new tab)`);
         const amount = document.createElement("p");
@@ -184,10 +215,12 @@
     }
   }
 
-  function open() {
+  function open(source = "console_fallback") {
     if (dialog.open) return;
     returningFocus = document.activeElement;
     dialog.showModal();
+    placement = source;
+    observe("social_rewards_opened");
     dialog.querySelector("h2").focus();
   }
   function canAutoOpen() {
@@ -201,6 +234,11 @@
     try {
       const next = await request();
       if (current !== generation) return;
+      if (locallyDismissed && next.eligible && !next.dismissed) {
+        // Retry an offline dismissal before considering automatic display.
+        try { await request("/dismiss", {}); } catch { /* Retain local suppression for the next visit. */ }
+        if (current !== generation) return;
+      }
       render(next);
       // Showing the invitation consumes the automatic offer, so continuing
       // to the console does not immediately interrupt the user with a modal.
@@ -223,13 +261,16 @@
     }
   }
   function dismiss() {
+    locallyDismissed = true;
+    generation += 1; // Invalidate any automatic opening already in flight.
+    try { localStorage.setItem(dismissalKey, "1"); } catch { /* Keep suppression in memory. */ }
     dialog.close();
     request("/dismiss", {}).catch(() => {
-      // Automatic display was durably suppressed before opening. A failed
-      // explicit dismissal therefore cannot cause repeat automatic popups.
+      // Manual opening may precede /shown. Refresh retries this preference;
+      // the account-scoped local marker also survives navigation and reload.
     });
   }
-  openers.forEach((button) => button.addEventListener("click", () => { open(); refresh(); }));
+  openers.forEach((button) => button.addEventListener("click", () => { open(openerPlacement(button)); refresh(); }));
   dialog.querySelectorAll("[data-rewards-close]").forEach((button) => button.addEventListener("click", dismiss));
   dialog.addEventListener("keydown", (event) => {
     if (event.key !== "Tab") return;

@@ -405,6 +405,7 @@ function initConsole() {
       event.preventDefault();
       const panel = document.getElementById("new-api-key");
       if (panel) {
+        panel.open = true;
         panel.scrollIntoView({ behavior: "smooth", block: "start" });
         const input = panel.querySelector('input[name="name"]');
         if (input) {

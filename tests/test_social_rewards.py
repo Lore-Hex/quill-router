@@ -83,8 +83,8 @@ def test_uncertain_commit_is_reconciled_and_retry_does_not_pay_twice(monkeypatch
     client, result, _ = _account()
     original = InMemoryStore.credit_workspace_once
 
-    def commit_then_disconnect(self, workspace_id, amount_microdollars, event_id):
-        original(self, workspace_id, amount_microdollars, event_id)
+    def commit_then_disconnect(self, workspace_id, amount_microdollars, event_id, **kwargs):
+        original(self, workspace_id, amount_microdollars, event_id, **kwargs)
         raise TimeoutError("lost response after commit")
 
     with monkeypatch.context() as patcher:
@@ -105,7 +105,8 @@ def test_uncertain_commit_is_reconciled_and_retry_does_not_pay_twice(monkeypatch
 ])
 def test_forged_claims_rejected(body):
     client, result, _ = _account()
-    assert _post(client, **body).status_code == 422
+    # The application maps request-model validation failures to HTTP 400.
+    assert _post(client, **body).status_code == 400
     assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
 
 
@@ -249,3 +250,161 @@ def test_original_destination_must_still_be_owned_and_active(change):
     # Keep an accessible workspace so console authentication can resolve.
     STORE.create_workspace(result.user.id, "Remaining")
     assert _post(client, action="github", attested=True).status_code == 403
+
+
+def test_observation_requires_auth_origin_and_allowlisted_metadata(monkeypatch):
+    from trusted_router.routes.console import social_rewards
+
+    client, result, _ = _account()
+    seen = []
+    monkeypatch.setattr(social_rewards, 'track_console', lambda *args, **kwargs: seen.append((args, kwargs)))
+    body = {'event': 'social_reward_clicked', 'placement': 'api_key_setup', 'action': 'github',
+            'observation_id': '84c35821-8c8f-48ea-8aba-19724a965078'}
+    assert _post(client, 'observe', **body).status_code == 200
+    assert seen[0][0][2] == result.user.id
+    assert seen[0][1]['action'] == 'github'
+    assert client.post('/console/social-rewards/observe', json=body).status_code == 403
+    assert _post(client, 'observe', **{**body, 'action': 'private'}).status_code == 400
+    assert _post(client, 'observe', **{**body, 'event': 'social_reward_claimed'}).status_code == 400
+    assert _post(client, 'observe', **{**body, 'action': None}).status_code == 422
+    client.cookies.clear()
+    assert client.post('/console/social-rewards/observe', json=body,
+                       headers={'Origin': 'http://testserver'}, follow_redirects=False).status_code == 302
+
+
+def test_failure_before_commit_leaves_no_receipt_and_retry_grants_once(monkeypatch):
+    from trusted_router.social_rewards import claim_event_id
+
+    client, result, _ = _account()
+
+    def unavailable(*args, **kwargs):
+        raise TimeoutError('failed before commit')
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(InMemoryStore, 'credit_workspace_once', unavailable)
+        assert _post(client, action='github', attested=True).status_code == 500
+    assert not STORE.has_credit_grant(result.workspace.id, claim_event_id(result.user.id, 'github'))
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
+    for _ in range(2):
+        assert _post(client, action='github', attested=True).status_code == 200
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+
+
+def test_status_read_failure_after_commit_does_not_repeat_credit(monkeypatch):
+    client, result, _ = _account()
+
+    def unavailable(*args, **kwargs):
+        raise TimeoutError('receipt read unavailable')
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(InMemoryStore, 'has_credit_grant', unavailable)
+        assert _post(client, action='github', attested=True).status_code == 500
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+    assert _post(client, action='github', attested=True).json()['actions'][0]['claimed']
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+
+
+def test_pause_after_commit_preserves_receipt_and_resume_does_not_repeat():
+    from fastapi import HTTPException
+
+    from trusted_router.social_rewards import status
+
+    _, result, settings = _account()
+    claim(result.user.id, 'github', settings)
+    paused = settings.model_copy(update={'social_rewards_enabled': False})
+    with pytest.raises(HTTPException) as error:
+        claim(result.user.id, 'github', paused)
+    assert error.value.status_code == 409
+    progress = status(result.user.id, paused)
+    assert not progress['enabled'] and progress['actions'][0]['claimed']
+    claim(result.user.id, 'github', settings)
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
+
+
+def test_claim_requires_authenticated_session_and_cannot_supply_identity():
+    client, result, _ = _account()
+    assert _post(client, action='github', attested=True, user_id=result.user.id).status_code == 400
+    client.cookies.clear()
+    response = client.post('/console/social-rewards/claim',
+                           json={'action': 'github', 'attested': True},
+                           headers={'Origin': 'http://testserver'}, follow_redirects=False)
+    assert response.status_code == 302
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
+
+
+def test_ownership_return_restores_only_original_users_remaining_claims():
+    from fastapi import HTTPException
+
+    from trusted_router.social_rewards import status
+
+    _, result, settings = _account(activated=False)
+    claim(result.user.id, "github", settings)
+    other = STORE.ensure_user("transfer-recipient@gmail.com")
+    STORE.transfer_workspace_ownership(result.workspace.id, other.id)
+    for user_id in (result.user.id, other.id):
+        assert not status(user_id, settings)["eligible"]
+        with pytest.raises(HTTPException) as error:
+            claim(user_id, "youtube", settings)
+        assert error.value.status_code == 403
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
+
+    STORE.transfer_workspace_ownership(result.workspace.id, result.user.id)
+    restored = status(result.user.id, settings)
+    assert restored["eligible"]
+    assert [a["id"] for a in restored["actions"] if a["claimed"]] == ["github"]
+    claim(result.user.id, "github", settings)
+    claim(result.user.id, "youtube", settings)
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 210_000
+    assert STORE.get_social_reward_enrollment(other.id) is None
+
+
+def test_pause_signup_cohort_stays_excluded_while_existing_enrollment_resumes():
+    from fastapi import HTTPException
+
+    from trusted_router.social_rewards import status
+
+    _, enrolled, settings = _account(activated=False)
+    claim(enrolled.user.id, "github", settings)
+    STORE.dismiss_social_rewards(enrolled.user.id)
+    paused = settings.model_copy(update={"social_rewards_enabled": False})
+    with pytest.raises(HTTPException) as error:
+        claim(enrolled.user.id, "youtube", paused)
+    assert error.value.status_code == 409
+    progress = status(enrolled.user.id, paused)
+    assert progress["dismissed"] and progress["actions"][0]["claimed"]
+    assert live_credit_summary(enrolled.workspace.id)["total_credits"] == 180_000
+
+    info = OAuthUserInfo(sub="paused", email="paused@gmail.com", email_verified=True)
+    signup = _persist_login(OAUTH_PROVIDERS["google"], paused, info, None)
+    assert signup.attribution is not None and signup.attribution[1] == 300_000
+    returning = _persist_login(OAUTH_PROVIDERS["google"], settings, info, None)
+    assert not returning.first_time and returning.user_id == signup.user_id
+    assert STORE.get_social_reward_enrollment(signup.user_id) is None
+    with pytest.raises(HTTPException) as error:
+        claim(signup.user_id, "github", settings)
+    assert error.value.status_code == 403
+    assert live_credit_summary(signup.attribution[0])["total_credits"] == 300_000
+
+    claim(enrolled.user.id, "github", settings)
+    resumed = claim(enrolled.user.id, "youtube", settings)
+    assert resumed["dismissed"]
+    assert sum(action["claimed"] for action in resumed["actions"]) == 2
+    assert live_credit_summary(enrolled.workspace.id)["total_credits"] == 210_000
+
+
+@pytest.mark.parametrize("change", ["transfer", "delete"])
+def test_ownership_transfer_between_eligibility_and_commit_cannot_credit(monkeypatch, change):
+    client, result, _ = _account()
+    other = STORE.ensure_user('race-owner@gmail.com')
+    original = InMemoryStore.credit_workspace_once
+
+    def transfer_then_credit(self, workspace_id, amount_microdollars, event_id, **kwargs):
+        if change == "transfer":
+            self.transfer_workspace_ownership(workspace_id, other.id)
+        else:
+            self.update_workspace(workspace_id, deleted=True)
+        return original(self, workspace_id, amount_microdollars, event_id, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, 'credit_workspace_once', transfer_then_credit)
+    assert _post(client, action='github', attested=True).status_code == 403
+    assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
