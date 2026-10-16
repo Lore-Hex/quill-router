@@ -249,6 +249,8 @@
       "status": 1,
       "id": "z-ai/glm-5.2",
       "upstream_id": "glm-5.2",
+      "retirement_at": "2026-11-16T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3",
       "created": 1782376549,
       "routable": true,
       "input_token_price_per_m": 2115855,
