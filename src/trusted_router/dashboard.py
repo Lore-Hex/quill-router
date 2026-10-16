@@ -6027,7 +6027,8 @@ def _model_faq_items(
         provider_answer = f"{provider_answer}, and {provider_names[-1]}"
     if route_evidence["route_count"]:
         speech = SPEECH_MODELS.get(model.id)
-        non_token_audio = model.id in TRANSCRIPTION_MODELS or (speech is not None and not speech.token_billed)
+        transcription = TRANSCRIPTION_MODELS.get(model.id)
+        non_token_audio = (transcription is not None and not transcription.token_billed) or (speech is not None and not speech.token_billed)
         price_answer = (
             f"The current Credits price is {route_evidence['lowest_prompt_price']}. "
             "Output is included; these are audio prices, not text-token prices."

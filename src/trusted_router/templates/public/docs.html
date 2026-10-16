@@ -304,7 +304,7 @@ with httpx.Client() as client:
   -F model=openai/whisper-large-v3-turbo \
   -F 'provider={"only":["tinfoil"],"min_privacy":"confidential"}' \
   -F file=@recording.wav</code></pre>
-  <p>Tinfoil Whisper uses an attestation-verified connection. OpenAI Whisper and Mistral Voxtral are separate direct routes, not confidential-compute routes. Discover current prices at <a href="/v1/models?output_modalities=transcription">transcription models</a>. Limits: 7 MiB uploads, ten minutes, and 24 MB decoded MP3 audio. This release returns JSON or verbose JSON; URL inputs and realtime transcription are not supported.</p>
+  <p>Tinfoil and Privatemode transcription routes use attestation-verified encrypted connections. OpenAI Whisper and direct Mistral Voxtral are separate routes, not confidential-compute routes. Discover current prices and supported formats at <a href="/v1/models?output_modalities=transcription">transcription models</a>. Limits: 7 MiB uploads, ten minutes, and 24 MB decoded MP3 audio. Voxtral Small and Privatemode Voxtral Mini return JSON without timestamps. Whisper also supports verbose JSON. URL inputs and realtime transcription are not supported.</p>
   <p><a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/transcription.md">SDK examples, timestamps, privacy, and billing</a></p>
 </section>
 

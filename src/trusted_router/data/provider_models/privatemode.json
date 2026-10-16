@@ -94,8 +94,7 @@
       "context_length": 8192,
       "supports_tools": false,
       "supports_reasoning": false,
-      "routable": false,
-      "routable_reason": "attested-enclave-rollout-pending",
+      "routable": true,
       "input_token_price_per_m": 906167,
       "output_token_price_per_m": 1494587,
       "cached_input_token_price_per_m": 94148
@@ -119,8 +118,7 @@
       "context_length": 32768,
       "supports_tools": false,
       "supports_reasoning": false,
-      "routable": false,
-      "routable_reason": "attested-enclave-rollout-pending",
+      "routable": true,
       "input_token_price_per_m": 152990,
       "output_token_price_per_m": 0
     },
@@ -132,7 +130,7 @@
         "audio"
       ],
       "output_modalities": [
-        "text"
+        "transcription"
       ],
       "endpoints": [
         "audio/transcriptions"
@@ -142,8 +140,9 @@
       "upstream_id": "voxtral-mini-3b",
       "supports_tools": false,
       "supports_reasoning": false,
-      "routable": false,
-      "routable_reason": "unsupported-endpoint-or-billing"
+      "routable": true,
+      "billing_unit": "audio_minute",
+      "audio_minute_price_microdollars": 4708
     },
     {
       "display_name": "Whisper large-v3",
@@ -153,7 +152,7 @@
         "audio"
       ],
       "output_modalities": [
-        "text"
+        "transcription"
       ],
       "endpoints": [
         "audio/transcriptions"
@@ -163,8 +162,9 @@
       "upstream_id": "whisper-large-v3",
       "supports_tools": false,
       "supports_reasoning": false,
-      "routable": false,
-      "routable_reason": "unsupported-endpoint-or-billing"
+      "routable": true,
+      "billing_unit": "audio_minute",
+      "audio_minute_price_microdollars": 16476
     }
   ],
   "source": "https://docs.privatemode.ai/models/overview/",

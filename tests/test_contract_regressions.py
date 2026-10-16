@@ -50,7 +50,12 @@ def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: 
             continue
         if transcription := trusted.get("transcription"):
             assert pricing == transcription["pricing"]
-            assert set(pricing) in ({"request"}, {"input_audio_minute"})
+            if transcription["billing_unit"] == "tokens":
+                assert set(pricing) == {"prompt", "completion"}
+                assert Decimal(pricing["prompt"]) == Decimal(_per_token_decimal(trusted["prompt_price_microdollars_per_million_tokens"]))
+                assert Decimal(pricing["completion"]) == Decimal(_per_token_decimal(trusted["completion_price_microdollars_per_million_tokens"]))
+            else:
+                assert set(pricing) in ({"request"}, {"input_audio_minute"})
             assert all(Decimal(value) > 0 for value in pricing.values())
             continue
         if "input_character_price_per_million" in speech:

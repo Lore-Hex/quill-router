@@ -1355,7 +1355,7 @@ for _speech in SPEECH_MODELS.values():
     )
 
 for _transcription in TRANSCRIPTION_MODELS.values():
-    if _transcription.provider != "tinfoil":
+    if _transcription.provider not in {"tinfoil", "privatemode"}:
         # Text-provider agreements do not establish audio-specific retention.
         _MODEL_PROVIDER_PRIVACY_OVERRIDES[(_transcription.id, _transcription.provider)] = ModelProviderPrivacyOverride(
             privacy_tier=0, provider_zero_data_retention=False,
@@ -1365,15 +1365,19 @@ for _transcription in TRANSCRIPTION_MODELS.values():
         )
     MODELS[_transcription.id] = Model(
         id=_transcription.id, name=_transcription.name, provider=_transcription.provider,
-        upstream_id=_transcription.upstream_id, context_length=0,
+        upstream_id=_transcription.upstream_id, context_length=32768 if _transcription.token_billed else 0,
         supports_chat=False, supports_messages=False,
         input_modalities=("audio",), output_modalities=("transcription",),
         prepaid_available=True, byok_available=False,
-        supported_parameters=("language", "response_format", "timestamp_granularities"),
+        prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.input_token_cost),
+        completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.output_token_cost),
+        published_prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.input_token_cost),
+        published_completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.output_token_cost),
+        supported_parameters=("language", "response_format") + (("timestamp_granularities",) if "verbose_json" in _transcription.response_formats else ()),
         documentation=ModelDocumentation(
-            description="File transcription, billed per request or audio duration, not text tokens.",
+            description="File transcription, billed from reported audio input and text output tokens." if _transcription.token_billed else "File transcription, billed per request or audio duration, not text tokens.",
             input_format="POST /v1/audio/transcriptions with multipart file or base64 input_audio, and model. PCM WAV or MP3, at most 7 MiB and ten minutes.",
-            output_format="JSON text and usage; verbose_json adds supported timestamps.",
+            output_format="JSON text and usage; verbose_json adds supported timestamps." if "verbose_json" in _transcription.response_formats else "JSON text and usage. Timestamps are not supported.",
             example_input='{"model":"' + _transcription.id + '","input_audio":{"data":"<base64>","format":"wav"}}',
             example_output='{"text":"Hello","usage":{"seconds":1,"cost":0.01}}',
         ),

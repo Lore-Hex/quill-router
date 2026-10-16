@@ -426,11 +426,11 @@ def transcription_route_endpoint_candidates(
 ) -> list[tuple[Model, ModelEndpoint]]:
     if len(inputs.model_ids) != 1 or inputs.model_ids[0] not in TRANSCRIPTION_MODELS:
         raise api_error(400, "Model does not support transcription", ErrorType.MODEL_NOT_SUPPORTED)
-    if (
+    if not TRANSCRIPTION_MODELS[inputs.model_ids[0]].token_billed and (
         inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
         or inputs.preferences.max_completion_price_microdollars_per_million_tokens is not None
     ):
-        raise api_error(400, "Token-price limits do not apply to transcription", ErrorType.BAD_REQUEST)
+        raise api_error(400, "Token-price limits do not apply to non-token-billed transcription", ErrorType.BAD_REQUEST)
     spec = TRANSCRIPTION_MODELS[inputs.model_ids[0]]
     candidates = [
         (m, e) for m, e in catalog_endpoint_candidates(MODELS[spec.id], inputs.preferences)

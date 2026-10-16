@@ -109,7 +109,14 @@ def endpoint_capabilities(model: Model, endpoint: ModelEndpoint) -> RequestCapab
         speech is not None and speech.provider == endpoint.provider == "tinfoil"
     )
     transcription = TRANSCRIPTION_MODELS.get(model.id)
-    attested_transcription = transcription is not None and transcription.provider == endpoint.provider == "tinfoil"
+    attested_transcription = (
+        transcription is not None and transcription.provider == endpoint.provider
+        and endpoint.provider in {"tinfoil", "privatemode"}
+    )
+    attested_embedding = (model.id, endpoint.provider, endpoint.upstream_id) in {
+        ("nomic-ai/nomic-embed-text", "tinfoil", "nomic-embed-text"),
+        ("qwen/qwen3-embedding-4b", "privatemode", "qwen3-embedding-4b"),
+    }
     return {
         "reasoning_effort": (
             [value for value in EFFORT_ORDER if value in effort] if effort is not None else None
@@ -117,7 +124,7 @@ def endpoint_capabilities(model: Model, endpoint: ModelEndpoint) -> RequestCapab
         "tools": "tools" in endpoint.supported_parameters,
         "seed": "seed" in endpoint.supported_parameters,
         "vision": "image" in (endpoint.input_modalities or ()),
-        "confidential": (offers_chat(model) or attested_speech or attested_transcription) and endpoint_meets_privacy_requirement(
+        "confidential": (offers_chat(model) or attested_speech or attested_transcription or attested_embedding) and endpoint_meets_privacy_requirement(
             endpoint, PRIVACY_TIER_CONFIDENTIAL,
         ),
     }
