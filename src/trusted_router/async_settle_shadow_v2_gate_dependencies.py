@@ -73,6 +73,9 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
     to their original paths. Present pages are also indexed by decoded digest,
     including the permitted trailing LF. Parser failures stop only that branch.
     """
+    from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_prefixes
+
+    captures: list[bytes] = []
     parsers: dict[str, Parser] = {}
     decoded: dict[str, Any] = {}
     by_digest: dict[str, str] = {}
@@ -81,12 +84,15 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
     for path, raw in files.items():
         try:
             value = retained_json(raw)
+            if isinstance(value, dict) and isinstance(value.get('passes'), list):
+                captures.append(raw)
             if isinstance(value, dict) and 'entries' in value:
                 decoded[path] = value
                 by_digest[sha256(value)] = path
         except ValueError:
             continue
-    pending: list[Any] = []
+    prefixes = accounting_prefixes(captures)
+    pending: list[tuple[str, Any]] = []
     schemas: dict[str, Schema] = {}
     expanded: set[str] = set()
 
@@ -105,7 +111,7 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
         if path not in expanded and (schema is not None or parser is not None and parser not in (original_bytes, python_source)):
             expanded.add(path)
             try:
-                pending.append(decoded[path] if path in decoded else retained_json(files[path]))
+                pending.append((path, decoded[path] if path in decoded else retained_json(files[path])))
             except (ValueError, KeyError):
                 pass
         if source or parser is not None:
@@ -153,11 +159,11 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
         if path == 'proof.external_proofs_sha256':
             value = {**value, 'requirements': [r for r in value['requirements'] if r['stage'] in closure(stage)],
                      'pilot': value['pilot'] if stage in ('pre-flip', 'post-flip') else None}
-        pending.append(value)
+        pending.append((path, value))
     while pending:
-        node = pending.pop()
+        origin, node = pending.pop()
         if isinstance(node, list):
-            pending.extend(node)
+            pending.extend((origin, value) for value in node)
             continue
         if not isinstance(node, dict):
             continue
@@ -182,9 +188,13 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             add(node['deployment'], parser=deployment_roster)
         if node.get('format') == 'shadow-v2-live-export-a3-n' and isinstance(node.get('details'), dict):
             from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_page
+            prefix = prefixes.get(origin, '')
             for refs in node['details'].values():
                 for ref in refs if isinstance(refs, list) else []:
-                    add(ref, parser=accounting_page)
+                    if isinstance(ref, dict) and set(ref) == set(a2.FILE_REF.fields):
+                        add({**ref, 'path': prefix + ref['path']}, parser=accounting_page)
+            # Export-page references belong to this spool, not the graph root.
+            continue
         if 'export_accounting' in node:
             from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_root
             pages(node['export_accounting'], 'files', accounting_root)
@@ -212,7 +222,7 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             add(node['configuration'], parser=retained_json)
         if fields == set(a2.RESOLUTION_DAG.fields):
             pages(node['history'], 'reset_history')
-        pending.extend(node.values())
+        pending.extend((origin, value) for value in node.values())
     for path in parsers:
         qualified = path.split('/', 1)[-1] if '/manifest.' in path else path
         if qualified in contract.OBJECT_PREIMAGES:

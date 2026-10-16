@@ -1,6 +1,7 @@
 """Gate consumption of the bundle package's original export accounting."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,28 @@ from trusted_router.async_settle_shadow_v2_pack_daypack import AccountingResult 
 from trusted_router.async_settle_shadow_v2_pack_streaming import CapturedJSON as CapturedJSON
 from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
+
+
+def accounting_prefixes(captures: Iterable[bytes]) -> dict[str, str]:
+    """Read the declared pass scopes; captures without one keep the empty scope."""
+    prefixes: dict[str, str] = {}
+    for raw in captures:
+        try:
+            capture = retained_json(raw)
+        except ValueError:
+            continue
+        if not isinstance(capture, dict) or not isinstance(capture.get('passes'), list):
+            continue
+        for passed in capture['passes']:
+            if not isinstance(passed, dict) or not all(key in passed for key in ('bundle', 'accounting', 'prefix', 'object_plan')):
+                continue
+            ref = passed['accounting']
+            require(isinstance(ref, dict) and isinstance(ref.get('path'), str), 'evidence_schema_gap')
+            prefix = passed['prefix']
+            require(isinstance(prefix, str), 'evidence_schema_gap')
+            require(ref['path'] not in prefixes or prefixes[ref['path']] == prefix, 'evidence_schema_gap')
+            prefixes[ref['path']] = prefix
+    return prefixes
 
 
 def accounting_root(raw: bytes) -> dict[str, Any]:
@@ -50,6 +73,7 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
             self.put(ref['path'], graph.file(ref))
             return super().read(ref)
 
+    prefixes = None
     totals = []
     for key, envelope in payloads.items():
         if key != 'manifest.independent_inventory_sha256' and not key.endswith('/manifest.independent_inventory_sha256'):
@@ -59,6 +83,8 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
             continue
         refs = graph.detail(deployment['export_accounting'], 'files')
         require(bool(refs), 'artifact_gap')
+        if prefixes is None:
+            prefixes = accounting_prefixes(graph.files.values())
         date = envelope['day']
         collector_plan = deployment.get('collector_plan', {})
         require(type(collector_plan) is dict, 'evidence_schema_gap')
@@ -87,7 +113,8 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
             for ref in refs:
                 try:
                     result = compare_export_accounting_streamed(originals, ref, path, day=date,
-                                                                object_plan=object_plan, collector_plan=collector_plan)
+                                                                object_plan=object_plan, collector_plan=collector_plan,
+                                                                prefix=prefixes.get(ref['path'], ''))
                 except PayloadError:
                     raise
                 except (ValueError, KeyError, TypeError) as exc:
