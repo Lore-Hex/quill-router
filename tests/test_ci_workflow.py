@@ -25,7 +25,7 @@ def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
         job = jobs[name]
         count = int(job["env"]["TEST_SHARDS"])
         assert job["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
-        assert job["timeout-minutes"] == 25
+        assert job["timeout-minutes"] == 35
         assert job["strategy"]["fail-fast"] is False
         assert "continue-on-error" not in job
     assert jobs["coverage"]["needs"] == "test"
@@ -34,12 +34,15 @@ def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
 def test_ci_runs_python_suite_once_with_coverage() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    # Still one coverage pass, now sharded. A second pass on the SAME clock
-    # doubles CI time and delays every guarded rollout without checking any
-    # additional behavior, which is why this file exists.
+    # Still one full coverage pass, now sharded. The focused P5 pass checks
+    # live-object budgets that cannot safely collect in a mixed-suite worker.
     assert "-n 4 --dist loadgroup" in workflow
     assert "--cov=trusted_router" in workflow
-    assert workflow.count("--cov=trusted_router") == 1
+    jobs = yaml.safe_load(workflow)["jobs"]
+    full_commands = "\n".join(step.get("run", "") for name, job in jobs.items()
+                              if name != "spanner-emulator" for step in job.get("steps", []))
+    assert full_commands.count("--cov=trusted_router") == 1
+    assert workflow.count("--cov=trusted_router") == 2
 
     # The shards collect coverage with NO threshold: each sees only its own
     # slice, so a per-shard floor would fail on a suite that covers far more.
@@ -60,6 +63,28 @@ def test_ci_runs_python_suite_once_with_coverage() -> None:
     # DDL. Sharding is safe only because each matrix job gets its own service
     # containers.
     assert "--splits" in workflow and "--group" in workflow
+
+
+def test_ci_shards_record_durations_using_existing_split_weights() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    path = "durations-${{ matrix.shard }}.json"
+    for job_name, clock in (("test", "default"), ("test-post-cutover", "post-cutover")):
+        steps = jobs[job_name]["steps"]
+        test_index = next(i for i, step in enumerate(steps)
+                          if "uv run pytest" in step.get("run", ""))
+        assert steps[test_index - 1]["run"] == f"cp .test_durations {path}"
+        command = steps[test_index]["run"]
+        assert f"--store-durations --durations-path={path} --clean-durations" in command
+        assert "--splitting-algorithm least_duration" in command
+        assert "--splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}" in command
+        upload = next(step for step in steps
+                      if step.get("with", {}).get("name")
+                      == f"durations-{clock}-${{{{ matrix.shard }}}}")
+        assert steps.index(upload) > test_index
+        assert upload["if"] == "always()"
+        assert upload["uses"] == "actions/upload-artifact@v4"
+        assert upload["with"]["path"] == path
+        assert upload["with"]["retention-days"] == 7
 
 
 def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
@@ -101,7 +126,7 @@ def test_native_spanner_job_runs_both_focused_server_gates() -> None:
     assert job["services"]["spanner"]["image"] == "gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"
     assert "bigtable" not in job["services"]
     steps = [step for step in job["steps"] if "uv run pytest" in step.get("run", "")]
-    assert len(steps) == 2
+    assert len(steps) == 3
     assert "tests/conformance -k spanner-emulator" in steps[0]["run"]
     assert "tests/conformance/test_spanner_schema.py" in steps[1]["run"]
     assert "tests/conformance/test_spanner_sql_acceptance.py" in steps[1]["run"]
@@ -109,6 +134,25 @@ def test_native_spanner_job_runs_both_focused_server_gates() -> None:
     assert steps[1]["if"] == "${{ !cancelled() }}"
     assert "continue-on-error" not in job
     assert all("continue-on-error" not in step for step in job["steps"])
+
+
+def test_p5_object_budgets_run_in_a_fresh_package_only_session() -> None:
+    import shlex
+
+    from tests.shadow_v2_gate_cache import PACKAGE_MODULES
+
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    step = next(step for step in jobs["spanner-emulator"]["steps"]
+                if step.get("name") == "P5 package object budgets")
+    assert shlex.split(step["run"]) == [
+        "uv", "run", "pytest", "-q", "tests/test_async_settle_shadow_v2_gate*.py",
+        "-m", "not proof_oracle", "-n", "2",
+        "--cov=trusted_router", "--cov-report=", "--cov-fail-under=0",
+    ]
+    assert {path.name for path in ROOT.glob("tests/test_async_settle_shadow_v2_gate*.py")} == PACKAGE_MODULES
+    assert step["if"] == "${{ !cancelled() }}"
+    assert step["timeout-minutes"] == 12
+    assert "continue-on-error" not in step
 
 
 def test_provider_health_is_monitored_separately_from_release_correctness() -> None:
@@ -146,6 +190,7 @@ def test_proof_oracle_ci_split(request, tmp_path):
     command = proof_oracle_command(job)
     assert command == ['uv', 'run', 'pytest', '-q', '-n', '4', '--dist', 'loadgroup',
                        '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
+                       'tests/test_async_settle_shadow_v2_gate_window.py',
                        '--splits', '4', '--group', '${{', 'matrix.shard', '}}',
                        '--splitting-algorithm', 'least_duration']
     assert job['runs-on'] == 'ubuntu-latest'

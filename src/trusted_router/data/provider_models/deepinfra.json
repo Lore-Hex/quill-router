@@ -2438,6 +2438,8 @@
       "status": 1,
       "id": "thinkingmachines/inkling",
       "upstream_id": "thinkingmachines/Inkling",
+      "retirement_at": "2026-10-22T00:00:00Z",
+      "replacement_model_id": "thinkingmachines/inkling-small",
       "context_length": 524288,
       "max_output_tokens": 524288,
       "input_token_price_per_m": 950000,

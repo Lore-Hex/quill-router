@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil launched Kimi K3 and DeepSeek V4 Flash on 2026-08-20, then GLM 5.3 and multimodal GLM 5.3 Flash on 2026-09-03. Tinfoil supports confidential prompt caching where published by its live feed. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-10-15T12:03:30Z",
-  "model_count": 7,
+  "generated_at": "2026-10-15T21:25:33Z",
+  "model_count": 16,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -204,6 +204,201 @@
       "input_token_price_per_m": 650000,
       "output_token_price_per_m": 1450000,
       "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "Llama 3.3 70B",
+      "title": "meta-llama/llama-3.3-70b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "llama3-3-70b",
+      "features": [
+        "function-calling"
+      ],
+      "context_length": 131072,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 2750000
+    },
+    {
+      "display_name": "Voxtral TTS",
+      "title": "voxtral-tts",
+      "model_type": "tts",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "audio"
+      ],
+      "endpoints": [
+        "audio/speech"
+      ],
+      "status": 1,
+      "id": "mistralai/voxtral-4b-tts-2603",
+      "upstream_id": "voxtral-tts",
+      "routable": true,
+      "billing_unit": "request",
+      "fixed_request_price_microdollars": 2000
+    },
+    {
+      "display_name": "Voxtral Mini 4B Realtime",
+      "title": "voxtral-mini-4b-realtime",
+      "model_type": "audio",
+      "input_modalities": [
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "realtime"
+      ],
+      "status": 1,
+      "id": "mistralai/voxtral-mini-4b-realtime-2602",
+      "upstream_id": "voxtral-mini-4b-realtime",
+      "routable": false,
+      "routable_reason": "unsupported-endpoint-or-billing"
+    },
+    {
+      "display_name": "Voxtral Small 24B",
+      "title": "voxtral-small-24b",
+      "model_type": "audio",
+      "input_modalities": [
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "audio/transcriptions",
+        "audio/translations",
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/voxtral-small-24b",
+      "upstream_id": "voxtral-small-24b",
+      "routable": false,
+      "routable_reason": "unsupported-endpoint-or-billing"
+    },
+    {
+      "display_name": "Nomic Embed Text",
+      "title": "nomic-ai/nomic-embed-text",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "nomic-ai/nomic-embed-text",
+      "upstream_id": "nomic-embed-text",
+      "features": [],
+      "context_length": 8192,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0,
+      "routable": false,
+      "routable_reason": "attested-enclave-rollout-pending"
+    },
+    {
+      "display_name": "GPT-OSS 120B",
+      "title": "openai/gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "responses"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "features": [
+        "reasoning",
+        "function-calling"
+      ],
+      "context_length": 131072,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "GPT-OSS Safeguard 120B",
+      "title": "openai/gpt-oss-safeguard-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "responses"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-safeguard-120b",
+      "upstream_id": "gpt-oss-safeguard-120b",
+      "features": [
+        "function-calling"
+      ],
+      "context_length": 131072,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "Whisper Large V3 Turbo",
+      "title": "whisper-large-v3-turbo",
+      "model_type": "audio",
+      "input_modalities": [
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "audio/transcriptions"
+      ],
+      "status": 1,
+      "id": "openai/whisper-large-v3-turbo",
+      "upstream_id": "whisper-large-v3-turbo",
+      "routable": true,
+      "billing_unit": "request",
+      "fixed_request_price_microdollars": 10000
+    },
+    {
+      "display_name": "Qwen3-TTS 1.7B",
+      "title": "qwen3-tts",
+      "model_type": "tts",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "audio"
+      ],
+      "endpoints": [
+        "audio/speech"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-tts",
+      "upstream_id": "qwen3-tts",
+      "routable": true,
+      "billing_unit": "request",
+      "fixed_request_price_microdollars": 10000
     }
   ],
   "price_scale": "microdollars_per_million"

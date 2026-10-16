@@ -106,7 +106,9 @@
           <div><span>Input</span><strong>{{ model.prompt_price }}</strong></div>
           <div><span>Cached input</span><strong>{{ model.cached_prompt_price }}</strong></div>
           <div><span>Output</span><strong>{{ model.completion_price }}</strong></div>
-          {% if model.speech %}
+          {% if model.transcription %}
+          <div><span>Input limit</span><strong>7 MiB, 10 minutes</strong></div>
+          {% elif model.speech %}
           <div><span>Input limit</span><strong>{{ model.speech.max_input_characters }} characters</strong></div>
           {% else %}
           <div><span>Context</span><strong title="{{ model.context_length }} tokens">{{ model.context_length_compact }}</strong></div>
@@ -171,5 +173,5 @@
 </section>
 {% endblock %}
 {% block body_scripts %}
-<script src="/static/models.js?v={{ static_version|default('local') }}"></script>
+<script defer src="/static/models.js?v={{ static_version|default('local') }}"></script>
 {% endblock %}

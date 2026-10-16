@@ -3,7 +3,8 @@
 The design's rollout step 8 (`fast-admission-and-batched-settlement.md`
 §8), as `fast-admission-production-rollout.md` asks: what the pilot enables,
 what it checks, and how it turns off. It starts on Joseph's own workspace,
-on his word (2026-10-14), after P1's runs 1 to 6 (`fast-admission-p1-results.md`).
+on his word (2026-10-14), after P1's runs 1 to 6 (`fast-admission-p1-results.md`),
+and adds one customer's workspace on his word (2026-10-16).
 
 ## Where the client lives
 
@@ -102,7 +103,8 @@ One call tries at most two of them within one budget, the whole call's.
 Three, all in the control plane's settings (`config.py`), none on by
 default, in the order they are turned on:
 
-1. `TR_FASTPATH_PILOT_WORKSPACES`: the pilot set, Joseph's workspace id.
+1. `TR_FASTPATH_PILOT_WORKSPACES`: the pilot set, Joseph's workspace and,
+   from 2026-10-16, one customer's, by ID.
 2. The fast path's own switch for that workspace:
    `fastpathctl -database $DB enable WORKSPACE` (W1). The front door
    answers `off` until it is on.
@@ -125,12 +127,21 @@ deploy; the fast path's switch changes at once.
 ## What it checks
 
 - The audit after every hour of the pilot, and before and after a switch:
-  `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0.
+  `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0. On
+  a workspace with requests of its own, a synchronous hold in flight shows
+  as its shard's reserved credit with no lease behind it ("shard N reserves
+  X, and its live leases' donors hold 0"): the audit counts lease holds
+  only, so such a report is read against the requests in flight, and the
+  combined identity below decides.
 - The counter reconciler's combined identity on the workspace
   (`storage_gcp_counter_reconcile.py`): reservations and bookings of the
   leases with the synchronous holds.
-- `fastpathwatch -workspace WORKSPACE` with P1's ceilings, the spend
-  ceiling at a tenth of the workspace's credits.
+- `fastpathwatch -workspace WORKSPACE` for each workspace in the set, with
+  P1's ceilings and `-fresh 15m -window 20m`, since one Spanner CPU series a
+  few minutes late stopped the first watch (2026-10-16 02:00Z). The spend
+  ceiling counts the workspace's whole usage, today's path included, so it
+  is set for each workspace above its own expected spend over the watch's
+  life.
 - The control plane's log line per authorize the pilot took or passed over
   (`fastpath authorize <status>`), and the settle's.
 - Cloud Logging: no `fastpath_alert` entries for the workspace.
@@ -154,11 +165,12 @@ because the pilot runs with them:
 
 ## What is not in the pilot
 
-Streams (they join once registrations carry the heartbeat declaration,
-§4.11); any workspace but Joseph's; the 503 in place of 402 when a
-balance's headroom sits in leases (the fallback reserves today, so a large
-lease allocation on a small balance can refuse a request today's path
-would have taken; the pilot workspace's balance is large); the enclave
+Streams (a small share of requests; left out on Joseph's word,
+2026-10-16); any workspace but the two in the set; the 503 in place of 402
+when a balance's headroom sits in leases (the fallback reserves today, so a
+large lease allocation on a small balance can refuse a request today's
+path would have taken; each workspace's room is checked before it joins
+the set); the enclave
 calling the fast path itself; W7's alert policies.
 
 ## The state on 2026-10-14

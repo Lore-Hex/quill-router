@@ -145,7 +145,7 @@
 .privacy-provider,.privacy-price{padding:20px 12px;border-top:1px solid var(--line);}.privacy-price{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .pricing-unit{font-size:11px;color:var(--muted);margin:12px 0 0;text-align:center}
 .evidence-footer{display:flex;flex-direction:column;gap:14px;padding:20px 0;font-size:11px;color:#b8c2be;line-height:1.6}
-.evidence-footer a{font-size:14px;color:var(--mint);text-decoration:none}.evidence-footer a span{float:right;font-size:18px}
+.evidence-footer a{font-size:14px;color:var(--mint)}
 .sectors{gap:0}.sectors article,.sectors article:nth-child(2),.sectors article:nth-child(3){background:none;border-top:1px solid var(--line)}.sectors article+article{border-left:1px solid var(--line)}
 .sector-art{margin:0 0 24px;height:26px}.sector-art svg{display:block;width:26px;height:26px;fill:none;stroke:#9ca9a5;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
 .health-bars{display:flex;gap:4px;height:44px}.health-bar{flex:1;min-width:0;background:#83b9a5}
@@ -386,15 +386,8 @@ footer .brand small{font-size:12px}
  .masthead.nav-ready #primary-navigation{overscroll-behavior:contain}
 }
 
-/* Lower the phone hero's visual center while keeping actions in normal flow. */
-@media(max-width:600px) and (max-height:650px){
- .hero-copy{padding-top:72px;padding-bottom:max(20px,env(safe-area-inset-bottom))}
-
-}
-
-/* Check times remain on the widget face, including stale/failed checks. */
+/* Original check times remain visible while measurements are eligible. */
 .last-check { font: 11px/1.5 var(--mono, monospace); color: var(--muted, #a8b0bd); margin: 6px 0 10px; }
-.evidence-state { font-size: 12px; line-height: 1.5; margin: 12px 0; }
 
 /* Headings follow the TrustedRouter homepage: Archivo at its weights and tracking. Sizes are unchanged. */
 h1,h2,h3,.headline-accent,.privacy-choice h3,
@@ -407,7 +400,7 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .service-heading strong{font-family:Archivo,Arial,sans-serif;font-weight:400}
 
 /* Empty live-data slots leave the source links as the fallback. */
-[data-live-state]:empty,[data-live-attestation]:empty,.last-check:empty,[data-live-price-unit][hidden]{display:none}
+[data-live-attestation]:empty,.last-check:empty,[data-live-price-unit][hidden]{display:none}
 
 /* Source-only cards size to their content instead of stretching beside prices. */
 .trust-evidence .uptime-panel:has([data-live-services]:empty),
@@ -419,8 +412,8 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 }
 
 /* The page black, header and secondary button follow the homepage.
-   Copy is centred above a provider marquee in a 1024px window, like a logo strip: six equal
-   slots are about 1400px wide, so the window never shows a logo twice. It runs only while the hero is on screen,
+   Copy is centred above a compact homepage-style marquee. Each group fills the
+   desktop window, so the animation stays seamless at every width. It runs only while the hero is on screen,
    pauses on hover or keyboard focus, and is a static row for reduced motion or without JS. */
 :root{--bg:#050706;--text:#edf8f5}
 .masthead{background:#050706;backdrop-filter:none}
@@ -428,48 +421,45 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .secondary{background:#0b1814b3;color:#d4ecff;border-color:#8cab99;box-shadow:none}
 .secondary:hover{background:#13261f;border-color:#a9c7b6;color:#fff}
 .hero{flex-direction:column;align-items:stretch}
-.hero-copy{flex:1 0 auto;min-height:0;justify-content:center;padding-block:40px 24px;padding-block:clamp(40px,6svh,76px) 24px}
+.hero-copy{flex:1 0 auto;min-height:0;justify-content:center;padding-block:clamp(40px,6svh,76px) 24px}
 .hero .lead{margin:24px auto 28px}
 .hero-copy .actions{margin-top:0}
-.hero-providers{position:relative;z-index:1;width:100%;padding:16px 0 20px}
-.hero-providers p{margin:0 0 12px;text-align:center;font-size:12px;line-height:1.6;color:var(--muted)}
-.hero-provider-row{max-width:1024px;width:calc(100% - 64px);margin-inline:auto;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
-.hero-provider-track{display:flex;width:max-content;margin-inline:auto;animation:provider-marquee 48s linear infinite;animation-play-state:paused}
+.hero-providers{position:relative;z-index:1;width:100%;padding:12px 0}
+.hero-providers p{margin:0 0 8px;text-align:center;font-size:12px;line-height:1.6;color:var(--muted)}
+.hero-provider-row{max-width:980px;width:calc(100% - 64px);margin-inline:auto;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.hero-provider-track{display:flex;width:max-content;margin-inline:auto;animation:provider-marquee 40s linear infinite;animation-play-state:paused}
 .hero.is-animating .hero-provider-track{animation-play-state:running}
 /* Keyboard focus stops the slide and lets the row scroll, so the focused logo is always in view. */
 .hero-provider-row:focus-within{overflow-x:auto;mask-image:none}
 .hero-provider-row:focus-within .hero-provider-track{animation:none;transform:none}
 @media(hover:hover){.hero-provider-row:hover .hero-provider-track{animation-play-state:paused}}
-.hero-provider-group{display:flex;align-items:center;gap:40px;padding-inline:20px}
-.hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:12px;min-width:192px;min-height:36px;font-size:17px;color:var(--text);text-decoration:none;white-space:nowrap}
+.hero-provider-group{display:flex;align-items:center;gap:32px;padding-right:32px;flex-shrink:0;min-width:980px;justify-content:space-between}
+.hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:44px;font-size:14px;color:#d0ded7;text-shadow:0 1px 8px #050706;text-decoration:none;white-space:nowrap}
 .hero-provider-group a:hover{color:var(--mint)}
-.hero-provider-group img{width:32px;height:32px;object-fit:contain}
+.hero-provider-group img{width:24px;height:24px;flex:none;object-fit:contain;border-radius:5px}
 @keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-@media(max-width:1000px){
- .hero-provider-group{gap:32px;padding-inline:16px}
- .hero-provider-group a{min-width:152px;gap:10px;font-size:16px}
- .hero-provider-group img{width:28px;height:28px}
-}
 @media(max-width:600px){
- .hero-copy{padding-block:40px 24px}
+ .hero{justify-content:center}
+ .hero-copy{flex:0 0 auto;padding-block:40px 24px}
+ .hero-providers{margin-top:32px;padding:24px 0;background:linear-gradient(180deg,#05070600,#05070699 30%,#05070699 70%,#05070600)}
+ .hero-providers p{margin-bottom:12px}
  .hero-provider-row{width:100%}
- .hero-provider-group{gap:24px;padding-inline:12px}
- .hero-provider-group a{min-width:0;gap:10px;min-height:32px;font-size:15px}
- .hero-provider-group img{width:26px;height:26px}
+ .hero-provider-group{min-width:0}
 }
 /* After the breakpoints, so the static row keeps its compact slots at every width. */
 @media(prefers-reduced-motion:reduce){
  .hero-provider-track{animation:none}
  .hero-provider-group+.hero-provider-group{display:none}
- .hero-provider-row{max-width:none;width:100%;overflow-x:auto;mask-image:none;scrollbar-width:thin}
- .hero-provider-group a{min-width:0}
+ .hero-provider-row{overflow-x:auto;mask-image:none;scrollbar-width:thin}
 }
-@media(prefers-reduced-motion:reduce) and (max-width:1000px){.hero-provider-group{gap:24px;padding-inline:12px}}
+@media(prefers-reduced-motion:reduce) and (max-width:1000px){.hero-provider-group{min-width:0}}
 
-/* Hero and closing box share one photograph: the TrustedRouter river, cropped to water
-   so it reads as texture rather than a place. The gradient arcs are retired. */
-.hero-photo{position:absolute;inset:0;z-index:-2;pointer-events:none;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
-.hero-photo::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 58% 46% at 50% 44%,rgba(5,7,6,.5),transparent 72%),linear-gradient(180deg,rgba(5,7,6,.8),rgba(5,7,6,.4) 40%,rgba(5,7,6,.25) 72%,rgba(5,7,6,.9))}
+@media(min-width:601px) and (pointer:fine){.hero-provider-group a{min-height:32px}}
+
+/* Approved close aerial for the hero; the closing box keeps its original river crop. */
+.hero-photo{position:absolute;inset:0;z-index:-2;pointer-events:none;background:url('/assets/river-hero.webp') 50% 50%/cover no-repeat}
+.hero-photo::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.30)}
+@media(max-width:600px){.hero-photo::after{background:rgba(0,0,0,.20)}}
 .hero .lead{color:#edf8f5}
 .closing-art::before{content:"";position:absolute;inset:0;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
 .closing-art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,6,.94),rgba(5,7,6,.6) 55%,rgba(5,7,6,.35))}
@@ -511,3 +501,11 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 @media(max-width:800px){.brochure-inner h2{font-size:38px}.brochure-contents li{font-size:16px}.brochure-row{flex-direction:column}.brochure-row .button{width:100%}}
 @media(max-width:600px){.brochure-inner h2{font-size:35px}}
 
+
+/* Persistent underlines identify links on touch screens and before hover. */
+.privacy-column h3,.evidence-footer a{
+ text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:1px;
+}
+
+.privacy-column:hover h3,.privacy-column:focus-visible h3,
+.evidence-footer a:hover,.evidence-footer a:focus-visible{text-decoration-thickness:2px}

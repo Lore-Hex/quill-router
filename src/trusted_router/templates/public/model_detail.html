@@ -34,9 +34,17 @@
           <span class="muted-copy">No AI IQ profile matched yet.</span>
           {% endif %}
         </td></tr>
-        {% if model.speech %}
+        {% if model.transcription %}
+        <tr><th>Input limit</th><td>7 MiB, up to 10 minutes</td></tr>
+        <tr><th>Input formats</th><td>{{ model.transcription.input_formats|join(', ') }}</td></tr>
+        <tr><th>Billing</th><td>{{ model.transcription.billing_unit|replace('_', ' ') }}</td></tr>
+        <tr><th>Price</th><td>{{ model.prompt_price }}</td></tr>
+        <tr><th>API</th><td><a href="/docs#transcription">Audio transcription</a></td></tr>
+        {% elif model.speech %}
         <tr><th>Input limit</th><td>{{ model.speech.max_input_characters }} characters</td></tr>
-        {% if model.speech.billing_unit == 'input_characters' %}
+        {% if model.speech.billing_unit == 'request' %}
+        <tr><th>Price</th><td>${{ model.speech.request_price }}/request</td></tr>
+        {% elif model.speech.billing_unit == 'input_characters' %}
         <tr><th>Input price</th><td>${{ model.speech.input_character_price_per_million }}/M characters</td></tr>
         {% else %}
         <tr><th>Input price</th><td>${{ model.speech.input_token_price_per_million }}/M text tokens</td></tr>
@@ -92,6 +100,7 @@
           {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
           {% if model.supports_decide %}<span class="pill">decide</span>{% endif %}
           {% if model.speech %}<span class="pill">speech</span>{% endif %}
+          {% if model.transcription %}<span class="pill">transcription</span>{% endif %}
           {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
           {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
           {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
@@ -192,12 +201,16 @@
     </table>
     </div>
     {% else %}
+    {% if model.speech or model.transcription %}
+    <p style="color:var(--muted);font-size:14px">Audio requests use the listed model and provider. These routes do not silently switch models or providers.</p>
+    {% else %}
     <p style="color:var(--muted);font-size:14px">
       Sorted by lowest combined prompt and completion price. Use
       <code>"provider": {"sort": "throughput"}</code> in the request body
       (or append <code>:nitro</code> to the model id) to route to the
       fastest provider instead.
     </p>
+    {% endif %}
     <p style="color:var(--muted);font-size:14px">
       <strong>Trust boundary:</strong> TR router attestation verifies the
       TrustedRouter gateway only. Provider policy separately describes the

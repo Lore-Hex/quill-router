@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 
+from trusted_router.catalog_aliases import canonical_listing_id
 from trusted_router.model_aliases import canonical_router_model_id
 
 LEGACY_MODEL_ID_ALIASES: dict[str, str] = {
@@ -29,6 +30,7 @@ def canonical_public_provider_slug(provider_slug: str, providers: Mapping[str, o
 def canonical_public_model_id(model_id: str, models: Mapping[str, object]) -> str:
     """Resolve known aliases and unambiguous casing to existing catalog IDs."""
     model_id = canonical_router_model_id(model_id)
+    model_id = canonical_listing_id(model_id, models)
     # Exact native IDs remain authoritative, including mixed-case provider IDs.
     if model_id in models:
         return model_id

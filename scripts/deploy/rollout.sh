@@ -622,8 +622,10 @@ ENV_VARS=(
   # 45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
   # The fast path's pilot (docs/design/fast-admission-pilot.md): Joseph's
-  # workspace, admitted by the front doors from the us-central1 control plane.
-  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # workspace and, on his word (2026-10-16), one customer's, admitted by the
+  # front doors from the us-central1 control plane. Rollback: Joseph's ID
+  # alone, or TR_FASTPATH_PILOT_ENABLED=false.
+  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb"
   "TR_FASTPATH_PILOT_ENABLED=true"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates

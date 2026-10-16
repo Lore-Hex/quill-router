@@ -752,10 +752,166 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         histogram_upper_bounds_us=[100, 500, 1000, 2000, 5000, 10000, 50000, 200000, None],
         metrics=metrics, regional_percentiles=region_timing, usage=usage, source_revisions=revisions,
         fixture_sha256=FIXTURE_SHA256, proof_sha256=proof_hash,
-        report_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+        # Pin the base v1 implementation digest: adding explicit v2 dispatch
+        # must not change the legacy report's byte-for-byte output.
+        report_sha256="719a3acfc87edf226b7b51a06b3b5d74192944dce248442ddc7e865fa2d4c2f0")
+
+
+def shadow_v2_release_pins() -> dict[str, str]:
+    """Read the existing A2-S8 code pins without importing the billing tests."""
+    import ast
+
+    from trusted_router.async_settle_shadow_v2_contract import FIXTURE_MANIFEST_SHA256
+
+    root = Path(__file__).resolve().parents[2]
+    tree = ast.parse((root / 'tests/test_billing_snapshot.py').read_bytes())
+    pins = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == 'FIXTURE_SHA256' for target in node.targets)]
+    if len(pins) != 1 or type(pins[0]) is not str:
+        raise ValueError('artifact_gap: billing release pin unavailable')
+    return {'proof.evaluator_fixture_sha256': pins[0],
+            'proof.binding_fixture_sha256': FIXTURE_SHA256,
+            'proof.wire_fixture_sha256': FIXTURE_MANIFEST_SHA256}
+
+
+def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes | None = None,
+                    *, release: Any = None) -> Any:
+    """Bind imported verifiers and original public descriptors at the I/O boundary."""
+    import inspect
+
+    from scripts.async_settle.async_settle_shadow_v2_gate_tools import run_retained
+    from trusted_router.async_settle_shadow_binding import verify_binding
+    from trusted_router.async_settle_shadow_v2_certificate import (
+        verify_certificate,
+        verify_original_receipt,
+    )
+    from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts, VerifierApproval
+    from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
+    from trusted_router.async_settle_shadow_v2_gate_retained import unchanged_checks
+    from trusted_router.async_settle_shadow_v2_gate_views import budget_view
+    from trusted_router.detached_jws import TrustedKey, canonical
+
+    if __package__:
+        from . import pilot_enablement
+    else:
+        import pilot_enablement
+    root = Path(__file__).resolve().parents[2]
+    approvals = []
+    for fn, raw, fixture in ((verify_certificate, certificate_keys, 'shadow_v2/exclusion_certificate.json'),
+                              (verify_binding, binding_keys, 'shadow_v1.json')):
+        if raw is None:
+            continue
+        values = retained_json(raw)
+        if type(values) is not list or canonical(values) != raw:
+            raise ValueError('evidence_schema_gap: canonical public descriptors required')
+        keys = tuple(TrustedKey(**value) for value in values)
+        source = Path(inspect.getfile(fn)).read_bytes()
+        fixtures = (root / 'tests/fixtures/async_settlement' / fixture).read_bytes()
+        approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, raw, keys,
+            hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
+    for fn in (pilot_enablement.fleet_budgets_pre, pilot_enablement.fleet_budgets,
+               pilot_enablement.shadow_serving, pilot_enablement.pre_flip, pilot_enablement.post_flip,
+               pilot_enablement.counter_coverage_report, pilot_enablement.roster_coverage,
+               collect_rollbacks, report, run_retained, unchanged_checks, budget_view):
+        source = Path(inspect.getfile(fn)).read_bytes()
+        fixtures = (root / 'tests/fixtures/async_settlement/shadow_v2_a2/manifest.json').read_bytes()
+        approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, b'[]', (),
+            hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
+    from trusted_router.async_settle_shadow_v2_gate_release import measurement_parsers
+    measurements = measurement_parsers(release)
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+    release_files = {path: (root / path).read_bytes() for path in RELEASE_FILES.values()}
+    return LoadingPorts(verify_certificate, verify_original_receipt, verify_binding,
+        comparator_positive, positive_sample, known_exclusion, pilot_enablement.fleet_budgets_pre,
+        collect_rollbacks, report, pilot_enablement.post_flip, tuple(approvals),
+        shadow_v2_release_pins(), lambda path: release_files[path], pilot_enablement.roster_coverage,
+        retained=run_retained, gate_roster=pilot_enablement.gate_roster_coverage, release=release,
+        measurements=measurements)
+
+
+def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
+    """Explicit offline v2 entry point; a render failure is a tool failure."""
+    if not __package__:
+        # Direct script execution and module execution bind the same imported
+        # retained callables. This branch is reachable only with explicit v2.
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from scripts.async_settle.shadow_report import shadow_v2_main as entry
+        entry(argv, gate=gate)
+        return
+    from trusted_router.async_settle_shadow_v2_gate_result import run
+
+    parser = argparse.ArgumentParser(description="Offline shadow-v2 gate")
+    parser.add_argument('--policy', choices=['shadow-v2'], required=True)
+    parser.add_argument('--bundle', type=Path, required=True)
+    parser.add_argument('--gate', choices=['transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'], default=gate or 'pre-flip')
+    parser.add_argument('--certificate-keys', type=Path)
+    parser.add_argument('--binding-keys', type=Path)
+    parser.add_argument('--output-dir', type=Path)
+    parser.add_argument('--release-plan', type=Path)
+    parser.add_argument('--release-plan-sha256')
+    args = parser.parse_args(argv)
+    from scripts.async_settle.async_settle_shadow_v2_gate_tools import read_release_plan
+    damaged_inputs = []
+    release = None
+    if args.release_plan is not None:
+        try:
+            if args.release_plan_sha256 is None:
+                raise ValueError('release-plan approval digest absent')
+            release = read_release_plan(args.release_plan.read_bytes(), args.release_plan_sha256)
+        except (OSError, ValueError, TypeError, KeyError):
+            damaged_inputs.append('tool_input/release-plan')
+
+    def optional_bytes(path: Path | None, name: str) -> bytes | None:
+        if path is None:
+            return None
+        try:
+            return path.read_bytes()
+        except (OSError, ValueError):
+            damaged_inputs.append('tool_input/' + name)
+            return None
+
+    try:
+        ports = shadow_v2_ports(optional_bytes(args.certificate_keys, 'certificate-keys'),
+            optional_bytes(args.binding_keys, 'binding-keys'), release=release)
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        damaged_inputs.append('tool_input/key-descriptors')
+        ports = shadow_v2_ports(None, None, release=release)
+    try:
+        original = args.bundle.read_bytes()
+    except (OSError, ValueError):
+        original = b''
+    result, rendered = run(original, ports, gate=args.gate, damaged_inputs=tuple(damaged_inputs))
+    from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput
+    if isinstance(rendered, UnavailableGateOutput):
+        print(json.dumps(rendered.diagnostic(), sort_keys=True, separators=(',', ':')))
+        raise SystemExit(1)
+    assert result is not None
+    output, _attachments = rendered
+    destination = args.output_dir or args.bundle.parent / 'gate-output'
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / 'report.json').write_bytes(_attachments[0])
+    from trusted_router.async_settle_shadow_v2_a2_evidence import L
+    from trusted_router.detached_jws import canonical
+    for stream, pages in result.detail_streams.items():
+        for page in pages:
+            target = destination / L('report', stream, page['page_seq'])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(canonical(page))
+    for path, raw in result.input_leaves.items():
+        target = destination / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    (destination / 'output.json').write_bytes(output)
+    print(output.decode('ascii'))
+    raise SystemExit(0 if result.verdict == 'PASS' else 1)
 
 
 def main() -> None:
+    import sys
+    if '--policy' in sys.argv[1:] or any(a.startswith('--policy=') for a in sys.argv[1:]):
+        shadow_v2_main(sys.argv[1:])
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--day", action="append", required=True)
     parser.add_argument("--proof-manifest", type=Path, required=True)

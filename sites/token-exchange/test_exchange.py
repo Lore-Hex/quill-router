@@ -10,7 +10,7 @@ from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 import deploy
-from build import build, load_markets, render, tracked_url
+from build import PROVIDERS, build, load_markets, render, tracked_url
 from deploy import certificate_requests, domains, publish_certificates, url_map
 
 RIYADH = ["riyadhtokenexchange.com", "www.riyadhtokenexchange.com"]
@@ -223,13 +223,15 @@ class ExchangeTests(unittest.TestCase):
             self.assertNotIn("google-analytics", page)
             self.assertIn('<script src="/assets/analytics.js?v=test" defer></script>', page)
             self.assertNotIn("$headline", page)
-            # The hero photograph and the provider marquee: one visible group of six links,
+            # The hero photograph and the provider marquee: one visible group of six provider links,
             # one hidden copy that stays out of the tab order, under the relationship label.
             self.assertIn('class="hero-photo"', page)
             self.assertIn("Providers on TrustedRouter", page)
             self.assertEqual(page.count('<div class="hero-provider-group">'), 1)
             self.assertEqual(page.count('<div class="hero-provider-group" aria-hidden="true">'), 1)
             self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), 6)
+            for _, label in PROVIDERS:
+                self.assertEqual(page.count(f'<span>{label}</span>'), 2)
 
     def test_escape(self):
         market = copy.deepcopy(load_markets()[0])
@@ -504,7 +506,7 @@ class ExchangeTests(unittest.TestCase):
             referenced = set()
             for path in [*output.glob("*/index.html"), *output.glob("*.html"), *assets.glob("*.css"), *assets.glob("*.js")]:
                 referenced.update(re.findall(r"/assets/([A-Za-z0-9._-]+)", path.read_text()))
-            self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "mark.svg"}, referenced)
+            self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "river-hero.webp", "mark.svg"}, referenced)
             self.assertEqual({path.name for path in assets.iterdir()}, referenced)
 
 

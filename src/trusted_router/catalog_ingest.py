@@ -670,6 +670,11 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "openai/gpt-5-mini",
             "openai/o3",
             "openai/o3-mini",
+            # Listed since 2026-10-04 but never served: since 2026-10-06 every
+            # request returns HTTP 500 wrapping upstream 404 "page not found",
+            # while the same key serves lightning-ai/glm-5.3. Re-admit only
+            # after a paid canary passes.
+            "lightning-ai/glm-5.3-flash",
         }
     ),
     # route-health first sweep 2026-07-18, 100% failure. These ids may be

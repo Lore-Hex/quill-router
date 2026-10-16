@@ -46,8 +46,15 @@ def refresh_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pa
             "microsoft/mai-voice-2.1-flash": 15_000_000,
         },
         "token_prices": OLD_TOKEN_PRICES,
+        "request_price_unit": "microdollars_per_request",
+        "request_prices": {"qwen/qwen3-tts": 10000, "mistralai/voxtral-4b-tts-2603": 2000},
     }))
     pages = {
+        speech.TINFOIL_URL: json.dumps({"data": [
+            {"id": model, "type": "tts", "endpoints": ["/v1/audio/speech"],
+             "pricing": {"inputTokenPricePer1M": 0, "outputTokenPricePer1M": 0, "requestPrice": price}}
+            for model, price in (("qwen3-tts", 0.01), ("voxtral-tts", 0.002))
+        ]}),
         speech.SOURCES["x-ai/grok-voice-tts-1.0"]:
             "<table><tr><td>Pricing</td><td>$15 / 1M chars</td></tr></table>",
         speech.SOURCES["mistralai/voxtral-mini-tts-2603"]:
@@ -76,6 +83,20 @@ def refresh_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pa
     monkeypatch.setattr(speech, "SNAPSHOT", snapshot)
     monkeypatch.setattr(speech.requests, "get", get)
     return snapshot, pages
+
+
+def test_tinfoil_request_tariffs_refresh(refresh_sources):
+    path, pages = refresh_sources
+    speech.refresh()
+    snapshot = json.loads(path.read_text())
+    assert snapshot["request_price_unit"] == "microdollars_per_request"
+    assert snapshot["request_prices"] == {"qwen/qwen3-tts": 10000, "mistralai/voxtral-4b-tts-2603": 2000}
+    assert "qwen/qwen3-tts" not in snapshot["prices"]
+    before = path.read_bytes()
+    pages[speech.TINFOIL_URL] = pages[speech.TINFOIL_URL].replace('"requestPrice": 0.01', '"requestPrice": 0.03')
+    with pytest.raises(ValueError, match="requires review"):
+        speech.refresh()
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("change", ["unit", "missing", "duplicate", "conflicting", "zero", "precision", "unlabelled"])

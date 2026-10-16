@@ -143,7 +143,11 @@
     </div>
     <p class="signup-foot"><a href="/status">View public status</a> or inspect <a href="/models/{{ model.id }}/providers">provider routes</a>.</p>
     {% elif section == "pricing" %}
+    {% if model.transcription or (model.speech and model.speech.billing_unit != 'tokens') %}
+    <p class="muted-copy">Audio prices use the units shown below. Output is included. Charges are settled in integer microdollars.</p>
+    {% else %}
     <p class="muted-copy">Credits prices are shown as USD per million tokens and billed internally as integer microdollars, not floats. Cached input appears when the provider publishes a distinct cache-read rate.</p>
+    {% endif %}
     {% if model.endpoints %}
     <table>
       <thead>
@@ -209,6 +213,38 @@
         </ul>
       </div>
     </div>
+    {% elif section == "api" and model.transcription %}
+    <p class="muted-copy">Transcribe a WAV or MP3 file with the OpenAI SDK. <a href="/docs#transcription">Formats, timestamps, privacy, and limits</a>.</p>
+    <pre class="code-block"><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+with open("recording.wav", "rb") as audio:
+    response = client.audio.transcriptions.create(
+        model="{{ model.id }}",
+        file=audio,
+        response_format="json",
+    )
+print(response.text)</code></pre>
+    {% elif section == "api" and model.speech %}
+    <p class="muted-copy">Generate audio with the OpenAI SDK. <a href="/docs#text-to-speech">Voices, formats, privacy, and limits</a>.</p>
+    <pre class="code-block"><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+with client.audio.speech.with_streaming_response.create(
+    model="{{ model.id }}",
+    input="Hello from TrustedRouter.",
+    voice="{{ model.speech.supported_voices[0] }}",
+    response_format="{{ model.speech.default_response_format }}",
+) as response:
+    response.stream_to_file("speech.{{ model.speech.default_response_format }}")</code></pre>
     {% elif section == "api" and not model.supports_chat and model.supports_decide %}
     <p class="muted-copy">A decision model answers <span class="mono">POST {{ decide_path }}</span>: one state, a set of typed questions, a verified answer to each. It does not take chat requests. <a href="/docs/decide">The API, the models, the numbers</a>.</p>
     <pre class="code-block"><code>{{ decide_curl(model.id, api_base_url) }}</code></pre>

@@ -1,0 +1,7 @@
+<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="TrustedRouter mark">
+  <ns0:g fill="none" stroke="#171c16" stroke-linecap="round" stroke-linejoin="round">
+    <ns0:path d="M1.4 7.5 H6.5 L11 12 M1.4 16.5 H4 L8.5 12 M1.4 12 H15.5" stroke-width="2" />
+    <ns0:circle cx="15.5" cy="12" r="1.9" fill="#171c16" stroke="none" />
+    <ns0:path d="M17.4 12 H22.6" stroke-width="2" />
+  </ns0:g>
+</ns0:svg>

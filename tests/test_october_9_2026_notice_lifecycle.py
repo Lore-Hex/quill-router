@@ -21,6 +21,8 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "thinkingmachines/inkling", "thinkingmachines/Inkling",
+         datetime(2026, 10, 22, tzinfo=UTC), "thinkingmachines/inkling-small"),
     Case("deepinfra", "ibm-granite/granite-4.2-3b", "ibm-granite/granite-4.2-3b",
          datetime(2026, 10, 18, tzinfo=UTC), "ibm-granite/granite-4.2-8b"),
     Case("deepinfra", "ibm-granite/granite-4.2-30b", "ibm-granite/granite-4.2-30b",

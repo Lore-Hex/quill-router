@@ -1893,7 +1893,7 @@ def test_model_aliases_redirect_once_to_existing_pages(
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
-def test_one_route_qwen_pricing_page_redirects_to_model_overview(
+def test_consolidated_qwen_pricing_redirects_to_canonical_page(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     method: str,
@@ -1909,7 +1909,7 @@ def test_one_route_qwen_pricing_page_redirects_to_model_overview(
         follow_redirects=False,
     )
     assert response.status_code == 301
-    assert response.headers["location"] == "/models/qwen/qwen-3-8-27b"
+    assert response.headers["location"] == "/models/qwen/qwen3.8-27b/pricing"
     assert client.request(method, response.headers["location"]).status_code == 200
 
 
@@ -1920,6 +1920,7 @@ def test_one_route_qwen_pricing_redirect_requires_live_overview(
 
     # Absent from the catalog, whether it lists the model today or not.
     monkeypatch.delitem(public.MODELS, "qwen/qwen-3-8-27b", raising=False)
+    monkeypatch.delitem(public.MODELS, "qwen/qwen3.8-27b", raising=False)
     response = client.get(
         "/models/qwen/qwen-3-8-27b/pricing",
         follow_redirects=False,

@@ -63,6 +63,7 @@ from trusted_router.catalog import (
     provider_is_routable,
     providers_for_display,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.competitor_comparisons import (
@@ -127,6 +128,7 @@ from trusted_router.seo_meta import (
 )
 from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.storage_models import BedrockGroupBuyPledge
+from trusted_router.transcription import TRANSCRIPTION_MODELS, transcription_metadata
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -3658,7 +3660,8 @@ def subprocessors_json(settings: Settings) -> str:
 
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
-    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values() if not model.internal_only]
+    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()
+                  if not model.internal_only and not is_listing_alias(model.id, MODELS)]
     all_models.sort(key=_model_discovery_sort_key)
     models = all_models
     normalized_filter = model_filter.strip().lower()
@@ -4578,7 +4581,8 @@ def _sitemap_lastmod() -> str:
 
 def llms_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
-    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only)
+    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID
+                      and not model.internal_only and not is_listing_alias(model.id, MODELS))
     provider_count = len(providers_for_display())
     lines = [
         "# TrustedRouter",
@@ -5060,8 +5064,11 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         completion = _price(model.completion_price_microdollars_per_million_tokens)
     speech = SPEECH_MODELS.get(model.id)
     if speech and not speech.token_billed:
-        prompt = f"{format_money_precise(speech.customer_rate)}/M characters"
+        prompt = speech.non_token_price_label
         completion = "Included"
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
+    if transcription:
+        prompt, completion = transcription.price_label, "Included"
     cached_prices = _cached_prompt_prices(route_endpoints)
     if cached_prices:
         cached_prompt = _price_values_range(cached_prices, include_zero=True)
@@ -5118,8 +5125,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "context_length_compact": _compact_token_count(model.context_length),
         "context_length_int": model.context_length,
         "prompt_price": prompt,
-        "cached_prompt_price": "Not applicable" if speech else cached_prompt,
+        "cached_prompt_price": "Not applicable" if speech or transcription else cached_prompt,
         "speech": speech_metadata(model.id) if speech else None,
+        "transcription": transcription_metadata(model.id) if transcription else None,
         "completion_price": completion,
         "prompt_price_sort": prompt_price_sort,
         "cached_price_sort": min(cached_prices) if cached_prices else None,
@@ -5480,6 +5488,7 @@ def _model_detail_view(
 ) -> dict[str, object]:
     publisher = _model_publisher(model)
     speech = SPEECH_MODELS.get(model.id)
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
     is_meta = model.id in META_MODEL_IDS
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
@@ -5502,9 +5511,9 @@ def _model_detail_view(
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
                 "provider_logo_url": provider_logo_url(endpoint.provider),
-                "prompt_price": f"{format_money_precise(speech.customer_rate)}/M characters" if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
-                "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range((endpoint,)),
-                "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
+                "prompt_price": transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "cached_prompt_price": "Not applicable" if speech or transcription else _cached_prompt_price_range((endpoint,)),
+                "completion_price": "Included" if transcription or (speech and not speech.token_billed) else _endpoint_price_range(
                     (endpoint,), "completion_price_microdollars_per_million_tokens"
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
@@ -5551,11 +5560,12 @@ def _model_detail_view(
         "context_length_int": model.context_length,
         "fixed_price": fixed_price,
         "speech": speech_metadata(model.id) if speech else None,
-        "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
+        "transcription": transcription_metadata(model.id) if transcription else None,
+        "prompt_price": transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(model.prompt_price_microdollars_per_million_tokens),
         "cached_prompt_price": (
-            "selected route" if is_meta else _cached_prompt_price_range(endpoints)
+            "Not applicable" if speech or transcription else "selected route" if is_meta else _cached_prompt_price_range(endpoints)
         ),
-        "completion_price": _price(
+        "completion_price": "Included" if transcription or (speech and not speech.token_billed) else _price(
             model.completion_price_microdollars_per_million_tokens,
             include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
         ),
@@ -5793,7 +5803,8 @@ def _benchmark_links(model: Model, *, test_mode: bool = False) -> list[dict[str,
 
 def _public_models_for_seo() -> list[Model]:
     return sorted(
-        [model for model in MODELS.values() if model.id not in META_MODEL_IDS and not model.internal_only],
+        [model for model in MODELS.values() if model.id not in META_MODEL_IDS
+         and not model.internal_only and not is_listing_alias(model.id, MODELS)],
         key=lambda model: model.id,
     )
 
@@ -5801,7 +5812,8 @@ def _public_models_for_seo() -> list[Model]:
 def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     """Return the complete public catalog used by the agent-facing full document."""
     models = sorted(
-        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only),
+        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID
+         and not model.internal_only and not is_listing_alias(model.id, MODELS)),
         key=lambda model: model.id,
     )
     return [_model_view(model, test_mode=test_mode) for model in models]
@@ -5902,6 +5914,9 @@ def _model_route_evidence(
     ]
     lowest_prompt = min(prompt_prices) if prompt_prices else None
     lowest_completion = min(completion_prices) if completion_prices else None
+    speech = SPEECH_MODELS.get(model.id)
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
+    audio_price = transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else None
 
     ttft_rows = [
         row
@@ -5948,9 +5963,9 @@ def _model_route_evidence(
         else None
     )
     return {
-        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else None,
+        "lowest_prompt_price": (audio_price or _price(lowest_prompt)) if lowest_prompt is not None else None,
         "lowest_completion_price": (
-            _price(
+            "Included" if audio_price and endpoints else _price(
                 lowest_completion,
                 include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
             )
@@ -6011,7 +6026,12 @@ def _model_faq_items(
         provider_answer = ", ".join(str(name) for name in provider_names[:-1])
         provider_answer = f"{provider_answer}, and {provider_names[-1]}"
     if route_evidence["route_count"]:
+        speech = SPEECH_MODELS.get(model.id)
+        non_token_audio = model.id in TRANSCRIPTION_MODELS or (speech is not None and not speech.token_billed)
         price_answer = (
+            f"The current Credits price is {route_evidence['lowest_prompt_price']}. "
+            "Output is included; these are audio prices, not text-token prices."
+            if non_token_audio else
             f"The current lowest Credits input price is "
             f"{route_evidence['lowest_prompt_price']} and the lowest Credits output price is "
             f"{route_evidence['lowest_completion_price']}. Prices are per one million tokens "
@@ -6345,6 +6365,7 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
         if not endpoints:
             continue
         speech = SPEECH_MODELS.get(model.id)
+        transcription = TRANSCRIPTION_MODELS.get(model.id)
         rows.append(
             {
                 "id": model.id,
@@ -6361,13 +6382,14 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                 ),
                 "context_length": f"{model.context_length:,}",
                 "speech": speech_metadata(model.id) if speech else None,
+                "transcription": transcription_metadata(model.id) if transcription else None,
                 "endpoint_count": len(endpoints),
-                "prompt_price": f"{format_money_precise(speech.customer_rate)}/M characters" if speech and not speech.token_billed else _endpoint_price_range(
+                "prompt_price": transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
                     endpoints,
                     "prompt_price_microdollars_per_million_tokens",
                 ),
-                "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range(endpoints),
-                "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
+                "cached_prompt_price": "Not applicable" if speech or transcription else _cached_prompt_price_range(endpoints),
+                "completion_price": "Included" if transcription or (speech and not speech.token_billed) else _endpoint_price_range(
                     endpoints,
                     "completion_price_microdollars_per_million_tokens",
                 ),

@@ -16,9 +16,21 @@
   top: 12px;
 }
 
-/* Header */
+/* Header. It stays pinned while the page scrolls so Sign in / Console is always
+   reachable; in-page anchors land below it. */
+
+:root {
+  --sticky-header-height: var(--site-header-height, var(--tr-space-header-height));
+}
+
+html {
+  scroll-padding-top: var(--sticky-header-height);
+}
 
 .trnav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   background: var(--tr-color-surface-bg);
   color: var(--tr-color-text-primary);
   font-family: var(--tr-font-family-sans);
@@ -211,6 +223,10 @@
 }
 
 @media (max-width: 880px) {
+  :root {
+    --sticky-header-height: var(--site-header-height, var(--tr-space-header-height-880));
+  }
+
   .trnav .tbar {
     gap: 10px;
     height: var(--tr-space-header-height-880);
@@ -228,6 +244,9 @@
     gap: 0;
     margin: 0;
     padding: 16px 24px 24px;
+    max-height: calc(100dvh - var(--sticky-header-height));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
     border-bottom: 1px solid var(--tr-color-line-control);
     background: var(--tr-color-surface-control);
   }
@@ -235,6 +254,7 @@
   .trnav nav.open { display: flex; }
 
   .trnav nav a {
+    flex-shrink: 0;
     min-height: 44px;
     padding: 16px 0;
   }

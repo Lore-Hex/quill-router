@@ -8,9 +8,10 @@ comma-separated) so the workflow's rollback step can target only the
 failing regions.
 
 Per-region status: prefer the requested SLO class from
-`data.slo_classes.{class}.current_by_region`, falling back to the older
-`data.current.checks[]` shape when the status endpoint has not rolled
-forward yet. The default SLO class is router_core so deploy rollback is
+`data.slo_classes.{class}.current_by_region`, falling back per missing region
+to `data.current.checks[]`. Published SLOs intentionally cover the canonical
+endpoint, while pinned regional probes live in the checks array. The default
+SLO class is router_core so deploy rollback is
 gated by attested reachability, auth/authorize, fallback, and settlement
 rather than provider-only outages.
 
@@ -104,6 +105,7 @@ def fetch_per_region(
     it. That distinguishes "monitor blackout" (status fetch ok, region
     has no recent probes) from a real "up" reading.
     """
+    regions = tuple(regions)
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - deploy script uses operator-provided HTTPS status URL.
             payload = json.load(response)
@@ -118,13 +120,12 @@ def fetch_per_region(
         # the down counter; deploys aren't the suspect for an LB blip).
         return {region: "unknown" for region in regions}
 
-    if isinstance(slo_region_status, dict) and slo_region_status:
-        out: dict[str, str] = {}
+    out: dict[str, str] = {}
+    if isinstance(slo_region_status, dict):
         for region in regions:
             row = slo_region_status.get(region)
-            status = (row or {}).get("status") if isinstance(row, dict) else None
-            out[region] = normalize_watchdog_status(status)
-        return out
+            if isinstance(row, dict):
+                out[region] = normalize_watchdog_status(row.get("status"))
 
     # Keep the worst STATUS, not the worst severity int. down and
     # trust_degraded share severity 2, so ranking by int and mapping back
@@ -150,7 +151,7 @@ def fetch_per_region(
             continue
         if sev > SEVERITY.get(worst.get(target, ""), -1):
             worst[target] = status
-    return {region: worst.get(region, "unknown") for region in regions}
+    return {region: out.get(region, worst.get(region, "unknown")) for region in regions}
 
 
 def write_output(key: str, value: str) -> None:

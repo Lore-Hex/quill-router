@@ -73,9 +73,12 @@ _NATIVE_TO_OR_ID = {
     "qwen3-vl-30b": "qwen/qwen3-vl-30b-a3b-instruct",
     "llama3-3-70b": "meta-llama/llama-3.3-70b-instruct",
     "gpt-oss-120b": "openai/gpt-oss-120b",
+    "gpt-oss-safeguard-120b": "openai/gpt-oss-safeguard-120b",
     "voxtral-small-24b": "mistralai/voxtral-small-24b",
     "whisper-large-v3-turbo": "openai/whisper-large-v3-turbo",
     "qwen3-tts": "qwen/qwen3-tts",
+    "voxtral-tts": "mistralai/voxtral-4b-tts-2603",
+    "voxtral-mini-4b-realtime": "mistralai/voxtral-mini-4b-realtime-2602",
     "nomic-embed-text": "nomic-ai/nomic-embed-text",
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
@@ -209,13 +212,15 @@ def _chat_manifest_row(
     upstream_id: str,
 ) -> dict[str, Any] | None:
     model_type = source.get("type")
-    if model_type not in (None, "chat"):
+    if model_type not in (None, "chat", "safety", "embedding"):
         return None
     raw_endpoints = source.get("endpoints")
     endpoint_names = (
         {str(endpoint) for endpoint in raw_endpoints} if isinstance(raw_endpoints, list) else set()
     )
-    if endpoint_names and "/v1/chat/completions" not in endpoint_names:
+    embedding = model_type == "embedding"
+    expected_endpoint = "/v1/embeddings" if embedding else "/v1/chat/completions"
+    if endpoint_names and expected_endpoint not in endpoint_names:
         return None
 
     endpoints = ["chat/completions"]
@@ -235,11 +240,11 @@ def _chat_manifest_row(
         "upstream_id": upstream_id,
         "display_name": str(source.get("name") or upstream_id),
         "title": model_id,
-        "model_type": "chat",
+        "model_type": "embedding" if embedding else "chat",
         "features": features,
         "input_modalities": ["text", "image"] if multimodal else ["text"],
-        "output_modalities": ["text"],
-        "endpoints": endpoints,
+        "output_modalities": ["embeddings"] if embedding else ["text"],
+        "endpoints": ["embeddings"] if embedding else endpoints,
         "status": 1,
     }
     context_window = source.get("context_window")
@@ -280,6 +285,62 @@ def fetch() -> ProviderPricingResult:
         pricing = row.get("pricing") or {}
         if not isinstance(pricing, dict):
             continue
+        # A token-only tariff cannot represent a per-request charge. Keep
+        # unsupported protocols visible to discovery without advertising a
+        # working route or leaking zero token prices into the price index.
+        request_micro = _microdollars_per_million(pricing.get("requestPrice", 0))
+        if (
+            native_id == "whisper-large-v3-turbo"
+            and row.get("type") == "audio"
+            and row.get("endpoints") == ["/v1/audio/transcriptions"]
+            and request_micro is not None and request_micro > 0
+            and pricing.get("inputTokenPricePer1M") == 0
+            and pricing.get("outputTokenPricePer1M") == 0
+        ):
+            discovered[or_id] = {
+                "id": or_id, "upstream_id": native_id,
+                "display_name": str(row.get("name") or native_id),
+                "model_type": "audio", "input_modalities": ["audio"],
+                "output_modalities": ["transcription"], "endpoints": ["audio/transcriptions"],
+                "routable": True, "billing_unit": "request",
+                "fixed_request_price_microdollars": request_micro,
+            }
+            continue
+        if (
+            native_id in {"qwen3-tts", "voxtral-tts"}
+            and row.get("type") == "tts"
+            and row.get("endpoints") == ["/v1/audio/speech"]
+            and request_micro is not None and request_micro > 0
+            and pricing.get("inputTokenPricePer1M") == 0
+            and pricing.get("outputTokenPricePer1M") == 0
+        ):
+            # Tariffs are refreshed and guarded separately by pricing.speech.
+            # Do not inject request prices into the token-price index.
+            discovered[or_id] = {
+                "id": or_id, "upstream_id": native_id,
+                "display_name": str(row.get("name") or native_id),
+                "model_type": "tts", "input_modalities": ["text"],
+                "output_modalities": ["speech"], "endpoints": ["audio/speech"],
+                "routable": True, "billing_unit": "request",
+                "fixed_request_price_microdollars": request_micro,
+            }
+            continue
+        if manifest_row is None or request_micro is None or request_micro != 0:
+            kind = str(row.get("type") or "chat")
+            raw_endpoints = row.get("endpoints")
+            discovered[or_id] = {
+                "id": or_id, "upstream_id": native_id,
+                "display_name": str(row.get("name") or native_id),
+                "model_type": kind,
+                "input_modalities": ["audio"] if kind == "audio" else ["text"],
+                "output_modalities": ["audio"] if kind == "tts" else ["text"],
+                "endpoints": [str(path).removeprefix("/v1/") for path in raw_endpoints]
+                if isinstance(raw_endpoints, list) else [],
+                "routable": False,
+                "routable_reason": "unsupported-endpoint-or-billing",
+            }
+            notes.append(f"held unsupported endpoint or request tariff: {native_id}")
+            continue
         input_micro = _microdollars_per_million(pricing.get("inputTokenPricePer1M"))
         output_micro = _microdollars_per_million(pricing.get("outputTokenPricePer1M"))
         if input_micro is None or output_micro is None:
@@ -295,12 +356,10 @@ def fetch() -> ProviderPricingResult:
             completion_micro_per_m=output_micro,
             prompt_cached_micro_per_m=cached_input_micro,
         )
-        # The shared snapshot merger still refreshes every mapped live route.
-        # Explicitly expected models and syntactically strict GLM releases are
-        # safe to append from Tinfoil's structured catalog. Other families stay
-        # review-gated even when generic canonicalization can name them.
-        if manifest_row is not None and (
-            or_id in EXPECTED_MODELS
+        # Every explicitly reviewed native ID participates in discovery, not
+        # only the handful of headline models in EXPECTED_MODELS.
+        if (
+            native_id.strip().casefold() in _NATIVE_TO_OR_ID
             or _GLM_NATIVE_ID_RE.fullmatch(native_id.strip().casefold()) is not None
         ):
             discovered[or_id] = manifest_row
