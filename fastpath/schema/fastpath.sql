@@ -33,6 +33,35 @@ CREATE TABLE tr_credit_balance (
   updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
 ) PRIMARY KEY (workspace_id, shard);
 
+-- Reservations, as production's scripts/deploy/migrate_typed_counters.sh
+-- creates them, word for word, with the index by expiry: today's
+-- synchronous holds, which a credit shard's `reserved` carries beside its
+-- leases' (§4.7's combined identity), and which the audit reads unsettled,
+-- through the index. The service never writes them; a test holds the two
+-- equal, and the migration leaves both alone.
+CREATE TABLE tr_reservation (
+    reservation_id STRING(64) NOT NULL,
+    workspace_id STRING(64),
+    key_hash STRING(64),
+    ws_shard INT64,
+    credit_shard INT64 NOT NULL DEFAULT (0),
+    key_shard INT64,
+    credit_reserved_micro INT64,
+    key_reserved_micro INT64,
+    actual_micro INT64,
+    hold_usage_type STRING(16),
+    settled_usage_type STRING(16),
+    authorization_id STRING(64),
+    settled BOOL NOT NULL DEFAULT (false),
+    idempotency_scope STRING(256),
+    idempotency_fingerprint STRING(64),
+    created_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
+    expires_at TIMESTAMP,
+    terminal_at TIMESTAMP,
+  ) PRIMARY KEY (reservation_id);
+
+CREATE INDEX tr_reservation_by_expiry ON tr_reservation (settled, expires_at);
+
 -- Leases (§4.2), keyed by workspace first, since a grant reads the
 -- workspace's leases under its lock.
 CREATE TABLE tr_lease (
