@@ -33,7 +33,7 @@ def require_internal_model_key(
 ) -> None:
     if not requests_internal_model(body):
         return
-    if "trustedrouter/fortanix-test" in _requested_ids(body) and cloud_for_region(settings.effective_serving_region) not in {"gcp", "aws"}:
+    if "trustedrouter/fortanix-test" in _requested_ids(body) and cloud_for_region(settings.effective_serving_region) not in {"gcp", "aws", "azure"}:
         raise api_error(503, "Internal test provider is not enabled in this cloud", ErrorType.MODEL_NOT_SUPPORTED)
     for expected in (settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key):
         if expected and caller_hash == lookup_hash_api_key(expected):
