@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -349,6 +350,10 @@ def _window(command: str, plan: dict[str, Any], *, source: Path, out: Path | Non
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] in ACTION_SEAMS:
+        from scripts.async_settle.shadow_v2_activation import main as activation_main
+        return activation_main(arguments)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('collect', 'review-inputs', 'pack', *ACTION_SEAMS))
     parser.add_argument('--plan', type=Path, required=True)
@@ -358,8 +363,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--phase')
     args = parser.parse_args(argv)
     try:
-        result = window(args.command, retained_json(args.plan.read_bytes()), source=args.input or args.plan.parent,
-                        out=args.out, stage=args.stage)
+        plan = retained_json(args.plan.read_bytes())
+        source = args.input or args.plan.parent
+        if plan.get('version') == 'p6-first-window-v1':
+            from trusted_router.async_settle_shadow_v2_activation_plan import (
+                contained_path,
+                load,
+                read_file,
+            )
+            activation = load(args.plan)
+            plan = retained_json(read_file(args.plan.parent, activation.artifacts.bundle_plan))
+            source = args.input or contained_path(args.plan.parent, activation.artifacts.bundle_plan.path).parent
+        result = window(args.command, plan, source=source, out=args.out, stage=args.stage)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         result = dict(complete=False, missing=[str(exc)])
     print(json.dumps(result, sort_keys=True, separators=(',', ':')))
