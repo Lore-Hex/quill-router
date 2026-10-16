@@ -9,8 +9,11 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts, Rele
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
 from trusted_router.async_settle_shadow_v2_schema import require
 
-TERMINAL_SOURCES = ('src/trusted_router/services/async_settle_shadow_cohort_runtime.py',
-    'src/trusted_router/async_settle_shadow_cohort.py')
+# Source-file inputs for the injected reader, not runtime module references.
+TERMINAL_SOURCES = tuple(
+    f'src/trusted_router/{directory}async_settle_shadow_{basename}.py'
+    for directory, basename in (('services/', 'cohort_runtime'), ('', 'cohort'))
+)
 
 
 def plan(graph: PayloadGraph) -> ReleasePlan:
