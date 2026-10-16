@@ -2262,6 +2262,23 @@ class _FakeTransaction:
             else:
                 self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
 
+    def update(
+        self, *, table: str, columns: tuple[str, ...], values: list[tuple]
+    ) -> None:
+        from google.api_core.exceptions import NotFound
+
+        if self._did_dml:
+            raise RuntimeError("mutation after DML in the same transaction")
+        for value in values:
+            record = dict(zip(columns, value, strict=True))
+            pk = tuple(record[column] for column in _TYPED_PRIMARY_KEYS[table])
+            if self._typed_current(table, pk) is None:
+                raise NotFound("update mutation requires an existing row")
+        self._did_mutation = True
+        self.pending_writes.extend(
+            ("upsert_typed", table, columns, value) for value in values
+        )
+
     def delete(self, table: str, keyset: _KeySet) -> None:
         if self._did_dml:
             raise RuntimeError(

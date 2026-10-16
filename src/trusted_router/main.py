@@ -634,7 +634,10 @@ def create_app(
             workspace_id = str(UUID(workspace_id)) if isinstance(workspace_id, str) else "unknown"
         except ValueError:
             workspace_id = "unknown"
-        timing = " ".join(f"{name}={value}" for name, value in gateway_error_timing_fields(exc).items())
+        from trusted_router.storage_gcp_io import spanner_failure_fields
+
+        fields = {**gateway_error_timing_fields(exc), **spanner_failure_fields(exc)}
+        timing = " ".join(f"{name}={value}" for name, value in fields.items())
         _storage_error_logger.warning(
             "%s method=%s route=%s request_id=%s error_class=%s workspace_id=%s%s",
             event,
