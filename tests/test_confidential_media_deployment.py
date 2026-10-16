@@ -41,7 +41,7 @@ def test_media_discovery_and_authorization_follow_gateway_release(region: str) -
             import asyncio
             import os
             import httpx
-            from tests.test_decide_models import _authorize
+            from tests.test_decide_models import _authorize, _assert_no_financial_side_effects
             from trusted_router.catalog import MODELS, MODEL_ENDPOINTS, endpoints_for_model
             from trusted_router.config import Settings
             from trusted_router.main import create_app
@@ -83,6 +83,8 @@ def test_media_discovery_and_authorization_follow_gateway_release(region: str) -
                     "provider": {"only": ["privatemode"], "min_privacy": "confidential"},
                 })
                 assert response.status_code == (200 if allowed else 400), response.text
+                if not allowed:
+                    _assert_no_financial_side_effects()
             asyncio.run(verify())
         ''')],
         env={**os.environ, "TR_PRIMARY_REGION": "us-central1", "TR_SERVING_REGION": region,
