@@ -129,7 +129,7 @@ def test_p5_object_budgets_run_in_a_fresh_package_only_session() -> None:
     ]
     assert {path.name for path in ROOT.glob("tests/test_async_settle_shadow_v2_gate*.py")} == PACKAGE_MODULES
     assert step["if"] == "${{ !cancelled() }}"
-    assert step["timeout-minutes"] == 5
+    assert step["timeout-minutes"] == 12
     assert "continue-on-error" not in step
 
 

@@ -87,7 +87,9 @@ jobs:
       # SDK leftovers from other tests. Mixed-suite workers skip that count.
       - name: P5 package object budgets
         if: ${{ !cancelled() }}
-        timeout-minutes: 5
+        # 861 covered tests on two workers: 3.5 minutes on one runner, over 5 on
+        # a slower one (run 38851426992 timed out at the old 5-minute limit).
+        timeout-minutes: 12
         run: >-
           uv run pytest -q tests/test_async_settle_shadow_v2_gate*.py
           -m "not proof_oracle" -n 2
