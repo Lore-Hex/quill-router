@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing.providers import deepinfra, xiaomi
+from scripts.pricing.providers import deepinfra, scaleway, xiaomi
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -21,6 +21,8 @@ class Case:
 
 
 _CASES = [
+    Case("scaleway", "z-ai/glm-5.2", "glm-5.2",
+         datetime(2026, 11, 16, tzinfo=UTC), "z-ai/glm-5.3"),
     Case("deepinfra", "thinkingmachines/inkling", "thinkingmachines/Inkling",
          datetime(2026, 10, 22, tzinfo=UTC), "thinkingmachines/inkling-small"),
     Case("deepinfra", "ibm-granite/granite-4.2-3b", "ibm-granite/granite-4.2-3b",
@@ -36,7 +38,11 @@ _CASES = [
     Case("xiaomi", "xiaomi/mimo-v2.5", "mimo-v2.5",
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
-_MANIFESTS = {"deepinfra": deepinfra.MANIFEST_PATH, "xiaomi": xiaomi.MANIFEST_PATH}
+_MANIFESTS = {
+    "deepinfra": deepinfra.MANIFEST_PATH,
+    "scaleway": scaleway.MANIFEST_PATH,
+    "xiaomi": xiaomi.MANIFEST_PATH,
+}
 
 
 def test_xiaomi_cutoff_is_the_substitution_start_not_the_shutoff() -> None:
