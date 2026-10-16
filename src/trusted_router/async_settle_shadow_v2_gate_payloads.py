@@ -5,6 +5,7 @@ semantics. The loader keeps the retained adapter seam closed independently.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,6 +18,7 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import (
     Cohort,
     Inventory,
     Key,
+    LoadingPorts,
     Ports,
     Row,
     Shutdown,
@@ -44,7 +46,7 @@ from trusted_router.detached_jws import canonical
 
 @dataclass
 class PayloadGraph:
-    files: dict[str, bytes]
+    files: Mapping[str, bytes]
     completed_at_us: int | None = None
     streams: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     decoded: dict[str, Any] = field(default_factory=dict)
@@ -52,30 +54,46 @@ class PayloadGraph:
     _bad_pages: dict[tuple[str, str], PayloadError] = field(default_factory=dict)
     _containers: dict[int, list[tuple[str, str, dict[str, Any] | None, str | None]]] = field(default_factory=dict)
     _indexed: set[str] = field(default_factory=set)
-    _lookups: dict[bytes, Any] = field(default_factory=dict)
+    _lookups: dict[str, Any] = field(default_factory=dict)
     issues: list[LoadingIssue] = field(default_factory=list)
     limits: dict[str, dict[str, Any]] = field(default_factory=dict)
     shutdown: Shutdown | None = None
     ports: Ports | None = None
+    stage: str = 'pre-flip'
+    parsers: dict[str, Any] = field(default_factory=dict)
+    ledgers: tuple[bytes, ...] = ()
 
     def reject(self, path: str, exc: Exception) -> None:
         if isinstance(exc, PayloadError):
             path = exc.path
-        self.issues.append(LoadingIssue(error_gap(exc), path, str(exc)))
+        if not any(issue.path == path for issue in self.issues):
+            self.issues.append(LoadingIssue(error_gap(exc), path, error_gap(exc)))
 
     def file(self, reference: dict[str, Any]) -> bytes:
         a2.FILE_REF(reference)
         raw = self.files.get(reference['path'])
-        if raw is None or len(raw) != reference['bytes'] or roots.file_digest(raw) != reference['sha256']:
+        if raw is None:
+            raise PayloadError(reference['path'], 'artifact_gap')
+        parser = self.parsers.get(reference['path'])
+        if parser is not None:
+            try:
+                parser(raw)
+            except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                raise PayloadError(reference['path'], 'evidence_schema_gap') from exc
+        if len(raw) != reference['bytes'] or roots.file_digest(raw) != reference['sha256']:
             raise PayloadError(reference['path'], 'artifact_gap')
         return raw
 
     def object(self, reference: dict[str, Any], schema: Schema) -> dict[str, Any]:
-        raw = self.file(reference)
+        a2.FILE_REF(reference)
+        raw = self.files.get(reference['path'])
+        if raw is None:
+            raise PayloadError(reference['path'], 'artifact_gap')
         try:
             value = contract._object_bytes(raw, schema)
         except ValueError as exc:
             raise PayloadError(reference['path'], error_gap(exc)) from exc
+        self.file(reference)
         self.decoded[reference['path']] = value
         self.references(value)
         return value
@@ -113,12 +131,13 @@ class PayloadGraph:
                     # not page containers. Reject them before the much more
                     # expensive contract traversal; accepted pages still go
                     # through the contract on their original bytes below.
-                    if raw not in self._lookups:
+                    if path not in self._lookups:
                         try:
-                            self._lookups[raw] = retained_json(raw)
+                            candidate = retained_json(raw)
+                            self._lookups[path] = candidate if type(candidate) is dict and 'entries' in candidate else None
                         except ValueError:
-                            self._lookups[raw] = None
-                    lookup = self._lookups[raw]
+                            self._lookups[path] = None
+                    lookup = self._lookups[path]
                     if type(lookup) is not dict or 'entries' not in lookup:
                         continue
                     try:
@@ -178,9 +197,34 @@ class PayloadGraph:
         self.detail(value['dependencies'], 'files')
         # Decode the untouched v1 payload, retaining binary64 values. Semantic
         # validation is performed by the named retained callable, never A2.
-        self.decoded[value['payload']['path']] = retained_json(self.file(value['payload']))
+        try:
+            self.decoded[value['payload']['path']] = retained_json(self.file(value['payload']))
+        except PayloadError:
+            raise
+        except ValueError as exc:
+            raise PayloadError(value['payload']['path'], 'evidence_schema_gap') from exc
 
     def materialize(self, payloads: dict[str, dict[str, Any]]) -> None:
+        from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+        references: dict[str, list[dict[str, Any]]] = {}
+        self.parsers.update(dependencies(self.files, payloads, self.ports, self.stage, self.ledgers, references=references))
+        for path, parser in self.parsers.items():
+            try:
+                if path not in self.files:
+                    raise PayloadError(path, 'artifact_gap')
+                raw = self.files[path]
+                parser(raw)
+                digest = roots.file_digest(raw)
+                for reference in references.get(path, ()):
+                    a2.FILE_REF(reference)
+                    if len(raw) != reference['bytes'] or digest != reference['sha256']:
+                        raise PayloadError(path, 'artifact_gap')
+                if isinstance(self.ports, LoadingPorts) and self.ports.release is not None:
+                    expected = self.ports.release.artifacts.get(path)
+                    if expected is not None and digest != expected:
+                        raise PayloadError(path, 'artifact_gap')
+            except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                self.reject(path, exc)
         for path, value in payloads.items():
             try:
                 self.materialize_one(path, value)
@@ -194,8 +238,12 @@ class PayloadGraph:
             self.reject('proof.post_budget_sha256', ValueError('evidence_schema_gap'))
 
     def materialize_one(self, path: str, value: dict[str, Any]) -> None:
-        self.references(value)
         qualified = path.split('/', 1)[-1] if '/manifest.' in path else path
+        if qualified == 'proof.external_proofs_sha256':
+            from trusted_router.async_settle_shadow_v2_gate_policy import closure
+            value = {**value, 'requirements': [r for r in value['requirements'] if r['stage'] in closure(self.stage)],
+                     'pilot': value['pilot'] if self.stage in ('pre-flip', 'post-flip') else None}
+        self.references(value)
         if qualified == 'proof.shutdown_inventory_sha256':
             require(value['complete'], 'artifact_gap')
             self.approved_subject(value['approval'], value['measurements'])

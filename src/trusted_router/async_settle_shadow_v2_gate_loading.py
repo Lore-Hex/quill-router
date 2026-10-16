@@ -53,6 +53,13 @@ def error_gap(exc: Exception) -> str:
     return 'artifact_gap' if str(exc) in ('artifact_gap', 'evidence_size') else 'evidence_schema_gap'
 
 
+def error_detail(exc: Exception) -> str:
+    """Only frozen diagnostic labels cross the output boundary, never Python text."""
+    labels = {rule.name for rule in a2.FAILURE_RULES} | {'a1-publisher-conservation'}
+    text = str(exc)
+    return text if text in labels else 'evidence_schema_gap'
+
+
 def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, max_depth: int = 64, bounded_integers: bool = True) -> Any:
     """Transport decode only; the retained callable owns the payload schema.
 
@@ -79,7 +86,7 @@ def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, 
         raise ValueError('evidence_schema_gap') from exc
 
 
-def validate_original_bytes(bundle: Bundle, ports: Ports | None) -> list[dict[str, Any]]:
+def validate_original_bytes(bundle: Bundle, ports: Ports | None, *, gate: str = 'pre-flip') -> list[dict[str, Any]]:
     """Exercise the existing row/preimage boundary during loading as well.
 
     Evaluators still recheck this boundary; loading never treats unchecked rows
@@ -88,7 +95,7 @@ def validate_original_bytes(bundle: Bundle, ports: Ports | None) -> list[dict[st
     """
     from trusted_router.async_settle_shadow_v2_gate_bundle import decode_bundle
 
-    ctx = decode_bundle(bundle, ports, 'fleet-budgets-pre')
+    ctx = decode_bundle(bundle, ports, gate)
     return [dict(gap=issue.gap, detail=issue.detail,
                  subject=issue.subject.wire or a2.N())
             for issue in ctx.issues if not issue.detail.startswith('undefined preimage:')]

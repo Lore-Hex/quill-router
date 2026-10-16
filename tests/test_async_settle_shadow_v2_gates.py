@@ -7,7 +7,10 @@ from typing import Any
 
 import pytest
 
-from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
+from tests.shadow_v2_gate_cache import (  # noqa: F401
+    default_dependency_lookup_cache,
+    payloadgraph_shared_lookup_cache,
+)
 from tests.shadow_v2_gate_fixture_generator import (
     START,
     build,
@@ -291,7 +294,8 @@ def test_fleet_bootstrap_does_not_require_seed(passing: Bundle) -> None:
 @pytest.mark.parametrize('seconds', [604799, 604800, 604801])
 def test_clock_exact_seven_day_boundary(passing: Bundle, seconds: int) -> None:
     ctx = decode_bundle(passing, ports(passing), 'pre-flip')
-    ctx.verified.add(passing.signatures[0].object_id)
+    from trusted_router.async_settle_shadow_v2_gate_bundle import verify_samples
+    verify_samples(ctx)
     end = START + 2000000 + seconds * 1000000
     assert ctx.bundle.inventory is not None
     ctx.bundle = replace(ctx.bundle, completed_at_us=end, inventory=replace(ctx.bundle.inventory,
@@ -430,7 +434,7 @@ def test_post_flip_delegates_retained_outcomes(tmp_path: Any) -> None:
     from tests.shadow_v2_gate_a2_fixture import real_fixture, transport
     from trusted_router.async_settle_shadow_v2_gate_loader import load
     original, bound, _ = real_fixture(tmp_path, seconds=20, pilot_stage='post-flip')
-    candidate = load(transport(original), bound)
+    candidate = load(transport(original), bound, gate='post-flip')
     assert evaluate(candidate, bound, gate='post-flip').verdict == 'PASS'
     assert candidate.external and candidate.external.post_input
     candidate.external.post_input['outbox'][0]['terminal_at'] = None

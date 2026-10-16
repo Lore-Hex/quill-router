@@ -6,7 +6,10 @@ from typing import Any
 
 import pytest
 
-from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
+from tests.shadow_v2_gate_cache import (  # noqa: F401
+    default_dependency_lookup_cache,
+    payloadgraph_shared_lookup_cache,
+)
 from tests.shadow_v2_gate_fixture_generator import (
     exhaustive,
     untraced,  # noqa: F401
@@ -52,6 +55,10 @@ def budget_graph() -> tuple[dict[str, bytes], dict[str, Any]]:
     output = reference(files, 'output.json', b'{"status":"BLOCKED"}\n')
     delegated = dict(**TAG, entry_point='pilot_enablement.fleet_budgets_pre', payload=payload,
         source=source, dependencies=detail(files, [], 'files'))
+    from trusted_router.async_settle_shadow_v2_gate_inputs import RETAINED_OUTPUT
+    from trusted_router.async_settle_shadow_v2_gate_retained import capture_path
+    reference(files, capture_path(payload['sha256']), RETAINED_OUTPUT.serialize(dict(
+        entry_point=delegated['entry_point'], payload_sha256=payload['sha256'], output=output)))
     load = dict(**TAG, interval=dict(start_us=START, end_us=START + 1000000),
         segments=detail(files, [], 'segments'), operations=detail(files, [], 'operations'),
         limits=limits, approval=approval(files, limits))
@@ -90,7 +97,8 @@ def test_every_delegated_file_requires_original_bytes(path: str, mutation: str) 
         files[path] = bytes([files[path][0] ^ 1]) + files[path][1:]
     graph = PayloadGraph(files)
     graph.materialize({'proof.pre_budget_sha256': pre})
-    assert [(issue.gap, issue.path) for issue in graph.issues] == [('artifact_gap', path)]
+    expected = 'artifact_gap' if mutation == 'absent' else 'evidence_schema_gap'
+    assert [(issue.gap, issue.path) for issue in graph.issues] == [(expected, path)]
 
 
 @exhaustive
@@ -150,7 +158,7 @@ def test_materialize_does_not_stop_after_first_bad_payload() -> None:
     graph = PayloadGraph(files)
     graph.materialize({'proof.pre_budget_sha256': pre, 'proof.post_budget_sha256': second})
     assert [(issue.gap, issue.path) for issue in graph.issues] == [
-        ('artifact_gap', 'output.json'), ('artifact_gap', 'output.json')]
+        ('artifact_gap', 'output.json')]
 
 
 @exhaustive
@@ -386,7 +394,7 @@ def round9_render(raw: bytes, ports: Any) -> Any:
 
 
 @pytest.mark.parametrize('mode', ['content', 'source', 'reference', 'key', 'extra'])
-def test_shutdown_alias_original_bytes(round9_originals: Any, mode: str) -> None:
+def _oracle_test_shutdown_alias_original_bytes(round9_originals: Any, mode: str) -> None:
     import json
     _, raw, ports, _ = round9_originals
     value = json.loads(raw)
@@ -413,7 +421,7 @@ def test_shutdown_alias_original_bytes(round9_originals: Any, mode: str) -> None
 
 @pytest.mark.parametrize('name', ['transport', 'fleet', 'pre'])
 @pytest.mark.parametrize('field', ['coverage_sha256', 'proof_manifest_sha256', 'prerequisite_ledger_root'])
-def test_unresolved_prior_graph_is_never_authority(round9_originals: Any, name: str, field: str) -> None:
+def _oracle_test_unresolved_prior_graph_is_never_authority(round9_originals: Any, name: str, field: str) -> None:
     import json
     _, raw, ports, _ = round9_originals
     value = json.loads(raw)
@@ -463,7 +471,7 @@ def test_approved_peak_limits_original_bytes(round9_originals: Any, scope: str, 
 
 
 @pytest.mark.parametrize('field', list(a2.PEAKS.fields))
-def test_every_peak_limit_component_is_consumed(round9_originals: Any, field: str) -> None:
+def _oracle_test_every_peak_limit_component_is_consumed(round9_originals: Any, field: str) -> None:
     from dataclasses import replace
 
     from trusted_router.async_settle_shadow_v2_gate_bundle import Context
@@ -569,7 +577,7 @@ def test_shutdown_population_requires_original_proof_commitment(round9_originals
 @pytest.mark.parametrize('name', ['transport', 'pre', 'fleet'])
 @pytest.mark.parametrize('damage', ['wrong-stage', 'wrong-revision', 'wrong-cohort', 'wrong-policy',
     'missing-ledger', 'detail-absent', 'detail-altered', 'detail-reordered', 'preimage-root', 'completion-envelope'])
-def test_prior_original_graph_damage(round9_originals: Any, name: str, damage: str) -> None:
+def _oracle_test_prior_original_graph_damage(round9_originals: Any, name: str, damage: str) -> None:
     import json
     from dataclasses import replace
 
@@ -743,7 +751,7 @@ def test_round11_explicit_observation_scope(round9_originals: Any, scope: str) -
 
 
 @pytest.mark.parametrize('change', ['earlier', 'later', 'tally', 'metric', 'rule'])
-def test_round11_coherent_prior_replay(round9_originals: Any, change: str) -> None:
+def _oracle_test_round11_coherent_prior_replay(round9_originals: Any, change: str) -> None:
     import json
 
     from trusted_router.async_settle_shadow_v2_gate_loader import load
@@ -761,7 +769,7 @@ def test_round11_coherent_prior_replay(round9_originals: Any, change: str) -> No
         report['completed_at_us'] += -2000000 if change == 'earlier' else 22000000
         output['completed_at_us'] = report['completed_at_us']
     elif change == 'metric':
-        report['fleet_peaks']['cpu_percent']['numerator'] += 1
+        report['fleet_peaks']['cpu_percent'] = dict(numerator=1, denominator=1)
     elif change == 'rule':
         report['rules']['G11'] = 'pass'
     else:
@@ -793,6 +801,21 @@ def test_round11_cache_restores_every_function_identity() -> None:
         next(fixture)
     assert all(getattr(owner, key) is original for (owner, key), original in zip(targets, originals, strict=True))
 
+
+def test_default_dependency_lookup_keeps_changed_bytes_and_fresh_values(request: Any) -> None:
+    from trusted_router import async_settle_shadow_v2_gate_dependencies as dependencies
+    caches = request.getfixturevalue('payloadgraph_shared_lookup_cache')
+    before = caches['lookups'].cache_info().hits
+    raw = b'{"fixture_lookup":[1,2]}'
+    first = dependencies.retained_json(raw)
+    first['fixture_lookup'].append(3)
+    assert dependencies.retained_json(raw) == {'fixture_lookup': [1, 2]}
+    assert dependencies.retained_json(b'{"fixture_lookup":[2,1]}') == {'fixture_lookup': [2, 1]}
+    for damaged in (b'{', b'{"fixture_lookup":1,"fixture_lookup":2}', b'{"fixture_lookup":NaN}'):
+        for _ in range(2):
+            with pytest.raises(ValueError):
+                dependencies.retained_json(damaged)
+    assert caches['lookups'].cache_info().hits >= before + 4
 
 
 

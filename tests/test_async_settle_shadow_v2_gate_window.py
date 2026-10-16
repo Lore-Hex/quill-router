@@ -137,10 +137,10 @@ def validation_cache(request: Any):
     patch.setattr(Schema, '_decode', decoded)
     patch.setattr(Schema, 'parse', dispatch)
     patch.setattr(health, 'validate_publisher_traces', traces)
-    originals = tuple(patch._setattr)
+    restored_functions = tuple(patch._setattr)
     yield
     patch.undo()
-    assert all(getattr(owner, name) is original for owner, name, original in originals)
+    assert all(getattr(owner, name) is original for owner, name, original in restored_functions)
     stale = [name for name, module in tuple(sys.modules.items())
              if name.startswith('trusted_router.async_settle_shadow_v2_gate')
              and getattr(module, 'file_digest', None) is digest]
@@ -172,6 +172,7 @@ def short_family(tmp_path_factory: Any, validation_cache: Any) -> Any:
     return transport(original), ports
 
 
+@pytest.mark.proof_oracle
 @pytest.mark.parametrize('case', SHORT_CASES, ids=lambda row: row['gap'])
 def test_short_blocked_render(short_family: Any, tmp_path: Any, case: Any) -> None:
     gap = case['gap']
@@ -194,7 +195,7 @@ def test_short_blocked_render(short_family: Any, tmp_path: Any, case: Any) -> No
                    for f in result.failures if f.gap == 'artifact_gap')
         tally = result.gate_report['failure_counts'][gap]
         assert tally['count'] > 0 and tally['complete'] is True
-        assert result.gate_report['verifiers']['binding']['calls'] > 0
+        assert result.gate_report['verifiers']['binding']['calls'] == 0
 
 
 
@@ -213,11 +214,18 @@ def test_byte_witness_inventory_is_explicit() -> None:
             if stage != row['stage'] and list(contract.REQUIRED_RULES).index(stage) < list(contract.REQUIRED_RULES).index(row['stage'])) or row['rule'] in ('G10', 'G11') or row['gap'] == 'close_handoff_budget_gap'
 
 
+def seven_day_originals(tmp_path_factory: Any) -> Any:
+    original, bound_ports, _ = real_fixture(tmp_path_factory.mktemp('real-seven-days'),
+        seconds=604804, pilot_stage='pre-flip', churn=True)
+    from tests.shadow_v2_gate_a3_originals import compact_originals
+    original = compact_originals(original, bound_ports, 'pre-flip')
+    return original, bound_ports
+
+
 @pytest.fixture(scope='class')
 def real_seven_days(tmp_path_factory: Any, validation_cache: Any) -> Any:
     with no_line_tracing():
-        original, bound_ports, _ = real_fixture(tmp_path_factory.mktemp('real-seven-days'),
-            seconds=604804, pilot_stage='pre-flip', churn=True)
+        original, bound_ports = seven_day_originals(tmp_path_factory)
         raw = transport(original)
         loaded = load_original(raw, bound_ports)
         assert loaded.a2_streams['loading_issues'] == []
@@ -459,7 +467,18 @@ def test_short_verified_clock_branches(short_family: Any, mode: str) -> None:
 def totality_original(tmp_path_factory: Any, validation_cache: Any) -> Any:
     # No historical graph is necessary for transport; all originals and the
     # approved release are real. Schema caches remain module-local.
-    return real_fixture(tmp_path_factory.mktemp('totality-original'), chain=False, traffic=False)
+    from dataclasses import replace
+
+    from tests.shadow_v2_gate_a2_fixture import commit_originals
+    from tests.shadow_v2_gate_a3_originals import compact_originals
+    original, ports, expected = real_fixture(tmp_path_factory.mktemp('totality-original'), chain=False, traffic=False)
+    original = compact_originals(original, ports, 'transport')
+    files = {p.name: p.raw for p in original.preimages}
+    plan = json.loads(ports.release.raw)
+    plan['artifacts'] = {path: digest for path, digest in plan['artifacts'].items() if path in files}
+    files[ports.release.path] = canonical(plan)
+    ports = replace(ports, release=replace(ports.release, artifacts=plan['artifacts'], raw=files[ports.release.path]))
+    return commit_originals(original, files), ports, expected
 
 
 @pytest.fixture(scope='class')
@@ -763,6 +782,163 @@ def test_round14_transport_cache_has_module_lifetime() -> None:
     # Distinct scalar entries are visible to the reference walk even though
     # gc.get_objects does not count them. Teardown must release this table.
     prior._VERIFIED[tuple(f'module-original-{index}' for index in range(12000))] = True
+
+
+
+# The existing package oracle job owns the exhaustive A3 dependency matrix.
+
+from tests.test_async_settle_shadow_v2_gate_a3 import (  # noqa: E402
+    ROOT_DEPENDENCIES,
+    through_all,
+)
+from tests.test_async_settle_shadow_v2_gate_a3 import originals as a3_originals  # noqa: E402, F401
+from trusted_router.async_settle_shadow_v2_gate_policy import REQUIRED  # noqa: E402
+
+
+@pytest.mark.proof_oracle
+@pytest.mark.parametrize('stage', tuple(REQUIRED))
+@pytest.mark.parametrize('path', ROOT_DEPENDENCIES)
+@pytest.mark.parametrize('damage', ['delete', 'corrupt'])
+def test_each_stage_dependency_has_one_path_diagnostic(a3_originals: Any, tmp_path: Path, stage: str, path: str, damage: str) -> None:  # noqa: F811
+    original, ports, _ = a3_originals
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    value = json.loads(transport(original))
+    if damage == 'delete':
+        value['preimages'] = [p for p in value['preimages'] if p['name'] != path]
+    else:
+        next(p for p in value['preimages'] if p['name'] == path)['raw'] = '{}'
+    raw = canonical(value)
+    bundle = load(raw, ports, gate=stage)
+    own = [i for i in bundle.a2_streams['loading_issues'] if i['path'] == path]
+    assert len(own) == 1 and own[0]['gap'] == ('artifact_gap' if damage == 'delete' else 'evidence_schema_gap'), own
+    from trusted_router.async_settle_shadow_v2_gate_result import run
+    result, _ = run(raw, ports, gate=stage)
+    assert result is not None
+    from trusted_router import async_settle_shadow_v2_a2_evidence as evidence
+    original_subject = evidence.O('a2_file', path)
+    failures = [failure for failure in result.failures if failure.subject == original_subject]
+    assert len(failures) == 1, failures
+    assert through_all(raw, ports, tmp_path, stage)['verdict'] == 'BLOCKED'
+    assert not any('KeyError' in i['detail'] or "'proof." in i['detail'] for i in bundle.a2_streams['loading_issues'])
+
+
+
+# Measured slow matrices live in this existing CI oracle job. Every case and
+# original-byte assertion is retained; default modules keep their smoke tests.
+from tests import test_async_settle_shadow_v2_gate_complete as oracle_complete  # noqa: E402
+from tests.test_async_settle_shadow_v2_gate_a3 import originals  # noqa: E402, F401
+from tests.test_async_settle_shadow_v2_gate_cli import cli_original  # noqa: E402, F401
+from tests.test_async_settle_shadow_v2_gate_complete import real  # noqa: E402, F401
+from tests.test_async_settle_shadow_v2_gate_loading import (  # noqa: E402, F401
+    round9_originals,
+)
+
+test_each_payload_original_mutation_blocks = pytest.mark.proof_oracle(oracle_complete._oracle_test_each_payload_original_mutation_blocks)
+from tests import test_async_settle_shadow_v2_gate_a3 as oracle_a3  # noqa: E402
+
+test_prior_release_plan_cannot_weaken_policy = pytest.mark.proof_oracle(oracle_a3._oracle_test_prior_release_plan_cannot_weaken_policy)
+test_pinned_runtime_calls_existing_verifier_and_retains_c = pytest.mark.proof_oracle(oracle_a3._oracle_test_pinned_runtime_calls_existing_verifier_and_retains_c)
+from tests import test_async_settle_shadow_v2_gate_loading as oracle_loading  # noqa: E402
+
+test_prior_original_graph_damage = pytest.mark.proof_oracle(oracle_loading._oracle_test_prior_original_graph_damage)
+test_round11_coherent_prior_replay = pytest.mark.proof_oracle(oracle_loading._oracle_test_round11_coherent_prior_replay)
+test_every_peak_limit_component_is_consumed = pytest.mark.proof_oracle(oracle_loading._oracle_test_every_peak_limit_component_is_consumed)
+from tests import test_async_settle_shadow_v2_gate_cli as oracle_cli  # noqa: E402
+
+test_round11_scope_source_deletions = pytest.mark.proof_oracle(oracle_cli._oracle_test_round11_scope_source_deletions)
+test_round11_sibling_damage = pytest.mark.proof_oracle(oracle_cli._oracle_test_round11_sibling_damage)
+
+test_unavailable_commitment_value_and_one_line = pytest.mark.proof_oracle(oracle_cli._oracle_test_unavailable_commitment_value_and_one_line)
+
+test_damaged_sibling_never_erases_original_proof = pytest.mark.proof_oracle(oracle_cli._oracle_test_damaged_sibling_never_erases_original_proof)
+
+test_generated_damaged_inputs_always_render = pytest.mark.proof_oracle(oracle_cli._oracle_test_generated_damaged_inputs_always_render)
+
+test_unresolved_prior_graph_is_never_authority = pytest.mark.proof_oracle(oracle_loading._oracle_test_unresolved_prior_graph_is_never_authority)
+
+test_shutdown_alias_original_bytes = pytest.mark.proof_oracle(oracle_loading._oracle_test_shutdown_alias_original_bytes)
+
+test_each_proof_digest_has_defined_original_preimage = pytest.mark.proof_oracle(oracle_complete._oracle_test_each_proof_digest_has_defined_original_preimage)
+
+test_each_manifest_digest_uses_its_declared_preimage = pytest.mark.proof_oracle(oracle_complete._oracle_test_each_manifest_digest_uses_its_declared_preimage)
+
+
+test_view_error_retains_originals_and_exact_diagnostic = pytest.mark.proof_oracle(oracle_a3._oracle_test_view_error_retains_originals_and_exact_diagnostic)
+test_recovery_report_has_every_required_failure = pytest.mark.proof_oracle(oracle_a3._oracle_test_recovery_report_has_every_required_failure)
+
+
+@pytest.mark.proof_oracle
+@pytest.mark.parametrize('stage', tuple(REQUIRED))
+@pytest.mark.parametrize('damage', ['delete', 'corrupt'])
+@pytest.mark.parametrize('shard', range(16))
+def test_every_nested_original_has_one_path_diagnostic(a3_originals: Any, boundary_cache: Any,  # noqa: F811
+        tmp_path: Path, stage: str, damage: str, shard: int) -> None:
+    from trusted_router import async_settle_shadow_v2_a2_evidence as evidence
+    from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies, original_bytes
+    from trusted_router.async_settle_shadow_v2_gate_result import run
+    original, ports, _ = a3_originals
+    files = {p.name: p.raw for p in original.preimages}
+    loaded = load_original(transport(original), ports, gate=stage)
+    inventory = dependencies(files, loaded.a2_payloads, ports, stage, original.ledgers)
+    paths = sorted(inventory)
+    assert len(paths) > 50
+    for path in paths[shard::16]:
+        value = json.loads(transport(original))
+        if damage == 'delete':
+            value['preimages'] = [entry for entry in value['preimages'] if entry['name'] != path]
+        else:
+            next(entry for entry in value['preimages'] if entry['name'] == path)['raw'] = '{'
+        raw = canonical(value)
+        result, _ = run(raw, ports, gate=stage)
+        assert result is not None
+        own = [f for f in result.failures if f.subject == evidence.O('a2_file', path)]
+        gap = 'artifact_gap' if damage == 'delete' or inventory[path] is original_bytes else 'evidence_schema_gap'
+        assert len(own) == 1 and own[0].gap == gap and own[0].count == 1, (stage, path, own)
+        assert own[0].detail == gap
+        assert through_all(raw, ports, tmp_path, stage)['verdict'] == 'BLOCKED'
+
+
+def test_seven_day_fixture_has_one_class_owner() -> None:
+    assert real_seven_days._fixture_function_marker.scope == 'class'
+    for function in (TestSevenDays.test_seven_day_churn_render, TestSevenDays.test_seven_day_blocked_render):
+        assert any(mark.name == 'xdist_group' and mark.args == ('p5-seven-days',) for mark in function.pytestmark)
+
+
+def test_seven_day_fixture_omits_unused_originals(tmp_path_factory: Any,
+        monkeypatch: Any, tmp_path: Path) -> None:
+    import sys
+    small = real_fixture(tmp_path_factory.mktemp('small-seven-days'), seconds=400, pilot_stage='pre-flip')
+    original, ports, _ = small
+    monkeypatch.setattr(sys.modules[__name__], 'real_fixture', lambda *args, **kwargs: small)
+    compact, _ = seven_day_originals(tmp_path_factory)
+    assert len(compact.preimages) < len(original.preimages)
+    assert compact.rows == original.rows and compact.attachments == original.attachments
+    raw = transport(compact)
+    through_all(raw, ports, tmp_path, 'pre-flip')
+
+
+@pytest.mark.proof_oracle
+@pytest.mark.parametrize('stage', tuple(REQUIRED))
+@pytest.mark.parametrize('path,damage', [('inventory/2026-10-06/serving.json', '{}'),
+    ('inventory/2026-10-06/serving.json', 'null'), ('inventory/2026-10-06/deployment.json', '[]')])
+def test_nested_roster_wrong_shape(a3_originals: Any, tmp_path: Path, stage: str, path: str, damage: str) -> None:  # noqa: F811
+    from tests.test_async_settle_shadow_v2_gate_a3 import output_failures
+    from trusted_router import async_settle_shadow_v2_a2_evidence as evidence
+    original, ports, _ = a3_originals
+    value = json.loads(transport(original))
+    next(p for p in value['preimages'] if p['name'] == path)['raw'] = damage
+    _, sets = output_failures(canonical(value), ports, tmp_path, stage)
+    for failures in sets:
+        own = [f for f in failures if f['subject'] == evidence.O('a2_file', path)]
+        assert len(own) == 1 and own[0]['gap'] == own[0]['detail'] == 'evidence_schema_gap' and own[0]['count'] == 1
+
+test_shutdown_transactions_and_total_use_each_measurement = pytest.mark.proof_oracle(oracle_a3._oracle_test_shutdown_transactions_and_total_use_each_measurement)
+
+test_shutdown_opposite_writer_durations = pytest.mark.proof_oracle(oracle_a3._oracle_test_shutdown_opposite_writer_durations)
+
+test_shutdown_result_ceiling_independent_of_aggregate = pytest.mark.proof_oracle(oracle_a3._oracle_test_shutdown_result_ceiling_independent_of_aggregate)
 
 
 class TestSevenDays:

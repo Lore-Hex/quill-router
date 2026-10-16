@@ -7,6 +7,7 @@ from fractions import Fraction
 from typing import Any, Literal
 
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
+from trusted_router.async_settle_shadow_v2_gate_plan import PlanInput
 from trusted_router.async_settle_shadow_v2_schema import require
 
 
@@ -186,7 +187,7 @@ def render(result: Result) -> tuple[bytes, tuple[bytes, ...]] | UnavailableGateO
 _render_blocked = render
 
 
-def run(raw: bytes, ports: Any = None, *, gate: str = 'pre-flip',
+def run(raw: bytes | PlanInput, ports: Any = None, *, gate: str = 'pre-flip',
         damaged_inputs: tuple[str, ...] = ()) -> tuple[Result | None, tuple[bytes, tuple[bytes, ...]] | UnavailableGateOutput]:
     """Outermost original-byte library boundary shared by both offline tools.
 
@@ -199,7 +200,7 @@ def run(raw: bytes, ports: Any = None, *, gate: str = 'pre-flip',
     from trusted_router import async_settle_shadow_v2_gate_loader as loader
     from trusted_router import async_settle_shadow_v2_gates as gates
     try:
-        bundle = loader.load(raw, ports)
+        bundle = loader.load(raw, ports, gate=gate)
         if damaged_inputs:
             bundle = replace(bundle, undefined_preimages=(*bundle.undefined_preimages, *damaged_inputs))
         result = gates.evaluate(bundle, ports, gate=gate)
@@ -208,8 +209,8 @@ def run(raw: bytes, ports: Any = None, *, gate: str = 'pre-flip',
         return _internal_error(raw, gate)
 
 
-def _internal_error(raw: bytes, gate: str) -> tuple[Result | None, tuple[bytes, tuple[bytes, ...]] | UnavailableGateOutput]:
-    """Small recovery seam: commitments, diagnostic scope, fixed G1 failure."""
+def _internal_error(raw: bytes | PlanInput, gate: str) -> tuple[Result | None, tuple[bytes, tuple[bytes, ...]] | UnavailableGateOutput]:
+    """Small recovery seam: commitments, scope, and one failure per required rule."""
     from dataclasses import replace
 
     from trusted_router import async_settle_shadow_v2_a2_evidence as a2
@@ -223,7 +224,7 @@ def _internal_error(raw: bytes, gate: str) -> tuple[Result | None, tuple[bytes, 
     from trusted_router.async_settle_shadow_v2_gate_loading import transport_children
     from trusted_router.async_settle_shadow_v2_schema import Schema, day, integer
     try:
-        value, _ = transport_children(raw, MAX_BUNDLE_BYTES)
+        value, _ = raw.decode() if isinstance(raw, PlanInput) else transport_children(raw, MAX_BUNDLE_BYTES)
         proof_raw = value['proof'].encode('utf-8')
         proof = a1.PROOF_MANIFEST.parse(proof_raw)
     except (ValueError, KeyError, AttributeError, TypeError, UnicodeError):
@@ -242,13 +243,12 @@ def _internal_error(raw: bytes, gate: str) -> tuple[Result | None, tuple[bytes, 
         completed = None
     bundle = Bundle(proof=proof_raw, days=tuple(sorted(set(days))[:32]), completed_at_us=completed or 0)
     ctx = Context(bundle, None, gate, proof=proof)
-    for row in value.get('rows', []):
-        if row['kind'] != p1.KINDS[5]:
-            continue
-        try:
-            ctx.rows[Key(row['kind'], row['id'])] = a1.validate_row(row['kind'], row['id'], row['raw'].encode())
-        except (ValueError, UnicodeError):
-            continue
+    from trusted_router.async_settle_shadow_v2_gate_controls import manifests
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Row
+    originals = tuple(Row(Key(row['kind'], row['id']), row['raw'].encode()) for row in value.get('rows', []))
+    ctx.bundle = replace(bundle, rows=originals)
+    for manifest in manifests(originals):
+        ctx.rows[Key(p1.KINDS[5], manifest['day'] + '/manifest-v2')] = manifest
     # Independent inventory is also a diagnostic source when no requested day,
     # proof roster or manifest survives. Validate the original envelope and its
     # exact serving FILE_REF; this supplies scope, never semantic authority.
@@ -282,7 +282,7 @@ def _internal_error(raw: bytes, gate: str) -> tuple[Result | None, tuple[bytes, 
     from trusted_router.async_settle_shadow_v2_schema import day_at
     intervals = list(independent)
     writers = [roster.get('router', {}) for roster in proof['rosters_by_day'].values()]
-    writers.extend(manifest['router_writers'] for manifest in ctx.kind(p1.KINDS[5]) if 'router_writers' in manifest)
+    writers.extend(manifest['router_writers'] for manifest in ctx.manifests() if 'router_writers' in manifest)
     intervals.extend((writer['lifetime']['start_us'], writer['lifetime']['end_us'])
         for roster in writers for writer in roster.values())
     surviving = []
@@ -312,7 +312,11 @@ def _internal_error(raw: bytes, gate: str) -> tuple[Result | None, tuple[bytes, 
         return None, UnavailableGateOutput('observation_scope_artifacts_absent_or_undecodable')
     ctx.bundle = replace(bundle, days=days_tuple, completed_at_us=scope['end_us'] if completed is None else completed)
     subject = a2.O('a2_file', 'internal-error')
-    failures = (Failure('artifact_gap', 'G1', subject, 1, (), 'internal gate error'),)
+    required = REQUIRED_RULES[gate]
+    gaps_by_rule = {row.rule: row.name for row in reversed(a2.FAILURE_RULES)}
+    gaps_by_rule['G1'] = 'artifact_gap'
+    failures = tuple(Failure(gaps_by_rule[rule], rule, subject if rule == 'G1' else a2.N(), 1, (), 'original view unavailable')
+        for rule in sorted(required))
     metrics = Report(None, None, None, None, (), None, None, (), (), None, (), (), None, None, None)
     tallies, listed = listing(failures, days_tuple)
     streams, references = {}, {}
@@ -335,5 +339,5 @@ def _internal_error(raw: bytes, gate: str) -> tuple[Result | None, tuple[bytes, 
             else 'not_required' for rule in (f'G{i}' for i in range(1, 12))})
     leaves: dict[str, bytes] = {}
     result = Result(gate, ctx.bundle.completed_at_us, file_digest(proof_raw), proof['ledger_root'],
-                    ('artifact_gap',), failures, metrics, report, streams, leaves)
+                    tuple(sorted(f.gap for f in failures)), failures, metrics, report, streams, leaves)
     return result, _render_blocked(result)

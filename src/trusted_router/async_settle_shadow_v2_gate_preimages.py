@@ -126,12 +126,13 @@ def audit(ctx: Context) -> None:
             ctx.issue('artifact_gap', 'approved release file pin absent', Subject(wire=a2.O('a2_file', qualified)))
         elif ctx.proof[qualified.split('.')[1]] != expected:
             ctx.issue('evidence_schema_gap', 'unapproved release fixture pin', Subject(wire=a2.O('a2_file', qualified)))
-    for manifest in ctx.kind(p1.KINDS[5]):
+    for manifest in ctx.manifests():
         if 'router_writers' not in manifest:
             continue
         artifacts, root_inputs = preimages(ctx, manifest)
         for qualified in (*contract.FILE_PREIMAGES, *contract.OBJECT_PREIMAGES):
-            if qualified not in artifacts:
+            if qualified not in artifacts and not any(
+                    issue['path'] == qualified for issue in ctx.bundle.a2_streams.get('loading_issues', [])):
                 ctx.issue('artifact_gap', 'A2 required original preimage absent',
                     Subject(day=manifest['day'], wire=a2.O('a2_file', qualified)))
         try:

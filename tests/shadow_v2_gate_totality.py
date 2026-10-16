@@ -172,13 +172,14 @@ class BoundaryCache:
         from collections import OrderedDict
         self.loads: Any = OrderedDict()
         self.evaluations: Any = OrderedDict()
+        self.boundaries: set[Any] = set()
 
-    @staticmethod
-    def trusted(ports: Any) -> bytes:
+    def trusted(self, ports: Any) -> bytes:
         import pickle
         from dataclasses import fields, is_dataclass
 
         from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+        from trusted_router.async_settle_shadow_v2_gate_release import TERMINAL_SOURCES
         def freeze(value: Any) -> Any:
             if callable(value):
                 return ('callable', id(getattr(value, '__func__', value)), id(getattr(value, '__self__', None)))
@@ -191,11 +192,21 @@ class BoundaryCache:
             return value
         if ports is None:
             return b''
-        values = []
+        from trusted_router import async_settle_shadow_v2_gate_loader as loader
+        from trusted_router import async_settle_shadow_v2_gate_release as release
+        from trusted_router import async_settle_shadow_v2_gate_views as views
+        from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
+        boundaries = (loader.validate_original_bytes, release.release_checks,
+            *(getattr(views, name) for name in ('budget_view', 'external_view', 'reset_view', 'signature_views')),
+            *(getattr(PayloadGraph, name) for name in ('materialize', 'inventory', 'cohort')))
+        # A changed view must never reuse an earlier view's outcome. Retain the
+        # callables until teardown so Python cannot reuse a discarded identity.
+        self.boundaries.update(boundaries)
+        values = [('view_boundaries', tuple(id(fn) for fn in boundaries))]
         for field in fields(ports):
             value = getattr(ports, field.name)
             if field.name == 'read_release_file':
-                value = tuple((path, value(path)) for path in RELEASE_FILES.values()) if value else None
+                value = tuple((path, value(path)) for path in (*RELEASE_FILES.values(), *TERMINAL_SOURCES)) if value else None
             values.append((field.name, freeze(value)))
         return pickle.dumps(values)
 
@@ -245,6 +256,7 @@ class BoundaryCache:
         assert loader.load is original_load and gates.evaluate is original_evaluate
         self.loads.clear()
         self.evaluations.clear()
+        self.boundaries.clear()
 
 
 def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: Any,
@@ -263,6 +275,117 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
         # valid baseline. A changed path is not assumed equivalent.
         return all(key not in supplied or supplied[key] == documents['options'][key]
                    for key in ('certificate_keys', 'binding_keys'))
+    # The transport oracle deliberately leaves later-stage originals supplied.
+    # Their absence is now permitted by A3. Compute the exclusive deferred
+    # closure from the baseline bytes, independently of the production loader.
+    originals = {entry['name']: entry['raw'] for entry in documents['bundle']['preimages']}
+    decoded = {}
+    digests = {}
+    from trusted_router.async_settle_shadow_v2_schema import sha256
+    for filename, body in originals.items():
+        try:
+            decoded[filename] = json.loads(body)
+            digests[sha256(decoded[filename])] = filename
+        except (ValueError, TypeError):
+            pass
+    def reachable(seeds: list[Any]) -> set[str]:
+        found: set[str] = set()
+        pending = list(seeds)
+        while pending:
+            node = pending.pop()
+            if isinstance(node, dict):
+                references = []
+                if set(node) == {'path', 'bytes', 'sha256'}:
+                    references.append(node['path'])
+                for field in ('tail_sha256', 'previous_sha256'):
+                    if node.get(field) in digests:
+                        references.append(digests[node[field]])
+                for filename in references:
+                    if filename not in found:
+                        found.add(filename)
+                        pending.append(decoded.get(filename))
+                pending.extend(node.values())
+            elif isinstance(node, list):
+                pending.extend(node)
+        return found
+    external = decoded['proof.external_proofs_sha256']
+    current = {**external, 'requirements': [item for item in external['requirements'] if item['stage'] == 'transport'], 'pilot': None}
+    retained = [value for filename, value in decoded.items()
+                if (filename.startswith('proof.') or '/manifest.' in filename)
+                and filename != 'proof.external_proofs_sha256']
+    # Required original bytes include explicit stage inputs and the complete
+    # descriptor closure, rather than just the difference from future proofs.
+    seeds = retained + [current]
+    required = {filename for filename in originals if filename.startswith('proof.') or '/manifest.' in filename}
+    required.add('loading/release-plan.json')
+    # Supplied root descriptors retain the frozen validator's direct FILE_REF
+    # byte checks even when the referenced proof has no current semantic use.
+    direct = [decoded[name] for name in required if name in decoded and name != 'loading/release-plan.json']
+    while direct:
+        node = direct.pop()
+        if isinstance(node, dict):
+            if set(node) == set(a2.FILE_REF.fields):
+                required.add(node['path'])
+            else:
+                direct.extend(node.values())
+        elif isinstance(node, list):
+            direct.extend(node)
+    by_file_digest = {roots.file_digest(body.encode()): filename for filename, body in originals.items()}
+    for raw in documents['bundle']['ledgers']:
+        ledger = json.loads(raw)
+        for item in ledger.values():
+            if isinstance(item, dict) and set(item) == {'sha256', 'completed_at_us'}:
+                filename = by_file_digest.get(item['sha256'])
+                if filename is not None:
+                    required.add(filename)
+                    seeds.append(decoded.get(filename))
+    required.update(reachable(seeds))
+    # Retained output descriptors are mandatory even though the frozen
+    # delegated envelope only declares its input and dependency stream.
+    pending = list(seeds)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            if set(node) == set(a2.DELEGATED_PAYLOAD.fields) and not node['entry_point'].endswith(('fleet_budgets_pre', 'fleet_budgets')):
+                filename = 'loading/retained-output/' + node['payload']['sha256'] + '.json'
+                required.add(filename)
+                required.update(reachable([decoded.get(filename)]))
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+    ignored = set(originals) - required
+    # DETAIL pages are located by canonical content hash, not their transport
+    # filename. The fixture also retains superseded source pages after adding
+    # boot context; those orphan pages are not dependencies of any proof.
+    named_files: set[str] = set()
+    detail_hashes: set[str] = set()
+    pending = list(decoded.values())
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            if set(node) == {'path', 'bytes', 'sha256'}:
+                named_files.add(node['path'])
+            for field in ('tail_sha256', 'previous_sha256'):
+                if isinstance(node.get(field), str):
+                    detail_hashes.add(node[field])
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+    page_raw = set()
+    for filename, value in decoded.items():
+        if (isinstance(value, dict) and {'entries', 'page_seq', 'previous_sha256'} <= value.keys()
+                and filename not in named_files):
+            page_raw.add(originals[filename])
+            if sha256(value) not in detail_hashes:
+                ignored.add(filename)
+    ignored_raw = {originals[filename] for filename in ignored if filename in originals}
+    def valid_path(path: Any) -> bool:
+        try:
+            a2.FILE_REF.fields['path'](path)
+        except (ValueError, TypeError, UnicodeError):
+            return False
+        return True
+
     def effective(value: Any) -> Any:
         # Explicit inert set, evaluated on the COMPLETE final document:
         # absent/null optional prior envelopes (no input bytes); absent/null or
@@ -282,6 +405,19 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
             entries = value.get(field)
             if not isinstance(entries, list):
                 continue
+            if field == 'preimages':
+                entries = [entry for entry in entries if not (isinstance(entry, dict)
+                    and set(entry) == {'name', 'raw'} and entry['raw'] in ignored_raw
+                    and (entry['name'] in ignored or entry['name'] not in originals)
+                    and valid_path(entry['name']))]
+                for entry in entries:
+                    if (isinstance(entry, dict) and set(entry) == {'name', 'raw'}
+                            and entry['raw'] in page_raw and entry['name'] not in named_files):
+                        try:
+                            a2.FILE_REF.fields['path'](entry['name'])
+                        except (ValueError, TypeError, UnicodeError):
+                            continue
+                        entry['name'] = '<content-addressed-page>'
             if field == 'attachments':
                 for entry in entries:
                     if (isinstance(entry, dict) and set(entry) == {'kind', 'id', 'raw'}
@@ -303,6 +439,13 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
                     raise ValueError('duplicate member is not inert')
                 result[key] = value
             return result
-        return effective(json.loads(changed, object_pairs_hook=unique)) == effective(documents['bundle'])
+        final = json.loads(changed, object_pairs_hook=unique)
+        declared = decoded.get('loading/release-plan.json', {}).get('artifacts', {})
+        if isinstance(final, dict) and isinstance(final.get('preimages'), list):
+            for entry in final['preimages']:
+                if isinstance(entry, dict) and isinstance(entry.get('raw'), str) and entry.get('name') in declared:
+                    if roots.file_digest(entry['raw'].encode()) != declared[entry['name']]:
+                        return False
+        return effective(final) == effective(documents['bundle'])
     except (ValueError, TypeError):
         return False

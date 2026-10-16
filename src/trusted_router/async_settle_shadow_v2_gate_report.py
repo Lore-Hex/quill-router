@@ -62,7 +62,7 @@ def population(ctx: Context, window: dict[str, int], required: tuple[str, ...]) 
     slots = [e for page in ctx.attached('publisher_trace') for e in page['entries'] if left <= e['slot'] * 2000000 < right]
     available_slots = known and not any(i.gap == 'publisher_trace_gap' for i in ctx.issues)
     shutdown = [v for v in (ctx.bundle.shutdown.entries if ctx.bundle.shutdown else ()) if left < v['interval_end_us'] <= right]
-    expected_closes = {(m['day'], boot) for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m
+    expected_closes = {(m['day'], boot) for m in ctx.manifests() if 'router_writers' in m
         for boot, writer in m['router_writers'].items() if left < writer['lifetime']['end_us'] <= right}
     known_closes = known and expected_closes == {(s['day'], s['boot']) for s in shutdown}
     closes = [v for v in ctx.kind(a1.KINDS[-1]) if (v['day'], v['boot']) in expected_closes]
@@ -114,7 +114,7 @@ def diagnostic_scope(ctx: Context) -> tuple[tuple[str, ...], dict[str, int] | No
     if not intervals:
         rosters = [(day, roster.get('router', {})) for day, roster in
                    (ctx.proof or {}).get('rosters_by_day', {}).items()]
-        rosters.extend((m['day'], m['router_writers']) for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m)
+        rosters.extend((m['day'], m['router_writers']) for m in ctx.manifests() if 'router_writers' in m)
         for day, writers in rosters:
             for writer in writers.values():
                 lifetime = writer['lifetime']
@@ -173,7 +173,7 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
             continue
         own = [c for c in all_counters if (c['day'], c['boot']) == (day, boot)]
         own_events = [ev for page, ev in ctx.events() if (page['day'], page['boot']) == (day, boot)]
-        manifest = next((m for m in ctx.kind(p1.KINDS[5]) if m.get('day') == day and 'router_writers' in m), None)
+        manifest = next((m for m in ctx.manifests() if m.get('day') == day and 'router_writers' in m), None)
         interval = manifest[role + '_writers'].get(boot, {}).get('lifetime') if manifest else None
         if interval is None:
             continue
