@@ -224,19 +224,36 @@ No contract, fixture or pin changes accompany these internal seams.
 
 Round 20: CI run 38838857421 stopped in `live_objects()` at `gc.collect()`,
 called by `_p5_cache_counts` during setup of a worker's first P5 module after
-about 260 unrelated tests, including Spanner SDK tests. The dump is consistent
-with a native finalizer holding the GIL; it does not identify the native object.
-Python signal handlers and timeout threads cannot run while C code holds the
-GIL, so the signal timeout did not stop the worker. Live-object counts and their
-unchanged 35,000-object margins now run only when every selected session item
-belongs to `PACKAGE_MODULES`. Mixed sessions print why that check was skipped;
-module data release, restored lookup identities, and the unchanged 5,000-object
-reachable margin still run. The reference walk uses `gc.get_referents()` and
-does not call `gc.collect()`. The signal timeout marks remain unchanged.
+about 260 unrelated tests, including Spanner SDK tests. The initial native-finalizer
+explanation was incorrect; round 21 below records the heap growth that made the
+collection slow. Live-object counts and their unchanged 35,000-object margins
+were restricted to sessions where every selected item belongs to
+`PACKAGE_MODULES`. At that point mixed sessions printed why that check was
+skipped; module data release, restored lookup identities, and the unchanged
+5,000-object reachable margin still ran. The reference walk uses
+`gc.get_referents()` and does not call `gc.collect()`. The signal timeout marks
+remain unchanged.
 A separate covered step in the `spanner-emulator` job runs only the eight
 package modules with `-m "not proof_oracle" -n 2`, in fresh workers, with a
 five-minute limit. Its partial coverage has no floor; the full-suite combined
 coverage gate still requires 70%.
+
+Round 21: CI run 38844053421 stopped both shard-4 selections at 37 percent,
+where P5 modules followed about 260 unrelated tests. The single-process covered
+replay was killed with exit 137 at a P5 module boundary. `reachable_objects()`
+walked from `trusted_router` module roots into the shared worker's application
+heap; its pending list and visited dictionary retained the reached objects,
+with edges appended before deduplication, growing memory before the visited-object
+ceiling could stop the walk. That heap growth also explains round 20's slow
+collection, rather than a native finalizer. Mixed sessions now skip both
+reachable-object and live-object measurements with one line naming both;
+they still check released data and restored lookup identities. Package-only
+sessions, including the separate CI step, retain all four checks with the
+same 5,000 reachable-object and 35,000 live-object margins. `_p5_cache_lifetime`
+and `release_data_caches` only clear known caches and containers and inspect
+cache sizes; neither walks the heap or requests collection in the mixed path.
+Regression tests make both measurements, the frozen-package walk, and explicit
+GC calls raise in mixed sessions while exercising setup and real data release.
 
 The production input fields above are unchanged in round 16. The all-paths decoder
 property retains all ten sibling-check lexemes and all twenty agreement-check

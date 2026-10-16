@@ -357,28 +357,28 @@ def _p5_cache_counts(request):
                            item.get_closest_marker('proof_oracle')
                            for item in request.session.items)
     lookups_before = installed_lookups()
-    reachable_before = reachable_objects()
-    # A shared worker can hold native SDK objects from unrelated tests. An
-    # explicit collection can block in their finalizers before a Python timeout
-    # can run. Measure live objects only in a package-only pytest session;
+    # Module roots in a shared worker can reach the whole application heap.
+    # Walking it retains those objects and can exhaust memory before a budget
+    # assertion runs. Restrict both heap measurements to package-only sessions;
     # xdist workers each see the whole session selection, not just their tasks.
     measure_objects = all(item.path.name in PACKAGE_MODULES for item in request.session.items)
     if measure_objects:
+        reachable_before = reachable_objects()
         before = live_objects()
         baseline = getattr(request.session, '_p5_objects_before', before)
         request.session._p5_objects_before = baseline
     else:
-        print(f'P5 objects {request.node.path.name}: budget check skipped '
-              '(mixed session; gc.collect could finalize unrelated native objects)')
+        print(f'P5 {request.node.path.name}: reachable_objects and live_objects '
+              'budget checks skipped (mixed session; heap measurements are package-only)')
     yield
     if measure_objects:
         after = live_objects()
-    reachable_after = reachable_objects()
-    reachable_margin = 5000
-    print(f'P5 reachable {request.node.path.name}: before={reachable_before} '
-          f'after={reachable_after} margin={reachable_margin}')
-    assert reachable_after <= reachable_before + reachable_margin, (
-        request.node.path.name, reachable_before, reachable_after, reachable_margin)
+        reachable_after = reachable_objects()
+        reachable_margin = 5000
+        print(f'P5 reachable {request.node.path.name}: before={reachable_before} '
+              f'after={reachable_after} margin={reachable_margin}')
+        assert reachable_after <= reachable_before + reachable_margin, (
+            request.node.path.name, reachable_before, reachable_after, reachable_margin)
     assert installed_lookups() == lookups_before
     assert_released_data()
     if not measure_objects:
