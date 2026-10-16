@@ -8,8 +8,10 @@ and the lease or authorization it concerns as `subject` (`writeAlert` in
 policies, `infra/fastpath_alerts.tf`, notify the on-call email and the ops
 chat:
 
-- **TR Fast path: service alert**, on any such entry, at most one
-  notification per five minutes; the incident's label `kind` is the kind.
+- **TR Fast path: service alert**, on any such entry; the incident's
+  label `kind` is the kind, and each kind notifies at most once per five
+  minutes (Cloud Monitoring keeps a timeline per extracted label value, so
+  two kinds within five minutes notify twice).
 - **TR Fast path: subscription lag**, when a fast path subscription's
   oldest unacked message stays over ten minutes old for five minutes: a
   reader gone, slow, or stuck on one lease's ordered messages while the

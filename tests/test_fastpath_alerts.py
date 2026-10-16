@@ -45,6 +45,10 @@ def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
     # journal's err priority, which the agent maps to ERROR.
     assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)}' in service
     assert 'fmt.Fprintln(w, "<3>"+string(line))' in service
+    # All three parts at once: the log, the label and the severity, so an
+    # ordinary entry of the same log does not match.
+    assert tf.count("filter = join(") == 1 and 'filter = join(" AND ", [' in tf
+    assert " OR " not in tf
     assert '"labels.fastpath_alert:*"' in tf
     assert '"severity>=ERROR"' in tf
     assert 'kind = "EXTRACT(labels.fastpath_alert)"' in tf
@@ -70,6 +74,12 @@ def test_the_lag_policy_watches_every_subscription_of_the_fast_path() -> None:
     tf = POLICIES.read_text(encoding="utf-8")
     for subscription in subscriptions:
         assert f"google_pubsub_subscription.{subscription}" in tf, subscription
+    # The metric's subscription_id label is the short name ("auditor"), not
+    # the resource's full ID (projects/P/subscriptions/auditor).
+    assert "google_pubsub_subscription.fastpath_auditor.name," in tf
+    assert "google_pubsub_subscription.fastpath_stager.name," in tf
+    assert "[for subscription in google_pubsub_subscription.fastpath_archive : subscription.name]" in tf
+    assert not re.search(r"(fastpath_auditor|fastpath_stager|subscription)\.id\b", tf)
     # The condition itself: the fast path's subscriptions only, their oldest
     # message's age past the threshold, held for the duration.
     lag = _policy("fastpath_subscription_lag")

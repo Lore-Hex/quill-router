@@ -58,8 +58,9 @@ resource "google_monitoring_alert_policy" "fastpath_alert" {
   }
 
   # A fault can write an alert per record it meets (2,222 lines in one P1
-  # run): one notification per five minutes, the incident closing on its
-  # own half an hour after the last.
+  # run): one notification per five minutes for each kind (each extracted
+  # label value has its own timeline), the incident closing on its own half
+  # an hour after the last.
   alert_strategy {
     notification_rate_limit {
       period = "300s"
