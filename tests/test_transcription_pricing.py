@@ -1,9 +1,12 @@
 import json
+from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from scripts.pricing.transcription import parse_price, parse_token_prices
 from trusted_router.provider_manifest_policy import request_billed_transcription_price_is_valid
+from trusted_router.transcription import TRANSCRIPTION_MODELS
 
 
 def test_duration_prices_require_the_right_units() -> None:
@@ -48,3 +51,17 @@ def test_transcription_manifest_billing_units_cannot_mix(unit: str, prices: dict
     assert request_billed_transcription_price_is_valid(row)
     assert not request_billed_transcription_price_is_valid({**row, "fixed_request_price_microdollars": 1})
     assert not request_billed_transcription_price_is_valid({**row, "endpoints": ["chat/completions"]})
+
+
+def test_token_audio_snapshot_manifest_and_billing_prices_agree() -> None:
+    from trusted_router import catalog
+
+    model_id = "mistralai/voxtral-small-24b"
+    spec = TRANSCRIPTION_MODELS[model_id]
+    manifest = json.loads((Path(__file__).parents[1] / "src/trusted_router/data/provider_models/tinfoil.json").read_text())
+    row = next(row for row in manifest["models"] if row["id"] == model_id)
+    assert row["input_token_price_per_m"] == spec.input_token_cost
+    assert row["output_token_price_per_m"] == spec.output_token_cost
+    for endpoint in catalog.endpoints_for_model(model_id):
+        assert Decimal(spec.pricing["prompt"]) * 10**12 == endpoint.prompt_price_microdollars_per_million_tokens
+        assert Decimal(spec.pricing["completion"]) * 10**12 == endpoint.completion_price_microdollars_per_million_tokens

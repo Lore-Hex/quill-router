@@ -3998,7 +3998,7 @@ def _settle_gateway_authorization(
             if (
                 body.route_type != "audio.transcriptions" or additional_cost != 0
                 or not 0 < total_input <= TRANSCRIPTION_MAX_INPUT_TOKENS
-                or not 0 < output_tokens <= TRANSCRIPTION_MAX_OUTPUT_TOKENS
+                or not 0 <= output_tokens <= TRANSCRIPTION_MAX_OUTPUT_TOKENS
                 or cache_read or cache_creation or body.service_tier
                 or actual_cost > authorization.estimated_microdollars
             ):

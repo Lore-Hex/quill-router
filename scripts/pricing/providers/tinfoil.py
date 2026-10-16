@@ -292,7 +292,7 @@ def fetch() -> ProviderPricingResult:
         if (
             native_id == "voxtral-small-24b" and row.get("type") == "audio"
             and "/v1/chat/completions" in row.get("endpoints", [])
-            and request_micro == 0
+            and request_micro == 0 and pricing.get("requestPrice") == 0
         ):
             input_micro = _microdollars_per_million(pricing.get("inputTokenPricePer1M"))
             output_micro = _microdollars_per_million(pricing.get("outputTokenPricePer1M"))

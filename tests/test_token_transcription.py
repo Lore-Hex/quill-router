@@ -54,8 +54,18 @@ def test_token_audio_cannot_underreserve(client: TestClient, transcription_key: 
     assert response.status_code == 400, response.text
 
 
+def test_token_audio_silence_charges_only_reported_input(client: TestClient, transcription_key: str) -> None:
+    response = token_authorize(client, transcription_key)
+    assert response.status_code == 200, response.text
+    auth = response.json()["data"]
+    body = settle(auth, actual_input_tokens=1000, actual_output_tokens=0)
+    result = client.post("/v1/internal/gateway/settle", json=body)
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["cost_microdollars"] == 211
+
+
 @pytest.mark.parametrize("changes", [
-    {"actual_input_tokens": 0}, {"actual_output_tokens": 0},
+    {"actual_input_tokens": 0},
     {"actual_input_tokens": MAX_INPUT_TOKENS + 1},
     {"actual_output_tokens": MAX_OUTPUT_TOKENS + 1},
     {"additional_cost_microdollars": 1}, {"route_type": "chat.completions"},
