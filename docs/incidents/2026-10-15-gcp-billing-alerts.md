@@ -40,6 +40,58 @@ exception and public 503 response. It does not log SQL, parameters, keys, prompt
 or outputs. Errors arising later while iterating a returned stream may still lack
 the RPC label; the telemetry is diagnostic improvement, not complete tracing.
 
+#### Follow-up investigation on October 16
+
+Reanalysis of the captured 17:42-17:56 request window confirms 44 HTTP 503s
+on one container, but **not** exclusive isolation of all Spanner errors. One
+peer logged a Commit deadline at 17:45:55 and its settle returned 200 after
+13.216 seconds. Its fallback recovered; the affected container's fallback
+also failed. This distinction matters when assessing a shared backend event.
+
+The affected container's 16 failed authorize timing records show key lookups
+of 33-74 ms, followed by 19.874-21.939 seconds in storage. The auth code makes
+strong Spanner reads, not successful-result cache hits. A completely dead
+process or uniformly broken database connection is therefore a poor fit.
+Failures include transactional reads, SQL, batch DML, and durable outbox
+inserts, not just Commit. Captured requests overlap at most eight at a time;
+that is not a count of background operations or internal SDK retries.
+
+The configured SDK, google-cloud-spanner 3.69.1, uses multiplexed sessions by
+default. An offline check of its real session manager confirmed that read-only
+and read-write operations share that session and do not check out FixedSizePool
+slots. Raising TR_SPANNER_POOL_SIZE is not an evidence-based fix. The SDK also
+uses leader-aware routing for read-write calls but not ordinary read-only
+snapshots. A frontend/session-affinity or leader-directed backend problem is
+a plausible explanation, not an established cause. Google's
+[leader-aware routing documentation](https://docs.cloud.google.com/spanner/docs/leader-aware-routing)
+describes the distinct path. Do not disable it or reset clients fleet-wide on
+this evidence alone.
+
+The next decisive evidence is Google-side correlation of the saved request IDs,
+plus container CPU/memory and Spanner method/status metrics for 17:40-18:00.
+Raw IDs and logs remain private. Fresh Cloud Monitoring access was blocked by
+expired operator authentication on October 16; no support case has been filed
+for this incident. Keep [issue #1813](https://github.com/Lore-Hex/quill-router/issues/1813)
+open until that correlation or a reproducible defect establishes the cause.
+
+#### Separate confirmed regional watchdog gap
+
+The October 16 rollout reported `us-east4=unknown` even though fresh pinned
+TLS/attestation probes were present. `fetch_per_region` returned as soon as
+it found any SLO region map. The public SLO intentionally covers the canonical
+endpoint and therefore omits most diagnostic regions; their probes live in
+`current.checks`. The watchdog now consults that array for each missing region
+instead of only when the entire SLO map is empty. Explicit SLO rows retain
+precedence, absent evidence stays unknown, and provider-only failures remain
+excluded. This fixes a monitoring defect, not the underlying storage incident.
+
+The earlier allowance fix (#1812) reached all four GCP control-plane regions
+in [rollout 38876188930](https://github.com/Lore-Hex/quill-router/actions/runs/38876188930),
+which contains merge commit 7ad1ac407 and passed each regional billing-5xx gate
+by 10:24:36 UTC on October 16. Public health and fresh regional probes were up
+at 11:01 UTC. These checks establish current recovery, not permanent resolution
+of #1813 or successful rollout to other clouds.
+
 ### US Central: capped-key allowance repair competes with settlement
 
 At 19:05:13 an authorization returned 503 after approximately 20 seconds.
