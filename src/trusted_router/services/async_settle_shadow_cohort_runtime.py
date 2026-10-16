@@ -7,7 +7,7 @@ import json
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from queue import Empty, Full, Queue
 from types import SimpleNamespace
 from typing import Any, NamedTuple, TypeVar
@@ -297,25 +297,32 @@ class Runtime:
         # Reserve the bounded replay-decision cache inside the shared byte cap.
         self.tokens, self.refilled, self.pending, self.queued_bytes = 10., time.monotonic(), 0, 32*4096
         self.stopped = False
+        self.startup_admission = SimpleNamespace(ready=True)
+        self.startup_attempt_result: Callable[[Any, str], None] | None = None
+        self.startup_attempt_start: Callable[[], None] | None = None
+        self.opted_starts = self.opted_consumed = 0
         self.decisions: dict[str, bytes] = {}
         self.worker.start()  # install-time prestart; no request can start a thread
 
     def authorize_http(self, request: Any, body: Any, auth: GatewayAuthorization, additions: dict[str, Any],
                        endpoints: list[Any], *, typed: bool, federated: bool, replay: bool) -> None:
+        inputs: AuthorizeInput | None = None
         try:
+            startup_ready = self.startup_admission.ready
             observed_us = time.time_ns()//1000
             capability = tuple(request.headers.getlist("X-TR-Settlement-Shadow-Policy"))
+            capable = has_v2_capability(capability)
             original = None
-            if replay and has_v2_capability(capability):
+            if replay and capable:
                 try:
                     original = retained_replay_decision(self.decisions, auth.id)
                 except ValueError:
                     # The replay still receives its own unresolved receipt below.
                     pass
-            if replay or not has_v2_capability(capability):
+            if not startup_ready or replay or not capable:
                 inputs = AuthorizeInput(observed_us, authorization_identity(auth, self.async_runtime, typed),
                     self.settings.source_revision, receipt_dimensions(auth.provider, body.route_type, body.stream), None, None, False, False,
-                    "replay" if has_v2_capability(capability) else "header_absent")
+                    "missing_context" if not startup_ready else "replay" if capable else "header_absent")
             else:
                 inputs = map_requested_facts(body=body, authorization=auth, endpoints=endpoints,
                     typed=typed, federated=federated, runtime=self.async_runtime,
@@ -334,10 +341,65 @@ class Runtime:
             fields = authorize(self.settings, capability,
                 self.port, inputs, additions, self.signer, replay=replay,
                 original_decision=original, retained_original=True, original_locator=original["receipt_locator"] if original else None,
-                finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize)
+                finalized_event=retain if not replay else None, deferred=True)
             additions.update(compared_handoff_fields(fields, auth))
-        except Exception:
+        except Exception as error:
+            if inputs is not None:
+                inputs.result = "timeout" if isinstance(error, TimeoutError) else "failed"
             self.port.lost.set()
+        finally:
+            if inputs is not None and inputs.started:
+                self.defer_input(inputs, capable)
+
+    def retain_startup_attempts(self, harness: Any) -> None:
+        harness.attempt_source = self
+        self.startup_attempt_result = harness.attempt_result
+        self.startup_attempt_start = harness.attempt_start
+
+    def defer_input(self, inputs: AuthorizeInput, capable: bool) -> None:
+        # Count at the producer, before any queue or rate refusal. No per-start
+        # recorder or retained lookup is created on the request path.
+        if capable:
+            self.opted_starts += 1
+        # Only completion fields are needed after authorize returns. Clear the
+        # producer projection before charging and transferring its owned input.
+        inputs.identity = {}
+        inputs.dimensions = {}
+        inputs.facts = inputs.candidates = None
+        inputs.server_facts = inputs.server_candidates = None
+        size = len(canonical(asdict(inputs)))
+        if self.admit(size):
+            self.port.lost.set()
+            if inputs.reservation is not None and inputs.event is not None:
+                self.port.fail_fold(inputs.reservation)
+            return
+        if not self.dispatch(self.input_work, inputs, capable, size):
+            self.port.lost.set()
+            if inputs.reservation is not None and inputs.event is not None:
+                self.port.fail_fold(inputs.reservation)
+            self.release(size)
+
+    def input_work(self, inputs: AuthorizeInput, capable: bool, size: int) -> None:
+        try:
+            if capable:
+                self.opted_consumed += 1
+                if inputs.reservation is None:
+                    self.port.lost.set()
+                try:
+                    if self.startup_attempt_start is not None:
+                        self.startup_attempt_start()
+                    if inputs.reservation is not None and self.startup_attempt_result is not None:
+                        self.startup_attempt_result(inputs.reservation, inputs.result)
+                except Exception:  # noqa: S110 - record availability does not change the native result
+                    pass
+            if inputs.reservation is not None and inputs.event is not None:
+                self.fold_complete(inputs.reservation, inputs.event, (), None)
+        except Exception:
+            if inputs.reservation is not None and inputs.event is not None:
+                self.port.fail_fold(inputs.reservation)
+            raise
+        finally:
+            self.release(size)
 
     def admit(self, size: int) -> str | None:
         if not self.guard.acquire(blocking=False):

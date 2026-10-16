@@ -154,7 +154,7 @@ class GCSAttachments:
         if method == "GET" and status == 404:
             return None
         require(status in (200, 201), "attachment_response")
-        return data if method == "GET" else None
+        return data
 
     def request(self, method: str, key: str, body: bytes | None, timeout: float, *,
                 deadline: float | None = None, clock: Callable[[], float] | None = None) -> bytes | None:
