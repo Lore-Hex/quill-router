@@ -117,3 +117,13 @@ def test_public_audio_pages_use_audio_units(client: TestClient, model: str) -> N
     assert page.status_code == 200
     assert "7 MiB" in page.text
     assert TRANSCRIPTION_MODELS[model].price_label in page.text
+    assert "Prices are per one million tokens" not in page.text
+    assert "provider\": {\"sort\": \"throughput\"}" not in page.text
+    pricing = client.get("/models/" + model + "/pricing")
+    assert pricing.status_code == 200
+    assert "USD per million tokens" not in pricing.text
+    assert TRANSCRIPTION_MODELS[model].price_label in pricing.text
+    api = client.get("/models/" + model + "/api")
+    assert api.status_code == 200
+    assert "client.audio.transcriptions.create" in api.text
+    assert "client.chat.completions.create" not in api.text

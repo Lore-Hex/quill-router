@@ -93,3 +93,12 @@ def test_public_speech_price_is_per_request(client, model):
     assert page.status_code == 200
     assert "/request" in page.text
     assert "/M characters" not in page.text
+    assert "Prices are per one million tokens" not in page.text
+    pricing = client.get("/models/" + model + "/pricing")
+    assert pricing.status_code == 200
+    assert "USD per million tokens" not in pricing.text
+    api = client.get("/models/" + model + "/api")
+    assert api.status_code == 200
+    assert "client.audio.speech.with_streaming_response.create" in api.text
+    assert 'response_format="wav"' in api.text
+    assert "client.chat.completions.create" not in api.text

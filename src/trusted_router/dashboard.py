@@ -5561,11 +5561,11 @@ def _model_detail_view(
         "fixed_price": fixed_price,
         "speech": speech_metadata(model.id) if speech else None,
         "transcription": transcription_metadata(model.id) if transcription else None,
-        "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
+        "prompt_price": transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(model.prompt_price_microdollars_per_million_tokens),
         "cached_prompt_price": (
-            "selected route" if is_meta else _cached_prompt_price_range(endpoints)
+            "Not applicable" if speech or transcription else "selected route" if is_meta else _cached_prompt_price_range(endpoints)
         ),
-        "completion_price": _price(
+        "completion_price": "Included" if transcription or (speech and not speech.token_billed) else _price(
             model.completion_price_microdollars_per_million_tokens,
             include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
         ),
@@ -5914,6 +5914,9 @@ def _model_route_evidence(
     ]
     lowest_prompt = min(prompt_prices) if prompt_prices else None
     lowest_completion = min(completion_prices) if completion_prices else None
+    speech = SPEECH_MODELS.get(model.id)
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
+    audio_price = transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else None
 
     ttft_rows = [
         row
@@ -5960,9 +5963,9 @@ def _model_route_evidence(
         else None
     )
     return {
-        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else None,
+        "lowest_prompt_price": (audio_price or _price(lowest_prompt)) if lowest_prompt is not None else None,
         "lowest_completion_price": (
-            _price(
+            "Included" if audio_price and endpoints else _price(
                 lowest_completion,
                 include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
             )
@@ -6023,7 +6026,12 @@ def _model_faq_items(
         provider_answer = ", ".join(str(name) for name in provider_names[:-1])
         provider_answer = f"{provider_answer}, and {provider_names[-1]}"
     if route_evidence["route_count"]:
+        speech = SPEECH_MODELS.get(model.id)
+        non_token_audio = model.id in TRANSCRIPTION_MODELS or (speech is not None and not speech.token_billed)
         price_answer = (
+            f"The current Credits price is {route_evidence['lowest_prompt_price']}. "
+            "Output is included; these are audio prices, not text-token prices."
+            if non_token_audio else
             f"The current lowest Credits input price is "
             f"{route_evidence['lowest_prompt_price']} and the lowest Credits output price is "
             f"{route_evidence['lowest_completion_price']}. Prices are per one million tokens "
