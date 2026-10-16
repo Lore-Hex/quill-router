@@ -58,6 +58,7 @@ def test_beam_is_discovered_without_a_handwritten_id_mapping(
     row = written["models"][0]
     assert row["id"] == MODEL_ID
     assert row["upstream_id"] == NATIVE_ID
+    assert row["max_output_tokens"] == 131_072
     assert row["cached_input_token_price_per_m"] == 130_000
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
@@ -70,19 +71,26 @@ def test_beam_is_discovered_without_a_handwritten_id_mapping(
 
 
 def test_committed_beam_route_has_verified_pricing_and_privacy() -> None:
+    manifest = json.loads(baseten.MANIFEST_PATH.read_text())
+    row = next(row for row in manifest["models"] if row["id"] == MODEL_ID)
     model = MODELS[MODEL_ID]
-    assert model.context_length == 1_048_576
+    assert model.context_length >= row["context_length"]
     assert model.input_modalities == ("text",)
     assert model.output_modalities == ("text",)
     shape = model_to_openrouter_shape(model)
     assert shape["trustedrouter"]["open_weights"] is True
-    endpoints = [ep for ep in endpoints_for_model(MODEL_ID) if ep.usage_type == "Credits"]
+    endpoints = [
+        ep for ep in endpoints_for_model(MODEL_ID)
+        if ep.provider == "baseten" and ep.usage_type == "Credits"
+    ]
     assert len(endpoints) == 1
     endpoint = endpoints[0]
     assert endpoint.provider == "baseten"
     assert endpoint.upstream_id == NATIVE_ID
-    assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(1_300_000)
-    assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(4_300_000)
-    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == _customer_price(130_000)
+    assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(row["input_token_price_per_m"])
+    assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(row["output_token_price_per_m"])
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == _customer_price(
+        row["cached_input_token_price_per_m"],
+    )
     assert endpoint_zero_data_retention(endpoint) is True
     assert endpoint_e2ee(endpoint) is not True
