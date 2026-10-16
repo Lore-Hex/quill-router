@@ -93,7 +93,9 @@ def door(monkeypatch: pytest.MonkeyPatch) -> _Door:
     """One front door, answering admitted and won, standing in for the fleet."""
     monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: True)
     door = _Door({"/v1/authorize": ADMIT, "/v1/settle": dict(WON), "/v1/refund": {"Status": "won", "Kind": "refund", "Charge": 0}})
-    client = fd.FrontDoorClient(lambda _budget: ("10.0.0.1:8080",), timeout_seconds=1.5, transport=_transport({"10.0.0.1:8080": door}))
+    # Route tests use immediate mock responses; deadline behavior has its own
+    # advancing-clock tests in test_fastpath_frontdoor.py.
+    client = fd.FrontDoorClient(lambda _budget: ("10.0.0.1:8080",), timeout_seconds=1.5, clock=lambda: 0.0, transport=_transport({"10.0.0.1:8080": door}))
     monkeypatch.setattr(gateway, "_fastpath_client", client)
     return door
 

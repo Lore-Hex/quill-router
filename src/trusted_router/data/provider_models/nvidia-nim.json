@@ -736,7 +736,8 @@
       "upstream_id": "moonshotai/kimi-k3",
       "display_name": "moonshotai/kimi-k3",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "status": 1,
       "input_modalities": [
         "text"

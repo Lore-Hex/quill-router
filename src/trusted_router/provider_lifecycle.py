@@ -88,6 +88,10 @@ STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT = datetime(2026, 10, 12, 16, 4, tzinfo
 # has been deprecated and is no longer available" (last success 2026-10-06).
 # Observation-dated, like the two above; not an upstream cutover claim.
 STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT = datetime(2026, 10, 10, 19, 39, tzinfo=UTC)
+# The NIM error supplies its exact EOL. Streamlake supplies no date, so use
+# the confirmed production rejection observation rather than inventing one.
+NVIDIA_NIM_KIMI_K3_RETIREMENT_AT = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
+STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT = datetime(2026, 10, 16, 22, 1, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -329,6 +333,26 @@ _RETIREMENTS = (
         model_ids=frozenset({"qwen/qwen3-235b-a22b-instruct-2507"}),
         upstream_ids=frozenset({"Qwen3-235B-A22B-Instruct-2507"}),
         effective_at=STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({
+            "qwen/qwen3-vl-235b-a22b-instruct",
+            "qwen/qwen3-235b-a22b-thinking-2507",
+            "qwen/qwen3-30b-a3b-instruct-2507",
+        }),
+        upstream_ids=frozenset({
+            "Qwen3-VL-235B-A22B-Instruct",
+            "Qwen3-235B-A22B-Thinking-2507",
+            "Qwen3-30B-A3B-Instruct-2507",
+        }),
+        effective_at=STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="nvidia-nim",
+        model_ids=frozenset({"moonshotai/kimi-k3"}),
+        upstream_ids=frozenset({"moonshotai/kimi-k3"}),
+        effective_at=NVIDIA_NIM_KIMI_K3_RETIREMENT_AT,
     ),
     # W&B's September notice gives October 5 without a time zone. Stop at
     # 00:00 UTC conservatively, only for these exact Serverless Inference ids.

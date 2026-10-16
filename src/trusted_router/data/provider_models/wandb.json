@@ -758,11 +758,32 @@
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Z.AI GLM 5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "context_length": 1048576,
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-10-16"
     }
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-16T22:17:26Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 33
+  "model_count": 34
 }

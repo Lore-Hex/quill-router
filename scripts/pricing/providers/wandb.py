@@ -248,6 +248,9 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="WANDB_API_KEY",
         explicit_model_map={},
         preserve_unpriced_model_ids=_PRESERVE_UNPRICED_MODEL_IDS,
+        # Observed in /models on 2026-10-16, but neither the model docs nor
+        # the hosted pricing page publishes its tariff. Do not borrow Flash's.
+        reviewed_unpriced_model_ids=frozenset({"z-ai/glm-5.3"}),
         pricing_source_url=PRICING_URL,
         price_loader=_load_prices,
         normalize_rows=_normalize_rows,
