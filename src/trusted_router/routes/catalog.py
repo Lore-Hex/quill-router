@@ -317,9 +317,12 @@ def _openai_service_tier_metadata(provider: str, model_id: str) -> dict[str, Any
 
 def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
     from trusted_router.speech import SPEECH_MODELS
+    from trusted_router.transcription import TRANSCRIPTION_MODELS
 
+    if transcription := TRANSCRIPTION_MODELS.get(endpoint.model_id):
+        return transcription.pricing
     if (spec := SPEECH_MODELS.get(endpoint.model_id)) and not spec.token_billed:
-        return {"input_character": microdollars_per_million_tokens_to_token_decimal(spec.customer_rate)}
+        return spec.non_token_pricing
     payload = {
         "prompt": microdollars_per_million_tokens_to_token_decimal(
             endpoint.prompt_price_microdollars_per_million_tokens

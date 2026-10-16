@@ -244,8 +244,9 @@
       "status": 1,
       "id": "mistralai/voxtral-4b-tts-2603",
       "upstream_id": "voxtral-tts",
-      "routable": false,
-      "routable_reason": "unsupported-endpoint-or-billing"
+      "routable": true,
+      "billing_unit": "request",
+      "fixed_request_price_microdollars": 2000
     },
     {
       "display_name": "Voxtral Mini 4B Realtime",
@@ -375,8 +376,9 @@
       "status": 1,
       "id": "openai/whisper-large-v3-turbo",
       "upstream_id": "whisper-large-v3-turbo",
-      "routable": false,
-      "routable_reason": "unsupported-endpoint-or-billing"
+      "routable": true,
+      "billing_unit": "request",
+      "fixed_request_price_microdollars": 10000
     },
     {
       "display_name": "Qwen3-TTS 1.7B",
@@ -394,8 +396,9 @@
       "status": 1,
       "id": "qwen/qwen3-tts",
       "upstream_id": "qwen3-tts",
-      "routable": false,
-      "routable_reason": "unsupported-endpoint-or-billing"
+      "routable": true,
+      "billing_unit": "request",
+      "fixed_request_price_microdollars": 10000
     }
   ],
   "price_scale": "microdollars_per_million"

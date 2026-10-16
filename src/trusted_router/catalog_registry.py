@@ -207,6 +207,7 @@ from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.request_capabilities import normalize_request_capabilities
 from trusted_router.speech import SPEECH_MODELS
+from trusted_router.transcription import TRANSCRIPTION_MODELS
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1345,11 +1346,36 @@ for _speech in SPEECH_MODELS.values():
         published_prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.input_token_cost),
         published_completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.output_token_cost),
         documentation=ModelDocumentation(
-            description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per input character, not per token.",
+            description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per request over an attested connection." if _speech.request_cost_microdollars else "Text-to-speech, billed per input character, not per token.",
             input_format="POST /v1/audio/speech with model, input (text), voice, and response_format.",
             output_format="Raw audio bytes. Errors are JSON. See supported response_formats.",
             example_input='{"model":"' + _speech.id + '","input":"Hello!","voice":"' + _speech.voices[0] + '","response_format":"' + _speech.formats[0] + '"}',
             example_output="Binary audio, not a JSON envelope.",
+        ),
+    )
+
+for _transcription in TRANSCRIPTION_MODELS.values():
+    if _transcription.provider != "tinfoil":
+        # Text-provider agreements do not establish audio-specific retention.
+        _MODEL_PROVIDER_PRIVACY_OVERRIDES[(_transcription.id, _transcription.provider)] = ModelProviderPrivacyOverride(
+            privacy_tier=0, provider_zero_data_retention=False,
+            provider_confidential_compute=False, provider_e2ee=False,
+            provider_policy="Audio-specific retention commitments have not been verified.",
+            provider_policy_url=_transcription.pricing_source,
+        )
+    MODELS[_transcription.id] = Model(
+        id=_transcription.id, name=_transcription.name, provider=_transcription.provider,
+        upstream_id=_transcription.upstream_id, context_length=0,
+        supports_chat=False, supports_messages=False,
+        input_modalities=("audio",), output_modalities=("transcription",),
+        prepaid_available=True, byok_available=False,
+        supported_parameters=("language", "response_format", "timestamp_granularities"),
+        documentation=ModelDocumentation(
+            description="File transcription, billed per request or audio duration, not text tokens.",
+            input_format="POST /v1/audio/transcriptions with multipart file or base64 input_audio, and model. PCM WAV or MP3, at most 7 MiB and ten minutes.",
+            output_format="JSON text and usage; verbose_json adds supported timestamps.",
+            example_input='{"model":"' + _transcription.id + '","input_audio":{"data":"<base64>","format":"wav"}}',
+            example_output='{"text":"Hello","usage":{"seconds":1,"cost":0.01}}',
         ),
     )
 
@@ -1685,7 +1711,7 @@ HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
 HELD_PREPAID_SETTLEMENT_ENDPOINTS.update(_HELD_DECISION_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
-    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS),
+    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS) | frozenset(TRANSCRIPTION_MODELS),
     at=CATALOG_RESOLVED_AT,
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)

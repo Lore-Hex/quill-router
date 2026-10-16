@@ -909,10 +909,11 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
     ]
     assert any(endpoint.usage_type == "Credits" for endpoint in openai_endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in openai_endpoints)
-    sora_models = {"openai/sora-2", "openai/sora-2-pro"}
+    # Chat's account-level commitment is not evidence for video or transcription.
+    unverified_retention_models = {"openai/sora-2", "openai/sora-2-pro", "openai/whisper-1"}
     assert all(
         endpoint_zero_data_retention(endpoint)
-        is (endpoint.usage_type == "Credits" and endpoint.model_id not in sora_models)
+        is (endpoint.usage_type == "Credits" and endpoint.model_id not in unverified_retention_models)
         for endpoint in openai_endpoints
     )
 

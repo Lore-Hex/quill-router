@@ -255,6 +255,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
     for name in (
         "src/trusted_router/data/openrouter_snapshot.json",
         "src/trusted_router/data/speech_pricing.json",
+        "src/trusted_router/data/transcription_pricing.json",
         "src/trusted_router/data/provider_routing_evidence.json",
         "src/trusted_router/data/provider_models/fixture.json",
         "src/trusted_router/data/model_changes.jsonl",

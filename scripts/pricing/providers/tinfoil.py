@@ -289,6 +289,42 @@ def fetch() -> ProviderPricingResult:
         # unsupported protocols visible to discovery without advertising a
         # working route or leaking zero token prices into the price index.
         request_micro = _microdollars_per_million(pricing.get("requestPrice", 0))
+        if (
+            native_id == "whisper-large-v3-turbo"
+            and row.get("type") == "audio"
+            and row.get("endpoints") == ["/v1/audio/transcriptions"]
+            and request_micro is not None and request_micro > 0
+            and pricing.get("inputTokenPricePer1M") == 0
+            and pricing.get("outputTokenPricePer1M") == 0
+        ):
+            discovered[or_id] = {
+                "id": or_id, "upstream_id": native_id,
+                "display_name": str(row.get("name") or native_id),
+                "model_type": "audio", "input_modalities": ["audio"],
+                "output_modalities": ["transcription"], "endpoints": ["audio/transcriptions"],
+                "routable": True, "billing_unit": "request",
+                "fixed_request_price_microdollars": request_micro,
+            }
+            continue
+        if (
+            native_id in {"qwen3-tts", "voxtral-tts"}
+            and row.get("type") == "tts"
+            and row.get("endpoints") == ["/v1/audio/speech"]
+            and request_micro is not None and request_micro > 0
+            and pricing.get("inputTokenPricePer1M") == 0
+            and pricing.get("outputTokenPricePer1M") == 0
+        ):
+            # Tariffs are refreshed and guarded separately by pricing.speech.
+            # Do not inject request prices into the token-price index.
+            discovered[or_id] = {
+                "id": or_id, "upstream_id": native_id,
+                "display_name": str(row.get("name") or native_id),
+                "model_type": "tts", "input_modalities": ["text"],
+                "output_modalities": ["speech"], "endpoints": ["audio/speech"],
+                "routable": True, "billing_unit": "request",
+                "fixed_request_price_microdollars": request_micro,
+            }
+            continue
         if manifest_row is None or request_micro is None or request_micro != 0:
             kind = str(row.get("type") or "chat")
             raw_endpoints = row.get("endpoints")

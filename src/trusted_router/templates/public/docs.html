@@ -162,6 +162,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
         <li><code>POST /v1/responses</code></li>
         <li><code>POST /v1/embeddings</code></li>
         <li><a href="#text-to-speech"><code>POST /v1/audio/speech</code></a></li>
+        <li><a href="#transcription"><code>POST /v1/audio/transcriptions</code></a></li>
             <li><code>POST {{ decide_path }}</code> — decision models: shared <code>state</code> plus typed <code>questions</code> (boolean, choice, score) in, verified answers with probabilities out. Like chat completions, <code>trustedrouter.routing</code> identifies the model and provider that served the decision, omitting fields the gateway cannot establish. It also answers to the paths Vercel AI Gateway (<code>/v1/evaluate</code>) and OpenRouter (<code>/api/alpha/decisions</code>) use for the same request. Use <code>trustedrouter/trev-1.0</code>, <code>typesafe-ai/jev</code>, or any chat model. See <a href="/docs/decide">/docs/decide</a>.</li>
         <li><code>POST /v1/videos</code></li>
         <li><a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a> <span class="muted">public, no API key</span></li>
@@ -294,6 +295,17 @@ with httpx.Client() as client:
   <p>xAI, Mistral, ElevenLabs, and Microsoft charge by input characters, including spaces and punctuation. Gemini charges by text-input and audio-output tokens: it reserves a maximum-token hold for 8,192 text-input and 16,384 audio-output tokens before synthesis, then charges only provider-reported usage and releases the unused hold. Token rates are frozen at authorization.</p>
   <p>Audio is buffered before settlement and delivery; this is not incremental synthesis streaming. Errors return JSON. <code>X-Generation-Id</code> identifies the billing record and <code>X-Usage-Cost</code> reports the charge in USD. Reusing an <code>Idempotency-Key</code> returns 409 without generating or charging again; audio is not stored for replay.</p>
   <p><a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/text-to-speech.md">Speech models, parameters, SDK examples, privacy, and billing</a></p>
+</section>
+<section class="marketing-section" id="transcription">
+  <h2>Audio transcription</h2>
+  <p>Upload PCM WAV or MP3 to <code>POST https://api.trustedrouter.com/v1/audio/transcriptions</code>. Use multipart with the OpenAI SDK, or JSON with base64 <code>input_audio</code>. Audio and transcripts stay out of the control plane and durable router logs.</p>
+  <pre><code>curl --fail-with-body https://api.trustedrouter.com/v1/audio/transcriptions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -F model=openai/whisper-large-v3-turbo \
+  -F 'provider={"only":["tinfoil"],"min_privacy":"confidential"}' \
+  -F file=@recording.wav</code></pre>
+  <p>Tinfoil Whisper uses an attestation-verified connection. OpenAI Whisper and Mistral Voxtral are separate direct routes, not confidential-compute routes. Discover current prices at <a href="/v1/models?output_modalities=transcription">transcription models</a>. Limits: 7 MiB uploads, ten minutes, and 24 MB decoded MP3 audio. This release returns JSON or verbose JSON; URL inputs and realtime transcription are not supported.</p>
+  <p><a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/transcription.md">SDK examples, timestamps, privacy, and billing</a></p>
 </section>
 
 <section class="marketing-section" id="usage-cost">

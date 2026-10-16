@@ -21,6 +21,39 @@ SNAPSHOT = Path(__file__).resolve().parents[2] / "src/trusted_router/data/speech
 GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
 ELEVENLABS_URL = "https://elevenlabs.io/pricing/api"
 MICROSOFT_URL = "https://microsoft.ai/news/our-first-streaming-transcription-model/"
+TINFOIL_URL = "https://inference.tinfoil.sh/v1/models"
+
+
+def parse_tinfoil_request_prices(raw: str) -> dict[str, int]:
+    payload = json.loads(raw, parse_float=Decimal)
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        raise ValueError("Missing Tinfoil speech catalog")
+    names = {"qwen3-tts": "qwen/qwen3-tts", "voxtral-tts": "mistralai/voxtral-4b-tts-2603"}
+    prices = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("id") not in names:
+            continue
+        model = names[row["id"]]
+        pricing = row.get("pricing")
+        if (
+            model in prices or row.get("type") != "tts"
+            or row.get("endpoints") != ["/v1/audio/speech"]
+            or not isinstance(pricing, dict)
+            or pricing.get("inputTokenPricePer1M") != 0
+            or pricing.get("outputTokenPricePer1M") != 0
+        ):
+            raise ValueError("Conflicting Tinfoil speech billing contract")
+        price = pricing.get("requestPrice")
+        if isinstance(price, bool) or not isinstance(price, (int, Decimal)):
+            raise ValueError("Missing Tinfoil per-request tariff")
+        micro = Decimal(price) * 1_000_000
+        if not micro.is_finite() or micro <= 0 or micro != micro.to_integral_value():
+            raise ValueError("Invalid Tinfoil per-request tariff")
+        prices[model] = int(micro)
+    if set(prices) != set(names.values()):
+        raise ValueError("Incomplete Tinfoil speech tariffs")
+    return prices
 
 
 def parse_elevenlabs_prices(html: str) -> dict[str, int]:
@@ -213,12 +246,23 @@ def refresh() -> None:
             previous = before["token_prices"][model][kind]
             if (price >= previous * 2 or price * 2 <= previous) and not approved_transition:
                 raise ValueError(f"Speech price change requires review: {model} {kind}")
+    response = requests.get(TINFOIL_URL, timeout=30)
+    response.raise_for_status()
+    request_prices = parse_tinfoil_request_prices(response.text)
+    if before.get("request_price_unit") != "microdollars_per_request":
+        raise ValueError("Wrong speech request price unit")
+    for model, price in request_prices.items():
+        previous = before["request_prices"][model]
+        if price >= previous * 2 or price * 2 <= previous:
+            raise ValueError(f"Speech price change requires review: {model}")
     # Fetch and validate every rate before touching the last-known-good file.
     snapshot = {
         "checked_on": today.isoformat(),
         "unit": "microdollars_per_million_input_characters",
         "prices": prices,
         "token_prices": token_prices,
+        "request_prices": request_prices,
+        "request_price_unit": "microdollars_per_request",
     }
     SNAPSHOT.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
 

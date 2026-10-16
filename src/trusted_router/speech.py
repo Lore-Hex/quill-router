@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from trusted_router.money import format_money_precise
 from trusted_router.pricing import customer_fixed_price_microdollars
 
 
@@ -25,6 +26,27 @@ class SpeechModel:
     pricing_source: str
     input_token_cost: int = 0
     output_token_cost: int = 0
+    request_cost_microdollars: int = 0
+
+    @property
+    def customer_request_price(self) -> int:
+        return customer_fixed_price_microdollars(self.request_cost_microdollars)
+
+    @property
+    def billing_unit(self) -> str:
+        return "tokens" if self.token_billed else "request" if self.request_cost_microdollars else "input_characters"
+
+    @property
+    def non_token_pricing(self) -> dict[str, str]:
+        if self.request_cost_microdollars:
+            return {"request": str(Decimal(self.customer_request_price) / 1_000_000)}
+        return {"input_character": str(Decimal(self.customer_rate) / 1_000_000_000_000)}
+
+    @property
+    def non_token_price_label(self) -> str:
+        if self.request_cost_microdollars:
+            return f"{format_money_precise(self.customer_request_price)}/request"
+        return f"{format_money_precise(self.customer_rate)}/M characters"
 
     @property
     def token_billed(self) -> bool:
@@ -37,6 +59,8 @@ class SpeechModel:
     def quote(self, characters: int) -> int:
         if type(characters) is not int or not 1 <= characters <= self.max_characters:
             raise ValueError("speech input character count is outside the model limit")
+        if self.request_cost_microdollars:
+            return self.customer_request_price
         return 0 if self.token_billed else (characters * self.customer_rate + 999_999) // 1_000_000
 
 
@@ -53,6 +77,12 @@ def _load_prices() -> dict[str, int]:
 
 
 _PRICES = _load_prices()
+_SNAPSHOT = json.loads((Path(__file__).parent / "data/speech_pricing.json").read_text())
+if _SNAPSHOT.get("request_price_unit") != "microdollars_per_request":
+    raise ValueError("Speech request pricing snapshot has the wrong unit")
+_REQUEST_PRICES = _SNAPSHOT["request_prices"]
+if any(type(v) is not int or v <= 0 for v in _REQUEST_PRICES.values()):
+    raise ValueError("Speech request pricing must be positive integer microdollars per request")
 _TOKEN_PRICES = json.loads((Path(__file__).parent / "data/speech_pricing.json").read_text())[
     "token_prices"
 ]
@@ -167,11 +197,21 @@ for _slug, _native in (
     )
 
 
+for _id, _name, _native, _voices in (
+    ("qwen/qwen3-tts", "Qwen: Qwen3 TTS", "qwen3-tts", "aiden dylan eric ono_anna ryan serena sohee uncle_fu vivian"),
+    ("mistralai/voxtral-4b-tts-2603", "Mistral: Voxtral 4B TTS", "voxtral-tts", "neutral_female neutral_male casual_female casual_male cheerful_female ar_male de_female de_male es_female es_male fr_female fr_male hi_female hi_male it_female it_male nl_female nl_male pt_female pt_male"),
+):
+    SPEECH_MODELS[_id] = SpeechModel(
+        _id, _name, "tinfoil", _native, 0, tuple(_voices.split()), ("wav",), 4096, 1, 1,
+        "https://inference.tinfoil.sh/v1/models", request_cost_microdollars=_REQUEST_PRICES[_id],
+    )
+
+
 def speech_metadata(model_id: str) -> dict[str, object]:
     spec = SPEECH_MODELS[model_id]
     return {
         "endpoint": "/v1/audio/speech",
-        "billing_unit": "tokens" if spec.token_billed else "input_characters",
+        "billing_unit": spec.billing_unit,
         **(
             {
                 "input_token_price_per_million": str(
@@ -184,13 +224,14 @@ def speech_metadata(model_id: str) -> dict[str, object]:
                 "max_output_audio_tokens": GEMINI_OUTPUT_LIMIT,
             }
             if spec.token_billed
-            else {
+            else {"request_price": str(Decimal(spec.customer_request_price) / 1_000_000)}
+            if spec.request_cost_microdollars else {
                 "input_character_price_per_million": str(Decimal(spec.customer_rate) / 1_000_000),
             }
         ),
         "supported_voices": list(spec.voices),
         "response_formats": list(spec.formats),
-        "default_response_format": "pcm",
+        "default_response_format": "wav" if spec.provider == "tinfoil" else "pcm",
         "max_input_characters": spec.max_characters,
         "speed": {"min": spec.min_speed, "max": spec.max_speed, "default": 1},
         "pricing_source": spec.pricing_source,
