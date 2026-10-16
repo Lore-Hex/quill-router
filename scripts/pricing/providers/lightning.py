@@ -82,6 +82,8 @@ def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
     _DISCOVERED_MANIFEST_ROWS = {}
+    if reason := PROVIDER_INCIDENT_HOLD_REASONS.get(SLUG):
+        raise RuntimeError(f"lightning: {reason}; discovery paused before credential transmission")
     api_key = os.environ.get("LIGHTNING_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:

@@ -432,3 +432,13 @@ def test_native_price_conflict_and_recovery_still_work(
     assert rows[native].get("routable", True) is True
     assert "routable_reason" not in rows[native]
     assert rows[native]["input_token_price_per_m"] == 1_000_000
+def test_security_incident_hold_stops_discovery_before_sending_credentials(monkeypatch):
+    from scripts.pricing.providers import lightning
+    from trusted_router import provider_contracts
+
+    monkeypatch.setitem(provider_contracts.PROVIDER_INCIDENT_HOLD_REASONS, "lightning", "provider-security-incident")
+    monkeypatch.setenv("LIGHTNING_API_KEY", "must-not-be-sent")
+    monkeypatch.setattr(lightning.httpx, "Client", lambda **_kw: pytest.fail("network opened during security hold"))
+    with pytest.raises(RuntimeError, match="discovery paused before credential transmission"):
+        lightning.fetch()
+
