@@ -31,6 +31,7 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
     providers_for_display,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_capabilities import (
     provider_extension_parameters,
     union_supported_parameters,
@@ -170,6 +171,8 @@ def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
     shapes: list[dict[str, Any]] = []
     last_changes = last_route_changes(timestamp(_utc_now()))
     for model in MODELS.values():
+        if is_listing_alias(model.id, MODELS):
+            continue
         shape = model_to_openrouter_shape(model)
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):

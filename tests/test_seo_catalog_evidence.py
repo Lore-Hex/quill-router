@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import META_MODEL_IDS, MODELS, PROVIDERS, endpoints_for_model
+from trusted_router.catalog_aliases import MODEL_LISTING_ALIASES
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.provider_lifecycle import (
     LIFECYCLE_CLOCK_OVERRIDE_ENV,
@@ -49,6 +50,7 @@ def test_seo_evidence_counts_the_live_public_catalog(
     public_model_ids = {
         model.id for model in MODELS.values()
         if model.id not in META_MODEL_IDS and not model.internal_only
+        and MODEL_LISTING_ALIASES.get(model.id) not in MODELS
     }
     public_model_count = len(public_model_ids)
     public_provider_count = sum(not provider.internal_only for provider in PROVIDERS.values())
@@ -58,6 +60,23 @@ def test_seo_evidence_counts_the_live_public_catalog(
     assert f"<strong>{public_model_count}</strong><span>public models</span>" in response.text
     assert f"<strong>{public_provider_count}</strong><span>providers</span>" in response.text
     assert f"<strong>{public_route_count}</strong><span>configured routes</span>" in response.text
+
+
+def test_seo_counts_alias_routes_once_under_the_canonical_model() -> None:
+    public_ids = {
+        model.id for model in MODELS.values()
+        if model.id not in META_MODEL_IDS and not model.internal_only
+    }
+    aliases = {
+        alias for alias, canonical in MODEL_LISTING_ALIASES.items()
+        if alias in public_ids and canonical in public_ids
+    }
+    assert aliases
+    evidence = seo_catalog_evidence("openai-compatible-llm-api", test_mode=True)
+    assert evidence["model_count"] == len(public_ids - aliases)
+    assert evidence["route_count"] == sum(
+        len(endpoints_for_model(model_id)) for model_id in public_ids - aliases
+    )
 
 
 def test_focused_seo_pages_show_relevant_current_models(
