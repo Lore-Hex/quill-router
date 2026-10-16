@@ -8,8 +8,8 @@
 # archive. What each means and what to do: docs/runbooks/fastpath-alerts.md.
 #
 # The channels exist already (the reliability scripts made them) and are
-# read here, not managed. The applying identity may create and update
-# policies but not delete them (trustedRouterAlertReconciler,
+# read here, not managed. The applying identity's role adds and changes
+# policies but cannot delete one (trustedRouterAlertReconciler,
 # scripts/deploy/gateway_reliability_iam.sh): a change that replaces a
 # policy needs an operator.
 

@@ -15,12 +15,31 @@ def _read(*parts: str) -> str:
     return ROOT.joinpath(*parts).read_text(encoding="utf-8")
 
 
-def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
+def _policy(name: str) -> str:
+    """One policy's resource block, through the next top-level block."""
     tf = POLICIES.read_text(encoding="utf-8")
+    start = tf.index(f'resource "google_monitoring_alert_policy" "{name}" {{')
+    end = tf.find("\n}\n", start)
+    assert end > start
+    return tf[start:end]
+
+
+def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
+    import yaml
+
+    tf = _policy("fastpath_alert")
     startup = _read("infra", "fastpath_node_startup.sh.tftpl")
     service = _read("fastpath", "internal", "service", "service.go")
-    # The agent's journald receiver names the log the entries land in.
-    assert re.search(r"^ {4}fastpath_journal:\n {6}type: systemd_journald$", startup, re.M)
+    # The agent's active pipeline reads the journal through the receiver
+    # that names the log, and parses each line's MESSAGE as JSON, which
+    # makes the line's labels the entry's.
+    match = re.search(r"<<AGENT\n(.*?)\nAGENT\n", startup, re.S)
+    assert match
+    logging = yaml.safe_load(match.group(1))["logging"]
+    assert logging["receivers"] == {"fastpath_journal": {"type": "systemd_journald"}}
+    pipeline = logging["service"]["pipelines"]["fastpath"]
+    assert pipeline["receivers"] == ["fastpath_journal"] and "fastpath_json" in pipeline["processors"]
+    assert logging["processors"]["fastpath_json"] == {"type": "parse_json", "field": "MESSAGE"}
     assert '"logName=\\"projects/${local.gcp_project_id}/logs/fastpath_journal\\""' in tf
     # The service labels each alert with its kind and writes it at the
     # journal's err priority, which the agent maps to ERROR.
@@ -51,12 +70,23 @@ def test_the_lag_policy_watches_every_subscription_of_the_fast_path() -> None:
     tf = POLICIES.read_text(encoding="utf-8")
     for subscription in subscriptions:
         assert f"google_pubsub_subscription.{subscription}" in tf, subscription
+    # The condition itself: the fast path's subscriptions only, their oldest
+    # message's age past the threshold, held for the duration.
+    lag = _policy("fastpath_subscription_lag")
+    assert lag.count("condition_threshold {") == 1
+    assert '"resource.type = \\"pubsub_subscription\\""' in lag
+    assert '"metric.type = \\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\\""' in lag
+    assert (
+        '"resource.labels.subscription_id = one_of(${join(", ", '
+        '[for name in local.fastpath_lag_subscriptions : "\\"${name}\\""])})"'
+    ) in lag
+    assert re.search(r'^\s+comparison\s+= "COMPARISON_GT"$', lag, re.M)
+    assert re.search(r'^\s+duration\s+= "300s"$', lag, re.M)
     # An archive's oldest message waits up to its max_duration in the normal
     # course: the threshold sits past it.
     (max_duration,) = re.findall(r'max_duration\s+=\s+"(\d+)s"', fastpath)
-    (threshold,) = re.findall(r"threshold_value\s+=\s+(\d+)", tf)
+    (threshold,) = re.findall(r"^\s+threshold_value\s+=\s+(\d+)$", lag, re.M)
     assert int(threshold) > int(max_duration)
-    assert "pubsub.googleapis.com/subscription/oldest_unacked_message_age" in tf
 
 
 def test_the_channels_are_read_not_managed() -> None:

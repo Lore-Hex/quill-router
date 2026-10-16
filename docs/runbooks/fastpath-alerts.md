@@ -11,7 +11,9 @@ chat:
 - **TR Fast path: service alert**, on any such entry, at most one
   notification per five minutes; the incident's label `kind` is the kind.
 - **TR Fast path: subscription lag**, when a fast path subscription's
-  oldest unacked message is over ten minutes old for five minutes.
+  oldest unacked message stays over ten minutes old for five minutes: a
+  reader gone, slow, or stuck on one lease's ordered messages while the
+  others go on.
 
 ## First, for any alert
 
@@ -58,7 +60,7 @@ this page names does not change.
 | `unreadable_pending_work` | A winner's pending work cannot be read. | Its pack's work stays pending and its lease does not retire. Money is unaffected. Fix the cause, then the pack completes. |
 | `no_boot_binding` | A winner's boot binding is stated by no record. | As `unreadable_pending_work`. |
 | `drain_overdue` | A lease is still draining past its holds' longest life and the grace. | Find why with `status`. A fleet must not stop while it drains (`fastpath-turn-off.md`). |
-| `pending_work_overdue` | A pack's pending work was not done in time. | Read the node's journal for the pending worker's errors; the alerts above usually name the cause. |
+| `pending_work_overdue` | A pack's pending work was not done in time. | The pending worker does not log why a pack waits: its sweep drops the error. The alerts above, on the same subject or lease, name the causes it knows. `status` shows the workspace's pending packs and staged records; a winner whose full record is not staged waits for it. |
 | `other` | An alert whose message is none of the auditor's. | Read the entry's message. |
 
 ## Subscription lag
@@ -88,16 +90,17 @@ echo '<3>{"message":"fastpath alert: an exercise of the alert path","subject":"e
 The incident opens with `kind` `exercise` within a few minutes and closes
 on its own half an hour later.
 
-The lag policy fires only on a subscription with no reader for ten
-minutes, which production does not stage on purpose. Its filter is checked
-instead against the series it selects, one per subscription:
+The lag policy fires once a subscription's oldest message has stayed
+past ten minutes for five more, which production does not stage on
+purpose. Its filter is checked instead against the series it selects, one
+per subscription, from an operator's machine:
 
 ```bash
 curl -sS -G -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   https://monitoring.googleapis.com/v3/projects/quill-cloud-proxy/timeSeries \
   --data-urlencode 'filter=resource.type = "pubsub_subscription" AND metric.type = "pubsub.googleapis.com/subscription/oldest_unacked_message_age" AND resource.labels.subscription_id = one_of("auditor", "stager", "settle-log-archive", "records-archive")' \
-  --data-urlencode "interval.startTime=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)" \
-  --data-urlencode "interval.endTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --data-urlencode "interval.startTime=$(python3 -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) - d.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))')" \
+  --data-urlencode "interval.endTime=$(python3 -c 'import datetime as d; print(d.datetime.now(d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')" \
   | grep -o '"subscription_id": "[^"]*"' | sort -u
 ```
 
