@@ -155,7 +155,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     Provider,
     _EmbeddingSpec,
 )
-from trusted_router.catalog_deployment import unavailable_gateway_model_ids
+from trusted_router.catalog_deployment import apply_gateway_admission_holds
 from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time build below
     _AUTHOR_TO_PROVIDER_SLUG,
     _INGEST_PATH,
@@ -1722,6 +1722,10 @@ _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
 
 consolidate_model_routes(MODELS, MODEL_ENDPOINTS)
 
+# Apply gateway rollout holds after every catalog source has merged and before
+# capabilities are derived. An hourly refresh must not reintroduce held routes.
+apply_gateway_admission_holds(MODELS, MODEL_ENDPOINTS)
+
 # Normalize the completed route inventory before any routing or public reader
 # sees it. Reviewed contracts update the declarations those readers share.
 _endpoints_by_model: dict[str, list[ModelEndpoint]] = {}
@@ -1800,16 +1804,6 @@ for _named_decision_model_id in NAMED_DECISION_MODEL_PROVIDERS:
         MODELS[_named_decision_model_id] = _named_decision_model_with_chain_prices(
             _named_decision_model_id
         )
-
-# Apply gateway rollout holds after EVERY catalog source has merged. A future
-# snapshot or provider refresh must not reintroduce an unsupported protocol.
-_unavailable_gateway_models = unavailable_gateway_model_ids()
-for _model_id in _unavailable_gateway_models:
-    MODELS.pop(_model_id, None)
-MODEL_ENDPOINTS = {
-    identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
-    if endpoint.model_id not in _unavailable_gateway_models
-}
 
 # Operator-only POC tariff, approved 2026-10-13: Z.ai GLM-5.3-Flash's
 # $0.15/$0.50 per million reference rate, NOT a verified Fortanix quote.

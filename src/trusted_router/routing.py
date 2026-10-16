@@ -424,7 +424,11 @@ def routing_pool_discovery(
 def transcription_route_endpoint_candidates(
     inputs: NormalizedRoutingInputs,
 ) -> list[tuple[Model, ModelEndpoint]]:
-    if len(inputs.model_ids) != 1 or inputs.model_ids[0] not in TRANSCRIPTION_MODELS:
+    if (
+        len(inputs.model_ids) != 1
+        or inputs.model_ids[0] not in TRANSCRIPTION_MODELS
+        or inputs.model_ids[0] not in MODELS
+    ):
         raise api_error(400, "Model does not support transcription", ErrorType.MODEL_NOT_SUPPORTED)
     if not TRANSCRIPTION_MODELS[inputs.model_ids[0]].token_billed and (
         inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
