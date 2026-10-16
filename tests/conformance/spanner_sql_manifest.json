@@ -1977,8 +1977,8 @@
         }
       ]
     },
-    "storage_gcp_key_escrow:txn:1": {
-      "fingerprint": "fcbc39b2991f619d26365b919a4bdc925b950453acd760c67ce638fb5d50d5f4",
+    "storage_gcp_key_escrow:read_counters:1": {
+      "fingerprint": "97c18154956915443e297e62ef40c5767eac208107bedd2a0fcf0127a39cd49c",
       "scenarios": [
         {
           "bindings": {},
@@ -4710,7 +4710,7 @@
     "storage_gcp_generations:SpannerGenerations._reconcile_page": "889635a6ac2415c0fa1bcc9a1b71411fd6e061052c8fc22c56a17cc121a86f41",
     "storage_gcp_google_ads:SpannerGoogleAdsDeliveryStore._read_entity_from": "e633b9b8413c4b1ce44309ce8fe0fabc6a4a6d42d2a0fcbf6c9e94982820440a",
     "storage_gcp_google_ads:SpannerGoogleAdsDeliveryStore._list_entities": "fd1dd78c71ba2d47ad201bf583a268188f245afb11f791d9a6cc314e63d7e7ef",
-    "storage_gcp_key_escrow:rebalance_key_limit_headroom.txn": "fcbc39b2991f619d26365b919a4bdc925b950453acd760c67ce638fb5d50d5f4",
+    "storage_gcp_key_escrow:rebalance_key_limit_headroom.read_counters": "97c18154956915443e297e62ef40c5767eac208107bedd2a0fcf0127a39cd49c",
     "storage_gcp_key_shard_admin:_typed_key_state": "73a4a569ff114b9a2347b324dccc1c4756c9e380b1cd87971af930e2677001f5",
     "storage_gcp_key_shard_admin:reshard_key_usage.txn": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
     "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "614f2667ef559acac550195fd45a158a07dd663c5da435a74a463befbabedc96",
