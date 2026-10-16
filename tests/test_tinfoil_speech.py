@@ -88,6 +88,7 @@ def test_public_speech_price_is_per_request(client, model):
     assert float(row["pricing"]["request"]) > 0
     assert row["trustedrouter"]["speech"]["billing_unit"] == "request"
     assert row["trustedrouter"]["speech"]["default_response_format"] == "wav"
+    assert row["trustedrouter"]["capabilities"]["confidential"] is True
     page = client.get("/models/" + model)
     assert page.status_code == 200
     assert "/request" in page.text

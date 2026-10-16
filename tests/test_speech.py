@@ -146,6 +146,20 @@ def test_speech_catalog(client: TestClient) -> None:
             assert _endpoint_pricing_payload(endpoint) == rows[mid]["pricing"]
 
 
+@pytest.mark.parametrize("model", ["qwen/qwen3-tts", "mistralai/voxtral-4b-tts-2603"])
+def test_tinfoil_speech_admits_confidential_only_route(
+    client: TestClient, speech_key: str, model: str,
+) -> None:
+    result = authorize(
+        client, speech_key, model=model,
+        provider={"only": ["tinfoil"], "min_privacy": "confidential"},
+    )
+    assert result.status_code == 200, result.text
+    auth = result.json()["data"]
+    assert auth["provider"] == "tinfoil"
+    assert auth["estimated_cost_microdollars"] == SPEECH_MODELS[model].quote(100)
+
+
 @pytest.mark.parametrize(
     "model", [mid for mid, spec in SPEECH_MODELS.items() if not spec.token_billed]
 )

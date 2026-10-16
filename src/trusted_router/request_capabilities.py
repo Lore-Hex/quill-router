@@ -18,6 +18,7 @@ from typing import Any, TypedDict
 from trusted_router.catalog_capabilities import union_supported_parameters
 from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL, Model, ModelEndpoint, offers_chat
 from trusted_router.catalog_privacy import endpoint_meets_privacy_requirement
+from trusted_router.speech import SPEECH_MODELS
 
 EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 _TEXT_ONLY_MODELS = frozenset({"openai/gpt-oss-120b", "openai/gpt-oss-20b"})
@@ -102,6 +103,10 @@ def normalize_request_capabilities(
 def endpoint_capabilities(model: Model, endpoint: ModelEndpoint) -> RequestCapabilities:
     """Read a provider/credential route's corrected request declarations."""
     effort = _reviewed_contracts().get((endpoint.provider, model.id), {}).get("reasoning_effort")
+    speech = SPEECH_MODELS.get(model.id)
+    attested_speech = (
+        speech is not None and speech.provider == endpoint.provider == "tinfoil"
+    )
     return {
         "reasoning_effort": (
             [value for value in EFFORT_ORDER if value in effort] if effort is not None else None
@@ -109,7 +114,7 @@ def endpoint_capabilities(model: Model, endpoint: ModelEndpoint) -> RequestCapab
         "tools": "tools" in endpoint.supported_parameters,
         "seed": "seed" in endpoint.supported_parameters,
         "vision": "image" in (endpoint.input_modalities or ()),
-        "confidential": offers_chat(model) and endpoint_meets_privacy_requirement(
+        "confidential": (offers_chat(model) or attested_speech) and endpoint_meets_privacy_requirement(
             endpoint, PRIVACY_TIER_CONFIDENTIAL,
         ),
     }
