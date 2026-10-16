@@ -2,16 +2,17 @@
 # alerting. A node's service writes each alert as an ERROR entry of the log
 # fastpath_journal, labelled fastpath_alert with the alert's kind
 # (writeAlert in fastpath/internal/service; the node's Ops Agent carries the
-# journal there, infra/fastpath_node_startup.sh.tftpl). One policy notifies
-# on any such entry; one on the lag of the fast path's subscriptions: the
-# auditor's (an auditor making no progress), the stager's and each topic's
-# archive. What each means and what to do: docs/runbooks/fastpath-alerts.md.
+# journal there, infra/fastpath_node_startup.sh.tftpl). A policy for each
+# kind notifies on its entries; one more on the lag of the fast path's
+# subscriptions: the auditor's (an auditor making no progress), the stager's
+# and each topic's archive. What each means and what to do:
+# docs/runbooks/fastpath-alerts.md.
 #
 # The channels exist already (the reliability scripts made them) and are
 # read here, not managed. The applying identity's role adds and changes
 # policies but cannot delete one (trustedRouterAlertReconciler,
 # scripts/deploy/gateway_reliability_iam.sh): a change that replaces a
-# policy needs an operator.
+# policy, or a kind taken off the list, needs an operator.
 
 data "google_monitoring_notification_channel" "fastpath_oncall" {
   project      = local.gcp_project_id
@@ -35,32 +36,51 @@ locals {
     ],
     [for subscription in google_pubsub_subscription.fastpath_archive : subscription.name],
   )
+  # Every kind of fastpath/internal/auditor/alerts.go, and "other", which the
+  # service gives an alert of no kind it knows. A policy each: Cloud
+  # Monitoring sends a policy at most 20 notifications a day, so a kind that
+  # keeps firing cannot use up a money fault's.
+  fastpath_alert_kinds = toset([
+    "gap",
+    "audit_fault",
+    "fault_usage",
+    "unreadable_record",
+    "unappliable_record",
+    "record_of_no_lease",
+    "unknown_record_kind",
+    "full_record_of_no_authorization",
+    "full_record_of_no_lease",
+    "unreadable_pending_work",
+    "no_boot_binding",
+    "drain_overdue",
+    "pending_work_overdue",
+    "other",
+  ])
 }
 
 resource "google_monitoring_alert_policy" "fastpath_alert" {
+  for_each = local.fastpath_alert_kinds
+
   project      = local.gcp_project_id
-  display_name = "TR Fast path: service alert"
+  display_name = "TR Fast path: ${each.key}"
   combiner     = "OR"
   severity     = "ERROR"
 
   conditions {
-    display_name = "A fast path node wrote an alert"
+    display_name = "A fast path node wrote a ${each.key} alert"
     condition_matched_log {
       filter = join(" AND ", [
         "logName=\"projects/${local.gcp_project_id}/logs/fastpath_journal\"",
-        "labels.fastpath_alert:*",
+        "labels.fastpath_alert=\"${each.key}\"",
         "severity>=ERROR",
       ])
-      label_extractors = {
-        kind = "EXTRACT(labels.fastpath_alert)"
-      }
     }
   }
 
   # A fault can write an alert per record it meets (2,222 lines in one P1
-  # run): one notification per five minutes for each kind (each extracted
-  # label value has its own timeline), the incident closing on its own half
-  # an hour after the last.
+  # run): one notification per five minutes, the incident closing on its
+  # own half an hour after the last. A log-matched policy must carry the
+  # rate limit; the API refuses one without it.
   alert_strategy {
     notification_rate_limit {
       period = "300s"
@@ -69,7 +89,7 @@ resource "google_monitoring_alert_policy" "fastpath_alert" {
   }
 
   documentation {
-    content   = "A fast path node wrote an alert; its kind is the incident's label `kind`, and the entry's `subject` names the lease or authorization. What each kind means and what to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
+    content   = "A fast path node wrote a `${each.key}` alert; the entry's `subject` names the lease or authorization. What it means and what to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
     mime_type = "text/markdown"
   }
 

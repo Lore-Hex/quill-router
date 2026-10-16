@@ -45,20 +45,29 @@ def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
     # journal's err priority, which the agent maps to ERROR.
     assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)}' in service
     assert 'fmt.Fprintln(w, "<3>"+string(line))' in service
-    # All three parts at once: the log, the label and the severity, so an
-    # ordinary entry of the same log does not match.
+    # A policy per kind, each matching all three parts at once: the log, its
+    # kind's label and the severity, so an ordinary entry of the same log, or
+    # another kind's, does not match.
+    assert "for_each = local.fastpath_alert_kinds" in tf
     assert tf.count("filter = join(") == 1 and 'filter = join(" AND ", [' in tf
     assert " OR " not in tf
-    assert '"labels.fastpath_alert:*"' in tf
+    assert '"labels.fastpath_alert=\\"${each.key}\\""' in tf
     assert '"severity>=ERROR"' in tf
-    assert 'kind = "EXTRACT(labels.fastpath_alert)"' in tf
+    # A log-matched policy must carry a notification rate limit, which
+    # terraform validate does not check and the API does.
+    assert re.search(r'notification_rate_limit \{\n\s+period = "300s"\n\s+\}\n\s+auto_close = "1800s"', tf)
 
 
-def test_every_alert_kind_has_a_runbook_entry() -> None:
+def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
     alerts = _read("fastpath", "internal", "auditor", "alerts.go")
     kinds = re.findall(r'^\tAlert\w+:\s+"(\w+)",$', alerts, re.M)
     assert len(kinds) == len(re.findall(r"^\tAlert\w+\s+= ", alerts, re.M)) == 13
     assert 'return "other"' in alerts
+    # Each kind its own policy, so a kind that keeps firing cannot use up
+    # another's daily notifications.
+    listed = re.search(r"fastpath_alert_kinds = toset\(\[(.*?)\]\)", POLICIES.read_text(encoding="utf-8"), re.S)
+    assert listed
+    assert sorted(re.findall(r'"(\w+)"', listed.group(1))) == sorted([*kinds, "other"])
     runbook = _read("docs", "runbooks", "fastpath-alerts.md")
     for kind in [*kinds, "other"]:
         assert re.search(rf"^\| `{kind}` \| ", runbook, re.M), kind
@@ -96,7 +105,9 @@ def test_the_lag_policy_watches_every_subscription_of_the_fast_path() -> None:
     # course: the threshold sits past it.
     (max_duration,) = re.findall(r'max_duration\s+=\s+"(\d+)s"', fastpath)
     (threshold,) = re.findall(r"^\s+threshold_value\s+=\s+(\d+)$", lag, re.M)
-    assert int(threshold) > int(max_duration)
+    assert int(threshold) == 600 > int(max_duration)
+    # One series past the threshold is enough: the auditor's alone.
+    assert re.search(r"trigger \{\n\s+count = 1\n\s+\}", lag)
 
 
 def test_the_channels_are_read_not_managed() -> None:
@@ -108,4 +119,12 @@ def test_the_channels_are_read_not_managed() -> None:
     for script in ("gateway_reliability.sh", "clickhouse_reliability.sh"):
         assert 'ALERT_CHANNEL_DISPLAY_NAME:-TrustedRouter Spanner on-call}' in _read("scripts", "deploy", script)
     assert 'display_name = "TrustedRouter Spanner on-call"' in tf
+    assert 'display_name = "TrustedRouter ops chat gcp"' in tf
+    # Both channels in the list every policy notifies.
+    assert (
+        "fastpath_alert_channels = [\n"
+        "    data.google_monitoring_notification_channel.fastpath_oncall.name,\n"
+        "    data.google_monitoring_notification_channel.fastpath_ops_chat.name,\n"
+        "  ]"
+    ) in tf
     assert tf.count("notification_channels = local.fastpath_alert_channels") == 2

@@ -4,14 +4,14 @@ W7 of `docs/design/fast-admission-production-rollout.md`. A fast path node
 writes each alert as one ERROR entry of the log `fastpath_journal` in
 Cloud Logging, with the alert's kind as the entry's label `fastpath_alert`
 and the lease or authorization it concerns as `subject` (`writeAlert` in
-`fastpath/internal/service`; the node's Ops Agent carries its journal). Two
-policies, `infra/fastpath_alerts.tf`, notify the on-call email and the ops
+`fastpath/internal/service`; the node's Ops Agent carries its journal). The
+policies in `infra/fastpath_alerts.tf` notify the on-call email and the ops
 chat:
 
-- **TR Fast path: service alert**, on any such entry; the incident's
-  label `kind` is the kind, and each kind notifies at most once per five
-  minutes (Cloud Monitoring keeps a timeline per extracted label value, so
-  two kinds within five minutes notify twice).
+- **TR Fast path: KIND**, one policy for each kind below, on its entries.
+  Each notifies at most once per five minutes and, by Cloud Monitoring's
+  cap, at most 20 times a day; a policy each, so a kind that keeps firing
+  cannot use up another kind's notifications.
 - **TR Fast path: subscription lag**, when a fast path subscription's
   oldest unacked message stays over ten minutes old for five minutes: a
   reader gone, slow, or stuck on one lease's ordered messages while the
@@ -80,17 +80,19 @@ The incident's resource names the subscription:
 
 ## Exercising the alert path
 
-W7 asks for each policy to fire once on an injected fault. On a node, a
-line in the journal in the service's own form reaches the policy the way a
-real alert does:
+W7 asks for the alerts to fire once on an injected fault. On a node, a line
+in the journal in the service's own form reaches its policy the way a real
+alert does. The kind `other` is the one to use, since the service gives it
+to an alert of no kind it knows:
 
 ```bash
-echo '<3>{"message":"fastpath alert: an exercise of the alert path","subject":"exercise","logging.googleapis.com/labels":{"fastpath_alert":"exercise"}}' \
+echo '<3>{"message":"fastpath alert: an exercise of the alert path","subject":"exercise","logging.googleapis.com/labels":{"fastpath_alert":"other"}}' \
   | systemd-cat -t fastpath-exercise
 ```
 
-The incident opens with `kind` `exercise` within a few minutes and closes
-on its own half an hour later.
+An incident of **TR Fast path: other** opens within a few minutes and
+closes on its own half an hour later. Every kind's policy is the same but
+for its kind (`fastpath_alert_kinds` in the Terraform).
 
 The lag policy fires once a subscription's oldest message has stayed
 past ten minutes for five more, which production does not stage on
