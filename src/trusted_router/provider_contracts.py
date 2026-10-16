@@ -29,6 +29,11 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview
     "perplexity": "billing-contract-unverified",
 }
+# Lightning revoked platform access during its October 16 security incident.
+# This applies to both managed and customer keys. Require reviewed recovery,
+# including fresh credentials and canaries, before removing the hold.
+# https://lightning.ai/ (October 2026 Security Incident notice)
+PROVIDER_INCIDENT_HOLD_REASONS = {"lightning": "provider-security-incident"}
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
@@ -93,6 +98,8 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 def provider_model_operator_held(
     provider_slug: str, model_id: str, upstream_id: str | None = None,
 ) -> bool:
+    if provider_slug in PROVIDER_INCIDENT_HOLD_REASONS:
+        return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id
     if native_prefix is not None and not native_id.startswith(native_prefix):

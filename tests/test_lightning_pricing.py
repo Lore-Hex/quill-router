@@ -60,6 +60,11 @@ class FakeResponse:
 
 @pytest.fixture
 def feed(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    from trusted_router import provider_contracts
+
+    # These parser/recovery contracts exercise an available provider. The
+    # independent incident-hold test checks production remains unavailable.
+    monkeypatch.delitem(provider_contracts.PROVIDER_INCIDENT_HOLD_REASONS, "lightning", raising=False)
     rows: list[dict[str, Any]] = []
 
     class FakeClient:

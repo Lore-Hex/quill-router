@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import check_price_coverage
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import wandb
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
@@ -250,6 +251,36 @@ def test_wandb_flash_hold_survives_refresh_until_operator_lifts_it(
     assert "unresolved_since" not in by_id[model_id]
 
 
+def test_reviewed_unpriced_glm_is_discovered_but_never_canaries_or_routes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from scripts.pricing.providers import _direct_openai
+
+    documented = wandb._parse_model_docs(_model_docs_html())
+    monkeypatch.setattr(wandb, "_load_model_docs", lambda: documented)
+    monkeypatch.setenv("WANDB_API_KEY", "test-key")
+    checked: list[str] = []
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **kw: checked.append(kw["model"]) or True)
+    rows = [{"id": native} for _label, native, *_rest in _MODELS] + [{"id": "zai-org/GLM-5.3"}]
+    provider = DirectOpenAIProvider(replace(
+        wandb.CATALOG.spec,
+        catalog_loader=lambda _key: rows,
+        price_loader=lambda: wandb._parse_prices(_pricing_html(), documented_models=documented),
+    ), manifest_path=tmp_path / "wandb.json")
+    result = provider.fetch()
+    provider.write_provider_manifest(result)
+    models = {row["id"]: row for row in json.loads(provider.manifest_path.read_text())["models"]}
+    assert models["z-ai/glm-5.3"]["routable"] is False
+    assert models["z-ai/glm-5.3"]["routable_reason"] == "price-unavailable"
+    assert "z-ai/glm-5.3" not in result.prices
+    assert "zai-org/GLM-5.3" not in checked
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    routable, unresolved, classified, new_unresolved = check_price_coverage._manifest_provider_model_state("wandb")
+    for model_id in ("z-ai/glm-5.3", "zai-org/GLM-5.3"):
+        assert model_id in classified
+        assert model_id not in routable | unresolved | new_unresolved
+
+
 def test_wandb_rejects_layout_or_catalog_collapse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -295,8 +326,14 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     # today is test_wandb_lists_glm_5_3_flash_at_its_native_id_with_its_window_and_prices.
     assert "z-ai/glm-5.3-flash" not in wandb.CATALOG.spec.operator_hold_reasons
     assert all(row["upstream_id"] for row in rows.values())
-    assert all(row["input_token_price_per_m"] > 0 for row in rows.values())
-    assert all(row["output_token_price_per_m"] > 0 for row in rows.values())
+    for row in rows.values():
+        if row.get("routable_reason") == "price-unavailable":
+            assert row["routable"] is False
+            assert "input_token_price_per_m" not in row
+            assert "output_token_price_per_m" not in row
+        else:
+            assert row["input_token_price_per_m"] > 0
+            assert row["output_token_price_per_m"] > 0
     assert any(row["upstream_id"] != model_id for model_id, row in rows.items())
     # A routable row is routed once, at its exact upstream ID; a row the refresh
     # tombstoned, or one a scheduled retirement has taken off at the catalog's

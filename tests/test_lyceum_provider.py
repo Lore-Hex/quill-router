@@ -94,11 +94,22 @@ def test_failed_refresh_cannot_publish_old_discovery(monkeypatch):
 
 
 def test_canaries_gate_publication_and_price_coverage(monkeypatch, tmp_path):
+    from tests.test_lyceum_api_pricing import model_row
+
     path = tmp_path / "lyceum.json"
     monkeypatch.setattr(lyceum, "MANIFEST_PATH", path)
     monkeypatch.setenv("LYCEUM_API_KEY", "test-only-token")
-    monkeypatch.setattr(lyceum, "fetch_json", lambda *_a, **_kw: catalog("z-ai/glm-5.3-flash", "moonshotai/kimi-k3", "lyceum/router", "qwen/qwen3-embedding-8b"))
-    monkeypatch.setattr(lyceum, "fetch_html", lambda *_a: card() + card("moonshotai/kimi-k3") + card("qwen/qwen3-embedding-8b", prompt="$0.02 /1M", output=None, cached=None, categories="embedding"))
+    alias = model_row("lyceum/router")
+    alias["model_id"] = "moonshotai/kimi-k3"
+    embedding = model_row("qwen/qwen3-embedding-8b", kind="embedding")
+    embedding["max_output_tokens"] = None
+    embedding["input_modalities"][0]["pricing"] = [{
+        "meter": "serverless_inference_prompt_tokens", "currency": "USD", "unit_price": "0.00000002",
+    }]
+    embedding["output_modalities"] = [{"type": "embedding", "pricing": []}]
+    monkeypatch.setattr(lyceum, "fetch_json", lambda *_a, **_kw: {"data": [
+        model_row(), model_row("moonshotai/kimi-k3"), alias, embedding,
+    ]})
     probes = []
 
     def probe(key, row):
