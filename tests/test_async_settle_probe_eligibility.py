@@ -22,7 +22,7 @@ from trusted_router import billing_snapshot as b
 from trusted_router.async_settle_shadow_binding import verify_binding
 from trusted_router.async_settle_shadow_compare import Booking
 from trusted_router.async_settle_shadow_evidence import SAMPLE
-from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.detached_jws import canonical
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -219,6 +219,7 @@ def test_real_authorize_negative_controls(negative: str) -> None:
         cfg.synthetic_monitor_api_key = raw
     else:
         candidate = next(e for e in MODEL_ENDPOINTS.values() if e.model_id.startswith("openai/")
+                         and MODELS[e.model_id].supports_chat
                          and e.provider not in {"openai", "anthropic"} and e.usage_type == "Credits")
         payload.update(model=candidate.model_id, provider={"only": [candidate.provider], "allow_fallbacks": False})
     try:
