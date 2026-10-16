@@ -230,9 +230,102 @@ stop at P4 holds a real workspace's room for that long; the hand-off at
 a planned stop (`fastpath-deploy.md`) is the way around it, and the
 watch's stop could list the holds the same way.
 
+## Run 6: eight a second, stopped by the spend ceiling
+
+2026-10-14 15:18:22Z, on the release of runs 3 to 5 (`f96c21395`), after Joseph's second
+admin grant (`fastpath_p1_funding_2026_10_b`) raised the funding to 200 USD
+and the run's spend ceiling, a tenth of it, to 20 USD. Floors 0.13 ms here
+and 1.40 ms to the other node. The watch stopped the stage at 9.5 minutes
+of a planned ten: "spent 23,344,055 past 20,000,000", ten leases revoked.
+
+| started | admitted / busy | settles / refunds | streams complete / cut off | heartbeats |
+|---|---|---|---|---|
+| 4,560 | 4,549 / 11 | 4,335 / 70 | 2,134 / 144 | 3,426 |
+
+Authorize admitted p50 2.69 ms, p99 3.90 ms, max 6.33 ms; heartbeat p50
+13.8 ms, p99 40 ms; settle p50 25 ms, p99 69 ms, max 450 ms. The audit
+after the stop found no problem, usage 35,571,241 of the 200,000,000
+funded, 29.2 million reserved, and five packs pending and seventeen
+records staged, in flight. Five minutes later the 144 streams the stop cut
+off were reaped, nothing was pending or staged, and no `no_boot_binding`
+alert had come since the stop: the reap fix of runs 3 to 5, in production
+under a stop.
+
+## Runs 7 to 10: sixteen to 128 a second
+
+2026-10-16, both nodes on release `afa671dc9`, which adds the drain-log
+refund taking its hold's boot (#1783) and the owner releasing
+no-heartbeat holds at their end of life (#1784). Each run about 2,900
+generations, its duration halved as its rate doubled, so each stays under
+the 20 USD ceiling; the watch on every run with the runbook's ceilings.
+The pilot's own watch on Joseph's workspace ran throughout with the same
+production-wide ceilings, Spanner's CPU, the subscriptions' backlog and
+pending work overdue, and none was passed.
+
+| run | rate, duration | started | admitted / busy | settles / refunds | streams complete | heartbeats |
+|---|---|---|---|---|---|---|
+| 7 (01:23Z) | 16/s, 3 min | 2,880 | 2,868 / 12 | 2,821 / 47 | 1,421 | 2,263 |
+| 8 (01:30Z) | 32/s, 90 s | 2,880 | 2,878 / 2 | 2,847 / 31 | 1,447 | 2,298 |
+| 9 (01:40Z) | 64/s, 45 s | 2,880 | 2,877 / 3 | 2,837 / 40 | 1,485 | 2,318 |
+| 10 (01:45Z) | 128/s, 23 s | 2,944 | 2,942 / 2 | 2,906 / 36 | 1,465 | 2,370 |
+
+None not started, none cancelled, every run ending on its own with the
+watch exiting 0.
+
+| run | floor here / other | authorize admitted p50 / p90 / p99 / max | heartbeat p50 / p99 | settle p50 / p99 / max |
+|---|---|---|---|---|
+| 7 | 0.13 / 1.49 ms | 2.60 / 3.56 / 4.03 / 8.48 ms | 13.6 / 33.2 ms | 24.0 / 71.0 / 575 ms |
+| 8 | 0.13 / 1.03 ms | 2.70 / 3.48 / 4.03 / 6.08 ms | 13.6 / 31.8 ms | 23.2 / 57.5 / 119 ms |
+| 9 | 0.14 / 1.43 ms | 2.62 / 3.64 / 4.53 / 7.90 ms | 14.3 / 41.5 ms | 23.4 / 58.1 / 386 ms |
+| 10 | 0.14 / 1.17 ms | 2.50 / 3.26 / 4.31 / 7.55 ms | 15.0 / 38.9 ms | 24.8 / 73.8 / 170 ms |
+
+**The admission's cost does not move with the rate.** Its p99 stays
+between 4.0 and 4.5 ms from sixteen to 128 a second, as from one to eight,
+under the 10 ms budget at every quantile.
+
+**Busy answers.** Run 7's first six came before its first lease, as in
+runs 3 to 5. The rest came mid-run, two to six a run, about one request in
+a thousand, a request no lease took at that moment; a lease held from the
+run before served the start of runs 8 to 10. The pilot sends a busy answer
+to today's path.
+
+| run | usage booked | open leases / reserved after | packs pending a minute after |
+|---|---|---|---|
+| 7 | 11,985,948 | 7 / 22,998,232 | 0 |
+| 8 | 12,205,431 | 9 / 30,792,801 | 0 |
+| 9 | 12,259,627 | 11 / 45,759,044 | 11, none two minutes after |
+| 10 | 19,502,113 | 13 / 46,256,931 | 13, none 90 seconds after |
+
+**The audits** found no problem after each run: no fault usage, the
+leases' consumption equal to the usage booked, every winner decided once.
+The pending packs after runs 9 and 10 were in flight and done well inside
+the watch's five minutes. Run 10 booked 19.5 USD for the same count of
+generations that cost run 7 12.0: the charges are heavy-tailed, so a run's
+spend is not its count times an average.
+
+**Load.** Spanner's high-priority CPU in `us-central1`, the highest
+minute of each run: 4.8% in run 7, 5.6% in 8, 4.8% in 9 and 7.7% in 10,
+over 2.5 to 3% between runs; the other regions at most 3.8%. The nodes'
+CPU, a minute's average: `tr-fastpath-1`, where the generator runs too, at
+most 19%, `tr-fastpath-2` at most 14%. A run shorter than a minute fills
+less than one, so its minute's average understates its peak.
+
+**The mix's streams.** The load mix's stream share, one half, is the
+runbook's assumption. Production's, measured on 2026-10-16 over seven days
+of organic successes (`provider_benchmark_samples`), is 2.9% of requests,
+though 60% of spend. So these runs carry far more heartbeats than
+production would at the same rate, and their numbers are conservative for
+it. The pilot leaves streams out (Joseph, 2026-10-16).
+
 ## Next
 
-The rate's next step, eight a second, spends about 16 USD in ten
-minutes, past the run's spend ceiling of a tenth of the funding, and the
-workspace has 60 USD of room left: the next runs need either more
-funding or five-minute runs, the owner's timings read for the p50 first.
+The climb stops at 128 a second for now, for three reasons. A run's spend
+is heavy-tailed, as run 10's shows. The generator runs on `tr-fastpath-1`
+beside its front door and owner, so past this rate a run measures the
+generator too. And the workspace has about 62 USD of room: 200 funded,
+91.5 booked, 46.3 reserved by its open leases.
+
+The design's figure for a lease is about 1,000 generations a second
+(§6). A sustained run there needs a generator on its own machine in the
+network, and either more funding, about 250 USD a minute at this mix, or a
+mix of smaller charges, with the spend ceiling raised to match.
