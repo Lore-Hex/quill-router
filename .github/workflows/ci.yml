@@ -83,6 +83,17 @@ jobs:
           tests/conformance/test_spanner_sql_acceptance.py
           tests/conformance/test_spanner_schema_audit.py
           tests/test_consolidate_starter_credit.py
+      # A fresh package-only process can collect live objects without native
+      # SDK leftovers from other tests. Mixed-suite workers skip that count.
+      - name: P5 package object budgets
+        if: ${{ !cancelled() }}
+        # 861 covered tests on two workers: 3.5 minutes on one runner, over 5 on
+        # a slower one (run 38851426992 timed out at the old 5-minute limit).
+        timeout-minutes: 12
+        run: >-
+          uv run pytest -q tests/test_async_settle_shadow_v2_gate*.py
+          -m "not proof_oracle" -n 2
+          --cov=trusted_router --cov-report= --cov-fail-under=0
       - name: Emulator logs
         if: failure()
         run: |
@@ -440,7 +451,7 @@ jobs:
       - name: Frozen-main proof matrix without coverage
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
-          -m proof_oracle tests/test_async_settle_proof_oracle.py
+          -m proof_oracle tests/test_async_settle_proof_oracle.py tests/test_async_settle_shadow_v2_gate_window.py
           --splits 4 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
 
