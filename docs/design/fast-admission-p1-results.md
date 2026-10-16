@@ -263,8 +263,9 @@ runbook's ceilings. The pilot's own watch on Joseph's workspace, with the
 same production-wide ceilings (Spanner's CPU, the subscriptions' backlog,
 pending work overdue), ran through all four runs. It stopped at
 02:00:07Z, thirteen minutes after run 10 ended, not on a ceiling but on
-its lost-view rule: one Spanner CPU series (`us-west2`, the database's
-system work) was six minutes late, past `-fresh` of five, for three looks.
+its lost-view rule: three looks in a row had a read that failed, the last
+because the newest point of one Spanner CPU series (`us-west2`, the
+database's system work) was up to six minutes old, past `-fresh` of five.
 Since it reads each series with Monitoring's delay, a ceiling passed
 during the runs would have stopped it first, for that reason. It was
 re-armed with `-fresh 15m -window 20m`.
