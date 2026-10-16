@@ -231,6 +231,19 @@ collect the complete lexeme/range product, compare its path union with the
 unsplit matrix, and require timing entries for every selected window oracle ID,
 including loadgroup suffixes. The timing check does not generate entries.
 
+Round 19 adds estimated `.test_durations` entries for every previously unrecorded
+test ID marked `conformance-spanner-emulator`, `conformance-spanner-pg`, or
+`conformance-postgres`, including loadgroup suffixes, in the union of collections
+with `-m "not provider_health and not proof_oracle"` on the default clock and
+`TR_LIFECYCLE_CLOCK_OVERRIDE=2027-02-05T00:00:00Z`. The weights are 25.0 seconds
+for each Spanner backend and 6.0 seconds for Postgres. These conservative
+estimates derive from the CI timelines of runs 38809305127 and 38820979824,
+using tail seconds divided by pinned-group size; the latter run's emulator
+tails imply about 14.7 seconds per ID (24.5 minutes / 100) and 16.9 seconds per
+ID (20 minutes / 71). These weights estimate serial backend work for shard
+assignment. Existing entries remain unchanged; replace these estimates with
+CI-recorded durations once the shards upload them.
+
 | Test data | Lifetime check |
 |---|---|
 | Parsed variants, last transport, typed ports, prior results and entry-digest inputs | `_p5_cache_lifetime` clears these at module teardown; the separate `_p5_cache_counts` checks the remaining objects and restored functions |
