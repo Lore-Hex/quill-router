@@ -184,27 +184,39 @@ def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_
 
     gate = real_threading.Event()
     sent: list[str] = []
+    sent_lock = real_threading.Lock()
 
     def handle(request: httpx.Request) -> httpx.Response:
-        sent.append(request.url.path)
-        gate.wait(5.0)
+        with sent_lock:
+            sent.append(request.url.path)
+        gate.wait(10.0)
         return httpx.Response(200, json=ADMIT)
 
-    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=0.2, transport=httpx.MockTransport(handle))
-    # Hold every worker on a call that never answers in time.
+    budget = 2.0
+    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=budget, transport=httpx.MockTransport(handle))
+    # Hold every worker on a call the door has not answered: each worker
+    # sends while it holds its permit, so once every call is sent, none is
+    # free. Waiting for that, not a fixed sleep, keeps a slow runner from
+    # leaving a worker free.
     holders = [
         real_threading.Thread(target=client.authorize, kwargs={"workspace_id": "ws", "request": f"r{i}", "estimate": 1, "stream": False, "boot": b"b"})
         for i in range(fd.WORKERS)
     ]
     for h in holders:
         h.start()
-    real_time.sleep(0.05)
+    deadline = real_time.monotonic() + 10.0
+    while len(sent) < fd.WORKERS and real_time.monotonic() < deadline:
+        real_time.sleep(0.01)
+    assert len(sent) == fd.WORKERS, "every worker holds a call"
     started = real_time.monotonic()
     assert client.authorize(workspace_id="ws", request="late", estimate=1, stream=False, boot=b"b") is None
-    assert real_time.monotonic() - started < 0.1, "no worker free: today's path at once"
+    elapsed = real_time.monotonic() - started
+    # Not sent, and not waiting out the budget as a call with a worker would.
+    assert len(sent) == fd.WORKERS
+    assert elapsed < budget / 2, "no worker free: today's path at once"
     gate.set()
     for h in holders:
-        h.join(5.0)
+        h.join(10.0)
     # The call with no worker was never sent, not even after the workers freed.
     assert len(sent) == fd.WORKERS
     client.close()
