@@ -127,12 +127,15 @@ deploy; the fast path's switch changes at once.
 ## What it checks
 
 - The audit after every hour of the pilot, and before and after a switch:
-  `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0. On
-  a workspace with requests of its own, a synchronous hold in flight shows
-  as its shard's reserved credit with no lease behind it ("shard N reserves
-  X, and its live leases' donors hold 0"): the audit counts lease holds
-  only, so such a report is read against the requests in flight, and the
-  combined identity below decides.
+  `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0,
+  CREDITS the sum of the workspace's `total_credits` at the time. It counts
+  the workspace's synchronous holds in flight beside its leases' (#1821,
+  running from 2026-10-17 05:10Z). On `tr-fastpath-1`,
+  `/var/tmp/pilot-audit-hourly.sh` runs it for each workspace in the set
+  every hour, logs to `/var/tmp/pilot-audit.log`, and writes an alert of
+  kind `other` on any problem, which **TR Fast path: other** notifies; a
+  funding it cannot read is logged and waits for the next hour. Like the
+  watches, it does not survive the node's reset: it is restarted after.
 - The counter reconciler's combined identity on the workspace
   (`storage_gcp_counter_reconcile.py`): reservations and bookings of the
   leases with the synchronous holds.
@@ -146,10 +149,12 @@ deploy; the fast path's switch changes at once.
   (`fastpath authorize <status>`), and the settle's.
 - Cloud Logging: no `fastpath_alert` entries for the workspace.
 
-## Two exposures the pilot carries
+## Two exposures the pilot carried
 
-Both are the fast path's to fix, filed as follow-ups, and stated here
-because the pilot runs with them:
+Both were fixed (#1784 and #1783), and the fixes run on the nodes from
+2026-10-17 05:10Z, the first release the nodes ran after their pins
+(`fast-admission-p1-results.md`, "The release the nodes ran"). Before
+that, the pilot's first fifteen minutes ran with them:
 
 - A non-streaming hold with no terminal is never released by the owner:
   it has no heartbeats, so adoption skips it and a healthy owner keeps
@@ -173,13 +178,13 @@ path would have taken; each workspace's room is checked before it joins
 the set); the enclave
 calling the fast path itself; W7's alert policies.
 
-## The state on 2026-10-14
+## The state on 2026-10-17
 
-Landed on one branch, each piece tested against the fake Spanner store and
-the route itself: the settings, the client, the cohort predicate, the typed
-store's leased authorize (`authorize_gateway_typed(..., fastpath_envelope=...)`)
-and leased finalize (`typed_finalize_leased_result`), and the route wiring
-(`_fastpath_admission` before the typed store call in
-`_authorize_gateway_sync_impl`; `_settle_leased_authorization` before the
-settle-outbox intent in `_settle_gateway_authorization`). The pilot set and
-the client switch are off until the deploy that follows is verified.
+The pilot is live. The control plane in `us-central1` runs it from
+2026-10-17 04:55Z (#1793, merged as `d0e4c7169`), for Joseph's workspace
+and one customer's; the first request it admitted was the customer's, and
+by 05:11Z it had admitted and settled 42 with no warning, four taking
+today's path when no lease had room. The nodes run
+`93e69666a`, checked on their processes, with W7's alert policies applied
+and exercised (`docs/runbooks/fastpath-alerts.md`), a watch for each
+workspace and the hourly audit on `tr-fastpath-1`.
