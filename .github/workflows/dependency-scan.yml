@@ -1,0 +1,51 @@
+name: Dependency scan
+
+# SOC 2 CC7.1 — automated dependency vulnerability scanning (ISMS 12-…md action,
+# due 2026-10-31). OSV-Scanner reads every lockfile/manifest in the repo
+# (uv.lock, requirements*.txt, package-lock.json, go.mod).
+#
+#  * push to main + daily schedule: full scan, results uploaded to GitHub code
+#    scanning (Security tab), where each finding is a tracked, triageable alert.
+#    Does not fail: the existing backlog is worked down through those alerts.
+#  * pull_request: diff scan against the base branch; FAILS only when the PR
+#    introduces a vulnerability that main does not already have.
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+  schedule:
+    - cron: "23 9 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan-full:
+    if: ${{ github.event_name != 'pull_request' }}
+    permissions:
+      actions: read
+      security-events: write
+      contents: read
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@ef6dfdf01765802d5a8dbc3c39852a6128b00af0" # v2.7.0
+    with:
+      fail-on-vuln: false
+      scan-args: |-
+        --include-git-root
+        -r
+        ./
+
+  scan-pr:
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      actions: read
+      security-events: write
+      contents: read
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@ef6dfdf01765802d5a8dbc3c39852a6128b00af0" # v2.7.0
+    with:
+      scan-args: |-
+        --include-git-root
+        -r
+        ./
