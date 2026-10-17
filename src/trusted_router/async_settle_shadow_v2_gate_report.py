@@ -229,6 +229,7 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
     output = dict(**TAG, gate=ctx.gate, completed_at_us=ctx.bundle.completed_at_us,
         proof_manifest_sha256=file_digest(ctx.bundle.proof), prerequisite_ledger_root=ctx.proof['ledger_root'],
         days=list(ctx.bundle.days), window=window,
+        producer_registrations=list(ctx.bundle.producer_registrations or ()),
         rules={f'G{i}': 'not_required' if f'G{i}' not in required else 'unevaluable' if any(issue.unavailable and next(r.rule for r in a2.FAILURE_RULES if r.name == issue.gap) == f'G{i}' for issue in ctx.issues) else 'fail' if any(f.rule == f'G{i}' for f in failures) else 'pass' for i in range(1, 12)},
         **aggregate, handoff=handoff, publisher=publisher,
         fleet_peaks=peaks(next((p for p in legacy.peaks or () if p.region is None), None), ctx), **observations(**populations),

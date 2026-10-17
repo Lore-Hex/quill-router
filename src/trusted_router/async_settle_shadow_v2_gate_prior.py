@@ -113,9 +113,8 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     )
     prior_release = decode_release_plan(plan_raw, roots.file_digest(plan_raw))
     prior_ports = replace(ctx.ports, release=prior_release, measurements=measurement_parsers(prior_release))
-    from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
-    registrations_raw = inventory.get('loading/producer-registrations.json')
-    registrations = None if registrations_raw is None else tuple(retained_json(registrations_raw))
+    registrations = (tuple(report['producer_registrations'])
+                     if 'producer_registrations' in report else None)
     graph = PayloadGraph(inventory, report['completed_at_us'], ports=prior_ports, stage=report['gate'],
                          producer_registrations=registrations)
     payloads = {path: contract._object_bytes(raw, contract.OBJECT_PREIMAGES[qualified])

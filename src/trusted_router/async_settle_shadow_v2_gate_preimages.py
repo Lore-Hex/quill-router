@@ -245,16 +245,8 @@ def input_inventory(ctx: Context) -> tuple[list[dict[str, Any]], dict[str, bytes
         prior = getattr(ctx.bundle, name)
         if prior is not None:
             artifacts['prior-gates/' + name] = prior
-    from trusted_router.async_settle_shadow_v2_gate_native_accounting import select_registrations
-    from trusted_router.detached_jws import canonical
-    registrations = ctx.bundle.producer_registrations
-    metadata = {}
-    # Empty declarations need storage only when absence would enable fallback.
-    if registrations or registrations is not None and select_registrations(artifacts, (), None):
-        metadata['loading/producer-registrations.json'] = canonical(list(registrations))
-        artifacts.update(metadata)
     references = [dict(path=path, sha256=roots.file_digest(raw), bytes=len(raw)) for path, raw in sorted(artifacts.items()) if len(raw) <= 262144]
-    entries, leaves = [], dict(metadata)
+    entries, leaves = [], {}
     for at in range(0, len(references), 512):
         keys = references[at:at + 512]
         raw = a2.INPUT_LEAF.serialize(dict(**TAG, keys=keys, complete=True))

@@ -1199,7 +1199,7 @@ def test_round13_prior_registration_propagation(originals: Any, tmp_path: Path, 
     result = evaluate(loaded, ports, gate='fleet-budgets-pre')
     assert result.verdict == 'PASS'
     output, attachments = render(result)
-    assert canonical(list(loaded.producer_registrations)) in attachments
+    assert json.loads(attachments[0])['producer_registrations'] == list(loaded.producer_registrations)
     archive = [*attachments, *(p.raw for p in loaded.preimages),
                *(row.raw for row in (*loaded.rows, *loaded.attachments)), *loaded.ledgers, loaded.proof]
     current = replace(loaded, pre=output, preimages=(*loaded.preimages,
@@ -1250,3 +1250,86 @@ def test_round13_capture_reference_path_format(originals: Any, tmp_path: Path, p
     loaded = load(raw, ports, gate='fleet-budgets-pre')
     assert dict(gap='evidence_schema_gap', path=registration['name'], detail='evidence_schema_gap') in loaded.a2_streams['loading_issues']
     assert through_all(raw, ports, tmp_path, 'fleet-budgets-pre')['verdict'] == 'BLOCKED'
+
+
+def _round15_prior(originals: Any, monkeypatch: Any, declared: bool) -> Any:
+    from dataclasses import replace
+
+    from tests import shadow_v2_gate_a3_originals as helper
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+
+    original, ports, _ = originals
+    path, body = 'loading/producer-registrations.json', b'name: review\non: push\n'
+    reference = helper.reference
+    def renamed(files: Any, name: str, raw: bytes) -> Any:
+        return reference(files, path if name == 'ci/review/workflow.yml' else name, raw)
+    with monkeypatch.context() as patch:
+        patch.setattr(helper, 'reference', renamed)
+        raw, ports = helper.opaque_originals(original, ports, body)
+    loaded = load(raw, ports, gate='fleet-budgets-pre')
+    if declared:
+        raw, ports = helper.accounted_originals(loaded, ports, prefix='review-spool/',
+                                               registration_path='review/registration.data')
+        loaded = load(raw, ports, gate='fleet-budgets-pre')
+    assert loaded.a2_streams['loading_issues'] == []
+    result = evaluate(loaded, ports, gate='fleet-budgets-pre')
+    assert result.verdict == 'PASS'
+    output, attachments = render(result)
+    archive = [*attachments, *(p.raw for p in loaded.preimages),
+               *(row.raw for row in (*loaded.rows, *loaded.attachments)), *loaded.ledgers, loaded.proof]
+    current = replace(loaded, pre=output, preimages=(*loaded.preimages,
+        *(Preimage('prior-artifacts/' + file_digest(raw), raw) for raw in archive)))
+    return raw, ports, loaded, attachments, transport(current), path, body
+
+
+@pytest.mark.parametrize('declared', [False, True], ids=['source-only', 'explicit-registration'])
+def test_round15_prior_byte_only_metadata_name(originals: Any, tmp_path: Path, monkeypatch: Any, declared: bool) -> None:
+    from trusted_router import async_settle_shadow_v2_gate_prior as prior
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+
+    raw, ports, loaded, attachments, replay, path, body = _round15_prior(originals, monkeypatch, declared)
+    (tmp_path / 'initial').mkdir()
+    (tmp_path / 'prior').mkdir()
+    assert through_all(raw, ports, tmp_path / 'initial', 'fleet-budgets-pre')['verdict'] == 'PASS'
+    refs = [ref for item in attachments for value in [json.loads(item)]
+            if isinstance(value, dict) and 'keys' in value for ref in value['keys'] if ref['path'] == path]
+    assert refs == [dict(path=path, bytes=22, sha256=file_digest(body))]
+    assert json.loads(attachments[0])['producer_registrations'] == list(loaded.producer_registrations)
+    prior._VERIFIED.clear()
+    assert through_all(replay, ports, tmp_path / 'prior', 'fleet-budgets')['verdict'] == 'PASS'
+
+
+def test_round15_prior_never_decodes_byte_only_original(originals: Any, tmp_path: Path, monkeypatch: Any) -> None:
+    from trusted_router import async_settle_shadow_v2_gate_dependencies as dependencies
+    from trusted_router import async_settle_shadow_v2_gate_loading as loading
+    from trusted_router import async_settle_shadow_v2_gate_payloads as payloads
+    from trusted_router import async_settle_shadow_v2_gate_prior as prior
+
+    _, ports, _, _, replay, _, body = _round15_prior(originals, monkeypatch, False)
+    attempted = []
+    for module in (loading, dependencies, payloads, consumer):
+        parser = module.retained_json
+        def recorded(raw: bytes, parser: Any = parser) -> Any:
+            if raw == body:
+                attempted.append(raw)
+            return parser(raw)
+        monkeypatch.setattr(module, 'retained_json', recorded)
+    prior._VERIFIED.clear()
+    result = through_all(replay, ports, tmp_path, 'fleet-budgets')
+    assert attempted == []
+    assert result['verdict'] == 'PASS'
+
+
+def test_round15_report_registration_field_schema(originals: Any, monkeypatch: Any) -> None:
+    _, _, loaded, attachments, _, _, _ = _round15_prior(originals, monkeypatch, True)
+    report = json.loads(attachments[0])
+    assert report['producer_registrations'] == list(loaded.producer_registrations)
+    assert a2.GATE_REPORT.parse(canonical(report)) == report
+    ref = report['producer_registrations'][0]
+    for value in (None, {}, [42], [ref] * 33, [{'path': ref['path']}], [{**ref, 'bytes': -1}],
+                  [{**ref, 'sha256': 'bad'}], [{**ref, 'path': '../registration.json'}]):
+        with pytest.raises(ValueError):
+            a2.GATE_REPORT.parse(canonical({**report, 'producer_registrations': value}))
