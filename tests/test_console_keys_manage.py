@@ -195,8 +195,10 @@ def test_existing_keys_are_primary_when_workspace_has_keys(console: dict) -> Non
     page = console["client"].get("/console/api-keys").text
 
     assert page.index("Your keys") < page.index("Create API key")
+    assert page.index("Your keys") < page.index('data-rewards-key-card')
     assert 'data-action="open-new-key"' in page
-    assert '<details class="panel key-create-panel" id="new-api-key">' in page
+    assert '<details class="panel key-create-panel" id="new-api-key" hidden>' in page
     assert '<details class="key-limit-editor">' in page
-    assert 'href="/support">Help</a>' in page
+    assert '<summary>Help</summary>' in page
+    assert 'href="/support">Support</a>' in page
     assert 'href="/support?category=feature#support-inquiry">Feature request</a>' in page

@@ -1168,11 +1168,8 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert (
-        "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
-        in resp.text
-    )
-    assert "Paste this short message" not in agent_message.group(0)
+    assert "Paste this into your coding agent." in resp.text
+    assert "Paste this into your coding agent." not in agent_message.group(0)
     assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
     assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
@@ -1259,7 +1256,7 @@ def test_console_api_key_budget_can_be_edited_and_cleared(
 
     updated_page = client.get("/console/api-keys")
     assert 'value="25.123456"' in updated_page.text
-    assert "of $25.12" in updated_page.text  # "Used $X of $25.12" budget line
+    assert "$25.12 total limit" in updated_page.text
 
     cleared = client.post(
         f"/console/api-keys/{key.hash}/limit",
