@@ -354,7 +354,8 @@
       "id": "moonshotai/kimi-k2-instruct-0905",
       "upstream_id": "Kimi-K2-Instruct-0905",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-model-not-found",
       "input_token_price_per_m": 571000,
       "output_token_price_per_m": 2286000,
       "cached_input_token_price_per_m": 143000
