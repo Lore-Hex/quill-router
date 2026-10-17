@@ -167,8 +167,8 @@ unit. But the unit is enabled, so at boot systemd starts it from the
 binary already on disk, the release before, about forty seconds before the
 script installs the new one, and the script's `systemctl enable --now`
 leaves a running unit alone. Until 2026-10-17 every reset left each node
-running the release before its pin while `/opt/fastpath/release`, the
-instance's metadata and `systemctl is-active` all said otherwise
+running the release before its pin while `/opt/fastpath/release` and
+the instance's metadata named the pin and the service reported active
 (`docs/design/fast-admission-p1-results.md`). So the release a node runs
 is read from its process, and a reset is followed by a restart. For each
 node, one at a time, the other serving:

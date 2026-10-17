@@ -121,15 +121,20 @@ five minutes, at the first 30-second poll past the ceiling.
 
 ## What the two runs found
 
-Three defects, each fixed on main and on the nodes before run 3:
+Three defects, each fixed on main before run 3; the first two ran on the
+nodes from run 3 on, the third from 2026-10-15 ("The release the nodes
+ran", below):
 
 1. **A reaped hold's boot binding** (above). The fix took two releases,
    since an auditor from before a record field refuses a record carrying
    it and the settle after that record is then acknowledged past a gap:
    first every auditor reads the authorization's boot binding on a hold's
    first heartbeat record (#1751, release `2eef83dec`), then the owner
-   states it there (#1754, release `4f58c6efa`), pinned once both nodes
-   ran the reader. `docs/runbooks/fastpath-deploy.md` now says how a
+   states it there (#1754, release `4f58c6efa`). The writer was pinned
+   (2026-10-14 01:00Z) while the nodes still ran `bfa94e22e`, before
+   either ran the reader; it reached them in order all the same, the
+   reader from 01:02Z and the writer from 04:04Z, since each reset ran
+   the release before its pin. `docs/runbooks/fastpath-deploy.md` now says how a
    record field is added. The packs run 2 left pending are from before
    the fix; they stay pending until an operator marks their work done,
    which the audit reports and the watch's ceiling would stop run 3 on.
@@ -347,8 +352,8 @@ boots the node with its unit enabled, so systemd starts the binary on disk,
 the previous release, about forty seconds before the startup script
 downloads the pinned one; the script's `systemctl enable --now` leaves the
 running unit alone, and it keeps the old binary, deleted on disk, until it
-next starts. `/opt/fastpath/release`, the instance's metadata and
-`systemctl is-active` all named the pin. The nodes' journals in Cloud
+next starts. `/opt/fastpath/release` and the instance's metadata named
+the pin, and the service reported itself active. The nodes' journals in Cloud
 Logging say what each start ran:
 
 | started | node | running | pinned then |
@@ -358,13 +363,16 @@ Logging say what each start ran:
 | 2026-10-14 01:02Z | both | `2eef83dec` | `4f58c6efa` |
 | 2026-10-14 04:04Z | both | `4f58c6efa` | `f96c21395` |
 | 2026-10-15 02:13Z | both | `f96c21395` | `afa671dc9` |
-| 2026-10-17 05:04Z | both | `afa671dc9` | `93e69666a` |
-| 2026-10-17 05:07Z, 05:10Z | 1, then 2 | `93e69666a` | `93e69666a` |
+| 2026-10-17 05:04:49Z | 1 | `afa671dc9` | `93e69666a` |
+| 2026-10-17 05:07:48Z | 1 | `93e69666a` | `93e69666a` |
+| 2026-10-17 05:08:55Z | 2 | `afa671dc9` | `93e69666a` |
+| 2026-10-17 05:10:09Z | 2 | `93e69666a` | `93e69666a` |
 
 So runs 3 to 6 ran `4f58c6efa` and runs 7 to 10 `f96c21395`; their numbers
 and audits stand for those releases. The boot binding's two releases still
-reached the nodes in order, the reader before the writer. The last two
-starts were restarts after each node was marked leaving and drained, and
+reached the nodes in order, the reader before the writer. Node 2 ran
+`f96c21395` until its reset at about 05:08:40Z, node 1 having reset at
+05:04Z. The two `93e69666a` starts were restarts after each node was marked leaving and drained, and
 the running binary's hash then matched the installed one. A node now takes
 a pin by "Taking a pinned release" in `docs/runbooks/fastpath-deploy.md`,
 which reads the release from the process.

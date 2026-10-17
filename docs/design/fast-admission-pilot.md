@@ -151,10 +151,12 @@ deploy; the fast path's switch changes at once.
 
 ## Two exposures the pilot carried
 
-Both were fixed (#1784 and #1783), and the fixes run on the nodes from
-2026-10-17 05:10Z, the first release the nodes ran after their pins
-(`fast-admission-p1-results.md`, "The release the nodes ran"). Before
-that, the pilot's first fifteen minutes ran with them:
+Both were fixed (#1784 and #1783, in `afa671dc9`), and the fixes ran on
+the nodes only from 2026-10-17: on node 1 from 05:04:49Z and on node 2
+from 05:08:55Z, when their resets started `afa671dc9`, the release
+pinned before the latest; both nodes reached the latest, `93e69666a`, by
+05:10:09Z (`fast-admission-p1-results.md`, "The release the nodes ran").
+The pilot's first minutes, from 04:55Z, ran with them:
 
 - A non-streaming hold with no terminal is never released by the owner:
   it has no heartbeats, so adoption skips it and a healthy owner keeps
@@ -183,8 +185,8 @@ calling the fast path itself; W7's alert policies.
 The pilot is live. The control plane in `us-central1` runs it from
 2026-10-17 04:55Z (#1793, merged as `d0e4c7169`), for Joseph's workspace
 and one customer's; the first request it admitted was the customer's, and
-by 05:11Z it had admitted and settled 42 with no warning, four taking
-today's path when no lease had room. The nodes run
+by 05:11Z it had admitted and settled 42 with no warning, and four more
+went to today's path when the front door did not admit them. The nodes run
 `93e69666a`, checked on their processes, with W7's alert policies applied
 and exercised (`docs/runbooks/fastpath-alerts.md`), a watch for each
 workspace and the hourly audit on `tr-fastpath-1`.
