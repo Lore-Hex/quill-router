@@ -1726,9 +1726,7 @@ body.console {
 .social-rewards::backdrop { background: rgb(0 0 0 / 78%); }
 .social-rewards-head { padding: 28px 28px 20px; position: relative; background: color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base)); }
 .social-rewards-close { position: absolute; right: 12px; top: 12px; font-size: 24px; border: 0; background: transparent; }
-.social-rewards-eyebrow { color: var(--tr-color-text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; margin: 0 44px 14px 0; }
 .social-rewards h2 { font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -.03em; margin: 0 32px 10px 0; }
-.social-rewards-head > p:not(.social-rewards-eyebrow, .social-rewards-progress) { color: var(--tr-color-text-secondary); font-size: 14px; line-height: 1.5; }
 .social-rewards-progress { font-size: 12px; font-weight: 600; margin: 22px 0 10px; }
 .social-rewards progress { display: block; width: 100%; height: 4px; border: 0; border-radius: 4px; accent-color: var(--tr-color-accent-base); background: var(--tr-color-line-rule-soft); }
 .social-rewards progress::-webkit-progress-bar { background: var(--tr-color-line-rule-soft); border-radius: 4px; }
@@ -1773,7 +1771,7 @@ body.console {
 @media (max-width: 600px) {
   .social-rewards-head { padding: 22px 18px 18px; }
   .social-rewards-eyebrow { min-height: 34px; }
-  .social-rewards h2 { margin-right: 0; }
+  .social-rewards h2 { margin-right: 36px; }
   .social-rewards-content { padding: 0 18px; }
   .social-rewards-list li { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; padding: 16px 0; }
   .social-rewards-icon svg,
@@ -2062,3 +2060,36 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 @media (max-width: 720px) {
   .key-list-panel .keys-table td[data-col="Actions"] { padding-top: 12px; }
 }
+
+/* One geometric disclosure marker across the console navigation. */
+.console-header-menu summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  margin-left: 4px;
+}
+.console-header-menu[open] > summary::after { transform: rotate(225deg); }
+@media (max-width: 800px) {
+  .console-configuration > summary { display: flex; align-items: center; list-style: none; padding: 10px 12px; }
+  .console-configuration > summary::-webkit-details-marker { display: none; }
+  .console-sidebar .console-header-menu > summary { justify-content: space-between; }
+  .console-configuration > summary::after,
+  .console-sidebar .console-header-menu > summary::after {
+    content: "";
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    margin-left: auto;
+    color: var(--muted);
+  }
+  .console-configuration[open] > summary::after,
+  .console-sidebar .console-header-menu[open] > summary::after { transform: rotate(45deg); }
+}
+.social-rewards-icon[data-platform="linkedin"] { color: #0a66c2; }
+.social-rewards-icon[data-platform="youtube"] { color: #ff0033; }

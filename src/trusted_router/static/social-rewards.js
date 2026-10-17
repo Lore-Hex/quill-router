@@ -52,6 +52,7 @@
   function platformIcon(id) {
     const icon = document.createElement("span");
     icon.className = "social-rewards-icon";
+    icon.dataset.platform = id;
     icon.setAttribute("aria-hidden", "true");
     if (id === "github") {
       const img = document.createElement("img");
@@ -68,6 +69,17 @@
         : id === "linkedin"
           ? "M20.4 2H3.6C2.7 2 2 2.7 2 3.6v16.8c0 .9.7 1.6 1.6 1.6h16.8c.9 0 1.6-.7 1.6-1.6V3.6c0-.9-.7-1.6-1.6-1.6ZM8 19H5V9.5h3V19ZM6.5 8.2a1.7 1.7 0 1 1 0-3.4 1.7 1.7 0 0 1 0 3.4ZM19 19h-3v-4.6c0-1.1 0-2.5-1.5-2.5s-1.8 1.2-1.8 2.4V19h-3V9.5h2.9v1.3h.1c.4-.8 1.4-1.6 2.8-1.6 3 0 3.5 2 3.5 4.5V19Z"
           : "M23 7s-.2-1.7-.9-2.4c-.9-.9-1.9-.9-2.4-1C16.4 3.4 12 3.4 12 3.4s-4.4 0-7.7.2c-.5.1-1.5.1-2.4 1C1.2 5.3 1 7 1 7S.8 9 .8 11v2c0 2 .2 4 .2 4s.2 1.7.9 2.4c.9.9 2.1.9 2.6 1 1.9.2 7.5.2 7.5.2s4.4 0 7.7-.2c.5-.1 1.5-.1 2.4-1 .7-.7.9-2.4.9-2.4s.2-2 .2-4v-2c0-2-.2-4-.2-4ZM9.7 15.5v-7l6.4 3.5-6.4 3.5Z");
+      if (id === "linkedin" || id === "youtube") {
+        const backing = document.createElementNS(svg.namespaceURI, id === "linkedin" ? "rect" : "path");
+        backing.setAttribute("fill", "#fff");
+        if (id === "linkedin") {
+          backing.setAttribute("x", "3"); backing.setAttribute("y", "3");
+          backing.setAttribute("width", "18"); backing.setAttribute("height", "18");
+        } else {
+          backing.setAttribute("d", "M9.7 15.5v-7l6.4 3.5-6.4 3.5Z");
+        }
+        svg.append(backing);
+      }
       svg.append(path); icon.append(svg);
     }
     return icon;
@@ -132,7 +144,7 @@
     const count = actions.filter((action) => action.claimed).length;
     dialog.querySelector("[data-rewards-progress]").textContent = `${count} of 5 rewards claimed`;
     dialog.querySelector("[data-rewards-meter]").value = count;
-    dialog.querySelector("[data-rewards-destination]").textContent = `Rewards go to your initial workspace: ${state.workspace_name}.`;
+    dialog.querySelector("[data-rewards-destination]").textContent = `Credit goes to your signup workspace: ${state.workspace_name}.`;
     notice.hidden = state.enabled;
     notice.textContent = !state.enabled
       ? "Rewards are currently paused. Your claimed rewards are safe."
@@ -158,7 +170,7 @@
         });
         link.setAttribute("aria-label", `${action.label} (opens a new tab)`);
         const amount = document.createElement("p");
-        amount.textContent = `${copy[0]} · ≈200K tokens`;
+        amount.textContent = `${copy[0]} · 200K tokens`;
         info.append(link, amount);
         const button = document.createElement("button");
         button.type = "button";

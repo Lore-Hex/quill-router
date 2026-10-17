@@ -254,7 +254,8 @@ for (const width of [1440, 390, 320]) {
     if (width < 600) {
       const heading = await page.locator("#social-rewards-title").boundingBox();
       const close = await page.getByRole("button", { name: "Close social rewards", exact: true }).boundingBox();
-      expect(heading.y).toBeGreaterThanOrEqual(close.y + close.height);
+      // The compact heading may sit beside Close, but their boxes must not overlap.
+      expect(heading.x + heading.width <= close.x || heading.y >= close.y + close.height).toBe(true);
     }
     await expect(page.locator("#social-rewards-title")).toBeFocused();
     await page.keyboard.press("Shift+Tab");

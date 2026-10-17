@@ -2,6 +2,45 @@
 
 Updated October 17, 2026. Production rollout remains on hold.
 
+### Modal/navigation commit approval
+
+User approved committing the simplified modal, platform colors, consistent
+chevrons and approximation-symbol removal. The follow/confirmation flow is now
+under discussion only; honor-system behavior and payout rules remain unchanged.
+No push or deployment authorized in this step. Existing release blockers remain.
+
+### Rewards copy reduction
+
+Removed approximation symbols from the modal headline and row amounts at the
+user's request. Shortened the collapsed disclosure to the signup workspace,
+any-model credit use, and a brief DeepSeek-based token-estimate qualification.
+Payouts and rules are unchanged. Inspected expanded details at 390px and desktop;
+31 browser checks passed before the final wording-only shortening. Changes remain
+local/uncommitted; prior full-release blockers remain.
+
+### Mobile chevrons and simplified rewards modal — local review
+
+Committed the approved CTA/key-status/Broadcast changes as e9c851f12. Subsequent
+local changes give Configuration and Help matching right-aligned geometric
+chevrons, right when closed and down when open on mobile. The modal removes the
+Social rewards eyebrow and Five actions sentence, using Earn ≈1M extra tokens
+as its headline with existing claimed progress. Equal ≈200K row estimates,
+confirmation, recovery, destination disclosure and reward rules are unchanged.
+LinkedIn/YouTube marks use blue/red with white inner shapes; GitHub/X stay
+monochrome. YouTube destination remains unresolved and campaign stays off.
+
+Reviewed the original unclaimed mockup: its 1M GitHub / 250K other weighting,
+2M headline and expiration copy are superseded, not restored. Borrowed its direct
+headline emphasis. Platform references: https://brand.linkedin.com/in-logo and
+https://design.google/library/youtube-new-red-color.
+
+Visual QA: 390px mobile menu closed/open chevrons, modal at 1440/390/320px.
+Corrected 320px heading/close clearance; changed the old heading-below-close
+assertion to enforce non-overlap for the new side-by-side layout. All 31 browser
+checks pass. Checkpoint Ruff/mypy pass; required uv gates remain blocked by the
+Intel macOS torch distribution. No full release validation, push or deployment.
+Modal/chevron iteration remains uncommitted for review.
+
 ### Console action sizing and key status — local follow-up
 
 Kept header/rewards artwork unchanged: user requested ideas only for those.
