@@ -240,6 +240,51 @@ def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_
     assert sent == [("/v1/authorize", "next")]
 
 
+def test_a_worker_keeps_its_permit_until_its_call_ends_even_after_its_caller_left() -> None:
+    """A worker holds its permit for as long as its request runs, past its
+    caller's budget: the permits bound the requests in flight, not the
+    callers waiting. The client's clock stands still, so the worker always
+    sends whatever the scheduler does; the door holds the request until the
+    test lets it go."""
+    import threading as real_threading
+    import time as real_time
+
+    gate = real_threading.Event()
+    entered = real_threading.Event()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        entered.set()
+        gate.wait(30.0)
+        return httpx.Response(200, json=ADMIT)
+
+    client = fd.FrontDoorClient(
+        lambda _b: ("10.0.0.1:8080",), timeout_seconds=0.05, clock=lambda: 0.0, transport=httpx.MockTransport(handle),
+    )
+    permits = client._permits
+
+    def free() -> int:
+        taken = 0
+        while permits.acquire(blocking=False):
+            taken += 1
+        for _ in range(taken):
+            permits.release()
+        return taken
+
+    assert free() == fd.WORKERS
+    try:
+        # The caller gives up at its budget; its worker is still at the door.
+        assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
+        assert entered.wait(10.0), "the worker reached the door"
+        assert free() == fd.WORKERS - 1, "the worker still holds its permit"
+    finally:
+        gate.set()
+    deadline = real_time.monotonic() + 10.0
+    while free() < fd.WORKERS and real_time.monotonic() < deadline:
+        real_time.sleep(0.01)
+    assert free() == fd.WORKERS, "the permit comes back when the call ends"
+    client.close()
+
+
 def test_a_late_answer_changes_no_breaker_either_way() -> None:
     clock = [0.0]
 
