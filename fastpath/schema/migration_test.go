@@ -22,9 +22,12 @@ var created = regexp.MustCompile(`^CREATE (TABLE|INDEX|UNIQUE INDEX) (\w+)`)
 // words is a statement with its whitespace made single spaces.
 func words(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// ownStatements are fastpath.sql's statements but production's
-// tr_credit_balance, which the migration leaves alone, and what each
-// creates, and whether it is an index.
+// production names fastpath.sql's copies of production's own tables and
+// index, which the migration leaves alone.
+var production = map[string]bool{"tr_credit_balance": true, "tr_reservation": true, "tr_reservation_by_expiry": true}
+
+// ownStatements are fastpath.sql's statements but production's, and what
+// each creates, and whether it is an index.
 func ownStatements(t *testing.T) (statements, names []string, index []bool) {
 	t.Helper()
 	all, err := Statements()
@@ -36,7 +39,7 @@ func ownStatements(t *testing.T) (statements, names []string, index []bool) {
 		if m == nil {
 			t.Fatalf("a statement that creates nothing: %q", s)
 		}
-		if m[2] != "tr_credit_balance" {
+		if !production[m[2]] {
 			statements, names, index = append(statements, words(s)), append(names, m[2]), append(index, m[1] != "TABLE")
 		}
 	}
