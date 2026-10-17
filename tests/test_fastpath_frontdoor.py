@@ -215,11 +215,19 @@ def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_
         started.append(kwargs.get("target"))
         return real_thread(*args, **kwargs)
 
+    # And every sleep: the refused call falls back at once, with no backoff.
+    slept: list[float] = []
     monkeypatch.setattr(client, "_permits", Spy())
     monkeypatch.setattr(fd.threading, "Thread", counted)
+    monkeypatch.setattr(fd.time, "sleep", slept.append)
+    began = fd.time.monotonic()
     assert client.authorize(workspace_id="ws", request="late", estimate=1, stream=False, boot=b"b") is None
+    took = fd.time.monotonic() - began
     assert asked == [((), {"blocking": False}, False)], "asked once, without waiting, and refused"
     assert started == [] and sent == [], "nothing started, nothing sent"
+    assert slept == [], "no backoff"
+    # A loose bound on the rest, far under the budget a waiting call spends.
+    assert took < 1.0
     monkeypatch.undo()
     # Freed, the permits leave nothing behind that sends the call later, and
     # a call now takes a worker and is sent: the refusal was the permits'.
