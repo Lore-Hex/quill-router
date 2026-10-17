@@ -877,8 +877,8 @@ body.console {
   flex-wrap: wrap;
 }
 
-.key-row-disabled td {
-  opacity: 0.75;
+.key-row-disabled td[data-col="Key"] {
+  color: var(--tr-color-text-secondary);
 }
 
 .warning-note {
@@ -2043,4 +2043,22 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   .console-sidebar {
     background: color-mix(in srgb, var(--tr-color-accent-ink) 65%, var(--tr-color-surface-panel));
   }
+}
+
+/* Form fields fill their grid; actions size to their labels on every viewport. */
+.console-main .form > .btn {
+  justify-self: start;
+  align-self: start;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  white-space: normal;
+}
+/* Status is information, not a control: no pill border or button surface. */
+.key-state { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tr-color-text-secondary); }
+.key-state::before { content: ""; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--tr-color-accent-base); }
+.key-state-disabled::before { background: transparent; box-sizing: border-box; border: 1px solid var(--tr-color-text-tertiary); }
+.key-actions .btn { min-height: 44px; }
+@media (max-width: 720px) {
+  .key-list-panel .keys-table td[data-col="Actions"] { padding-top: 12px; }
 }

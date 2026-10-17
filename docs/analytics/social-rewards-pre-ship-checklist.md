@@ -2,6 +2,24 @@
 
 Updated October 17, 2026. Production rollout remains on hold.
 
+### Console action sizing and key status — local follow-up
+
+Kept header/rewards artwork unchanged: user requested ideas only for those.
+Console form-grid buttons now fit their labels with 44px minimum touch height,
+instead of stretching across the form. API key status is plain text with a filled
+(active) or hollow (disabled) indicator, separate from Enable key / Disable key
+actions. Removed whole-row disabled opacity to preserve control readability.
+Visual QA also caught Broadcast's destinations table overflowing on mobile;
+wrapped it in the existing table-scroll utility.
+
+Inspected Broadcast/Credits and API Keys at 1440px and 390px; checked both key
+states with a disposable preview key and restored it to Active. Broadcast page
+width equals the 390px viewport; checkout button measures 162x44px in its 292px
+mobile form. Existing browser suite: 31 passed; key-management backend suite:
+11 passed; checkpoint Ruff/mypy passed. Required uv gates remain blocked by the
+unsupported Intel macOS torch distribution. Full release validation remains
+incomplete. These follow-up changes are local and uncommitted; no push/deploy.
+
 ### Approved visual checkpoint and header texture
 
 User approved committing the layered rewards artwork and distinct desktop sidebar.

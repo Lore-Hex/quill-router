@@ -80,19 +80,19 @@
             </form>
             </details>
           </td>
-          <td data-col="Status">{% if k.disabled %}<span class="pill warn">disabled</span>{% else %}<span class="pill good">active</span>{% endif %}</td>
+          <td data-col="Status">{% if k.disabled %}<span class="key-state key-state-disabled">Disabled</span>{% else %}<span class="key-state key-state-active">Active</span>{% endif %}</td>
           <td data-col="Actions">
             <div class="key-actions">
               {% if k.disabled %}
               <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/enable">
-                <button class="btn" type="submit">Enable</button>
+                <button class="btn" type="submit">Enable key</button>
               </form>
               <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/delete">
                 <button class="btn danger" type="submit" title="Permanently delete this key">Delete</button>
               </form>
               {% else %}
               <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/disable">
-                <button class="btn" type="submit" title="Stop this key from authorizing requests. Disable first to delete.">Disable</button>
+                <button class="btn" type="submit" title="Stop this key from authorizing requests. Disable first to delete.">Disable key</button>
               </form>
               {% endif %}
             </div>
