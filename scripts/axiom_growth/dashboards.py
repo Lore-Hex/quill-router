@@ -56,6 +56,22 @@ EVENTS=f"""['{DATASET}'] | where event startswith 'acquisition.'
 | summarize arg_max(exported_at, _time, event, anonymous_fingerprint, utm_source, utm_medium, utm_campaign, creative_id, landing_path, referrer_domain, customer_domain, amount_microdollars) by event_id
 """+FILTER
 FRESH=f"['{DATASET}'] | where event == 'growth.sync_completed' | summarize arg_max(_time, observed_through) | project Latest_export=todatetime(_time), Observed_through=todatetime(observed_through) | extend Minutes_behind=datetime_diff('minute',now(),Observed_through) | extend Status=iff(isnull(Observed_through) or Minutes_behind>15,'STALE: refresh delayed','Automatic refresh every 5 minutes')"
+CONSOLE_EVENTS=f"""['{DATASET}']
+| where event in ('acquisition.console_api_keys_viewed','acquisition.social_rewards_invitation_viewed','acquisition.social_rewards_opened','acquisition.social_reward_clicked','acquisition.social_reward_claimed')
+| extend account_fingerprint=tostring(column_ifexists('account_fingerprint','')), device_category=tostring(column_ifexists('device_category','unknown')), reward_placement=tostring(column_ifexists('reward_placement','')), reward_action=tostring(column_ifexists('reward_action',''))
+| summarize First_observed=min(_time) by event_id, event, account_fingerprint, device_category, reward_placement, reward_action
+"""
+DEVICE_QUERY=CONSOLE_EVENTS+"""
+| where event=='acquisition.console_api_keys_viewed' and isnotempty(account_fingerprint)
+| summarize Desktop=countif(device_category=='desktop'), Mobile=countif(device_category=='mobile'), Tablet=countif(device_category=='tablet'), Unknown=countif(device_category=='unknown'), Views=count() by account_fingerprint
+| extend Device_group=case(Desktop>0 and Mobile==0 and Tablet==0 and Unknown==0,'Desktop only',Mobile>0 and Desktop==0 and Tablet==0 and Unknown==0,'Mobile only',Tablet>0 and Desktop==0 and Mobile==0 and Unknown==0,'Tablet only',Unknown>0 and Desktop==0 and Mobile==0 and Tablet==0,'Unknown only','Multiple categories')
+| summarize Accounts=count(), Page_responses=sum(Views) by Device_group
+"""
+REWARDS_QUERY=CONSOLE_EVENTS+"""
+| where event!='acquisition.console_api_keys_viewed'
+| summarize Observations=count() by event, reward_placement, reward_action
+"""
+
 ONBOARDING=f"""['{DATASET}'] | where event in ('acquisition.onboarding_call_started','acquisition.onboarding_call_succeeded','acquisition.onboarding_call_failed')
 | extend attempt_id=tostring(column_ifexists('attempt_id','')), failure_reason=tostring(column_ifexists('failure_reason','')), http_status=tolong(column_ifexists('http_status',0)), elapsed_ms=tolong(column_ifexists('elapsed_ms',0))
 | where isnotempty(attempt_id)
@@ -161,6 +177,8 @@ def build():
       dashboard('tr-growth-funnel-v1','TR Growth | Conversion Funnel',
         'Continuously refreshed cohorts of pseudonymous visitors, not total people. First step is a recorded 1.5s engagement, not every first visit. Purchase and 7+ day return are branches, not mandatory linear steps. Conversion timestamps must be ordered. Age filter compares mature cohorts. Source gaps and cookie resets remain gaps. Automatic incremental refresh every five minutes. Browser attribution is missing Aug 23 15:56 UTC to Sep 4 18:52 UTC; missing visits are not zero traffic. Usage and conversions remain available.',[
         freshness,
+        ('API Keys: observed accounts by device (multiple categories include unknown)','Table',DEVICE_QUERY,12),
+        ('Rewards observations: claims are not verified follows; legacy placement may be empty','Table',REWARDS_QUERY,12),
         ('Daily event coverage: missing visits are not zero traffic','Table',EVENTS+" | summarize Engagement_events=countif(event=='acquisition.landing_engaged'), Signup_events=countif(event=='acquisition.signup_completed'), Activation_events=countif(event=='acquisition.first_successful_api_call'), Purchase_events=countif(event=='acquisition.credit_purchase_completed') by Day=bin(_time,1d) | extend Browser_coverage=case(Day>=datetime(2026-08-24) and Day<datetime(2026-09-04),'Missing visitor attribution',Day==datetime(2026-08-23) or Day==datetime(2026-09-04),'Partial visitor attribution','Observed records') | sort by Day desc",12),
         ('Ordered funnel and conversion percentages','Table',funnel_query(),12),
         ('Welcome test: matched attempts only (browser-reported, not all API traffic)','Table',onboarding_query(),12),

@@ -207,7 +207,7 @@ async function runFirstActivationCall(button) {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
   if (label)
-    label.textContent = "Routing live request...";
+    label.textContent = "Testing your key...";
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 75000);
   let status = 0;
@@ -258,6 +258,8 @@ async function runFirstActivationCall(button) {
     );
     result.hidden = false;
     markActivationComplete(flow);
+    button.closest(".activation-primary-action").hidden = true;
+    window.dispatchEvent(new Event("trustedrouter:first-call-success"));
     if (label)
       label.textContent = "Test passed";
     button.classList.add("activation-run-success");
@@ -272,7 +274,7 @@ async function runFirstActivationCall(button) {
     showActivationError(flow, status);
     button.disabled = false;
     if (label)
-      label.textContent = "Try the live request again";
+      label.textContent = "Try again";
   } finally {
     window.clearTimeout(timeout);
     button.removeAttribute("aria-busy");
@@ -380,16 +382,73 @@ async function loadCreditsStripeDetails() {
   }
 }
 
+function initConsoleNavigation() {
+  const sidebar = document.getElementById("console-navigation");
+  const toggle = document.querySelector(".console-menu-toggle");
+  const utilities = document.querySelector(".console-utilities");
+  if (!sidebar || !toggle || !utilities) return;
+  const home = utilities.parentElement;
+  const media = window.matchMedia("(max-width: 800px)");
+  const close = () => {
+    document.body.classList.remove("console-navigation-open");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = "Menu";
+  };
+  const sync = () => {
+    close();
+    if (media.matches) sidebar.append(utilities);
+    else home.insertBefore(utilities, toggle);
+    utilities.querySelectorAll("details").forEach(detail => {
+      detail.open = media.matches && detail.classList.contains("console-account");
+    });
+    const configuration = sidebar.querySelector(".console-configuration");
+    if (configuration) configuration.open = !media.matches || Boolean(configuration.querySelector(".active"));
+  };
+  document.body.classList.add("console-navigation-ready");
+  toggle.hidden = false;
+  toggle.addEventListener("click", () => {
+    const open = toggle.getAttribute("aria-expanded") !== "true";
+    document.body.classList.toggle("console-navigation-open", open);
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.textContent = open ? "Close" : "Menu";
+  });
+  sidebar.addEventListener("click", event => {
+    if (event.target.closest("a") && media.matches) close();
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && toggle.getAttribute("aria-expanded") === "true") {
+      close();
+      toggle.focus();
+    }
+    if (event.key === "Escape" && !media.matches) {
+      utilities.querySelectorAll("details[open]").forEach(detail => {
+        if (detail.contains(document.activeElement)) detail.querySelector("summary").focus();
+        detail.open = false;
+      });
+    }
+  });
+  media.addEventListener("change", sync);
+  sync();
+}
+
 function initConsole() {
+  initConsoleNavigation();
   updateCheckoutMinimum();
   loadCreditsStripeDetails();
   const checkoutMethod = document.querySelector("[data-checkout-payment-method]");
   if (checkoutMethod) {
     checkoutMethod.addEventListener("change", updateCheckoutMinimum);
   }
+  const createKeyPanel = document.getElementById("new-api-key");
+  if (createKeyPanel) {
+    createKeyPanel.addEventListener("toggle", () => {
+      if (!createKeyPanel.open) createKeyPanel.hidden = true;
+    });
+  }
   if (window.location.hash === "#new-api-key") {
     const panel = document.getElementById("new-api-key");
     if (panel) {
+      panel.hidden = false;
       panel.open = true;
       window.setTimeout(() => panel.querySelector('input[name="name"]')?.focus(), 100);
     }
@@ -403,6 +462,8 @@ function initConsole() {
       event.preventDefault();
       const panel = document.getElementById("new-api-key");
       if (panel) {
+        panel.hidden = false;
+        panel.open = true;
         panel.scrollIntoView({ behavior: "smooth", block: "start" });
         const input = panel.querySelector('input[name="name"]');
         if (input) {
@@ -410,6 +471,11 @@ function initConsole() {
         }
       }
       return;
+    }
+    const connectLink = target.closest('a[href="#connect-your-app"]');
+    if (connectLink) {
+      const setup = document.getElementById("connect-your-app");
+      if (setup) setup.open = true;
     }
     const runButton = target.closest('[data-action="run-first-call"]');
     if (runButton) {

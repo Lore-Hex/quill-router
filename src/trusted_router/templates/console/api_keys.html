@@ -3,19 +3,21 @@
 {% block body %}
 {% macro create_key_form() %}
 <form class="form" method="post" action="/console/api-keys">
-  <div class="row">
-    <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
-    <label>Total budget (USD, optional)<input name="limit" type="text" inputmode="decimal" placeholder="e.g. 100"></label>
-  </div>
-  <div class="row key-window-row">
-    <label>Daily limit (USD, optional)<input name="limit_daily" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.daily }}"></label>
-    <label>Weekly limit (USD, optional)<input name="limit_weekly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.weekly }}"></label>
-    <label>Monthly limit (USD, optional)<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
-  </div>
-  <label class="budget-action-check"><input type="checkbox" name="budget_alert_only"> <span>Email alert only — notify me when a budget is crossed, but don’t block requests</span></label>
-  <label class="budget-action-check"><input type="checkbox" name="budget_strict"> <span>Strict budget admission</span></label>
-  <p class="key-window-note">Strict admission includes in-flight reservations and can be much slower under concurrent use. Busy requests receive a retryable error. This choice is fixed for the key's lifetime. Final charges use actual provider usage, which can exceed an estimate.</p>
-  <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Budgets hard-stop requests with 429 by default. Select “Email alert only” to notify without blocking, including with strict admission selected. Windows reset at UTC midnight / Monday / the 1st. Default enforcement excludes in-flight holds; strict admission includes them. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
+  <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
+  <details class="key-spending-options">
+    <summary>Spending limits</summary>
+    <p class="key-window-note">USD · Blank means unlimited.</p>
+    <div class="key-budget-grid">
+      <label>Total<input name="limit" type="text" inputmode="decimal" placeholder="Unlimited"></label>
+      <label>Daily<input name="limit_daily" type="text" inputmode="decimal" placeholder="Unlimited"></label>
+      <label>Weekly<input name="limit_weekly" type="text" inputmode="decimal" placeholder="Unlimited"></label>
+      <label>Monthly<input name="limit_monthly" type="text" inputmode="decimal" placeholder="Unlimited"></label>
+    </div>
+    <label class="budget-action-check"><input type="checkbox" name="budget_alert_only"> <span>Email alerts instead of blocking requests</span></label>
+    <label class="budget-action-check"><input type="checkbox" name="budget_strict" aria-describedby="strict-budget-note"> <span>Include in-flight requests</span></label>
+    <p class="key-window-note" id="strict-budget-note">Cannot be changed later. May slow concurrent requests or require retries. Final charges can exceed estimates.</p>
+    <p class="key-window-note">Limits block requests (429) unless alerts-only is selected. In-flight requests are excluded unless selected above. Daily limits reset at midnight UTC; weekly on Monday; monthly on the 1st.</p>
+  </details>
   <button class="btn primary" type="submit">Create key</button>
 </form>
 {% endmacro %}
@@ -24,7 +26,7 @@
 {% endif %}
 {% if created_key %}
 <section class="panel">
-  <div class="panel-head"><h2>Save this key. It will not be shown again</h2><span class="pill warn">one time reveal</span></div>
+  <div class="panel-head"><h2>Save this key. It will not be shown again</h2></div>
   <div class="panel-body">
     {{ api_key_reveal(created_key, "created") }}
   </div>
@@ -32,35 +34,40 @@
 {% endif %}
 {% if not keys %}
 <section class="panel">
-  <div class="panel-head"><h2>Create a new API key</h2></div>
+  <div class="panel-head"><h2>Create API key</h2></div>
   <div class="panel-body">
     {{ create_key_form() }}
   </div>
 </section>
 {% endif %}
-<section class="panel">
+{% if keys %}
+<section class="panel key-list-panel">
   <div class="panel-head">
     <div>
-      <h2>Existing keys</h2>
-      <p class="panel-kicker">Monitor usage, budgets, and access for this workspace.</p>
+      <h2>Your keys ({{ keys|length }})</h2>
     </div>
     <div class="panel-head-actions">
-      <span class="pill">{{ keys|length }} total</span>
       {% if keys %}
-      <button class="btn" type="button" data-action="open-new-key">New key</button>
+      <button class="btn primary" type="button" data-action="open-new-key" aria-controls="new-api-key">Create key</button>
       {% endif %}
     </div>
   </div>
   <div class="panel-body">
     <div class="table-scroll">
     <table class="keys-table">
-      <thead><tr><th>Name</th><th>Label</th><th>Budgets</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Key</th><th>Usage &amp; limits</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
         {% for k in keys %}
         <tr class="key-row{% if k.disabled %} key-row-disabled{% endif %}">
-          <td data-col="Name">{{ k.name }}</td>
-          <td data-col="Label"><code>{{ k.label }}</code></td>
-          <td data-col="Budgets">
+          <td data-col="Key"><strong>{{ k.name }}</strong><code class="key-label">{{ k.label }}</code></td>
+          <td data-col="Usage &amp; limits">
+            <div class="key-budget-current">
+              {{ k.usage_display }} used{% if k.limit_display != 'none' %} · {{ k.limit_display }} total limit{% else %} · No total limit{% endif %}
+              {%- for w in k.windows if w.limit_display %}<br>{{ w.name|capitalize }} {{ w.used_display }} / {{ w.limit_display }}{% endfor %}
+              {% if k.budget_alert_only %}<br>Email alerts only{% endif %}
+              {% if k.budget_strict %}<br>Includes in-flight requests{% endif %}
+            </div>
+            <details class="key-limit-editor"><summary aria-label="Edit limits for {{ k.name }}">Edit limits</summary>
             <form class="key-budget-form" method="post" action="/console/api-keys/{{ k.hash }}/limit">
               <div class="key-budget-grid">
                 <label>Total<input name="limit" type="text" inputmode="decimal" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Total budget for {{ k.name }}"></label>
@@ -68,14 +75,10 @@
                 <label>{{ w.name|capitalize }}<input name="limit_{{ w.name }}" type="text" inputmode="decimal" placeholder="off" value="{{ w.input }}" aria-label="{{ w.name|capitalize }} limit for {{ k.name }}"></label>
                 {% endfor %}
               </div>
-              <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" {% if k.budget_alert_only %}checked{% endif %} aria-label="Email alert only for {{ k.name }}"> <span>Email alert only (don’t block)</span></label>
-              {% if k.budget_strict %}<p class="key-window-note">Strict admission includes in-flight reservations.</p>{% endif %}
+              <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" {% if k.budget_alert_only %}checked{% endif %} aria-label="Email alert only for {{ k.name }}"> <span>Email alerts instead of blocking requests</span></label>
               <button class="btn" type="submit">Save</button>
             </form>
-            <div class="key-budget-current">
-              Used {{ k.usage_display }}{% if k.limit_display != 'none' %} of {{ k.limit_display }}{% endif %}
-              {%- for w in k.windows if w.limit_display %} · {{ w.name }} {{ w.used_display }} / {{ w.limit_display }}{% endfor %}
-            </div>
+            </details>
           </td>
           <td data-col="Status">{% if k.disabled %}<span class="pill warn">disabled</span>{% else %}<span class="pill good">active</span>{% endif %}</td>
           <td data-col="Actions">
@@ -96,25 +99,17 @@
           </td>
         </tr>
         {% endfor %}
-        {% if not keys %}
-        <tr><td class="empty" colspan="5">No keys yet. Create one above.</td></tr>
-        {% endif %}
       </tbody>
     </table>
     </div>
   </div>
 </section>
-{% if keys %}
-<section class="panel key-create-panel" id="new-api-key">
-  <div class="panel-head">
-    <div>
-      <h2>Create a new API key</h2>
-      <p class="panel-kicker">Use a separate key for each application or environment.</p>
-    </div>
-  </div>
+<details class="panel key-create-panel" id="new-api-key" hidden>
+  <summary class="panel-head">Create API key</summary>
   <div class="panel-body">
     {{ create_key_form() }}
   </div>
-</section>
+</details>
 {% endif %}
+{% include "console/_social_rewards_invitation.html" %}
 {% endblock %}

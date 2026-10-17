@@ -17,6 +17,19 @@ def event(name='signup_completed', **kwargs):
         'utm_source': 'google', **kwargs}, 'axiom')
 
 
+@pytest.mark.parametrize('name', [
+    'social_rewards_exposed', 'social_reward_clicked', 'social_reward_claimed',
+])
+def test_social_rewards_export_is_distinct_from_purchase_and_follower_verification(name):
+    row = project({
+        '_time': '2026-10-15T02:30:00Z', 'event': 'acquisition.' + name,
+        'anonymous_fingerprint': 'a' * 64, 'amount_microdollars': 30_000,
+    }, 'axiom' if name == 'social_reward_claimed' else 'cloud_logging')
+    assert row['event'] == 'acquisition.' + name
+    assert 'amount_microdollars' not in row  # Promotional grants are not purchases.
+    assert 'verified' not in row
+
+
 class FakeIO:
     def __init__(self, events=(), daily=(), fail=False):
         self.rows = list(events)
@@ -246,7 +259,7 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     value = source_filter()
     assert '=~' not in value
     assert '\\' not in value
-    assert value.count('jsonPayload.event=') == 34
+    assert value.count('jsonPayload.event=') == 40
     for name in m.BROWSER_EVENTS | m.CONVERSION_EVENTS:
         assert f'jsonPayload.event="{name}"' in value
     assert 'resource.type="cloud_run_revision"' in value
@@ -445,3 +458,24 @@ def test_missing_pre_auth_cookie_is_unknown_not_an_invented_direct_visit():
 @pytest.mark.parametrize('label', ['(unknown)', '(unattributed)', '(redacted)'])
 def test_known_missing_source_labels_remain_explicit(label):
     assert m.canonical_source(label) == label
+
+
+def test_console_observation_projection_replay_and_allowlist():
+    raw = {'_time': '2026-10-15T02:30:00Z',
+           'event': 'acquisition.social_reward_clicked', 'anonymous_fingerprint': 'a' * 64,
+           'account_fingerprint': 'b' * 64, 'reward_action': 'github',
+           'reward_placement': 'api_key_setup', 'device_category': 'mobile',
+           'observation_id': '84c35821-8c8f-48ea-8aba-19724a965078',
+           'user_agent': 'private browser data', 'email': 'private@example.com'}
+    first = project(raw, 'cloud_logging')
+    replay = project({**raw, '_time': '2026-10-15T02:31:00Z'}, 'cloud_logging')
+    assert first['event_id'] == replay['event_id']
+    assert first['reward_action'] == 'github'
+    assert first['reward_placement'] == 'api_key_setup'
+    assert first['device_category'] == 'mobile'
+    assert 'user_agent' not in first and 'email' not in first
+    invalid = project({**raw, 'reward_action': 'secret', 'device_category': 'raw UA',
+                       'reward_placement': 'https://private'}, 'cloud_logging')
+    assert not {'reward_action', 'device_category', 'reward_placement'} & invalid.keys()
+    grant = event('social_reward_claimed', reward_action='github')
+    assert grant['reward_action'] == 'github'

@@ -133,7 +133,7 @@ def test_create_form_budget_alert_only_checkbox(console: dict) -> None:
     page = client.get("/console/api-keys").text
     assert '<input type="checkbox" name="budget_alert_only">' in page
     assert '<input type="checkbox" name="budget_alert_only" checked>' not in page
-    assert "Budgets hard-stop requests with 429 by default" in page
+    assert "Limits block requests (429) unless alerts-only is selected" in page
     # Alert-only mode requires an explicit checked value.
     client.post("/console/api-keys", data={"name": "alerted", "budget_alert_only": "on"})
     alerted = next(k for k in STORE.list_keys(workspace.id) if k.name == "alerted")
@@ -191,12 +191,14 @@ def test_budget_inputs_have_no_number_spinners(console: dict) -> None:
 
 
 def test_existing_keys_are_primary_when_workspace_has_keys(console: dict) -> None:
-    """Existing keys stay primary while creation remains permanently visible."""
+    """Existing keys stay primary while creation opens on demand."""
     page = console["client"].get("/console/api-keys").text
 
-    assert page.index("Existing keys") < page.index("Create a new API key")
+    assert page.index("Your keys") < page.index("Create API key")
+    assert page.index("Your keys") < page.index('data-rewards-key-card')
     assert 'data-action="open-new-key"' in page
-    assert '<section class="panel key-create-panel" id="new-api-key">' in page
-    assert '<details class="panel key-create-panel"' not in page
-    assert 'href="/support">Help</a>' in page
+    assert '<details class="panel key-create-panel" id="new-api-key" hidden>' in page
+    assert '<details class="key-limit-editor">' in page
+    assert '<summary>Help</summary>' in page
+    assert 'href="/support">Support</a>' in page
     assert 'href="/support?category=feature#support-inquiry">Feature request</a>' in page

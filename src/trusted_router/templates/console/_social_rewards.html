@@ -1,0 +1,22 @@
+<dialog class="social-rewards" id="social-rewards" aria-labelledby="social-rewards-title" aria-describedby="social-rewards-intro" data-rewards-user="{{ user.id }}">
+  <div class="social-rewards-head">
+    <button class="btn social-rewards-close" type="button" data-rewards-close aria-label="Close social rewards">×</button>
+    <p class="social-rewards-eyebrow">Social rewards</p>
+    <h2 id="social-rewards-title" tabindex="-1">Unlock extra tokens</h2>
+    <p id="social-rewards-intro">Five actions. Approximately 1M tokens.</p>
+    <p class="social-rewards-progress" data-rewards-progress aria-live="polite">0 of 5 rewards claimed</p>
+    <progress data-rewards-meter max="5" value="0" aria-label="Rewards claimed"></progress>
+  </div>
+  <div class="social-rewards-content">
+    <p data-rewards-notice role="status" hidden></p>
+    <ul class="social-rewards-list" data-rewards-list></ul>
+  </div>
+  <div class="social-rewards-foot">
+    <details class="social-rewards-terms"><summary>About these rewards</summary>
+      <p class="social-rewards-destination" data-rewards-destination></p>
+      <p>Token equivalents use DeepSeek V4 Flash 0731 via DeepInfra with equal input/output usage. Actual usage varies by model, route and pricing. Estimates show rewards earned, not your remaining balance.</p>
+    </details>
+    <button class="btn" type="button" data-rewards-close>Skip for now</button>
+  </div>
+</dialog>
+<script defer src="/static/social-rewards.js?v={{ static_version|default('local') }}&amp;flow=early-rewards-v2"></script>

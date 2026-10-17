@@ -536,6 +536,8 @@ ENV_VARS=(
   "TR_ENVIRONMENT=canary"
   "TR_SERVICE_SURFACE=observer"
   "TR_NEW_SIGNUPS_ENABLED=false"
+  "TR_SOCIAL_REWARDS_ENABLED=false"
+  "TR_SOCIAL_REWARDS_PLANE_ID=azure"
   # Container Apps cannot safely overwrite the trusted client-IP header while
   # this service is directly exposed. Ignore any caller-supplied value and use
   # the conservative aggregate application bucket; the platform scale cap is

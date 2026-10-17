@@ -51,6 +51,7 @@ from trusted_router.signup_gate import (
     require_new_account_creation,
     starter_credit_for_email,
 )
+from trusted_router.social_rewards import SIGNUP_MICRODOLLARS, campaign_enabled
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -216,10 +217,17 @@ def _persist_login(
             # signup() returns None only on a TOCTOU race; fall back to a
             # fresh lookup, surface a real 500 if even that fails so we
             # don't deref None silently.
+            starter_credit = _starter_credit(provider, info, settings)
+            enroll_rewards = (
+                campaign_enabled(settings)
+                and provider.slug in {"google", "github"}
+                and starter_credit > 0
+            )
             result = STORE.signup(
                 email=info.email,
-                trial_credit_microdollars=_starter_credit(provider, info, settings),
+                trial_credit_microdollars=(SIGNUP_MICRODOLLARS if enroll_rewards else starter_credit),
                 email_verified=True,
+                social_rewards_issuer=settings.social_rewards_issuer_id if enroll_rewards else None,
             )
             if result is not None:
                 user_id = result.user.id
