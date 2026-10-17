@@ -9,7 +9,10 @@ body.console {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: linear-gradient(110deg, var(--tr-color-accent-ink), color-mix(in srgb, var(--tr-color-panel-mint-ink-2) 80%, var(--tr-color-surface-bg)) 48%, var(--tr-color-surface-control));
+  background:
+    radial-gradient(ellipse at 48% 160%, color-mix(in srgb, var(--tr-color-accent-base) 40%, transparent), transparent 52%),
+    radial-gradient(ellipse at 68% -140%, color-mix(in srgb, var(--tr-color-link-base) 32%, transparent), transparent 52%),
+    var(--tr-color-accent-ink);
   border-bottom: 1px solid var(--tr-color-line-rule);
   display: flex;
   /* Wrap at any width: at full desktop nothing wraps; at intermediate widths
@@ -27,22 +30,6 @@ body.console {
 .console-topbar .brand {
   flex: 0 0 auto;
   color: var(--tr-color-accent-hover);
-}
-
-/* Three quiet routes converge into one path; only use genuinely empty space. */
-.console-route-detail {
-  display: block;
-  flex: 1 1 320px;
-  width: 100%;
-  max-width: 480px;
-  min-width: 0;
-  height: 40px;
-  margin-inline: auto;
-  color: var(--tr-color-accent-base);
-  pointer-events: none;
-}
-@media (max-width: 1100px) {
-  .console-route-detail { display: none; }
 }
 
 .console-topnav {
@@ -129,7 +116,7 @@ body.console {
 
 .console-sidebar {
   border-right: 1px solid var(--line);
-  background: color-mix(in srgb, var(--tr-color-surface-panel) 94%, var(--tr-color-accent-base));
+  background: var(--tr-color-surface-bg-alt);
   padding: 20px 14px;
   display: flex;
   flex-direction: column;
@@ -1961,7 +1948,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 .console-topbar .console-header-menu > summary,
 .console-topbar .console-menu-toggle { color: var(--tr-color-accent-hover); }
 .console-sidebar .sidebar-link.active {
-  background: color-mix(in srgb, var(--tr-color-surface-selected) 80%, var(--tr-color-accent-base));
+  background: color-mix(in srgb, var(--tr-color-surface-selected) 96%, var(--tr-color-accent-base));
   font-weight: 600;
 }
 .console-sidebar .sidebar-link:hover { background: var(--tr-color-surface-hover); }
@@ -1982,4 +1969,78 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 .social-rewards-list p, .social-rewards-foot p { color: var(--tr-color-text-secondary); }
 @media (max-width: 600px) {
   .key-list-panel > .panel-head { padding: 16px; }
+}
+
+/* Static atmospheric layers stay behind content. Header dropdowns remain unclipped. */
+.console-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, var(--tr-color-accent-base) .55px, transparent .8px) 0 0 / 4px 4px;
+  opacity: .18;
+  mask-image: linear-gradient(90deg, transparent 20%, #000 55%, transparent 85%);
+}
+.key-rewards-invitation,
+.key-first-onboarding .key-rewards-invitation,
+.social-rewards-head {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, transparent 42%, color-mix(in srgb, var(--tr-color-accent-ink) 10%, transparent)),
+    radial-gradient(ellipse at 105% 115%, oklch(from var(--tr-color-information-note) .68 calc(c * 2) h / .8), transparent 38%),
+    radial-gradient(ellipse at 94% 100%, oklch(from var(--tr-color-link-base) .68 calc(c * 3) h / .8), transparent 52%),
+    radial-gradient(ellipse at 92% -25%, oklch(from var(--tr-color-accent-base) .72 calc(c * 3) h / .75), transparent 56%),
+    color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base));
+}
+.key-rewards-invitation::before,
+.social-rewards-head::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, var(--tr-color-accent-base) .65px, transparent .9px) 0 0 / 4px 4px;
+  opacity: .075;
+  mask-image: linear-gradient(100deg, transparent 45%, #000);
+}
+.key-rewards-invitation::after,
+.social-rewards-head::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 360px;
+  height: 360px;
+  right: -190px;
+  top: -210px;
+  border: 1px solid color-mix(in srgb, var(--tr-color-accent-base) 18%, transparent);
+  border-radius: 50%;
+  outline: 1px solid color-mix(in srgb, var(--tr-color-accent-base) 8%, transparent);
+  outline-offset: 42px;
+  pointer-events: none;
+}
+@media (max-width: 600px) {
+  .key-rewards-invitation::after,
+  .social-rewards-head::after { right: -260px; }
+}
+/* Keep optional rewards compact on return visits too; its action stays on the
+   quiet side of the artwork instead of sitting over the brightest color. */
+.key-rewards-invitation {
+  max-width: 720px;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.key-rewards-copy h2 { font-size: 18px; }
+.key-rewards-invitation > .btn,
+.key-first-onboarding .key-rewards-invitation > .btn {
+  border-color: var(--tr-color-line-strong);
+  color: var(--tr-color-text-primary);
+}
+@media (min-width: 801px) {
+  .console-sidebar {
+    background: color-mix(in srgb, var(--tr-color-accent-ink) 65%, var(--tr-color-surface-panel));
+  }
 }

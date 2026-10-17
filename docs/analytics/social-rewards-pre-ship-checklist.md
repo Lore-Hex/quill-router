@@ -2,6 +2,57 @@
 
 Updated October 17, 2026. Production rollout remains on hold.
 
+### Approved visual checkpoint and header texture
+
+User approved committing the layered rewards artwork and distinct desktop sidebar.
+Raised header dot opacity from 8% to 18%, retaining the fade behind logo and
+controls; inspected the final 1440px desktop and 390px phone views. Final browser
+suite: 31 passed. Checkpoint Ruff/mypy passed; all three required uv gates remain
+blocked by the Intel macOS torch wheel. This commit is a visual checkpoint only,
+not release readiness. No push or deployment in this step.
+
+### Desktop sidebar separation
+
+Added a desktop-only deep-green sidebar using a 65% accent-ink / 35% panel token
+mix, distinct from the page canvas without restoring the earlier pale fill.
+Inspected 1440px desktop and 390px mobile screenshots. The rewards gradients are
+brand-derived chroma variants, not literal palette tokens. Recommended retaining
+the current compact, quiet header rather than adding further artwork. Local
+visual iteration only; existing full-gate and release blockers remain.
+
+### Brighter color and hierarchy follow-up
+
+Increased decorative color chroma using relative OKLCH variants of the existing
+mint, blue and lilac tokens, concentrated at the rewards card's right edge.
+Navigation uses a quieter dark sidebar and a reduced active-item fill; header
+lighting stays compact. Return-visit rewards now share the 720px maximum width
+and stacked copy/action arrangement so the button avoids the brightest artwork.
+Reward buttons retain outlines, with clearer borders; Copy remains the only
+filled initial-onboarding action. No reward or key behavior changes.
+
+Visual QA covered welcome at 1440/1024/390/320px, key management at 1440/390px,
+320px rewards dialog, and 390px navigation. Reviewed wrapping, artwork placement,
+primary/secondary action emphasis, and compact header dimensions. All 31 browser
+checks and checkpoint Ruff/mypy passed. Required uv gates were attempted again;
+all remain blocked by the unsupported Intel macOS torch distribution. Existing
+full-suite/coverage and release blockers remain. Local review only; no push/deploy.
+
+### Layered console treatment — local design review
+
+Replaced the rejected routing SVG with quiet brand-token gradient lighting and
+fine halftone in the compact header. Rewards invitations and dialog heading use
+forest/mint and muted link-blue layers with two cropped circular contours. The
+12% mint base is retained. Mobile contours sit farther right to keep the copy
+clear; no homepage photograph, animation, or reward behavior changes.
+
+Inspected full 1440px desktop and 390px phone compositions, the phone rewards
+dialog, and the desktop Account dropdown. Phone header remains 56px with no
+horizontal overflow. Browser regressions: 31 passed outside the sandbox (initial
+sandbox launch was denied). Checkpoint Ruff and mypy passed. All three required
+uv gates were retried and remain blocked by the Intel macOS torch distribution;
+full-suite success and coverage remain unestablished. This iteration is local
+for visual review, not pushed or deployed; all release blockers below remain.
+
 ### Compact tonal header refinement
 
 Following the brand/reference review, reduced desktop header height to 60px while
