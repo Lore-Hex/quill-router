@@ -331,12 +331,14 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
         elif isinstance(node, list):
             direct.extend(node)
     by_file_digest = {roots.file_digest(body.encode()): filename for filename, body in originals.items()}
+    ledger_files: set[str] = set()
     for raw in documents['bundle']['ledgers']:
         ledger = json.loads(raw)
         for item in ledger.values():
             if isinstance(item, dict) and set(item) == {'sha256', 'completed_at_us'}:
                 filename = by_file_digest.get(item['sha256'])
                 if filename is not None:
+                    ledger_files.add(filename)
                     required.add(filename)
                     seeds.append(decoded.get(filename))
     required.update(reachable(seeds))
@@ -359,7 +361,7 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
     # boot context; those orphan pages are not dependencies of any proof.
     named_files: set[str] = set()
     detail_hashes: set[str] = set()
-    pending = list(decoded.values())
+    pending = [*decoded.values(), documents['bundle'].get('producer_registrations', [])]
     while pending:
         node = pending.pop()
         if isinstance(node, dict):
@@ -378,6 +380,10 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
             page_raw.add(originals[filename])
             if sha256(value) not in detail_hashes:
                 ignored.add(filename)
+    # R1/R4: ledger declarations identify these proofs by byte digest, not
+    # filename. A valid rename retains that role unless a FILE_REF names it.
+    ledger_names = ledger_files - named_files
+    ledger_raw = {originals[filename] for filename in ledger_names}
     ignored_raw = {originals[filename] for filename in ignored if filename in originals}
     def valid_path(path: Any) -> bool:
         try:
@@ -411,6 +417,12 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
                     and (entry['name'] in ignored or entry['name'] not in originals)
                     and valid_path(entry['name']))]
                 for entry in entries:
+                    if (isinstance(entry, dict) and set(entry) == {'name', 'raw'}
+                            and entry['raw'] in ledger_raw and valid_path(entry['name'])
+                            and entry['name'] not in named_files
+                            and (entry['name'] in ledger_names and originals[entry['name']] == entry['raw']
+                                 or entry['name'] not in originals)):
+                        entry['name'] = '<content-addressed-ledger>'
                     if (isinstance(entry, dict) and set(entry) == {'name', 'raw'}
                             and entry['raw'] in page_raw and entry['name'] not in named_files):
                         try:

@@ -490,6 +490,43 @@ def boundary_cache(totality_original: Any) -> Any:
 
 
 
+@pytest.mark.parametrize('mutation', ['truncate', 'rename', 'invalid', 'collision', 'bytes', 'delete', 'named', 'registration'])
+def test_round14_ledger_name_reference(totality_original: Any, mutation: str) -> None:
+    """Only an unchanged, unnamed ledger original has a movable filename."""
+    import copy
+
+    from tests.shadow_v2_gate_totality import inert_damage
+
+    original, _, _ = totality_original
+    baseline = json.loads(transport(original))
+    ledger = json.loads(baseline['ledgers'][0])
+    index = next(i for i, entry in enumerate(baseline['preimages'])
+                 if file_digest(entry['raw'].encode()) == ledger['size']['sha256'])
+    entry = baseline['preimages'][index]
+    if mutation == 'named':
+        baseline['producer_registrations'] = [dict(path=entry['name'],
+            bytes=len(entry['raw'].encode()), sha256=file_digest(entry['raw'].encode()))]
+    changed = copy.deepcopy(baseline)
+    candidate = changed['preimages'][index]
+    candidate['name'] = entry['name'][:len(entry['name']) // 2]
+    if mutation == 'rename':
+        candidate['name'] = 'renamed/proof-result'
+    elif mutation == 'invalid':
+        candidate['name'] = '../proof-result'
+    elif mutation == 'collision':
+        candidate['name'] = next(e['name'] for e in baseline['preimages']
+                                 if file_digest(e['raw'].encode()) == ledger['transport']['sha256'])
+    elif mutation == 'bytes':
+        candidate['raw'] += '\n'
+    elif mutation == 'delete':
+        del changed['preimages'][index]
+    elif mutation == 'registration':
+        # R2 preserves the declared ledger role even at the fallback path.
+        candidate['name'] = 'stage/producer-captures.json'
+    assert inert_damage('bundle', ('preimages', index, 'name'), mutation, None,
+        {'bundle': baseline}, canonical(changed), None, library_call=True) == (mutation in ('truncate', 'rename', 'registration'))
+
+
 class TestGeneratedBoundary:
     @pytest.mark.proof_oracle
     @pytest.mark.parametrize('shard', range(128))
