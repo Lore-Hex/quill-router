@@ -1,5 +1,5 @@
 {
-  "checked_on": "2026-10-15",
+  "checked_on": "2026-10-17",
   "prices": {
     "elevenlabs/eleven-flash-v2.5": 40000000,
     "elevenlabs/eleven-multilingual-v2": 80000000,
@@ -10,11 +10,11 @@
     "mistralai/voxtral-mini-tts-2603": 16000000,
     "x-ai/grok-voice-tts-1.0": 15000000
   },
+  "request_price_unit": "microdollars_per_request",
   "request_prices": {
     "mistralai/voxtral-4b-tts-2603": 2000,
     "qwen/qwen3-tts": 10000
   },
-  "request_price_unit": "microdollars_per_request",
   "token_prices": {
     "google/gemini-3.8-flash-lite-tts": {
       "input": 500000,

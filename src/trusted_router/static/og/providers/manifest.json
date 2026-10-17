@@ -82,10 +82,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 15,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 23,
+    "route_count": 29,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -163,10 +163,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
@@ -280,10 +280,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 74,
+    "model_count": 76,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 80,
+    "route_count": 82,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -406,11 +406,11 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 0,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 12,
-    "route_mode": "Prepaid + BYOK",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "lightning"
   },
   "liquid": {
@@ -433,19 +433,19 @@
   },
   "lyceum": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Lyceum",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "lyceum"
   },
   "makora": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 15,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -478,10 +478,10 @@
   },
   "mistral": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 11,
     "name": "Mistral",
     "privacy": "Policy documented",
-    "route_count": 19,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "mistral"
   },
@@ -505,19 +505,19 @@
   },
   "near-ai": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 0,
     "name": "NEAR AI",
     "privacy": "Confidential + ZDR",
-    "route_count": 1,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "near-ai"
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 23,
+    "model_count": 26,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 44,
+    "route_count": 50,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -568,10 +568,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 48,
+    "model_count": 47,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 83,
+    "route_count": 80,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -649,10 +649,10 @@
   },
   "privatemode": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 7,
     "name": "Privatemode",
     "privacy": "Confidential + ZDR",
-    "route_count": 3,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "privatemode"
   },
@@ -775,10 +775,10 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 25,
+    "model_count": 22,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 25,
+    "route_count": 22,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
@@ -838,10 +838,10 @@
   },
   "tinfoil": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 12,
     "name": "Tinfoil",
     "privacy": "Confidential + ZDR",
-    "route_count": 12,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
   },
@@ -883,10 +883,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 59,
+    "model_count": 60,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 100,
+    "route_count": 102,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },

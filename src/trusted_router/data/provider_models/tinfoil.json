@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil launched Kimi K3 and DeepSeek V4 Flash on 2026-08-20, then GLM 5.3 and multimodal GLM 5.3 Flash on 2026-09-03. Tinfoil supports confidential prompt caching where published by its live feed. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-10-15T21:25:33Z",
+  "generated_at": "2026-10-17T03:21:42Z",
   "model_count": 16,
   "models": [
     {
@@ -236,7 +236,7 @@
         "text"
       ],
       "output_modalities": [
-        "audio"
+        "speech"
       ],
       "endpoints": [
         "audio/speech"
@@ -367,7 +367,7 @@
         "audio"
       ],
       "output_modalities": [
-        "text"
+        "transcription"
       ],
       "endpoints": [
         "audio/transcriptions"
@@ -387,7 +387,7 @@
         "text"
       ],
       "output_modalities": [
-        "audio"
+        "speech"
       ],
       "endpoints": [
         "audio/speech"

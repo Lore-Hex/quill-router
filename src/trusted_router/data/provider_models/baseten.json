@@ -2,14 +2,14 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-17T03:21:42Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 25,
+  "model_count": 27,
   "models": [
     {
       "id": "reflection/beam-1.0",
       "upstream_id": "reflection/Beam-1.0",
-      "display_name": "Reflection: Beam 1.0",
+      "display_name": "Beam",
       "context_length": 1048576,
       "max_output_tokens": 131072,
       "endpoints": [
@@ -823,6 +823,77 @@
       "output_token_price_per_m": 2400000,
       "cached_input_token_price_per_m": 14000,
       "routable": true
+    },
+    {
+      "display_name": "Muse Spark Open",
+      "title": "meta-models/muse-spark-open",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-models/muse-spark-open",
+      "upstream_id": "meta-models/muse-spark-open",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "stop",
+        "presence_penalty",
+        "frequency_penalty"
+      ],
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 4250000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "Nemotron Super 3.5",
+      "title": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "stop",
+        "max_tokens"
+      ],
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 40000
     }
   ]
 }

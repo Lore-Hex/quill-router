@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-10-15T12:03:30Z",
-  "model_count": 106,
+  "generated_at": "2026-10-17T03:21:42Z",
+  "model_count": 108,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2561,6 +2561,48 @@
       "context_length": 1048576,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+      "title": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-super-vl-120b-a12b-bf16",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+      "context_length": 32768,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "StepFun: Step-5-Preview",
+      "title": "stepfun-ai/Step-5-Preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/step-5-preview",
+      "upstream_id": "stepfun-ai/Step-5-Preview",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 2700000,
       "cached_input_token_price_per_m": 100000
     }
   ],

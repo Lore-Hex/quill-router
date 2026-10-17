@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-10-15T12:03:30Z",
-  "model_count": 47,
+  "generated_at": "2026-10-17T03:21:42Z",
+  "model_count": 50,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -1185,6 +1185,86 @@
       "max_output_tokens": 65536,
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "meta-models/muse-spark-open",
+      "upstream_id": "meta-models/muse-spark-open",
+      "display_name": "Muse Spark Open",
+      "title": "meta-models/muse-spark-open",
+      "created": 1791523446,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 4250000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/nemotron-3.5-super-vl",
+      "upstream_id": "nvidia/Nemotron-3.5-Super-VL",
+      "display_name": "Nemotron 3.5 Super VL",
+      "title": "nvidia/nemotron-3.5-super-vl",
+      "created": 1791841710,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 900000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "reflection/beam",
+      "upstream_id": "reflection/beam",
+      "display_name": "Reflection Beam 1.0",
+      "title": "reflection/beam",
+      "created": 1792155600,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1000000,
       "model_type": "chat",
       "features": [
         "serverless",
