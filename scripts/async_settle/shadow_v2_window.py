@@ -102,7 +102,7 @@ def _collect_day(source: Path, out: Path, plan: dict[str, Any], *,
         reconciliation=reconciliation)
     for producer in PRODUCERS:
         files.read(captures[producer])
-    files.obj('stage/producer-captures.json', captures)
+    result['transport']['producer_registrations'] = [files.obj('stage/producer-captures.json', captures)]
     criteria: dict[str, list[str]] = {name: list(checks) for name, checks in CHECKS.items()}
     for stage, names in plan['required_stages'].items():
         for name in names:

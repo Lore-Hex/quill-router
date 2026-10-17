@@ -322,6 +322,7 @@ def test_real_prefixed_export_accounting_differential(tmp_path, composed, assemb
     prefix = passed['prefix']
     assert prefix == 'native-export/'
     original, ports = assembled
+    registrations = tuple(original['producer_registrations'])
     originals = {item['name']: item['raw'].encode() for item in original['preimages']}
     before = dict(originals)
     accounting = json.loads(originals[passed['accounting']['path']])
@@ -343,7 +344,7 @@ def test_real_prefixed_export_accounting_differential(tmp_path, composed, assemb
     page_refs = [ref for refs in accounting['details'].values() for ref in refs]
     if part == 'dependency-pages':
         references = {}
-        parsers = dependencies(originals, payloads, ports, 'transport', references=references)
+        parsers = dependencies(originals, payloads, ports, 'transport', references=references, producer_registrations=registrations)
         for ref in page_refs:
             located = {**ref, 'path': prefix + ref['path']}
             assert ref['path'] not in parsers
@@ -360,7 +361,7 @@ def test_real_prefixed_export_accounting_differential(tmp_path, composed, assemb
             compared.append(actual)
             return actual
         monkeypatch.setattr(consumer, 'compare_export_accounting_streamed', compare)
-        graph = PayloadGraph(originals)
+        graph = PayloadGraph(originals, producer_registrations=registrations)
         consumer.consume(graph, payloads,
             tuple(Row(Key(row['kind'], row['id']), row['raw'].encode()) for row in rows),
             tuple(Row(Key(row['kind'], row['id']), row['raw'].encode()) for row in attachments))
@@ -369,7 +370,8 @@ def test_real_prefixed_export_accounting_differential(tmp_path, composed, assemb
     assert originals == before
 
 
-def test_real_prefixed_export_with_opaque_support(tmp_path, composed, assembled, monkeypatch):
+@pytest.mark.parametrize('support', ['ci/review/workflow.yml', 'ci/review/stage/producer-captures.json'])
+def test_real_prefixed_export_with_opaque_support(tmp_path, composed, assembled, monkeypatch, support):
     from tests.shadow_v2_gate_accounting import assert_accounting_equal
     from trusted_router import async_settle_shadow_v2_gate_native_accounting as consumer
     from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
@@ -378,11 +380,13 @@ def test_real_prefixed_export_with_opaque_support(tmp_path, composed, assembled,
     from trusted_router.async_settle_shadow_v2_pack_accounting_stream import (
         compare_export_accounting_streamed,
     )
+    from trusted_router.detached_jws import canonical
 
     root, plan = composed
     capture = json.loads((root / 'capture' / plan['captures']['NativeExport']['path']).read_bytes())
     passed = capture['passes'][0]
     original, ports = assembled
+    registrations = tuple(original['producer_registrations'])
     originals = {item['name']: item['raw'].encode() for item in original['preimages']}
     accounting = json.loads(originals[passed['accounting']['path']])
     entries = [entry for ref in accounting['details']['entries']
@@ -398,24 +402,27 @@ def test_real_prefixed_export_with_opaque_support(tmp_path, composed, assembled,
         compared.append(actual)
         return actual
     monkeypatch.setattr(consumer, 'compare_export_accounting_streamed', compare)
-    baseline = PayloadGraph(originals)
+    baseline = PayloadGraph(originals, producer_registrations=registrations)
     consumer.consume(baseline, payloads, rows, attachments)
     baseline_refs = {}
-    baseline_parsers = dependencies(originals, payloads, ports, 'transport', references=baseline_refs)
+    baseline_parsers = dependencies(originals, payloads, ports, 'transport', references=baseline_refs, producer_registrations=registrations)
     body = b'{"passes":[{"bundle":"example.json","accounting":{"path":"unused-accounting.json"},"prefix":null,"object_plan":{}}]}'
-    with_support = {**originals, 'ci/review/workflow.yml': body}
+    if support.endswith('producer-captures.json'):
+        body = canonical(dict(NativeExport=dict(path=support), passes=[dict(
+            bundle='example.json', accounting=dict(path=passed['accounting']['path']), prefix=None, object_plan={})]))
+    with_support = {**originals, support: body}
     actual_refs = {}
-    actual_parsers = dependencies(with_support, payloads, ports, 'transport', references=actual_refs)
+    actual_parsers = dependencies(with_support, payloads, ports, 'transport', references=actual_refs, producer_registrations=registrations)
     assert actual_refs == baseline_refs
     assert actual_parsers.keys() == baseline_parsers.keys()
     for refs in accounting['details'].values():
         for ref in refs:
             path = passed['prefix'] + ref['path']
             assert actual_parsers[path](with_support[path]) == baseline_parsers[path](originals[path])
-    actual = PayloadGraph(with_support)
+    actual = PayloadGraph(with_support, producer_registrations=registrations)
     consumer.consume(actual, payloads, rows, attachments)
     assert len(compared) == 2
     assert compared[0].complete and compared[0].native_rpcs == 19
     assert_accounting_equal(compared[1], compared[0])
     assert actual.streams == baseline.streams
-    assert {path: raw for path, raw in with_support.items() if path != 'ci/review/workflow.yml'} == originals
+    assert {path: raw for path, raw in with_support.items() if path != support} == originals

@@ -363,7 +363,7 @@ def transport_children(raw: bytes, limit: int) -> tuple[dict[str, Any], list[Loa
     arrays = {'rows': {'kind', 'id', 'raw'}, 'attachments': {'kind', 'id', 'raw'},
               'preimages': {'name', 'raw'}, 'ledgers': None, 'days': None}
     allowed = {'v', 'policy_version', 'contract_revision', 'proof', 'transport', 'fleet',
-               'pre', 'serving', 'completed_at_us', 'window', *arrays}
+               'pre', 'serving', 'completed_at_us', 'window', 'producer_registrations', *arrays}
     for key, child in value.items():
         if key not in allowed:
             reject('transport/extra')

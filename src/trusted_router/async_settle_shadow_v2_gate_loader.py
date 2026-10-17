@@ -33,7 +33,7 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
         require(type(value) is dict and value.get('policy_version') == 'shadow-v2'
                 and value.get('contract_revision') == 'a1', 'policy_version_gap')
         require(set(value) <= {'v', 'policy_version', 'contract_revision', 'rows', 'attachments', 'proof', 'ledgers',
-                              'transport', 'fleet', 'pre', 'serving', 'completed_at_us', 'days', 'preimages', 'window'}, 'artifact_gap')
+                              'transport', 'fleet', 'pre', 'serving', 'completed_at_us', 'days', 'preimages', 'window', 'producer_registrations'}, 'artifact_gap')
         def rows(name: str) -> tuple[Row, ...]:
             values = value.get(name, [])
             require(type(values) is list, 'artifact_gap')
@@ -108,9 +108,18 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
         for name in conflicts:
             payloads.pop(name, None)
         decoded_rows, decoded_attachments = rows('rows'), rows('attachments')
+        registrations = value.get('producer_registrations', [])
+        try:
+            require(type(registrations) is list and len(registrations) <= 32, 'evidence_schema_gap')
+            for registration in registrations:
+                a2.e.FILE_REF(registration)
+        except (ValueError, TypeError, KeyError):
+            registrations = []
+            issues.append(LoadingIssue('evidence_schema_gap', 'transport/producer_registrations', 'evidence_schema_gap'))
         graph = PayloadGraph({k: v for k, v in unique.items() if k not in conflicts},
                              None if 'completed_at_us' in metadata_issues else completed, ports=ports, stage=gate,
-                             ledgers=tuple(item.encode('utf-8') for item in ledgers))
+                             ledgers=tuple(item.encode('utf-8') for item in ledgers),
+                             producer_registrations=tuple(registrations))
         for qualified in a2.OBJECT_PREIMAGES:
             if qualified.startswith('proof.') and qualified not in unique:
                 issues.append(LoadingIssue('artifact_gap', qualified, 'required payload absent'))

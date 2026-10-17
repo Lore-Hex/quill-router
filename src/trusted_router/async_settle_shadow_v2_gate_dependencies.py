@@ -66,14 +66,18 @@ def file_list(raw: bytes) -> Any:
 
 
 def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: Any, stage: str, ledgers: tuple[bytes, ...] = (), *,
-                 references: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Parser]:
+                 references: dict[str, list[dict[str, Any]]] | None = None,
+                 producer_registrations: tuple[dict[str, Any], ...] = ()) -> dict[str, Parser]:
     """Follow descriptors, including page links, without checking references.
 
     The independently approved file inventory resolves missing canonical pages
     to their original paths. Present pages are also indexed by decoded digest,
     including the permitted trailing LF. Parser failures stop only that branch.
     """
-    from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_prefixes
+    from trusted_router.async_settle_shadow_v2_gate_native_accounting import (
+        accounting_prefixes,
+        accounting_root,
+    )
 
     parsers: dict[str, Parser] = {}
     decoded: dict[str, Any] = {}
@@ -182,9 +186,9 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
         if fields == set(a2.INDEPENDENT_INVENTORY.fields):
             add(node['serving'], parser=serving_roster)
             add(node['deployment'], parser=deployment_roster)
-        if node.get('format') == 'shadow-v2-live-export-a3-n' and isinstance(node.get('details'), dict):
+        if parsers.get(origin) is accounting_root and node.get('format') == 'shadow-v2-live-export-a3-n' and isinstance(node.get('details'), dict):
             from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_page
-            prefix = accounting_prefixes(files, (origin,)).get(origin, '')
+            prefix = accounting_prefixes(files, (origin,), producer_registrations).get(origin, '')
             for refs in node['details'].values():
                 for ref in refs if isinstance(refs, list) else []:
                     if isinstance(ref, dict) and set(ref) == set(a2.FILE_REF.fields):
@@ -192,7 +196,6 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             # Export-page references belong to this spool, not the graph root.
             continue
         if 'export_accounting' in node:
-            from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_root
             pages(node['export_accounting'], 'files', accounting_root)
         if fields == set(a2.SHUTDOWN_INVENTORY.fields):
             pages(node['writers'], 'shutdown_writers')

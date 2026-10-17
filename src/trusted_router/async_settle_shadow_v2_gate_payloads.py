@@ -62,6 +62,7 @@ class PayloadGraph:
     stage: str = 'pre-flip'
     parsers: dict[str, Any] = field(default_factory=dict)
     ledgers: tuple[bytes, ...] = ()
+    producer_registrations: tuple[dict[str, Any], ...] = ()
 
     def reject(self, path: str, exc: Exception) -> None:
         if isinstance(exc, PayloadError):
@@ -208,7 +209,8 @@ class PayloadGraph:
         """Apply gate-stage dependency checks before shared payload assembly."""
         from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
         references: dict[str, list[dict[str, Any]]] = {}
-        self.parsers.update(dependencies(self.files, payloads, self.ports, self.stage, self.ledgers, references=references))
+        self.parsers.update(dependencies(self.files, payloads, self.ports, self.stage, self.ledgers, references=references,
+            producer_registrations=self.producer_registrations))
         for path, parser in self.parsers.items():
             try:
                 if path not in self.files:

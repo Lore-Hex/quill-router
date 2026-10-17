@@ -708,6 +708,55 @@ def test_opaque_passes_support_has_only_byte_checks(originals: Any, tmp_path: Pa
     assert through_all(raw, ports, tmp_path)['verdict'] == 'PASS'
 
 
+@pytest.mark.parametrize('gate', ['transport', 'fleet-budgets-pre'])
+@pytest.mark.parametrize('two_files', [False, True], ids=['support-only', 'file-ref'])
+def test_opaque_registration_support_has_only_byte_checks(originals: Any, tmp_path: Path, monkeypatch: Any,
+                                                         gate: str, two_files: bool) -> None:
+    from tests import shadow_v2_gate_a3_originals as helper
+    from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies, original_bytes
+
+    original, ports, _ = originals
+    raw, ports = helper.accounted_originals(original, ports)
+    original = load(raw, ports, gate=gate)
+    support = 'ci/review/stage/producer-captures.json'
+    notes = 'ci/review/notes.json'
+    reference = helper.reference
+    detail = helper.detail
+
+    def support_reference(files: Any, path: str, body: bytes) -> Any:
+        if path == 'ci/review/workflow.yml':
+            if two_files:
+                capture = reference(files, notes, body)
+                return reference(files, support, canonical(dict(NativeExport=capture)))
+            path = support
+        return reference(files, path, body)
+
+    def support_detail(files: Any, entries: Any, stream: str) -> Any:
+        if two_files:
+            entries = sorted([*entries, reference(files, notes, files[notes])], key=lambda row: row['path'])
+        pages: dict[str, bytes] = {}
+        descriptor = detail(pages, entries, stream)
+        files.update({'review-support-' + path: body for path, body in pages.items()})
+        return descriptor
+
+    monkeypatch.setattr(helper, 'reference', support_reference)
+    monkeypatch.setattr(helper, 'detail', support_detail)
+    example = dict(passes=[dict(bundle='example.json',
+        accounting=dict(path=f'accounting/{original.days[0]}/root.json'), prefix=None, object_plan={})])
+    if not two_files:
+        example['NativeExport'] = dict(path=support)
+    for label, body in [('control', canonical(dict(source='workflow record'))), ('example', canonical(example))]:
+        raw, bound = helper.opaque_originals(original, ports, body)
+        (tmp_path / label).mkdir()
+        assert through_all(raw, bound, tmp_path / label, gate)['verdict'] == 'PASS'
+        loaded = load(raw, bound, gate=gate)
+        assert loaded.a2_streams['loading_issues'] == []
+        files = {p.name: p.raw for p in loaded.preimages}
+        parsers = dependencies(files, dict(loaded.a2_payloads), bound, 'transport', loaded.ledgers)
+        for path in (support, notes) if two_files else (support,):
+            assert parsers[path] is original_bytes
+
+
 def test_reviewed_multi_bundle_stage_and_missing_part(originals: Any, tmp_path: Path) -> None:
     from tests.shadow_v2_gate_a3_originals import captured_plan
     original, ports, _ = originals

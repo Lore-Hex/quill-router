@@ -19,30 +19,32 @@ from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
 
 
-def accounting_prefixes(files: Mapping[str, bytes], paths: Iterable[str]) -> dict[str, str]:
-    """Read NativeExport declarations only for the applicable accounting roots."""
+def accounting_prefixes(files: Mapping[str, bytes], paths: Iterable[str],
+                        registrations: Iterable[dict[str, Any]] = ()) -> dict[str, str]:
+    """Read only the producer registrations declared by this transport."""
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_loading import PayloadError
+
     applicable = set(paths)
     if not applicable:
         return {}
+
+    def read(ref: dict[str, Any]) -> Any:
+        a2.FILE_REF(ref)
+        raw = files.get(ref['path'])
+        if raw is None or len(raw) != ref['bytes'] or file_digest(raw) != ref['sha256']:
+            raise PayloadError(ref['path'], 'artifact_gap')
+        return retained_json(raw)
+
     captures = []
-    # The writer declares producer kinds in this original registration file.
-    # Other originals remain byte-only, even when they contain a passes list.
-    for path in files:
-        if path != 'stage/producer-captures.json' and not path.endswith('/stage/producer-captures.json'):
-            continue
-        try:
-            declared = retained_json(files[path])
-        except ValueError:
-            continue
-        ref = declared.get('NativeExport') if isinstance(declared, dict) else None
-        if isinstance(ref, dict) and isinstance(ref.get('path'), str) and ref['path'] in files:
-            captures.append(files[ref['path']])
+    for registration in registrations:
+        declared = read(registration)
+        require(isinstance(declared, dict), 'evidence_schema_gap')
+        if 'NativeExport' in declared:
+            captures.append(read(declared['NativeExport']))
     prefixes: dict[str, str] = {}
-    for raw in captures:
-        try:
-            capture = retained_json(raw)
-        except ValueError:
-            continue
+    for capture in captures:
         if not isinstance(capture, dict) or not isinstance(capture.get('passes'), list):
             continue
         for passed in capture['passes']:
@@ -100,7 +102,7 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
             continue
         refs = graph.detail(deployment['export_accounting'], 'files')
         require(bool(refs), 'artifact_gap')
-        prefixes = accounting_prefixes(graph.files, (ref['path'] for ref in refs))
+        prefixes = accounting_prefixes(graph.files, (ref['path'] for ref in refs), graph.producer_registrations)
         date = envelope['day']
         collector_plan = deployment.get('collector_plan', {})
         require(type(collector_plan) is dict, 'evidence_schema_gap')
