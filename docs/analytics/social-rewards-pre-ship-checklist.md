@@ -2,6 +2,23 @@
 
 Updated October 17, 2026. Production rollout remains on hold.
 
+### Compact tonal header refinement
+
+Following the brand/reference review, reduced desktop header height to 60px while
+retaining 56px on mobile. Replaced the uniform fill with a restrained gradient of
+existing forest-green brand tokens. An aria-hidden, noninteractive SVG depicts
+three smooth routes merging into one, with a single outlined node and faded ends.
+It occupies the flex space between brand and controls and is hidden at <=1100px.
+
+Visual QA caught and corrected an SVG gradient coordinate issue that hid the
+horizontal route. Inspected the corrected drawing close-up and in the complete
+1440px page, checked logo/control clearance and dropdown layering at 1120px,
+verified the motif disappears at 1024px, and inspected the 390px phone view.
+Measured header heights are 60px/56px; phone Menu retains a >44px target, with no
+horizontal overflow. The 31 browser checks and checkpoint Ruff/mypy passed.
+This is presentation-only; previously recorded full-suite and release blockers
+remain unresolved. No merge or deployment is authorized.
+
 ## October 17 PR checkpoint
 
 User authorized committing and pushing the reviewed console/onboarding work to
