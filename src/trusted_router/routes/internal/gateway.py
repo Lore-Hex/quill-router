@@ -1762,7 +1762,6 @@ def _authorize_gateway_sync_impl(
             and all(UsageType.for_endpoint(e) == UsageType.CREDITS for _m, e in endpoint_candidates),
             boot_verified=bool(boot_context["boot_verified"]),
             boot_kid=boot_auth.kid if boot_auth is not None else None,
-            idempotency_key=presented_idempotency_key,
             service_tier=body.service_tier,
             key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
             budget_strict=bool(api_key.budget_strict),
@@ -1957,7 +1956,8 @@ def _authorize_gateway_sync_impl(
             release_user_model_slot_after_error()
             raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED)
         if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
-            release_user_model_slot_after_error()
+            # The slot, and the hold a lease granted this attempt: given back.
+            release_after_error()
             raise api_error(
                 409,
                 "Idempotency key was already used for a different gateway request",
@@ -1969,8 +1969,9 @@ def _authorize_gateway_sync_impl(
         if outcome == AuthorizeOutcome.REPLAY:
             # concurrent-race replay: respond from the STORED authorization.
             # Our provisional slot belongs to the id that lost the race, not
-            # to the stored authorization — give it back.
-            release_user_model_slot_after_error()
+            # to the stored authorization — give it back; and the hold a
+            # lease granted this attempt, which the stored one does not use.
+            release_after_error()
             return _replay_response(authorization, endpoint_candidates)
         credit_reservation_id = authorization.credit_reservation_id
     else:
@@ -4987,7 +4988,6 @@ def _fastpath_admission(
     credit_funded: bool,
     boot_verified: bool,
     boot_kid: str | None,
-    idempotency_key: str | None,
     service_tier: str | None,
     key_capped: bool,
     budget_strict: bool,
@@ -5007,7 +5007,6 @@ def _fastpath_admission(
         standard_endpoint_pricing=standard_endpoint_pricing,
         credit_funded=credit_funded,
         boot_verified=boot_verified and bool(boot_kid),
-        idempotency_key=idempotency_key,
         service_tier=service_tier,
         key_capped=key_capped,
         budget_strict=budget_strict,
@@ -5106,13 +5105,23 @@ def _settle_leased_authorization(
     except Exception:
         logger.exception("fastpath pilot intent enqueue failed authorization_id=%s", authorization.id)
         raise unavailable from None
-    if enqueued == ENQ_EXISTS_TERMINAL:
-        refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
-        _release_user_model_slot_safely(refreshed)
-        return {"data": _already_settled_gateway_data(refreshed)}
     if enqueued == ENQ_LEASED:
         # A drain holds the row: it asks the front door itself.
         return {"data": _intent_durable_gateway_data(authorization, intent)}
+    # The pending intent fences the reaper (its transaction re-reads the
+    # outbox guard); this read sees a reap that committed before it. A
+    # terminal authorization answers its stored disposition and the front
+    # door is not asked: a reaped hold ends uncharged at its end of life.
+    try:
+        current = STORE.get_gateway_authorization(authorization.id)
+    except Exception:
+        logger.exception("fastpath pilot terminal read failed, left to the drain authorization_id=%s", authorization.id)
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
+    if enqueued == ENQ_EXISTS_TERMINAL or current is None or current.settled:
+        refreshed = current or authorization
+        _release_user_model_slot_safely(refreshed)
+        return {"data": _already_settled_gateway_data(refreshed)}
+    authorization = current
     try:
         decision = fastpath_settle.forward_terminal(
             _fastpath_front_door(settings), authorization, success=success, charge=charge, generation=generation,

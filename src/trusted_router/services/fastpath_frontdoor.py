@@ -387,7 +387,6 @@ def pilot_reason(
     standard_endpoint_pricing: bool,
     credit_funded: bool,
     boot_verified: bool,
-    idempotency_key: str | None,
     service_tier: str | None,
     key_capped: bool,
     budget_strict: bool,
@@ -414,8 +413,6 @@ def pilot_reason(
         return "funding"
     if not boot_verified:
         return "boot"
-    if idempotency_key:
-        return "idempotency"
     if service_tier:
         return "service_tier"
     if key_capped or budget_strict:

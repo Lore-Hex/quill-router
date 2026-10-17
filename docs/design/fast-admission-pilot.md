@@ -34,8 +34,9 @@ For an authorize in the cohort, the control plane asks a front door
 (`POST /v1/authorize` with the workspace, the authorization id as the
 request's hash, the estimate, the stream flag and the enclave boot's binding)
 and, if admitted, writes the authorization row with the sealed envelope in
-its payload and reserves nothing: no credit hold, no key hold, no
-`tr_reservation` row. The hold is the lease's. At settle or refund the control
+its payload and reserves nothing: no credit hold, no key hold; the
+`tr_reservation` row it writes holds nothing and carries only the
+idempotency scope. The hold is the lease's. At settle or refund the control
 plane prices the actual charge as today, forwards the terminal to a front
 door (`/v1/settle` with the charge, the full record and the money fields;
 `/v1/refund`), and then writes the terminal's records alone: the
@@ -68,13 +69,25 @@ at once, best effort, so it does not wait for the lease to drain.
 
 The cohort, `pilot_reason` in `services/fastpath_frontdoor.py`, is the
 design's §4.11 at its narrowest: a credit-funded key on a standard route,
-not streaming, with a verified boot, no idempotency key, no service tier,
+not streaming, with a verified boot, no service tier,
 no key cap or window (alert-only windows included), no strict budget, no
 app markup, every candidate priced in credits (a BYOK fallback books no
 credit usage, and a lease would charge it); a workspace in the pilot set;
 a control plane in a pilot region, with the settle outbox and the durable
 activity outbox on (the leased settle writes both in its own commit).
-Everything else stays on
+An idempotency key does not exclude a request: the enclave sends one on
+every authorize, and a leased authorization replays by its scope exactly
+as today's does: the leased authorize writes a `tr_reservation` row that
+holds nothing (credit 0, key 0) and carries the scope, the one unique
+index both paths claim, so a key used on today's path and then admitted,
+or the reverse, or admitted and retried with the pilot turned off, gets
+one authorization, two attempts at once conflict on that index, a retry's
+hold is given back, and a differing body is 409. The row expires as
+today's does: a leased authorization abandoned with no terminal gets
+today's lifecycle (the reaper finalizes it released, holding nothing,
+while the lease ends the hold at its end of life; a pending outbox intent
+keeps the reaper off it), and the leased finalize claims it with the
+records, so it retires with them. Everything else stays on
 today's path, as does any request the front door does not admit: `off` (the
 workspace is not on the fast path's own switch), `busy` (no lease took it),
 `invalid`, a front door that failed, or none serving. A request is never

@@ -4979,34 +4979,113 @@ class SpannerStore:
         *,
         build_authorization: Any,
         authorization_id: str | None,
+        workspace_id: str,
+        key_hash: str,
+        idempotency_key: str | None,
+        idempotency_fingerprint: str | None,
+        reservation_usage_type: str,
+        expires_at: Any,
         fastpath_envelope: str,
         fastpath_end_of_life: str | None,
         created_at: dt.datetime | None,
         window_decision: Any,
-    ) -> tuple[Any, GatewayAuthorization]:
+    ) -> tuple[Any, GatewayAuthorization | None]:
         """The pilot's authorize (docs/design/fast-admission-pilot.md): one
         transaction inserting the typed authorization row, with the lease's
-        envelope in its payload and no reservation. The pilot takes only
-        requests with no idempotency key, no key cap and a typed request
-        record, so there is no idempotency read and no hold DML here."""
+        envelope in its payload, and a reservation row that holds nothing
+        (credit 0, key 0) and carries the idempotency scope: the one scope
+        today's path claims, so a replay of the key on either path, the
+        enclave's retry after a lost answer, a client's, the pilot on or off,
+        answers the stored authorization as today's does, REPLAY or
+        IDEMPOTENCY_MISMATCH by fingerprint, and two attempts at once
+        conflict on the scope's unique index. The caller gives back the
+        hold it took for a replay. The row expires as today's does, so a
+        leased authorization abandoned with no terminal gets today's
+        lifecycle (the reaper finalizes it released, holding nothing; the
+        lease ends the hold at its end of life), while a pending outbox
+        intent keeps the reaper off it; the leased finalize claims it with
+        the records.
+        """
+        from google.api_core.exceptions import AlreadyExists
+
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome, AuthorizeVerdict
-        from trusted_router.storage_gcp_request_records import insert_gateway_authorization
+        from trusted_router.storage_gcp_batch_dml import execute_batch_dml
+        from trusted_router.storage_gcp_counter_dml import (
+            read_reservation_by_idempotency,
+            reservation_insert_statement,
+        )
+        from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
+        from trusted_router.storage_gcp_request_records import (
+            gateway_authorization_insert_statement,
+        )
 
         if self.request_record_write_mode != "typed":
             raise RuntimeError("a leased authorization needs the typed request record")
         if authorization_id is None:
             raise ValueError("a leased authorization needs its id up front")
+        scope = (
+            _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
+            if idempotency_key is not None
+            else None
+        )
+        pt = self._param_types
+
+        def replay() -> tuple[Any, GatewayAuthorization | None] | None:
+            if scope is None:
+                return None
+            with self._database.snapshot() as snapshot:
+                existing = read_reservation_by_idempotency(snapshot, pt, scope)
+            if existing is None:
+                return None
+            if existing["idempotency_fingerprint"] != idempotency_fingerprint:
+                return AuthorizeVerdict(AuthorizeOutcome.IDEMPOTENCY_MISMATCH, rate_limit=window_decision), None
+            stored = self.get_gateway_authorization(str(existing["authorization_id"]))
+            if stored is None:
+                return None
+            return AuthorizeVerdict(AuthorizeOutcome.REPLAY, rate_limit=window_decision), stored
+
+        replayed = replay()
+        if replayed is not None:
+            return replayed
         when = created_at if created_at is not None else dt.datetime.now(dt.UTC)
-        authorization = build_authorization(authorization_id, "")
-        authorization.credit_reservation_id = None
+        reservation_id = str(uuid.uuid4())
+        authorization = build_authorization(authorization_id, reservation_id)
         authorization.fastpath_envelope = fastpath_envelope
         authorization.fastpath_end_of_life = fastpath_end_of_life
         authorization.created_at = when.isoformat().replace("+00:00", "Z")
-
         def txn(transaction: Any) -> None:
-            insert_gateway_authorization(transaction, self._param_types, authorization, created_at=when)
+            statements = [
+                reservation_insert_statement(
+                    pt,
+                    reservation_id=reservation_id,
+                    workspace_id=workspace_id,
+                    key_hash=key_hash,
+                    ws_shard=UNSHARDED,
+                    credit_shard=UNSHARDED,
+                    key_shard=UNSHARDED,
+                    credit_reserved_micro=0,
+                    key_reserved_micro=0,
+                    hold_usage_type=reservation_usage_type,
+                    authorization_id=authorization_id,
+                    idempotency_scope=scope,
+                    idempotency_fingerprint=idempotency_fingerprint,
+                    expires_at=expires_at,
+                    created_at=when,
+                ),
+                gateway_authorization_insert_statement(pt, authorization, created_at=when),
+            ]
+            execute_batch_dml(transaction, statements, [(1,)] * len(statements))
 
-        run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_authorize_leased")
+        try:
+            run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_authorize_leased")
+        except AlreadyExists:
+            # The scope's row landed first (a concurrent attempt, on either
+            # path): its authorization answers, and the caller gives this
+            # hold back.
+            replayed = replay()
+            if replayed is None:
+                raise
+            return replayed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
 
     def typed_finalize_leased_result(
@@ -5034,6 +5113,7 @@ class SpannerStore:
         is not a leased one or is settled already (the caller answers the
         stored disposition)."""
         from trusted_router.storage_gcp_batch_dml import execute_batch_dml
+        from trusted_router.storage_gcp_counter_dml import claim_reservation_statement
         from trusted_router.storage_gcp_generation_records import generation_insert_statement
         from trusted_router.storage_gcp_request_records import (
             gateway_authorization_settled_statement,
@@ -5074,6 +5154,14 @@ class SpannerStore:
         def txn(transaction: Any) -> None:
             statements = [gateway_authorization_settled_statement(pt, authorization)]
             counts: list[tuple[int, ...]] = [(1,)]
+            if authorization.credit_reservation_id:
+                # The scope row, holding nothing, claimed with the records so
+                # it is terminal with them; its retention the done-mark's.
+                statements.append(claim_reservation_statement(
+                    pt, str(authorization.credit_reservation_id), actual_micro=0,
+                    settled_usage_type=str(actual_usage_type), defer_retention=True,
+                ))
+                counts.append((1,))
             if success and generation is not None:
                 if persist_generation:
                     statements.append(generation_insert_statement(pt, generation, terminal_at=now))
@@ -5489,6 +5577,12 @@ class SpannerStore:
             return self._authorize_gateway_leased(
                 build_authorization=build_authorization,
                 authorization_id=authorization_id,
+                workspace_id=workspace_id,
+                key_hash=key_hash,
+                idempotency_key=idempotency_key,
+                idempotency_fingerprint=idempotency_fingerprint,
+                reservation_usage_type=str(usage),
+                expires_at=expires_at,
                 fastpath_envelope=fastpath_envelope,
                 fastpath_end_of_life=fastpath_end_of_life,
                 created_at=created_at,

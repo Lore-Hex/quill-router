@@ -81,14 +81,15 @@ def test_a_leased_authorize_writes_the_authorization_row_and_holds_nothing() -> 
 
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert authorization is not None
-    assert authorization.credit_reservation_id is None
     assert authorization.fastpath_envelope == "sealed-1"
     assert authorization.fastpath_end_of_life == "2026-10-14T06:00:00Z"
     assert _credit_rows(db, workspace.id) == before, "no credit hold"
-    assert _reservations(db, workspace.id) == [], "no reservation row"
+    rows = _reservations(db, workspace.id)
+    assert len(rows) == 1 and rows[0]["credit_reserved_micro"] == 0 and rows[0]["key_reserved_micro"] == 0
+    assert rows[0]["authorization_id"] == authorization.id and rows[0]["settled"] is False
     stored = store.get_gateway_authorization(authorization.id)
     assert stored is not None
-    assert stored.fastpath_envelope == "sealed-1" and stored.credit_reservation_id is None
+    assert stored.fastpath_envelope == "sealed-1" and stored.credit_reservation_id == rows[0]["reservation_id"]
     assert not stored.settled
 
 
@@ -116,6 +117,92 @@ def test_a_leased_authorize_is_not_refused_by_the_unleased_headroom_check() -> N
     outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1")
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert authorization is not None and authorization.fastpath_envelope == "sealed-1"
+
+
+def test_a_scope_row_that_landed_first_answers_a_leased_authorize() -> None:
+    """Two attempts of one key, on either path: the scope's unique index
+    decides, and the loser replays the winner."""
+    store, _db = _store()
+    workspace, key = _funded_workspace(store)
+    first_outcome, first = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id="auth-reserved-1", estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="shared-key", idempotency_fingerprint="body-1",
+        skip_key_limit=True,
+    )
+    assert first_outcome == AuthorizeOutcome.ACCEPTED and first is not None and first.fastpath_envelope is None
+    outcome, replayed = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id="auth-leased-2", estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="shared-key", idempotency_fingerprint="body-1",
+        skip_key_limit=True, fastpath_envelope="sealed-2", fastpath_end_of_life="2026-10-14T06:00:00Z",
+    )
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == first.id
+    mismatch, none = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id="auth-leased-3", estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="shared-key", idempotency_fingerprint="body-2",
+        skip_key_limit=True, fastpath_envelope="sealed-3", fastpath_end_of_life="2026-10-14T06:00:00Z",
+    )
+    assert mismatch == AuthorizeOutcome.IDEMPOTENCY_MISMATCH and none is None
+
+
+def _typed_authorize(store: Any, workspace: Any, key: Any, *, authorization_id: str, fingerprint: str, envelope: str | None) -> tuple[Any, Any]:
+    return store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id=authorization_id, estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="raced-key", idempotency_fingerprint=fingerprint,
+        skip_key_limit=True, fastpath_envelope=envelope,
+        fastpath_end_of_life="2026-10-14T06:00:00Z" if envelope else None,
+    )
+
+
+def test_two_attempts_at_once_conflict_on_the_scope_and_the_loser_replays_the_winner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both attempts miss the scope on their first read (the winner has not
+    committed yet), then the winner commits: the loser's INSERT conflicts
+    on the scope's unique index and it replays the winner, on either path
+    order, with no second authorization."""
+    from trusted_router import storage_gcp_authorize, storage_gcp_counter_dml
+
+    real = storage_gcp_counter_dml.read_reservation_by_idempotency
+
+    def misses_once(counter: list[int]) -> Any:
+        def read(snapshot: Any, pt: Any, scope: str) -> Any:
+            counter[0] += 1
+            return None if counter[0] == 1 else real(snapshot, pt, scope)
+        return read
+
+    # Today's path won; the leased attempt's first read missed it.
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _o, winner = _typed_authorize(store, workspace, key, authorization_id="auth-win-1", fingerprint="body", envelope=None)
+    assert winner is not None
+    reads = [0]
+    monkeypatch.setattr(storage_gcp_counter_dml, "read_reservation_by_idempotency", misses_once(reads))
+    outcome, replayed = _typed_authorize(store, workspace, key, authorization_id="auth-lose-1", fingerprint="body", envelope="sealed")
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == winner.id
+    assert reads[0] == 2, "the first read missed, the conflict's read found the winner"
+    assert store.get_gateway_authorization("auth-lose-1") is None
+    assert len(_reservations(db, workspace.id)) == 1
+    monkeypatch.undo()
+
+    # The leased attempt won; today's path's first read missed it.
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _o, winner = _typed_authorize(store, workspace, key, authorization_id="auth-win-2", fingerprint="body", envelope="sealed")
+    assert winner is not None and winner.fastpath_envelope == "sealed"
+    reads = [0]
+    monkeypatch.setattr(storage_gcp_authorize, "read_reservation_by_idempotency", misses_once(reads))
+    outcome, replayed = _typed_authorize(store, workspace, key, authorization_id="auth-lose-2", fingerprint="body", envelope=None)
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == winner.id
+    assert store.get_gateway_authorization("auth-lose-2") is None
+    rows = _reservations(db, workspace.id)
+    assert len(rows) == 1 and rows[0]["credit_reserved_micro"] == 0
+    assert sum(row["reserved"] for row in _credit_rows(db, workspace.id)) == 0, "no hold survives the loss"
 
 
 def test_a_leased_authorize_needs_its_id_up_front() -> None:
@@ -177,7 +264,8 @@ def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
     assert db.gateway_authorizations[authorization.id]["terminal_at"] is None
     assert stored.fastpath_envelope == "sealed-1"
     assert _credit_rows(db, workspace.id) == credit_before, "the lease booked the usage, not this commit"
-    assert _reservations(db, workspace.id) == []
+    rows = _reservations(db, workspace.id)
+    assert len(rows) == 1 and rows[0]["settled"] is True and rows[0]["credit_reserved_micro"] == 0
     activity = _activity(db, workspace.id)
     assert len(activity) == 1, activity
 

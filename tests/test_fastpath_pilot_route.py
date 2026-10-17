@@ -124,16 +124,89 @@ def test_a_request_in_the_cohort_is_held_under_a_lease_and_reserves_nothing(door
     assert authorization is not None
     assert authorization.fastpath_envelope == "sealed-pilot"
     assert authorization.fastpath_end_of_life == "2026-10-14T20:00:00Z"
-    assert authorization.credit_reservation_id is None
-    assert data["credit_reservation_id"] is None
+    # The scope row holds nothing: today's idempotency scope, no hold.
+    assert authorization.credit_reservation_id is not None
+    scope_row = database.reservations[authorization.credit_reservation_id]
+    assert scope_row["credit_reserved_micro"] == 0 and scope_row["key_reserved_micro"] == 0
+    assert scope_row["authorization_id"] == authorization.id
     assert _credit(database)["reserved"] == 0
-    assert database.reservations == {}
     path, sent = door.seen[0]
     assert path == "/v1/authorize"
     assert sent["Workspace"] == WORKSPACE and sent["Request"] == authorization.id
     assert sent["Estimate"] == authorization.estimated_microdollars > 0
     assert sent["Stream"] is False
     assert sent["Boot"] == base64.b64encode(b"boot-pilot").decode()
+
+
+def test_a_leased_authorization_replays_by_its_idempotency_key_and_gives_the_second_hold_back(door: _Door) -> None:
+    """The enclave retries an authorize with the same key after a lost
+    answer, and a client may present one: the stored authorization answers,
+    no second row is written, and the hold the retry took is refunded."""
+    store, database, key = _seed()
+    for presented in ("tr-gateway-" + "ab" * 16, "client-order-42"):
+        body = _body(key.hash, idempotency_key=presented)
+        first = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+        seen_before = len(door.seen)
+        again = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+        assert again["authorization_id"] == first["authorization_id"]
+        assert again.get("idempotent_replay") is True
+        authorization = store.get_gateway_authorization(first["authorization_id"])
+        assert authorization is not None and authorization.fastpath_envelope == "sealed-pilot"
+        assert authorization.idempotency_key == presented
+        # The retry was admitted by the front door, then its hold refunded.
+        assert [path for path, _sent in door.seen[seen_before:]] == ["/v1/authorize", "/v1/refund"]
+        assert _credit(database)["reserved"] == 0
+    # A different body under a used key is a mismatch, as today, and the
+    # hold the mismatching attempt took is given back.
+    seen_before = len(door.seen)
+    with pytest.raises(Exception, match="") as caught:
+        gateway._authorize_gateway_sync(_request(), _body(key.hash, idempotency_key="client-order-42", max_output_tokens=7), _pilot())
+    assert getattr(caught.value, "status_code", None) == 409
+    assert [path for path, _sent in door.seen[seen_before:]] == ["/v1/authorize", "/v1/refund"]
+
+
+def test_one_idempotency_scope_across_both_admission_paths(door: _Door) -> None:
+    """A key first used on today's path (the front door busy) then admitted,
+    and a key first admitted then taking today's path: one authorization
+    either way."""
+    store, database, key = _seed()
+    # Today's path first: the front door is busy.
+    door.answers["/v1/authorize"] = {"Status": "busy"}
+    body = _body(key.hash, idempotency_key="reserved-first")
+    first = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert store.get_gateway_authorization(first["authorization_id"]).fastpath_envelope is None
+    door.answers["/v1/authorize"] = dict(ADMIT)
+    again = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert again["authorization_id"] == first["authorization_id"] and again.get("idempotent_replay") is True
+    assert [path for path, _sent in door.seen[-2:]] == ["/v1/authorize", "/v1/refund"]
+    # The pilot first: then the front door is busy on the retry.
+    body = _body(key.hash, idempotency_key="leased-first")
+    leased = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert store.get_gateway_authorization(leased["authorization_id"]).fastpath_envelope == "sealed-pilot"
+    door.answers["/v1/authorize"] = {"Status": "busy"}
+    reserved_before = _credit(database)["reserved"]
+    again = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    assert again["authorization_id"] == leased["authorization_id"] and again.get("idempotent_replay") is True
+    assert _credit(database)["reserved"] == reserved_before, "no second hold on today's path"
+    # And a differing body under the leased key on today's path is 409.
+    with pytest.raises(Exception, match="") as caught:
+        gateway._authorize_gateway_sync(_request(), _body(key.hash, idempotency_key="leased-first", max_output_tokens=7), _pilot())
+    assert getattr(caught.value, "status_code", None) == 409
+
+
+def test_turning_the_pilot_off_keeps_replay_protection_for_leased_keys(door: _Door) -> None:
+    store, database, key = _seed()
+    body = _body(key.hash, idempotency_key="leased-then-off")
+    leased = gateway._authorize_gateway_sync(_request(), body, _pilot())["data"]
+    reserved_before = _credit(database)["reserved"]
+    again = gateway._authorize_gateway_sync(_request(), body, _pilot(fastpath_pilot_enabled=False))["data"]
+    assert again["authorization_id"] == leased["authorization_id"] and again.get("idempotent_replay") is True
+    assert _credit(database)["reserved"] == reserved_before
+    with pytest.raises(Exception, match="") as caught:
+        gateway._authorize_gateway_sync(
+            _request(), _body(key.hash, idempotency_key="leased-then-off", max_output_tokens=7), _pilot(fastpath_pilot_enabled=False),
+        )
+    assert getattr(caught.value, "status_code", None) == 409
 
 
 @pytest.mark.parametrize(
@@ -143,10 +216,9 @@ def test_a_request_in_the_cohort_is_held_under_a_lease_and_reserves_nothing(door
         (_pilot(fastpath_pilot_workspaces="ws-other"), {}, True),
         (_pilot(fastpath_pilot_regions="europe-west4"), {}, True),
         (_pilot(), {"stream": True}, True),
-        (_pilot(), {"idempotency_key": "idem-1"}, True),
         (_pilot(), {}, False),
     ],
-    ids=["disabled", "workspace", "region", "stream", "idempotency", "no_boot"],
+    ids=["disabled", "workspace", "region", "stream", "no_boot"],
 )
 def test_a_request_outside_the_cohort_reserves_as_today(
     door: _Door, settings: Settings, body_overrides: dict[str, Any], request_boot: bool,
@@ -207,7 +279,9 @@ def test_the_settle_of_a_leased_request_goes_to_the_front_door_and_leaves_record
     assert full["authorization_id"] == authorization.id and full["kind"] == "settle"
     # No money moved here: the lease booked the usage.
     assert _credit(database) == credit_before
-    assert database.reservations == {}
+    # The scope row held nothing and is claimed with the records.
+    (scope_row,) = database.reservations.values()
+    assert scope_row["settled"] and scope_row["credit_reserved_micro"] == 0 and scope_row["key_reserved_micro"] == 0
     activity = [json.loads(row["payload"]) for row in database.operational_analytics_outbox]
     assert [(row["request_id"], row["workspace_id"]) for row in activity] == [("req-pilot", WORKSPACE)]
     assert data["settled"] is True
@@ -348,6 +422,103 @@ def test_the_intent_is_durable_before_the_front_door_is_asked(door: _Door) -> No
     assert row["status"] == "done"
     settled_row = store.get_gateway_authorization(authorized["authorization_id"])
     assert settled_row is not None and settled_row.settled
+
+
+def test_a_reap_that_lands_before_the_intent_answers_the_refund_and_asks_no_front_door(
+    door: _Door, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The settle read the leased authorization unsettled; the reaper then
+    finalized it, expired and holding nothing, before the intent was
+    enqueued. The settle answers the stored refund and forwards no charge
+    the records would never show; the drain marks its intent done."""
+    import datetime as dt
+
+    from trusted_router.services import settle_outbox_drain
+
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None
+    now = dt.datetime.now(dt.UTC)
+    database.reservations[authorization.credit_reservation_id]["expires_at"] = now - dt.timedelta(seconds=1)
+    outbox = gateway.spanner_settle_outbox()
+    reaped: list[int] = []
+
+    class _ReapFirst:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(outbox, name)
+
+        def enqueue(self, *args: Any, **kwargs: Any) -> Any:
+            reaped.append(store.reap_expired_reservations_result(now=now, limit=10).count)
+            return outbox.enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(gateway, "spanner_settle_outbox", lambda: _ReapFirst())
+    doors_before = len(door.seen)
+    data = gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())["data"]
+    assert reaped == [1], "the reaper finalized the leased authorization first"
+    assert [path for path, _sent in door.seen[doors_before:]] == [], "no charge is forwarded"
+    assert data["already_settled"] is True and data["finalization_outcome"] == "refunded"
+    reaped_row = store.get_gateway_authorization(authorization.id)
+    assert reaped_row is not None and reaped_row.finalization_outcome == "refunded"
+    assert _credit(database)["reserved"] == 0 and _credit(database)["total_usage"] == 0
+    monkeypatch.undo()
+    row = _pending_intents(database, authorization.id)[0]
+    row["next_attempt_at"] = "2020-01-01T00:00:00Z"
+    settle_outbox_drain.drain_settle_outbox(10)
+    assert len(door.seen) == doors_before
+    assert _pending_intents(database, authorization.id)[0]["status"] == "done"
+
+
+def _expiry(row: dict[str, Any]) -> Any:
+    import datetime as dt
+
+    value = row["expires_at"]
+    return value if isinstance(value, dt.datetime) else dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def test_an_abandoned_leased_authorization_is_reaped_on_todays_schedule(door: _Door) -> None:
+    """A leased authorization that never sees a terminal expires as today's
+    does: the reaper finalizes it released, holding nothing, so no unsettled
+    reservation outlives it (the resharders count those)."""
+    import datetime as dt
+
+    store, database, key = _seed()
+    leased = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/authorize"] = {"Status": "busy"}
+    control = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    leased_auth = store.get_gateway_authorization(leased["authorization_id"])
+    control_auth = store.get_gateway_authorization(control["authorization_id"])
+    assert leased_auth is not None and leased_auth.fastpath_envelope == "sealed-pilot"
+    assert control_auth is not None and control_auth.fastpath_envelope is None
+    leased_expiry = _expiry(database.reservations[leased_auth.credit_reservation_id])
+    control_expiry = _expiry(database.reservations[control_auth.credit_reservation_id])
+    assert abs(leased_expiry - control_expiry) < dt.timedelta(minutes=1)
+    after = max(leased_expiry, control_expiry) + dt.timedelta(seconds=1)
+    assert store.reap_expired_reservations_result(now=after, limit=10).count == 2
+    for authorization_id in (leased_auth.id, control_auth.id):
+        reaped = store.get_gateway_authorization(authorization_id)
+        assert reaped is not None and reaped.settled and reaped.finalization_outcome == "refunded"
+    assert not [row for row in database.reservations.values() if not row["settled"]]
+    assert _credit(database)["reserved"] == 0 and _credit(database)["total_usage"] == 0
+
+
+def test_a_pending_intent_keeps_the_reaper_off_a_leased_authorization(door: _Door) -> None:
+    """Enqueued first, the intent fences the reaper: an expired leased
+    authorization with a pending intent is left for the terminal."""
+    import datetime as dt
+
+    store, database, key = _seed()
+    door.answers["/v1/settle"] = {"Status": "recorded"}
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    data = gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())["data"]
+    assert data["disposition"] == "intent_durable"
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and not authorization.settled
+    now = dt.datetime.now(dt.UTC)
+    database.reservations[authorization.credit_reservation_id]["expires_at"] = now - dt.timedelta(seconds=1)
+    assert store.reap_expired_reservations_result(now=now, limit=10).count == 0
+    still = store.get_gateway_authorization(authorization.id)
+    assert still is not None and not still.settled
 
 
 def test_a_record_failure_after_a_decided_terminal_is_left_to_the_drain(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
