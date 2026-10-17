@@ -3941,6 +3941,17 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "home, not an inference serving region or a data-retention guarantee."
         ),
     ),
+    "meta-models": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Meta",
+        source_url="https://www.sec.gov/Archives/edgar/data/1326801/000162828026003942/meta-20251231.htm",
+        note=(
+            "Meta's verified publisher at https://huggingface.co/meta-models "
+            "publishes Muse weights. The country records Meta Platforms' "
+            "principal executive offices, not an inference serving region "
+            "or a data-retention guarantee."
+        ),
+    ),
     "meta-llama": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="Meta",

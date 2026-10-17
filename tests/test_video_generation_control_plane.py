@@ -86,6 +86,7 @@ def _authorize_video(
     idempotency_key: str = "video-test-1",
     request_fingerprint: str = "a" * 64,
     provider: str | None = None,
+    provider_order: list[str] | None = None,
     region: str | None = None,
 ) -> dict[str, object]:
     response = client.post(
@@ -100,6 +101,7 @@ def _authorize_video(
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
             **({"provider": {"only": [provider]}} if provider else {}),
+            **({"provider": {"order": provider_order}} if provider_order else {}),
             **({"region": region} if region else {}),
         },
     )
@@ -477,12 +479,20 @@ def test_video_job_prepare_rejects_mismatched_quote(
 def test_video_job_can_persist_an_authorized_fallback_route_and_exact_charge(
     client: TestClient,
     inference_key: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from trusted_router import routing
+
+    monkeypatch.setattr(
+        routing, "measured_provider_rank",
+        lambda provider, sort: 0 if provider == "venice" else 100,
+    )
     auth = _authorize_video(
         client,
         inference_key,
         quote=900_000,
         idempotency_key="video-authorized-fallback",
+        provider_order=["atlas-cloud", "venice"],
     )
     assert auth["provider"] == "atlas-cloud"
     venice = next(

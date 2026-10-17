@@ -196,6 +196,14 @@ def test_model_origin_lookup_reads_the_vendor_prefix() -> None:
     assert model_origin_for_model_id("no-such-vendor/some-model") is None
 
 
+def test_meta_models_publisher_has_the_same_origin_as_meta() -> None:
+    origin = model_origin_for_model_id("meta-models/muse-spark-open")
+    assert origin is not None
+    assert (origin.country, origin.lab_name) == (
+        MODEL_ORIGINS["meta"].country, MODEL_ORIGINS["meta"].lab_name,
+    )
+
+
 def test_chinese_origin_weights_can_be_served_by_a_non_chinese_operator() -> None:
     # The two tables answer different questions, and this is the case that
     # proves it: GLM weights are Chinese, the routed Z.ai API operator is not.
