@@ -230,8 +230,17 @@ async def test_real_writers_native_export_collect_and_pack_loader(monkeypatch, t
         # placeholder budget. Current loader loses scope here; preserve exactly.
         loaded = load(exported.transport_path.read_bytes())
         assert loaded.proof is None
-        assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
-            path='transport/container', detail="'router_writers'")]
+        assert loaded.a2_streams['loading_issues'] == [
+            {'gap': 'artifact_gap', 'path': 'proof.shutdown_inventory_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.cohort_seed_policy_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.pre_budget_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.post_budget_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.external_proofs_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.resolution_dag_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'manifest.independent_inventory_sha256', 'detail': 'artifact_gap'},
+            {'gap': 'artifact_gap', 'path': 'loading/release-plan.json', 'detail': 'artifact_gap'},
+            {'gap': 'artifact_gap', 'path': 'loading/signatures.json', 'detail': 'artifact_gap'},
+        ]
         # A3-E round 3 supplies the corrected vector for this base block.
         from tests.shadow_v2_pack_round5_vectors import corrected_result
         corrected = corrected_result('test_real_writers_native_export_collect_and_pack_loader')

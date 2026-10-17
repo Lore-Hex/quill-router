@@ -248,7 +248,17 @@ def test_r25_complete_collection_file_population(tmp_path, writer):
     actual = directory_references(tmp_path / 'out')
     assert len(costs['receipts']) == len(actual)
     assert {r['object']['path'] for r in costs['receipts']} == {r['path'] for r in actual}
-    assert len([r for r in actual if r['path'].startswith('gate/')]) == 8
+    gate_files = [r for r in actual if r['path'].startswith('gate/')]
+    assert len(gate_files) == 8
+    # The declaration rides in the report, so there is no separate metadata file.
+    transport = json.loads((tmp_path / 'out/stage/transport.json').read_bytes())
+    declaration = canonical(transport['producer_registrations'])
+    bodies = [(tmp_path / 'out' / r['path']).read_bytes() for r in gate_files]
+    assert declaration not in bodies
+    reports = [value for body in bodies for value in [json.loads(body)]
+               if isinstance(value, dict) and 'failure_counts' in value]
+    assert len(reports) == 1
+    assert reports[0]['producer_registrations'] == transport['producer_registrations']
     assert DAY + '/manifest-v2.json' in {r['path'] for r in actual}
     assert json.loads((tmp_path / result['output_record']['path']).read_bytes()) == costs
 

@@ -5,10 +5,12 @@ import math
 from fractions import Fraction
 from typing import Any
 
+from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a1_health as h
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_bundle import Context, subject
 from trusted_router.async_settle_shadow_v2_gate_inputs import Boot, Rate
+from trusted_router.async_settle_shadow_v2_gate_loading import error_detail
 from trusted_router.async_settle_shadow_v2_gate_result import Peak, Subject
 from trusted_router.async_settle_shadow_v2_gate_verifiers import invoke_retained
 from trusted_router.async_settle_shadow_v2_schema import day_at, require, sha256
@@ -93,7 +95,7 @@ def observer_health(ctx: Context) -> None:
         try:
             h.validate_publisher_traces(counter['publisher'], entries, day=counter['day'], boot=counter['boot'], first_slot=first, last_slot=last)
         except ValueError as exc:
-            ctx.issue('publisher_accounting_gap' if str(exc) in ('publisher_accounting_gap', 'a1-publisher-conservation') else 'publisher_trace_gap', str(exc), sub)
+            ctx.issue('publisher_accounting_gap' if error_detail(exc) in ('publisher_accounting_gap', 'a1-publisher-conservation') else 'publisher_trace_gap', error_detail(exc), sub)
         pub = counter['publisher']
         failed = pub['failures'] + pub['missed_slots']
         streak = peak = 0
@@ -154,8 +156,8 @@ def observer_health(ctx: Context) -> None:
                 h.validate_publication(claim, body)
                 require(prediction['health_slot'] == body['slot'], 'health_slot_gap')
             except ValueError as exc:
-                ctx.issue('health_slot_gap' if str(exc) == 'health_slot_gap' else 'publisher_trace_gap', str(exc),
-                          sub if str(exc) == 'health_slot_gap' else Subject(trace['day'], trace['boot']))
+                ctx.issue('health_slot_gap' if error_detail(exc) == 'health_slot_gap' else 'publisher_trace_gap', error_detail(exc),
+                          sub if error_detail(exc) == 'health_slot_gap' else Subject(trace['day'], trace['boot']))
     # Every scheduled fleet slot needs an actual winner, independent of reader success.
     by_slot: dict[int, list[dict[str, Any]]] = {}
     for trace in traces:
@@ -193,7 +195,7 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
             if peak.simultaneous > cap:
                 ctx.issue('simultaneous_capacity_gap', 'simultaneous cap exceeded', Subject(object_id=peak.region))
     except ValueError as exc:
-        ctx.issue('simultaneous_capacity_gap', str(exc))
+        ctx.issue('simultaneous_capacity_gap', error_detail(exc))
     maxima = budget.component_seconds
     if (set(maxima) != set(COMPONENT_BOUNDS) or any(not math.isfinite(v) or not 0 <= v <= COMPONENT_BOUNDS[k] for k, v in maxima.items() if k in COMPONENT_BOUNDS)
             or sum(maxima.get(k, math.inf) for k in ('publisher_period', 'publisher_jitter', 'publication', 'poll_period', 'poll_jitter', 'install')) > 4.25
@@ -253,6 +255,13 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
     actual_bytes += sum(len(p.raw) for p in ctx.bundle.preimages)
     actual_ops = (actual_ops + budget.export_root_writes) * budget.export_passes
     actual_bytes = (actual_bytes + budget.export_write_bytes) * budget.export_passes
+    accounting = ctx.bundle.a2_streams.get('export_accounting', [])
+    if accounting:
+        # Every declared pass contributes its actual calls, including reruns.
+        native_records = sum(max(p['source_records'] for p in accounting if p['day'] == day)
+                             for day in {p['day'] for p in accounting})
+        actual_ops += sum(p['native_rpcs'] for p in accounting) - native_records * budget.export_passes
+        actual_bytes = max(actual_bytes, sum(p['body_bytes'] for p in accounting) + budget.export_write_bytes)
     invalid_export = (budget.export_passes < 1 or budget.export_root_writes < 0
         or not 0 <= budget.export_write_bytes <= 262144 * budget.export_root_writes
         or not 0 <= budget.cleanup_seconds <= 30
@@ -262,8 +271,30 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
     if invalid_export or actual_ops > budget.export_operations or actual_bytes > budget.export_bytes:
         ctx.issue('evidence_export_budget_gap', 'bounded export exceeds approved finite total')
     closes = len(ctx.kind(p1.KINDS[4]))
-    if budget.close_transactions < 2 * closes or budget.close_rows < 7 * closes or budget.close_elapsed_us > 2000000 or budget.handoff_elapsed_us > 2000000 or budget.close_elapsed_us + budget.handoff_elapsed_us > min(4000000, budget.grace_us):
+    if budget.close_transactions < 2 * closes or budget.close_rows < 7 * closes or budget.close_elapsed_us > 2000000 or budget.handoff_elapsed_us > 2000000:
         ctx.issue('close_handoff_budget_gap', 'separate final/close-result transaction budget')
+    shutdown = ctx.bundle.shutdown
+    if shutdown is not None:
+        entries = {(s['day'], s['boot']): s for s in shutdown.entries}
+        originals = {(s['day'], s['boot']): s for s in ctx.kind(a1.KINDS[-1])}
+        for measured in shutdown.measurements:
+            close, result, final = (measured[k] for k in ('close_us', 'result_us', 'final_pass_us'))
+            entry = entries[measured['day'], measured['boot']]
+            grace = entry['grace_us'] if entry['termination_applies'] else measured['grace_us']
+            original = originals.get((measured['day'], measured['boot']))
+            remaining_ok = True
+            if entry['close_result'] is not None:
+                remaining_ok = original is not None and (original['shutdown_remaining_us'] is not None
+                    or not (entry['termination_applies'] or entry['reason'] == 'shutdown'))
+                if original is not None and original['shutdown_remaining_us'] is not None:
+                    # Captured at original-attempt start: preparation and wait
+                    # are already spent. The following result is still due.
+                    remaining_ok = max(close, original['elapsed_us']) + result <= original['shutdown_remaining_us']
+            if not (remaining_ok and 0 <= close <= 2000000 and 0 <= result <= 2000000
+                    and close + result <= final <= 4000000
+                    and measured['preparation_us'] + measured['export_wait_us'] + final <= min(grace, 9000000)):
+                ctx.issue('close_handoff_budget_gap', 'per-measurement final pass and remaining grace',
+                    Subject(day=measured['day'], boot=measured['boot']))
     compare_peak_limits(ctx, peaks)
     return peaks
 

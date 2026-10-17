@@ -10,8 +10,8 @@ from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_contract as contract
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_bundle import Context, subject
+from trusted_router.async_settle_shadow_v2_gate_loading import error_detail
 from trusted_router.async_settle_shadow_v2_gate_result import Dimensions, Subject
-from trusted_router.async_settle_shadow_v2_gate_verifiers import invoke
 from trusted_router.async_settle_shadow_v2_schema import day_at, require, sha256
 from trusted_router.detached_jws import canonical
 
@@ -25,7 +25,7 @@ def deployment(ctx: Context) -> None:
         return
     if len({b.boot for b in inv.boots}) != len(inv.boots):
         ctx.issue('writer_roster_gap', 'duplicate independent boot')
-    manifests = {v['day']: v for v in ctx.kind(p1.KINDS[5]) if 'router_writers' in v}
+    manifests = {v['day']: v for v in ctx.manifests() if 'router_writers' in v}
     counters = {(v['day'], v['boot']): v for v in ctx.kind(p1.KINDS[3])}
     closures = {(v['day'], v['boot']): v for v in ctx.kind(p1.KINDS[4])}
     expected: set[tuple[str, str]] = set()
@@ -178,7 +178,7 @@ def receipt_accounting(ctx: Context) -> None:
                 require(decision.eligibility == event['eligibility'] and decision.eligibility != 'unknown', 'authorization_link_gap')
                 require(all(getattr(decision, k) == event['decision'][k] for k in ('reason', 'facts_sha256', 'candidate_set_sha256')), 'authorization_link_gap')
             except ValueError as exc:
-                ctx.issue('authorization_link_gap', str(exc), subject(page, event['seq']))
+                ctx.issue('authorization_link_gap', error_detail(exc), subject(page, event['seq']))
 
 
 def authorization(ctx: Context) -> None:
@@ -212,15 +212,15 @@ def authorization(ctx: Context) -> None:
                     joins.validate_terminal_join(obligation, page, tp, locator, **options)
                     valid.append(locator)
                 except ValueError as exc:
-                    gap = str(exc) if str(exc) in ('authorization_link_gap', 'authorization_terminal_conflict', 'authorization_horizon_gap') else 'authorization_link_gap'
-                    ctx.issue(gap, str(exc), sub, (tp['day'] + '/' + tp['boot'] + '/' + terminal['seq'],))
+                    gap = error_detail(exc) if error_detail(exc) in ('authorization_link_gap', 'authorization_terminal_conflict', 'authorization_horizon_gap') else 'authorization_link_gap'
+                    ctx.issue(gap, error_detail(exc), sub, (tp['day'] + '/' + tp['boot'] + '/' + terminal['seq'],))
             if valid:
                 obligation = {**obligation, 'status': 'terminal_reconciled', 'terminal_reference': valid[0]}
             if matches and matches[0] != obligation:
                 ctx.issue('authorization_obligation_gap', 'report projection differs from actual terminal join', sub)
             ctx.obligations.append(obligation)
         except ValueError as exc:
-            ctx.issue('authorization_link_gap', str(exc), sub)
+            ctx.issue('authorization_link_gap', error_detail(exc), sub)
     extras = [o for o in supplied if o['original_receipt'] not in expected_locs]
     for o in extras:
         ctx.issue('authorization_obligation_gap', 'unreferenced obligation', subject(o['original_receipt']))
@@ -229,7 +229,7 @@ def authorization(ctx: Context) -> None:
         try:
             joins.obligation_projection(closure, own)
         except ValueError as exc:
-            ctx.issue('authorization_obligation_gap', str(exc), subject(closure))
+            ctx.issue('authorization_obligation_gap', error_detail(exc), subject(closure))
 
 
 def durability(ctx: Context) -> None:
@@ -262,7 +262,7 @@ def durability(ctx: Context) -> None:
                 a1.sealed_closure(result, closure, counter, lifecycle={boot.boot: dict(revision=boot.revision, region=boot.region,
                     lifetime=dict(start_us=boot.start_us, end_us=boot.end_us))}, termination_applies=boot.termination_applies)
             except ValueError as exc:
-                ctx.issue('writer_closure_gap' if str(exc) == 'writer_closure_gap' else 'close_result_identity_gap', str(exc), sub)
+                ctx.issue('writer_closure_gap' if error_detail(exc) == 'writer_closure_gap' else 'close_result_identity_gap', error_detail(exc), sub)
         handoffs = [h for h in ctx.attached('handoff_accounting') if all(h[k] == counter[k] for k in ('day', 'boot'))]
         if len(handoffs) != 1 or result is None or handoffs[0]['result_sha256'] != sha256(result) or not handoffs[0]['landed']:
             ctx.issue('handoff_coverage_gap', 'missing conservative handoff accounting', sub)
@@ -280,13 +280,7 @@ def durability(ctx: Context) -> None:
             if event['phase'] == 'completion':
                 joins.validate_completion(op, joins.event_locator(op, oe['seq']), page, joins.event_locator(page, event['seq']))
             elif event['phase'] != 'replay':
-                key = event['authorization_day'] + '/' + event['authorization_id']
-                signature = next((s for s in ctx.bundle.signatures if s.object_id == key), None)
-                if event['proof_kind'] != 'certificate':
-                    require(signature is not None and ctx.ports is not None, 'retry_original_gap')
-                    assert signature is not None and ctx.ports is not None
-                    invoke(ctx, 'binding', signature.token, signature.keys, event['receipt_at_us'] // 1000000)
                 require(oe['phase'] == event['phase'] and oe['receipt_at_us'] <= event['event_at_us'] and
-                    all(oe[k] == event[k] for k in ('identity', 'decision', 'dimensions', 'payload_sha256', 'certificate_sha256', 'proof_kind')), 'retry_original_gap')
+                    all(oe[k] == event[k] for k in ('identity', 'decision', 'dimensions', 'payload_sha256', 'certificate_sha256', 'proof_kind', 'partition', 'eligibility', 'comparison', 'booking')), 'retry_original_gap')
         except ValueError as exc:
-            ctx.issue('retry_original_gap', str(exc), subject(page, event['seq']))
+            ctx.issue('retry_original_gap', error_detail(exc), subject(page, event['seq']))

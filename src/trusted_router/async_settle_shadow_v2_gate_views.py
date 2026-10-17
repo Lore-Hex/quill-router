@@ -70,6 +70,9 @@ def budget_view(graph: PayloadGraph, payloads: dict[str, dict[str, Any]],
                 <= envelope['approval']['reviewed_at_us'], 'evidence_schema_gap')
     pre_input, pre_result = delegate(graph, pre['retained'], pre['output'])
     post_input, post_result = delegate(graph, post['retained'], post['output'])
+    if graph.stage == 'fleet-budgets-pre':
+        from trusted_router.async_settle_shadow_v2_gate_scopes import qualification
+        qualification(graph, payloads, pre_input, pre_result)
     # CLI completion is not part of the Python return. Verify every other byte
     # of this original completed artifact against the recomputed pre result.
     completed_ref = post_input['pre_enable']
@@ -151,7 +154,8 @@ def budget_view(graph: PayloadGraph, payloads: dict[str, dict[str, Any]],
     require(graph.limits['pre'] == limits, 'evidence_schema_gap')
     require({r['region'] for r in limits['regions']} == set(caps), 'evidence_schema_gap')
     policy = payloads['proof.cohort_seed_policy_sha256']
-    require(set(policy['required_regions']) == {b.region for b in inventory.boots if b.role == 'router'}, 'evidence_schema_gap')
+    from trusted_router.async_settle_shadow_v2_gate_controls import traffic_regions
+    traffic_regions(rows, inventory, policy)
     extra_fields: dict[str, Any] = {k: measured[k] for k in TOTALS}
     extra_fields.update({k: rational(measured[k]) for k in ALLOWANCES})
     return Budget(pre_input=pre_input, regional_caps=caps, fleet_cap=sum(caps.values()),
@@ -164,8 +168,8 @@ def budget_view(graph: PayloadGraph, payloads: dict[str, dict[str, Any]],
         rates=tuple(rates), pre_completed_us=before, post_completed_us=post['approval']['reviewed_at_us'],
         pre_digest=sha256(pre), post_pre_digest=post['pre_envelope_sha256'],
         post_workspace_count=post_input['workspace_count'], post_regional_caps=post_input['maximum_router_instances_by_region'],
-        close_elapsed_us=max(s['final_pass_us'] for s in shutdown),
-        handoff_elapsed_us=max(s['result_us'] + s['export_wait_us'] + s['preparation_us'] for s in shutdown),
+        close_elapsed_us=max(s['close_us'] for s in shutdown),
+        handoff_elapsed_us=max(s['result_us'] for s in shutdown),
         grace_us=min(s['grace_us'] for s in shutdown),
         load_segments=tuple(segments), peak_limits=dict(graph.limits),
         projected_load_segments=tuple(graph.detail(pre['v2_load']['segments'], 'segments')), **extra_fields)
@@ -175,21 +179,28 @@ def external_view(graph: PayloadGraph, value: dict[str, Any]) -> External:
     ports = graph.ports
     require(isinstance(ports, LoadingPorts) and ports.release is not None, 'artifact_gap')
     assert isinstance(ports, LoadingPorts) and ports.release is not None
-    required = tuple(sorted(set(EXTERNAL_REQUIRED) | set(ports.release.required)))
+    from trusted_router.async_settle_shadow_v2_gate_policy import REQUIRED, closure, validate_policy
+    validate_policy(ports.release.required, dict(ports.release.required_stages), dict(ports.release.criteria))
+    stages = closure(graph.stage)
+    required = tuple(sorted({name for stage in stages for name in REQUIRED[stage]}
+        | {name for stage in stages for name in ports.release.required_stages.get(stage, ())}))
     proofs = []
     for item in value['requirements']:
+        if item['stage'] not in stages:
+            continue
         raw = graph.file(item['evidence'])
         proof = graph.object(item['evidence'], a2.PROOF_RESULT)
         from trusted_router.async_settle_shadow_v2_gate_release import validate_proof
-        validate_proof(graph, proof)
+        validate_proof(graph, proof, item['stage'])
         proofs.append(ExternalProof(item['name'], item['router_revision'], item['enclave_revision'],
             raw, item['evidence']['sha256'], all(c['result'] == 'pass' for c in proof['checks']), item['stage']))
-    require(set(required) <= {p.name for p in proofs}, 'artifact_gap')
+    require(all(any(p.name == name and p.stage == stage for p in proofs)
+        for stage in stages for name in ports.release.required_stages.get(stage, ())), 'artifact_gap')
     scoped = ports.release.required_stages
     require(not scoped or set(required) <= {name for names in scoped.values() for name in names}, 'artifact_gap')
     pilot_input = None
     pilot_result: dict[str, Any] = {}
-    if value['pilot'] is not None:
+    if value['pilot'] is not None and graph.stage in ('pre-flip', 'post-flip'):
         pilot_input, pilot_result = delegate(graph, value['pilot'])
     checks = pilot_result.get('checklist', {})
     return External(tuple(proofs), required, checks.get('measured_drain') == 'PASS',
@@ -206,8 +217,8 @@ def reset_view(graph: PayloadGraph, value: dict[str, Any], inventory: Inventory 
     require(inventory is not None, 'artifact_gap')
     assert inventory is not None
     serving = sorted([[b.start_us, b.end_us or graph.completed_at_us, b.revision] for b in inventory.boots if b.role == 'router'])
-    manifests = {m['day']: {'router_revisions': m['revisions']['router']} for m in
-        (a1.MANIFEST.parse(row.raw) for row in rows if row.key.kind == p1.KINDS[5])}
+    from trusted_router.async_settle_shadow_v2_gate_controls import manifests as select_manifests
+    manifests = {m['day']: {'router_revisions': m['revisions']['router']} for m in select_manifests(rows)}
     require(sorted(payload['serving']) == serving and payload['manifests'] == manifests
             and sorted(payload['days']) == sorted(manifests), 'evidence_schema_gap')
     history = graph.detail(value['history'], 'reset_history')
@@ -234,16 +245,12 @@ def reset_view(graph: PayloadGraph, value: dict[str, Any], inventory: Inventory 
 
 
 def signature_views(graph: PayloadGraph, rows: tuple[Row, ...]) -> tuple[Any, ...]:
-    """Ephemeral original tokens, with keys selected only from approved ports.
-
-    Frozen Bundle transport has no signature field. This named companion file
-    supplies material for the existing verifier; it creates no second verifier.
-    """
+    """Optional certificate material; D1 compared samples retain no tokens."""
     from trusted_router.async_settle_shadow_v2_gate_inputs import Signature
     path = 'loading/signatures.json'
     raw = graph.files.get(path)
-    require(raw is not None, 'artifact_gap')
-    assert raw is not None
+    if raw is None:
+        raw = b'[]'
     values = retained_json(raw)
     require(type(values) is list and len(values) <= 10000, 'evidence_schema_gap')
     ports = graph.ports
@@ -264,11 +271,12 @@ def signature_views(graph: PayloadGraph, rows: tuple[Row, ...]) -> tuple[Any, ..
         result.append(Signature(value['object_id'], value['token'], approvals[0].keys, value['now'],
             value['expected'], value['attempt'], value['server_attempt'], value['claims']))
         seen.add(value['object_id'])
-    expected = {r.key.id for r in rows if r.key.kind == p1.KINDS[0]}
+    expected: set[str] = set()
     for row in rows:
         if row.key.kind == p1.KINDS[2]:
             page = a1.validate_row(row.key.kind, row.key.id, row.raw)
             expected.update(e['authorization_day'] + '/' + e['authorization_id'] for e in page['events']
                 if e.get('proof_kind') == 'certificate')
-    require(expected == seen, 'artifact_gap')
+    # Legacy supplied binding material is inventoried but never required or invoked.
+    require(expected == {v['object_id'] for v in values if v['verifier'] == 'certificate'}, 'artifact_gap')
     return tuple(result)

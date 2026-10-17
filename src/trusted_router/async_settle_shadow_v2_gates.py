@@ -76,7 +76,7 @@ def resets(ctx: Context) -> tuple[int, ...]:
         history.extend(legacy['resets'])
         serving = [(b.start_us, b.end_us or ctx.bundle.completed_at_us, b.revision)
                    for b in ctx.bundle.inventory.boots] if ctx.bundle.inventory else []
-        manifests = {m['day']: {'router_revisions': m['revisions']['router']} for m in ctx.kind(p1.KINDS[5]) if 'revisions' in m}
+        manifests = {m['day']: {'router_revisions': m['revisions']['router']} for m in ctx.manifests() if 'revisions' in m}
         invoke_retained(ctx, 'collect_rollbacks', history, serving, support.proof.get('resolved_mismatches', []), manifests)
     except (ValueError, KeyError, TypeError):
         ctx.issue('missing_support', 'invalid retained reset/resolution evidence')
@@ -115,13 +115,14 @@ def external(ctx: Context) -> None:
         ctx.issue('external_proofs_missing', 'decoded external proofs absent')
         ctx.issue('pilot_prerequisite_gap', 'pilot proof absent')
         return
-    stages = ('transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip')
+    from trusted_router.async_settle_shadow_v2_gate_policy import closure
+    stages = closure(ctx.gate)
     requirements = supplied.required_stages or {ctx.gate: supplied.required}
     identities = [(p.stage or ctx.gate, p.name) for p in supplied.proofs]
     if len(identities) != len(set(identities)):
         ctx.issue('external_proofs_missing', 'duplicate stage/proof identity')
     for stage, required in requirements.items():
-        if stage not in stages or stages.index(stage) > stages.index(ctx.gate):
+        if stage not in stages:
             continue
         for name in required:
             matches = [p for p in supplied.proofs if p.name == name and (p.stage or ctx.gate) == stage]
@@ -138,7 +139,7 @@ def external(ctx: Context) -> None:
             require(invoke_retained(ctx, 'post_flip', supplied.post_input)['status'] == 'PASS', 'pilot_prerequisite_gap')
         except (ValueError, KeyError, TypeError, OSError):
             ctx.issue('pilot_prerequisite_gap', 'retained post-flip status/rollback/handoff failed')
-    elif not all((supplied.drain_selected, supplied.signer_checked, supplied.attestation_checked, supplied.exposure_accepted)):
+    elif ctx.gate == 'pre-flip' and not all((supplied.drain_selected, supplied.signer_checked, supplied.attestation_checked, supplied.exposure_accepted)):
         ctx.issue('pilot_prerequisite_gap', 'selected drain/signer/attestation/exposure incomplete')
 
 
@@ -148,7 +149,7 @@ def clock(ctx: Context, reset_times: tuple[int, ...]) -> tuple[int | None, int |
     blocked_days = {i.subject.day for i in ctx.issues if i.subject.day is not None}
     gap_times: list[int] = []
     intervals = []
-    for manifest in ctx.kind(p1.KINDS[5]):
+    for manifest in ctx.manifests():
         if 'router_writers' not in manifest or manifest['day'] not in ctx.bundle.days:
             continue
         for gap in manifest['gaps']:
@@ -158,7 +159,7 @@ def clock(ctx: Context, reset_times: tuple[int, ...]) -> tuple[int | None, int |
                 blocked_days.add(day_at(at * 86400000000))
         if not manifest['complete']:
             blocked_days.add(manifest['day'])
-    for manifest in ctx.kind(p1.KINDS[5]):
+    for manifest in ctx.manifests():
         if 'router_writers' not in manifest or manifest['day'] not in ctx.bundle.days or manifest['day'] in blocked_days:
             continue
         day_start = (dt.date.fromisoformat(manifest['day']) - dt.date(1970, 1, 1)).days * 86400000000
@@ -211,6 +212,9 @@ def clock(ctx: Context, reset_times: tuple[int, ...]) -> tuple[int | None, int |
                          if event['phase'] in ('authorize', 'replay', 'settle', 'refund')}
         regions = {b.region for b in ctx.bundle.inventory.boots
                    if b.role == 'router' and b.boot in traffic_boots} if ctx.bundle.inventory else set()
+        policy = ctx.bundle.a2_payloads.get('proof.cohort_seed_policy_sha256')
+        if policy is not None:
+            regions.update(policy['required_regions'])
         seeded = {s['deployment']['region'] for s in candidates if start is not None and start <= s['observed_at_us'] <= (end or start)}
         for region in sorted(regions - seeded):
             ctx.issue('regional_seed_gap', 'region has no real seed', Subject(object_id=region))
@@ -280,20 +284,34 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
         # is an original scope bound, never a fabricated zero or gate success.
         bundle = replace(bundle, completed_at_us=observation_scope['end_us'])
         ctx.bundle = bundle
-    needed = ('inventory', 'cohort', 'budget') if gate == 'fleet-budgets-pre' else ('inventory', 'cohort', 'budget', 'external', 'reset_support')
+    selected = STAGES[gate]
+    needed = ['inventory', 'cohort', 'external']
+    if 'G7' in selected:
+        needed.append('budget')
+    if 'G9' in selected:
+        needed.append('reset_support')
     for name in needed:
         if getattr(bundle, name) is None:
             ctx.issue('artifact_gap', 'undefined preimage: ' + name, Subject(object_id=name))
-    # Collect independent predicates even after prior failures; no early verdict.
-    for collect in (coverage_issues, verify_samples, deployment, receipt_accounting, authorization, observer_health, durability):
+    from trusted_router.async_settle_shadow_v2_gate_verifiers import check_ports
+    check_ports(ctx)
+    # G1 still validates all original schemas and the complete frozen graph.
+    collectors = ((('G1',), coverage_issues), (('G5',), verify_samples), (('G2',), deployment),
+        (('G4', 'G5'), receipt_accounting), (('G3',), authorization),
+        (('G6',), observer_health), (('G8',), durability))
+    for rules, collect in collectors:
+        if not set(rules).intersection(selected):
+            continue
         try:
             collect(ctx)
-        except (ValueError, KeyError, TypeError, OverflowError) as exc:
-            ctx.issue('evidence_schema_gap', collect.__name__ + ': ' + type(exc).__name__)
-    check_calls(ctx)
-    peaks = load_budgets(ctx)
-    reset_times = resets(ctx)
-    external(ctx)
+        except (ValueError, KeyError, TypeError, OverflowError):
+            ctx.issue('evidence_schema_gap', collect.__name__ + ': invalid evidence')
+    if 'G5' in selected:
+        check_calls(ctx)
+    peaks = load_budgets(ctx) if 'G7' in selected else ()
+    reset_times = resets(ctx) if 'G9' in selected else ()
+    if 'G11' in selected:
+        external(ctx)
     start, elapsed, gap_times = clock(ctx, reset_times)
     selected = STAGES[gate]
     window = None

@@ -48,8 +48,14 @@ def delegate(graph: PayloadGraph, envelope: dict[str, Any],
     require(file_digest(record.source) == record.source_pin, 'artifact_gap')
     dependencies = graph.detail(envelope['dependencies'], 'files')
     files = {ref['path']: graph.file(ref) for ref in dependencies}
-    payload = retained_json(graph.file(envelope['payload']))
-    result = ports.retained(entry, payload, files)
+    from trusted_router.async_settle_shadow_v2_gate_loading import PayloadError
+    try:
+        payload = retained_json(graph.file(envelope['payload']))
+        result = ports.retained(entry, payload, files)
+    except PayloadError:
+        raise
+    except (ValueError, KeyError, TypeError) as exc:
+        raise PayloadError(envelope['payload']['path'], 'evidence_schema_gap') from exc
     require(result.calls.get(entry, 0) >= 1 and set(result.opened) <= files.keys(), 'evidence_schema_gap')
     if entry == 'shadow_report.collect_rollbacks':
         require(result.calls.get('shadow_report.report', 0) >= 1, 'evidence_schema_gap')
@@ -58,9 +64,12 @@ def delegate(graph: PayloadGraph, envelope: dict[str, Any],
     if output is None:
         path = capture_path(envelope['payload']['sha256'])
         raw = graph.files.get(path)
-        require(raw is not None, 'artifact_gap')
-        assert raw is not None
-        capture = RETAINED_OUTPUT.parse(raw)
+        if raw is None:
+            raise PayloadError(path, 'artifact_gap')
+        try:
+            capture = RETAINED_OUTPUT.parse(raw)
+        except ValueError as exc:
+            raise PayloadError(path, 'evidence_schema_gap') from exc
         require(capture['entry_point'] == entry and capture['payload_sha256'] == envelope['payload']['sha256'], 'evidence_schema_gap')
         output = capture['output']
     # Canonical function outputs, no invented CLI completion timestamp.

@@ -15,7 +15,6 @@ from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a2_contract as contract
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
-from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_inputs import (
     Bundle,
     Key,
@@ -114,11 +113,19 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     )
     prior_release = decode_release_plan(plan_raw, roots.file_digest(plan_raw))
     prior_ports = replace(ctx.ports, release=prior_release, measurements=measurement_parsers(prior_release))
-    graph = PayloadGraph(inventory, report['completed_at_us'], ports=prior_ports)
+    registrations = (tuple(report['producer_registrations'])
+                     if 'producer_registrations' in report else None)
+    graph = PayloadGraph(inventory, report['completed_at_us'], ports=prior_ports, stage=report['gate'],
+                         producer_registrations=registrations)
     payloads = {path: contract._object_bytes(raw, contract.OBJECT_PREIMAGES[qualified])
         for path, raw in inventory.items()
         if (qualified := path.split('/', 1)[-1] if '/manifest.' in path else path) in contract.OBJECT_PREIMAGES}
+    from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+    from trusted_router.async_settle_shadow_v2_gate_native_accounting import select_registrations
     from trusted_router.async_settle_shadow_v2_gate_release import release_checks
+    roles = dependencies(inventory, payloads, prior_ports, 'post-flip', producer_registrations=(), _roles_only=True)
+    registrations = select_registrations(inventory, roles, registrations)
+    graph.producer_registrations = registrations
     release_checks(graph, payloads)
     graph.detail(payloads['proof.post_budget_sha256']['v2_load']['segments'], 'segments')
     # Release files are live trusted checkout inputs even on a cache hit.
@@ -126,9 +133,11 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     require(prior_ports.read_release_file is not None, 'artifact_gap')
     assert prior_ports.read_release_file is not None
     release_bytes = tuple((field, prior_ports.read_release_file(path)) for field, path in RELEASE_FILES.items())
+    from trusted_router.async_settle_shadow_v2_gate_release import TERMINAL_SOURCES
+    terminal_sources = tuple((path, prior_ports.read_release_file(path)) for path in TERMINAL_SOURCES)
     for field, raw in release_bytes:
         require(roots.file_digest(raw) == proof[field.split('.')[1]] == prior_ports.approved_files.get(field), 'artifact_gap')
-    current_config = tuple(sorted((m['config_sha256'], m['fixture_sha256']) for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m))
+    current_config = tuple(sorted((m['config_sha256'], m['fixture_sha256']) for m in ctx.manifests() if 'router_writers' in m))
     from dataclasses import fields
 
     from trusted_router.async_settle_shadow_v2_gate_loader import load
@@ -144,7 +153,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
         for value in (getattr(prior_ports, field.name),))
     cache_key = (name, output['coverage_sha256'],
         tuple(sorted((path, roots.file_digest(raw)) for path, raw in inventory.items())),
-        tuple((field, roots.file_digest(raw)) for field, raw in release_bytes), current_config,
+        tuple((field, roots.file_digest(raw)) for field, raw in (*release_bytes, *terminal_sources)), current_config,
         tuple((a.entry_point, a.function, roots.file_digest(a.source), roots.file_digest(a.fixture),
                roots.file_digest(a.keyset), a.keys, a.source_pin, a.fixture_pin) for a in prior_ports.approvals),
         trusted, contract.validate_preimages, contract.validate_gate_output, Schema.parse, Schema._validate,
@@ -174,7 +183,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
         previous = matches[0]
         ordered.append(original(previous))
     bundle = Bundle(rows=tuple(rows), attachments=tuple(attachments), proof=proof_raw,
-        ledgers=tuple(ordered), inventory=boots, days=tuple(report['days']),
+        ledgers=tuple(ordered), inventory=boots, days=tuple(report['days']), producer_registrations=registrations,
         completed_at_us=report['completed_at_us'], preimages=tuple(Preimage(k, v) for k, v in inventory.items()),
         transport=inventory.get('prior-gates/transport'), pre=inventory.get('prior-gates/pre'),
         fleet=inventory.get('prior-gates/fleet'), serving=inventory.get('prior-gates/serving'))
@@ -186,13 +195,13 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     verify_release_file_preimages(prior)
     ledger_preimages(prior)
     require(not prior.issues, 'artifact_gap')
-    manifests = prior.kind(p1.KINDS[5])
+    manifests = prior.manifests()
     require({m['day'] for m in manifests} == set(report['days']), 'artifact_gap')
     for manifest in manifests:
         artifacts, inputs = preimages(prior, manifest)
         contract.validate_preimages(manifest, proof, artifacts=artifacts, roots=inputs)
         # Configuration/policy identity is independent of lifetime/roster churn.
-        current = [m for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m]
+        current = [m for m in ctx.manifests() if 'router_writers' in m]
         require(bool(current) and all(m['config_sha256'] == manifest['config_sha256']
             and m['fixture_sha256'] == manifest['fixture_sha256'] for m in current), 'artifact_gap')
     expected = {a2.L(b.role, b.boot, b.revision, b.region, str(b.start_us)) for b in boots.boots}
@@ -215,6 +224,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     # and evaluator. In particular, materialize checks every approval at the
     # claimed completion; the report cannot certify its own claimed PASS.
     raw_transport = canonical(dict(policy_version='shadow-v2', contract_revision='a1',
+        producer_registrations=list(registrations),
         rows=[dict(kind=r.key.kind, id=r.key.id, raw=r.raw.decode()) for r in rows],
         attachments=[dict(kind=r.key.kind, id=r.key.id, raw=r.raw.decode()) for r in attachments],
         proof=proof_raw.decode(), ledgers=[raw.decode() for raw in ordered],
@@ -222,7 +232,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
         preimages=[dict(name=k, raw=v.decode()) for k, v in inventory.items()],
         **{key: inventory['prior-gates/' + key].decode() if 'prior-gates/' + key in inventory else None
             for key in ('transport', 'pre', 'fleet', 'serving')}))
-    verified = evaluate(load(raw_transport, prior_ports), prior_ports, gate=report['gate'])
+    verified = evaluate(load(raw_transport, prior_ports, gate=report['gate']), prior_ports, gate=report['gate'])
     rendered = render(verified)
     matched = (isinstance(rendered, tuple) and verified.verdict == 'PASS'
                and rendered[1][0] == original(output['coverage_sha256']))
@@ -238,8 +248,8 @@ def verified_prior_gate(ctx: Context, name: str, value: dict[str, Any]) -> None:
         return
     try:
         ctx.gates[name] = _resolve(ctx, name, value)
-    except (ValueError, KeyError, TypeError, IndexError, OSError) as exc:
+    except (ValueError, KeyError, TypeError, IndexError, OSError):
         subject = Subject(wire=a2.O('prior_gate', name))
-        ctx.issue('artifact_gap', 'prior_gate_original_graph: ' + STAGES[name] + ': ' + str(exc), subject)
+        ctx.issue('artifact_gap', 'prior_gate_original_graph: ' + STAGES[name] + ': original graph rejected', subject)
         ctx.issue('pre_enable_budget' if name == 'pre' else 'boot_prerequisite_gap',
                   'required prior graph did not verify')

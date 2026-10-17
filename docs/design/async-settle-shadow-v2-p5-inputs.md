@@ -57,7 +57,7 @@ Section 8's graph is: transport and pre-enable have no prior gate requirement; f
 | `Rate.publisher_writes` | Original COUNTER observer/publisher counts and approved post LOAD_SEGMENT intervals | a1.validate_row; LOAD_SEGMENT; validate_publisher_traces; gate_views.budget_view exact count/duration equality |
 | `Rate.burst_reads` | Explicit zero in the original-byte budget adapter; startup operations are independently supplied by PEAKS | gate_views.budget_view; gate_load.measured_peaks and exact approved component limits |
 | `Rate.burst_pending` | Original COUNTER observer/publisher counts and approved post LOAD_SEGMENT intervals | a1.validate_row; LOAD_SEGMENT; validate_publisher_traces; gate_views.budget_view exact count/duration equality |
-| `Budget.pre_input` | Approved pre/post BUDGET_ENVELOPE retained payloads and recomputed outputs, their pinned dependencies and monitoring bytes | BUDGET_ENVELOPE; DELEGATED_PAYLOAD; gate_retained.delegate; gate_views.budget_view; release_checks; validate_preimages |
+| `Budget.pre_input` | Original dormant production pre BUDGET_ENVELOPE payload/output and deployment/read-health/CPU; qualification-scope.json separately links the isolated trial post envelope | BUDGET_ENVELOPE; DELEGATED_PAYLOAD; gate_retained.delegate; gate_views.budget_view; release_checks; validate_preimages |
 | `Budget.regional_caps` | Approved pre/post BUDGET_ENVELOPE retained payloads and recomputed outputs, their pinned dependencies and monitoring bytes | BUDGET_ENVELOPE; DELEGATED_PAYLOAD; gate_retained.delegate; gate_views.budget_view; release_checks; validate_preimages |
 | `Budget.fleet_cap` | Approved pre/post BUDGET_ENVELOPE retained payloads and recomputed outputs, their pinned dependencies and monitoring bytes | BUDGET_ENVELOPE; DELEGATED_PAYLOAD; gate_retained.delegate; gate_views.budget_view; release_checks; validate_preimages |
 | `Budget.surge` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
@@ -81,9 +81,9 @@ Section 8's graph is: transport and pre-enable have no prior gate requirement; f
 | `Budget.export_bytes` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
 | `Budget.close_transactions` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
 | `Budget.close_rows` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
-| `Budget.close_elapsed_us` | Single verified Shutdown.measurements population | SHUTDOWN_MEASUREMENT; PayloadGraph.materialize_one; gate_views.budget_view |
-| `Budget.handoff_elapsed_us` | Single verified Shutdown.measurements population | SHUTDOWN_MEASUREMENT; PayloadGraph.materialize_one; gate_views.budget_view |
-| `Budget.grace_us` | Single verified Shutdown.measurements population | SHUTDOWN_MEASUREMENT; PayloadGraph.materialize_one; gate_views.budget_view |
+| `Budget.close_elapsed_us` | Maximum close_us over the verified Shutdown.measurements population | SHUTDOWN_MEASUREMENT; PayloadGraph.materialize_one; gate_views.budget_view |
+| `Budget.handoff_elapsed_us` | Maximum result_us over the verified Shutdown.measurements population | SHUTDOWN_MEASUREMENT; PayloadGraph.materialize_one; gate_views.budget_view |
+| `Budget.grace_us` | Minimum reported grace for display; predicates use each measurement and its matching termination entry, never combined maxima | SHUTDOWN_MEASUREMENT; PayloadGraph.materialize_one; gate_views.budget_view |
 | `Budget.publisher_unresolved_rows_per_second` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
 | `Budget.publisher_control_rows_per_second` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
 | `Budget.publisher_transactions_per_second` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
@@ -96,7 +96,7 @@ Section 8's graph is: transport and pre-enable have no prior gate requirement; f
 | `Budget.cleanup_sink_keys` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
 | `Budget.cleanup_seconds` | Approved loading/budget-measurements.json original dependency; component_us converted to seconds | BUDGET_MEASUREMENTS; FILE_REF; gate_views.budget_view; release_checks |
 | `Budget.load_segments` | Pre/post v2_load segments DETAIL originals and approved limits FILE_REF originals | BUDGET_ENVELOPE; LOAD_SEGMENT; LIMITS/PEAKS; validate_detail; gate_views.budget_view; compare_peak_limits |
-| `Budget.projected_load_segments` | Pre/post v2_load segments DETAIL originals and approved limits FILE_REF originals | BUDGET_ENVELOPE; LOAD_SEGMENT; LIMITS/PEAKS; validate_detail; gate_views.budget_view; compare_peak_limits |
+| `Budget.projected_load_segments` | Production pre v2_load projected segments and limits; qualification-scope.json separates trial actuals without changing dormant pins | BUDGET_ENVELOPE; LOAD_SEGMENT; LIMITS/PEAKS; validate_detail; gate_views.budget_view; compare_peak_limits |
 | `Budget.peak_limits` | Pre/post v2_load segments DETAIL originals and approved limits FILE_REF originals | BUDGET_ENVELOPE; LOAD_SEGMENT; LIMITS/PEAKS; validate_detail; gate_views.budget_view; compare_peak_limits |
 | `ExternalProof.name` | EXTERNAL_PROOFS requirement FILE_REF original PROOF_RESULT and independently approved criterion/check inventory | EXTERNAL_PROOFS; PROOF_RESULT; gate_release.validate_proof; validate_preimages |
 | `ExternalProof.router_revision` | EXTERNAL_PROOFS requirement FILE_REF original PROOF_RESULT and independently approved criterion/check inventory | EXTERNAL_PROOFS; PROOF_RESULT; gate_release.validate_proof; validate_preimages |
@@ -105,26 +105,26 @@ Section 8's graph is: transport and pre-enable have no prior gate requirement; f
 | `ExternalProof.sha256` | EXTERNAL_PROOFS requirement FILE_REF original PROOF_RESULT and independently approved criterion/check inventory | EXTERNAL_PROOFS; PROOF_RESULT; gate_release.validate_proof; validate_preimages |
 | `ExternalProof.passed` | EXTERNAL_PROOFS requirement FILE_REF original PROOF_RESULT and independently approved criterion/check inventory | EXTERNAL_PROOFS; PROOF_RESULT; gate_release.validate_proof; validate_preimages |
 | `ExternalProof.stage` | EXTERNAL_PROOFS requirement FILE_REF original PROOF_RESULT and independently approved criterion/check inventory | EXTERNAL_PROOFS; PROOF_RESULT; gate_release.validate_proof; validate_preimages |
-| `External.proofs` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
-| `External.required` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
-| `External.drain_selected` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
-| `External.signer_checked` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
-| `External.attestation_checked` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
-| `External.exposure_accepted` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
-| `External.post_input` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
-| `External.required_stages` | EXTERNAL_PROOFS original bytes, approved requirements and recomputed retained pilot output | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.proofs` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.required` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.drain_selected` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.signer_checked` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.attestation_checked` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.exposure_accepted` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.post_input` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
+| `External.required_stages` | Stage-applicable EXTERNAL_PROOFS originals; whole-policy gate_policy.REQUIRED and approved stage check scopes; retained pilot output at money stages | EXTERNAL_PROOFS; gate_views.external_view; gate_retained.delegate; validate_preimages |
 | `ResetSupport.rows` | RESOLUTION_DAG retained original payload, dependency files, recomputed report/rollback results and history support FILE_REFs | RESOLUTION_DAG; RESET_HISTORY_ENTRY; gate_views.reset_view; gate_retained.delegate; validate_preimages |
 | `ResetSupport.proof` | RESOLUTION_DAG retained original payload, dependency files, recomputed report/rollback results and history support FILE_REFs | RESOLUTION_DAG; RESET_HISTORY_ENTRY; gate_views.reset_view; gate_retained.delegate; validate_preimages |
 | `ResetSupport.resets` | RESOLUTION_DAG retained original payload, dependency files, recomputed report/rollback results and history support FILE_REFs | RESOLUTION_DAG; RESET_HISTORY_ENTRY; gate_views.reset_view; gate_retained.delegate; validate_preimages |
 | `ResetSupport.support_files` | RESOLUTION_DAG retained original payload, dependency files, recomputed report/rollback results and history support FILE_REFs | RESOLUTION_DAG; RESET_HISTORY_ENTRY; gate_views.reset_view; gate_retained.delegate; validate_preimages |
-| `Signature.object_id` | Approved loading/signatures.json originals, referenced receipt bytes and independently pinned public keys | gate_views.signature_views; binding.verify_binding; certificate.verify_certificate; verify_original_receipt |
-| `Signature.token` | Approved loading/signatures.json originals, referenced receipt bytes and independently pinned public keys | gate_views.signature_views; binding.verify_binding; certificate.verify_certificate; verify_original_receipt |
-| `Signature.keys` | Approved loading/signatures.json originals, referenced receipt bytes and independently pinned public keys | gate_views.signature_views; binding.verify_binding; certificate.verify_certificate; verify_original_receipt |
-| `Signature.now` | Retained signature metadata; verification time comes from the original event, not this redundant value | gate_views.signature_views; gate_accounting event-time receipt verification |
-| `Signature.expected` | Approved loading/signatures.json originals, referenced receipt bytes and independently pinned public keys | gate_views.signature_views; binding.verify_binding; certificate.verify_certificate; verify_original_receipt |
-| `Signature.attempt` | Approved loading/signatures.json originals, referenced receipt bytes and independently pinned public keys | gate_views.signature_views; binding.verify_binding; certificate.verify_certificate; verify_original_receipt |
-| `Signature.server_attempt` | Approved loading/signatures.json originals, referenced receipt bytes and independently pinned public keys | gate_views.signature_views; binding.verify_binding; certificate.verify_certificate; verify_original_receipt |
-| `Signature.claims` | Approved loading/signatures.json originals, referenced receipt bytes and independently pinned public keys | gate_views.signature_views; binding.verify_binding; certificate.verify_certificate; verify_original_receipt |
+| `Signature.object_id` | Optional certificate loading/signatures.json originals and ordered approved public keys; none required for compared samples/retries | gate_views.signature_views; certificate.verify_certificate; verify_original_receipt; D1 zero compared binding calls |
+| `Signature.token` | Optional certificate loading/signatures.json originals and ordered approved public keys; none required for compared samples/retries | gate_views.signature_views; certificate.verify_certificate; verify_original_receipt; D1 zero compared binding calls |
+| `Signature.keys` | Optional certificate loading/signatures.json originals and ordered approved public keys; none required for compared samples/retries | gate_views.signature_views; certificate.verify_certificate; verify_original_receipt; D1 zero compared binding calls |
+| `Signature.now` | Optional certificate metadata; certificate verification time comes from the original event | gate_views.signature_views; gate_accounting event-time receipt verification |
+| `Signature.expected` | Optional certificate loading/signatures.json originals and ordered approved public keys; none required for compared samples/retries | gate_views.signature_views; certificate.verify_certificate; verify_original_receipt; D1 zero compared binding calls |
+| `Signature.attempt` | Optional certificate loading/signatures.json originals and ordered approved public keys; none required for compared samples/retries | gate_views.signature_views; certificate.verify_certificate; verify_original_receipt; D1 zero compared binding calls |
+| `Signature.server_attempt` | Optional certificate loading/signatures.json originals and ordered approved public keys; none required for compared samples/retries | gate_views.signature_views; certificate.verify_certificate; verify_original_receipt; D1 zero compared binding calls |
+| `Signature.claims` | Optional certificate loading/signatures.json originals and ordered approved public keys; none required for compared samples/retries | gate_views.signature_views; certificate.verify_certificate; verify_original_receipt; D1 zero compared binding calls |
 | `Preimage.name` | Original exported path and UTF-8 bytes; conflicting candidates remain separate | FILE_REF; gate_loading.retained_json; validate_preimages; PayloadGraph.file/object/detail |
 | `Preimage.raw` | Original exported path and UTF-8 bytes; conflicting candidates remain separate | FILE_REF; gate_loading.retained_json; validate_preimages; PayloadGraph.file/object/detail |
 | `Shutdown.entries` | Committed SHUTDOWN_INVENTORY writer detail -> measurement FILE_REF -> approved source original bytes; aliases must match exactly | SHUTDOWN_INVENTORY; SHUTDOWN_ENTRY; SHUTDOWN_MEASUREMENT; source parser; PayloadGraph.materialize_one; decode_bundle alias identity/byte checks |
@@ -139,7 +139,7 @@ Section 8's graph is: transport and pre-enable have no prior gate requirement; f
 | `Bundle.budget` | Original graph decoded by gate_loader.load; see corresponding type rows in this table | PayloadGraph.materialize; gate_views; validate_original_bytes; validate_preimages |
 | `Bundle.external` | Original graph decoded by gate_loader.load; see corresponding type rows in this table | PayloadGraph.materialize; gate_views; validate_original_bytes; validate_preimages |
 | `Bundle.reset_support` | Original graph decoded by gate_loader.load; see corresponding type rows in this table | PayloadGraph.materialize; gate_views; validate_original_bytes; validate_preimages |
-| `Bundle.signatures` | Original graph decoded by gate_loader.load; see corresponding type rows in this table | PayloadGraph.materialize; gate_views; validate_original_bytes; validate_preimages |
+| `Bundle.signatures` | Optional certificate material; no file or Signature required for compared samples/retries | gate_views.signature_views; gate_compared retained joins; D1 zero offline binding calls |
 | `Bundle.transport` | Original envelope plus report, streams, leaves and original graph from finite input inventory | gate_prior._resolve; validate_gate_output; validate_preimages; release_checks; ledger_preimages; exact current binding |
 | `Bundle.fleet` | Original envelope plus report, streams, leaves and original graph from finite input inventory | gate_prior._resolve; validate_gate_output; validate_preimages; release_checks; ledger_preimages; exact current binding |
 | `Bundle.pre` | Original envelope plus report, streams, leaves and original graph from finite input inventory | gate_prior._resolve; validate_gate_output; validate_preimages; release_checks; ledger_preimages; exact current binding |
@@ -151,18 +151,19 @@ Section 8's graph is: transport and pre-enable have no prior gate requirement; f
 | `Bundle.a2_payloads` | Original named proof/manifest objects and FILE_REF bytes | OBJECT_PREIMAGES schemas; FILE_REF; PayloadGraph; validate_preimages |
 | `Bundle.shutdown` | Only the loader committed SHUTDOWN_INVENTORY -> measurement -> source population | PayloadGraph.materialize_one; PROOF_MANIFEST shutdown digest binding in load; validate_preimages; decode_bundle alias equality |
 | `Bundle.window` | Requested transport metadata. Invalid fields produce loading issues; each interval validated for contract representability before selection; scope recovered together from independent inventory, proof rosters or surviving day-manifest lifetimes. Window cannot assert evidence | integer; day; INTERVAL; gate_report.diagnostic_scope/window_for; gates.clock (seed and elapsed are separate from requested observation scope). Completion fallback is a report bound, not a trusted gate timestamp |
+| `Bundle.producer_registrations` | Transport producer_registrations FILE_REF declarations, or the R2 conventional registration after the complete role walk; retained in the structured prior report member | gate_loader.load; gate_dependencies.dependencies; select_registrations; accounting_prefixes; gate_report.build; GATE_REPORT; gate_prior._resolve |
 | `Bundle.a2_streams` | Loader-generated diagnostics and materialized original DETAIL streams; diagnostics are not evidence and are never proof preimages | LoadingIssue; GAP_NAME; validate_detail; validate_original_bytes |
 | `RetainedResult.output` | Actual retained callable execution on original payload/dependencies through finite file port, with counted calls | gate_retained.delegate; RETAINED_OUTPUT; capture/output byte equality; check_calls |
 | `RetainedResult.opened` | Actual retained callable execution on original payload/dependencies through finite file port, with counted calls | gate_retained.delegate; RETAINED_OUTPUT; capture/output byte equality; check_calls |
 | `RetainedResult.calls` | Actual retained callable execution on original payload/dependencies through finite file port, with counted calls | gate_retained.delegate; RETAINED_OUTPUT; capture/output byte equality; check_calls |
 | `RetainedResult.components` | Actual retained callable execution on original payload/dependencies through finite file port, with counted calls | gate_retained.delegate; RETAINED_OUTPUT; capture/output byte equality; check_calls |
-| `ReleasePlan.path` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; FILE_REF; digest; gate_release.release_checks |
-| `ReleasePlan.raw` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; FILE_REF; digest; gate_release.release_checks |
-| `ReleasePlan.artifacts` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; FILE_REF; digest; gate_release.release_checks |
-| `ReleasePlan.criteria` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; FILE_REF; digest; gate_release.release_checks |
-| `ReleasePlan.verifiers` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; FILE_REF; digest; gate_release.release_checks |
-| `ReleasePlan.required` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; FILE_REF; digest; gate_release.release_checks |
-| `ReleasePlan.required_stages` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; FILE_REF; digest; gate_release.release_checks |
+| `ReleasePlan.path` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; gate_policy.validate_policy; FILE_REF; digest; gate_release.release_checks |
+| `ReleasePlan.raw` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; gate_policy.validate_policy; FILE_REF; digest; gate_release.release_checks |
+| `ReleasePlan.artifacts` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; gate_policy.validate_policy; FILE_REF; digest; gate_release.release_checks |
+| `ReleasePlan.criteria` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; gate_policy.validate_policy; FILE_REF; digest; gate_release.release_checks |
+| `ReleasePlan.verifiers` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; gate_policy.validate_policy; FILE_REF; digest; gate_release.release_checks |
+| `ReleasePlan.required` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; gate_policy.validate_policy; FILE_REF; digest; gate_release.release_checks |
+| `ReleasePlan.required_stages` | Independent CLI release-plan bytes, pinned by explicit external digest | read_release_plan; gate_policy.validate_policy; FILE_REF; digest; gate_release.release_checks |
 | `LoadingPorts.verify_certificate` | Trusted tool wiring and independently pinned release plan; source-specific parser is an explicit trusted port | gate_verifiers.check_ports; gate_release.release_checks; read_release_plan |
 | `LoadingPorts.verify_original_receipt` | Trusted tool wiring and independently pinned release plan; source-specific parser is an explicit trusted port | gate_verifiers.check_ports; gate_release.release_checks; read_release_plan |
 | `LoadingPorts.verify_binding` | Trusted tool wiring and independently pinned release plan; source-specific parser is an explicit trusted port | gate_verifiers.check_ports; gate_release.release_checks; read_release_plan |
@@ -219,6 +220,14 @@ and tools boundary: unexpected load/evaluate/render failures yield a fixed
 proof and scope survive, otherwise the applicable proof-first diagnostic.
 The optional window constrains containment; it does not replace report scope.
 No contract, fixture or pin changes accompany these internal seams.
+
+## A3 role-resolution rules
+
+R1. A file's role comes from its declaration. The transport's optional `producer_registrations` member (complete FILE_REFs, as in your round-12 draft) declares the producer registration(s); a registration's `NativeExport` FILE_REF declares a capture. Every producer of transports in this tree emits the member: the collection script, the bundle composition, and gate_prior's reconstruction of prior transports. The report carries `producer_registrations` as its own checked array of complete FILE_REFs, in the same shape as collection and composition. One original path keeps its original bytes; one transport member keeps its own report field. The member is never materialized at an original path, and prior reconstruction reads it only from the report field, never by decoding an original with a metadata-looking name. Newly emitted reports include the member, including an empty array; the earlier report shape without the member remains readable.
+R2. Compatibility fallback, narrowly: when a transport has NO `producer_registrations` member, the registration is the original at the conventional path `stage/producer-captures.json` (or a path ending `/stage/producer-captures.json`) ONLY IF that original has no other declared role anywhere in the input: it is not a member of any prerequisite's or source's source list, no FILE_REF of another role points at it, and the dependency walk has not assigned it a parser. A file with any declared role keeps that role whatever its name. (That is why the r6/r7 support files, declared as byte-only sources, must never be promoted, and why a historical capture, whose registration is undeclared, keeps its scope.)
+R3. A declared or fallback-selected registration and its captures undergo the full format check: not a dictionary, no list-valued `passes`, a pass missing a required key, an unreadable NativeExport target: each is `evidence_schema_gap` at that path, never a silent `continue` with an empty prefix (P1-16).
+R4. No other role is ever derived from a path spelling. The `sources/measurement/` mapping in gate_release applies only to files declared as SHUTDOWN_MEASUREMENT sources; a file reached solely through an ordinary source list keeps `original_bytes` even under that prefix (P1-17; the mapping predates this package, you fix its application in the dependency walk, not the release inventory format).
+R5. Byte-only originals are never parsed for content, in any code path, including scope discovery.
 
 ## P5 test data lifetime and oracle scheduling
 
@@ -322,3 +331,88 @@ The generated boundary family and seven-day family use class-scoped data.
 Their large loaded graphs are released when each family completes; the
 seven-day family is collected last. The assertions and generated cases are
 unchanged.
+
+### A3 round 1 source boundaries
+
+All control populations use `gate_controls.manifests`: exact day/manifest-v2
+key plus the frozen MANIFEST schema. CAP and RETENTION retain their original
+bytes in `Bundle.rows` and the input inventory and use their own frozen schemas.
+Unknown control subtypes produce a row-scoped schema failure.
+
+`Bundle.signatures` and every `Signature.*` field are optional certificate
+material. Compared samples and retries have no signature-file dependency and
+no offline binding invocation. Both approved callables and ordered public key
+sets remain required. `gate_compared` joins retained original sample/terminal
+coordinates, deployment, authorization, payload/snapshot commitments,
+classification and booking; independent accounting keeps every retry attempt
+and its own prediction. Actual offline compared binding calls are zero.
+
+`External.required`, `External.required_stages`, `ReleasePlan.required` and
+`ReleasePlan.required_stages` are constrained by `gate_policy.REQUIRED`, derived
+from sections 8, 11 and 15.6. Release criteria can add checks; stage-specific
+shadow/money check scopes cannot substitute for each other. Loading receives the
+requested gate, including recursive predecessor loading. Future requirement
+objects may be absent; their names remain in the whole-policy release inventory.
+The frozen original envelope slots, including linked pre/post budgets, remain
+mandatory. View construction is limited to applicable rules.
+
+For `Budget.pre_input`, `Budget.projected_load_segments`, `Budget.load_segments`
+and `Bundle.inventory`, pre-enable separates the unchanged retained dormant
+production deployment/read-health/CPU projection from the closed isolated
+qualification trial's enabled writers and post envelope. The independently
+approved supplemental `loading/qualification-scope.json` identifies distinct
+production/trial resources, the exact production deployment FILE_REF, the trial
+INDEPENDENT_INVENTORY FILE_REFs and both canonical envelope digests. It is
+inventoried original evidence, not a frozen contract extension or seed. Missing
+or invalid scope records keep the pre-enable seam closed. The unchanged
+`validate_preimages` still validates both envelopes and their link.
+
+`Cohort.regional_seeds` uses the reviewed COHORT_SEED_POLICY.required_regions
+subset plus reconciled terminal regions. `Inventory.boots`, load segments and
+capacity sweeps retain every enabled writer, including idle regions. An unknown
+terminal writer or an unreviewed booking region blocks.
+
+`Bundle.a2_streams.loading_issues` reports one primary diagnostic per dependency
+path for the six required proof roots: absent originals are artifact failures,
+present malformed schema bytes are schema failures. Nested FILE_REF originals now use the declared format parser before byte/hash
+comparison, as described in Round 3 below. Diagnostics retain original paths and
+do not expose exception text. Section 15.4 multi-bundle loading and declared
+export-accounting consumption are implemented; full-day validation capacity
+remains the named open seam below.
+
+## Round 2 file checks and shutdown accounting
+
+The nested dependency inventory records original paths and expected parsers before FILE_REF byte-count and digest checks. Missing bytes produce artifact_gap; present malformed bytes produce evidence_schema_gap. Diagnostics are deduplicated by original path. Page chains are resolved through their decoded digest or the approved original inventory, and prerequisite source files and retained-output descriptors are included. No optional future file becomes required merely because it is listed in the release plan.
+
+Downstream view errors retain the original proof and sibling bytes. Each view uses the fixed diagnostic label at its original subject. Outer recovery lists a named failure for every required rule it marks unevaluable and validates its report with the unchanged output contract.
+
+Shutdown final_pass_us and preparation_us + export_wait_us + final_pass_us remain in Shutdown.measurements. Each measurement checks close_us and result_us separately against 2,000,000 us, their sum against final_pass_us, final_pass_us against 4,000,000 us, and the total against min(the matching writer's remaining grace, 9,000,000 us). Existing original close-result checks and transaction/row counts remain applicable. Aggregate maxima never borrow another writer's grace.
+
+The transport boundary oracle follows the applicable descriptor closure, including prerequisite files and mandatory retained-output descriptors. Unused original reviews and sources may be absent or relocated; present declared bytes retain their byte/digest checks. Round 3 below supersedes the round-2 export-accounting and combined transport-count limitations.
+
+## Round 3 file formats, original deadlines and input plans
+
+| Input | Original source | Consumer |
+|---|---|---|
+| Serving and deployment rosters | Independently declared FILE_REF originals | `gate_dependencies.serving_roster` / `deployment_roster`, retained roster checks, then byte count and digest |
+| Typed nested files | Their declared schema or producer parser | Dependency parser before FILE_REF comparison |
+| Support files without a declared format | Original bytes | FILE_REF byte count and digest; no added JSON requirement |
+| Original remaining shutdown deadline | Matching day/boot CLOSE_RESULT `shutdown_remaining_us`, captured at original attempt start | `gate_load.load_budgets`: original elapsed time and the following result transaction must fit; preparation and wait are already spent at this point |
+| Shutdown scalar phases | Matching SHUTDOWN_MEASUREMENT | Separate close/result ceilings, their sum contained in final_pass, preparation + wait + final bounded by the writer's reported grace and nine seconds |
+| Declared export passes | Deployment original `export_accounting: DETAIL` and every source page/original it names | `gate_native_accounting.consume` invokes the shared `pack_accounting_stream` parser during loading; G7 consumes the actual native RPC totals from all declared passes |
+| Multi-part captured input | C2 `shadow-v2-captured-transport-1` descriptor and its `shadow-v2-pack-plan-1` input inventory | `gate_plan.PlanInput`: every leaf, listed part, predecessor, length and digest checked before one stage evaluation; individual file/page bounds retained |
+
+Scalar shutdown sources do not contain monotonic phase endpoints. Duration sums
+check the recorded sequential budget; they cannot establish exact endpoint
+containment, overlap, idle gaps or actual phase order. `ScalarShutdownOrder`
+names that missing endpoint evidence. Wall timestamps do not fill it.
+
+`FrozenDayValidationCapacity` remains a separate loader seam. The bounded input
+leaf reader does not make the frozen exact-dict preimage validator or the gate
+context stream a whole day. A complete bounded adapter and a traced end-to-end
+day validation are still required. No whole-day memory claim follows from the
+leaf-reader test.
+
+## Round 6 shared file checks and oracle groups
+
+The bundle composition failure reproduced both after gates modules and alone: the added A3 dependency walk treated export-spool-relative page paths as graph-relative paths during shared `PayloadGraph.materialize`. Gate loading now calls `materialize_gate` for dependency and stage checks, while shared assembly retains its original file scope; release-plan decoding checks the file format, with required gate policy still checked by `release_checks` during current and prior loading. Cache cleanup was not the cause and remains limited to gates-module teardown. A scratch comparison produces 539 byte-identical assembly files with main’s materializer; the bundle’s saved gate-result comparisons still differ under A3 and remain unresolved without changing those expectations or undoing A3 behavior. Four-group CI runs 38924732345 took 43 to 45+ minutes with 1,252 window oracle cases; six groups per clock reduce estimated single-worker group work to about two thirds while retaining the 45-minute cap. The complete selection also includes 338 frozen-main cases (1,590 total); the installed least-duration splitter estimates maximum/mean group weights of 6,250.625/6,250.574 seconds for four groups and 4,167.104/4,167.050 seconds for six on both clocks, using the existing duration file and its mean fallback for the 338 unmeasured cases.
