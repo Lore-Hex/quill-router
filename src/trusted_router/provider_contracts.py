@@ -5,6 +5,8 @@ SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
 NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
+STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
+STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
@@ -40,6 +42,11 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # A listed alias is not proof of serving availability. Require a
         # reviewed recovery before refresh can re-enable this route.
         ("nextbit", NEXTBIT_UNSLOPNEMO_MODEL_ID),
+        # October 17: repeated production 404s reproduced directly as
+        # model_not_found on the operator key; Kimi K2.6 succeeds on that key.
+        # Public catalog/pricing still list this ID. Require a reviewed live
+        # recovery before re-enabling; no official retirement date is known.
+        ("streamlake", STREAMLAKE_KIMI_K2_0905_MODEL_ID),
         # September 20: discovery admits these standard RedPill IDs, but the
         # enclave's reviewed Phala dispatch map does not. Keep them out of
         # routing until a reviewed adapter release, not an attestation bypass.
