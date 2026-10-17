@@ -700,6 +700,14 @@ def test_opaque_support_source_has_only_byte_checks(originals: Any, tmp_path: Pa
     assert through_all(raw, ports, tmp_path)['verdict'] == 'PASS'
 
 
+def test_opaque_passes_support_has_only_byte_checks(originals: Any, tmp_path: Path) -> None:
+    from tests.shadow_v2_gate_a3_originals import opaque_originals
+    original, ports, _ = originals
+    body = b'{"passes":[{"bundle":"example.json","accounting":{"path":"unused-accounting.json"},"prefix":null,"object_plan":{}}]}'
+    raw, ports = opaque_originals(original, ports, body)
+    assert through_all(raw, ports, tmp_path)['verdict'] == 'PASS'
+
+
 def test_reviewed_multi_bundle_stage_and_missing_part(originals: Any, tmp_path: Path) -> None:
     from tests.shadow_v2_gate_a3_originals import captured_plan
     original, ports, _ = originals

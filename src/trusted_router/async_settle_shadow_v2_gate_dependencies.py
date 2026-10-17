@@ -75,7 +75,6 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
     """
     from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_prefixes
 
-    captures: list[bytes] = []
     parsers: dict[str, Parser] = {}
     decoded: dict[str, Any] = {}
     by_digest: dict[str, str] = {}
@@ -84,14 +83,11 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
     for path, raw in files.items():
         try:
             value = retained_json(raw)
-            if isinstance(value, dict) and isinstance(value.get('passes'), list):
-                captures.append(raw)
             if isinstance(value, dict) and 'entries' in value:
                 decoded[path] = value
                 by_digest[sha256(value)] = path
         except ValueError:
             continue
-    prefixes = accounting_prefixes(captures)
     pending: list[tuple[str, Any]] = []
     schemas: dict[str, Schema] = {}
     expanded: set[str] = set()
@@ -188,7 +184,7 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             add(node['deployment'], parser=deployment_roster)
         if node.get('format') == 'shadow-v2-live-export-a3-n' and isinstance(node.get('details'), dict):
             from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_page
-            prefix = prefixes.get(origin, '')
+            prefix = accounting_prefixes(files, (origin,)).get(origin, '')
             for refs in node['details'].values():
                 for ref in refs if isinstance(refs, list) else []:
                     if isinstance(ref, dict) and set(ref) == set(a2.FILE_REF.fields):

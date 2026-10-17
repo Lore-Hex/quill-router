@@ -1,7 +1,7 @@
 """Gate consumption of the bundle package's original export accounting."""
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +19,24 @@ from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
 
 
-def accounting_prefixes(captures: Iterable[bytes]) -> dict[str, str]:
-    """Read the declared pass scopes; captures without one keep the empty scope."""
+def accounting_prefixes(files: Mapping[str, bytes], paths: Iterable[str]) -> dict[str, str]:
+    """Read NativeExport declarations only for the applicable accounting roots."""
+    applicable = set(paths)
+    if not applicable:
+        return {}
+    captures = []
+    # The writer declares producer kinds in this original registration file.
+    # Other originals remain byte-only, even when they contain a passes list.
+    for path in files:
+        if path != 'stage/producer-captures.json' and not path.endswith('/stage/producer-captures.json'):
+            continue
+        try:
+            declared = retained_json(files[path])
+        except ValueError:
+            continue
+        ref = declared.get('NativeExport') if isinstance(declared, dict) else None
+        if isinstance(ref, dict) and isinstance(ref.get('path'), str) and ref['path'] in files:
+            captures.append(files[ref['path']])
     prefixes: dict[str, str] = {}
     for raw in captures:
         try:
@@ -34,6 +50,8 @@ def accounting_prefixes(captures: Iterable[bytes]) -> dict[str, str]:
                 continue
             ref = passed['accounting']
             require(isinstance(ref, dict) and isinstance(ref.get('path'), str), 'evidence_schema_gap')
+            if ref['path'] not in applicable:
+                continue
             prefix = passed['prefix']
             require(isinstance(prefix, str), 'evidence_schema_gap')
             require(ref['path'] not in prefixes or prefixes[ref['path']] == prefix, 'evidence_schema_gap')
@@ -73,7 +91,6 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
             self.put(ref['path'], graph.file(ref))
             return super().read(ref)
 
-    prefixes = None
     totals = []
     for key, envelope in payloads.items():
         if key != 'manifest.independent_inventory_sha256' and not key.endswith('/manifest.independent_inventory_sha256'):
@@ -83,8 +100,7 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
             continue
         refs = graph.detail(deployment['export_accounting'], 'files')
         require(bool(refs), 'artifact_gap')
-        if prefixes is None:
-            prefixes = accounting_prefixes(graph.files.values())
+        prefixes = accounting_prefixes(graph.files, (ref['path'] for ref in refs))
         date = envelope['day']
         collector_plan = deployment.get('collector_plan', {})
         require(type(collector_plan) is dict, 'evidence_schema_gap')
