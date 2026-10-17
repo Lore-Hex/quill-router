@@ -1,6 +1,97 @@
 # Social Rewards Pre-ship Checklist
 
-Updated October 15, 2026. Changes are local; production rollout remains on hold.
+Updated October 17, 2026. Production rollout remains on hold.
+
+## October 17 PR checkpoint
+
+User authorized committing and pushing the reviewed console/onboarding work to
+the existing draft PR #1790. This supersedes earlier no-push instructions for this
+checkpoint only; merging and deployment remain unauthorized.
+
+Reduced the mobile green header to 56px with 4px vertical padding while preserving
+the 44px Menu touch target. Desktop sizing is unchanged. Verified the actual 56px
+height at 390px and inspected mobile and 1440px desktop screenshots.
+All 31 rewards/navigation browser tests passed again; checkpoint Ruff and mypy
+passed. Required uv gates still stop at the unsupported Intel macOS torch wheel.
+
+The earlier fallback full-suite run is no longer active. Its final log reports
+32 failed, 22,224 passed, 1,337 skipped, 594 deselected, 12 xfailed and 2,254 errors
+after 2:29:24. Progress stops around 69% with a truncated traceback and no useful
+failure details, so this is neither a clean nor a complete validation result.
+Do not attribute these failures to this change without reproduction against an
+updated main baseline. No coverage result is established. Keep the PR in draft
+pending supported-environment validation and the remaining release blockers.
+
+## Preview UX iteration — direct key reset and console color
+
+User requested a direct dev-only reset and a desktop/mobile hierarchy review.
+The local `/tmp/social_rewards_app_preview.py` harness now exposes
+`/__preview/key-grant` through a persistent **Fresh API key** toolbar link.
+It creates a disposable simulated signup and redirects directly to the one-time
+key reveal; repeated use was verified to issue different keys without visiting
+the homepage or an OAuth screen. **Key list** opens the current account's keys.
+This shortcut exists only in the isolated preview harness, not production routes.
+
+Local presentation changes: sage-green console header, lighter sidebar with a
+clearer active item, padded key-management surface, and consistent green rewards
+card/dialog header. Copy remains the only filled initial-onboarding button;
+Continue retains its strong mint outline. On return visits, the key list and key
+creation controls precede optional rewards. Setup stays collapsed and the rewards
+headline is preserved. No payout, eligibility, transfer, dismissal, or campaign
+configuration changed. YouTube remains unresolved; no replacement or reduction
+in the approved reward total has been implemented.
+
+Inspected desktop (1440px), mobile (390px), narrow mobile navigation (320px),
+key-list and reward-dialog screenshots. All 31 browser checks passed. Checkpoint
+Ruff and mypy passed. The focused server suite returned 114 passed and three
+stale presentation assertions: hidden creation disclosure/Help grouping, coding
+agent heading, and total-limit copy. Updated those expectations while preserving
+key secrecy and budget behavior assertions, and added keys-before-rewards order
+coverage; all three focused reruns passed. The pre-existing full backend run is
+around 65% and has reported failures; final results and triage remain pending.
+No full-suite or release-readiness claim is made. No push or deployment.
+
+## Current validation status — October 16 continuation
+
+This status supersedes older test counts and environment failures below; historical
+audit entries remain for context. No push or deployment is authorized.
+
+- Confirmed branch `jasmine/social-rewards` at `f2f04e3bc`, with the approved
+  console navigation and 12% mint rewards surface still uncommitted. Unrelated
+  untracked assets and handoff folders were left untouched.
+- Reran all 29 rewards browser checks and 2 navigation checks: **31 passed**.
+  Strengthened the navigation checks for desktop-only single-workspace context,
+  mobile Configuration expansion/collapse, separate visible Earnings/Broadcast,
+  and restoration across breakpoints; both updated checks passed.
+- Confirmed the ngrok simulated signup preview works. Inspected desktop 1280px
+  and mobile 390px screenshots, the mobile menu, and the expanded setup tabs.
+  No application UI or reward-rule edits were needed in this continuation.
+- Checkpoint-environment Ruff passed; mypy passed for all 454 source files.
+  Retried each required `uv run` gate using `/tmp/geo-release-tools/bin/uv`:
+  all stop before execution because locked `torch==2.12.0` has no Intel macOS
+  distribution. Do not change shared dependencies merely to bypass this gate.
+- Existing full fallback pytest process (PID 6427) remains active and its log
+  `/tmp/console-nav-full-tests.log` continues advancing around 15%. No duplicate
+  fallback full suite was started. **No full-suite pass is established.** Its
+  invocation is `python -m pytest -q`, without coverage collection; even a pass
+  will not establish the required 70% coverage floor.
+- A bounded Docker availability check timed out after 15 seconds. Real database
+  conformance remains unverified. Proof-oracle completion also remains required.
+- Cached `origin/main` is 28 commits ahead of the branch's common base (branch
+  has 5 unique commits). Integration with current main and the final release
+  review remain pending; no rebase was attempted during the running suite.
+- Caller audit: `/shown` is still used to persist automatic-offer suppression;
+  its exposure event is distinct from placement observations. `/clicked` has
+  no current browser caller, but still has an API regression test. It was not
+  removed while the backend suite was executing; PR-scoped cleanup remains open.
+
+Remaining release blockers: supported-environment full gates and >=70% coverage;
+real PostgreSQL/Spanner conformance; billing proof oracle; final integrated review;
+official YouTube destination and coordinated campaign configuration; internal-QA
+reporting exclusions and the approved analytics rollout/verification. Rollout
+still sets `TR_SOCIAL_REWARDS_ENABLED=false` and no YouTube destination. The preview
+placeholder is not an approved production URL. These checks do not establish
+release readiness.
 
 ## Next Work In Order
 
@@ -362,3 +453,33 @@ At widths up to 800px, console header shows the brand and Menu. Existing workspa
 ### Mobile navigation decision superseded
 
 User rejected the compact header/drawer because it deviates too far from live main. Reverted that entire shell change and its dedicated tests, restoring the preceding header/sidebar behavior. Key-first onboarding, setup grouping, and rewards presentation remain intact.
+
+### 2026-10-16 scope decision: ship rewards before shared-header work
+
+User explicitly deferred header centralization and navigation redesign to a separate chat and isolated worktree. This is follow-up work, not a prerequisite for this PR. No follow-up chat or worktree has been created by this decision record.
+
+Current PR scope: preserve existing console header, desktop sidebar, mobile navigation, workspace switching, approved key-first onboarding and reward behavior. Fix the console/provider brand link to go to `/` rather than returning to API Keys or provider overview. Do not transplant the reviewed navigation mockups into this PR. No push or deployment is authorized yet.
+
+Follow-up scope: shared brand/header primitives with public, console and minimal-auth variants; one console navigation definition used by desktop and mobile; clear account actions and workspace context; actual brand-kit typography, assets, spacing and interaction states. Review mobile single-workspace and multi-workspace states before implementation. Earnings and Broadcast must not be grouped under Configuration merely to shorten the menu. API reference and independent trust verifier are later exceptions; separately branded Token Exchange sites are out of scope.
+
+Parallel-work strategy: start the follow-up worktree from then-current main, keep header work on its own branch/PR, and avoid changing reward or key-flow templates. Design exploration can proceed while this PR finishes validation. After this PR merges, update the header branch onto main and validate it against the shipped onboarding/rewards UI; do not make this PR depend on the header branch. Shared files such as console/_layout.html, console.css and console.js are expected integration points, so avoid incidental refactors here.
+
+Audit evidence: public pages, docs and homepage already share public/_nav.html; console and provider share console/_layout.html; auth has a minimal brand shell. Axiom's checked 30-day window did not provide console device-category or workspace-switch usage evidence, so mobile use must not be assumed negligible. The current branch adds API Keys device-category instrumentation; evaluate it after release before prioritizing navigation by usage.
+
+### 2026-10-16 approved console-only navigation pass
+
+Supersedes the instruction to freeze console navigation above. User approved a bounded console-only change: mobile brand plus Menu; workspace selection inside navigation; desktop workspace selector in sidebar with Models, Docs, Help and Account in the header. One workspace displays its name without a redundant selector. Configuration is collapsible on mobile; Earnings and Broadcast stay separate. Existing workspace POST and return path are preserved, with one sign-out form moved between mobile navigation and desktop Account. Logo links home. API key and rewards content/behavior unchanged; cross-site header centralization remains deferred. Desktop 1280px and phone 390px screenshots inspected; navigation tests cover one/two workspaces, POST submission, Escape, resize and 320px overflow. Ruff and mypy passed in the checkpoint environment; full pytest is still running in /tmp/console-nav-full-tests.log. No push or deploy.
+
+### Brighter key-page hierarchy
+
+User approved stronger Continue emphasis over optional rewards, while Copy remains the sole filled onboarding button. Continue now has a stronger mint outline and weight; rewards use a quieter panel and reduced padding. Key pages use the brand's bg-alt canvas, brighter secondary text and inset key surface. Single-workspace names are hidden in navigation; multiple-workspace switching remains. Desktop and mobile screenshots inspected, including the single-workspace menu. Reward rules and API key behavior unchanged. No push or deploy.
+
+### Desktop workspace context and rewards surface restored
+
+User requested the single-workspace name back on desktop only; mobile still omits it. Restored the brighter selected-green rewards surface so the card's internal padding reads as a deliberate inset rather than floating text. Continue retains its stronger outline and weight; reward CTA remains secondary. Desktop and mobile preview inspected. Reward behavior unchanged.
+
+### Handoff checkpoint: brighter rewards card
+
+Latest user adjustment: increase the welcome rewards surface brightness by mixing 12% brand mint into selected green, retaining the stronger Continue outline and Copy as the only filled CTA. Visually checked the updated preview. Current local commits: f2f04e3bc (key-first UI) and 961949d98 (reward behavior checkpoint); subsequent console-only navigation, contrast and workspace-label changes remain uncommitted. New tests/browser/console-navigation.spec.js is also uncommitted. Do not add unrelated untracked brand assets or handoff folders to commits. No push or deploy authorized. Full backend pytest log remains /tmp/console-nav-full-tests.log (last observed around 15%; no final result yet). Browser navigation tests (2) and rewards tests (29) passed, as did Ruff and mypy in the checkpoint virtualenv; these do not replace full release validation.
+
+Preview: https://fd77-108-6-58-177.ngrok-free.app/auth/google/login starts a fresh simulated signup and reveals a disposable key. Server uses /tmp/social_rewards_app_preview.py on port 18085, isolated in-memory state. Refreshing /console/welcome consumes the one-time key; use the signup preview URL again. Backend campaign rollout and actual YouTube destination remain release checklist items. Shared-header centralization remains separate future work; the user subsequently approved the bounded console-only navigation implemented here.

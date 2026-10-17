@@ -382,7 +382,57 @@ async function loadCreditsStripeDetails() {
   }
 }
 
+function initConsoleNavigation() {
+  const sidebar = document.getElementById("console-navigation");
+  const toggle = document.querySelector(".console-menu-toggle");
+  const utilities = document.querySelector(".console-utilities");
+  if (!sidebar || !toggle || !utilities) return;
+  const home = utilities.parentElement;
+  const media = window.matchMedia("(max-width: 800px)");
+  const close = () => {
+    document.body.classList.remove("console-navigation-open");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = "Menu";
+  };
+  const sync = () => {
+    close();
+    if (media.matches) sidebar.append(utilities);
+    else home.insertBefore(utilities, toggle);
+    utilities.querySelectorAll("details").forEach(detail => {
+      detail.open = media.matches && detail.classList.contains("console-account");
+    });
+    const configuration = sidebar.querySelector(".console-configuration");
+    if (configuration) configuration.open = !media.matches || Boolean(configuration.querySelector(".active"));
+  };
+  document.body.classList.add("console-navigation-ready");
+  toggle.hidden = false;
+  toggle.addEventListener("click", () => {
+    const open = toggle.getAttribute("aria-expanded") !== "true";
+    document.body.classList.toggle("console-navigation-open", open);
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.textContent = open ? "Close" : "Menu";
+  });
+  sidebar.addEventListener("click", event => {
+    if (event.target.closest("a") && media.matches) close();
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && toggle.getAttribute("aria-expanded") === "true") {
+      close();
+      toggle.focus();
+    }
+    if (event.key === "Escape" && !media.matches) {
+      utilities.querySelectorAll("details[open]").forEach(detail => {
+        if (detail.contains(document.activeElement)) detail.querySelector("summary").focus();
+        detail.open = false;
+      });
+    }
+  });
+  media.addEventListener("change", sync);
+  sync();
+}
+
 function initConsole() {
+  initConsoleNavigation();
   updateCheckoutMinimum();
   loadCreditsStripeDetails();
   const checkoutMethod = document.querySelector("[data-checkout-payment-method]");

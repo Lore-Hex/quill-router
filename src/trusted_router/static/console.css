@@ -9,8 +9,8 @@ body.console {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--tr-color-surface-bg);
-  border-bottom: 1px solid var(--tr-color-line-rule-soft);
+  background: var(--tr-color-panel-mint-ink-2);
+  border-bottom: 1px solid var(--tr-color-panel-mint-button-border);
   display: flex;
   /* Wrap at any width: at full desktop nothing wraps; at intermediate widths
      the workspace selector / user cluster drop to a second row instead of
@@ -25,6 +25,7 @@ body.console {
 
 .console-topbar .brand {
   flex: 0 0 auto;
+  color: var(--tr-color-accent-hover);
 }
 
 .console-topnav {
@@ -111,7 +112,7 @@ body.console {
 
 .console-sidebar {
   border-right: 1px solid var(--line);
-  background: var(--panel2);
+  background: color-mix(in srgb, var(--tr-color-surface-panel) 94%, var(--tr-color-accent-base));
   padding: 20px 14px;
   display: flex;
   flex-direction: column;
@@ -1719,7 +1720,7 @@ body.console {
   font-family: var(--tr-font-family-sans);
 }
 .social-rewards::backdrop { background: rgb(0 0 0 / 78%); }
-.social-rewards-head { padding: 28px 28px 20px; position: relative; }
+.social-rewards-head { padding: 28px 28px 20px; position: relative; background: color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base)); }
 .social-rewards-close { position: absolute; right: 12px; top: 12px; font-size: 24px; border: 0; background: transparent; }
 .social-rewards-eyebrow { color: var(--tr-color-text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; margin: 0 44px 14px 0; }
 .social-rewards h2 { font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -.03em; margin: 0 32px 10px 0; }
@@ -1865,9 +1866,103 @@ body.console {
 .key-first-onboarding .activation-setup-summary:hover { color: var(--tr-color-text-primary); }
 .key-first-onboarding .activation-tabs { flex-wrap: wrap; }
 .key-first-onboarding .secret-copy-btn { background: var(--tr-color-panel-mint-bg); color: var(--tr-color-panel-mint-ink); border-color: var(--tr-color-panel-mint-divider); }
-.key-first-onboarding .key-rewards-invitation { flex-direction: column; align-items: flex-start; gap: 16px; margin: 36px 0 0; background: var(--tr-color-surface-selected); border: 0; border-radius: var(--tr-radius-control); padding: 24px; }
+.key-first-onboarding .key-rewards-invitation { flex-direction: column; align-items: flex-start; gap: 12px; margin: 36px 0 0; background: color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base)); border: 1px solid var(--tr-color-line-rule); border-radius: var(--tr-radius-control); padding: 18px 24px; }
 .key-first-onboarding .key-rewards-copy h2 { font-size: 18px; color: var(--tr-color-accent-base); }
-.key-first-onboarding .key-rewards-invitation > .btn { background: transparent; color: var(--tr-color-accent-base); border: 1px solid var(--tr-color-accent-base); padding: 10px 16px; min-height: 44px; text-decoration: none; }
-.key-first-onboarding > .activation-console-link { justify-content: flex-start; justify-self: start; margin-top: 8px; padding: 10px 16px; min-height: 44px; background: transparent; color: var(--tr-color-text-primary); border: 1px solid var(--line); }
+.key-first-onboarding .key-rewards-invitation > .btn { background: transparent; color: var(--tr-color-text-secondary); border: 1px solid var(--tr-color-line-control); padding: 10px 16px; min-height: 44px; text-decoration: none; }
+.key-first-onboarding > .activation-console-link { justify-content: flex-start; justify-self: start; margin-top: 8px; padding: 12px 20px; min-height: 48px; background: transparent; color: var(--tr-color-text-primary); border: 2px solid var(--tr-color-accent-base); font-weight: 600; }
 
 .key-first-onboarding .activation-onboarding-agent pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Console-only navigation. Page content and rewards retain their own styles. */
+.console-utilities { margin-left:auto; display:flex; align-items:center; gap:24px; }
+.console-topnav { margin:0; align-items:center; }
+.console-header-menu { position:relative; font-size:14px; }
+.console-header-menu summary { cursor:pointer; min-height:44px; display:flex; align-items:center; gap:8px; list-style:none; }
+.console-header-menu summary::-webkit-details-marker { display:none; }
+.console-header-menu summary::after { content:"⌄"; color:var(--muted); }
+.console-menu-links { position:absolute; z-index:10; right:0; top:100%; width:230px; padding:12px; background:var(--tr-color-surface-control); border:1px solid var(--line); border-radius:6px; }
+.console-menu-links a, .console-menu-links button { display:block; width:100%; min-height:44px; box-sizing:border-box; padding:10px 12px; text-align:left; background:none; border:0; color:var(--ink); font:inherit; text-decoration:none; }
+.console-menu-links a:hover, .console-menu-links button:hover { background:var(--soft); }
+.console-menu-links form { margin:0; }
+.console-menu-links .console-user-email { display:block; padding:8px 12px; }
+.console-menu-toggle { display:none; background:none; border:0; color:var(--ink); font:inherit; min-height:44px; padding:10px 12px; }
+.console-menu-toggle[hidden] { display:none; }
+.console-sidebar .workspace-selector { order:0; width:100%; display:block; padding-bottom:16px; border-bottom:1px solid var(--line); }
+.console-sidebar .workspace-selector select { width:100%; max-width:100%; min-height:44px; }
+.console-sidebar .workspace-selector label span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.console-navigation-ready .workspace-selector-submit { display:none; }
+.console-workspace-name { padding:12px 10px 20px; border-bottom:1px solid var(--line); color:var(--muted); font-size:14px; }
+.console-sidebar .sidebar-group + .sidebar-group { border-top:1px solid var(--line); padding-top:16px; }
+.console-sidebar .sidebar-link { min-height:44px; box-sizing:border-box; display:flex; align-items:center; }
+.console-sidebar .sidebar-link.active { background:var(--tr-color-surface-selected); color:var(--tr-color-accent-base); border-left:2px solid var(--tr-color-accent-base); border-radius:2px; }
+@media (max-width:800px) {
+  .console-workspace-name { display:none; }
+  .console-topbar { min-height:56px; box-sizing:border-box; padding:4px 20px; flex-wrap:nowrap; justify-content:space-between; }
+  .console-navigation-ready .console-menu-toggle { display:block; }
+  .console-navigation-ready .console-sidebar { display:none; }
+  .console-navigation-open .console-sidebar { display:flex; }
+  .console-navigation-open .console-main { display:none; }
+  .console-sidebar { flex-direction:column; flex-wrap:nowrap; gap:16px; padding:16px 20px 24px; }
+  .console-sidebar .sidebar-group { flex:none; }
+  .console-sidebar .console-utilities { margin:0; display:flex; flex-direction:column; align-items:stretch; gap:16px; border-top:1px solid var(--line); padding-top:16px; }
+  .console-sidebar .console-topnav { display:flex; flex-direction:column; align-items:stretch; gap:0; }
+  .console-sidebar .console-topnav > a, .console-sidebar .console-header-menu summary { min-height:44px; padding:10px 12px; box-sizing:border-box; }
+  .console-sidebar .console-menu-links { position:static; width:auto; border:0; padding:0 12px; background:none; }
+  .console-sidebar .console-account { border-top:1px solid var(--line); padding-top:12px; }
+  .console-sidebar .console-account > summary { display:none; }
+  .console-sidebar .console-account .console-menu-links { padding:0; }
+  .console-sidebar .console-user-email { max-width:100%; }
+}
+.console-configuration { border-top:1px solid var(--line); padding-top:16px; }
+.console-configuration > summary { display:none; }
+@media(max-width:800px) {
+  .console-configuration > summary { display:list-item; cursor:pointer; padding:10px; min-height:44px; box-sizing:border-box; font-size:14px; }
+  .console-configuration:not([open]) > .sidebar-link { display:none; }
+  .console-configuration + .sidebar-group { border-top:1px solid var(--line); padding-top:16px; }
+}
+@media(max-width:800px) {
+  .console-sidebar .sidebar-group { display:flex; flex-direction:column; flex-wrap:nowrap; align-items:stretch; }
+  .console-sidebar details.sidebar-group { display:block; }
+}
+
+/* Brighter key-page surfaces and readable supporting copy from the brand kit. */
+body.console:has(.key-first-onboarding), body.console:has(.key-list-panel) {
+  --bg: var(--tr-color-surface-bg-alt);
+  --ink: var(--tr-color-text-primary);
+  --muted: var(--tr-color-text-secondary);
+  background: var(--tr-color-surface-bg-alt);
+}
+body.console .console-main:has(.key-first-onboarding),
+body.console .console-main:has(.key-list-panel) { background: var(--tr-color-surface-bg-alt); }
+.key-first-onboarding .activation-key-panel h2,
+.key-first-onboarding .activation-setup-summary { color: var(--tr-color-text-secondary); }
+.key-first-onboarding .secret-row code { background: var(--tr-color-surface-panel-inset); color: var(--tr-color-text-primary); }
+.key-first-onboarding > .activation-console-link:hover { background: var(--tr-color-surface-hover); border-color: var(--tr-color-accent-hover); }
+
+/* Separate navigation, key management and optional rewards with tonal surfaces. */
+.console-topbar .console-topnav > a,
+.console-topbar .console-header-menu > summary,
+.console-topbar .console-menu-toggle { color: var(--tr-color-accent-hover); }
+.console-sidebar .sidebar-link.active {
+  background: color-mix(in srgb, var(--tr-color-surface-selected) 80%, var(--tr-color-accent-base));
+  font-weight: 600;
+}
+.console-sidebar .sidebar-link:hover { background: var(--tr-color-surface-hover); }
+.key-list-panel { background: var(--tr-color-surface-panel-raised); }
+.key-list-panel > .panel-head { padding: 20px 24px; }
+.key-list-panel > .panel-body { padding: 0 16px 16px; }
+.key-list-panel + .key-create-panel + .key-rewards-invitation { margin-top: 32px; }
+.key-rewards-invitation {
+  background: color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base));
+  border-left: 3px solid var(--tr-color-line-strong);
+}
+.key-rewards-invitation > .btn {
+  background: transparent;
+  color: var(--tr-color-accent-base);
+  border-color: var(--tr-color-line-control);
+}
+.key-first-onboarding .key-rewards-invitation { border-left: 3px solid var(--tr-color-line-strong); }
+.social-rewards-list p, .social-rewards-foot p { color: var(--tr-color-text-secondary); }
+@media (max-width: 600px) {
+  .key-list-panel > .panel-head { padding: 16px; }
+}
