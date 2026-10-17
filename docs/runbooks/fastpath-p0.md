@@ -23,7 +23,9 @@ default network behind the project's NAT with no external address.
    passed to `gs://tr-fastpath-releases-quill-cloud-proxy/fastpath/<commit>/`;
    the first is the commit that merged the workflow. Pin it in
    `infra/fastpath.tf` (`fastpath_release`), merge, and reset both nodes so
-   the startup script installs it:
+   the startup script installs it. A node that already ran a release takes
+   the new one by "Taking a pinned release" in `fastpath-deploy.md`, which
+   checks the release its process runs, not the file that names it:
 
    ```bash
    gcloud compute instances reset tr-fastpath-1 --zone=us-central1-a --project=quill-cloud-proxy

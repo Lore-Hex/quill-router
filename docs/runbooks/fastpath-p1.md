@@ -41,7 +41,8 @@ on `main`.
 
 3. **A release from P1 on** pinned in `infra/fastpath.tf`
    (`fastpath_release`), so the nodes carry `loadgen`, `fastpathwatch` and
-   `load-mix.json` in `/opt/fastpath`; then the nodes reset (P0's runbook).
+   `load-mix.json` in `/opt/fastpath`; then each node takes it
+   ("Taking a pinned release", `fastpath-deploy.md`).
    Done 2026-10-13 02:10Z with bfa94e22e.
 
 ## Each run
@@ -55,12 +56,12 @@ gcloud compute ssh tr-fastpath-1 --zone=us-central1-a --project=quill-cloud-prox
 with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`,
 `WS` the workspace's ID, `FUNDED` the `credits_total_microdollars` the
 provisioner printed, and `FRONT`
-the nodes' front doors by their internal IPs, which a node keeps only
-until it is replaced (a change to the startup script replaces both nodes,
-as the apply of 2026-10-13 01:38Z did):
+the serving front doors, read from the fleet's members (a node keeps its
+IP only until it is replaced, as the apply of 2026-10-13 01:38Z replaced
+both; the node's own identity reads Spanner and cannot list instances):
 
 ```bash
-FRONT=$(gcloud compute instances list --project=quill-cloud-proxy --filter="name~tr-fastpath" --format="value(networkInterfaces[0].networkIP)" | sed 's#^#http://#; s#$#:8080#' | paste -sd, -)
+FRONT=$(gcloud spanner databases execute-sql trusted-router --instance=trusted-router-nam6 --project=quill-cloud-proxy --sql="SELECT address FROM tr_fastpath_member WHERE state = 'serving' AND 'frontdoor' IN UNNEST(roles) ORDER BY address" | tail -n +2 | sed 's#^#http://#' | paste -sd, -)
 ```
 
 0. **The floor.** The generator's latencies include the hop from this

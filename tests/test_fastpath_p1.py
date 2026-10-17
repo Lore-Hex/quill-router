@@ -89,7 +89,8 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     # The front doors are read from the nodes, never written down: a node
     # keeps its IP only until it is replaced.
     assert not re.search(r"10\.128\.\d+\.\d+", runbook)
-    assert any(c.startswith("FRONT=$(gcloud compute instances list") for c in commands)
+    (front,) = [c for c in commands if c.startswith("FRONT=")]
+    assert "FROM tr_fastpath_member WHERE state = 'serving' AND 'frontdoor' IN UNNEST(roles)" in front
     # Before the first run, in this order: the override that puts the
     # workspace at the tier, and the role the watch's Monitoring reads
     # need, both before the watch's command; before the rate rises, each

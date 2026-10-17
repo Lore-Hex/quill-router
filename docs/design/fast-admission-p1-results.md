@@ -121,15 +121,20 @@ five minutes, at the first 30-second poll past the ceiling.
 
 ## What the two runs found
 
-Three defects, each fixed on main and on the nodes before run 3:
+Three defects, each fixed on main before run 3; the first two ran on the
+nodes from run 3 on, the third from 2026-10-15 ("The release the nodes
+ran", below):
 
 1. **A reaped hold's boot binding** (above). The fix took two releases,
    since an auditor from before a record field refuses a record carrying
    it and the settle after that record is then acknowledged past a gap:
    first every auditor reads the authorization's boot binding on a hold's
    first heartbeat record (#1751, release `2eef83dec`), then the owner
-   states it there (#1754, release `4f58c6efa`), pinned once both nodes
-   ran the reader. `docs/runbooks/fastpath-deploy.md` now says how a
+   states it there (#1754, release `4f58c6efa`). The writer was pinned
+   (2026-10-14 01:00Z) while the nodes still ran `bfa94e22e`, before
+   either ran the reader; it reached them in order all the same, the
+   reader from 01:02Z and the writer from 04:04Z, since each reset ran
+   the release before its pin. `docs/runbooks/fastpath-deploy.md` now says how a
    record field is added. The packs run 2 left pending are from before
    the fix; they stay pending until an operator marks their work done,
    which the audit reports and the watch's ceiling would stop run 3 on.
@@ -152,8 +157,10 @@ the accounting, which held in both runs.
 
 ## Runs 3 to 5: the fixes on the nodes, the rate raised by steps
 
-2026-10-14, nodes on release `f96c21395` (the three fixes above), the
-legacy pending packs marked done by an operator first. Each run the full
+2026-10-14, nodes running release `4f58c6efa`, with fixes 1 and 2 above;
+`f96c21395`, the alerts' severity, was pinned but ran only from 2026-10-15
+("The release the nodes ran", below). The legacy pending packs were
+marked done by an operator first. Each run the full
 ten minutes, the generator ending on its own, the watch exiting 0, the
 audit exiting 0 with no problem.
 
@@ -183,7 +190,7 @@ runs, an empty `/owner/ping` (`fastpath/internal/frontdoor/http.go`, a
 generator sends every other request to each front door
 (`fastpath/internal/loadgen`), and a front door may forward an
 authorization to the other node's owner; the authorize path between
-the two releases is unchanged (`git log bfa94e22e..f96c21395 --
+the two releases is unchanged (`git log bfa94e22e..4f58c6efa --
 fastpath/` touches the heartbeat record and the alert line); the
 observed load during run 4 was low (load average 0.11 on two vCPUs,
 the logging agent at six percent, no journal line per request). The
@@ -232,7 +239,7 @@ watch's stop could list the holds the same way.
 
 ## Run 6: eight a second, stopped by the spend ceiling
 
-2026-10-14 15:18:22Z, on the release of runs 3 to 5 (`f96c21395`), after Joseph's second
+2026-10-14 15:18:22Z, on the release of runs 3 to 5 (`4f58c6efa`), after Joseph's second
 admin grant (`fastpath_p1_funding_2026_10_b`) raised the funding to 200 USD
 and the run's spend ceiling, a tenth of it, to 20 USD. Floors 0.13 ms here
 and 1.40 ms to the other node. The watch stopped the stage at 9.5 minutes
@@ -253,9 +260,11 @@ so none came during runs 3 to 10.
 
 ## Runs 7 to 10: sixteen to 128 a second
 
-2026-10-16, both nodes on release `afa671dc9`, which adds the drain-log
-refund taking its hold's boot (#1783) and the owner releasing
-no-heartbeat holds at their end of life (#1784). Each run about 2,900
+2026-10-16, both nodes running release `f96c21395`. `afa671dc9`, which
+adds the drain-log refund taking its hold's boot (#1783) and the owner
+releasing no-heartbeat holds at their end of life (#1784), was pinned but
+did not run until 2026-10-17 ("The release the nodes ran", below). Each
+run about 2,900
 generations, its duration halved as its rate doubled, so that its expected
 spend, about 12 USD at the charges so far, sits under the 20 USD ceiling;
 run 10's heavy tail took it to 19.5. The watch ran on every run with the
@@ -335,6 +344,38 @@ share of streams; how many heartbeats a production stream sends is not
 measured (the mix's one to four is the runbook's assumption too), so the
 heartbeat load per request is not compared. The pilot leaves streams out
 (Joseph, 2026-10-16).
+
+## The release the nodes ran
+
+Each pin's nodes ran the release before it, until 2026-10-17. A reset
+boots the node with its unit enabled, so systemd starts the binary on disk,
+the previous release, about forty seconds before the startup script
+downloads the pinned one; the script's `systemctl enable --now` leaves the
+running unit alone, and it keeps the old binary, deleted on disk, until it
+next starts. `/opt/fastpath/release` and the instance's metadata named
+the pin, and the service reported itself active. The nodes' journals in Cloud
+Logging say what each start ran:
+
+| started | node | running | pinned then |
+|---|---|---|---|
+| 2026-10-13 22:25Z | both | `bfa94e22e` | `bfa94e22e` |
+| 2026-10-14 00:23Z | both | `bfa94e22e` | `2eef83dec` |
+| 2026-10-14 01:02Z | both | `2eef83dec` | `4f58c6efa` |
+| 2026-10-14 04:04Z | both | `4f58c6efa` | `f96c21395` |
+| 2026-10-15 02:13Z | both | `f96c21395` | `afa671dc9` |
+| 2026-10-17 05:04:49Z | 1 | `afa671dc9` | `93e69666a` |
+| 2026-10-17 05:07:48Z | 1 | `93e69666a` | `93e69666a` |
+| 2026-10-17 05:08:55Z | 2 | `afa671dc9` | `93e69666a` |
+| 2026-10-17 05:10:09Z | 2 | `93e69666a` | `93e69666a` |
+
+So runs 3 to 6 ran `4f58c6efa` and runs 7 to 10 `f96c21395`; their numbers
+and audits stand for those releases. The boot binding's two releases still
+reached the nodes in order, the reader before the writer. Node 2 ran
+`f96c21395` until its reset at about 05:08:40Z, node 1 having reset at
+05:04Z. The two `93e69666a` starts were restarts after each node was marked leaving and drained, and
+the running binary's hash then matched the installed one. A node now takes
+a pin by "Taking a pinned release" in `docs/runbooks/fastpath-deploy.md`,
+which reads the release from the process.
 
 ## Next
 
