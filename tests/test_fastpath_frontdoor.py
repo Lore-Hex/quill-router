@@ -183,13 +183,15 @@ def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_
     without waiting, starts no thread and sends nothing, then or later. The
     test holds the permits itself, so no schedule frees one; a race of
     holder threads against a sleep left one free on a slow runner."""
-    sent: list[str] = []
+    sent: list[tuple[str, str]] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
-        sent.append(request.url.path)
+        sent.append((request.url.path, json.loads(request.content)["Request"]))
         return httpx.Response(200, json=ADMIT)
 
-    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=1.5, transport=httpx.MockTransport(handle))
+    # A budget no scheduler outlasts, so the call that is let through below
+    # cannot time out on a worker held off the CPU.
+    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=30.0, transport=httpx.MockTransport(handle))
     permits = client._permits
     for _ in range(fd.WORKERS):
         assert permits.acquire(blocking=False)
@@ -204,12 +206,13 @@ def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_
         def release(self) -> None:
             permits.release()
 
+    # Every thread made while the refused call runs, whatever its target:
+    # nothing else in this test makes one.
     started: list[object] = []
     real_thread = fd.threading.Thread
 
     def counted(*args: Any, **kwargs: Any) -> Any:
-        if getattr(kwargs.get("target"), "__module__", None) == fd.__name__:
-            started.append(kwargs.get("target"))
+        started.append(kwargs.get("target"))
         return real_thread(*args, **kwargs)
 
     monkeypatch.setattr(client, "_permits", Spy())
@@ -224,8 +227,9 @@ def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_
         permits.release()
     assert sent == []
     assert client.authorize(workspace_id="ws", request="next", estimate=1, stream=False, boot=b"b") is not None
-    assert sent == ["/v1/authorize"]
     client.close()
+    # Only the call let through was sent, as itself: the refused one never.
+    assert sent == [("/v1/authorize", "next")]
 
 
 def test_a_late_answer_changes_no_breaker_either_way() -> None:
