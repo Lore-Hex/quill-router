@@ -253,6 +253,7 @@ class Bundle:
     shutdown: Shutdown | None = None
     window: Mapping[str, int] | None = None
     a2_streams: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)
+    producer_registrations: tuple[dict[str, Any], ...] | None = None
 
 
 @dataclass(frozen=True)

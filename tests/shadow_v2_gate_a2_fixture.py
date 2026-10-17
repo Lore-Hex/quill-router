@@ -163,6 +163,7 @@ def transport(bundle: Bundle) -> bytes:
         rows=rows(bundle.rows), attachments=rows(bundle.attachments), proof=bundle.proof.decode() if bundle.proof else None,
         ledgers=[raw.decode() for raw in bundle.ledgers], days=list(bundle.days), completed_at_us=bundle.completed_at_us,
         preimages=[dict(name=p.name, raw=p.raw.decode()) for p in bundle.preimages],
+        **({'producer_registrations': list(bundle.producer_registrations)} if bundle.producer_registrations is not None else {}),
         **{key: getattr(bundle, key).decode() if getattr(bundle, key) else None for key in ('transport', 'fleet', 'pre', 'serving')}))
 
 

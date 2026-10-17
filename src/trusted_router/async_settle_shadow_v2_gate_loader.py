@@ -119,7 +119,7 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
         graph = PayloadGraph({k: v for k, v in unique.items() if k not in conflicts},
                              None if 'completed_at_us' in metadata_issues else completed, ports=ports, stage=gate,
                              ledgers=tuple(item.encode('utf-8') for item in ledgers),
-                             producer_registrations=tuple(registrations))
+                             producer_registrations=tuple(registrations) if 'producer_registrations' in value else None)
         for qualified in a2.OBJECT_PREIMAGES:
             if qualified.startswith('proof.') and qualified not in unique:
                 issues.append(LoadingIssue('artifact_gap', qualified, 'required payload absent'))
@@ -211,6 +211,7 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
                       pre=original(value.get('pre')), serving=original(value.get('serving')),
                       completed_at_us=completed, undefined_preimages=undefined,
                       preimages=tuple(preimages), a2_payloads=payloads, window=window,
+                      producer_registrations=graph.producer_registrations,
                       a2_streams=graph.streams, inventory=inventory, cohort=cohort, shutdown=graph.shutdown,
                       budget=views.get('proof.pre_budget_sha256'), external=views.get('proof.external_proofs_sha256'),
                       reset_support=views.get('proof.resolution_dag_sha256'),

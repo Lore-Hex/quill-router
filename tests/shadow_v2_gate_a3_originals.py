@@ -152,7 +152,8 @@ def captured_plan(raw: bytes, root: Any, *, part_size: int = 200) -> Any:
     return PlanInput(plan_raw, lambda name: (root / name).read_bytes())
 
 
-def accounted_originals(original: Any, ports: Any, *, damage: str = '') -> tuple[bytes, Any]:
+def accounted_originals(original: Any, ports: Any, *, damage: str = '', prefix: str = '',
+                        registration_path: str | None = None, capture_body: bytes | None = None) -> tuple[bytes, Any]:
     """Build complete original pass pages, then bind them to the deployment."""
     from trusted_router.async_settle_shadow_v2_gate_native_accounting import (
         DAY_KINDS,
@@ -243,6 +244,15 @@ def accounted_originals(original: Any, ports: Any, *, damage: str = '') -> tuple
         files['loading/qualification-scope.json'] = canonical(scope)
         if damage == 'missing':
             del files[ref['path']]
+    registration = None
+    if registration_path is not None:
+        for path in list(files):
+            if prefix and path.startswith('accounting/') and not path.endswith('/root.json'):
+                files[prefix + path] = files.pop(path)
+        passes = [dict(bundle='native.json', accounting=reference(files, f'accounting/{date}/root.json',
+                      files[f'accounting/{date}/root.json']), prefix=prefix, object_plan={}) for date in original.days]
+        capture = reference(files, 'review/capture.data', capture_body if capture_body is not None else canonical(dict(passes=passes)))
+        registration = reference(files, registration_path, canonical(dict(NativeExport=capture)))
     plan = json.loads(ports.release.raw)
     plan['artifacts'].update({path: file_digest(raw) for path, raw in files.items()
         if path != ports.release.path and not path.startswith('proof.')})
@@ -253,5 +263,9 @@ def accounted_originals(original: Any, ports: Any, *, damage: str = '') -> tuple
         target = '/root.json' if damage == 'root-shape' else '/reads.json'
         value = json.loads(raw)
         next(p for p in value['preimages'] if p['name'].endswith(target))['raw'] = '{}'
+        raw = canonical(value)
+    if registration is not None:
+        value = json.loads(raw)
+        value['producer_registrations'] = [registration]
         raw = canonical(value)
     return raw, ports

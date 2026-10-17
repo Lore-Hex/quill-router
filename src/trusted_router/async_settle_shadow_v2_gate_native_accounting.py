@@ -19,45 +19,65 @@ from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
 
 
+def select_registrations(files: Mapping[str, bytes], declared_paths: Iterable[str],
+                         registrations: tuple[dict[str, Any], ...] | None) -> tuple[dict[str, Any], ...]:
+    """Only an absent declaration permits the conventional-path fallback."""
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    if registrations is not None:
+        return registrations
+    declared = set(declared_paths)
+    conventional = 'stage/producer-captures.json'
+    if conventional in files and conventional not in declared:
+        raw = files[conventional]
+        return (dict(path=conventional, bytes=len(raw), sha256=file_digest(raw)),)
+    return tuple(dict(path=path, bytes=len(raw), sha256=file_digest(raw))
+                 for path, raw in files.items() if path not in declared
+                 and (path == 'stage/producer-captures.json' or path.endswith('/stage/producer-captures.json')))
+
+
 def accounting_prefixes(files: Mapping[str, bytes], paths: Iterable[str],
                         registrations: Iterable[dict[str, Any]] = ()) -> dict[str, str]:
-    """Read only the producer registrations declared by this transport."""
+    """Check each selected registration and capture before resolving scope."""
     from trusted_router import async_settle_shadow_v2_a2_evidence as a2
     from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
     from trusted_router.async_settle_shadow_v2_gate_loading import PayloadError
 
     applicable = set(paths)
-    if not applicable:
-        return {}
 
-    def read(ref: dict[str, Any]) -> Any:
-        a2.FILE_REF(ref)
-        raw = files.get(ref['path'])
-        if raw is None or len(raw) != ref['bytes'] or file_digest(raw) != ref['sha256']:
-            raise PayloadError(ref['path'], 'artifact_gap')
-        return retained_json(raw)
+    def read(ref: dict[str, Any], owner: str) -> Any:
+        path = ref['path'] if isinstance(ref, dict) and isinstance(ref.get('path'), str) else owner
+        try:
+            a2.FILE_REF(ref)
+            raw = files[path]
+            require(len(raw) == ref['bytes'] and file_digest(raw) == ref['sha256'])
+            return retained_json(raw)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise PayloadError(path, 'evidence_schema_gap') from exc
 
-    captures = []
-    for registration in registrations:
-        declared = read(registration)
-        require(isinstance(declared, dict), 'evidence_schema_gap')
-        if 'NativeExport' in declared:
-            captures.append(read(declared['NativeExport']))
     prefixes: dict[str, str] = {}
-    for capture in captures:
-        if not isinstance(capture, dict) or not isinstance(capture.get('passes'), list):
-            continue
-        for passed in capture['passes']:
-            if not isinstance(passed, dict) or not all(key in passed for key in ('bundle', 'accounting', 'prefix', 'object_plan')):
+    for registration in registrations:
+        path = registration['path']
+        try:
+            declared = read(registration, path)
+            require(type(declared) is dict, 'evidence_schema_gap')
+            if 'NativeExport' not in declared:
                 continue
-            ref = passed['accounting']
-            require(isinstance(ref, dict) and isinstance(ref.get('path'), str), 'evidence_schema_gap')
-            if ref['path'] not in applicable:
-                continue
-            prefix = passed['prefix']
-            require(isinstance(prefix, str), 'evidence_schema_gap')
-            require(ref['path'] not in prefixes or prefixes[ref['path']] == prefix, 'evidence_schema_gap')
-            prefixes[ref['path']] = prefix
+            ref = declared['NativeExport']
+            capture = read(ref, path)
+            path = ref['path']
+            require(type(capture) is dict and type(capture.get('passes')) is list and bool(capture['passes']))
+            for passed in capture['passes']:
+                require(type(passed) is dict and all(key in passed for key in ('bundle', 'accounting', 'prefix', 'object_plan')))
+                a2.FILE_REF(passed['accounting'])
+                require(type(passed['bundle']) is str and type(passed['prefix']) is str and type(passed['object_plan']) is dict)
+                target, prefix = passed['accounting']['path'], passed['prefix']
+                if target in applicable:
+                    require(target not in prefixes or prefixes[target] == prefix)
+                    prefixes[target] = prefix
+        except PayloadError:
+            raise
+        except (ValueError, KeyError, TypeError) as exc:
+            raise PayloadError(path, 'evidence_schema_gap') from exc
     return prefixes
 
 
@@ -93,6 +113,11 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
             self.put(ref['path'], graph.file(ref))
             return super().read(ref)
 
+    if graph.producer_registrations is None:
+        from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+        roles = dependencies(graph.files, payloads, graph.ports, 'post-flip', graph.ledgers,
+                             producer_registrations=(), _roles_only=True) if select_registrations(graph.files, (), None) else {}
+        graph.producer_registrations = select_registrations(graph.files, roles, None)
     totals = []
     for key, envelope in payloads.items():
         if key != 'manifest.independent_inventory_sha256' and not key.endswith('/manifest.independent_inventory_sha256'):

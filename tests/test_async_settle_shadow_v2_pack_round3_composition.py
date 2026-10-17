@@ -426,3 +426,32 @@ def test_real_prefixed_export_with_opaque_support(tmp_path, composed, assembled,
     assert_accounting_equal(compared[1], compared[0])
     assert actual.streams == baseline.streams
     assert {path: raw for path, raw in with_support.items() if path != support} == originals
+
+
+@pytest.mark.parametrize('opaque', [False, True], ids=['round5', 'round7'])
+def test_round13_historical_real_writer_scope(tmp_path, assembled, monkeypatch, opaque):
+    from tests.test_async_settle_shadow_v2_gate_a3 import through_all
+    from trusted_router import async_settle_shadow_v2_gate_native_accounting as consumer
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.detached_jws import canonical
+    original, ports = assembled
+    value = json.loads(canonical(original))
+    value.pop('producer_registrations')
+    if opaque:
+        value['preimages'].append(dict(name='ci/review/stage/producer-captures.json', raw=canonical(dict(
+            NativeExport=dict(path='ci/review/stage/producer-captures.json'), passes=[dict(bundle='example.json',
+            accounting=dict(path='native-export/accounting.json'), prefix=None, object_plan={})])).decode()))
+    raw = canonical(value)
+    seen = []
+    compare = consumer.compare_export_accounting_streamed
+    def recorded(*args, **kwargs):
+        assert kwargs['prefix'] == 'native-export/'
+        result = compare(*args, **kwargs)
+        assert result.native_rpcs == 19
+        seen.append(result)
+        return result
+    monkeypatch.setattr(consumer, 'compare_export_accounting_streamed', recorded)
+    loaded = load(raw, ports, gate='transport')
+    assert not [issue for issue in loaded.a2_streams['loading_issues'] if issue['path'].startswith('export/')]
+    through_all(raw, ports, tmp_path)
+    assert seen

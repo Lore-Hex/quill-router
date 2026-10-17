@@ -18,7 +18,7 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import (
 )
 from trusted_router.async_settle_shadow_v2_gate_loading import LIMITS, retained_json
 from trusted_router.async_settle_shadow_v2_gate_policy import closure
-from trusted_router.async_settle_shadow_v2_schema import Schema, require, sha256
+from trusted_router.async_settle_shadow_v2_schema import Schema, require
 
 Parser = Callable[[bytes], Any]
 
@@ -67,7 +67,8 @@ def file_list(raw: bytes) -> Any:
 
 def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: Any, stage: str, ledgers: tuple[bytes, ...] = (), *,
                  references: dict[str, list[dict[str, Any]]] | None = None,
-                 producer_registrations: tuple[dict[str, Any], ...] = ()) -> dict[str, Parser]:
+                 producer_registrations: tuple[dict[str, Any], ...] | None = None,
+                 _roles_only: bool = False) -> dict[str, Parser]:
     """Follow descriptors, including page links, without checking references.
 
     The independently approved file inventory resolves missing canonical pages
@@ -84,14 +85,11 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
     by_digest: dict[str, str] = {}
     if isinstance(ports, LoadingPorts) and ports.release is not None:
         by_digest.update((digest, path) for path, digest in ports.release.artifacts.items())
+    # DETAIL declares pages by digest. Index bytes without inspecting content.
     for path, raw in files.items():
-        try:
-            value = retained_json(raw)
-            if isinstance(value, dict) and 'entries' in value:
-                decoded[path] = value
-                by_digest[sha256(value)] = path
-        except ValueError:
-            continue
+        by_digest[roots.file_digest(raw)] = path
+        if raw.endswith(b'\n'):
+            by_digest[roots.file_digest(raw[:-1])] = path
     pending: list[tuple[str, Any]] = []
     schemas: dict[str, Schema] = {}
     expanded: set[str] = set()
@@ -111,7 +109,9 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
         if path not in expanded and (schema is not None or parser is not None and parser not in (original_bytes, python_source)):
             expanded.add(path)
             try:
-                pending.append((path, decoded[path] if path in decoded else retained_json(files[path])))
+                if path not in decoded:
+                    decoded[path] = retained_json(files[path])
+                pending.append((path, decoded[path]))
             except (ValueError, KeyError):
                 pass
         if source or parser is not None:
@@ -155,6 +155,7 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
                 ledger_path = by_digest.get(item['sha256'])
                 if ledger_path is not None:
                     add(dict(path=ledger_path, bytes=0, sha256=item['sha256']), a2.PROOF_RESULT, declared=False)
+    accounting: dict[str, Any] = {}
     for path, value in payloads.items():
         if path == 'proof.external_proofs_sha256':
             value = {**value, 'requirements': [r for r in value['requirements'] if r['stage'] in closure(stage)],
@@ -187,13 +188,8 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             add(node['serving'], parser=serving_roster)
             add(node['deployment'], parser=deployment_roster)
         if parsers.get(origin) is accounting_root and node.get('format') == 'shadow-v2-live-export-a3-n' and isinstance(node.get('details'), dict):
-            from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_page
-            prefix = accounting_prefixes(files, (origin,), producer_registrations).get(origin, '')
-            for refs in node['details'].values():
-                for ref in refs if isinstance(refs, list) else []:
-                    if isinstance(ref, dict) and set(ref) == set(a2.FILE_REF.fields):
-                        add({**ref, 'path': prefix + ref['path']}, parser=accounting_page)
-            # Export-page references belong to this spool, not the graph root.
+            accounting[origin] = node
+            # Finish the role walk before selecting a historical registration.
             continue
         if 'export_accounting' in node:
             pages(node['export_accounting'], 'files', accounting_root)
@@ -205,7 +201,8 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             add(node['original_close'], a1.CLOSURE)
             add(node['close_result'], a1.CLOSE_RESULT)
         if fields == set(a2.SHUTDOWN_MEASUREMENT.fields):
-            add(node['source'], SHUTDOWN_SOURCE)
+            parser = ports.measurements.get(node['source']['path']) if isinstance(ports, LoadingPorts) else None
+            add(node['source'], None if parser is not None else SHUTDOWN_SOURCE, parser=parser)
         if fields == set(a2.BUDGET_ENVELOPE.fields):
             add(node['output'], parser=retained_json)
             add(node['v2_load']['limits'], LIMITS)
@@ -228,9 +225,6 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             schemas[path] = contract.OBJECT_PREIMAGES[qualified]
     if 'loading/budget-measurements.json' in parsers:
         schemas['loading/budget-measurements.json'] = BUDGET_MEASUREMENTS
-    if isinstance(ports, LoadingPorts):
-        for path in parsers.keys() & ports.measurements.keys():
-            parsers[path] = ports.measurements[path]
     for path, schema in schemas.items():
         def parse_schema(raw: bytes, schema: Schema = schema) -> Any:
             return contract._object_bytes(raw, schema)
@@ -240,4 +234,27 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
             from trusted_router.async_settle_shadow_v2_gate_release import decode_release_plan
             return decode_release_plan(raw, roots.file_digest(raw))
         parsers[ports.release.path] = release_parser
+    if _roles_only:
+        from trusted_router.async_settle_shadow_v2_gate_native_accounting import accounting_page
+        for node in accounting.values():
+            for refs in node['details'].values():
+                for ref in refs if isinstance(refs, list) else []:
+                    if isinstance(ref, dict) and set(ref) == set(a2.FILE_REF.fields):
+                        parsers.setdefault(ref['path'], accounting_page)
+    else:
+        from trusted_router.async_settle_shadow_v2_gate_native_accounting import (
+            accounting_page,
+            select_registrations,
+        )
+        roles = (dependencies(files, payloads, ports, 'post-flip', ledgers,
+                              producer_registrations=(), _roles_only=True)
+                 if producer_registrations is None and select_registrations(files, (), None) else parsers)
+        registrations = select_registrations(files, roles, producer_registrations)
+        prefixes = accounting_prefixes(files, accounting, registrations)
+        for origin, node in accounting.items():
+            prefix = prefixes.get(origin, '')
+            for refs in node['details'].values():
+                for ref in refs if isinstance(refs, list) else []:
+                    if isinstance(ref, dict) and set(ref) == set(a2.FILE_REF.fields):
+                        add({**ref, 'path': prefix + ref['path']}, parser=accounting_page)
     return parsers

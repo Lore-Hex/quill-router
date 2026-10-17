@@ -62,7 +62,7 @@ class PayloadGraph:
     stage: str = 'pre-flip'
     parsers: dict[str, Any] = field(default_factory=dict)
     ledgers: tuple[bytes, ...] = ()
-    producer_registrations: tuple[dict[str, Any], ...] = ()
+    producer_registrations: tuple[dict[str, Any], ...] | None = None
 
     def reject(self, path: str, exc: Exception) -> None:
         if isinstance(exc, PayloadError):
@@ -122,62 +122,32 @@ class PayloadGraph:
         schema = roots.STREAMS[stream][1]
         require(schema is not None, 'evidence_schema_gap')
         assert schema is not None
-        if stream not in self._indexed:
-            # DETAIL supplies hashes, not paths. Candidate files come only from
-            # the finite supplied file inventory, never from disk discovery.
-            if id(schema) not in self._containers:
-                containers: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
-                for path, raw in self.files.items():
-                    # Lookup only. Most dependencies are source/fixture files,
-                    # not page containers. Reject them before the much more
-                    # expensive contract traversal; accepted pages still go
-                    # through the contract on their original bytes below.
-                    if path not in self._lookups:
-                        try:
-                            candidate = retained_json(raw)
-                            self._lookups[path] = candidate if type(candidate) is dict and 'entries' in candidate else None
-                        except ValueError:
-                            self._lookups[path] = None
-                    lookup = self._lookups[path]
-                    if type(lookup) is not dict or 'entries' not in lookup:
-                        continue
-                    try:
-                        value = contract._object_bytes(raw, schema)
-                    except ValueError as exc:
-                        try:
-                            # Lookup only: a committed but invalid page must be
-                            # a schema failure, not misreported as missing bytes.
-                            rejected = retained_json(raw)
-                            if type(rejected) is dict and 'entries' in rejected:
-                                containers.append((path, sha256(rejected), None, error_gap(exc)))
-                        except ValueError:
-                            pass
-                    else:
-                        containers.append((path, sha256(value), value, None))
-                self._containers[id(schema)] = containers
-            for path, digest, candidate, error in self._containers[id(schema)]:
-                if candidate is None:
-                    self._bad_pages[stream, digest] = PayloadError(path, error or 'evidence_schema_gap')
-                    continue
-                try:
-                    for entry in candidate['entries']:
-                        roots.STREAMS[stream][0](entry)
-                except ValueError as exc:
-                    self._bad_pages[stream, digest] = PayloadError(path, error_gap(exc))
-                    continue
-                self._pages[stream, digest] = candidate
-            self._indexed.add(stream)
+        # Hash lookup does not parse ordinary source-list originals.
+        if not self._lookups:
+            for path, raw in self.files.items():
+                self._lookups[roots.file_digest(raw)] = path
+                if raw.endswith(b'\n'):
+                    self._lookups[roots.file_digest(raw[:-1])] = path
         tail = reference['tail_sha256']
         pages: list[dict[str, Any]] = []
         visited: set[str] = set()
         while tail is not None:
             require(tail not in visited and len(pages) < reference['pages'], 'evidence_schema_gap')
             visited.add(tail)
-            page = self._pages.get((stream, tail))
-            if page is None and (stream, tail) in self._bad_pages:
-                raise self._bad_pages[stream, tail]
-            require(page is not None, 'artifact_gap')
-            assert page is not None
+            key = (stream, tail)
+            if key not in self._pages:
+                located = self._lookups.get(tail)
+                require(isinstance(located, str), 'artifact_gap')
+                assert isinstance(located, str)
+                path = located
+                try:
+                    page = contract._object_bytes(self.files[path], schema)
+                    for entry in page['entries']:
+                        roots.STREAMS[stream][0](entry)
+                    self._pages[key] = page
+                except ValueError as exc:
+                    raise PayloadError(path, error_gap(exc)) from exc
+            page = self._pages[key]
             pages.append(page)
             tail = page['previous_sha256']
         pages.reverse()

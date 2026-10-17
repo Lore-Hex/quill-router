@@ -248,7 +248,12 @@ def test_r25_complete_collection_file_population(tmp_path, writer):
     actual = directory_references(tmp_path / 'out')
     assert len(costs['receipts']) == len(actual)
     assert {r['object']['path'] for r in costs['receipts']} == {r['path'] for r in actual}
-    assert len([r for r in actual if r['path'].startswith('gate/')]) == 8
+    gate_files = [r for r in actual if r['path'].startswith('gate/')]
+    assert len(gate_files) == 9
+    # Prior reconstruction needs the original registration declaration too.
+    transport = json.loads((tmp_path / 'out/stage/transport.json').read_bytes())
+    declaration = canonical(transport['producer_registrations'])
+    assert len([r for r in gate_files if (tmp_path / 'out' / r['path']).read_bytes() == declaration]) == 1
     assert DAY + '/manifest-v2.json' in {r['path'] for r in actual}
     assert json.loads((tmp_path / result['output_record']['path']).read_bytes()) == costs
 

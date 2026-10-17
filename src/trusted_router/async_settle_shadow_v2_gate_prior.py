@@ -113,11 +113,20 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     )
     prior_release = decode_release_plan(plan_raw, roots.file_digest(plan_raw))
     prior_ports = replace(ctx.ports, release=prior_release, measurements=measurement_parsers(prior_release))
-    graph = PayloadGraph(inventory, report['completed_at_us'], ports=prior_ports, stage=report['gate'])
+    from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
+    registrations_raw = inventory.get('loading/producer-registrations.json')
+    registrations = None if registrations_raw is None else tuple(retained_json(registrations_raw))
+    graph = PayloadGraph(inventory, report['completed_at_us'], ports=prior_ports, stage=report['gate'],
+                         producer_registrations=registrations)
     payloads = {path: contract._object_bytes(raw, contract.OBJECT_PREIMAGES[qualified])
         for path, raw in inventory.items()
         if (qualified := path.split('/', 1)[-1] if '/manifest.' in path else path) in contract.OBJECT_PREIMAGES}
+    from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+    from trusted_router.async_settle_shadow_v2_gate_native_accounting import select_registrations
     from trusted_router.async_settle_shadow_v2_gate_release import release_checks
+    roles = dependencies(inventory, payloads, prior_ports, 'post-flip', producer_registrations=(), _roles_only=True)
+    registrations = select_registrations(inventory, roles, registrations)
+    graph.producer_registrations = registrations
     release_checks(graph, payloads)
     graph.detail(payloads['proof.post_budget_sha256']['v2_load']['segments'], 'segments')
     # Release files are live trusted checkout inputs even on a cache hit.
@@ -175,7 +184,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
         previous = matches[0]
         ordered.append(original(previous))
     bundle = Bundle(rows=tuple(rows), attachments=tuple(attachments), proof=proof_raw,
-        ledgers=tuple(ordered), inventory=boots, days=tuple(report['days']),
+        ledgers=tuple(ordered), inventory=boots, days=tuple(report['days']), producer_registrations=registrations,
         completed_at_us=report['completed_at_us'], preimages=tuple(Preimage(k, v) for k, v in inventory.items()),
         transport=inventory.get('prior-gates/transport'), pre=inventory.get('prior-gates/pre'),
         fleet=inventory.get('prior-gates/fleet'), serving=inventory.get('prior-gates/serving'))
@@ -216,6 +225,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     # and evaluator. In particular, materialize checks every approval at the
     # claimed completion; the report cannot certify its own claimed PASS.
     raw_transport = canonical(dict(policy_version='shadow-v2', contract_revision='a1',
+        producer_registrations=list(registrations),
         rows=[dict(kind=r.key.kind, id=r.key.id, raw=r.raw.decode()) for r in rows],
         attachments=[dict(kind=r.key.kind, id=r.key.id, raw=r.raw.decode()) for r in attachments],
         proof=proof_raw.decode(), ledgers=[raw.decode() for raw in ordered],

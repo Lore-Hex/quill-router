@@ -151,6 +151,7 @@ Section 8's graph is: transport and pre-enable have no prior gate requirement; f
 | `Bundle.a2_payloads` | Original named proof/manifest objects and FILE_REF bytes | OBJECT_PREIMAGES schemas; FILE_REF; PayloadGraph; validate_preimages |
 | `Bundle.shutdown` | Only the loader committed SHUTDOWN_INVENTORY -> measurement -> source population | PayloadGraph.materialize_one; PROOF_MANIFEST shutdown digest binding in load; validate_preimages; decode_bundle alias equality |
 | `Bundle.window` | Requested transport metadata. Invalid fields produce loading issues; each interval validated for contract representability before selection; scope recovered together from independent inventory, proof rosters or surviving day-manifest lifetimes. Window cannot assert evidence | integer; day; INTERVAL; gate_report.diagnostic_scope/window_for; gates.clock (seed and elapsed are separate from requested observation scope). Completion fallback is a report bound, not a trusted gate timestamp |
+| `Bundle.producer_registrations` | Transport producer_registrations FILE_REF declarations, or the R2 conventional registration after the complete role walk; retained in the prior report input inventory | gate_loader.load; gate_dependencies.dependencies; select_registrations; accounting_prefixes; input_inventory; gate_prior._resolve |
 | `Bundle.a2_streams` | Loader-generated diagnostics and materialized original DETAIL streams; diagnostics are not evidence and are never proof preimages | LoadingIssue; GAP_NAME; validate_detail; validate_original_bytes |
 | `RetainedResult.output` | Actual retained callable execution on original payload/dependencies through finite file port, with counted calls | gate_retained.delegate; RETAINED_OUTPUT; capture/output byte equality; check_calls |
 | `RetainedResult.opened` | Actual retained callable execution on original payload/dependencies through finite file port, with counted calls | gate_retained.delegate; RETAINED_OUTPUT; capture/output byte equality; check_calls |
@@ -219,6 +220,14 @@ and tools boundary: unexpected load/evaluate/render failures yield a fixed
 proof and scope survive, otherwise the applicable proof-first diagnostic.
 The optional window constrains containment; it does not replace report scope.
 No contract, fixture or pin changes accompany these internal seams.
+
+## A3 role-resolution rules
+
+R1. A file's role comes from its declaration. The transport's optional `producer_registrations` member (complete FILE_REFs, as in your round-12 draft) declares the producer registration(s); a registration's `NativeExport` FILE_REF declares a capture. Every producer of transports in this tree emits the member: the collection script, the bundle composition, and gate_prior's reconstruction of prior transports (the reviewer found gate_prior rebuilding transports without it: fix that propagation gap).
+R2. Compatibility fallback, narrowly: when a transport has NO `producer_registrations` member, the registration is the original at the conventional path `stage/producer-captures.json` (or a path ending `/stage/producer-captures.json`) ONLY IF that original has no other declared role anywhere in the input: it is not a member of any prerequisite's or source's source list, no FILE_REF of another role points at it, and the dependency walk has not assigned it a parser. A file with any declared role keeps that role whatever its name. (That is why the r6/r7 support files, declared as byte-only sources, must never be promoted, and why a historical capture, whose registration is undeclared, keeps its scope.)
+R3. A declared or fallback-selected registration and its captures undergo the full format check: not a dictionary, no list-valued `passes`, a pass missing a required key, an unreadable NativeExport target: each is `evidence_schema_gap` at that path, never a silent `continue` with an empty prefix (P1-16).
+R4. No other role is ever derived from a path spelling. The `sources/measurement/` mapping in gate_release applies only to files declared as SHUTDOWN_MEASUREMENT sources; a file reached solely through an ordinary source list keeps `original_bytes` even under that prefix (P1-17; the mapping predates this package, you fix its application in the dependency walk, not the release inventory format).
+R5. Byte-only originals are never parsed for content, in any code path, including scope discovery.
 
 ## P5 test data lifetime and oracle scheduling
 
