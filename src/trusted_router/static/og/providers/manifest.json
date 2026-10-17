@@ -163,10 +163,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
@@ -442,10 +442,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 15,
+    "route_count": 13,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
