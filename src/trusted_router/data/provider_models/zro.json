@@ -187,12 +187,13 @@
       "upstream_id": "gemini-4-argon",
       "routable": false,
       "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-10-14"
+      "unresolved_since": "2026-10-14",
+      "missing_since": "2026-10-18"
     }
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-10-17T06:54:15Z",
+  "generated_at": "2026-10-18T05:06:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

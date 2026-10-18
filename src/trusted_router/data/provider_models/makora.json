@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-10-17T06:54:15Z",
+  "generated_at": "2026-10-18T05:06:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 19,
   "models": [
@@ -633,7 +633,7 @@
       ],
       "status": 1,
       "context_length": 1048576,
-      "max_output_tokens": 393216,
+      "max_output_tokens": 943718,
       "features": [
         "tools",
         "logprobs",

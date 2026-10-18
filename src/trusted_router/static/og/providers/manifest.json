@@ -82,10 +82,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 17,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 29,
+    "route_count": 33,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -199,19 +199,19 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 92,
+    "model_count": 93,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 176,
+    "route_count": 178,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 4,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
@@ -235,10 +235,10 @@
   },
   "engy": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 9,
     "name": "Engy",
     "privacy": "Zero retention",
-    "route_count": 8,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "engy"
   },
@@ -262,10 +262,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -496,10 +496,10 @@
   },
   "morph": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Morph",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "morph"
   },
@@ -775,10 +775,10 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 22,
+    "model_count": 21,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 21,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
