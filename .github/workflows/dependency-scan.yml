@@ -9,6 +9,10 @@ name: Dependency scan
 #    Does not fail: the existing backlog is worked down through those alerts.
 #  * pull_request: diff scan against the base branch; FAILS only when the PR
 #    introduces a vulnerability that main does not already have.
+#
+# Inlined from google/osv-scanner-action's reusable workflows (v2.7.0) as steps,
+# because repository policy (tests/test_spanner_schema_audit_workflow.py) only
+# admits local reusable workflows.
 
 on:
   pull_request:
@@ -25,27 +29,97 @@ permissions:
 jobs:
   scan-full:
     if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       security-events: write
       contents: read
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@ef6dfdf01765802d5a8dbc3c39852a6128b00af0" # v2.7.0
-    with:
-      fail-on-vuln: false
-      scan-args: |-
-        --include-git-root
-        -r
-        ./
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run scanner
+        id: scan
+        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        env:
+          GOTOOLCHAIN: auto
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --format=sarif
+            --output=results.sarif
+            --include-git-root
+            -r
+            ./
+      # Non-zero exit means "vulnerabilities found" (tracked as alerts) or "scan
+      # failed"; only the second leaves no results file, and must fail the job.
+      - name: Check that the scan completed
+        run: test -s results.sarif || { echo "::error::OSV-Scanner wrote no results"; exit 1; }
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: results.sarif
 
   scan-pr:
     if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       security-events: write
       contents: read
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@ef6dfdf01765802d5a8dbc3c39852a6128b00af0" # v2.7.0
-    with:
-      scan-args: |-
-        --include-git-root
-        -r
-        ./
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Checkout target branch
+        run: git checkout "$GITHUB_BASE_REF"
+      - name: Run scanner on existing code
+        id: scan-old
+        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        env:
+          GOTOOLCHAIN: auto
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --format=json
+            --output=old-results.json
+            --include-git-root
+            -r
+            ./
+      - name: Checkout current branch
+        run: git checkout -f "$GITHUB_SHA"
+      - name: Run scanner on new code
+        id: scan-new
+        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        env:
+          GOTOOLCHAIN: auto
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --format=json
+            --output=new-results.json
+            --include-git-root
+            -r
+            ./
+      # A failed scan writes no file, and the reporter reads a missing --new file
+      # as "no new vulnerabilities"; refuse to compare incomplete scans.
+      - name: Check that both scans completed
+        run: |
+          status=0
+          [ -s old-results.json ] || { echo "::error::scan of the target branch wrote no results"; status=1; }
+          [ -s new-results.json ] || { echo "::error::scan of this branch wrote no results"; status=1; }
+          exit "$status"
+      - name: Report new vulnerabilities
+        uses: google/osv-scanner-action/osv-reporter-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        with:
+          scan-args: |-
+            --output=results.sarif
+            --old=old-results.json
+            --new=new-results.json
+            --gh-annotations=true
+            --fail-on-vuln=true
+      - name: Upload to code-scanning
+        if: ${{ !cancelled() && hashFiles('results.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: results.sarif
