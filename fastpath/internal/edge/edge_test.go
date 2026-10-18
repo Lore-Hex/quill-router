@@ -381,3 +381,27 @@ func TestNewRefusesAMissingPartOrAnUpstreamPath(t *testing.T) {
 		}
 	}
 }
+
+func TestAQueryWithASemicolonReachesPythonAsItCame(t *testing.T) {
+	h := newHarness(t)
+	h.send(t, http.MethodPost, "/internal/gateway/settle-outbox/drain?limit=1;ignored=2", `{}`, map[string]string{TokenHeader: token})
+	if h.last.query != "limit=1;ignored=2" {
+		t.Fatalf("the query: %q", h.last.query)
+	}
+}
+
+func TestAnEscapedPathIsSignedAsPythonReadsIt(t *testing.T) {
+	// Python verifies over request.url.path, the decoded path; so does the
+	// edge, over r.URL.Path. A signature over the decoded path verifies on
+	// both; one over the escaped form verifies on neither.
+	h := newHarness(t)
+	escaped := "/internal/gateway/authorize%0A"
+	decoded := "/internal/gateway/authorize\n"
+	for path, want := range map[string]Verdict{decoded: Verified, escaped: Invalid} {
+		header := h.header("boot-1", http.MethodPost, path, []byte(authorizeBody))
+		h.send(t, http.MethodPost, escaped, authorizeBody, map[string]string{TokenHeader: token, BootHeader: header})
+		if h.last.verdict != string(want) {
+			t.Fatalf("signed over %q: %q, want %q (python saw %q)", path, h.last.verdict, want, h.last.path)
+		}
+	}
+}

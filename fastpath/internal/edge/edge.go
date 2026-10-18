@@ -154,6 +154,10 @@ func New(cfg Config) (*Edge, error) {
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(&upstream)
 			r.Out.Host = upstream.Host
+			// The query as it came: the proxy drops parameters it cannot
+			// parse (a semicolon) before Rewrite, and Python, not the edge,
+			// reads the query, so it must see what the enclave sent.
+			r.Out.URL.RawQuery = r.In.URL.RawQuery
 			// The verdict goes on after the hop-by-hop headers are dropped,
 			// so a caller's `Connection: X-TR-Edge-Boot` cannot remove it.
 			r.Out.Header.Del(VerdictHeader)
