@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -390,18 +391,65 @@ func TestAQueryWithASemicolonReachesPythonAsItCame(t *testing.T) {
 	}
 }
 
-func TestAnEscapedPathIsSignedAsPythonReadsIt(t *testing.T) {
-	// The edge checks over r.URL.Path, the decoded path, as Python's
-	// comparison checks over the path its server decoded. A signature over
-	// the decoded path verifies; one over the escaped form does not.
+func TestABootHeaderNamedAsHopByHopIsAbsentForPython(t *testing.T) {
 	h := newHarness(t)
-	escaped := "/internal/gateway/authorize%0A"
-	decoded := "/internal/gateway/authorize\n"
-	for path, want := range map[string]Verdict{decoded: Verified, escaped: Invalid} {
+	h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, map[string]string{"Connection": "close, " + BootHeader})
+	if h.last.verdict != string(Absent) || h.last.headers.Get(BootHeader) != "" || h.boots.reads.Load() != 0 {
+		t.Fatalf("a hop-by-hop boot header: verdict %q, python saw %q, reads %d", h.last.verdict, h.last.headers.Get(BootHeader), h.boots.reads.Load())
+	}
+}
+
+func TestAPathBeyondPrintableASCIIIsUnchecked(t *testing.T) {
+	h := newHarness(t)
+	for _, path := range []string{"/internal/gateway/authorize%FF", "/internal/gateway/authorize%0A", "/internal/gateway/authoriz%C3%A9"} {
 		header := h.header("boot-1", http.MethodPost, path, []byte(authorizeBody))
-		h.send(t, http.MethodPost, escaped, authorizeBody, map[string]string{TokenHeader: token, BootHeader: header})
-		if h.last.verdict != string(want) {
-			t.Fatalf("signed over %q: %q, want %q (python saw %q)", path, h.last.verdict, want, h.last.path)
+		h.send(t, http.MethodPost, path, authorizeBody, map[string]string{TokenHeader: token, BootHeader: header})
+		if h.last.verdict != string(Unchecked) {
+			t.Fatalf("%s: %q", path, h.last.verdict)
 		}
+	}
+}
+
+func TestTheHeaderIsStrippedAsPythonStripsLatin1(t *testing.T) {
+	h := newHarness(t)
+	good := h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody))
+	// A no-break space byte (A0) and NEL (85) are whitespace to str.strip()
+	// on a Latin-1 decoded header; the UTF-8 no-break space (C2 A0) is two
+	// characters there, neither stripped as a pair.
+	cases := map[string]Verdict{
+		good + "\xa0":     Verified,
+		"\x85" + good:     Verified,
+		good + " \t":      Verified,
+		good + "\xc2\xa0": Invalid,
+	}
+	for header, want := range cases {
+		req, _ := http.NewRequest(http.MethodPost, h.server.URL+authorizePath, strings.NewReader(authorizeBody))
+		req.Header.Set(TokenHeader, token)
+		req.Header[BootHeader] = []string{header}
+		resp, err := plainClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if h.last.verdict != string(want) {
+			t.Fatalf("%q: %q, want %q", header, h.last.verdict, want)
+		}
+	}
+}
+
+func TestAnOversizedBodyKeepsItsDeclaredLength(t *testing.T) {
+	h := newHarness(t)
+	body := strings.Repeat("x", maxBody+1)
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/internal/gateway/settle", strings.NewReader(body))
+	req.Header.Set(TokenHeader, token)
+	req.Header.Set(BootHeader, "kid=boot-1,sig=AA")
+	req.ContentLength = int64(len(body))
+	resp, err := plainClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if h.last.headers.Get("Content-Length") != fmt.Sprint(len(body)) || len(h.last.body) != len(body) || h.last.verdict != string(Unchecked) {
+		t.Fatalf("an oversized body: length %q, got %d, verdict %q", h.last.headers.Get("Content-Length"), len(h.last.body), h.last.verdict)
 	}
 }

@@ -53,6 +53,11 @@ const (
 
 var bootAuthDomain = []byte("tr-authorize-v1")
 
+// pythonSpace is what str.strip() strips from a header value Python has
+// decoded as Latin-1, one byte a character: ASCII whitespace, the C0
+// separators, NEL and the no-break space.
+const pythonSpace = "\t\n\v\f\r\x1c\x1d\x1e\x1f \x85\xa0"
+
 // Verdict is what the edge found about a request's boot signature.
 type Verdict string
 
@@ -67,7 +72,9 @@ const (
 	Unread Verdict = "unread"
 	// Absent: the request carries no boot signature.
 	Absent Verdict = "absent"
-	// Unchecked: the body is larger than the edge reads; passed through.
+	// Unchecked: the body is larger than the edge reads, or the path has
+	// bytes outside printable ASCII, which Python's server decodes by rules
+	// the edge does not repeat; passed through.
 	Unchecked Verdict = "unchecked"
 )
 
@@ -194,7 +201,9 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	headers := r.Header.Values(BootHeader)
-	if len(headers) == 0 {
+	// A boot header the request names as hop-by-hop (`Connection:
+	// X-TR-Boot-Auth`) is dropped by the proxy: Python sees none.
+	if len(headers) == 0 || listedAsHopByHop(r.Header, BootHeader) {
 		e.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent)))
 		return
 	}
@@ -204,17 +213,47 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > maxBody {
+		// The rest streams after what was read; the length declared stays
+		// declared, since the body is the same.
 		out := r.Clone(context.WithValue(r.Context(), verdictKey{}, Unchecked))
 		out.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-		out.ContentLength = -1
 		e.proxy.ServeHTTP(w, out)
 		return
 	}
-	verdict := e.verdict(r.Context(), headers, r.Method, r.URL.Path, body)
+	verdict := Unchecked
+	if printableASCII(r.URL.Path) {
+		verdict = e.verdict(r.Context(), headers, r.Method, r.URL.Path, body)
+	}
 	out := r.Clone(context.WithValue(r.Context(), verdictKey{}, verdict))
 	out.Body = io.NopCloser(bytes.NewReader(body))
 	out.ContentLength = int64(len(body))
 	e.proxy.ServeHTTP(w, out)
+}
+
+// listedAsHopByHop: the Connection header names the header, so the proxy
+// drops it before Python sees the request.
+func listedAsHopByHop(h http.Header, name string) bool {
+	for _, value := range h.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// printableASCII: every byte of the decoded path is printable ASCII, which
+// the enclave's paths are; beyond that, Python's server decodes by its own
+// rules (replacement characters, control characters) the edge does not
+// repeat, and the verdict is Unchecked.
+func printableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // tokenOK reads the token as require_internal_gateway does: a bearer token
@@ -279,12 +318,13 @@ func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
 }
 
 // ParseBootHeader reads `kid=K,sig=S` as parse_boot_auth_header does: both
-// fields once, in any order, nothing else, S decoded by Python's base64url
-// rules.
+// fields once, in any order, nothing else, each part stripped of the
+// whitespace Python strips from the header's Latin-1 bytes, S decoded by
+// Python's base64url rules.
 func ParseBootHeader(value string) (kid string, sig []byte, ok bool) {
 	fields := map[string]string{}
 	for _, part := range strings.Split(value, ",") {
-		name, field, found := strings.Cut(strings.TrimSpace(part), "=")
+		name, field, found := strings.Cut(strings.Trim(part, pythonSpace), "=")
 		if !found {
 			return "", nil, false
 		}

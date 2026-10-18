@@ -432,17 +432,21 @@ _EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid"})
 
 
 def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None:
-    verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
-    if verdict is None or verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+    """An observation: nothing it does reaches the response."""
+    try:
+        verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
+        if verdict is None or verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+            return
+        if (verdict == "verified") != signed:
+            logger.warning(
+                "fastpath edge boot verdict differs edge=%s python=%s kid=%s path=%s",
+                verdict,
+                "verified" if signed else "invalid",
+                kid,
+                request.url.path,
+            )
+    except Exception:  # noqa: BLE001 - an observation must not change the response
         return
-    if (verdict == "verified") != signed:
-        logger.warning(
-            "fastpath edge boot verdict differs edge=%s python=%s kid=%s path=%s",
-            verdict,
-            "verified" if signed else "invalid",
-            kid,
-            request.url.path,
-        )
 
 
 def _stage_d_accepted_image_digests(
