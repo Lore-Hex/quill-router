@@ -19,7 +19,7 @@ from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest, GatewaySettleRequest
 from trusted_router.services import fastpath_frontdoor as fd
 from trusted_router.storage import configure_store
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_models import CreditAccount, SettleOutboxRow, Workspace
 
 WORKSPACE = "ws-pilot"
@@ -277,8 +277,12 @@ def test_the_settle_of_a_leased_request_goes_to_the_front_door_and_leaves_record
     full = json.loads(base64.b64decode(sent["Full"]))
     assert full["boot"] == base64.b64encode(b"boot-pilot").decode()
     assert full["authorization_id"] == authorization.id and full["kind"] == "settle"
-    # No money moved here: the lease booked the usage.
+    # No credit moved here: the lease booked the usage. The key's usage and
+    # window counters are booked, as today's settle books them.
     assert _credit(database) == credit_before
+    key_row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert key_row["usage"] == authorization.finalized_cost_microdollars and key_row["reserved"] == 0
+    assert key_row["day_usage"] == key_row["month_usage"] == authorization.finalized_cost_microdollars
     # The scope row held nothing and is claimed with the records.
     (scope_row,) = database.reservations.values()
     assert scope_row["settled"] and scope_row["credit_reserved_micro"] == 0 and scope_row["key_reserved_micro"] == 0
@@ -633,6 +637,36 @@ def test_the_drain_finishes_a_leased_intent_the_front_door_decides_later(door: _
     assert len(database.operational_analytics_outbox) == 1
     assert database.gateway_authorizations[authorization.id]["terminal_at"] is not None
     assert _credit(database)["reserved"] == 0
+
+
+def test_the_drain_parks_an_undecided_leased_intent_without_spending_an_attempt(door: _Door) -> None:
+    """The fast path decides a terminal by the time its lease closes, hours
+    after an owner crash: an intent it has not decided is asked again later,
+    with no attempt spent toward dead, until it is older than that."""
+    from trusted_router.services import settle_outbox_drain
+
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/settle"] = {"Status": "recorded"}
+    gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
+    row = _pending_intents(database, authorized["authorization_id"])[0]
+    attempts_before = row.get("attempts") or 0
+    for _pass in range(10):
+        row["next_attempt_at"] = "2020-01-01T00:00:00Z"
+        row["lease_owner"] = None
+        row["leased_until"] = None
+        settle_outbox_drain.drain_settle_outbox(10)
+        row = _pending_intents(database, authorized["authorization_id"])[0]
+        assert row["status"] == "pending" and (row.get("attempts") or 0) == attempts_before
+    assert row["last_error"] == "fast path undecided"
+    assert row["next_attempt_at"] > "2020-01-01T00:00:00Z"
+    assert not (store.get_gateway_authorization(authorized["authorization_id"]) or authorization_absent()).settled
+    # Older than the fast path's longest decision: the attempts count as today.
+    row["created_at"] = "2020-01-01T00:00:00Z"
+    row["next_attempt_at"] = "2020-01-01T00:00:00Z"
+    settle_outbox_drain.drain_settle_outbox(10)
+    row = _pending_intents(database, authorized["authorization_id"])[0]
+    assert row["status"] == "pending" and (row.get("attempts") or 0) == attempts_before + 1
 
 
 def test_a_failed_insert_after_admission_gives_the_hold_back(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:

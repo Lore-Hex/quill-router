@@ -5086,6 +5086,18 @@ class SpannerStore:
             if replayed is None:
                 raise
             return replayed
+        except Exception as exc:
+            if not is_transient_store_error(exc):
+                raise
+            # The commit's outcome is unknown: a deadline or a lost answer
+            # can follow a commit that applied. Read the row back before the
+            # caller gives the hold back, since a row that landed is this
+            # authorization, admitted, and a replay of it would be served
+            # under a hold the lease no longer has.
+            landed = self.get_gateway_authorization(authorization_id)
+            if landed is None:
+                raise
+            return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), landed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
 
     def typed_finalize_leased_result(
@@ -5107,11 +5119,17 @@ class SpannerStore:
         resolves the pending settle-outbox intent of kind `mark_intent` (the
         route's own; the drain resolves its row itself afterwards), which
         arms the row's retention as the outbox does; it claims no
-        reservation, releases no hold,
-        books no usage and pays no markup, since the lease did the booking
-        and the pilot's cohort has no markups. None when the authorization
-        is not a leased one or is settled already (the caller answers the
-        stored disposition)."""
+        reservation, releases no hold, books no credit usage and pays no
+        markup, since the lease did the booking and the pilot's cohort has
+        no markups. It books the charge to the key's usage and window
+        counters, as today's settle does for a key that held nothing (the
+        design's §4.6 has the auditor do this once the control plane leaves
+        the hot path). None when the authorization is not a leased one or is
+        settled already (the caller answers the stored disposition)."""
+        from trusted_router.storage_gcp_authorize import (
+            _log_missing_key_releases,
+            _release_key_or_skip_deleted,
+        )
         from trusted_router.storage_gcp_batch_dml import execute_batch_dml
         from trusted_router.storage_gcp_counter_dml import claim_reservation_statement
         from trusted_router.storage_gcp_generation_records import generation_insert_statement
@@ -5150,8 +5168,20 @@ class SpannerStore:
         now = dt.datetime.now(dt.UTC)
         pt = self._param_types
         persist_generation = bool(getattr(self, "_generation_records_enabled", False))
+        # The key's usage, by the settled usage type as today's settle books
+        # it; a refund books nothing. The scope row holds nothing on the key
+        # and is unsharded, so this is today's zero-hold booking.
+        key_usage = int(actual_microdollars) if success else 0
+        key_release = {
+            "reservation_id": authorization.credit_reservation_id,
+            "key_hash": authorization.key_hash,
+            "key_reserved_micro": 0,
+            "key_shard": UNSHARDED,
+        }
+        missing_key_releases: list[dict[str, Any]] = []
 
         def txn(transaction: Any) -> None:
+            missing_key_releases.clear()
             statements = [gateway_authorization_settled_statement(pt, authorization)]
             counts: list[tuple[int, ...]] = [(1,)]
             if authorization.credit_reservation_id:
@@ -5173,6 +5203,13 @@ class SpannerStore:
                 statements.append(benchmark_outbox.enqueue_statement(benchmark))
                 counts.append((1,))
             execute_batch_dml(transaction, statements, counts)
+            if key_usage > 0:
+                _count, warning = _release_key_or_skip_deleted(
+                    transaction, pt, key_release, key_usage,
+                    book_to_byok=actual_usage_type == UsageType.BYOK,
+                )
+                if warning is not None:
+                    missing_key_releases.append(warning)
             if mark_intent is not None:
                 # The route's pending intent, resolved in this commit, and
                 # with it the row's retention as the outbox keeps it: armed
@@ -5185,6 +5222,7 @@ class SpannerStore:
                     raise RuntimeError(f"leased finalize found no pending {mark_intent} intent")
 
         run_in_transaction_with_retry(self._database, txn, transaction_tag="tr_settle_leased")
+        _log_missing_key_releases({"missing_key_releases": list(missing_key_releases)})
         return (
             TypedFinalizeResult(finalized=True, activity_indexed=True, request_record_typed=True),
             authorization,

@@ -1930,7 +1930,9 @@ def _authorize_gateway_sync_impl(
                 existing_authorization, workspace.id, api_key.hash,
                 fingerprint_body, request_idempotency_key,
             ):
-                release_user_model_slot_after_error()
+                # The slot, and the hold a lease granted this attempt, which
+                # the stored job does not use: given back, as every replay.
+                release_after_error()
                 return _replay_response(existing_authorization, endpoint_candidates)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
