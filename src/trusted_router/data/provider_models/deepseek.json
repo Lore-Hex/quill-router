@@ -54,7 +54,7 @@
       ]
     },
     {
-      "display_name": "DeepSeek V4.1 Flash (rolling)",
+      "display_name": "DeepSeek Flash (rolling)",
       "title": "deepseek-flash",
       "model_type": "chat",
       "input_modalities": [
@@ -78,7 +78,8 @@
         "function-calling",
         "json-mode",
         "reasoning-effort"
-      ]
+      ],
+      "max_output_tokens": 393216
     }
   ],
   "source": "https://api.deepseek.com/models",

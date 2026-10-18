@@ -163,8 +163,29 @@
       "context_length": 1048576,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4100000
+    },
+    {
+      "display_name": "morph-dsv41flash-1017",
+      "title": "morph-dsv41flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "morph-dsv41flash-1017",
+      "context_length": 1048576,
+      "input_token_price_per_m": 120000,
+      "output_token_price_per_m": 800000,
+      "cached_input_token_price_per_m": 8000
     }
   ],
   "generated_at": "2026-10-17T06:54:15Z",
-  "model_count": 8
+  "model_count": 9
 }

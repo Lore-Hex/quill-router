@@ -20,6 +20,15 @@ def test_deepinfra_fetch_discovers_current_glm_models(monkeypatch) -> None:  # n
     payload = {
         "data": [
             {
+                "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+                "metadata": {
+                    "context_length": 1_048_576,
+                    "max_tokens": 1_048_576,
+                    "tags": ["chat", "vlm", "vision", "reasoning"],
+                    "pricing": {"input_tokens": 0.2, "output_tokens": 0.6, "cache_read_tokens": 0.006},
+                },
+            },
+            {
                 "id": "zai-org/GLM-5.2",
                 "metadata": {
                     "pricing": {
@@ -89,6 +98,10 @@ def test_deepinfra_fetch_discovers_current_glm_models(monkeypatch) -> None:  # n
     monkeypatch.setattr(deepinfra.httpx, "Client", FakeClient)
 
     result = deepinfra.fetch()
+    new_flash = deepinfra._DISCOVERED_MANIFEST_ROWS["deepseek/deepseek-v4.1-flash-1017"]
+    assert new_flash["input_modalities"] == ["text", "image"]
+    assert new_flash["context_length"] == 1_048_576
+    assert "max_output_tokens" not in new_flash
     price = result.prices["z-ai/glm-5.2"]
 
     assert price.prompt_micro_per_m == 1_200_000

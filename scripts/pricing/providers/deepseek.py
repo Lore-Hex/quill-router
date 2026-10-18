@@ -52,11 +52,19 @@ def fetch() -> ProviderPricingResult:
     UPSTREAM_ID_MAP.clear()
     required_models = frozenset(
         model for model in (
-            _PERSISTED_VERSIONED_MODELS | runtime_required_models(SLUG)
+            _PERSISTED_VERSIONED_MODELS | (
+                runtime_required_models(SLUG)
+                & (set(_NATIVE_TO_MODEL_ID.values()) | {"deepseek/deepseek-v4-pro-0813"})
+            )
             | frozenset(EXPECTED_MODELS) | {"deepseek/deepseek-flash"}
         )
         if not provider_model_retired(SLUG, model)
     )
+    # Aggregator endpoint listings are discovery hints, not evidence that a
+    # dated checkpoint is a callable direct API ID. Requiring them here made
+    # the 1017 launch rewrite this parser and fail every publication gate.
+    # Native availability below remains authoritative; do not invent aliases
+    # from a version label attached to the provider's rolling Flash endpoint.
     price_aliases = price_aliases_for_versioned_families(
         required_models,
         _VERSIONED_PRICE_FAMILIES,
@@ -125,7 +133,7 @@ def fetch() -> ProviderPricingResult:
         row.setdefault("context_length", 1_048_576)
         row["supported_features"] = ["function-calling", "json-mode", "reasoning-effort"]
         if row["id"] == "deepseek/deepseek-flash":
-            row["display_name"] = "DeepSeek V4.1 Flash (rolling)"
+            row["display_name"] = "DeepSeek Flash (rolling)"
     _DISCOVERED_MANIFEST_ROWS = discovered
     result.source = "api"
     result.fetched_url = MODELS_URL

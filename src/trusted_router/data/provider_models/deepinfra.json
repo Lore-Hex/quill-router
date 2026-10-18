@@ -3,7 +3,7 @@
   "provider": "deepinfra",
   "source": "https://api.deepinfra.com/v1/openai/models",
   "generated_at": "2026-10-15T12:03:30Z",
-  "model_count": 122,
+  "model_count": 123,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -3279,6 +3279,34 @@
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 2700000,
       "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "supported_features": [
+        "tools",
+        "structured-outputs",
+        "json-mode",
+        "reasoning"
+      ],
+      "context_length": 1048576,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 6000
     }
   ],
   "price_scale": "microdollars_per_million"
