@@ -55,6 +55,7 @@ DISCOVERY_NATIVE_OWNERS = frozenset(
         "MiniMaxAI",
         "moonshotai",
         "Qwen",
+        "stepfun-ai",
         "XiaomiMiMo",
         "zai-org",
     }
