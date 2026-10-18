@@ -78,7 +78,8 @@
         "function-calling",
         "json-mode",
         "reasoning-effort"
-      ]
+      ],
+      "max_output_tokens": 393216
     }
   ],
   "source": "https://api.deepseek.com/models",

@@ -4,7 +4,7 @@
   "source": "https://inference.baseten.co/v1/models",
   "generated_at": "2026-10-17T06:54:15Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 27,
+  "model_count": 28,
   "models": [
     {
       "id": "reflection/beam-1.0",
@@ -894,6 +894,40 @@
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "DeepSeek V4.1 Flash 1017",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "context_length": 1048576,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "stop"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 7000
     }
   ]
 }

@@ -195,16 +195,23 @@ def fetch() -> ProviderPricingResult:
         }
         if features is not None:
             discovered_row["supported_features"] = features.get(native_id, [])
+        tags = meta.get("tags")
+        if isinstance(tags, list) and any(tag in {"vision", "vlm", "multimodal"} for tag in tags if isinstance(tag, str)):
+            discovered_row["input_modalities"] = ["text", "image"]
         context_length = positive_int(
             meta.get("context_length") or row.get("context_length")
         )
         if context_length is not None:
             discovered_row["context_length"] = context_length
         max_output = _MAX_OUTPUT_OVERRIDES.get(or_id) or positive_int(
-            meta.get("max_tokens")
-            or meta.get("max_output_tokens")
+            meta.get("max_output_tokens")
             or row.get("max_output_tokens")
         )
+        # metadata.max_tokens also names the TOTAL context window. It does not
+        # establish a million-token generation limit for a new checkpoint.
+        legacy_max = positive_int(meta.get("max_tokens"))
+        if max_output is None and legacy_max != context_length:
+            max_output = legacy_max
         if max_output is not None:
             discovered_row["max_output_tokens"] = max_output
         discovered[or_id] = discovered_row

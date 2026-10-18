@@ -236,8 +236,37 @@
       "input_token_price_per_m": 40000,
       "output_token_price_per_m": 80000,
       "cached_input_token_price_per_m": 8000
+    },
+    {
+      "display_name": "deepseek-v4.1-flash-1017",
+      "title": "deepseek-v4.1-flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-v4.1-flash-1017",
+      "context_length": 1048576,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 80000,
+      "cached_input_token_price_per_m": 8000
     }
   ],
   "generated_at": "2026-10-17T06:54:15Z",
-  "model_count": 8
+  "model_count": 9
 }

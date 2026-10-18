@@ -37,6 +37,7 @@ _NATIVE_TO_MODEL_ID = {
     "morph-minimax27-230b": "minimax/minimax-m2.7",
     "morph-minimax3-428b": "minimax/minimax-m3",
     "morph-dsv4flash": "deepseek/deepseek-v4-flash",
+    "morph-dsv41flash-1017": "deepseek/deepseek-v4.1-flash-1017",
     "morph-v3-fast": "morph/morph-v3-fast",
     "morph-v3-large": "morph/morph-v3-large",
 }
@@ -51,6 +52,7 @@ _CONTEXT_LENGTHS = {
     "morph-minimax27-230b": 196_608,
     "morph-minimax3-428b": 262_144,
     "morph-dsv4flash": 1_048_576,
+    "morph-dsv41flash-1017": 1_048_576,
     "morph-v3-fast": 262_144,
     "morph-v3-large": 262_144,
 }
