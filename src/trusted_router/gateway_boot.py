@@ -85,6 +85,35 @@ def verify_boot_auth(
     )
 
 
+def verify_boot_signature(
+    *,
+    boot: GatewayBoot | None,
+    auth: BootAuthHeader,
+    method: str,
+    path: str,
+    exact_body_bytes: bytes,
+) -> bool:
+    """The signature alone, as the fast path's edge checks it: a registered,
+    verified boot under this key id signed these bytes. The key binding and
+    the image digest, verify_boot_auth's other questions, are not asked."""
+    if boot is None:
+        return False
+    return (
+        _boot_auth_failure_reason(
+            boot=boot,
+            auth=auth,
+            method=method,
+            path=path,
+            exact_body_bytes=exact_body_bytes,
+            # The binding holds by construction: the question is not asked.
+            signed_lookup_hash="",
+            resolved_lookup_hash="",
+            accepted_image_digests=(boot.image_digest,),
+        )
+        is None
+    )
+
+
 def _boot_auth_failure_reason(
     *,
     boot: GatewayBoot | None,

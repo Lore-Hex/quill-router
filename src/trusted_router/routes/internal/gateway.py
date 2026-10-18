@@ -93,6 +93,7 @@ from trusted_router.gateway_boot import (
     GatewayBoot,
     parse_boot_auth_header,
     verify_boot_auth,
+    verify_boot_signature,
 )
 from trusted_router.gateway_timing import (
     gateway_phase,
@@ -421,22 +422,24 @@ _SETTLE_REPAIR_FIELDS = frozenset(
 )
 
 # The fast path's edge (fastpath/internal/edge; docs/design/
-# fast-admission-enclave-direct.md, E1) puts its own verdict on the boot
-# signature in this header, which is compared with the route's. A verdict it
-# could not reach (unread, unchecked) is no disagreement.
+# fast-admission-enclave-direct.md, E1) puts its verdict on the boot
+# signature in this header: the signature alone, which this route checks
+# the same way (verify_boot_signature) beside its own verification, and
+# compares. A verdict the edge could not reach (unread, unchecked) is no
+# disagreement.
 _EDGE_BOOT_VERDICT_HEADER = "x-tr-edge-boot"
-_EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid", "not_accepted"})
+_EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid"})
 
 
-def _compare_edge_boot_verdict(request: Request, kid: str, verified: bool) -> None:
+def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None:
     verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
     if verdict is None or verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
         return
-    if (verdict == "verified") != verified:
+    if (verdict == "verified") != signed:
         logger.warning(
             "fastpath edge boot verdict differs edge=%s python=%s kid=%s path=%s",
             verdict,
-            "verified" if verified else "invalid",
+            "verified" if signed else "invalid",
             kid,
             request.url.path,
         )
@@ -900,11 +903,18 @@ def _authorize_gateway_sync_impl(
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
         )
+        edge_signed = verify_boot_signature(
+            boot=boot,
+            auth=boot_auth,
+            method=request.method,
+            path=request.url.path,
+            exact_body_bytes=cast(bytes, boot_context["raw_body"]),
+        )
+    else:
+        edge_signed = False
     # Compared whatever the header parsed to: a header the edge verified and
     # this route could not read (repeated, malformed) is a disagreement too.
-    _compare_edge_boot_verdict(
-        request, boot_auth.kid if boot_auth is not None else "", bool(boot_context["boot_verified"]),
-    )
+    _compare_edge_boot_verdict(request, boot_auth.kid if boot_auth is not None else "", edge_signed)
     if settings.speculative_provider_shadow_enabled:
         with speculation_shadow.isolate("boot_verified"):
             speculation_shadow.boot_verified(boot_context["boot_verified"], boot_auth.kid if boot_auth is not None else "")
@@ -2467,14 +2477,6 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         return await heartbeat_gateway(request, body, settings)
-
-    @router.get("/internal/gateway/stage-d/accepted-digests")
-    async def gateway_stage_d_accepted_digests(request: Request, settings: SettingsDep) -> dict[str, Any]:
-        """The accepted image digests, for the fast path's edge
-        (fastpath/internal/edge): the signed Stage D policy as this process
-        resolves it, with the break-glass override."""
-        require_internal_gateway(request, settings)
-        return {"image_digests": sorted(_stage_d_accepted_image_digests(request, settings))}
 
     @router.get("/internal/gateway/authorizations/{authorization_id}/disposition")
     async def gateway_disposition(

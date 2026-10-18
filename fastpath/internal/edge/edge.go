@@ -3,9 +3,15 @@
 // the one host the enclave reaches, checks the internal token and the boot
 // signature the enclave puts on each request, and passes the request to
 // Python unchanged with its verdict in a header, returning Python's answer
-// unchanged. Python decides everything; the verdict is compared with its
-// own, so the edge's checks are proven on real traffic before anything is
-// decided here.
+// unchanged. Python decides everything; the verdict is compared with
+// Python's own check of the same signature, so the edge's check is proven
+// on real traffic before anything is decided here.
+//
+// The verdict is the signature alone: the header well formed, a registered
+// and verified boot under its key id, and that boot's key over the method,
+// the path and the exact body. Python's further questions, whether the
+// body names the key the signature is bound to and whether the boot's
+// image digest is accepted, are Python's until the edge decides (E2).
 package edge
 
 import (
@@ -31,7 +37,7 @@ import (
 
 const (
 	// BootHeader carries the enclave's boot signature: `kid=K,sig=S`, S the
-	// URL-safe base64 of an Ed25519 signature over Digest (gateway_boot.py).
+	// base64url of an Ed25519 signature over Digest (gateway_boot.py).
 	BootHeader = "X-TR-Boot-Auth"
 	// VerdictHeader carries the edge's verdict on BootHeader to Python.
 	VerdictHeader = "X-TR-Edge-Boot"
@@ -51,18 +57,13 @@ var bootAuthDomain = []byte("tr-authorize-v1")
 type Verdict string
 
 const (
-	// Verified: one registered, verified boot signed the request, its image
-	// digest is accepted, and an authorize names its key by lookup hash.
+	// Verified: one registered, verified boot signed the request.
 	Verified Verdict = "verified"
 	// Invalid: the header is malformed or repeated, the boot is unknown or
-	// unverified, the signature does not verify, or an authorize body does
-	// not name its key by lookup hash (Python's binding check).
+	// unverified, or the signature does not verify.
 	Invalid Verdict = "invalid"
-	// NotAccepted: the signature verifies but the boot's image digest is
-	// not in the accepted set.
-	NotAccepted Verdict = "not_accepted"
-	// Unread: the boot or the accepted set could not be read in time; Python
-	// decides as it would alone.
+	// Unread: the boot could not be read within BootWait; Python decides as
+	// it would alone.
 	Unread Verdict = "unread"
 	// Absent: the request carries no boot signature.
 	Absent Verdict = "absent"
@@ -70,13 +71,12 @@ const (
 	Unchecked Verdict = "unchecked"
 )
 
-// Boot is a registered enclave boot: its key id, its Ed25519 public key,
-// whether its registration was verified, and the image digest it attested.
+// Boot is a registered enclave boot: its key id, its Ed25519 public key and
+// whether its registration was verified.
 type Boot struct {
-	Kid         string
-	PublicKey   ed25519.PublicKey
-	Verified    bool
-	ImageDigest string
+	Kid       string
+	PublicKey ed25519.PublicKey
+	Verified  bool
 }
 
 // Boots reads a boot by its key id: the boot and true, or false for none.
@@ -84,23 +84,16 @@ type Boots interface {
 	Boot(ctx context.Context, kid string) (Boot, bool, error)
 }
 
-// Digests says whether an image digest is accepted (the signed Stage D
-// policy Python resolves); an error means the set is not known now.
-type Digests interface {
-	Accepted(ctx context.Context, digest string) (bool, error)
-}
-
 // Config is an edge's: the internal token, Python's internal surface, where
-// boots and the accepted digests come from, how long a boot read is kept (a
-// boot's key never changes; a miss is kept a tenth as long), and how long
-// the checks may take before the verdict is Unread and the request goes on.
+// boots come from, how long a boot read is kept (a boot's key never
+// changes; a miss is kept a tenth as long), and how long a boot read may
+// take before the verdict is Unread and the request goes on.
 type Config struct {
 	Token     string
 	Upstream  *url.URL
 	Boots     Boots
-	Digests   Digests
 	BootTTL   time.Duration
-	CheckWait time.Duration
+	BootWait  time.Duration
 	Clock     func() time.Time
 	Transport http.RoundTripper
 }
@@ -121,11 +114,11 @@ type cachedBoot struct {
 
 type verdictKey struct{}
 
-// New makes an edge; it needs a token, an upstream with no path, and both
-// readers.
+// New makes an edge; it needs a token, an upstream with no path and a boot
+// reader.
 func New(cfg Config) (*Edge, error) {
-	if cfg.Token == "" || cfg.Upstream == nil || cfg.Upstream.Host == "" || cfg.Boots == nil || cfg.Digests == nil {
-		return nil, errors.New("edge: a token, an upstream with a host, a boot reader and a digest source")
+	if cfg.Token == "" || cfg.Upstream == nil || cfg.Upstream.Host == "" || cfg.Boots == nil {
+		return nil, errors.New("edge: a token, an upstream with a host and a boot reader")
 	}
 	if cfg.Upstream.Path != "" && cfg.Upstream.Path != "/" {
 		return nil, errors.New("edge: the upstream is a host, not a path")
@@ -133,8 +126,8 @@ func New(cfg Config) (*Edge, error) {
 	if cfg.BootTTL <= 0 {
 		cfg.BootTTL = 10 * time.Minute
 	}
-	if cfg.CheckWait <= 0 {
-		cfg.CheckWait = 2 * time.Second
+	if cfg.BootWait <= 0 {
+		cfg.BootWait = 2 * time.Second
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
@@ -144,6 +137,7 @@ func New(cfg Config) (*Edge, error) {
 		// enclave's behalf, so its response headers and body pass unchanged.
 		cfg.Transport = &http.Transport{
 			DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+			TLSHandshakeTimeout: 10 * time.Second,
 			DisableCompression:  true,
 			MaxIdleConnsPerHost: 256,
 			IdleConnTimeout:     90 * time.Second,
@@ -188,7 +182,8 @@ func answer(w http.ResponseWriter, code int, message, kind string) {
 
 // ServeHTTP passes the request to Python with the edge's verdict in
 // VerdictHeader. A request without the internal token is passed as it is,
-// for Python's own 401, and reads nothing here.
+// for Python's own 401, and reads nothing here. The enclave's requests
+// are JSON bodies with no trailers; the edge carries none.
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !e.tokenOK(r) {
 		e.proxy.ServeHTTP(w, r)
@@ -199,8 +194,6 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent)))
 		return
 	}
-	// The body is read before the request is cloned, so the trailers it
-	// fills are the clone's too.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
 		answer(w, http.StatusBadRequest, "The request body could not be read", "bad_request")
@@ -233,8 +226,7 @@ func (e *Edge) tokenOK(r *http.Request) bool {
 	return supplied != "" && subtle.ConstantTimeCompare([]byte(supplied), []byte(e.cfg.Token)) == 1
 }
 
-// verdict checks a boot header against the request it signs, within
-// CheckWait.
+// verdict checks a boot header against the request it signs.
 func (e *Edge) verdict(ctx context.Context, headers []string, method, path string, body []byte) Verdict {
 	if len(headers) != 1 {
 		return Invalid
@@ -243,8 +235,6 @@ func (e *Edge) verdict(ctx context.Context, headers []string, method, path strin
 	if !ok {
 		return Invalid
 	}
-	ctx, cancel := context.WithTimeout(ctx, e.cfg.CheckWait)
-	defer cancel()
 	boot, found, err := e.boot(ctx, kid)
 	if err != nil {
 		return Unread
@@ -255,32 +245,11 @@ func (e *Edge) verdict(ctx context.Context, headers []string, method, path strin
 	if !ed25519.Verify(boot.PublicKey, Digest(method, path, body), sig) {
 		return Invalid
 	}
-	if isAuthorize(method, path) && !namesKeyByLookupHash(body) {
-		return Invalid
-	}
-	accepted, err := e.cfg.Digests.Accepted(ctx, boot.ImageDigest)
-	if err != nil {
-		return Unread
-	}
-	if !accepted {
-		return NotAccepted
-	}
 	return Verified
 }
 
-// isAuthorize: the authorize route, whose body must name its key by lookup
-// hash for Python's binding check (verify_boot_auth's signed_lookup_hash).
-func isAuthorize(method, path string) bool {
-	return method == http.MethodPost && strings.HasSuffix(path, "/internal/gateway/authorize")
-}
-
-func namesKeyByLookupHash(body []byte) bool {
-	var fields struct {
-		LookupHash string `json:"api_key_lookup_hash"`
-	}
-	return json.Unmarshal(body, &fields) == nil && fields.LookupHash != ""
-}
-
+// boot reads a boot, from the cache within its TTL, else from the reader
+// within BootWait.
 func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
 	now := e.cfg.Clock()
 	e.mu.Lock()
@@ -289,6 +258,8 @@ func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
 	if ok && now.Before(c.until) {
 		return c.boot, c.found, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, e.cfg.BootWait)
+	defer cancel()
 	boot, found, err := e.cfg.Boots.Boot(ctx, kid)
 	if err != nil {
 		return Boot{}, false, err

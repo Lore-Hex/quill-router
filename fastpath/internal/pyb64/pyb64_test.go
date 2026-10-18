@@ -16,6 +16,7 @@ func TestDecodeIsPythons(t *testing.T) {
 		{"-_8", []byte{0xfb, 0xff}},
 		{"+/8", []byte{0xfb, 0xff}},
 		{"-_8=", []byte{0xfb, 0xff}},
+		{"AB", []byte{0}}, // unused bits set: Python decodes it
 	}
 	for _, c := range ok {
 		got, err := Decode(c.in)

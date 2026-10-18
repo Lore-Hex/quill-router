@@ -53,22 +53,9 @@ func (b *boots) Boot(ctx context.Context, kid string) (Boot, bool, error) {
 	return boot, ok, nil
 }
 
-type digests struct {
-	accepted map[string]bool
-	fail     bool
-}
-
-func (d *digests) Accepted(_ context.Context, digest string) (bool, error) {
-	if d.fail {
-		return false, errors.New("policy away")
-	}
-	return d.accepted[digest], nil
-}
-
 type seen struct {
 	method, path, query, verdict, host, body string
 	headers                                  http.Header
-	trailer                                  http.Header
 }
 
 type harness struct {
@@ -76,12 +63,13 @@ type harness struct {
 	server   *httptest.Server
 	upstream *httptest.Server
 	boots    *boots
-	digests  *digests
 	last     *seen
 	private  ed25519.PrivateKey
 	now      time.Time
 	respond  func(w http.ResponseWriter)
 }
+
+var plainClient = &http.Client{Transport: &http.Transport{DisableCompression: true}}
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
@@ -92,11 +80,9 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.private = private
 	h.boots = &boots{by: map[string]Boot{
-		"boot-1": {Kid: "boot-1", PublicKey: public, Verified: true, ImageDigest: "sha256:good"},
-		"boot-2": {Kid: "boot-2", PublicKey: public, Verified: false, ImageDigest: "sha256:good"},
-		"boot-3": {Kid: "boot-3", PublicKey: public, Verified: true, ImageDigest: "sha256:old"},
+		"boot-1": {Kid: "boot-1", PublicKey: public, Verified: true},
+		"boot-2": {Kid: "boot-2", PublicKey: public, Verified: false},
 	}}
-	h.digests = &digests{accepted: map[string]bool{"sha256:good": true}}
 	h.respond = func(w http.ResponseWriter) {
 		w.Header().Set("X-Answer", "python")
 		w.Header().Set("Content-Type", "application/json")
@@ -106,12 +92,12 @@ func newHarness(t *testing.T) *harness {
 	h.upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		h.last = &seen{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, verdict: r.Header.Get(VerdictHeader),
-			host: r.Host, body: string(body), headers: r.Header.Clone(), trailer: r.Trailer.Clone()}
+			host: r.Host, body: string(body), headers: r.Header.Clone()}
 		h.respond(w)
 	}))
 	t.Cleanup(h.upstream.Close)
 	upstream, _ := url.Parse(h.upstream.URL)
-	edge, err := New(Config{Token: token, Upstream: upstream, Boots: h.boots, Digests: h.digests, CheckWait: 200 * time.Millisecond,
+	edge, err := New(Config{Token: token, Upstream: upstream, Boots: h.boots, BootWait: 200 * time.Millisecond,
 		Clock: func() time.Time { return h.now }})
 	if err != nil {
 		t.Fatal(err)
@@ -145,8 +131,6 @@ func (h *harness) send(t *testing.T, method, path string, body string, headers m
 	t.Cleanup(func() { resp.Body.Close() })
 	return resp
 }
-
-var plainClient = &http.Client{Transport: &http.Transport{DisableCompression: true}}
 
 func (h *harness) signed(t *testing.T, kid, method, path, body string, extra map[string]string) *http.Response {
 	t.Helper()
@@ -197,7 +181,6 @@ func TestEveryWayABootSignatureFailsHasItsVerdict(t *testing.T) {
 		{"another method", h.header("boot-1", http.MethodGet, authorizePath, []byte(body)), Invalid},
 		{"unknown boot", h.header("boot-9", http.MethodPost, authorizePath, []byte(body)), Invalid},
 		{"unverified boot", h.header("boot-2", http.MethodPost, authorizePath, []byte(body)), Invalid},
-		{"digest not accepted", h.header("boot-3", http.MethodPost, authorizePath, []byte(body)), NotAccepted},
 		{"malformed", "kid=boot-1", Invalid},
 		{"duplicate field", "kid=boot-1,kid=boot-1,sig=AA", Invalid},
 		{"short signature", "kid=boot-1,sig=AAAA", Invalid},
@@ -219,10 +202,12 @@ func TestEveryWayABootSignatureFailsHasItsVerdict(t *testing.T) {
 func TestASignatureInTheStandardAlphabetVerifiesAsItDoesInPython(t *testing.T) {
 	h := newHarness(t)
 	sig := ed25519.Sign(h.private, Digest(http.MethodPost, authorizePath, []byte(authorizeBody)))
-	header := "kid=boot-1,sig=" + base64.StdEncoding.EncodeToString(sig)
-	h.send(t, http.MethodPost, authorizePath, authorizeBody, map[string]string{TokenHeader: token, BootHeader: header})
-	if h.last.verdict != string(Verified) {
-		t.Fatalf("the standard alphabet: %q", h.last.verdict)
+	for _, encoded := range []string{base64.StdEncoding.EncodeToString(sig), base64.RawStdEncoding.EncodeToString(sig),
+		base64.URLEncoding.EncodeToString(sig)} {
+		h.send(t, http.MethodPost, authorizePath, authorizeBody, map[string]string{TokenHeader: token, BootHeader: "kid=boot-1,sig=" + encoded})
+		if h.last.verdict != string(Verified) {
+			t.Fatalf("%s: %q", encoded, h.last.verdict)
+		}
 	}
 }
 
@@ -232,33 +217,13 @@ func TestTwoBootHeadersAreInvalidAsPythonReadsThem(t *testing.T) {
 	req.Header.Set(TokenHeader, token)
 	req.Header.Add(BootHeader, h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody)))
 	req.Header.Add(BootHeader, h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody)))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := plainClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if h.last.verdict != string(Invalid) || len(h.last.headers.Values(BootHeader)) != 2 {
 		t.Fatalf("two headers: %q, passed %d", h.last.verdict, len(h.last.headers.Values(BootHeader)))
-	}
-}
-
-func TestAnAuthorizeMustNameItsKeyByLookupHash(t *testing.T) {
-	h := newHarness(t)
-	for body, want := range map[string]Verdict{
-		`{"api_key_hash":"legacy","model":"m"}`:                 Invalid,
-		`{"api_key_lookup_hash":"","model":"m"}`:                Invalid,
-		`{"api_key_lookup_hash":"lookup-1","api_key_hash":"k"}`: Verified,
-		`not json`: Invalid,
-	} {
-		h.signed(t, "boot-1", http.MethodPost, authorizePath, body, nil)
-		if h.last.verdict != string(want) {
-			t.Fatalf("%s: %q, want %q", body, h.last.verdict, want)
-		}
-	}
-	// Other routes carry no key: the rule is the authorize's alone.
-	h.signed(t, "boot-1", http.MethodPost, heartbeatPath, `{"authorization_id":"gwa-1"}`, nil)
-	if h.last.verdict != string(Verified) {
-		t.Fatalf("a heartbeat: %q", h.last.verdict)
 	}
 }
 
@@ -299,13 +264,13 @@ func TestACallerCannotForgeOrSuppressTheVerdict(t *testing.T) {
 	if h.last.verdict != string(Absent) {
 		t.Fatalf("a forged verdict: %q", h.last.verdict)
 	}
-	h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, map[string]string{"Connection": VerdictHeader})
+	h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, map[string]string{"Connection": "close, " + VerdictHeader})
 	if h.last.verdict != string(Verified) {
 		t.Fatalf("a suppressed verdict: %q", h.last.verdict)
 	}
 }
 
-func TestReadersThatAreAwayOrSlowLeaveTheVerdictUnread(t *testing.T) {
+func TestABootReaderThatIsAwayOrSlowLeavesTheVerdictUnread(t *testing.T) {
 	h := newHarness(t)
 	h.boots.fail = true
 	h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, nil)
@@ -313,12 +278,6 @@ func TestReadersThatAreAwayOrSlowLeaveTheVerdictUnread(t *testing.T) {
 		t.Fatalf("boots away: %q", h.last.verdict)
 	}
 	h.boots.fail = false
-	h.digests.fail = true
-	h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, nil)
-	if h.last.verdict != string(Unread) {
-		t.Fatalf("digests away: %q", h.last.verdict)
-	}
-	h.digests.fail = false
 	h.boots.slow = time.Second
 	started := time.Now()
 	h.signed(t, "boot-5", http.MethodPost, authorizePath, authorizeBody, nil)
@@ -397,24 +356,6 @@ func TestAPythonThatIsNotReachedAnswersInItsEnvelope(t *testing.T) {
 	}
 }
 
-func TestRequestTrailersReachPython(t *testing.T) {
-	h := newHarness(t)
-	req, _ := http.NewRequest(http.MethodPost, h.server.URL+authorizePath, strings.NewReader(authorizeBody))
-	req.Header.Set(TokenHeader, token)
-	req.Header.Set(BootHeader, h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody)))
-	req.Trailer = http.Header{"X-Checksum": nil}
-	req.ContentLength = -1
-	req.Trailer.Set("X-Checksum", "abc")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if h.last.verdict != string(Verified) || h.last.trailer.Get("X-Checksum") != "abc" {
-		t.Fatalf("trailers: verdict %q trailer %v", h.last.verdict, h.last.trailer)
-	}
-}
-
 // TestTheDigestIsPythons pins the digest layout to gateway_boot.py's
 // boot_auth_digest: sha256(domain || METHOD || path || sha256(body)), with
 // a vector computed by that function.
@@ -428,13 +369,12 @@ func TestTheDigestIsPythons(t *testing.T) {
 func TestNewRefusesAMissingPartOrAnUpstreamPath(t *testing.T) {
 	upstream, _ := url.Parse("http://python.internal")
 	withPath, _ := url.Parse("http://python.internal/base")
-	b, d := &boots{}, &digests{}
+	b := &boots{}
 	for _, cfg := range []Config{
-		{Upstream: upstream, Boots: b, Digests: d},
-		{Token: token, Boots: b, Digests: d},
-		{Token: token, Upstream: upstream, Digests: d},
-		{Token: token, Upstream: upstream, Boots: b},
-		{Token: token, Upstream: withPath, Boots: b, Digests: d},
+		{Upstream: upstream, Boots: b},
+		{Token: token, Boots: b},
+		{Token: token, Upstream: upstream},
+		{Token: token, Upstream: withPath, Boots: b},
 	} {
 		if _, err := New(cfg); err == nil {
 			t.Fatalf("accepted %+v", cfg)
