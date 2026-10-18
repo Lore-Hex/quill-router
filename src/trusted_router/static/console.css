@@ -27,11 +27,6 @@ body.console {
   font-family: var(--tr-font-family-sans);
 }
 
-.console-topbar .brand {
-  flex: 0 0 auto;
-  color: var(--tr-color-accent-hover);
-}
-
 .console-topnav {
   display: flex;
   align-items: center;
