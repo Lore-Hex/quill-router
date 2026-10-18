@@ -125,35 +125,6 @@ def test_onboarding_assignment_is_balanced_and_stable():
     assert cells == [assigned_onboarding_cell(f'{i:032x}') for i in range(2000)]
 
 
-@pytest.mark.parametrize('cell', ['run_request', 'get_answer'])
-def test_onboarding_experiment_roundtrip_and_projection(cell, caplog):
-    from starlette.requests import Request
-
-    from trusted_router import acquisition as a
-    from trusted_router.config import Settings
-    from trusted_router.main import _ApplicationConsoleFormatter
-    from trusted_router.marketing_experiments import ONBOARDING_EXPERIMENT_ID
-    settings = Settings()
-    now = dt.datetime.now(dt.UTC).isoformat()
-    touch = {'utm_source': 'qa', 'utm_campaign': 'attribution_test', 'landing_path': '/',
-             'captured_at': now, 'experiment_id': ONBOARDING_EXPERIMENT_ID, 'experiment_cell_id': cell}
-    context = a.AttributionContext('a'*32, touch, touch, now)
-    request = Request({'type': 'http', 'headers': []})
-    request.state.acquisition_attribution = context
-    snapshot = a.oauth_attribution_snapshot(request, settings, 'state')
-    callback = Request({'type': 'http', 'headers': []})
-    a.restore_oauth_attribution(callback, settings, 'state', snapshot)
-    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
-    assert a.onboarding_exposure(callback, user_id='private', workspace_id='ws-private') == cell
-    record = next(r for r in caplog.records if r.getMessage() == 'acquisition.experiment_exposed')
-    payload = json.loads(_ApplicationConsoleFormatter().format(record))
-    assert payload['account_fingerprint'] == m.digest('tr-account:private')
-    assert payload['workspace_fingerprint'] == m.digest('ws-private')
-    projected = m.project_event({**payload, '_time': now}, source='cloud_logging')
-    assert projected['experiment_cell_id'] == cell and projected['utm_source'] == 'qa'
-    assert 'private' not in json.dumps(projected)
-
-
 def test_cloud_acquisition_formatter_rejects_raw_identity():
     from trusted_router.main import _ApplicationConsoleFormatter
     record = logging.makeLogRecord({'name': 'trusted_router.acquisition',

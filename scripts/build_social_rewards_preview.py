@@ -1,5 +1,6 @@
 """Regenerate the self-contained, simulated social rewards UI preview."""
 
+import argparse
 import base64
 import json
 import re
@@ -10,6 +11,9 @@ STATIC = ROOT / "src/trusted_router/static"
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True, help="Destination for the generated HTML")
+    args = parser.parse_args()
     css = "\n".join(
         (STATIC / name).read_text() for name in ("tokens.css", "dashboard.css", "console.css")
     )
@@ -17,6 +21,7 @@ def main() -> None:
     css += f'\n@font-face{{font-family:Archivo;src:url(data:font/woff2;base64,{font})}}'
     dialog = (ROOT / "src/trusted_router/templates/console/_social_rewards.html").read_text()
     dialog = re.sub(r"<script.*?</script>", "", dialog, flags=re.S)
+    dialog = re.sub(r"\{\{.*?\}\}", "preview-user", dialog)
     script = (STATIC / "social-rewards.js").read_text()
     child = (
         '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -31,8 +36,7 @@ def main() -> None:
 const state = {eligible:true,enabled:true,first_call_complete:true,dismissed:false,
  workspace_name:'Personal workspace', actions:[
  ['github','Star TrustedRouter on GitHub'],['x_trustedrouter','Follow TrustedRouter on X'],
- ['x_founder','Follow founder @jperla on X'],['linkedin','Follow TrustedRouter on LinkedIn'],
- ['youtube','Subscribe to TrustedRouter on YouTube']
+ ['x_founder','Follow founder @jperla on X'],['linkedin','Follow TrustedRouter on LinkedIn']
  ].map(([id,label])=>({id,label,url:'#',claimed:false}))};
 const scenario = SCENARIO;
 const key = document.getElementById('preview-key');
@@ -51,9 +55,7 @@ window.fetch=async(url,options)=>{
  }
  return {ok:true,json:async()=>JSON.parse(JSON.stringify(state))};
 };
-document.addEventListener('click',event=>{
- if(event.target.closest('.social-rewards-list a')) event.preventDefault();
-});
+window.open=()=>null;
 """
     outer = """<!doctype html><html lang=en><meta charset=utf-8>
 <title>TrustedRouter social rewards — local simulated preview</title>
@@ -88,7 +90,7 @@ render();</script></html>"""
     # Escape script closing tags because the child source lives inside a script string.
     outer = outer.replace("CHILD_JSON", json.dumps(child).replace("</", "<\\/"))
     outer = outer.replace("MOCK_JSON", json.dumps(mock).replace("</", "<\\/"))
-    (ROOT / "docs/previews/social-rewards.html").write_text(outer)
+    args.output.write_text(outer)
 
 
 if __name__ == "__main__":

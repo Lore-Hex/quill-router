@@ -9,7 +9,8 @@ The current implementation request supersedes the plan's older production-delive
 
 ## Preview and behavior
 
-Open `docs/previews/social-rewards.html`. This is a self-contained simulation using the
+Generate with `python scripts/build_social_rewards_preview.py --output /tmp/social-rewards.html`,
+then open `/tmp/social-rewards.html`. This is a self-contained simulation using the
 actual rewards template, CSS and JavaScript, with 1440/390/320 width controls and
 available, partially claimed, pending, error, before-call, key-reveal, paused and
 ineligible states. It performs no real requests or grants. Regenerate it with
