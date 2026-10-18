@@ -27,6 +27,16 @@ body.console {
   font-family: var(--tr-font-family-sans);
 }
 
+/* The console keeps its own wordmark: mint, 15px and medium weight, as before
+   the shared lockup. The mark itself is the shared drawing from _brand.html. */
+.console-topbar .brand {
+  gap: 10px;
+  color: var(--tr-color-accent-hover);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
 .console-topnav {
   display: flex;
   align-items: center;
