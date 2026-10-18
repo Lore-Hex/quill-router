@@ -903,11 +903,14 @@ def _authorize_gateway_sync_impl(
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
         )
+        # Over the path as the server decoded it, which is what the edge
+        # signs over too; request.url.path is that path after URL parsing
+        # (control characters removed, a '?' or '#' it contains ending it).
         edge_signed = verify_boot_signature(
             boot=boot,
             auth=boot_auth,
             method=request.method,
-            path=request.url.path,
+            path=str(request.scope.get("path", request.url.path)),
             exact_body_bytes=cast(bytes, boot_context["raw_body"]),
         )
     else:

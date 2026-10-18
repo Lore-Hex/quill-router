@@ -391,9 +391,9 @@ func TestAQueryWithASemicolonReachesPythonAsItCame(t *testing.T) {
 }
 
 func TestAnEscapedPathIsSignedAsPythonReadsIt(t *testing.T) {
-	// Python verifies over request.url.path, the decoded path; so does the
-	// edge, over r.URL.Path. A signature over the decoded path verifies on
-	// both; one over the escaped form verifies on neither.
+	// The edge checks over r.URL.Path, the decoded path, as Python's
+	// comparison checks over the path its server decoded. A signature over
+	// the decoded path verifies; one over the escaped form does not.
 	h := newHarness(t)
 	escaped := "/internal/gateway/authorize%0A"
 	decoded := "/internal/gateway/authorize\n"

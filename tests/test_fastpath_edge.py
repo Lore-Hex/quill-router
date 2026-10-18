@@ -136,3 +136,30 @@ def test_the_route_compares_the_signature_not_its_whole_verification(
     with caplog.at_level(logging.WARNING, logger=gateway.logger.name):
         gateway._authorize_gateway_sync(request, body, _pilot(fastpath_pilot_enabled=False), raw_body=raw)
     assert not [r for r in caplog.records if "edge boot verdict differs" in r.getMessage()]
+
+
+def test_the_comparison_reads_the_path_as_the_server_decoded_it(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path with an escaped line feed: the enclave signed over the decoded
+    path, the edge checked over it, and request.url.path drops the line
+    feed (verify_boot_auth then fails); the comparison reads the scope's
+    path and agrees with the edge."""
+    from tests.test_fastpath_pilot_route import _body, _pilot, _seed
+
+    private, boot = _boot()
+    store, _database, key = _seed()
+    monkeypatch.setattr(store, "get_gateway_boot", lambda kid: boot if kid == boot.kid else None)
+    body = _body(key.hash)
+    raw = body.model_dump_json().encode()
+    decoded = PATH + "\n"
+    auth = _auth(private, boot.kid, path=decoded, body=raw)
+    headers = [
+        (b"x-tr-boot-auth", f"kid={auth.kid},sig={auth.signature}".encode()),
+        (b"x-tr-edge-boot", b"verified"),
+    ]
+    request = Request({"type": "http", "method": "POST", "path": decoded, "headers": headers})
+    assert request.url.path == PATH
+    with caplog.at_level(logging.WARNING, logger=gateway.logger.name):
+        gateway._authorize_gateway_sync(request, body, _pilot(fastpath_pilot_enabled=False), raw_body=raw)
+    assert not [r for r in caplog.records if "edge boot verdict differs" in r.getMessage()]
