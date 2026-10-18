@@ -1048,6 +1048,14 @@ class _FakeTransaction:
             if duplicate_reference:
                 return 0
             if pk in self.db.typed.get("tr_trust_event", {}):
+                # A concurrent grant can commit after our absent receipt read.
+                # Real Spanner aborts that stale read/write transaction. Keep
+                # genuine duplicate inserts as AlreadyExists on a fresh read.
+                marker = ("stripe_event", p["event_id"])
+                current = self.db.rows.get(marker)
+                if (marker in self.read_versions and current is not None
+                        and self.read_versions[marker] != current.version):
+                    raise FakeAborted()
                 raise FakeAlreadyExists(f"tr_trust_event/{pk}")
             record = dict(p)
             self.pending_writes.append(("insert_typed_dml", "tr_trust_event", pk, record))
@@ -4068,6 +4076,8 @@ def _execute_sql(
             rows = [
                 row for row in rows if row.get("workspace_id") == params["workspace_id"]
             ]
+        if "event_id" in params:
+            rows = [row for row in rows if row.get("event_id") == params["event_id"]]
         if "ids" in params:
             wanted = set(params["ids"])
             rows = [row for row in rows if row.get("workspace_id") in wanted]

@@ -5,11 +5,9 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
-from trusted_router.acquisition import onboarding_exposure
 from trusted_router.auth import SettingsDep
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
-from trusted_router.typed_balance import live_credit_summary
 
 
 def register(app: FastAPI) -> None:
@@ -20,8 +18,6 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         first: int | None = None,
     ) -> Response:
-        summary = live_credit_summary(ctx.workspace.id)
-        trial_microdollars = summary["total_credits"] if summary else 0
         # `tr_pending_reveal` is the short-lived one-shot cookie set by
         # the OAuth callback right before its 302 here. It carries the
         # raw API key minted during STORE.signup(). We read it ONCE,
@@ -37,26 +33,16 @@ def register(app: FastAPI) -> None:
             if cookie_value:
                 revealed_key = cookie_value
                 clear_pending_reveal = True
-        cell = ''
-        if revealed_key and trial_microdollars > 0:
-            cell = onboarding_exposure(request, user_id=ctx.user.id, workspace_id=ctx.workspace.id, record=False)
         response = HTMLResponse(render(
             "console/welcome.html",
             settings=settings,
             ctx=ctx,
             active="api-keys",
-            page_title="Make your first API call",
-            page_subtitle="Save your key, confirm it works, then connect your app.",
+            page_title="Your API key",
+            page_subtitle="",
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
-            # The raw amount selects the appropriate next step without
-            # advertising the account-creation grant.
-            trial_credit_microdollars=trial_microdollars,
-            can_run_first_call=trial_microdollars > 0,
-            onboarding_cell=cell,
         ))
-        if cell:
-            onboarding_exposure(request, user_id=ctx.user.id, workspace_id=ctx.workspace.id)
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise
             # the browser keeps the original and the next refresh re-reveals

@@ -275,6 +275,8 @@ CONFIG=$(cat <<JSON
         "TR_ENVIRONMENT": "canary",
         "TR_SERVICE_SURFACE": "observer",
         "TR_NEW_SIGNUPS_ENABLED": "false",
+        "TR_SOCIAL_REWARDS_ENABLED": "false",
+        "TR_SOCIAL_REWARDS_PLANE_ID": "aws",
         "TR_RELEASE": "${RELEASE_COMMIT}",
         "TR_STORAGE_BACKEND": "postgres",
         "TR_POSTGRES_DSN": "host=${DSQL_HOST} port=5432 user=admin dbname=postgres sslmode=require",

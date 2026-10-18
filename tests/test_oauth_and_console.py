@@ -1072,7 +1072,7 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
     assert resp.text.count(fake_raw_key) == 2, (
-        "the raw API key must appear in the direct reveal and the visible "
+        "the raw API key must appear in the direct reveal and the optional "
         "Claude Code / Codex message"
     )
     assert 'data-copy-secret="welcome-api-key"' in resp.text
@@ -1083,10 +1083,12 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     assert agent_message is not None
     assert fake_raw_key in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert resp.text.index('id="welcome-agent-message"') < resp.text.index('id="welcome-api-key"')
-    assert "Run my first API request" in resp.text
-    assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
-    assert "Claude Code, Codex" in resp.text
+    assert resp.text.index('id="welcome-api-key"') < resp.text.index('id="welcome-agent-message"')
+    assert 'data-action="run-first-call"' not in resp.text
+    assert 'class="activation-progress"' not in resp.text
+    assert 'id="setup-agent-tab"' in resp.text
+    assert 'aria-labelledby="setup-agent-tab" data-setup-panel' in resp.text
+    assert "data-rewards-key-card" in resp.text
     assert "Python" in resp.text
     assert "JavaScript" in resp.text
     assert "curl" in resp.text
@@ -1166,11 +1168,8 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert (
-        "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
-        in resp.text
-    )
-    assert "Paste this short message" not in agent_message.group(0)
+    assert "Paste this into your coding agent." in resp.text
+    assert "Paste this into your coding agent." not in agent_message.group(0)
     assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
     assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
@@ -1183,7 +1182,7 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert keys[0].limit_microdollars == 1
 
 
-def test_console_welcome_without_credits_routes_to_funding(
+def test_console_welcome_without_credits_keeps_key_and_funding_access(
     console_session: tuple[TestClient, str],
 ) -> None:
     client, _ = console_session
@@ -1195,7 +1194,8 @@ def test_console_welcome_without_credits_routes_to_funding(
     response = client.get("/console/welcome?first=1")
 
     assert response.status_code == 200
-    assert "Add credits before the live check" in response.text
+    assert fake_raw_key in response.text
+    assert 'data-copy-secret="welcome-api-key"' in response.text
     assert 'href="/console/credits"' in response.text
     assert 'data-action="run-first-call"' not in response.text
 
@@ -1256,7 +1256,7 @@ def test_console_api_key_budget_can_be_edited_and_cleared(
 
     updated_page = client.get("/console/api-keys")
     assert 'value="25.123456"' in updated_page.text
-    assert "of $25.12" in updated_page.text  # "Used $X of $25.12" budget line
+    assert "$25.12 total limit" in updated_page.text
 
     cleared = client.post(
         f"/console/api-keys/{key.hash}/limit",

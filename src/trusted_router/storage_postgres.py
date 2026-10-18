@@ -153,6 +153,7 @@ from trusted_router.storage_models import (
     RoutablePayoutProfile,
     SessionAuthContext,
     SignupResult,
+    SocialRewardEnrollment,
     SyntheticProbeSample,
     SyntheticRollup,
     TrustEvent,
@@ -1425,6 +1426,45 @@ class PostgresStore:
         self._run_transaction(operation)
         self._company_affiliation_directory = None
 
+    def get_social_reward_enrollment(self, user_id: str) -> SocialRewardEnrollment | None:
+        return self._read_entity("social_reward_enrollment", user_id, SocialRewardEnrollment)
+
+    def dismiss_social_rewards(self, user_id: str) -> bool:
+        def txn(conn: Any) -> bool:
+            record = self._read_entity_tx(
+                conn, "social_reward_enrollment", user_id, SocialRewardEnrollment,
+                for_update=True,
+            )
+            if record is None or record.dismissed:
+                return False
+            record.dismissed = True
+            self._write_entity_tx(conn, "social_reward_enrollment", user_id, record)
+            return True
+
+        return self._run_transaction(txn)
+
+    def mark_social_reward_first_call(self, user_id: str) -> bool:
+        def txn(conn: Any) -> bool:
+            record = self._read_entity_tx(
+                conn, "social_reward_enrollment", user_id, SocialRewardEnrollment,
+                for_update=True,
+            )
+            if record is None or record.first_call_complete:
+                return False
+            record.first_call_complete = True
+            self._write_entity_tx(conn, "social_reward_enrollment", user_id, record)
+            return True
+
+        return self._run_transaction(txn)
+
+    def has_credit_grant(self, workspace_id: str, event_id: str) -> bool:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT kind FROM tr_trust_event WHERE workspace_id=%s AND event_id=%s",
+                (workspace_id, event_id),
+            ).fetchone()
+        return bool(row is not None and row[0] == "grant")
+
     def ensure_user(
         self,
         user_id: str,
@@ -1432,7 +1472,12 @@ class PostgresStore:
         *,
         trial_credit_microdollars: int | None = None,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> User:
+        if social_rewards_issuer is not None and (
+            not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
+        ):
+            raise ValueError("social rewards enrollment requires the 150000 signup grant")
         normalized_email = normalize_email(email or user_id)
 
         def ensure(conn: Any) -> User:
@@ -1461,12 +1506,17 @@ class PostgresStore:
                 normalized_email,
                 {"user_id": user.id},
             )
-            self._create_workspace_tx(
+            workspace = self._create_workspace_tx(
                 conn,
                 user.id,
                 "Personal Workspace",
                 trial_credit_microdollars,
             )
+            if social_rewards_issuer is not None:
+                self._write_entity_tx(
+                    conn, "social_reward_enrollment", user.id,
+                    SocialRewardEnrollment(user.id, workspace.id, social_rewards_issuer),
+                )
             return user
 
         return self._run_transaction(ensure)
@@ -1534,6 +1584,7 @@ class PostgresStore:
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
         email_verified: bool = False,
+        social_rewards_issuer: str | None = None,
     ) -> SignupResult | None:
         self._not_implemented("signup")
 
@@ -2120,7 +2171,10 @@ class PostgresStore:
         return self._read_entity("user", user_id, User)
 
     def find_user_by_email(self, email: str) -> User | None:
-        self._not_implemented("find_user_by_email")
+        record = self._read_entity("email_user", normalize_email(email), dict)
+        if record is None:
+            return None
+        return self.get_user(str(record["user_id"]))
 
     def find_user_by_wallet(self, address: str) -> User | None:
         record = self._read_entity("wallet_user", address.strip().lower(), dict)
@@ -4599,8 +4653,16 @@ class PostgresStore:
         payment_amount_microdollars: int | None = None,
         currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
+        required_owner_user_id: str | None = None,
     ) -> bool:
         def credit(conn: Any) -> bool:
+            # Serialize eligibility with the grant and ownership/deletion updates.
+            # Omitted by existing payment callers to preserve their semantics.
+            if required_owner_user_id is not None:
+                workspace = self._read_entity_tx(conn, "workspace", workspace_id, Workspace, for_update=True)
+                if (workspace is None or workspace.deleted
+                        or workspace.owner_user_id != required_owner_user_id):
+                    raise ValueError("credit_workspace_owner_mismatch")
             marker_body: dict[str, Any] = {
                 "created_at": iso_now(),
                 "workspace_id": workspace_id,
@@ -4691,11 +4753,13 @@ class PostgresStore:
         workspace_id: str,
         amount_microdollars: int,
         event_id: str,
+        *, required_owner_user_id: str | None = None,
     ) -> bool:
         return self.credit_workspace_typed_direct(
             workspace_id,
             amount_microdollars,
             event_id,
+            required_owner_user_id=required_owner_user_id,
             provenance=CreditProvenance(
                 source="grant",
                 provider="system",
@@ -7705,7 +7769,44 @@ class PostgresStore:
         window_seconds: int,
         now: dt.datetime | None = None,
     ) -> RateLimitHit:
-        self._not_implemented("hit_rate_limit")
+        now = now or utcnow()
+        epoch = int(now.timestamp())
+        bucket = epoch // window_seconds
+        # One row per subject/window configuration: PostgreSQL has no native
+        # entity TTL, so creating a fresh row each minute would grow forever.
+        entity_id = f"{namespace}#{subject}#{window_seconds}"
+        reset_epoch = (bucket + 1) * window_seconds
+
+        def txn(conn: Any) -> tuple[int, int]:
+            # Locking a missing row does not serialize first requests. Insert
+            # the counter first, then lock it, as for wallet challenge scopes.
+            self._insert_entity_once_tx(conn, "rate_limit", entity_id, {"count": 0})
+            row = self._read_entity_tx(
+                conn, "rate_limit", entity_id, dict, for_update=True,
+            )
+            if row is None:
+                raise RuntimeError("rate_limit_counter_missing")
+            previous_bucket = int(row.get("bucket", bucket))
+            if bucket < previous_bucket:
+                # A slow instance's clock must never reset an active counter
+                # backward or spend a second allowance for the old minute.
+                return limit + 1, (previous_bucket + 1) * window_seconds
+            count = int(row.get("count", 0)) + 1 if bucket == previous_bucket else 1
+            self._write_entity_tx(
+                conn, "rate_limit", entity_id,
+                {"count": count, "bucket": bucket, "expires_at": reset_epoch},
+            )
+            return count, reset_epoch
+
+        count, reset_epoch = self._run_transaction(txn)
+        reset_at = dt.datetime.fromtimestamp(reset_epoch, dt.UTC).replace(microsecond=0)
+        return RateLimitHit(
+            allowed=count <= limit,
+            limit=limit,
+            remaining=max(limit - count, 0),
+            reset_at=reset_at.isoformat().replace("+00:00", "Z"),
+            retry_after_seconds=max(reset_epoch - epoch, 1),
+        )
 
 
 def _dataclass_from_json(raw: Any, cls: type[T]) -> T:

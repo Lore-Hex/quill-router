@@ -10,24 +10,39 @@
   <link rel="stylesheet" href="/static/tokens.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
-  <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}&amp;flow=console-navigation-v2">
   {% block head_extra %}{% endblock %}
-  <script defer src="/static/console.js?v={{ static_version|default('local') }}"></script>
+  <script defer src="/static/console.js?v={{ static_version|default('local') }}&amp;flow=console-navigation-v2"></script>
   {% block scripts %}{% endblock %}
 <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
 <script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
 </head>
 <body class="console">
   <header class="console-topbar">
-    <a class="brand" href="{{ '/provider/' ~ selected_provider if provider_mode else '/console/api-keys' }}">{% include "_brand.html" %}</a>
-    <nav class="console-topnav">
-      <a href="/models">Models</a>
-      <a href="https://trust.trustedrouter.com">Trust</a>
-      <a href="https://github.com/Lore-Hex/trusted-router-py">SDK</a>
-      <a href="/support">Help</a>
-      <a href="/support?category=feature#support-inquiry">Feature request</a>
-    </nav>
-    {% if workspaces %}
+    <a class="brand" href="/">{% include "_brand.html" %}</a>
+    <div class="console-utilities">
+      <nav class="console-topnav" aria-label="Resources">
+        <a href="/models">Models</a>
+        <a href="/docs">Docs</a>
+        <details class="console-header-menu"><summary>Help</summary><div class="console-menu-links">
+          <a href="/support">Support</a>
+          <a href="/support?category=feature#support-inquiry">Feature request</a>
+          <a href="https://github.com/Lore-Hex/trusted-router-py">SDK</a>
+          <a href="https://trust.trustedrouter.com">Trust</a>
+        </div></details>
+      </nav>
+      <details class="console-header-menu console-account"><summary>Account</summary><div class="console-menu-links">
+        <span class="console-user-email">{{ user_email or 'Account' }}</span>
+        <a href="/console/account/preferences">Preferences</a>
+        <a href="/console/account/verification"{% if active == 'verification' %} aria-current="page"{% endif %}>Verification</a>
+        <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+      </div></details>
+    </div>
+    <button class="console-menu-toggle" type="button" aria-controls="console-navigation" aria-expanded="false" hidden>Menu</button>
+  </header>
+  <div class="console-shell">
+    <aside id="console-navigation" class="console-sidebar" aria-label="Workspace navigation">
+    {% if workspaces|length > 1 %}
     <form class="workspace-selector" method="post" action="/console/workspaces/select">
       <input type="hidden" name="next" value="{{ console_next_path }}">
       <label>
@@ -42,16 +57,10 @@
       </label>
       <button class="btn workspace-selector-submit" type="submit">Switch</button>
     </form>
+    {% elif workspaces %}
+    <div class="console-workspace-name">{{ workspaces[0].name }}</div>
     {% endif %}
-    <div class="console-user">
-      <span class="console-user-email">{{ user_email or 'no email' }}</span>
-      <form class="inline-form" method="post" action="/auth/logout">
-        <button class="btn" type="submit">Sign out</button>
-      </form>
-    </div>
-  </header>
-  <div class="console-shell">
-    <aside class="console-sidebar" aria-label="Workspace navigation">
+
       {% if provider_mode %}
       <div class="sidebar-group">
         <div class="sidebar-label">Provider operations</div>
@@ -61,38 +70,36 @@
       </div>
       {% else %}
       <div class="sidebar-group">
-        <div class="sidebar-label">Workspace</div>
+
         <a href="/console/api-keys" class="sidebar-link {{ 'active' if active == 'api-keys' else '' }}">API Keys</a>
+        <a href="/console/credits" class="sidebar-link {{ 'active' if active == 'credits' else '' }}">Credits</a>
+        <a href="/console/activity" class="sidebar-link {{ 'active' if active == 'activity' else '' }}">Observability</a>
+      </div>
+      <details class="sidebar-group console-configuration" open>
+        <summary>Configuration</summary>
         <a href="/console/authorized-apps" class="sidebar-link {{ 'active' if active == 'authorized-apps' else '' }}">Authorized Apps</a>
         <a href="/console/byok" class="sidebar-link {{ 'active' if active == 'byok' else '' }}">BYOK</a>
         <a href="/console/custom-models" class="sidebar-link {{ 'active' if active == 'custom-models' else '' }}">Custom Models</a>
         <a href="/console/user-models" class="sidebar-link {{ 'active' if active == 'user-models' else '' }}">User-provided Models</a>
-        <a href="/console/earnings" class="sidebar-link {{ 'active' if active == 'earnings' else '' }}">Earnings</a>
         <a href="/console/routing" class="sidebar-link {{ 'active' if active == 'routing' else '' }}">Routing</a>
-        <a href="/console/activity" class="sidebar-link {{ 'active' if active == 'activity' else '' }}">Observability</a>
+      </details>
+      <div class="sidebar-group">
+        <a href="/console/earnings" class="sidebar-link {{ 'active' if active == 'earnings' else '' }}">Earnings</a>
         <a href="/console/broadcast" class="sidebar-link {{ 'active' if active == 'broadcast' else '' }}">Broadcast</a>
         <a href="/console/settings" class="sidebar-link {{ 'active' if active == 'settings' else '' }}">Settings</a>
-      </div>
-      <div class="sidebar-group">
-        <div class="sidebar-label">Account</div>
-        <a href="/console/credits" class="sidebar-link {{ 'active' if active == 'credits' else '' }}">Credits</a>
-        <a href="/console/account/verification" class="sidebar-link {{ 'active' if active == 'verification' else '' }}">Verification</a>
-        <a href="/console/account/preferences" class="sidebar-link {{ 'active' if active == 'preferences' else '' }}">Preferences</a>
-        <form class="sidebar-link sidebar-signout" method="post" action="/auth/logout">
-          <button type="submit">Sign out</button>
-        </form>
       </div>
       {% endif %}
     </aside>
     <main class="console-main">
       <header class="console-page-head">
         <h1>{{ page_title }}</h1>
-        {% if page_subtitle %}<p>{{ page_subtitle }}</p>{% endif %}
+        {% if page_subtitle and active != "api-keys" %}<p>{{ page_subtitle }}</p>{% endif %}
       </header>
       <div class="console-page-body">
         {% block body %}{% endblock %}
       </div>
     </main>
   </div>
+  {% if not provider_mode %}{% include "console/_social_rewards.html" %}{% endif %}
 </body>
 </html>

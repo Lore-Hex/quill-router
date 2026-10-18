@@ -67,7 +67,7 @@ def test_api_key_reveal_leads_with_a_complete_agent_chat_message(
 
     assert response.status_code == 200
     assert (
-        "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
+        "Paste this into your coding agent."
         in response.text
     )
     assert (
@@ -75,7 +75,7 @@ def test_api_key_reveal_leads_with_a_complete_agent_chat_message(
         'of France?"'
         in response.text
     )
-    assert response.text.index("Paste this short message") < response.text.index(
+    assert response.text.index("Paste this into your coding agent.") < response.text.index(
         "Your TrustedRouter API key"
     )
     assert "Call https://api.trustedrouter.com/v1" not in response.text
