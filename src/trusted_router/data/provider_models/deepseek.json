@@ -54,7 +54,7 @@
       ]
     },
     {
-      "display_name": "DeepSeek Flash (rolling)",
+      "display_name": "DeepSeek V4.1 Flash (rolling)",
       "title": "deepseek-flash",
       "model_type": "chat",
       "input_modalities": [
