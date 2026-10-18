@@ -155,6 +155,8 @@ def test_conditional_grant_rejects_invalid_owner_without_receipt(store: Store, u
     enrollment = store.get_social_reward_enrollment(user.id)
     assert enrollment is not None
     workspace_id = enrollment.workspace_id
+    initial = live_credit_summary(workspace_id, store=store)
+    assert initial is not None and initial['total_credits'] == 150_000
     if change == 'transfer':
         other = store.ensure_user(f'new-owner-{unique}@example.com')
         store.transfer_workspace_ownership(workspace_id, other.id)
@@ -162,12 +164,18 @@ def test_conditional_grant_rejects_invalid_owner_without_receipt(store: Store, u
         store.update_workspace(workspace_id, deleted=True)
     else:
         workspace_id = f'missing-{unique}'
+    before_claim = live_credit_summary(enrollment.workspace_id, store=store)
+    assert before_claim is not None
+    if change != 'delete':
+        assert before_claim['total_credits'] == 150_000
     event = f'guard:{unique}:github'
     with pytest.raises(ValueError, match='credit_workspace_owner_mismatch'):
         store.credit_workspace_once(workspace_id, 30_000, event, required_owner_user_id=user.id)
     assert not store.has_credit_grant(workspace_id, event)
     summary = live_credit_summary(enrollment.workspace_id, store=store)
-    assert summary is not None and summary['total_credits'] == 150_000
+    # Deletion may retire the balance rows; a rejected claim must never change
+    # the post-deletion balance or create a receipt.
+    assert summary == before_claim
 
 
 def test_conditional_grant_retains_exactly_once_behavior(store: Store, unique: str) -> None:
@@ -183,3 +191,12 @@ def test_conditional_grant_retains_exactly_once_behavior(store: Store, unique: s
     assert store.has_credit_grant(enrollment.workspace_id, event)
     summary = live_credit_summary(enrollment.workspace_id, store=store)
     assert summary is not None and summary['total_credits'] == 180_000
+
+
+def test_enrolled_user_email_lookup_normalizes_and_finds_existing_user(store: Store, unique: str) -> None:
+    email = f'lookup-{unique}@example.com'
+    user = store.ensure_user(email, trial_credit_microdollars=150_000,
+                             social_rewards_issuer='primary')
+    found = store.find_user_by_email(f'  {email.upper()}  ')
+    assert found is not None and found.id == user.id
+    assert store.find_user_by_email(f'missing-{unique}@example.com') is None

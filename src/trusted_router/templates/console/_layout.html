@@ -34,7 +34,7 @@
       <details class="console-header-menu console-account"><summary>Account</summary><div class="console-menu-links">
         <span class="console-user-email">{{ user_email or 'Account' }}</span>
         <a href="/console/account/preferences">Preferences</a>
-        <a href="/console/account/verification">Verification</a>
+        <a href="/console/account/verification"{% if active == 'verification' %} aria-current="page"{% endif %}>Verification</a>
         <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
       </div></details>
     </div>

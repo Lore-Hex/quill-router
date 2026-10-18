@@ -2171,7 +2171,10 @@ class PostgresStore:
         return self._read_entity("user", user_id, User)
 
     def find_user_by_email(self, email: str) -> User | None:
-        self._not_implemented("find_user_by_email")
+        record = self._read_entity("email_user", normalize_email(email), dict)
+        if record is None:
+            return None
+        return self.get_user(str(record["user_id"]))
 
     def find_user_by_wallet(self, address: str) -> User | None:
         record = self._read_entity("wallet_user", address.strip().lower(), dict)

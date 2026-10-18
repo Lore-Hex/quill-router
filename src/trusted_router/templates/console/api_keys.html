@@ -6,12 +6,12 @@
   <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
   <details class="key-spending-options">
     <summary>Spending limits</summary>
-    <p class="key-window-note">USD · Blank means unlimited.</p>
+    <p class="key-window-note">USD · Blank means unlimited. A balanced starting point: ${{ suggested.daily }} / day, ${{ suggested.weekly }} / week, ${{ suggested.monthly }} / month.</p>
     <div class="key-budget-grid">
       <label>Total<input name="limit" type="text" inputmode="decimal" placeholder="Unlimited"></label>
-      <label>Daily<input name="limit_daily" type="text" inputmode="decimal" placeholder="Unlimited"></label>
-      <label>Weekly<input name="limit_weekly" type="text" inputmode="decimal" placeholder="Unlimited"></label>
-      <label>Monthly<input name="limit_monthly" type="text" inputmode="decimal" placeholder="Unlimited"></label>
+      <label>Daily<input name="limit_daily" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.daily }}"></label>
+      <label>Weekly<input name="limit_weekly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.weekly }}"></label>
+      <label>Monthly<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
     </div>
     <label class="budget-action-check"><input type="checkbox" name="budget_alert_only"> <span>Email alerts instead of blocking requests</span></label>
     <label class="budget-action-check"><input type="checkbox" name="budget_strict" aria-describedby="strict-budget-note"> <span>Include in-flight requests</span></label>
