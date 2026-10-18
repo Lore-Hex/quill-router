@@ -204,7 +204,13 @@ func New(cfg Config) (*Edge, error) {
 			if !ok {
 				return nil
 			}
-			target.Scheme, target.Host = caller.scheme, caller.host
+			if caller.host == "" {
+				// A caller that named no host (HTTP/1.0) gets a relative
+				// redirect, which it resolves against what it asked.
+				target.Scheme, target.Host = "", ""
+			} else {
+				target.Scheme, target.Host = caller.scheme, caller.host
+			}
 			resp.Header.Set("Location", target.String())
 			return nil
 		},

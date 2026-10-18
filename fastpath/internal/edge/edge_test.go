@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -541,5 +542,24 @@ func TestTheBootCacheIsBounded(t *testing.T) {
 	h.edge.mu.Unlock()
 	if size != 1 {
 		t.Fatalf("after the sweep: %d entries", size)
+	}
+}
+
+func TestARedirectToACallerWithNoHostIsRelative(t *testing.T) {
+	h := newHarness(t)
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Location", h.upstream.URL+"/internal/gateway/authorize?x=1")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}
+	// An HTTP/1.0 request names no host.
+	conn, err := net.Dial("tcp", strings.TrimPrefix(h.server.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = fmt.Fprintf(conn, "POST /internal/gateway/authorize/ HTTP/1.0\r\n%s: %s\r\nContent-Length: 0\r\n\r\n", TokenHeader, token)
+	raw, _ := io.ReadAll(conn)
+	if !strings.Contains(string(raw), "Location: /internal/gateway/authorize?x=1\r\n") {
+		t.Fatalf("a hostless caller's redirect:\n%s", raw)
 	}
 }
