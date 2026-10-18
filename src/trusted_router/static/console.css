@@ -1432,6 +1432,7 @@ body.console {
 .key-rewards-copy h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; }
 .key-rewards-copy > p:last-child { margin: 0; color: var(--muted); font-size: 13px; }
 .key-rewards-invitation > .btn { flex-shrink: 0; min-height: 44px; background: var(--tr-color-panel-mint-bg); color: var(--tr-color-panel-mint-ink); border-color: var(--tr-color-panel-mint-divider); }
+
 @media (max-width: 720px) {
   .key-rewards-invitation { align-items: flex-start; flex-direction: column; gap: 16px; padding: 18px; margin-bottom: 24px; }
   .key-rewards-copy h2 { font-size: 21px; }
@@ -1524,6 +1525,7 @@ body.console {
 .console-sidebar .sidebar-group + .sidebar-group { border-top:1px solid var(--line); padding-top:16px; }
 .console-sidebar .sidebar-link { min-height:44px; box-sizing:border-box; display:flex; align-items:center; }
 .console-sidebar .sidebar-link.active { background:var(--tr-color-surface-selected); color:var(--tr-color-accent-base); border-left:2px solid var(--tr-color-accent-base); border-radius:2px; }
+
 @media (max-width:800px) {
   .console-workspace-name { display:none; }
   .console-topbar { min-height:56px; box-sizing:border-box; padding:4px 20px; flex-wrap:nowrap; justify-content:space-between; }
@@ -1544,11 +1546,13 @@ body.console {
 }
 .console-configuration { border-top:1px solid var(--line); padding-top:16px; }
 .console-configuration > summary { display:none; }
+
 @media(max-width:800px) {
   .console-configuration > summary { display:list-item; cursor:pointer; padding:10px; min-height:44px; box-sizing:border-box; font-size:14px; }
   .console-configuration:not([open]) > .sidebar-link { display:none; }
   .console-configuration + .sidebar-group { border-top:1px solid var(--line); padding-top:16px; }
 }
+
 @media(max-width:800px) {
   .console-sidebar .sidebar-group { display:flex; flex-direction:column; flex-wrap:nowrap; align-items:stretch; }
   .console-sidebar details.sidebar-group { display:block; }
@@ -1559,6 +1563,7 @@ body.console:has(.key-first-onboarding), body.console:has(.key-list-panel) {
   --bg: var(--tr-color-surface-bg-alt);
   --ink: var(--tr-color-text-primary);
   --muted: var(--tr-color-text-secondary);
+
   background: var(--tr-color-surface-bg-alt);
 }
 body.console .console-main:has(.key-first-onboarding),
@@ -1592,6 +1597,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 }
 .key-first-onboarding .key-rewards-invitation { border-left: 3px solid var(--tr-color-line-strong); }
 .social-rewards-list p, .social-rewards-foot p { color: var(--tr-color-text-secondary); }
+
 @media (max-width: 600px) {
   .key-list-panel > .panel-head { padding: 16px; }
 }
@@ -1614,9 +1620,9 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   overflow: hidden;
   background:
     linear-gradient(90deg, transparent 42%, color-mix(in srgb, var(--tr-color-accent-ink) 10%, transparent)),
-    radial-gradient(ellipse at 105% 115%, oklch(from var(--tr-color-information-note) .68 calc(c * 2) h / .8), transparent 38%),
-    radial-gradient(ellipse at 94% 100%, oklch(from var(--tr-color-link-base) .68 calc(c * 3) h / .8), transparent 52%),
-    radial-gradient(ellipse at 92% -25%, oklch(from var(--tr-color-accent-base) .72 calc(c * 3) h / .75), transparent 56%),
+    radial-gradient(ellipse at 105% 115%, oklch(from var(--tr-color-information-note) 68% calc(c * 2) h / .8), transparent 38%),
+    radial-gradient(ellipse at 94% 100%, oklch(from var(--tr-color-link-base) 68% calc(c * 3) h / .8), transparent 52%),
+    radial-gradient(ellipse at 92% -25%, oklch(from var(--tr-color-accent-base) 72% calc(c * 3) h / .75), transparent 56%),
     color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base));
 }
 .key-rewards-invitation::before,
@@ -1638,13 +1644,16 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   z-index: -1;
   inset: 0 0 auto;
   height: 108px;
+
   --reward-arc-x: calc(100% + 30px);
+
   background:
     radial-gradient(circle at var(--reward-arc-x) -110px, transparent 189px, color-mix(in srgb, var(--tr-color-accent-base) 14%, transparent) 190px, transparent 191px),
     radial-gradient(circle at var(--reward-arc-x) -110px, transparent 229px, color-mix(in srgb, var(--tr-color-accent-base) 9%, transparent) 230px, transparent 231px);
   mask-image: linear-gradient(to bottom, #000 5%, rgb(0 0 0 / 65%) 40%, transparent 90%);
   pointer-events: none;
 }
+
 @media (max-width: 600px) {
   .key-rewards-invitation::after,
   .social-rewards-head::after { --reward-arc-x: calc(100% + 65px); }
@@ -1664,6 +1673,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   border-color: var(--tr-color-line-strong);
   color: var(--tr-color-text-primary);
 }
+
 @media (min-width: 801px) {
   .console-sidebar {
     background: color-mix(in srgb, var(--tr-color-accent-ink) 65%, var(--tr-color-surface-panel));
@@ -1684,6 +1694,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 .key-state::before { content: ""; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--tr-color-accent-base); }
 .key-state-disabled::before { background: transparent; box-sizing: border-box; border: 1px solid var(--tr-color-text-tertiary); }
 .key-actions .btn { min-height: 44px; }
+
 @media (max-width: 720px) {
   .key-list-panel .keys-table td[data-col="Actions"] { padding-top: 12px; }
 }
@@ -1699,6 +1710,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   margin-left: 4px;
 }
 .console-header-menu[open] > summary::after { transform: rotate(225deg); }
+
 @media (max-width: 800px) {
   .console-configuration > summary { display: flex; align-items: center; list-style: none; padding: 10px 12px; }
   .console-configuration > summary::-webkit-details-marker { display: none; }
