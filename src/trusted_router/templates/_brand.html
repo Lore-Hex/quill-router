@@ -1,4 +1,7 @@
-<span class="brand-mark" aria-hidden="true">
+{#- Brand home link for the console and auth layouts: an inline mark whose
+    colours come from tokens (charter.css .brand*). The public chrome uses the
+    image mark in public/_brand_link.html instead. -#}
+<a class="brand" href="/"><span class="brand-mark" aria-hidden="true">
   <svg viewBox="0 0 24 24" focusable="false">
     <g fill="none" stroke-linecap="round" stroke-linejoin="round">
       <path class="brand-mark-route" d="M1.4 7.5 H6.5 L11 12 M1.4 16.5 H4 L8.5 12 M1.4 12 H15.5"></path>
@@ -8,3 +11,4 @@
   </svg>
 </span>
 <span class="brand-word">{{ brand_name|default("TrustedRouter") }}</span>
+</a>

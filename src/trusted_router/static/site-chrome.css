@@ -1,6 +1,7 @@
-/* Shared site chrome: header, model search dialog and footer for every page,
- * the homepage included (templates/public/_nav.html), plus the console and
- * auth layouts. Colours, type and spacing come from tokens.css. */
+/* Shared site chrome: header, model search dialog and footer for every public
+ * page, the homepage included (templates/public/_nav.html, _footer.html).
+ * The signed-in console header is styled by console.css instead. Colours,
+ * type and spacing come from tokens.css. */
 
 .skip-link {
   position: absolute;

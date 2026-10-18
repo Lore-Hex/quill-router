@@ -34,11 +34,12 @@ body.console {
 
 .console-topnav {
   display: flex;
+  align-items: center;
   gap: 22px;
+  margin: 0;
   font-size: 15px;
   font-weight: 500;
   color: var(--muted);
-  margin-right: auto;
 }
 
 .console-topnav a {
@@ -50,24 +51,12 @@ body.console {
   color: var(--tr-color-text-primary);
 }
 
-.console-user {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  min-width: 0;
-}
-
 .console-user-email {
   color: var(--muted);
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.console-user .inline-form {
-  margin: 0;
 }
 
 .workspace-selector {
@@ -81,6 +70,8 @@ body.console {
 .workspace-selector select {
   min-width: 0;
   max-width: 240px;
+  min-height: 34px;
+  padding: 6px 30px 6px 9px;
 }
 
 .workspace-selector label {
@@ -95,11 +86,6 @@ body.console {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.workspace-selector select {
-  min-height: 34px;
-  padding: 6px 30px 6px 9px;
 }
 
 .workspace-selector-submit {
@@ -1505,7 +1491,6 @@ body.console {
 
 /* Console-only navigation. Page content and rewards retain their own styles. */
 .console-utilities { margin-left:auto; display:flex; align-items:center; gap:24px; }
-.console-topnav { margin:0; align-items:center; }
 .console-header-menu { position:relative; font-size:14px; }
 .console-header-menu summary { cursor:pointer; min-height:44px; display:flex; align-items:center; gap:8px; list-style:none; }
 .console-header-menu summary::-webkit-details-marker { display:none; }

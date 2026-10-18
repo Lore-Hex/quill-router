@@ -1,0 +1,4 @@
+{#- Brand home link for the public chrome: the header (_nav.html) and footer
+    (_footer.html). The console and auth layouts use the token-coloured inline
+    mark in _brand.html instead. Styles live in static/site-chrome.css. -#}
+<a class="brand-link" href="/"><img class="brand-mark" src="/static/homepage/mark.svg" width="30" height="30" alt="{{ brand_name|default('TrustedRouter') }}"><span class="brand-word" aria-hidden="true">{{ brand_name|default("TrustedRouter") }}</span></a>
