@@ -45,7 +45,10 @@ type AppendResult struct {
 // and under the same condition (§4.2), so no raise exists without its row
 // and none lands on a closed lease. The row is written last, with its
 // commit timestamp, and read in the order of that timestamp, then record ID.
-// An append retried with its record ID finds its row and writes nothing.
+// An append retried with its record ID finds its row and writes nothing;
+// retried once the lease is closed, it is refused like a first append, so
+// the authorization's disposition answers it (its row was decided with the
+// lease's order).
 func (s *Store) Append(ctx context.Context, t DrainTerminal) (AppendResult, error) {
 	if t.AuthorizationID == "" || t.RecordID == "" || t.Cause == "" || (t.Kind != "settle" && t.Kind != "refund") ||
 		t.Charge < 0 || t.Estimate < 0 || len(t.Money) == 0 {
@@ -70,24 +73,19 @@ func (s *Store) Append(ctx context.Context, t DrainTerminal) (AppendResult, erro
 			if kind != t.Kind || charge != t.Charge || estimate != t.Estimate || !bytes.Equal(digest, t.Digest) {
 				return fmt.Errorf("store: record %s is another terminal's", t.RecordID)
 			}
-			return nil
+			closed, err := leaseClosed(ctx, txn, t.Ref)
+			if closed {
+				out.Refused = RefusedClosed
+			}
+			return err
 		case spanner.ErrCode(err) != codes.NotFound:
 			return err
 		}
-		row, err = txn.ReadRowWithOptions(ctx, "tr_lease", t.Ref.key(), []string{"state"},
-			&spanner.ReadOptions{RequestTag: tag("append")})
-		if spanner.ErrCode(err) == codes.NotFound {
-			out.Refused = RefusedClosed
-			return nil
-		}
+		closed, err := leaseClosed(ctx, txn, t.Ref)
 		if err != nil {
 			return err
 		}
-		var state string
-		if err := row.Column(0, &state); err != nil {
-			return err
-		}
-		if state == "closed" {
+		if closed {
 			out.Refused = RefusedClosed
 			return nil
 		}
@@ -130,6 +128,24 @@ func (s *Store) Append(ctx context.Context, t DrainTerminal) (AppendResult, erro
 		out.CommitTS = resp.CommitTs.UTC()
 	}
 	return out, nil
+}
+
+// leaseClosed reads whether a lease is closed, or gone, in the append's
+// transaction.
+func leaseClosed(ctx context.Context, txn *spanner.ReadWriteTransaction, ref LeaseRef) (bool, error) {
+	row, err := txn.ReadRowWithOptions(ctx, "tr_lease", ref.key(), []string{"state"},
+		&spanner.ReadOptions{RequestTag: tag("append")})
+	if spanner.ErrCode(err) == codes.NotFound {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var state string
+	if err := row.Column(0, &state); err != nil {
+		return false, err
+	}
+	return state == "closed", nil
 }
 
 // DrainRow is a row of a lease's drain log.
