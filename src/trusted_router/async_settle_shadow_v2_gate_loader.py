@@ -111,7 +111,7 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
         decoded_rows, decoded_attachments = rows('rows'), rows('attachments')
         registrations = value.get('producer_registrations', [])
         try:
-            require(type(registrations) is list and len(registrations) <= 32, 'evidence_schema_gap')
+            require(type(registrations) is list and len(registrations) <= a2.e.MAX_PRODUCER_REGISTRATIONS, 'evidence_schema_gap')
             for registration in registrations:
                 a2.e.FILE_REF(registration)
         except (ValueError, TypeError, KeyError):

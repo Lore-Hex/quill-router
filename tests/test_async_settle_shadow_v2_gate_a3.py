@@ -1329,7 +1329,7 @@ def test_round15_report_registration_field_schema(originals: Any, monkeypatch: A
     assert report['producer_registrations'] == list(loaded.producer_registrations)
     assert a2.GATE_REPORT.parse(canonical(report)) == report
     ref = report['producer_registrations'][0]
-    for value in (None, {}, [42], [ref] * 33, [{'path': ref['path']}], [{**ref, 'bytes': -1}],
+    for value in (None, {}, [42], [ref] * 3, [{'path': ref['path']}], [{**ref, 'bytes': -1}],
                   [{**ref, 'sha256': 'bad'}], [{**ref, 'path': '../registration.json'}]):
         with pytest.raises(ValueError):
             a2.GATE_REPORT.parse(canonical({**report, 'producer_registrations': value}))
@@ -1664,3 +1664,120 @@ def test_round17_prior_captured_repeated_rows(originals: Any, tmp_path: Path) ->
             replay_folder = folder / str(old_roles)
             replay_folder.mkdir()
             assert through_all(replay, ports, replay_folder, 'fleet-budgets')['verdict'] == 'PASS'
+
+
+def _round18_registrations(originals: Any, paths: list[str], *, maximal: bool = False) -> tuple[bytes, Any]:
+    from tests.shadow_v2_gate_a3_originals import accounted_originals
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    original, ports, _ = originals
+    raw, ports = accounted_originals(original, ports, prefix='review-spool/', registration_path='review/registration.data')
+    value = json.loads(raw)
+    body = next(p['raw'] for p in value['preimages'] if p['name'] == 'review/registration.data')
+    if maximal:
+        body = body.ljust(262144)
+    value['producer_registrations'] = []
+    for path in paths:
+        ref = dict(path=path, bytes=len(body.encode()), sha256=file_digest(body.encode()))
+        a2.FILE_REF(ref)
+        value['producer_registrations'].append(ref)
+        value['preimages'].append(dict(name=path, raw=body))
+    return canonical(value), ports
+
+
+def _round18_maximal_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Maximal remainder from the round-18 max-report.py arithmetic receipt."""
+    import datetime
+
+    from trusted_router.async_settle_shadow_v2_schema import INT64
+    report = json.loads(canonical(report))
+    report.pop('producer_registrations', None)
+    report.update(gate='fleet-budgets-pre', completed_at_us=INT64,
+        days=[(datetime.date(2026, 1, 1) + datetime.timedelta(days=i)).isoformat() for i in range(32)],
+        window=dict(start_us=INT64 - 1, end_us=INT64), complete=False)
+    report['rules'] = dict.fromkeys(report['rules'], 'not_required')
+    ratio = dict(state='evaluated', numerator=INT64, denominator=INT64)
+    for key in ('comparator', 'admission', 'partition', 'attempts', 'checkpoint', 'handoff', 'null_counts'):
+        report[key] = {field: ratio.copy() if field == 'coverage' else INT64 for field in report[key]}
+    fractions = ('reads_per_second', 'pending_rows_per_second', 'trust_rows_per_second', 'health_rows_per_second',
+        'claim_operations_per_second', 'scan_operations_per_second', 'publication_operations_per_second',
+        'export_operations_per_second', 'export_bytes_per_second', 'configured_reads_per_second',
+        'configured_pending_rows_per_second', 'cpu_percent')
+    peaks = {field: dict(numerator=INT64, denominator=INT64 - 1) if field in fractions else INT64 for field in a2.PEAKS.fields}
+    report['fleet_peaks'] = peaks
+    report['publisher'] = {field: peaks if field == 'peaks' else INT64 for field in a2.PUBLISHER.fields}
+    report['timing'] = {field: dict.fromkeys(a2.STAT.fields, INT64) for field in a2.TIMINGS}
+    report['deltas'] = dict(count=INT64, null_count=INT64, min_micro=-INT64, max_micro=-INT64, bins=dict.fromkeys(a2.BINS, INT64))
+    for key in 'first_seed_at_us first_reset_at_us first_gap_at_us clock_start_us elapsed_seconds'.split():
+        report[key] = INT64
+    for key in 'writers regions failures input_inventory reset_history'.split():
+        report[key] = dict(root='f' * 64, count=INT64, pages=INT64, tail_sha256='f' * 64)
+    report['failure_counts'] = {field: dict(count=INT64, listed=16, complete=False, day_counts=[INT64] * 32)
+        for field in a2.FAILURE_COUNTS.fields}
+    verifier = dict(entry_point='v' * 128, source_sha256='f' * 64, fixture_sha256='f' * 64, keyset_sha256=None, calls=INT64)
+    report['verifiers'] = dict(
+        certificate={**verifier, 'entry_point': 'trusted_router.async_settle_shadow_v2_certificate.verify_certificate', 'keyset_sha256': 'f' * 64},
+        binding={**verifier, 'entry_point': 'trusted_router.async_settle_shadow_binding.verify_binding', 'keyset_sha256': 'f' * 64},
+        retained_tools=[verifier.copy() for _ in range(8)])
+    report['original_roles'] = dict(path='r' * 512, sha256='f' * 64, bytes=262144)
+    a2.GATE_REPORT(report)
+    return report
+
+
+@pytest.mark.parametrize('case', ['short-32', 'long-1', 'long-32', 'near-pass', 'near-block'])
+def test_round18_reviewer_registration_inputs(originals: Any, tmp_path: Path, case: str) -> None:
+    paths = []
+    for i in range(1 if case == 'long-1' else 32):
+        path = ('review/' + '/'.join(['r' * 95] * 5) + f'/{i}.json') if case.startswith('long') else f'review/registration-{i}.json'
+        if case.startswith('near-'):
+            path = 'review/' + 'r' * (140 if case == 'near-pass' else 142) + f'/{i}.json'
+        paths.append(path)
+    raw, ports = _round18_registrations(originals, paths)
+    loaded = load(raw, ports, gate='fleet-budgets-pre')
+    expected = [] if case == 'long-1' else [dict(gap='evidence_schema_gap', path='transport/producer_registrations', detail='evidence_schema_gap')]
+    assert [issue for issue in loaded.a2_streams['loading_issues'] if issue['path'] == 'transport/producer_registrations'] == expected
+    assert through_all(raw, ports, tmp_path, 'fleet-budgets-pre')['verdict'] == ('PASS' if case == 'long-1' else 'BLOCKED')
+
+
+def test_round18_maximal_registration_report(originals: Any, tmp_path: Path) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    # Use the accepted maximum so restoring 32 also exercises its full report.
+    paths = ['r' * 509 + f'{i:03}' for i in range(a2.MAX_PRODUCER_REGISTRATIONS)]
+    raw, ports = _round18_registrations(originals, paths, maximal=True)
+    loaded = load(raw, ports, gate='fleet-budgets-pre')
+    assert loaded.a2_streams['loading_issues'] == []
+    result = evaluate(loaded, ports, gate='fleet-budgets-pre')
+    assert result.verdict == 'PASS'
+    assert isinstance(render(result), tuple)
+    assert through_all(raw, ports, tmp_path, 'fleet-budgets-pre')['verdict'] == 'PASS'
+    maximal = _round18_maximal_report(result.gate_report)
+    maximal['producer_registrations'] = json.loads(raw)['producer_registrations']
+    assert a2.GATE_REPORT.parse(a2.GATE_REPORT.serialize(maximal)) == maximal
+    assert len(canonical(maximal['producer_registrations'])) == 1231
+
+
+def test_round18_three_registrations_block_at_loading(originals: Any, tmp_path: Path) -> None:
+    raw, ports = _round18_registrations(originals, [f'review/{i}.json' for i in range(3)])
+    loaded = load(raw, ports, gate='fleet-budgets-pre')
+    assert [issue for issue in loaded.a2_streams['loading_issues'] if issue['path'] == 'transport/producer_registrations'] == [
+        dict(gap='evidence_schema_gap', path='transport/producer_registrations', detail='evidence_schema_gap')]
+    assert through_all(raw, ports, tmp_path, 'fleet-budgets-pre')['verdict'] == 'BLOCKED'
+
+
+def test_round18_registration_envelope_arithmetic(originals: Any) -> None:
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    original, ports, _ = originals
+    report = _round18_maximal_report(evaluate(load(transport(original), ports), ports, gate='transport').gate_report)
+    counts = len(canonical(report['failure_counts']))
+    assert len(canonical(report)) - counts == 14756
+    ref = dict(path='r' * 512, sha256='f' * 64, bytes=262144)
+    a2.FILE_REF(ref)
+    assert len(canonical(ref)) == 614
+    member = [ref] * a2.MAX_PRODUCER_REGISTRATIONS
+    report['producer_registrations'] = member
+    envelope = len(canonical(report)) - counts
+    assert envelope == 14756 + len(canonical(member)) + 26
+    assert envelope <= 16384
+    assert (envelope, len(canonical(report)), 16384 - envelope) == (16013, 58737, 371)
+    assert len(canonical(report)) <= 65536
+    a2.GATE_REPORT(report)
