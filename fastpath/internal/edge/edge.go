@@ -370,7 +370,9 @@ func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
 		}
 	}
 	if len(e.boots) < maxCachedBoots {
-		e.boots[kid] = cachedBoot{boot: boot, found: found, until: now.Add(ttl)}
+		// The key is its own string: a substring of the header would keep
+		// the whole header, however padded, alive with the entry.
+		e.boots[strings.Clone(kid)] = cachedBoot{boot: boot, found: found, until: now.Add(ttl)}
 	}
 	e.mu.Unlock()
 	return boot, found, nil
