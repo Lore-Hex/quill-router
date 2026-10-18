@@ -14,15 +14,19 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Lore-Hex/quill-router/fastpath/internal/pyb64"
 )
 
 const (
@@ -32,7 +36,8 @@ const (
 	// VerdictHeader carries the edge's verdict on BootHeader to Python.
 	VerdictHeader = "X-TR-Edge-Boot"
 	// TokenHeader carries the internal service token the enclave sends; a
-	// bearer token in Authorization is the same (require_internal_gateway).
+	// bearer token in Authorization is read first, as Python reads it
+	// (require_internal_gateway).
 	TokenHeader = "X-Trustedrouter-Internal-Token"
 
 	maxBody = 16 << 20
@@ -46,11 +51,12 @@ var bootAuthDomain = []byte("tr-authorize-v1")
 type Verdict string
 
 const (
-	// Verified: a registered, verified boot signed the request, and its
-	// image digest is accepted.
+	// Verified: one registered, verified boot signed the request, its image
+	// digest is accepted, and an authorize names its key by lookup hash.
 	Verified Verdict = "verified"
-	// Invalid: the header is malformed, the boot is unknown or unverified,
-	// or the signature does not verify.
+	// Invalid: the header is malformed or repeated, the boot is unknown or
+	// unverified, the signature does not verify, or an authorize body does
+	// not name its key by lookup hash (Python's binding check).
 	Invalid Verdict = "invalid"
 	// NotAccepted: the signature verifies but the boot's image digest is
 	// not in the accepted set.
@@ -85,15 +91,18 @@ type Digests interface {
 }
 
 // Config is an edge's: the internal token, Python's internal surface, where
-// boots and the accepted digests come from, and how long a boot read is
-// kept (a boot's key never changes; a miss is kept a tenth as long).
+// boots and the accepted digests come from, how long a boot read is kept (a
+// boot's key never changes; a miss is kept a tenth as long), and how long
+// the checks may take before the verdict is Unread and the request goes on.
 type Config struct {
-	Token    string
-	Upstream *url.URL
-	Boots    Boots
-	Digests  Digests
-	BootTTL  time.Duration
-	Clock    func() time.Time
+	Token     string
+	Upstream  *url.URL
+	Boots     Boots
+	Digests   Digests
+	BootTTL   time.Duration
+	CheckWait time.Duration
+	Clock     func() time.Time
+	Transport http.RoundTripper
 }
 
 // Edge serves the enclave's control-plane paths.
@@ -110,6 +119,8 @@ type cachedBoot struct {
 	until time.Time
 }
 
+type verdictKey struct{}
+
 // New makes an edge; it needs a token, an upstream with no path, and both
 // readers.
 func New(cfg Config) (*Edge, error) {
@@ -122,71 +133,118 @@ func New(cfg Config) (*Edge, error) {
 	if cfg.BootTTL <= 0 {
 		cfg.BootTTL = 10 * time.Minute
 	}
+	if cfg.CheckWait <= 0 {
+		cfg.CheckWait = 2 * time.Second
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
+	}
+	if cfg.Transport == nil {
+		// Python's bytes as they are: no compression negotiated on the
+		// enclave's behalf, so its response headers and body pass unchanged.
+		cfg.Transport = &http.Transport{
+			DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+			DisableCompression:  true,
+			MaxIdleConnsPerHost: 256,
+			IdleConnTimeout:     90 * time.Second,
+		}
 	}
 	e := &Edge{cfg: cfg, boots: map[string]cachedBoot{}}
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""
 	e.proxy = &httputil.ReverseProxy{
+		Transport: cfg.Transport,
+		// Every write reaches the enclave as Python made it, so a response
+		// Python streams is streamed.
+		FlushInterval: -1,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(&upstream)
 			r.Out.Host = upstream.Host
+			// The verdict goes on after the hop-by-hop headers are dropped,
+			// so a caller's `Connection: X-TR-Edge-Boot` cannot remove it.
+			r.Out.Header.Del(VerdictHeader)
+			if v, ok := r.In.Context().Value(verdictKey{}).(Verdict); ok {
+				r.Out.Header.Set(VerdictHeader, string(v))
+			}
+		},
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+			answer(w, http.StatusBadGateway, "The control plane was not reached; retry", "bad_gateway")
 		},
 	}
 	return e, nil
+}
+
+// answer writes an error in the control plane's envelope (errors.py,
+// error_body), so the enclave decodes it as it decodes Python's.
+func answer(w http.ResponseWriter, code int, message, kind string) {
+	body, _ := json.Marshal(map[string]any{"error": map[string]any{
+		"code": code, "message": message, "type": kind, "source": "router",
+	}})
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+	w.WriteHeader(code)
+	_, _ = w.Write(body)
 }
 
 // ServeHTTP passes the request to Python with the edge's verdict in
 // VerdictHeader. A request without the internal token is passed as it is,
 // for Python's own 401, and reads nothing here.
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r = r.Clone(r.Context())
-	r.Header.Del(VerdictHeader)
 	if !e.tokenOK(r) {
 		e.proxy.ServeHTTP(w, r)
 		return
 	}
-	header := r.Header.Get(BootHeader)
-	if header == "" {
-		r.Header.Set(VerdictHeader, string(Absent))
-		e.proxy.ServeHTTP(w, r)
+	headers := r.Header.Values(BootHeader)
+	if len(headers) == 0 {
+		e.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent)))
 		return
 	}
+	// The body is read before the request is cloned, so the trailers it
+	// fills are the clone's too.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
-		http.Error(w, "edge: the body could not be read", http.StatusBadRequest)
+		answer(w, http.StatusBadRequest, "The request body could not be read", "bad_request")
 		return
 	}
 	if len(body) > maxBody {
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-		r.ContentLength = -1
-		r.Header.Set(VerdictHeader, string(Unchecked))
-		e.proxy.ServeHTTP(w, r)
+		out := r.Clone(context.WithValue(r.Context(), verdictKey{}, Unchecked))
+		out.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+		out.ContentLength = -1
+		e.proxy.ServeHTTP(w, out)
 		return
 	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	r.ContentLength = int64(len(body))
-	r.Header.Set(VerdictHeader, string(e.verdict(r.Context(), header, r.Method, r.URL.Path, body)))
-	e.proxy.ServeHTTP(w, r)
+	verdict := e.verdict(r.Context(), headers, r.Method, r.URL.Path, body)
+	out := r.Clone(context.WithValue(r.Context(), verdictKey{}, verdict))
+	out.Body = io.NopCloser(bytes.NewReader(body))
+	out.ContentLength = int64(len(body))
+	e.proxy.ServeHTTP(w, out)
 }
 
+// tokenOK reads the token as require_internal_gateway does: a bearer token
+// first, then the header.
 func (e *Edge) tokenOK(r *http.Request) bool {
-	supplied := r.Header.Get(TokenHeader)
+	supplied := ""
+	if auth := r.Header.Get("Authorization"); len(auth) >= 7 && strings.EqualFold(auth[:7], "bearer ") {
+		supplied = strings.TrimSpace(auth[7:])
+	}
 	if supplied == "" {
-		if auth := r.Header.Get("Authorization"); len(auth) > 7 && strings.EqualFold(auth[:7], "bearer ") {
-			supplied = strings.TrimSpace(auth[7:])
-		}
+		supplied = r.Header.Get(TokenHeader)
 	}
 	return supplied != "" && subtle.ConstantTimeCompare([]byte(supplied), []byte(e.cfg.Token)) == 1
 }
 
-// verdict checks a boot header against the request it signs.
-func (e *Edge) verdict(ctx context.Context, header, method, path string, body []byte) Verdict {
-	kid, sig, ok := ParseBootHeader(header)
+// verdict checks a boot header against the request it signs, within
+// CheckWait.
+func (e *Edge) verdict(ctx context.Context, headers []string, method, path string, body []byte) Verdict {
+	if len(headers) != 1 {
+		return Invalid
+	}
+	kid, sig, ok := ParseBootHeader(headers[0])
 	if !ok {
 		return Invalid
 	}
+	ctx, cancel := context.WithTimeout(ctx, e.cfg.CheckWait)
+	defer cancel()
 	boot, found, err := e.boot(ctx, kid)
 	if err != nil {
 		return Unread
@@ -197,6 +255,9 @@ func (e *Edge) verdict(ctx context.Context, header, method, path string, body []
 	if !ed25519.Verify(boot.PublicKey, Digest(method, path, body), sig) {
 		return Invalid
 	}
+	if isAuthorize(method, path) && !namesKeyByLookupHash(body) {
+		return Invalid
+	}
 	accepted, err := e.cfg.Digests.Accepted(ctx, boot.ImageDigest)
 	if err != nil {
 		return Unread
@@ -205,6 +266,19 @@ func (e *Edge) verdict(ctx context.Context, header, method, path string, body []
 		return NotAccepted
 	}
 	return Verified
+}
+
+// isAuthorize: the authorize route, whose body must name its key by lookup
+// hash for Python's binding check (verify_boot_auth's signed_lookup_hash).
+func isAuthorize(method, path string) bool {
+	return method == http.MethodPost && strings.HasSuffix(path, "/internal/gateway/authorize")
+}
+
+func namesKeyByLookupHash(body []byte) bool {
+	var fields struct {
+		LookupHash string `json:"api_key_lookup_hash"`
+	}
+	return json.Unmarshal(body, &fields) == nil && fields.LookupHash != ""
 }
 
 func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
@@ -230,7 +304,8 @@ func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
 }
 
 // ParseBootHeader reads `kid=K,sig=S` as parse_boot_auth_header does: both
-// fields once, in any order, nothing else; S URL-safe base64 without padding.
+// fields once, in any order, nothing else, S decoded by Python's base64url
+// rules.
 func ParseBootHeader(value string) (kid string, sig []byte, ok bool) {
 	fields := map[string]string{}
 	for _, part := range strings.Split(value, ",") {
@@ -251,7 +326,7 @@ func ParseBootHeader(value string) (kid string, sig []byte, ok bool) {
 	if !hasKid || !hasSig || kid == "" || len(kid) > maxKid || encoded == "" || len(encoded) > maxSig {
 		return "", nil, false
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(encoded, "="))
+	sig, err := pyb64.Decode(encoded)
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return "", nil, false
 	}

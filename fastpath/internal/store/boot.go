@@ -3,13 +3,12 @@ package store
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"cloud.google.com/go/spanner"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/pyb64"
 	"google.golang.org/grpc/codes"
 )
 
@@ -75,7 +74,7 @@ func parseBoot(kid, body string) (BootRecord, error) {
 	if b.JWK.Kty != "OKP" || b.JWK.Crv != "Ed25519" {
 		return BootRecord{}, fmt.Errorf("store: boot %s: its JWK is not an Ed25519 key", kid)
 	}
-	public, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(b.JWK.X, "="))
+	public, err := pyb64.Decode(b.JWK.X)
 	if err != nil || len(public) != ed25519.PublicKeySize {
 		return BootRecord{}, fmt.Errorf("store: boot %s: its public key is not 32 bytes", kid)
 	}

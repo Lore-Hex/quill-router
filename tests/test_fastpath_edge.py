@@ -71,3 +71,20 @@ def test_the_edges_verdict_is_compared_with_the_routes(
     assert bool(lines) == differs, lines
     if differs:
         assert f"edge={verdict}" in lines[0] and "kid=boot-1" in lines[0]
+
+
+
+def test_a_header_the_route_cannot_read_is_compared_as_invalid(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two boot headers parse to none here, and the route's verdict is then
+    `invalid`: the edge's `verified` on them is a disagreement the comparison
+    sees, since it runs whatever the header parsed to."""
+    from tests.test_fastpath_pilot_route import _body, _pilot, _seed
+
+    monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: True)
+    _store, _database, key = _seed()
+    headers = [(b"x-tr-boot-auth", b"kid=a,sig=AA"), (b"x-tr-boot-auth", b"kid=b,sig=AA"), (b"x-tr-edge-boot", b"verified")]
+    request = Request({"type": "http", "method": "POST", "path": "/internal/gateway/authorize", "headers": headers})
+    with caplog.at_level(logging.WARNING, logger=gateway.logger.name):
+        gateway._authorize_gateway_sync(request, _body(key.hash), _pilot(fastpath_pilot_enabled=False))
+    lines = [r.getMessage() for r in caplog.records if "edge boot verdict differs" in r.getMessage()]
+    assert len(lines) == 1 and "edge=verified python=invalid kid= " in lines[0], lines

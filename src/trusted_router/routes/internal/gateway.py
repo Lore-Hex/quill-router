@@ -900,7 +900,11 @@ def _authorize_gateway_sync_impl(
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
         )
-        _compare_edge_boot_verdict(request, boot_auth.kid, bool(boot_context["boot_verified"]))
+    # Compared whatever the header parsed to: a header the edge verified and
+    # this route could not read (repeated, malformed) is a disagreement too.
+    _compare_edge_boot_verdict(
+        request, boot_auth.kid if boot_auth is not None else "", bool(boot_context["boot_verified"]),
+    )
     if settings.speculative_provider_shadow_enabled:
         with speculation_shadow.isolate("boot_verified"):
             speculation_shadow.boot_verified(boot_context["boot_verified"], boot_auth.kid if boot_auth is not None else "")
