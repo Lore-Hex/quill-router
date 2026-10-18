@@ -82,18 +82,6 @@ def _first_call_complete(enrollment: SocialRewardEnrollment) -> bool:
     return successful
 
 
-def record_first_call(workspace_id: str, settings: Settings) -> None:
-    """Product eligibility, independent of optional marketing attribution."""
-    if not campaign_enabled(settings):
-        return
-    workspace = STORE.get_workspace(workspace_id)
-    if workspace is None:
-        return
-    enrollment = _eligible_enrollment(workspace.owner_user_id, settings)
-    if enrollment and enrollment.workspace_id == workspace_id and not enrollment.first_call_complete:
-        STORE.mark_social_reward_first_call(enrollment.user_id)
-
-
 def status(user_id: str, settings: Settings) -> dict[str, Any]:
     enrollment = _eligible_enrollment(user_id, settings)
     workspace = STORE.get_workspace(enrollment.workspace_id) if enrollment else None

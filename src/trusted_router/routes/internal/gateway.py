@@ -4752,14 +4752,12 @@ def _settle_gateway_authorization(
                 authorization.workspace_id,
                 model=generation_model_id,
                 provider=generation_provider,
-                settings=settings,
             )
         else:
             record_successful_api_call_safely(
                 authorization.workspace_id,
                 model=generation_model_id,
                 provider=generation_provider,
-                settings=settings,
             )
         # Alert-mode budgets: email the owner when a window is crossed (never
         # blocks — the block happens at authorize for limit-mode keys). Off the

@@ -176,27 +176,33 @@ def test_signup_enrollment_preserves_existing_exclusions():
     assert not returning.first_time
 
 
-def test_first_call_eligibility_does_not_require_marketing_attribution(monkeypatch):
-    from trusted_router.acquisition import record_successful_api_call_safely
-
-    client, result, settings = _account(activated=False)
-    # Equivalent to a GPC/DNT signup, where no marketing record is created.
+def test_first_call_status_recovers_without_marketing_attribution(monkeypatch):
+    client, result, _ = _account(activated=False)
+    # Console status can recover first-call evidence without a per-inference hook.
     monkeypatch.setattr(InMemoryStore, "get_acquisition_attribution", lambda self, workspace_id: None)
-    record_successful_api_call_safely(result.workspace.id, model="test", provider="test", settings=settings)
-    assert _post(client, action="github").status_code == 200
+    monkeypatch.setattr(InMemoryStore, "activity_events",
+                        lambda self, workspace_id, **kwargs: [{"status": "success"}])
+    response = client.get("/console/social-rewards")
+    assert response.json()["first_call_complete"] is True
     assert STORE.get_social_reward_enrollment(result.user.id).first_call_complete
+    assert _post(client, action="github").status_code == 200
 
 
-def test_failed_first_call_marker_does_not_fail_inference(monkeypatch):
-    from trusted_router.acquisition import record_successful_api_call_safely
+def test_throttled_successful_calls_do_not_read_reward_storage(monkeypatch):
+    from unittest.mock import Mock
 
-    _, result, settings = _account(activated=False)
+    from trusted_router import acquisition
 
-    def unavailable(self, user_id):
-        raise TimeoutError("storage unavailable")
-
-    monkeypatch.setattr(InMemoryStore, "mark_social_reward_first_call", unavailable)
-    record_successful_api_call_safely(result.workspace.id, model="test", provider="test", settings=settings)
+    _, result, _ = _account(activated=False)
+    workspace_read = Mock(side_effect=AssertionError("unexpected workspace read"))
+    enrollment_read = Mock(side_effect=AssertionError("unexpected enrollment read"))
+    monkeypatch.setattr(InMemoryStore, "get_workspace", workspace_read)
+    monkeypatch.setattr(InMemoryStore, "get_social_reward_enrollment", enrollment_read)
+    monkeypatch.setattr(acquisition, "_usage_check_due", lambda workspace_id: False)
+    for _ in range(10):
+        acquisition.record_successful_api_call_safely(result.workspace.id, model="test", provider="test")
+    workspace_read.assert_not_called()
+    enrollment_read.assert_not_called()
 
 
 def test_delegated_and_disabled_signup_keep_existing_amounts():
