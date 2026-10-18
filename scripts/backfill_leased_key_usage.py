@@ -38,6 +38,8 @@ CHUNK = 200
 GCLOUD = shutil.which("gcloud") or "gcloud"
 _LINE = re.compile(r"authorization_id=(gwa-[0-9a-f]{32}) kind=settle won=settle charge=(\d+)")
 _ID = re.compile(r"^gwa-[0-9a-f]{32}$")
+# Key hashes are `key_` and a URL-safe base64 digest (storage_models.ApiKey).
+_KEY_HASH = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
 
 def parse_log(lines: list[str]) -> dict[str, int]:
@@ -131,7 +133,7 @@ def update_sql(entry: dict[str, Any], *, now: dt.datetime) -> str:
     lifetime usage and each window's amount, rolling a stale window forward
     to its current floor as release_key's window SQL does."""
     floors = window_floors(now)
-    if not _ID.match("gwa-" + "0" * 32) or not re.match(r"^[0-9a-f]{64}$", entry["key_hash"]):
+    if not _KEY_HASH.match(entry["key_hash"]):
         raise ValueError(f"not a key hash: {entry['key_hash']!r}")
 
     def ts(value: dt.datetime) -> str:

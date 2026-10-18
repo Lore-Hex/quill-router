@@ -22,7 +22,7 @@ A1 = "gwa-" + "1" * 32
 A2 = "gwa-" + "2" * 32
 A3 = "gwa-" + "3" * 32
 A4 = "gwa-" + "4" * 32
-KEY = "a" * 64
+KEY = "key_v2cQvb7NjlDKPiSAJ9qnD-RE"
 NOW = dt.datetime(2026, 10, 18, 18, 0, tzinfo=dt.UTC)  # a Sunday; the week floor is Monday 10-12
 UNTIL = dt.datetime(2026, 10, 18, 17, 0, tzinfo=dt.UTC)
 
@@ -62,6 +62,13 @@ def test_the_plan_skips_what_is_not_a_settled_record_and_names_missing_rows() ->
     entries, skipped = backfill.plan(rows, charges, until=UNTIL, now=NOW)
     assert entries == []
     assert sorted(line.split(":")[0] for line in skipped) == [A1, A2]
+
+
+def test_the_update_refuses_a_key_hash_outside_its_charset() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        backfill.update_sql({"key_hash": "k' OR 1=1", "usage": 1, "day": 1, "week": 1, "month": 1}, now=NOW)
 
 
 def test_the_update_rolls_a_stale_window_forward_and_adds_to_a_current_one() -> None:
