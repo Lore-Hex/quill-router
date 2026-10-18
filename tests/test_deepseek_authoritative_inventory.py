@@ -7,7 +7,7 @@ import pytest
 
 from tests import catalog_vehicles
 from trusted_router import catalog_ingest
-from trusted_router.catalog import MODELS, MODEL_ENDPOINTS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.catalog_data import ModelEndpoint
 
 
