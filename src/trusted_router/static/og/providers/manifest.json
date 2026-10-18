@@ -46,10 +46,10 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "arcee"
   },
@@ -559,10 +559,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 12,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
