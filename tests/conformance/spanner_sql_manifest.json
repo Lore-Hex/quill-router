@@ -4654,7 +4654,7 @@
     "storage_gcp:SpannerStore.release_earnings_cashout.txn": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
     "storage_gcp:SpannerStore.ensure_earnings_account.txn": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
     "storage_gcp:SpannerStore._authorize_gateway_leased.txn": "6cb35a5c6b32f9f80baa3adf6308e1c40a93a734e1fb96eaf6a034ee4fbccb06",
-    "storage_gcp:SpannerStore.typed_finalize_leased_result.txn": "9068f717051d61a1cf9699f1b7e4bdb5618f837b33bc71bb758886f40ad92173",
+    "storage_gcp:SpannerStore.typed_finalize_leased_result.txn": "f77ee92a6773c3a162d63dbb91e0f4e59667a76ebca3b408d0d44ba2a5802137",
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
     "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",

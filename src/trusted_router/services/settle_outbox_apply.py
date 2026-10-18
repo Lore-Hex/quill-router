@@ -94,8 +94,19 @@ class ApplyOutcome:
     # transiently unavailable. Never reroute them to legacy after enqueue,
     # because settle_origin is frozen.
     PARK_TYPED_UNAVAILABLE = "park_typed_unavailable"
+    # A leased intent the fast path has not decided yet (the lease's order
+    # decides it, by the time the lease closes): parked, no attempt spent.
+    PARK_LEASED_UNDECIDED = "park_leased_undecided"
     INVALID_ROW = "invalid_row"
     ERROR = "error"
+
+
+# The fast path decides a terminal by the time its lease closes. After an
+# owner crash that is the lease's expiry, the hold's longest life (2h20m) and
+# the grace (fastpath/internal/service/service.go, Defaults), so three hours
+# covers it; an intent undecided past that spends its attempts as today,
+# toward dead and its alert.
+_LEASED_UNDECIDED_MAX_AGE_SECONDS = 3 * 3600
 
 
 def normalized_prompt_accounting(
@@ -461,6 +472,20 @@ def _provider_slug_from_endpoint_id(endpoint_id: str | None) -> str:
     return slug or "unknown"
 
 
+def _row_age_seconds(row: SettleOutboxRow) -> float | None:
+    """How long ago the intent was enqueued; None for a row with no readable
+    creation time, which is then treated as aged."""
+    if not row.created_at:
+        return None
+    try:
+        created = dt.datetime.fromisoformat(row.created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=dt.UTC)
+    return (dt.datetime.now(dt.UTC) - created).total_seconds()
+
+
 def _apply_leased(
     row: SettleOutboxRow,
     auth: GatewayAuthorization,
@@ -489,12 +514,16 @@ def _apply_leased(
             _fastpath_front_door(get_settings()), auth, success=success, charge=charge, generation=generation,
         )
     except fastpath_settle.Undecided as undecided:
+        age = _row_age_seconds(row)
         logger.warning(
-            "settle outbox leased intent undecided authorization_id=%s intent_kind=%s why=%s",
+            "settle outbox leased intent undecided authorization_id=%s intent_kind=%s why=%s age_seconds=%s",
             row.authorization_id,
             row.intent_kind,
             undecided,
+            None if age is None else int(age),
         )
+        if age is not None and age <= _LEASED_UNDECIDED_MAX_AGE_SECONDS:
+            return ApplyOutcome.PARK_LEASED_UNDECIDED
         return ApplyOutcome.ERROR
     try:
         result = typed_store.typed_finalize_leased_result(

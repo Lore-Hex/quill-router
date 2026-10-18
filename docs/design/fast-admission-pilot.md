@@ -42,8 +42,12 @@ door (`/v1/settle` with the charge, the full record and the money fields;
 `/v1/refund`), and then writes the terminal's records alone: the
 authorization marked settled with its finalization facts, the generation
 record, the activity row and the benchmark row. It claims no reservation,
-releases no hold, books no usage and pays no markup; the lease booked the
-usage, and the audit (`fastpathctl audit`) holds it. The records say what
+releases no hold, books no credit usage and pays no markup; the lease
+booked the usage, and the audit (`fastpathctl audit`) holds it. It books
+the charge to the key's usage and window counters (`tr_key_limit`), as
+today's settle does for a key that held nothing, so a cap or window set
+later sees the pilot's spend; the design has the auditor do this (§4.6)
+once the control plane leaves the hot path. The records say what
 the fast path decided, never what the route asked: the owner's winner (its
 kind and charge), or the closed lease's disposition, and the generation
 and activity rows carry that charge too. The terminal is durable before
@@ -62,7 +66,11 @@ sibling intent is outstanding); a record commit that fails after the
 front door decided is answered `intent_durable` too, and the drain writes
 the records. The drain marks a row done without asking the front door
 once the authorization is settled, and parks a row, spending no attempt,
-when the store is away. A BYOK terminal (the key's own provider
+when the store is away or the fast path has not decided the terminal: the
+lease's order decides it by the time the lease closes, up to the hold's
+longest life and the grace after an owner crash, so an intent younger than
+three hours is asked again at the next pass, and an older one spends its
+attempts as today, toward `dead` and its alert. A BYOK terminal (the key's own provider
 paid) charges the lease nothing, as today's path books nothing. A hold
 admitted whose authorization row then could not be written is refunded
 at once, best effort, so it does not wait for the lease to drain.

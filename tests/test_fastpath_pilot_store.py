@@ -11,7 +11,7 @@ import pytest
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_models import CreditProvenance, Generation
 from trusted_router.types import UsageType
 
@@ -239,12 +239,13 @@ def _generation(authorization: Any, *, cost: int) -> Generation:
     )
 
 
-def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
+def test_a_leased_settle_writes_the_records_books_the_key_usage_and_no_credit() -> None:
     store, db = _store()
     workspace, key = _funded_workspace(store)
     _outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1")
     assert authorization is not None
     credit_before = _credit_rows(db, workspace.id)
+    key_before = dict(db.typed[KEY_LIMIT_TABLE][(key.hash, 0)])
     generation = _generation(authorization, cost=700)
 
     result = store.typed_finalize_leased_result(
@@ -264,10 +265,31 @@ def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
     assert db.gateway_authorizations[authorization.id]["terminal_at"] is None
     assert stored.fastpath_envelope == "sealed-1"
     assert _credit_rows(db, workspace.id) == credit_before, "the lease booked the usage, not this commit"
+    # The key's usage and window counters, as today's settle books them for
+    # a key that held nothing (docs/design/fast-admission-pilot.md).
+    key_row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert key_row["reserved"] == key_before["reserved"] == 0
+    assert key_row["usage"] == key_before["usage"] + 700 and key_row["byok_usage"] == 0
+    assert (key_row["day_usage"], key_row["week_usage"], key_row["month_usage"]) == (700, 700, 700)
+    assert key_row["day_start"] is not None and key_row["week_start"] is not None and key_row["month_start"] is not None
     rows = _reservations(db, workspace.id)
     assert len(rows) == 1 and rows[0]["settled"] is True and rows[0]["credit_reserved_micro"] == 0
     activity = _activity(db, workspace.id)
     assert len(activity) == 1, activity
+
+
+def test_a_leased_byok_settle_books_the_key_usage_to_its_byok_column() -> None:
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1")
+    assert authorization is not None
+    result = store.typed_finalize_leased_result(
+        authorization.id, success=True, actual_microdollars=500, selected_usage_type="BYOK",
+        generation=_generation(authorization, cost=500), authorization_snapshot=authorization, mark_intent=None,
+    )
+    assert result is not None
+    key_row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert (key_row["usage"], key_row["byok_usage"]) == (0, 500)
 
 
 def test_a_leased_refund_marks_the_authorization_refunded_with_no_generation() -> None:
@@ -283,6 +305,82 @@ def test_a_leased_refund_marks_the_authorization_refunded_with_no_generation() -
     _finalize, finalized = result
     assert finalized.settled and finalized.finalization_outcome == "refunded"
     assert _activity(db, workspace.id) == []
+    key_row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert (key_row["usage"], key_row["day_usage"], key_row["reserved"]) == (0, 0, 0)
+
+
+def test_a_leased_insert_whose_outcome_is_unknown_is_read_back() -> None:
+    """A commit can apply and still answer with a deadline or a lost
+    answer. The row that landed is this authorization, admitted; without
+    one, the outcome stays unknown and the caller keeps the hold."""
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    original = storage_gcp.run_in_transaction_with_retry
+
+    def landed_then_lost(database: Any, txn: Any, **kwargs: Any) -> Any:
+        result = original(database, txn, **kwargs)
+        raise DeadlineExceeded("the answer was lost") from None
+        return result  # noqa: RET503 - unreachable, keeps the shape
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", landed_then_lost)
+        outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1", authorization_id="auth-landed")
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None and authorization.id == "auth-landed"
+    assert authorization.fastpath_envelope == "sealed-1"
+    assert "auth-landed" in db.gateway_authorizations
+    assert len(_reservations(db, workspace.id)) == 1
+
+    # No row read back proves nothing: the commit may still land. The
+    # outcome is unknown and the caller keeps the hold.
+    from trusted_router.storage_errors import LeasedOutcomeUnknown
+
+    def lost_in_flight(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise DeadlineExceeded("no answer")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", lost_in_flight)
+        with pytest.raises(LeasedOutcomeUnknown):
+            _authorize(store, workspace, key, envelope="sealed-2", authorization_id="auth-lost")
+    assert "auth-lost" not in db.gateway_authorizations
+    # A failure that is not transient is a failure: the caller gives the hold back.
+    def refused(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise ValueError("not a transient error")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", refused)
+        with pytest.raises(ValueError, match="not a transient"):
+            _authorize(store, workspace, key, envelope="sealed-4", authorization_id="auth-refused")
+
+
+def test_a_leased_insert_whose_read_back_fails_too_keeps_the_hold() -> None:
+    """The route's budget can be spent by the deadline the insert answered
+    with: the read-back fails as well, and the outcome stays unknown. The
+    store says so, rather than letting the caller give the hold back."""
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+    from trusted_router.storage_errors import LeasedOutcomeUnknown
+
+    store, _db = _store()
+    workspace, key = _funded_workspace(store)
+
+    def lost(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise DeadlineExceeded("the answer was lost")
+
+    def budget_spent(self: Any, authorization_id: str) -> Any:
+        raise DeadlineExceeded("the budget is spent")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", lost)
+        patch.setattr(storage_gcp.SpannerStore, "get_gateway_authorization", budget_spent)
+        with pytest.raises(LeasedOutcomeUnknown) as caught:
+            _authorize(store, workspace, key, envelope="sealed-3", authorization_id="auth-unknown")
+    assert caught.value.authorization_id == "auth-unknown"
 
 
 def test_a_second_leased_settle_is_a_replay_not_a_second_record() -> None:
