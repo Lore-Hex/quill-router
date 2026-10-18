@@ -2,6 +2,128 @@
 
 Updated October 17, 2026. Production rollout remains on hold.
 
+### Approved commit checkpoint — one-click flow and final arcs
+
+User authorized committing the current changes, not pushing or deploying. Final
+scope: one-click Star/Follow/Subscribe, no attestation field, bounded reconciliation
+and retry, hidden rewards while disabled, and softened corner arcs. No tiles or
+alternate textured-light treatment remain. All 31 final browser checks passed;
+focused backend/conformance previously passed 69 with 42 database skips. Fallback
+Ruff/mypy passed; mandatory uv gates remain blocked by the Intel macOS torch wheel.
+Earlier “uncommitted” entries below describe historical checkpoints.
+
+Production readiness still requires:
+- Integrate with current main and complete final review, including rolling-version
+  compatibility of the changed claim payload and removal of obsolete PR code.
+- Pass required Ruff, mypy, full pytest with >=70% coverage in a supported
+  environment; complete real-database conformance and the billing proof oracle.
+- Resolve platform-policy concerns for incentivized engagement and confirm the
+  official YouTube destination. Do not substitute actions or alter amounts silently.
+- Review multi-account farming controls, shared account-level redemption limiting,
+  and suspicious-redemption alerts. No campaign budget cap was approved. Existing
+  session/process-local limits are not an organization-wide fraud defense.
+- Confirm live flag state and config-as-code enable/disable procedure; demonstrate
+  disable/resume while preserving signup allowances and receipts. Current settings
+  flag requires rollout and does not instantly cancel already-running grants.
+- Finish analytics rollout, QA-account exclusion and receipt/alert visibility;
+  then use reviewed release gates and verify behavior and health after deployment.
+
+### Retained arcs, softened and cropped — local revision
+
+User requested keeping and modifying the arcs. Preserved the restored gradient,
+dot texture, thin progress bar and one-click flow. Repositioned the two contours
+into the upper-right corner, reduced their contrast, and masked them to disappear
+within the top 108px, above the modal progress bar. Mobile crops farther right.
+Reviewed desktop invitation and phone modal screenshots; preview integration at
+1440/390/320px still confirms claimed progress on Credits. Required uv gates remain
+blocked by the existing Intel Mac torch wheel limitation. No production changes.
+
+### Restored pre-tile artwork at user request
+
+User clarified that the desired baseline is before the five-tile design. Restored
+the thin progress bar, original circular arcs, dot texture and color lighting on
+the rewards invitation/modal. Removed tiles and their update code; retained the
+one-click flow. Arc refinements are discussion only. No production changes.
+
+### Textured-light revision reverted at user request
+
+Restored the preceding five-tile design, original rewards color lighting and dot
+texture. Removed the new grain SVG. One-click reward behavior and all prior
+product rules remain unchanged. Local only; no production changes.
+
+### Textured light — subsequently reverted
+
+User rejected the tile artwork and approved trying a Tiun-inspired composition
+based on supplied screenshots. Removed tiles from both invitation and modal, with
+no replacement progress bar; the accessible claimed count remains. Color gathers
+at the right edge in mint, blue and lilac and fades into a dark forest field behind
+the copy. A small static SVG noise filter replaces the regular rewards dot grid.
+No arcs, animation, reward-rule changes or production configuration changes.
+
+Reviewed local desktop and phone layouts at 1440/390/320px, including simulated
+claim and saved Credits state. All 31 browser checks passed. Required uv Ruff,
+mypy and full pytest were attempted again and remain blocked before execution by
+the Intel macOS torch distribution. Full-suite/coverage release blockers remain.
+Local uncommitted review only; unrelated untracked files remain untouched.
+
+### Five reward tiles — local visual revision
+
+User chose five reward tiles instead of the white circular arcs. Removed arcs from
+both invitation cards and the modal header. Replaced the modal progress bar with
+five small squares, one per action in list order; only server-confirmed grants fill
+the corresponding tile and add a checkmark. Invitation cards use the same tiles.
+The textual claimed count remains the accessible progress announcement; decorative
+tiles are aria-hidden. Existing color lighting and subtle texture remain.
+
+Inspected local preview at 1440/390/320px before and after a simulated claim and
+confirmed the receipt persists on Credits. All 31 browser checks passed, including
+tile count, claimed-action mapping, and invitation progress. Required uv Ruff/mypy/full-pytest gates
+were retried and still cannot start due to the unsupported Intel Mac torch wheel.
+No production flag, reward economics, backend eligibility, push or deploy changes.
+
+### One-click rewards — October 17 local implementation
+
+User approved a single Star / Follow / Subscribe action that opens the destination
+and requests the reward, without a checkbox, attestation, or separate claim button.
+Only a server receipt produces “✓ Claimed”. Interrupted requests reconcile first,
+retry transient failures at most once automatically, and share a 15-second total
+budget. Unresolved requests show “We couldn’t confirm your reward yet.” and Retry;
+Retry checks receipts and never reopens the social destination. Returning to Credits
+reads saved server progress. Internal grant telemetry now records verification=none,
+not a self-attestation that the user never made.
+
+Approved rules remain: immediate claims before API use; original signup workspace;
+remaining claims pause on ownership loss and resume on return, with no inheritance;
+deleted original workspaces do not redirect rewards; no expiration; dismissal with
+manual Credits re-entry and no repeated automatic popup. Five fixed 30,000 rewards
+plus 150,000 signup credit remain capped at 300,000 microdollars. Signups while off
+keep the original 300,000 allowance and never become eligible on resume. Existing
+transfer behavior is unchanged. No total campaign budget cap was approved.
+
+Turning the feature off now hides all entry points and closes an open rewards panel
+when refreshed; server claim rejection and receipt preservation already exist. A
+browser regression found .btn display overriding the hidden attribute; an explicit
+rewards-opener hidden rule fixes this. This is the existing settings flag, not a new
+instant distributed kill switch. An already-running grant is not canceled by hiding
+UI. The local preview stays enabled with isolated in-memory accounts.
+
+User requested local implementation/review and said to keep the production flag on.
+No production mutation was performed: checked-in rollout still sets the flag false;
+live production state was not inspected. No push, merge, deploy, PR creation or real
+credit issuance. Existing policy concerns and official YouTube destination remain
+unresolved; the preview channel is a placeholder, not production configuration.
+
+Validation: 31 browser tests passed, including real 15-second timeout, automatic
+retry, no duplicate tab on manual retry, lost-response reconciliation, disabled
+visibility, keyboard, and 1440/390/320px layout checks. Local preview integration at
+those widths confirmed a one-click simulated grant and persistent Credits receipt;
+desktop/mobile screenshots were visually inspected. Focused backend/enrollment
+conformance: 69 passed, 42 skipped for unconfigured database backends. Fallback Ruff
+passed; mypy passed all 454 source files. All three required uv gates were attempted
+and remain blocked before execution by torch 2.12.0 lacking an Intel macOS wheel.
+No full-suite or coverage pass is established; prior release blockers remain.
+Changes are local and uncommitted. Unrelated untracked files were preserved.
+
 ### Modal/navigation commit approval
 
 User approved committing the simplified modal, platform colors, consistent

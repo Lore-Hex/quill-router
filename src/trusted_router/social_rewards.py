@@ -1,4 +1,4 @@
-"""Fixed, account-scoped self-attested campaign; the typed grant is the receipt.
+"""Fixed, account-scoped unverified promotional campaign; the typed grant is the receipt.
 
 There is deliberately no mutable 'claimed' row to get ahead of a payout. An
 uncertain commit is recovered by retrying the same server-generated event ID.
@@ -143,7 +143,7 @@ def claim(user_id: str, action: str, settings: Settings) -> dict[str, Any]:
             attribution = STORE.get_acquisition_attribution(enrollment.workspace_id)
             if attribution is not None:
                 _log_conversion("acquisition.social_reward_claimed", attribution,
-                                extra={"reward_action": action, "self_attested": True})
+                                extra={"reward_action": action, "verification": "none"})
         except Exception:  # noqa: BLE001 - telemetry cannot undo a committed grant.
             log.warning("social_rewards.telemetry_failed", exc_info=True)
     # This strongly reads the committed typed event, never inferring success

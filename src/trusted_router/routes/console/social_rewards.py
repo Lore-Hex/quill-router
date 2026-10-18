@@ -1,4 +1,4 @@
-"""Authenticated, same-origin social reward status and self-attested claims."""
+"""Authenticated, same-origin social reward status and promotional grants."""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict
 
 from trusted_router.acquisition import log_browser_funnel_event, track_console
 from trusted_router.auth import SettingsDep
@@ -34,17 +34,6 @@ class ObservationRequest(BaseModel):
     placement: Literal["api_key_setup", "first_request_success", "credits", "console_fallback"]
     action: Literal["github", "x_trustedrouter", "x_founder", "linkedin", "youtube"] | None = None
     observation_id: UUID
-
-
-class ClaimRequest(ActionRequest):
-    attested: StrictBool
-
-    @field_validator("attested")
-    @classmethod
-    def require_attestation(cls, value: bool) -> bool:
-        if not value:
-            raise ValueError("Self-attestation is required")
-        return value
 
 
 def _track(request: Request, event: str) -> None:
@@ -95,7 +84,7 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/social-rewards/claim")
     def reward_claim(
-        request: Request, body: ClaimRequest, ctx: ConsoleDep, settings: SettingsDep,
+        request: Request, body: ActionRequest, ctx: ConsoleDep, settings: SettingsDep,
     ) -> JSONResponse:
         _same_origin(request, settings)
         return JSONResponse(claim(ctx.user.id, body.action, settings), headers=_HEADERS)

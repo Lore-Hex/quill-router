@@ -99,19 +99,21 @@ test("dismissal persists, Credits reopens, Escape restores focus", async ({ page
   await expect(opener).toBeFocused();
 });
 
-test("outbound click does not claim; explicit attestation commits one action", async ({ page }) => {
+test("one click opens the destination and grants without attestation", async ({ page }) => {
   const { requests } = await rewardsPage(page);
-  await expect(page.getByRole("dialog")).toBeVisible();
   const popupPromise = page.waitForEvent("popup");
-  await page.getByRole("link", { name: /Star TrustedRouter/ }).click();
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
   const popup = await popupPromise;
+  await expect(popup).toHaveURL("https://example.org/github");
   await popup.close();
-  expect(requests.filter((r) => r.url.endsWith("/claim"))).toHaveLength(0);
-  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
-  await page.getByRole("button", { name: "Claim 200K tokens" }).first().click();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
   await expect(page.getByRole("button", { name: "✓ Claimed" })).toBeDisabled();
-  expect(requests.find((r) => r.url.endsWith("/claim")).body).toEqual({ action: "github", attested: true });
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator("#social-rewards progress")).toHaveJSProperty("value", 1);
+  expect(requests.filter((r) => r.url.endsWith("/claim")).map((r) => r.body)).toEqual([{ action: "github" }]);
+  await page.reload();
+  await page.getByRole("button", { name: "Social rewards", exact: true }).click();
+  await expect(page.getByRole("button", { name: "✓ Claimed" })).toBeDisabled();
 });
 
 test("failed manual dismissal survives reload, retries, and still permits reopening", async ({ page }) => {
@@ -162,24 +164,13 @@ test("another accounts local dismissal does not suppress this accounts offer", a
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
-test("reward button opens its destination before enabling only that claim", async ({ page }) => {
-  const { requests } = await rewardsPage(page);
-  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toHaveCount(0);
-  const popupPromise = page.waitForEvent("popup");
-  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).first().click();
-  const popup = await popupPromise;
-  await expect(popup).toHaveURL("https://example.org/github");
-  await popup.close();
-  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeDisabled();
-  await expect(page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." })).not.toBeChecked();
-  const confirmation = page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." });
-  await confirmation.check();
-  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeEnabled();
-  await confirmation.uncheck();
-  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeDisabled();
-  expect(requests.filter((r) => r.url.endsWith("/claim"))).toHaveLength(0);
-  await expect(page.getByText("0 of 5 rewards claimed")).toBeVisible();
+test("platform actions have a single appropriate button", async ({ page }) => {
+  await rewardsPage(page);
+  await expect(page.locator("[data-rewards-list] button")).toHaveCount(5);
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Star on GitHub: Star the repository" })).toHaveText("Star");
+  await expect(page.getByRole("button", { name: "Subscribe on YouTube: Subscribe to TrustedRouter" })).toHaveText("Subscribe");
+  await expect(page.locator("[data-rewards-list]")).not.toContainText("I followed");
 });
 
 test("pending claim cannot repeat and a lost committed response reconciles", async ({ page }) => {
@@ -192,15 +183,13 @@ test("pending claim cannot repeat and a lost committed response reconciles", asy
   const popupPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).first().click();
   await (await popupPromise).close();
-  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
-  await page.getByRole("button", { name: "Claim 200K tokens" }).first().click();
   await expect(page.getByRole("button", { name: "Adding reward…" })).toBeDisabled();
   release();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry claim" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
 });
 
-test("failed claim is retryable with the same action", async ({ page }) => {
+test("transient failure retries automatically with the same action", async ({ page }) => {
   let attempts = 0;
   await rewardsPage(page, { claim: async (route, state) => {
     if (++attempts === 1) return route.fulfill({ status: 503, json: { detail: "Unavailable" } });
@@ -210,10 +199,8 @@ test("failed claim is retryable with the same action", async ({ page }) => {
   const popupPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).first().click();
   await (await popupPromise).close();
-  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
-  await page.getByRole("button", { name: "Claim 200K tokens" }).first().click();
-  await page.getByRole("button", { name: "Retry claim" }).click();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
+  expect(attempts).toBe(2);
 });
 
 for (const state of [{ eligible: false }, { enabled: false }, { first_call_complete: false }]) {
@@ -234,13 +221,14 @@ test("ownership loss clears existing claims and disables the offer", async ({ pa
   await expect(page.locator("[data-rewards-list] button")).toHaveCount(0);
 });
 
-test("Credits shows paused and locked states without enabling claims", async ({ page }) => {
-  await rewardsPage(page, { state: { enabled: false } });
-  await page.getByRole("button", { name: "Social rewards", exact: true }).click();
-  await expect(page.getByText("Rewards are currently paused. Your claimed rewards are safe.")).toBeVisible();
-  for (const button of await page.locator("[data-reward-start]").all()) {
-    await expect(button).toBeDisabled();
-  }
+test("disabled flag hides all invitations and closes an open panel", async ({ page }) => {
+  const { state } = await rewardsPage(page, { keys: true, state: { first_call_complete: false } });
+  await page.getByRole("button", { name: "Earn extra tokens", exact: true }).click();
+  state.enabled = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.locator("[data-rewards-key-card]")).not.toBeVisible();
+  for (const opener of await page.locator("[data-rewards-open]").all()) await expect(opener).not.toBeVisible();
 });
 
 for (const width of [1440, 390, 320]) {
@@ -295,9 +283,6 @@ for (const width of [1440, 390, 320]) {
   const popup = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
   await (await popup).close();
-  await expect(page.getByRole("button", { name: "Claim 200K tokens" })).toBeDisabled();
-  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
-  await page.getByRole("button", { name: "Claim 200K tokens" }).click();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
   expect(requests.filter(r => r.url.endsWith("/claim"))).toHaveLength(1);
 });
@@ -311,7 +296,7 @@ test("analytics distinguish visible invitations, flow opens, and platform clicks
   await page.getByRole("button", { name: "Earn extra tokens", exact: true }).click();
   await expect.poll(() => observations().some((r) => r.event === "social_rewards_opened"
     && r.placement === "api_key_setup")).toBe(true);
-  await page.locator('[data-reward-id="github"] a').click();
+  await page.locator('[data-reward-id="github"] button').click();
   await expect.poll(() => observations().some((r) => r.event === "social_reward_clicked"
     && r.action === "github" && r.placement === "api_key_setup")).toBe(true);
   expect(observations().filter((r) => r.event === "social_rewards_invitation_viewed"
@@ -332,21 +317,19 @@ test("lost claim response and unavailable reconciliation remain safely retryable
         claimed = true; grants += 1; state.actions[0].claimed = true; failStatus = true;
         return route.abort("failed");
       }
-      return route.fulfill({ json: state });
+      return route.abort("failed");
     },
   });
   const popupPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
   await (await popupPromise).close();
-  await page.getByRole("checkbox", { name: "I starred Lore-Hex/quill-router on GitHub." }).check();
-  await page.getByRole("button", { name: "Claim 200K tokens" }).click();
-  await expect(page.getByRole("button", { name: "Retry claim" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeEnabled();
   failStatus = false;
-  await page.getByRole("button", { name: "Retry claim" }).click();
+  await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("1 of 5 rewards claimed")).toBeVisible();
   expect(grants).toBe(1);
   expect(requests.filter((r) => r.url.endsWith("/claim")).map((r) => r.body))
-    .toEqual([{ action: "github", attested: true }, { action: "github", attested: true }]);
+    .toEqual([{ action: "github" }, { action: "github" }]);
 });
 
 for (const width of [1440, 390, 320]) {
@@ -377,7 +360,8 @@ test('API Keys invitation reflects progress, pause, completion, and eligibility'
   await expect(card).toContainText('4 rewards left to claim');
   state.enabled = false;
   await refresh();
-  await expect(card).toContainText('Rewards are paused.');
+  await expect(card).not.toBeVisible();
+  state.enabled = true;
   state.actions.forEach((action) => { action.claimed = true; });
   await refresh();
   await expect(card).toContainText('All five rewards claimed.');
@@ -385,4 +369,43 @@ test('API Keys invitation reflects progress, pause, completion, and eligibility'
   state.eligible = false;
   await refresh();
   await expect(card).not.toBeVisible();
+});
+
+
+test("hung requests stop within 15 seconds and Retry never opens another tab", async ({ page }) => {
+  test.setTimeout(40000);
+  let recover = false;
+  let started = false;
+  let popups = 0;
+  page.on("popup", () => { popups += 1; });
+  await rewardsPage(page, {
+    status: (route, state) => started && !recover ? new Promise(() => {}) : route.fulfill({ json: state }),
+    claim: (route, state) => {
+      started = true;
+      if (!recover) return new Promise(() => {});
+      state.actions[0].claimed = true;
+      return route.fulfill({ json: state });
+    },
+  });
+  const popup = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
+  await (await popup).close();
+  const began = Date.now();
+  await expect(page.getByRole("button", { name: "Adding reward…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled({ timeout: 17000 });
+  expect(Date.now() - began).toBeLessThan(17000);
+  await expect(page.getByText("We couldn’t confirm your reward yet.")).toBeVisible();
+  recover = true;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("button", { name: "✓ Claimed" })).toBeDisabled();
+  expect(popups).toBe(1);
+});
+
+test("authorization rejection is reconciled but not automatically retried", async ({ page }) => {
+  const { requests } = await rewardsPage(page, { claim: (route) => route.fulfill({ status: 403, json: {} }) });
+  const popup = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
+  await (await popup).close();
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+  expect(requests.filter((request) => request.url.endsWith("/claim"))).toHaveLength(1);
 });

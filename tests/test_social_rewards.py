@@ -56,11 +56,11 @@ def _post(client, path="claim", **body):
 
 def test_claim_before_first_call_is_committed_once():
     client, result, _ = _account(activated=False)
-    response = _post(client, action="github", attested=True)
+    response = _post(client, action="github")
     assert response.status_code == 200
     assert response.json()["first_call_complete"] is False
     assert response.json()["actions"][0]["claimed"] is True
-    assert _post(client, action="github", attested=True).status_code == 200
+    assert _post(client, action="github").status_code == 200
     assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
 
 
@@ -100,9 +100,9 @@ def test_uncertain_commit_is_reconciled_and_retry_does_not_pay_twice(monkeypatch
 
     with monkeypatch.context() as patcher:
         patcher.setattr(InMemoryStore, "credit_workspace_once", commit_then_disconnect)
-        assert _post(client, action="github", attested=True).status_code == 500
+        assert _post(client, action="github").status_code == 500
     assert client.get("/console/social-rewards").json()["actions"][0]["claimed"] is True
-    assert _post(client, action="github", attested=True).status_code == 200
+    assert _post(client, action="github").status_code == 200
     assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
 
 
@@ -110,9 +110,9 @@ def test_uncertain_commit_is_reconciled_and_retry_does_not_pay_twice(monkeypatch
     {"action": "github", "attested": False},
     {"action": "github", "attested": 1},
     {"action": "github", "attested": "true"},
-    {"action": "github", "attested": True, "amount": 1_000_000},
-    {"action": "github", "attested": True, "workspace_id": "other"},
-    {"action": "unknown", "attested": True},
+    {"action": "github", "amount": 1_000_000},
+    {"action": "github", "workspace_id": "other"},
+    {"action": "unknown"},
 ])
 def test_forged_claims_rejected(body):
     client, result, _ = _account()
@@ -124,7 +124,7 @@ def test_forged_claims_rejected(body):
 @pytest.mark.parametrize("origin", [None, "null", "https://attacker.invalid", "https://testserver", "http://testserver:99"])
 def test_claims_are_csrf_protected(origin):
     client, _, _ = _account()
-    response = client.post("/console/social-rewards/claim", json={"action": "github", "attested": True},
+    response = client.post("/console/social-rewards/claim", json={"action": "github"},
                            headers={"Origin": origin} if origin else {})
     assert response.status_code == 403
 
@@ -132,13 +132,13 @@ def test_claims_are_csrf_protected(origin):
 def test_legacy_and_other_account_cannot_claim():
     client, _, _ = _account(enrolled=False)
     assert client.get("/console/social-rewards").json()["eligible"] is False
-    assert _post(client, action="github", attested=True).status_code == 403
+    assert _post(client, action="github").status_code == 403
 
 
 def test_disabled_and_peer_plane_cannot_claim():
     for overrides in [{"social_rewards_enabled": False}, {"social_rewards_plane_id": "aws"}]:
         client, result, _ = _account(_settings(**overrides))
-        assert _post(client, action="github", attested=True).status_code == 409
+        assert _post(client, action="github").status_code == 409
         assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
         STORE.reset()
 
@@ -148,7 +148,7 @@ def test_shown_is_once_across_sessions_and_dismissal_keeps_claims_available():
     assert _post(client, "shown").json()["show_now"] is True
     assert _post(client, "shown").json()["show_now"] is False
     assert _post(client, "dismiss").json()["dismissed"] is True
-    assert _post(client, action="github", attested=True).status_code == 200
+    assert _post(client, action="github").status_code == 200
 
 
 def test_campaign_configuration_fails_closed_without_confirmed_destination():
@@ -183,7 +183,7 @@ def test_first_call_eligibility_does_not_require_marketing_attribution(monkeypat
     # Equivalent to a GPC/DNT signup, where no marketing record is created.
     monkeypatch.setattr(InMemoryStore, "get_acquisition_attribution", lambda self, workspace_id: None)
     record_successful_api_call_safely(result.workspace.id, model="test", provider="test", settings=settings)
-    assert _post(client, action="github", attested=True).status_code == 200
+    assert _post(client, action="github").status_code == 200
     assert STORE.get_social_reward_enrollment(result.user.id).first_call_complete
 
 
@@ -216,14 +216,14 @@ def test_wrong_account_has_no_access_to_enrollment():
     token, _ = STORE.create_auth_session(user_id=other.id, provider="google", label="other", ttl_seconds=3600)
     client.cookies.set("tr_session", token)
     assert client.get("/console/social-rewards").json()["eligible"] is False
-    assert _post(client, action="github", attested=True).status_code == 403
+    assert _post(client, action="github").status_code == 403
     assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
 
 
 def test_existing_authenticated_rate_limit_applies_to_claims():
     client, _, _ = _account(_settings(rate_limit_enabled=True, rate_limit_key_per_window=1))
-    assert _post(client, action="github", attested=True).status_code == 200
-    assert _post(client, action="github", attested=True).status_code == 429
+    assert _post(client, action="github").status_code == 200
+    assert _post(client, action="github").status_code == 429
 
 
 def test_optional_analytics_failure_cannot_fail_a_claim(monkeypatch):
@@ -235,7 +235,7 @@ def test_optional_analytics_failure_cannot_fail_a_claim(monkeypatch):
         raise RuntimeError("analytics unavailable")
 
     monkeypatch.setattr(acquisition, "_log_conversion", failing_log)
-    assert _post(client, action="github", attested=True).status_code == 200
+    assert _post(client, action="github").status_code == 200
     assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
 
 
@@ -260,7 +260,7 @@ def test_original_destination_must_still_be_owned_and_active(change):
         STORE.update_workspace(result.workspace.id, deleted=True)
     # Keep an accessible workspace so console authentication can resolve.
     STORE.create_workspace(result.user.id, "Remaining")
-    assert _post(client, action="github", attested=True).status_code == 403
+    assert _post(client, action="github").status_code == 403
 
 
 def test_observation_requires_auth_origin_and_allowlisted_metadata(monkeypatch):
@@ -293,11 +293,11 @@ def test_failure_before_commit_leaves_no_receipt_and_retry_grants_once(monkeypat
 
     with monkeypatch.context() as patcher:
         patcher.setattr(InMemoryStore, 'credit_workspace_once', unavailable)
-        assert _post(client, action='github', attested=True).status_code == 500
+        assert _post(client, action='github').status_code == 500
     assert not STORE.has_credit_grant(result.workspace.id, claim_event_id(result.user.id, 'github'))
     assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
     for _ in range(2):
-        assert _post(client, action='github', attested=True).status_code == 200
+        assert _post(client, action='github').status_code == 200
     assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
 
 
@@ -309,9 +309,9 @@ def test_status_read_failure_after_commit_does_not_repeat_credit(monkeypatch):
 
     with monkeypatch.context() as patcher:
         patcher.setattr(InMemoryStore, 'has_credit_grant', unavailable)
-        assert _post(client, action='github', attested=True).status_code == 500
+        assert _post(client, action='github').status_code == 500
     assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
-    assert _post(client, action='github', attested=True).json()['actions'][0]['claimed']
+    assert _post(client, action='github').json()['actions'][0]['claimed']
     assert live_credit_summary(result.workspace.id)['total_credits'] == 180_000
 
 
@@ -334,10 +334,10 @@ def test_pause_after_commit_preserves_receipt_and_resume_does_not_repeat():
 
 def test_claim_requires_authenticated_session_and_cannot_supply_identity():
     client, result, _ = _account()
-    assert _post(client, action='github', attested=True, user_id=result.user.id).status_code == 400
+    assert _post(client, action='github', user_id=result.user.id).status_code == 400
     client.cookies.clear()
     response = client.post('/console/social-rewards/claim',
-                           json={'action': 'github', 'attested': True},
+                           json={'action': 'github'},
                            headers={'Origin': 'http://testserver'}, follow_redirects=False)
     assert response.status_code == 302
     assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
@@ -417,5 +417,5 @@ def test_ownership_transfer_between_eligibility_and_commit_cannot_credit(monkeyp
         return original(self, workspace_id, amount_microdollars, event_id, **kwargs)
 
     monkeypatch.setattr(InMemoryStore, 'credit_workspace_once', transfer_then_credit)
-    assert _post(client, action='github', attested=True).status_code == 403
+    assert _post(client, action='github').status_code == 403
     assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000

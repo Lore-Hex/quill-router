@@ -1738,16 +1738,12 @@ body.console {
 .social-rewards-icon svg,
 .social-rewards-icon img { display: block; width: 26px; height: 26px; object-fit: contain; }
 .social-rewards-icon img { filter: brightness(0) invert(1); }
-.social-rewards-list a { color: var(--tr-color-text-primary); font-size: 14px; font-weight: 600; line-height: 1.4; text-decoration: none; }
-.social-rewards-list a:hover { text-decoration: underline; }
+.social-rewards-action-title { color: var(--tr-color-text-primary); font-size: 14px; font-weight: 600; line-height: 1.4; text-decoration: none; }
 .social-rewards-list p { color: var(--tr-color-text-tertiary); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
+[data-rewards-open][hidden] { display: none; }
 .social-rewards-start { min-width: 88px; min-height: 44px; font-size: 12px; }
 .social-rewards-controls { grid-column: 2 / -1; display: grid; gap: 14px; padding: 4px 0; }
 .social-rewards-controls[hidden] { display: none; }
-.social-rewards-controls label { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.5; padding: 8px 0; cursor: pointer; }
-.social-rewards-controls input { flex: 0 0 auto; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--tr-color-accent-base); }
-.social-rewards-controls .btn { justify-self: start; font-size: 13px; min-height: 44px; }
-.social-rewards-controls p:empty { display: none; }
 .social-rewards-list .claimed .btn { opacity: 1; background: transparent; color: var(--tr-color-accent-base); border-color: transparent; }
 .social-rewards-foot { padding: 18px 28px; border-top: 1px solid var(--tr-color-line-rule-soft); display: flex; gap: 20px; align-items: flex-start; justify-content: space-between; }
 .social-rewards-foot p { color: var(--tr-color-text-tertiary); font-size: 12px; line-height: 1.5; margin: 10px 0; }
@@ -1776,10 +1772,9 @@ body.console {
   .social-rewards-list li { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; padding: 16px 0; }
   .social-rewards-icon svg,
   .social-rewards-icon img { width: 23px; height: 23px; }
-  .social-rewards-list a { font-size: 13px; }
+  .social-rewards-action-title { font-size: 13px; }
   .social-rewards-start { min-width: 70px; padding: 8px; font-size: 11px; }
   .social-rewards-controls { grid-column: 1 / -1; }
-  .social-rewards-controls .btn { width: 100%; }
   .social-rewards-foot { padding: 14px 18px; gap: 12px; }
 }
 
@@ -2003,24 +1998,24 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   opacity: .075;
   mask-image: linear-gradient(100deg, transparent 45%, #000);
 }
+/* Cropped contours stay in the corner and dissolve above the progress bar. */
 .key-rewards-invitation::after,
 .social-rewards-head::after {
   content: "";
   position: absolute;
   z-index: -1;
-  width: 360px;
-  height: 360px;
-  right: -190px;
-  top: -210px;
-  border: 1px solid color-mix(in srgb, var(--tr-color-accent-base) 18%, transparent);
-  border-radius: 50%;
-  outline: 1px solid color-mix(in srgb, var(--tr-color-accent-base) 8%, transparent);
-  outline-offset: 42px;
+  inset: 0 0 auto;
+  height: 108px;
+  --reward-arc-x: calc(100% + 30px);
+  background:
+    radial-gradient(circle at var(--reward-arc-x) -110px, transparent 189px, color-mix(in srgb, var(--tr-color-accent-base) 14%, transparent) 190px, transparent 191px),
+    radial-gradient(circle at var(--reward-arc-x) -110px, transparent 229px, color-mix(in srgb, var(--tr-color-accent-base) 9%, transparent) 230px, transparent 231px);
+  mask-image: linear-gradient(to bottom, #000 5%, rgb(0 0 0 / 65%) 40%, transparent 90%);
   pointer-events: none;
 }
 @media (max-width: 600px) {
   .key-rewards-invitation::after,
-  .social-rewards-head::after { right: -260px; }
+  .social-rewards-head::after { --reward-arc-x: calc(100% + 65px); }
 }
 /* Keep optional rewards compact on return visits too; its action stays on the
    quiet side of the artwork instead of sitting over the brightest color. */

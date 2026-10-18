@@ -1,4 +1,4 @@
-/* Server-authorized honor-system rewards. No payout or eligibility is supplied here. */
+/* Server-authorized promotional rewards. No payout or eligibility is supplied here. */
 (() => {
   "use strict";
   const dialog = document.getElementById("social-rewards");
@@ -11,9 +11,6 @@
   try { locallyDismissed = localStorage.getItem(dismissalKey) === "1"; } catch { /* Storage may be blocked. */ }
   const pending = new Set();
   const errors = new Set();
-  const opened = new Set();
-  const confirmed = new Set();
-  let activeAction;
   let placement = "console_fallback";
   const impressions = new Set();
   function observe(event, action, source = placement) {
@@ -43,11 +40,11 @@
     });
   });
   const presentation = {
-    github: ["GitHub", "Star the repository", "Star", "I starred Lore-Hex/quill-router on GitHub.", "On GitHub, sign in and select Star at the top of the repository."],
-    x_trustedrouter: ["X", "Follow @TrustedRouter", "Follow", "I followed @TrustedRouter on X.", "On X, select Follow on the @TrustedRouter profile."],
-    x_founder: ["X", "Follow @jperla", "Follow", "I followed @jperla on X.", "On X, select Follow on the @jperla profile."],
-    linkedin: ["LinkedIn", "Follow TrustedRouter", "Follow", "I followed TrustedRouter on LinkedIn.", "On LinkedIn, select Follow on the TrustedRouter company page."],
-    youtube: ["YouTube", "Subscribe to TrustedRouter", "Subscribe", "I subscribed to TrustedRouter on YouTube.", "On YouTube, select Subscribe on the TrustedRouter channel."],
+    github: ["GitHub", "Star the repository", "Star"],
+    x_trustedrouter: ["X", "Follow @TrustedRouter", "Follow"],
+    x_founder: ["X", "Follow @jperla", "Follow"],
+    linkedin: ["LinkedIn", "Follow TrustedRouter", "Follow"],
+    youtube: ["YouTube", "Subscribe to TrustedRouter", "Subscribe"],
   };
   function platformIcon(id) {
     const icon = document.createElement("span");
@@ -91,9 +88,9 @@
   const invitation = document.querySelector("[data-rewards-invitation]");
   let generation = 0;
 
-  async function request(path = "", body) {
+  async function request(path = "", body, timeoutMs = 15000) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(`/console/social-rewards${path}`, {
         method: body === undefined ? "GET" : "POST",
@@ -101,7 +98,11 @@
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      if (!response.ok || response.redirected) throw new Error("rewards_unavailable");
+      if (!response.ok || response.redirected) {
+        const error = new Error("rewards_unavailable");
+        error.retryable = !response.redirected && response.status >= 500;
+        throw error;
+      }
       return await response.json();
     } finally { clearTimeout(timeout); }
   }
@@ -110,7 +111,7 @@
     state = { ...next, dismissed: next.dismissed || locallyDismissed };
     const keyCard = document.querySelector("[data-rewards-key-card]");
     if (keyCard) {
-      keyCard.hidden = !state.eligible;
+      keyCard.hidden = !state.eligible || !state.enabled;
       const claimed = (state.actions || []).filter((action) => action.claimed).length;
       keyCard.querySelector("[data-rewards-key-title]").textContent = claimed === 5
         ? "All five rewards claimed." : !state.enabled ? "Rewards are paused."
@@ -131,8 +132,9 @@
     openers.forEach((button) => {
       button.hidden = button.hasAttribute("data-rewards-success") ? !ready
         : button.hasAttribute("data-rewards-early") ? !(state.eligible && state.enabled) || ready
-          : !state.eligible;
+          : !(state.eligible && state.enabled);
     });
+    if (!state.enabled && dialog.open) dialog.close();
     if (!state.eligible) {
       list.replaceChildren();
       notice.hidden = false;
@@ -157,93 +159,84 @@
         const copy = presentation[action.id];
         const info = document.createElement("div");
         info.className = "social-rewards-info";
-        const link = document.createElement("a");
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        link.textContent = copy[1];
-        link.href = action.url;
-        link.addEventListener("click", () => {
-          opened.add(action.id);
-          activeAction = action.id;
-          render(state);
-          observe("social_reward_clicked", action.id);
-        });
-        link.setAttribute("aria-label", `${action.label} (opens a new tab)`);
+        const title = document.createElement("span");
+        title.className = "social-rewards-action-title";
+        title.textContent = copy[1];
         const amount = document.createElement("p");
         amount.textContent = `${copy[0]} · 200K tokens`;
-        info.append(link, amount);
+        info.append(title, amount);
         const button = document.createElement("button");
         button.type = "button";
         button.className = "btn social-rewards-start";
         button.dataset.rewardStart = "";
-        button.setAttribute("aria-label", `${copy[2]} on ${copy[0]}: ${copy[1]}`);
-        button.setAttribute("aria-controls", `reward-step-${action.id}`);
-        button.addEventListener("click", () => link.click());
-        const controls = document.createElement("div");
-        controls.id = `reward-step-${action.id}`;
-        controls.className = "social-rewards-controls";
-        const instruction = document.createElement("p");
-        instruction.textContent = copy[4];
-        const confirmation = document.createElement("label");
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.addEventListener("change", () => {
-          if (checkbox.checked) confirmed.add(action.id);
-          else confirmed.delete(action.id);
-          render(state);
+        button.addEventListener("click", () => {
+          if (pending.size || !state?.eligible || !state.enabled
+              || state.actions.find((item) => item.id === action.id)?.claimed) return;
+          if (!errors.has(action.id)) {
+            // Open synchronously in the user's gesture; no tab-return or follow proof is required.
+            window.open(action.url, "_blank", "noopener,noreferrer");
+            observe("social_reward_clicked", action.id);
+          }
+          claim(action.id);
         });
-        confirmation.append(checkbox, document.createTextNode(copy[3]));
-        const claimButton = document.createElement("button");
-        claimButton.type = "button";
-        claimButton.className = "btn primary";
-        claimButton.dataset.rewardClaim = "";
-        claimButton.addEventListener("click", () => claim(action.id));
         const status = document.createElement("p");
+        status.className = "social-rewards-controls";
         status.setAttribute("role", "status");
-        controls.append(instruction, confirmation, claimButton, status);
-        row.append(platformIcon(action.id), info, button, controls);
+        row.append(platformIcon(action.id), info, button, status);
         list.append(row);
       }
       const button = row.querySelector("[data-reward-start]");
-      const claimButton = row.querySelector("[data-reward-claim]");
-      const checkbox = row.querySelector("input");
       const busy = pending.has(action.id);
-      const unavailable = Boolean(action.claimed || pending.size || !state.enabled);
-      const expanded = activeAction === action.id && opened.has(action.id) && !action.claimed;
-      row.querySelector(".social-rewards-controls").hidden = !expanded;
-      button.disabled = unavailable;
-      button.setAttribute("aria-expanded", String(expanded));
-      button.textContent = action.claimed ? "✓ Claimed" : opened.has(action.id) ? "Open again" : presentation[action.id][2];
-      if (action.claimed) button.setAttribute("aria-label", "✓ Claimed");
-      checkbox.checked = confirmed.has(action.id);
-      checkbox.disabled = unavailable;
-      claimButton.disabled = unavailable || !opened.has(action.id) || !confirmed.has(action.id);
-      claimButton.setAttribute("aria-busy", String(busy));
-      claimButton.textContent = busy ? "Adding reward…" : errors.has(action.id) ? "Retry claim" : "Claim 200K tokens";
+      button.disabled = Boolean(action.claimed || pending.size || !state.enabled);
+      button.setAttribute("aria-busy", String(busy));
+      button.textContent = action.claimed ? "✓ Claimed" : busy ? "Adding reward…"
+        : errors.has(action.id) ? "Retry" : presentation[action.id][2];
+      button.setAttribute("aria-label", action.claimed || busy || errors.has(action.id)
+        ? button.textContent : `${presentation[action.id][2]} on ${presentation[action.id][0]}: ${presentation[action.id][1]}`);
       row.classList.toggle("claimed", Boolean(action.claimed));
-      row.querySelector('[role="status"]').textContent = errors.has(action.id) && !action.claimed
-        ? "Couldn’t confirm your reward. Retry safely; it can only be added once." : "";
+      const status = row.querySelector('[role="status"]');
+      status.hidden = !errors.has(action.id) || action.claimed;
+      status.textContent = status.hidden ? "" : "We couldn’t confirm your reward yet.";
     });
   }
 
   async function claim(id) {
-    if (pending.size || !opened.has(id) || !confirmed.has(id) || !state?.eligible || !state.enabled) return;
+    if (pending.size || !state?.eligible || !state.enabled) return;
     generation += 1;
+    const retry = errors.has(id);
     pending.add(id); errors.delete(id); render(state);
+    // All attempts and reconciliation share a 15-second budget, not 15 seconds each.
+    const deadline = Date.now() + 15000;
+    const claimed = () => state.actions.some((action) => action.id === id && action.claimed);
+    const boundedRequest = (path, body) => request(path, body, Math.max(1, Math.min(4000, deadline - Date.now())));
     try {
-      render(await request("/claim", { action: id, attested: true }));
-    } catch {
-      // A lost response can follow a committed grant. Read authoritative progress
-      // before offering the same account/action claim again.
-      try { render(await request()); } catch { /* Keep previous committed state. */ }
-      if (!state.actions.some((action) => action.id === id && action.claimed)) errors.add(id);
+      if (retry) {
+        try { render(await boundedRequest()); } catch { /* The same receipt makes replay safe. */ }
+      }
+      for (let attempt = 0; attempt < 2 && Date.now() < deadline; attempt += 1) {
+        if (claimed() || !state.eligible || !state.enabled) break;
+        let retryable = true;
+        try {
+          render(await boundedRequest("/claim", { action: id }));
+          break;
+        } catch (error) {
+          retryable = error.retryable !== false;
+          // A timed-out request can still commit. Read its receipt before replaying.
+          if (Date.now() < deadline) {
+            try { render(await boundedRequest()); } catch { /* Keep the last authoritative state. */ }
+          }
+        }
+        if (!retryable || claimed() || attempt === 1 || Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(500, deadline - Date.now())));
+      }
     } finally {
+      if (!claimed()) errors.add(id);
       pending.delete(id); render(state);
     }
   }
 
   function open(source = "console_fallback") {
-    if (dialog.open) return;
+    if (dialog.open || !state?.eligible || !state.enabled) return;
     returningFocus = document.activeElement;
     dialog.showModal();
     placement = source;
