@@ -221,7 +221,7 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
         pending.extend((origin, value) for value in node.values())
     for path in parsers:
         qualified = path.split('/', 1)[-1] if '/manifest.' in path else path
-        if qualified in contract.OBJECT_PREIMAGES:
+        if path in payloads and qualified in contract.OBJECT_PREIMAGES:
             schemas[path] = contract.OBJECT_PREIMAGES[qualified]
     if 'loading/budget-measurements.json' in parsers:
         schemas['loading/budget-measurements.json'] = BUDGET_MEASUREMENTS

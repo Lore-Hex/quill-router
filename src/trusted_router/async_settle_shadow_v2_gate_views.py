@@ -244,11 +244,24 @@ def reset_view(graph: PayloadGraph, value: dict[str, Any], inventory: Inventory 
 
 
 
-def signature_views(graph: PayloadGraph, rows: tuple[Row, ...]) -> tuple[Any, ...]:
+def signature_views(graph: PayloadGraph, rows: tuple[Row, ...], payloads: dict[str, Any]) -> tuple[Any, ...]:
     """Optional certificate material; D1 compared samples retain no tokens."""
     from trusted_router.async_settle_shadow_v2_gate_inputs import Signature
+    expected: set[str] = set()
+    for row in rows:
+        if row.key.kind == p1.KINDS[2]:
+            page = a1.validate_row(row.key.kind, row.key.id, row.raw)
+            expected.update(e['authorization_day'] + '/' + e['authorization_id'] for e in page['events']
+                if e.get('proof_kind') == 'certificate')
     path = 'loading/signatures.json'
     raw = graph.files.get(path)
+    if raw is not None:
+        # A source in another stage still keeps its declared role.
+        from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+        roles = dependencies(graph.files, payloads, graph.ports, 'post-flip', graph.ledgers,
+                             producer_registrations=(), _roles_only=True)
+        if path in roles:
+            raw = None
     if raw is None:
         raw = b'[]'
     values = retained_json(raw)
@@ -271,12 +284,6 @@ def signature_views(graph: PayloadGraph, rows: tuple[Row, ...]) -> tuple[Any, ..
         result.append(Signature(value['object_id'], value['token'], approvals[0].keys, value['now'],
             value['expected'], value['attempt'], value['server_attempt'], value['claims']))
         seen.add(value['object_id'])
-    expected: set[str] = set()
-    for row in rows:
-        if row.key.kind == p1.KINDS[2]:
-            page = a1.validate_row(row.key.kind, row.key.id, row.raw)
-            expected.update(e['authorization_day'] + '/' + e['authorization_id'] for e in page['events']
-                if e.get('proof_kind') == 'certificate')
     # Legacy supplied binding material is inventoried but never required or invoked.
     require(expected == {v['object_id'] for v in values if v['verifier'] == 'certificate'}, 'artifact_gap')
     return tuple(result)

@@ -26,12 +26,18 @@ RELEASE_FILES = {
 }
 
 
+def object_preimage_schemas(days: tuple[str, ...] | list[str]) -> dict[str, Any]:
+    """The A2 payload slots are exact fields, optionally qualified by a declared day."""
+    return {**contract.OBJECT_PREIMAGES,
+            **{day + '/' + field: schema for day in days
+               for field, schema in contract.OBJECT_PREIMAGES.items() if field.startswith('manifest.')}}
+
+
 def original_files(sources: tuple[Preimage, ...]) -> dict[str, bytes]:
     """Retain conflicting file candidates without selecting a logical body."""
     grouped: dict[str, set[bytes]] = defaultdict(set)
     for source in sources:
-        if source.name not in RELEASE_FILES:
-            grouped[source.name].add(source.raw)
+        grouped[source.name].add(source.raw)
     result = {}
     for path, candidates in grouped.items():
         if len(candidates) == 1:
@@ -171,7 +177,7 @@ def ledger_preimages(ctx: Context) -> None:
     """
     files: dict[str, set[bytes]] = defaultdict(set)
     for source in ctx.bundle.preimages:
-        if source.name not in RELEASE_FILES and len(source.raw) <= 262144:
+        if len(source.raw) <= 262144:
             files[roots.file_digest(source.raw)].add(source.raw)
     from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts
     from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
@@ -230,21 +236,66 @@ def ledger_preimages(ctx: Context) -> None:
                 ctx.issue('evidence_schema_gap', 'ledger_artifact_context_unbound:' + field, subject)
 
 
+def _inventory_originals(ctx: Context) -> tuple[dict[str, bytes], list[dict[str, Any]]]:
+    """Keep originals and transport declarations in separate collections."""
+    artifacts = original_files(ctx.bundle.preimages)
+    declarations = []
+
+    def add(member: str, path: str, raw: bytes, kind: str | None = None, key: str | None = None) -> None:
+        # A generated transport name cannot replace a supplied original. The
+        # report carries the selected reference, so replay needs no name rule.
+        if path in artifacts and artifacts[path] != raw:
+            path = 'original-roles/' + roots.file_digest(raw)
+            while path in artifacts and artifacts[path] != raw:
+                path = 'original-roles/' + roots.file_digest(path.encode() + raw)
+        artifacts[path] = raw
+        declarations.append(dict(member=member, kind=kind, id=key,
+            file=dict(path=path, sha256=roots.file_digest(raw), bytes=len(raw))))
+
+    for member in ('rows', 'attachments'):
+        for row in getattr(ctx.bundle, member):
+            add(member, 'rows/' + row.key.kind + '/' + row.key.id + '/' + roots.file_digest(row.raw),
+                row.raw, row.key.kind, row.key.id)
+    for raw in ctx.bundle.ledgers:
+        add('ledgers', 'ledgers/' + roots.file_digest(raw), raw)
+    if ctx.bundle.proof is not None:
+        add('proof', 'proof_manifest', ctx.bundle.proof)
+    for name in ('transport', 'fleet', 'pre', 'serving'):
+        prior = getattr(ctx.bundle, name)
+        if prior is not None:
+            add(name, 'prior-gates/' + name, prior)
+    return artifacts, declarations
+
+
+def original_role_pages(ctx: Context) -> tuple[dict[str, Any] | None, dict[str, bytes]]:
+    from trusted_router.async_settle_shadow_v2_gate_failures import TAG
+    _, declarations = _inventory_originals(ctx)
+    declarations.sort(key=lambda value: (value['member'], value['file']['path']))
+    # Invalid originals already have diagnostics; only bounded references can
+    # be carried by a report. Such a report cannot be a passing prior input.
+    valid = []
+    for declaration in declarations:
+        try:
+            a2.ORIGINAL_ROLE(declaration)
+        except ValueError:
+            continue
+        valid.append(declaration)
+    previous = None
+    leaves = {}
+    for at in range(0, len(valid), 128):
+        raw = a2.ORIGINAL_ROLES.serialize(dict(**TAG, entries=valid[at:at + 128], previous=previous))
+        path = 'original-roles/' + roots.file_digest(raw)
+        leaves[path] = raw
+        previous = dict(path=path, sha256=roots.file_digest(raw), bytes=len(raw))
+    return previous, leaves
+
+
+
 def input_inventory(ctx: Context) -> tuple[list[dict[str, Any]], dict[str, bytes]]:
     """Inventory exact candidate files, including conflicts, in bounded leaves."""
     from trusted_router.async_settle_shadow_v2_gate_failures import TAG
     from trusted_router.async_settle_shadow_v2_schema import sha256
-    artifacts = original_files(ctx.bundle.preimages)
-    for row in (*ctx.bundle.rows, *ctx.bundle.attachments):
-        artifacts['rows/' + row.key.kind + '/' + row.key.id + '/' + roots.file_digest(row.raw)] = row.raw
-    for raw in ctx.bundle.ledgers:
-        artifacts['ledgers/' + roots.file_digest(raw)] = raw
-    if ctx.bundle.proof is not None:
-        artifacts['proof_manifest'] = ctx.bundle.proof
-    for name in ('transport', 'fleet', 'pre', 'serving'):
-        prior = getattr(ctx.bundle, name)
-        if prior is not None:
-            artifacts['prior-gates/' + name] = prior
+    artifacts, _ = _inventory_originals(ctx)
     references = [dict(path=path, sha256=roots.file_digest(raw), bytes=len(raw)) for path, raw in sorted(artifacts.items()) if len(raw) <= 262144]
     entries, leaves = [], {}
     for at in range(0, len(references), 512):
@@ -283,6 +334,6 @@ def verify_release_file_preimages(ctx: Context) -> None:
             continue
         ctx.release_files[qualified] = raw
     for source in ctx.bundle.preimages:
-        if source.name not in RELEASE_FILES and len(source.raw) > 262144:
+        if len(source.raw) > 262144:
             ctx.issue('artifact_gap', 'exported_file_ref_bound: ' + source.name,
                       Subject(wire=a2.O('a2_file', source.name)))

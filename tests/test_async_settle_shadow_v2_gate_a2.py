@@ -229,7 +229,15 @@ def test_release_files_are_checkout_inputs_outside_export_inventory(passing: Bun
     assert json.loads(raw)['verdict'] == 'PASS'
     assert result.gate_report is not None and result.gate_report['complete'] is True
     assert not set(RELEASE_FILES) & {source.name for source in passing.preimages}
-    refs = [ref for leaf in result.input_leaves.values() for ref in json.loads(leaf)['keys']]
+    refs = []
+    for raw_page in result.input_leaves.values():
+        page = json.loads(raw_page)
+        if 'keys' in page:
+            a2.INPUT_LEAF(page)
+            refs.extend(page['keys'])
+        else:
+            a2.ORIGINAL_ROLES(page)
+            refs.extend(entry['file'] for entry in page['entries'])
     assert not set(RELEASE_FILES) & {ref['path'] for ref in refs}
     assert all(ref['bytes'] <= 262144 for ref in refs)
 

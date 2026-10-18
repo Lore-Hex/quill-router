@@ -82,6 +82,8 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
         issues: list[LoadingIssue] = list(transport_issues)
         unique: dict[str, bytes] = {}
         conflicts: set[str] = set()
+        from trusted_router.async_settle_shadow_v2_gate_preimages import object_preimage_schemas
+        schemas = object_preimage_schemas(days)
         for source in files:
             require(type(source) is dict and set(source) == {'name', 'raw'}
                     and type(source['name']) is str and type(source['raw']) is str, 'evidence_schema_gap')
@@ -99,10 +101,9 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
                 issues.append(LoadingIssue('artifact_gap', name, 'exported FILE_REF byte bound'))
                 conflicts.add(name)
                 continue
-            qualified = name.split('/', 1)[-1] if '/manifest.' in name else name
-            if qualified in a2.OBJECT_PREIMAGES:
+            if name in schemas:
                 try:
-                    payloads[name] = a2._object_bytes(source_raw, a2.OBJECT_PREIMAGES[qualified])
+                    payloads[name] = a2._object_bytes(source_raw, schemas[name])
                 except ValueError as exc:
                     issues.append(LoadingIssue(error_gap(exc), name, error_gap(exc)))
         for name in conflicts:
@@ -185,7 +186,7 @@ def load(raw: bytes | PlanInput, ports: Ports | None = None, *, gate: str = 'pre
             ('proof.pre_budget_sha256', ('proof.pre_budget_sha256', 'proof.post_budget_sha256', 'proof.cohort_seed_policy_sha256'), lambda: budget_view(graph, payloads, inventory, decoded_rows, decoded_attachments) if inventory else None),
             ('proof.external_proofs_sha256', ('proof.external_proofs_sha256',), lambda: external_view(graph, payloads['proof.external_proofs_sha256'])),
             ('proof.resolution_dag_sha256', ('proof.resolution_dag_sha256',), lambda: reset_view(graph, payloads['proof.resolution_dag_sha256'], inventory, decoded_rows)),
-            ('loading/signatures.json', (), lambda: signature_views(graph, decoded_rows)),
+            ('loading/signatures.json', (), lambda: signature_views(graph, decoded_rows, payloads)),
         ):
             if path == 'proof.pre_budget_sha256' and 'G7' not in selected:
                 continue

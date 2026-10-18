@@ -227,6 +227,8 @@ def test_transport_rewrite_requires_later_final_completion(tmp_path):
 
 
 def test_r25_complete_collection_file_population(tmp_path, writer):
+    from trusted_router.async_settle_shadow_v2_a2_evidence import ORIGINAL_ROLES
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
     from trusted_router.async_settle_shadow_v2_pack_output_costs import (
         directory_references,
         reserve_files,
@@ -249,7 +251,7 @@ def test_r25_complete_collection_file_population(tmp_path, writer):
     assert len(costs['receipts']) == len(actual)
     assert {r['object']['path'] for r in costs['receipts']} == {r['path'] for r in actual}
     gate_files = [r for r in actual if r['path'].startswith('gate/')]
-    assert len(gate_files) == 8
+    assert len(gate_files) == 9
     # The declaration rides in the report, so there is no separate metadata file.
     transport = json.loads((tmp_path / 'out/stage/transport.json').read_bytes())
     declaration = canonical(transport['producer_registrations'])
@@ -259,6 +261,13 @@ def test_r25_complete_collection_file_population(tmp_path, writer):
                if isinstance(value, dict) and 'failure_counts' in value]
     assert len(reports) == 1
     assert reports[0]['producer_registrations'] == transport['producer_registrations']
+    role_ref = reports[0]['original_roles']
+    role_bodies = [body for body in bodies if file_digest(body) == role_ref['sha256']]
+    assert len(role_bodies) == 1 and len(role_bodies[0]) == role_ref['bytes']
+    roles = ORIGINAL_ROLES.parse(role_bodies[0])
+    assert roles['previous'] is None
+    assert len(roles['entries']) == sum(len(transport.get(member, [])) for member in ('rows', 'attachments', 'ledgers')) + sum(
+        transport.get(member) is not None for member in ('proof', 'transport', 'pre', 'fleet', 'serving'))
     assert DAY + '/manifest-v2.json' in {r['path'] for r in actual}
     assert json.loads((tmp_path / result['output_record']['path']).read_bytes()) == costs
 

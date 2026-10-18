@@ -456,7 +456,8 @@ GATE_REPORT = replace(_a2({"gate": GATE, "completed_at_us": integer, "proof_mani
     "failure_counts": FAILURE_COUNTS,
     **dict.fromkeys("writers regions failures input_inventory reset_history".split(), DETAIL),
     "verifiers": VERIFIERS, "complete": boolean}, 65536, _report),
-    optional_fields={"producer_registrations": lambda v: array(FILE_REF, 32)(v)})
+    optional_fields={"producer_registrations": lambda v: array(FILE_REF, 32)(v),
+                     "original_roles": lambda v: nullable(FILE_REF)(v)})
 WRITER_REPORT = _a2({"day": day, "boot": identity, "role": ROLE, "revision": revision,
     "region": nullable(name), "interval": p1.INTERVAL, "partition": PARTITION, "admission": ADMISSION,
     "comparator": COMPARATOR, "attempts": ATTEMPTS, "checkpoint": CHECKPOINT,
@@ -473,6 +474,13 @@ def _path(v: Any) -> None:
 
 
 FILE_REF: Schema = Schema({"path": _path, "sha256": digest, "bytes": _bounded(262144)}, 768)
+ORIGINAL_ROLE = Schema({"member": literal("rows", "attachments", "ledgers", "proof", "transport", "pre", "fleet", "serving"),
+    "kind": nullable(text(512)), "id": nullable(text(512)), "file": FILE_REF}, 2048,
+    lambda v: require((v["kind"] is not None and v["id"] is not None)
+                      if v["member"] in ("rows", "attachments") else v["kind"] is None and v["id"] is None))
+ORIGINAL_ROLES = _a2({"entries": array(ORIGINAL_ROLE, 128), "previous": nullable(FILE_REF)})
+
+
 APPROVAL = Schema({"subject_sha256": digest, "reviewer": name, "reviewed_at_us": integer,
     "decision": literal("approved"), "record": FILE_REF}, 1024)
 INPUT_LEAF = _a2({"keys": array(FILE_REF, 10000), "complete": boolean}, invariant=lambda v: _sorted([r["path"] for r in v["keys"]]))

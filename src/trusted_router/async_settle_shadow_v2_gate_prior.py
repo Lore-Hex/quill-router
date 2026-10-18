@@ -6,7 +6,7 @@ readiness is the committed §5.3 ledger, not a recursive daily transport gate.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -41,6 +41,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     from trusted_router.async_settle_shadow_v2_gate_bundle import ATTACHMENTS, Context
     from trusted_router.async_settle_shadow_v2_gate_preimages import (
         ledger_preimages,
+        object_preimage_schemas,
         original_files,
         preimages,
         verify_release_file_preimages,
@@ -89,7 +90,7 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
                 raw = original(ref['sha256'])
                 require(len(raw) == ref['bytes'] and ref['path'] not in inventory, 'artifact_gap')
                 inventory[ref['path']] = raw
-    proof_raw = inventory.get('proof_manifest')
+    proof_raw = original(report['proof_manifest_sha256'])
     require(proof_raw is not None and roots.file_digest(proof_raw) == report['proof_manifest_sha256'], 'artifact_gap')
     assert proof_raw is not None
     proof = a1.PROOF_MANIFEST.parse(proof_raw)
@@ -117,9 +118,9 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
                      if 'producer_registrations' in report else None)
     graph = PayloadGraph(inventory, report['completed_at_us'], ports=prior_ports, stage=report['gate'],
                          producer_registrations=registrations)
-    payloads = {path: contract._object_bytes(raw, contract.OBJECT_PREIMAGES[qualified])
-        for path, raw in inventory.items()
-        if (qualified := path.split('/', 1)[-1] if '/manifest.' in path else path) in contract.OBJECT_PREIMAGES}
+    schemas = object_preimage_schemas(report['days'])
+    payloads = {path: contract._object_bytes(raw, schemas[path])
+                for path, raw in inventory.items() if path in schemas}
     from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
     from trusted_router.async_settle_shadow_v2_gate_native_accounting import select_registrations
     from trusted_router.async_settle_shadow_v2_gate_release import release_checks
@@ -166,14 +167,56 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     rows: list[Row] = []
     attachments: list[Row] = []
     ledgers: list[bytes] = []
-    for path, raw in inventory.items():
-        if path.startswith('rows/') and path.rsplit('/', 1)[-1] == roots.file_digest(raw):
-            kind, key = path[5:].rsplit('/', 1)[0].split('/', 1)
-            row = Row(Key(kind, key), raw)
-            (attachments if kind in ATTACHMENTS else rows).append(row)
-        elif path.startswith('ledgers/'):
-            ledgers.append(raw)
+    gates: dict[str, bytes] = {}
+    if 'original_roles' in report:
+        declarations = []
+        ref = report['original_roles']
+        seen: set[str] = set()
+        while ref is not None:
+            require(ref['sha256'] not in seen and len(seen) < 256, 'artifact_gap')
+            seen.add(ref['sha256'])
+            raw = original(ref['sha256'])
+            require(len(raw) == ref['bytes'], 'artifact_gap')
+            page = a2.ORIGINAL_ROLES.parse(raw)
+            declarations.extend(page['entries'])
+            ref = page['previous']
+        proofs = []
+        for declaration in declarations:
+            ref = declaration['file']
+            declared_raw = inventory.get(ref['path'])
+            require(declared_raw is not None and len(declared_raw) == ref['bytes']
+                    and roots.file_digest(declared_raw) == ref['sha256'], 'artifact_gap')
+            assert declared_raw is not None
+            raw = declared_raw
+            member = declaration['member']
+            if member in ('rows', 'attachments'):
+                row = Row(Key(declaration['kind'], declaration['id']), raw)
+                (rows if member == 'rows' else attachments).append(row)
+            elif member == 'ledgers':
+                ledgers.append(raw)
+            elif member == 'proof':
+                proofs.append(raw)
+            else:
+                require(member not in gates, 'artifact_gap')
+                gates[member] = raw
+        require(proofs == [proof_raw], 'artifact_gap')
+    else:
+        # Earlier reports encoded transport members in inventory keys. Check
+        # the declared file graph first: a source-only original is never one
+        # of those transport members, regardless of its spelling.
+        for path, raw in inventory.items():
+            if path in roles:
+                continue
+            if path.startswith('rows/') and path.rsplit('/', 1)[-1] == roots.file_digest(raw):
+                kind, key = path[5:].rsplit('/', 1)[0].split('/', 1)
+                row = Row(Key(kind, key), raw)
+                (attachments if kind in ATTACHMENTS else rows).append(row)
+            elif path == 'ledgers/' + roots.file_digest(raw):
+                ledgers.append(raw)
+            elif path in ('prior-gates/transport', 'prior-gates/pre', 'prior-gates/fleet', 'prior-gates/serving'):
+                gates[path.split('/')[1]] = raw
     parsed_ledgers = {roots.file_digest(raw): a1.PREREQUISITE_LEDGER.parse(raw) for raw in ledgers}
+    ledger_counts = Counter(roots.file_digest(raw) for raw in ledgers)
     # Reconstruct ledger order from links; inventory path order is not chain order.
     ordered: list[bytes] = []
     previous = None
@@ -181,12 +224,12 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
         matches = [digest for digest, value in parsed_ledgers.items() if value['previous_ledger_sha256'] == previous]
         require(len(matches) == 1, 'artifact_gap')
         previous = matches[0]
-        ordered.append(original(previous))
+        ordered.extend([original(previous)] * ledger_counts[previous])
     bundle = Bundle(rows=tuple(rows), attachments=tuple(attachments), proof=proof_raw,
         ledgers=tuple(ordered), inventory=boots, days=tuple(report['days']), producer_registrations=registrations,
         completed_at_us=report['completed_at_us'], preimages=tuple(Preimage(k, v) for k, v in inventory.items()),
-        transport=inventory.get('prior-gates/transport'), pre=inventory.get('prior-gates/pre'),
-        fleet=inventory.get('prior-gates/fleet'), serving=inventory.get('prior-gates/serving'))
+        transport=gates.get('transport'), pre=gates.get('pre'),
+        fleet=gates.get('fleet'), serving=gates.get('serving'))
     prior = Context(bundle, prior_ports, report['gate'])
     prior.proof = proof
     prior.rows = {row.key: a1.validate_row(row.key.kind, row.key.id, row.raw) for row in rows}
@@ -230,10 +273,19 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
         proof=proof_raw.decode(), ledgers=[raw.decode() for raw in ordered],
         days=report['days'], completed_at_us=report['completed_at_us'],
         preimages=[dict(name=k, raw=v.decode()) for k, v in inventory.items()],
-        **{key: inventory['prior-gates/' + key].decode() if 'prior-gates/' + key in inventory else None
+        **{key: gates[key].decode() if key in gates else None
             for key in ('transport', 'pre', 'fleet', 'serving')}))
     verified = evaluate(load(raw_transport, prior_ports, gate=report['gate']), prior_ports, gate=report['gate'])
-    rendered = render(verified)
+    # Preserve the earlier optional-member shape. A missing registration
+    # member equals an empty one only; all other report bytes still compare.
+    require(verified.gate_report is not None, 'artifact_gap')
+    assert verified.gate_report is not None
+    comparison_report = dict(verified.gate_report)
+    if 'producer_registrations' not in report and comparison_report.get('producer_registrations') == []:
+        comparison_report.pop('producer_registrations')
+    if 'original_roles' not in report:
+        comparison_report.pop('original_roles', None)
+    rendered = render(replace(verified, gate_report=comparison_report))
     matched = (isinstance(rendered, tuple) and verified.verdict == 'PASS'
                and rendered[1][0] == original(output['coverage_sha256']))
     _VERIFIED[cache_key] = matched

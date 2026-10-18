@@ -203,6 +203,9 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
             seed_at_us=min((s['observed_at_us'] for s in populations['samples'] or [] if s['deployment']['region'] == region and s['authorization_day'] + '/' + s['authorization_id'] in ctx.verified), default=None)))
     tallies, listed = listing(failures, ctx.bundle.days)
     inputs, leaves = input_inventory(ctx)
+    from trusted_router.async_settle_shadow_v2_gate_preimages import original_role_pages
+    role_refs, role_leaves = original_role_pages(ctx)
+    leaves.update(role_leaves)
     streams = dict(writers=writers, regions=regions, failures=listed, input_inventory=inputs, reset_history=sorted(ctx.reset_history, key=lambda r: (-1 if r['at_us'] is None else r['at_us'], r['revision'], r['reason'], r['support']['root'])))
     details = {}
     pages = {}
@@ -229,7 +232,7 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
     output = dict(**TAG, gate=ctx.gate, completed_at_us=ctx.bundle.completed_at_us,
         proof_manifest_sha256=file_digest(ctx.bundle.proof), prerequisite_ledger_root=ctx.proof['ledger_root'],
         days=list(ctx.bundle.days), window=window,
-        producer_registrations=list(ctx.bundle.producer_registrations or ()),
+        producer_registrations=list(ctx.bundle.producer_registrations or ()), original_roles=role_refs,
         rules={f'G{i}': 'not_required' if f'G{i}' not in required else 'unevaluable' if any(issue.unavailable and next(r.rule for r in a2.FAILURE_RULES if r.name == issue.gap) == f'G{i}' for issue in ctx.issues) else 'fail' if any(f.rule == f'G{i}' for f in failures) else 'pass' for i in range(1, 12)},
         **aggregate, handoff=handoff, publisher=publisher,
         fleet_peaks=peaks(next((p for p in legacy.peaks or () if p.region is None), None), ctx), **observations(**populations),
