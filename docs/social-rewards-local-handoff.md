@@ -1,3 +1,6 @@
+> Historical handoff. For the current reduced release, see
+> [the release checklist](analytics/social-rewards-pre-ship-checklist.md).
+
 # Social rewards: local implementation handoff
 
 October 15, 2026. Branch `jasmine/social-rewards`, based on `4f6a87efe`.

@@ -425,11 +425,11 @@ ENV_VARS=(
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
   "TR_TRUSTED_DOMAIN_ALIASES=allyrouter.com,uptimerouter.com"
   "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
-  # Exactly $0.30 once per newly created email/social OAuth account. Wallet-only
-  # accounts stay at $0. Keep this explicit so stale env cannot change policy.
+  # Base signup allowance when rewards do not apply. Enrolled accounts receive
+  # $0.15 plus fixed rewards, at most $0.30 total. Wallet-only accounts stay at $0.
   "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"
-  # Launch requires policy resolution and an accepted incident owner.
-  "TR_SOCIAL_REWARDS_ENABLED=false"
+  # Primary issuer campaign is enabled; disable through a code rollout if needed.
+  "TR_SOCIAL_REWARDS_ENABLED=true"
   "TR_SOCIAL_REWARDS_PLANE_ID=gcp-primary"
   "TR_SOCIAL_REWARDS_ISSUER_ID=gcp-primary"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"

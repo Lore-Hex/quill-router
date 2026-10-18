@@ -338,7 +338,7 @@ for (const width of [1440, 390, 320]) {
     const { requests } = await rewardsPage(page, { keys: true, state: { first_call_complete: false } });
     const card = page.locator('[data-rewards-key-card]');
     await expect(card).toBeVisible();
-    await expect(card).toContainText('Your next million tokens.');
+    await expect(card).toContainText('Earn extra API credit.');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await card.getByRole('button').click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -364,7 +364,7 @@ test('API Keys invitation reflects progress, pause, completion, and eligibility'
   state.enabled = true;
   state.actions.forEach((action) => { action.claimed = true; });
   await refresh();
-  await expect(card).toContainText('All five rewards claimed.');
+  await expect(card).toContainText('All available rewards claimed.');
   await expect(card.getByRole('button')).toHaveText('View rewards');
   state.eligible = false;
   await refresh();
@@ -408,4 +408,21 @@ test("authorization rejection is reconciled but not automatically retried", asyn
   await (await popup).close();
   await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
   expect(requests.filter((request) => request.url.endsWith("/claim"))).toHaveLength(1);
+});
+
+test('four available rewards complete and a later action returns without losing progress', async ({ page }) => {
+  const actions = ['github', 'x_trustedrouter', 'x_founder', 'linkedin'].map((id) => ({
+    id, label: id, url: `https://example.org/${id}`, claimed: true,
+  }));
+  const { state } = await rewardsPage(page, { keys: true, state: { actions, first_call_complete: false } });
+  const card = page.locator('[data-rewards-key-card]');
+  await expect(card).toContainText('All available rewards claimed.');
+  await card.getByRole('button').click();
+  await expect(page.getByText('4 of 4 rewards claimed')).toBeVisible();
+  await expect(page.locator('[data-rewards-meter]')).toHaveAttribute('max', '4');
+  await expect(page.locator('[data-reward-id="youtube"]')).toHaveCount(0);
+  state.actions.push({ id: 'youtube', label: 'YouTube', url: 'https://example.org/youtube', claimed: false });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByText('4 of 5 rewards claimed')).toBeVisible();
+  await expect(page.locator('[data-reward-id="youtube"]')).toHaveCount(1);
 });

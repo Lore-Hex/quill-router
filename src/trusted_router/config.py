@@ -565,12 +565,12 @@ class Settings(BaseSettings):
     # first workspace. Wallet-only and secondary workspaces receive no grant.
     # $0.30 = 300,000 microdollars.
     signup_trial_credit_microdollars: int = 300_000
-    # Off on every deployment until policy and incident ownership are resolved.
+    # Enabled explicitly in the primary deployment configuration.
     # Only the explicitly named issuing plane can enroll or pay claims.
     social_rewards_enabled: bool = False
     social_rewards_plane_id: str = ""
     social_rewards_issuer_id: str = "gcp-primary"
-    # Exact official channel must be confirmed before any reduced signup grant.
+    # YouTube stays hidden and unclaimable until an official channel is configured.
     social_rewards_youtube_url: str = ""
     # Shared account request throttle; not a campaign spend cap.
     social_rewards_claims_per_minute: int = Field(default=30, ge=5)

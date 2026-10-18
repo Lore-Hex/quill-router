@@ -72,7 +72,7 @@ def test_console_renders_account_scoped_dismissal_and_api_keys_invitation():
         assert f'data-rewards-user="{result.user.id}"' in response.text
     page = client.get("/console/api-keys").text
     assert "data-rewards-key-card" in page
-    assert "Your next million tokens." in page
+    assert "Earn extra API credit." in page
 
 
 def test_claims_concurrent_fixed_total_and_destination():
@@ -151,9 +151,9 @@ def test_shown_is_once_across_sessions_and_dismissal_keeps_claims_available():
     assert _post(client, action="github").status_code == 200
 
 
-def test_campaign_configuration_fails_closed_without_confirmed_destination():
+def test_campaign_can_enable_without_youtube():
     assert not campaign_enabled(Settings())
-    assert not campaign_enabled(_settings(social_rewards_youtube_url=""))
+    assert campaign_enabled(_settings(social_rewards_youtube_url=""))
 
 
 def test_signup_enrollment_preserves_existing_exclusions():
@@ -245,9 +245,15 @@ def test_click_is_not_a_claim():
     assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
 
 
-@pytest.mark.parametrize("url", ["javascript:alert(1)", "https://attacker.invalid/@test", "http://youtube.com/@test"])
-def test_invalid_destination_cannot_enable_campaign(url):
-    assert not campaign_enabled(_settings(social_rewards_youtube_url=url))
+@pytest.mark.parametrize("url", ["", "javascript:alert(1)", "https://attacker.invalid/@test", "http://youtube.com/@test"])
+def test_invalid_destination_hides_and_blocks_only_youtube(url):
+    client, result, settings = _account(_settings(social_rewards_youtube_url=url))
+    assert campaign_enabled(settings)
+    response = client.get("/console/social-rewards").json()
+    assert len(response["actions"]) == 4
+    assert "youtube" not in {action["id"] for action in response["actions"]}
+    assert _post(client, action="youtube").status_code == 422
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
 
 
 @pytest.mark.parametrize("change", ["transfer", "delete"])
@@ -419,3 +425,29 @@ def test_ownership_transfer_between_eligibility_and_commit_cannot_credit(monkeyp
     monkeypatch.setattr(InMemoryStore, 'credit_workspace_once', transfer_then_credit)
     assert _post(client, action='github').status_code == 403
     assert live_credit_summary(result.workspace.id)['total_credits'] == 150_000
+
+
+def test_four_rewards_now_and_youtube_later_preserve_account_cap():
+    client, result, settings = _account(_settings(social_rewards_youtube_url=""))
+    for action, _, _ in ACTIONS:
+        if action != "youtube":
+            assert _post(client, action=action).status_code == 200
+            assert _post(client, action=action).status_code == 200
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 270_000
+    configured = settings.model_copy(update={
+        "social_rewards_youtube_url": "https://www.youtube.com/@trustedrouter",
+    })
+    progress = claim(result.user.id, "youtube", configured)
+    assert len(progress["actions"]) == 5
+    claim(result.user.id, "youtube", configured)
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 300_000
+
+
+def test_oauth_signup_enrolls_with_youtube_unconfigured():
+    login = _persist_login(
+        OAUTH_PROVIDERS["google"], _settings(social_rewards_youtube_url=""),
+        OAuthUserInfo(sub="four-actions", email="four-actions@gmail.com", email_verified=True),
+        None,
+    )
+    assert login.attribution[1] == 150_000
+    assert STORE.get_social_reward_enrollment(login.user_id) is not None

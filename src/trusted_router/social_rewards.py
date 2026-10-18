@@ -30,12 +30,15 @@ ACTIONS = (
 
 
 def campaign_enabled(settings: Settings) -> bool:
-    if not (
+    return bool(
         settings.social_rewards_enabled
         and settings.social_rewards_plane_id
         and settings.social_rewards_plane_id == settings.social_rewards_issuer_id
-    ):
-        return False
+    )
+
+
+def youtube_available(settings: Settings) -> bool:
+    """An absent or invalid channel hides only YouTube, including direct claims."""
     try:
         youtube = urlsplit(settings.social_rewards_youtube_url)
         return (
@@ -110,6 +113,7 @@ def status(user_id: str, settings: Settings) -> dict[str, Any]:
                 )),
             }
             for action, label, url in ACTIONS
+            if action != "youtube" or youtube_available(settings)
         ] if enrollment else [],
     }
 
@@ -125,7 +129,9 @@ def require_offer(user_id: str, settings: Settings) -> SocialRewardEnrollment:
 
 def claim(user_id: str, action: str, settings: Settings) -> dict[str, Any]:
     enrollment = require_offer(user_id, settings)
-    if action not in {item[0] for item in ACTIONS}:
+    if action not in {item[0] for item in ACTIONS} or (
+        action == "youtube" and not youtube_available(settings)
+    ):
         raise HTTPException(422, "Unknown reward action.")
     try:
         credited = STORE.credit_workspace_once(

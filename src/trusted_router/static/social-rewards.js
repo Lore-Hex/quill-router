@@ -109,19 +109,20 @@
 
   function render(next) {
     state = { ...next, dismissed: next.dismissed || locallyDismissed };
+    const total = (state.actions || []).length;
     const keyCard = document.querySelector("[data-rewards-key-card]");
     if (keyCard) {
       keyCard.hidden = !state.eligible || !state.enabled;
       const claimed = (state.actions || []).filter((action) => action.claimed).length;
-      keyCard.querySelector("[data-rewards-key-title]").textContent = claimed === 5
-        ? "All five rewards claimed." : !state.enabled ? "Rewards are paused."
-          : claimed ? "Keep earning extra tokens." : "Your next million tokens.";
-      keyCard.querySelector("[data-rewards-key-description]").textContent = claimed === 5
-        ? "All five rewards have been added to your signup workspace."
+      keyCard.querySelector("[data-rewards-key-title]").textContent = total > 0 && claimed === total
+        ? "All available rewards claimed." : !state.enabled ? "Rewards are paused."
+          : claimed ? "Keep earning extra tokens." : "Earn extra API credit.";
+      keyCard.querySelector("[data-rewards-key-description]").textContent = total > 0 && claimed === total
+        ? "All available rewards have been added to your signup workspace."
         : !state.enabled ? "Your progress is saved. Check back to finish your rewards."
-          : claimed ? `${5 - claimed} rewards left to claim. Pick up where you left off.`
+          : claimed ? `${total - claimed} rewards left to claim. Pick up where you left off.`
             : "Earn API credit by following us on social.";
-      keyCard.querySelector("[data-rewards-open]").textContent = claimed === 5 || !state.enabled
+      keyCard.querySelector("[data-rewards-open]").textContent = total > 0 && claimed === total || !state.enabled
         ? "View rewards" : "Earn extra tokens";
     }
     const ready = Boolean(state.eligible && state.enabled && state.first_call_complete
@@ -144,8 +145,12 @@
     }
     const actions = state.actions || [];
     const count = actions.filter((action) => action.claimed).length;
-    dialog.querySelector("[data-rewards-progress]").textContent = `${count} of 5 rewards claimed`;
+    dialog.querySelector("[data-rewards-progress]").textContent = `${count} of ${total} rewards claimed`;
+    dialog.querySelector("[data-rewards-meter]").max = total || 1;
     dialog.querySelector("[data-rewards-meter]").value = count;
+    Array.from(list.children).forEach((row) => {
+      if (!actions.some((action) => action.id === row.dataset.rewardId)) row.remove();
+    });
     dialog.querySelector("[data-rewards-destination]").textContent = `Credit goes to your signup workspace: ${state.workspace_name}.`;
     notice.hidden = state.enabled;
     notice.textContent = !state.enabled
