@@ -421,6 +421,8 @@ func TestTheHeaderIsStrippedAsPythonStripsLatin1(t *testing.T) {
 		"\x85" + good:     Verified,
 		good + " \t":      Verified,
 		good + "\xc2\xa0": Invalid,
+		good + "\xff":     Invalid, // a byte that is a character to Python, not whitespace
+		good + "\xa0\xff": Invalid,
 	}
 	for header, want := range cases {
 		req, _ := http.NewRequest(http.MethodPost, h.server.URL+authorizePath, strings.NewReader(authorizeBody))
@@ -451,5 +453,15 @@ func TestAnOversizedBodyKeepsItsDeclaredLength(t *testing.T) {
 	resp.Body.Close()
 	if h.last.headers.Get("Content-Length") != fmt.Sprint(len(body)) || len(h.last.body) != len(body) || h.last.verdict != string(Unchecked) {
 		t.Fatalf("an oversized body: length %q, got %d, verdict %q", h.last.headers.Get("Content-Length"), len(h.last.body), h.last.verdict)
+	}
+}
+
+func TestAConnectionTokenIsTrimmedAsTheProxyTrimsIt(t *testing.T) {
+	// The proxy trims ASCII whitespace from Connection's tokens; a no-break
+	// space is not that, so the boot header stays and the verdict is its.
+	h := newHarness(t)
+	h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, map[string]string{"Connection": "\xc2\xa0" + BootHeader + "\xc2\xa0"})
+	if h.last.verdict != string(Verified) || h.last.headers.Get(BootHeader) == "" {
+		t.Fatalf("a token the proxy keeps: verdict %q, python saw %q", h.last.verdict, h.last.headers.Get(BootHeader))
 	}
 }

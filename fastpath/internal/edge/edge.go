@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"sync"
@@ -55,8 +56,21 @@ var bootAuthDomain = []byte("tr-authorize-v1")
 
 // pythonSpace is what str.strip() strips from a header value Python has
 // decoded as Latin-1, one byte a character: ASCII whitespace, the C0
-// separators, NEL and the no-break space.
-const pythonSpace = "\t\n\v\f\r\x1c\x1d\x1e\x1f \x85\xa0"
+// separators, NEL and the no-break space. Trimmed byte by byte, since the
+// value's bytes are not UTF-8 to Python.
+var pythonSpace = [256]bool{'\t': true, '\n': true, '\v': true, '\f': true, '\r': true, 0x1c: true, 0x1d: true,
+	0x1e: true, 0x1f: true, ' ': true, 0x85: true, 0xa0: true}
+
+func trimPythonSpace(s string) string {
+	start, end := 0, len(s)
+	for start < end && pythonSpace[s[start]] {
+		start++
+	}
+	for end > start && pythonSpace[s[end-1]] {
+		end--
+	}
+	return s[start:end]
+}
 
 // Verdict is what the edge found about a request's boot signature.
 type Verdict string
@@ -235,7 +249,9 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func listedAsHopByHop(h http.Header, name string) bool {
 	for _, value := range h.Values("Connection") {
 		for _, token := range strings.Split(value, ",") {
-			if strings.EqualFold(strings.TrimSpace(token), name) {
+			// Trimmed as the proxy trims the tokens it drops (ASCII
+			// whitespace only), so the edge sees what the proxy will see.
+			if strings.EqualFold(textproto.TrimString(token), name) {
 				return true
 			}
 		}
@@ -324,7 +340,7 @@ func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
 func ParseBootHeader(value string) (kid string, sig []byte, ok bool) {
 	fields := map[string]string{}
 	for _, part := range strings.Split(value, ",") {
-		name, field, found := strings.Cut(strings.Trim(part, pythonSpace), "=")
+		name, field, found := strings.Cut(trimPythonSpace(part), "=")
 		if !found {
 			return "", nil, false
 		}
