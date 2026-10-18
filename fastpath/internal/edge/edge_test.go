@@ -465,3 +465,81 @@ func TestAConnectionTokenIsTrimmedAsTheProxyTrimsIt(t *testing.T) {
 		t.Fatalf("a token the proxy keeps: verdict %q, python saw %q", h.last.verdict, h.last.headers.Get(BootHeader))
 	}
 }
+
+func TestARedirectPythonBuildsNamesTheCallersAuthority(t *testing.T) {
+	h := newHarness(t)
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Location", h.upstream.URL+"/internal/gateway/authorize")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}
+	client := &http.Client{Transport: plainClient.Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, c := range []struct{ proto, want string }{{"", "http://edge.example/internal/gateway/authorize"}, {"https", "https://edge.example/internal/gateway/authorize"}} {
+		req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/internal/gateway/authorize/", strings.NewReader(authorizeBody))
+		req.Host = "edge.example"
+		req.Header.Set(TokenHeader, token)
+		if c.proto != "" {
+			req.Header.Set("X-Forwarded-Proto", c.proto)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != c.want {
+			t.Fatalf("a redirect: %d %q, want %q", resp.StatusCode, resp.Header.Get("Location"), c.want)
+		}
+	}
+	// A redirect elsewhere is not touched.
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Location", "https://elsewhere.example/x")
+		w.WriteHeader(http.StatusFound)
+	}
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+authorizePath, strings.NewReader(authorizeBody))
+	req.Header.Set(TokenHeader, token)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("Location") != "https://elsewhere.example/x" {
+		t.Fatalf("elsewhere: %q", resp.Header.Get("Location"))
+	}
+}
+
+func TestABearerTokenIsStrippedAsPythonStripsIt(t *testing.T) {
+	h := newHarness(t)
+	boot := h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody))
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+authorizePath, strings.NewReader(authorizeBody))
+	req.Header["Authorization"] = []string{"Bearer \xa0" + token + "\xa0"}
+	req.Header.Set(BootHeader, boot)
+	resp, err := plainClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if h.last.verdict != string(Verified) {
+		t.Fatalf("a bearer token with Latin-1 spaces: %q", h.last.verdict)
+	}
+}
+
+func TestTheBootCacheIsBounded(t *testing.T) {
+	h := newHarness(t)
+	for i := range maxCachedBoots + 10 {
+		h.signed(t, fmt.Sprintf("boot-x%d", i), http.MethodPost, authorizePath, authorizeBody, nil)
+	}
+	h.edge.mu.Lock()
+	size := len(h.edge.boots)
+	h.edge.mu.Unlock()
+	if size > maxCachedBoots {
+		t.Fatalf("the cache grew to %d", size)
+	}
+	// Once the misses expire, the next read sweeps them.
+	h.now = h.now.Add(2 * time.Minute)
+	h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, nil)
+	h.edge.mu.Lock()
+	size = len(h.edge.boots)
+	h.edge.mu.Unlock()
+	if size != 1 {
+		t.Fatalf("after the sweep: %d entries", size)
+	}
+}

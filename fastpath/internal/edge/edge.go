@@ -189,8 +189,41 @@ func New(cfg Config) (*Edge, error) {
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
 			answer(w, http.StatusBadGateway, "The control plane was not reached; retry", "bad_gateway")
 		},
+		// A redirect Python builds names the upstream, which the caller
+		// cannot reach: it is given back under the authority the caller used.
+		ModifyResponse: func(resp *http.Response) error {
+			location := resp.Header.Get("Location")
+			if location == "" || resp.Request == nil {
+				return nil
+			}
+			target, err := url.Parse(location)
+			if err != nil || target.Host != upstream.Host {
+				return nil
+			}
+			caller, ok := resp.Request.Context().Value(callerKey{}).(callerAuthority)
+			if !ok {
+				return nil
+			}
+			target.Scheme, target.Host = caller.scheme, caller.host
+			resp.Header.Set("Location", target.String())
+			return nil
+		},
 	}
 	return e, nil
+}
+
+// callerAuthority is the scheme and host the caller used, carried in the
+// request's context for a redirect's rewrite.
+type callerAuthority struct{ scheme, host string }
+
+type callerKey struct{}
+
+func withCaller(r *http.Request) context.Context {
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return context.WithValue(r.Context(), callerKey{}, callerAuthority{scheme: scheme, host: r.Host})
 }
 
 // answer writes an error in the control plane's envelope (errors.py,
@@ -210,6 +243,7 @@ func answer(w http.ResponseWriter, code int, message, kind string) {
 // for Python's own 401, and reads nothing here. The enclave's requests
 // are JSON bodies with no trailers; the edge carries none.
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(withCaller(r))
 	if !e.tokenOK(r) {
 		e.proxy.ServeHTTP(w, r)
 		return
@@ -277,7 +311,7 @@ func printableASCII(s string) bool {
 func (e *Edge) tokenOK(r *http.Request) bool {
 	supplied := ""
 	if auth := r.Header.Get("Authorization"); len(auth) >= 7 && strings.EqualFold(auth[:7], "bearer ") {
-		supplied = strings.TrimSpace(auth[7:])
+		supplied = trimPythonSpace(auth[7:])
 	}
 	if supplied == "" {
 		supplied = r.Header.Get(TokenHeader)
@@ -328,10 +362,24 @@ func (e *Edge) boot(ctx context.Context, kid string) (Boot, bool, error) {
 		ttl /= 10
 	}
 	e.mu.Lock()
-	e.boots[kid] = cachedBoot{boot: boot, found: found, until: now.Add(ttl)}
+	if len(e.boots) >= maxCachedBoots {
+		for k, c := range e.boots {
+			if !now.Before(c.until) {
+				delete(e.boots, k)
+			}
+		}
+	}
+	if len(e.boots) < maxCachedBoots {
+		e.boots[kid] = cachedBoot{boot: boot, found: found, until: now.Add(ttl)}
+	}
 	e.mu.Unlock()
 	return boot, found, nil
 }
+
+// maxCachedBoots bounds the cache: a fleet has tens of boots, and unknown
+// key ids are kept a tenth as long; past the bound, expired entries are
+// swept, and if none expired the read is not kept.
+const maxCachedBoots = 4096
 
 // ParseBootHeader reads `kid=K,sig=S` as parse_boot_auth_header does: both
 // fields once, in any order, nothing else, each part stripped of the
