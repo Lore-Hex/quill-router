@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SendProductNotices",
+      "Effect": "Allow",
+      "Action": "ses:SendEmail",
+      "Resource": [
+        "arn:aws:ses:us-east-1:330422590279:identity/notices.trustedrouter.com",
+        "arn:aws:ses:us-east-1:330422590279:configuration-set/trustedrouter-notices"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ses:FromAddress": "notices@notices.trustedrouter.com"
+        }
+      }
+    }
+  ]
+}
