@@ -1756,17 +1756,9 @@ body.console {
 .activation-call-result { margin: 0; padding: 0; border: 0; background: transparent; }
 .activation-primary-action[hidden] { display: none; }
 .activation-result-head { border: 0; padding-bottom: 12px; }
-.activation-request-details { margin-bottom: 24px; }
-.activation-request-details summary { color: var(--muted); font-size: 12px; cursor: pointer; padding: 8px 0; }
-.activation-request-details .activation-result-grid { border: 0; border-radius: 0; background: transparent; }
-.activation-rewards-invitation { margin: 0; padding: 24px 0 4px; border-top: 1px solid var(--line); }
-.activation-rewards-invitation h3 { font-size: clamp(24px, 4vw, 32px); line-height: 1.15; letter-spacing: -.03em; margin: 0 0 10px; }
-.activation-rewards-invitation p { color: var(--muted); font-size: 14px; margin: 0 0 24px; }
-.activation-rewards-invitation a.btn { border-color: transparent; background: transparent; }
 
 @media (max-width: 600px) {
   .social-rewards-head { padding: 22px 18px 18px; }
-  .social-rewards-eyebrow { min-height: 34px; }
   .social-rewards h2 { margin-right: 36px; }
   .social-rewards-content { padding: 0 18px; }
   .social-rewards-list li { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; padding: 16px 0; }
@@ -1777,12 +1769,6 @@ body.console {
   .social-rewards-controls { grid-column: 1 / -1; }
   .social-rewards-foot { padding: 14px 18px; gap: 12px; }
 }
-
-/* A quiet balance row keeps key setup as the primary onboarding task. */
-.activation-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; color: var(--muted); font-size: 13px; }
-.activation-rewards-link { min-height: 44px; padding: 10px 18px; background: transparent; color: var(--tr-color-text-primary); border: 1px solid var(--line); font: inherit; font-weight: 600; cursor: pointer; }
-.activation-rewards-link:hover { text-decoration-thickness: 2px; }
-.activation-rewards-link:focus-visible { outline: 2px solid currentcolor; outline-offset: 5px; }
 
 /* Key management: summaries first, editing on demand. */
 .key-rewards-invitation { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 24px; margin-bottom: 28px; border: 1px solid var(--tr-color-panel-mint-divider); border-left: 3px solid var(--tr-color-accent-base); border-radius: var(--tr-radius-control); background: var(--tr-color-surface-selected); }
@@ -1827,15 +1813,8 @@ body.console {
 .activation-test-panel > .panel-head, .activation-setup-panel > .panel-head { padding: 0 0 16px; border: 0; }
 .activation-test-panel > .panel-body, .activation-setup-panel > .panel-body { padding: 0; }
 
-.activation-agent-options { margin-top: 16px; }
-.activation-agent-options > summary { padding: 16px 0; color: var(--tr-color-text-primary); cursor: pointer; font-size: 14px; font-weight: 400; }
-.activation-agent-options[open] > summary { margin-bottom: 12px; }
-.activation-entry-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-
-/* A completed request replaces its setup actions; only one rewards entry remains. */
-.activation-rewards-link[hidden] { display: none; }
-.activation-test-panel:has([data-call-result]:not([hidden])) > .panel-head,
-.activation-test-panel:has([data-call-result]:not([hidden])) .activation-entry-actions { display: none; }
+/* A completed request replaces its setup actions. */
+.activation-test-panel:has([data-call-result]:not([hidden])) > .panel-head { display: none; }
 .activation-test-panel .activation-call-result { padding-top: 12px; }
 .activation-test-panel .activation-result-head { padding-bottom: 16px; }
 .activation-key-panel { border: 0; background: transparent; box-shadow: none; }

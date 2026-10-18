@@ -176,16 +176,24 @@ def test_signup_enrollment_preserves_existing_exclusions():
     assert not returning.first_time
 
 
-def test_first_call_status_recovers_without_marketing_attribution(monkeypatch):
-    client, result, _ = _account(activated=False)
-    # Console status can recover first-call evidence without a per-inference hook.
-    monkeypatch.setattr(InMemoryStore, "get_acquisition_attribution", lambda self, workspace_id: None)
-    monkeypatch.setattr(InMemoryStore, "activity_events",
-                        lambda self, workspace_id, **kwargs: [{"status": "success"}])
-    response = client.get("/console/social-rewards")
-    assert response.json()["first_call_complete"] is True
-    assert STORE.get_social_reward_enrollment(result.user.id).first_call_complete
-    assert _post(client, action="github").status_code == 200
+@pytest.mark.parametrize("unavailable", ["get_acquisition_attribution", "mark_social_reward_first_call", None])
+def test_optional_analytics_cannot_block_status_or_committed_receipts(monkeypatch, unavailable):
+    from unittest.mock import Mock
+
+    client, result, _ = _account(activated=unavailable == "mark_social_reward_first_call")
+    activity = Mock(side_effect=TimeoutError("ClickHouse unavailable"))
+    monkeypatch.setattr(InMemoryStore, "activity_events", activity)
+    if unavailable:
+        monkeypatch.setattr(InMemoryStore, unavailable, Mock(side_effect=TimeoutError("optional metadata unavailable")))
+    else:
+        monkeypatch.setattr(InMemoryStore, "get_acquisition_attribution", lambda self, workspace_id: None)
+    assert client.get("/console/social-rewards").status_code == 200
+    for _ in range(2):
+        response = _post(client, action="github")
+        assert response.status_code == 200
+        assert response.json()["actions"][0]["claimed"] is True
+    assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
+    activity.assert_not_called()
 
 
 def test_throttled_successful_calls_do_not_read_reward_storage(monkeypatch):
@@ -247,7 +255,8 @@ def test_optional_analytics_failure_cannot_fail_a_claim(monkeypatch):
 
 def test_click_is_not_a_claim():
     client, result, _ = _account()
-    assert _post(client, "clicked", action="github").status_code == 200
+    assert _post(client, "observe", event="social_reward_clicked", placement="api_key_setup",
+                 action="github", observation_id="84c35821-8c8f-48ea-8aba-19724a965078").status_code == 200
     assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
 
 

@@ -107,12 +107,3 @@ def register(app: FastAPI) -> None:
         # Dismissal still works while issuance is switched off.
         STORE.dismiss_social_rewards(ctx.user.id)
         return JSONResponse(status(ctx.user.id, settings), headers=_HEADERS)
-
-    @app.post("/console/social-rewards/clicked")
-    def reward_clicked(
-        request: Request, body: ActionRequest, ctx: ConsoleDep, settings: SettingsDep,
-    ) -> JSONResponse:
-        _same_origin(request, settings)
-        require_offer(ctx.user.id, settings)
-        _track(request, "social_reward_clicked")
-        return JSONResponse({"recorded": True}, headers=_HEADERS)

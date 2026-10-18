@@ -19,8 +19,7 @@
       observation_id: crypto.randomUUID() }).catch(() => {});
   }
   function openerPlacement(button) {
-    return button.hasAttribute("data-rewards-early") || button.hasAttribute("data-rewards-api-keys") ? "api_key_setup"
-      : button.hasAttribute("data-rewards-success") ? "first_request_success"
+    return button.hasAttribute("data-rewards-api-keys") ? "api_key_setup"
         : location.pathname === "/console/credits" ? "credits" : "console_fallback";
   }
   const impressionObserver = typeof IntersectionObserver === "undefined" ? null
@@ -85,7 +84,6 @@
   let returningFocus;
   let refreshing = false;
   let refreshAgain = false;
-  const invitation = document.querySelector("[data-rewards-invitation]");
   let generation = 0;
 
   async function request(path = "", body, timeoutMs = 15000) {
@@ -125,16 +123,7 @@
       keyCard.querySelector("[data-rewards-open]").textContent = total > 0 && claimed === total || !state.enabled
         ? "View rewards" : "Earn extra tokens";
     }
-    const ready = Boolean(state.eligible && state.enabled && state.first_call_complete
-      && document.querySelector("[data-call-result]:not([hidden])"));
-    if (invitation) invitation.hidden = !ready;
-    const defaultActions = document.querySelector("[data-rewards-default-actions]");
-    if (defaultActions) defaultActions.hidden = ready;
-    openers.forEach((button) => {
-      button.hidden = button.hasAttribute("data-rewards-success") ? !ready
-        : button.hasAttribute("data-rewards-early") ? !(state.eligible && state.enabled) || ready
-          : !(state.eligible && state.enabled);
-    });
+    openers.forEach((button) => { button.hidden = !(state.eligible && state.enabled); });
     if (!state.enabled && dialog.open) dialog.close();
     if (!state.eligible) {
       list.replaceChildren();
@@ -265,14 +254,7 @@
         if (current !== generation) return;
       }
       render(next);
-      // Showing the invitation consumes the automatic offer, so continuing
-      // to the console does not immediately interrupt the user with a modal.
-      if (invitation && !invitation.hidden && !state.dismissed) {
-        const shown = await request("/shown", {});
-        if (current !== generation) return;
-        render(shown);
-      }
-      if (auto && !invitation && state.eligible && state.enabled && state.first_call_complete && !state.dismissed
+      if (auto && state.eligible && state.enabled && state.first_call_complete && !state.dismissed
           && canAutoOpen()) {
         const shown = await request("/shown", {});
         if (current !== generation) return;
@@ -312,6 +294,5 @@
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
   dialog.addEventListener("close", () => returningFocus?.focus());
   window.addEventListener("focus", () => refresh(!dialog.open));
-  window.addEventListener("trustedrouter:first-call-success", () => refresh());
   refresh(true);
 })();

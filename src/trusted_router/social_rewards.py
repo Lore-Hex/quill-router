@@ -69,17 +69,17 @@ def _eligible_enrollment(user_id: str, settings: Settings) -> SocialRewardEnroll
 def _first_call_complete(enrollment: SocialRewardEnrollment) -> bool:
     if enrollment.first_call_complete:
         return True
-    attribution = STORE.get_acquisition_attribution(enrollment.workspace_id)
-    successful = bool(attribution and "first_successful_api_call" in attribution.milestones)
-    if not successful:
-        # Bounded, workspace-scoped recovery from a missed post-call hook. A
-        # missing result is not proof of failure; later calls/visits can retry.
-        successful = any(row.get("status") == "success" for row in STORE.activity_events(
-            enrollment.workspace_id, limit=100,
-        ))
-    if successful:
-        STORE.mark_social_reward_first_call(enrollment.user_id)
-    return successful
+    # This is only a hint for the once-only popup, never claim eligibility.
+    # Do not query ClickHouse or let optional attribution block receipt reads.
+    try:
+        attribution = STORE.get_acquisition_attribution(enrollment.workspace_id)
+        successful = bool(attribution and "first_successful_api_call" in attribution.milestones)
+        if successful:
+            STORE.mark_social_reward_first_call(enrollment.user_id)
+        return successful
+    except Exception:  # noqa: BLE001 - optional presentation evidence must fail open.
+        log.warning("social_rewards.first_call_status_unavailable")
+        return False
 
 
 def status(user_id: str, settings: Settings) -> dict[str, Any]:
