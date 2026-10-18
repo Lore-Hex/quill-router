@@ -301,7 +301,11 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 
 // readLeaseMoney reads a lease's row and its donors inside a transaction.
 func readLeaseMoney(ctx context.Context, txn *spanner.ReadWriteTransaction, ref LeaseRef, operation string) (Lease, leaseMoney, error) {
-	row, err := txn.ReadRowWithOptions(ctx, "tr_lease", ref.key(), leaseColumns, &spanner.ReadOptions{RequestTag: tag(operation)})
+	columns := leaseColumns
+	if operation == "commit" {
+		columns = commitLeaseColumns
+	}
+	row, err := txn.ReadRowWithOptions(ctx, "tr_lease", ref.key(), columns, &spanner.ReadOptions{RequestTag: tag(operation)})
 	if spanner.ErrCode(err) == codes.NotFound {
 		return Lease{}, leaseMoney{}, fmt.Errorf("%w: %v", ErrNoLease, ref)
 	}
@@ -309,7 +313,12 @@ func readLeaseMoney(ctx context.Context, txn *spanner.ReadWriteTransaction, ref 
 		return Lease{}, leaseMoney{}, err
 	}
 	l := Lease{Ref: ref}
-	if err := l.scan(row); err != nil {
+	if operation == "commit" {
+		err = l.scanCommit(row)
+	} else {
+		err = l.scan(row)
+	}
+	if err != nil {
 		return Lease{}, leaseMoney{}, err
 	}
 	money := leaseMoney{Allocation: l.Allocation, Consumed: l.Consumed, ShortfallTotal: l.ShortfallTotal,
@@ -329,42 +338,23 @@ func readLeaseMoney(ctx context.Context, txn *spanner.ReadWriteTransaction, ref 
 	return l, money, err
 }
 
+// A normal auditor commit does not depend on expiry or revocation. Reading
+// those columns here would hold shared locks against the owner's renewals.
+// CloseLease still uses the full row, including its expiry fence.
+var commitLeaseColumns = []string{"state", "allocation", "consumed", "shortfall_total", "returned", "fault_usage",
+	"commit_version", "audit_fault_seq", "gap_seq", "boundary_seq"}
+
+func (l *Lease) scanCommit(row *spanner.Row) error {
+	return row.Columns(&l.State, &l.Allocation, &l.Consumed, &l.ShortfallTotal, &l.Returned, &l.FaultUsage,
+		&l.CommitVersion, &l.AuditFaultSeq, &l.GapSeq, &l.BoundarySeq)
+}
+
 // writeLeaseCommit writes a lease's row and its donors for a commit. The
 // row's statement repeats the guards the transaction checked on its read.
 func writeLeaseCommit(ctx context.Context, txn *spanner.ReadWriteTransaction, r CommitRequest, after, before leaseMoney,
 	result *CommitResult) error {
-	params := r.Ref.params()
-	params["read"], params["applied"], params["tick"], params["osum"] = r.ReadVersion, r.AppliedSeq, r.LastTick, r.AuditOsum
-	params["allocation"], params["consumed"], params["total"] = after.Allocation, after.Consumed, after.ShortfallTotal
-	params["returned"], params["fault"] = after.Returned, after.FaultUsage
-	params["s"], params["t"] = spanner.NullInt64{}, spanner.NullTime{}
-	if r.Boundary != nil {
-		params["s"] = spanner.NullInt64{Int64: r.Boundary.S, Valid: true}
-		params["t"] = spanner.NullTime{Time: r.Boundary.T, Valid: true}
-	}
-	params["listed"], params["fault_seq"] = spanner.NullInt64{}, spanner.NullInt64{}
-	if r.HoldsListedSeq != nil {
-		params["listed"] = spanner.NullInt64{Int64: *r.HoldsListedSeq, Valid: true}
-	}
-	if r.AuditFault != nil {
-		params["fault_seq"] = spanner.NullInt64{Int64: *r.AuditFault, Valid: true}
-	}
 	rows := 0
-	err := txn.QueryWithOptions(ctx, spanner.Statement{
-		SQL: `UPDATE tr_lease
-		         SET commit_version = commit_version + 1, applied_seq = @applied, last_tick = @tick, audit_osum = @osum,
-		             allocation = @allocation, consumed = @consumed, shortfall_total = @total, returned = @returned,
-		             fault_usage = @fault,
-		             boundary_seq = COALESCE(boundary_seq, @s),
-		             boundary_publish_time = COALESCE(boundary_publish_time, @t),
-		             holds_listed_seq = COALESCE(@listed, holds_listed_seq),
-		             audit_fault_seq = COALESCE(audit_fault_seq, @fault_seq),
-		             revoked = revoked OR @fault_seq IS NOT NULL
-		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND state != 'closed'
-		         AND gap_seq IS NULL AND (boundary_seq IS NULL OR boundary_seq = @applied)
-		      THEN RETURN state, commit_version`,
-		Params: params,
-	}, spanner.QueryOptions{RequestTag: tag("commit")}).Do(func(row *spanner.Row) error {
+	err := txn.QueryWithOptions(ctx, commitLeaseStatement(r, after), spanner.QueryOptions{RequestTag: tag("commit")}).Do(func(row *spanner.Row) error {
 		rows++
 		return row.Columns(&result.State, &result.NewVersion)
 	})
@@ -393,6 +383,43 @@ func writeLeaseCommit(ctx context.Context, txn *spanner.ReadWriteTransaction, r 
 		}
 	}
 	return nil
+}
+
+func commitLeaseStatement(r CommitRequest, after leaseMoney) spanner.Statement {
+	params := r.Ref.params()
+	params["read"], params["applied"], params["tick"], params["osum"] = r.ReadVersion, r.AppliedSeq, r.LastTick, r.AuditOsum
+	params["allocation"], params["consumed"], params["total"] = after.Allocation, after.Consumed, after.ShortfallTotal
+	params["returned"], params["fault"] = after.Returned, after.FaultUsage
+	params["s"], params["t"] = spanner.NullInt64{}, spanner.NullTime{}
+	if r.Boundary != nil {
+		params["s"] = spanner.NullInt64{Int64: r.Boundary.S, Valid: true}
+		params["t"] = spanner.NullTime{Time: r.Boundary.T, Valid: true}
+	}
+	params["listed"], params["fault_seq"] = spanner.NullInt64{}, spanner.NullInt64{}
+	if r.HoldsListedSeq != nil {
+		params["listed"] = spanner.NullInt64{Int64: *r.HoldsListedSeq, Valid: true}
+	}
+	revoke := ""
+	if r.AuditFault != nil {
+		params["fault_seq"] = spanner.NullInt64{Int64: *r.AuditFault, Valid: true}
+		// Keep fault publication and revocation atomic, without rewriting the
+		// renewal guard on every ordinary commit.
+		revoke = ", revoked = TRUE"
+	}
+	return spanner.Statement{
+		SQL: `UPDATE tr_lease
+		         SET commit_version = commit_version + 1, applied_seq = @applied, last_tick = @tick, audit_osum = @osum,
+		             allocation = @allocation, consumed = @consumed, shortfall_total = @total, returned = @returned,
+		             fault_usage = @fault,
+		             boundary_seq = COALESCE(boundary_seq, @s),
+		             boundary_publish_time = COALESCE(boundary_publish_time, @t),
+		             holds_listed_seq = COALESCE(@listed, holds_listed_seq),
+		             audit_fault_seq = COALESCE(audit_fault_seq, @fault_seq)` + revoke + `
+		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND state != 'closed'
+		         AND gap_seq IS NULL AND (boundary_seq IS NULL OR boundary_seq = @applied)
+		      THEN RETURN state, commit_version`,
+		Params: params,
+	}
 }
 
 // settleCreditRows applies a workspace's credit changes from one commit: the
