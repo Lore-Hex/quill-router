@@ -559,10 +559,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -883,10 +883,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 60,
+    "model_count": 61,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 102,
+    "route_count": 104,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },
