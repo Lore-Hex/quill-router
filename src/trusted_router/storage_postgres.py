@@ -7766,7 +7766,44 @@ class PostgresStore:
         window_seconds: int,
         now: dt.datetime | None = None,
     ) -> RateLimitHit:
-        self._not_implemented("hit_rate_limit")
+        now = now or utcnow()
+        epoch = int(now.timestamp())
+        bucket = epoch // window_seconds
+        # One row per subject/window configuration: PostgreSQL has no native
+        # entity TTL, so creating a fresh row each minute would grow forever.
+        entity_id = f"{namespace}#{subject}#{window_seconds}"
+        reset_epoch = (bucket + 1) * window_seconds
+
+        def txn(conn: Any) -> tuple[int, int]:
+            # Locking a missing row does not serialize first requests. Insert
+            # the counter first, then lock it, as for wallet challenge scopes.
+            self._insert_entity_once_tx(conn, "rate_limit", entity_id, {"count": 0})
+            row = self._read_entity_tx(
+                conn, "rate_limit", entity_id, dict, for_update=True,
+            )
+            if row is None:
+                raise RuntimeError("rate_limit_counter_missing")
+            previous_bucket = int(row.get("bucket", bucket))
+            if bucket < previous_bucket:
+                # A slow instance's clock must never reset an active counter
+                # backward or spend a second allowance for the old minute.
+                return limit + 1, (previous_bucket + 1) * window_seconds
+            count = int(row.get("count", 0)) + 1 if bucket == previous_bucket else 1
+            self._write_entity_tx(
+                conn, "rate_limit", entity_id,
+                {"count": count, "bucket": bucket, "expires_at": reset_epoch},
+            )
+            return count, reset_epoch
+
+        count, reset_epoch = self._run_transaction(txn)
+        reset_at = dt.datetime.fromtimestamp(reset_epoch, dt.UTC).replace(microsecond=0)
+        return RateLimitHit(
+            allowed=count <= limit,
+            limit=limit,
+            remaining=max(limit - count, 0),
+            reset_at=reset_at.isoformat().replace("+00:00", "Z"),
+            retry_after_seconds=max(reset_epoch - epoch, 1),
+        )
 
 
 def _dataclass_from_json(raw: Any, cls: type[T]) -> T:

@@ -16,6 +16,7 @@ from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.routes.console._shared import ConsoleDep
 from trusted_router.social_rewards import claim, require_offer, status
+from trusted_router.social_rewards_limits import enforce_social_reward_rate_limit
 from trusted_router.storage import STORE
 
 log = logging.getLogger(__name__)
@@ -87,6 +88,8 @@ def register(app: FastAPI) -> None:
         request: Request, body: ActionRequest, ctx: ConsoleDep, settings: SettingsDep,
     ) -> JSONResponse:
         _same_origin(request, settings)
+        require_offer(ctx.user.id, settings)
+        enforce_social_reward_rate_limit(ctx.user.id, settings)
         return JSONResponse(claim(ctx.user.id, body.action, settings), headers=_HEADERS)
 
     @app.post("/console/social-rewards/shown")

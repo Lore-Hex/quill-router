@@ -572,6 +572,8 @@ class Settings(BaseSettings):
     social_rewards_issuer_id: str = "gcp-primary"
     # Exact official channel must be confirmed before any reduced signup grant.
     social_rewards_youtube_url: str = ""
+    # Shared account request throttle; not a campaign spend cap.
+    social_rewards_claims_per_minute: int = Field(default=30, ge=5)
 
     # Global, creation-only operational brake. Returning Google/GitHub/wallet
     # users continue to sign in; only the branches that would create a new

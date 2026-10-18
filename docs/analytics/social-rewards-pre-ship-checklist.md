@@ -2,6 +2,43 @@
 
 Updated October 17, 2026. Production rollout remains on hold.
 
+### Abuse protection and monitoring implementation — pending CI
+
+User authorized parallel implementation of abuse protection and monitoring and
+confirmed that platform-policy concerns are resolved. The official YouTube URL is
+still unavailable; current campaign validation continues to require it. User's
+“instance switch” clarification means ordinary merge-to-deploy propagation, not a
+new instant runtime control. No runtime control store or operator endpoint was
+added; the existing config-as-code flag and guarded multi-cloud rollout remain.
+Full validation is to run in CI, avoiding large local installs/full suites.
+
+New claim admission uses a shared campaign/user counter (30 requests per minute by
+default, configurable with a floor of five). It cannot reset through session rotation
+and remains enforced when generic local rate limiting is disabled. Counter failure
+returns 503 without invoking a credit grant; excess requests return 429/Retry-After.
+Read-only receipt reconciliation stays available. Five immediate rewards, amounts,
+cohort eligibility and transfers are unchanged. This hardens request abuse but does
+not identify one person behind multiple accounts or introduce an organization cap.
+PostgreSQL now implements the shared counter with first-insert serialization, one
+row per subject/window configuration, and conservative backward-clock handling.
+
+The packaged receipt monitor reads only a bounded covering-index campaign range,
+independently of optional marketing attribution. It reports complete aggregate
+issuance, QA/customer counts and configurable velocity/amount anomalies. Missing
+index/read errors/row-budget exhaustion fail rather than return partial totals.
+The monitor never changes balances, grants, or flags; there is no campaign budget
+cap. See social-rewards-monitoring.md for index/scheduled-job/notification rollout.
+Those resources are not yet deployed or live-verified. Separate marketing rollout
+and its QA exclusion remain outstanding.
+
+Focused existing-environment tests: 96 passed, 51 real-database cases skipped;
+Ruff passed and final mypy passed across 456 source files. The 14 monitor unit
+tests also passed after the packaging change. A new native
+Spanner test exercises the actual index/Read RPC in an isolated emulator database
+and is selected by existing CI; local Docker installation was intentionally avoided.
+No full-suite, coverage, native-database or production-readiness pass is claimed.
+No push, merge, deployment, real grant or production configuration change occurred.
+
 ### Approved commit checkpoint — one-click flow and final arcs
 
 User authorized committing the current changes, not pushing or deploying. Final
@@ -12,7 +49,7 @@ focused backend/conformance previously passed 69 with 42 database skips. Fallbac
 Ruff/mypy passed; mandatory uv gates remain blocked by the Intel macOS torch wheel.
 Earlier “uncommitted” entries below describe historical checkpoints.
 
-Production readiness still requires:
+Production readiness requirements at that checkpoint (superseded by the status above):
 - Integrate with current main and complete final review, including rolling-version
   compatibility of the changed claim payload and removal of obsolete PR code.
 - Pass required Ruff, mypy, full pytest with >=70% coverage in a supported
