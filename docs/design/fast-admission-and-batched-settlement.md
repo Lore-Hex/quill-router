@@ -2411,7 +2411,8 @@ leases, and was retired on 2026-09-27.
    decided (§9): until then a dispute the reconciler has not seen leaves a
    workspace its tier. Then move keyed requests, capped keys, payouts and the
    remaining route types (§4.11) one at a time; then retire the Python hot
-   path.
+   path. The stages of that retirement are in
+   `fast-admission-enclave-direct.md`.
 
 ## 9. Not decided here
 
