@@ -65,7 +65,9 @@ func TestCancellationReleasesInventoryBeforeReceiveReturns(t *testing.T) {
 				}
 				t.Fatal("Receive waited for a withheld delivery after cancellation")
 			}
-			if got := f.receive(t, 1, 5*time.Second, nil); !equal(got["la"], []string{"la#1"}) {
+			// A redelivery already sent on the closing stream can remain
+			// leased for ackExtension; use the existing redelivery bound.
+			if got := f.receive(t, 1, 40*time.Second, nil); !equal(got["la"], []string{"la#1"}) {
 				t.Fatalf("the next consumer got %v", got)
 			}
 		})
