@@ -445,6 +445,28 @@ def transcription_route_endpoint_candidates(
     return candidates
 
 
+def fetch_route_endpoint_candidates(
+    inputs: NormalizedRoutingInputs,
+) -> list[tuple[Model, ModelEndpoint]]:
+    from trusted_router.web_fetch import FETCH_MODEL_ID
+
+    if inputs.model_ids != (FETCH_MODEL_ID,):
+        raise api_error(400, "Model does not support Fetch", ErrorType.MODEL_NOT_SUPPORTED)
+    if (
+        inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
+        or inputs.preferences.max_completion_price_microdollars_per_million_tokens is not None
+    ):
+        raise api_error(400, "Token-price limits do not apply to Fetch", ErrorType.BAD_REQUEST)
+    candidates = [
+        (model, endpoint)
+        for model, endpoint in catalog_endpoint_candidates(MODELS[FETCH_MODEL_ID], inputs.preferences)
+        if not endpoint.is_byok and endpoint.provider == "deepseek" and endpoint.upstream_id == "fetch"
+    ]
+    if not candidates:
+        raise api_error(400, "No Fetch route meets the requested provider and privacy filters", ErrorType.MODEL_NOT_SUPPORTED)
+    return candidates
+
+
 def speech_route_endpoint_candidates(
     inputs: NormalizedRoutingInputs,
 ) -> list[tuple[Model, ModelEndpoint]]:

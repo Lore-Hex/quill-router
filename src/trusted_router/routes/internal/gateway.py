@@ -156,6 +156,7 @@ from trusted_router.routing import (
     decide_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
     endpoint_supports_input_modalities,
+    fetch_route_endpoint_candidates,
     image_route_endpoint_candidates,
     normalize_routing_inputs,
     provider_route_preferences,
@@ -211,6 +212,7 @@ from trusted_router.speech import SPEECH_MODELS
 from trusted_router.stage_d import (
     ESTIMATED_USAGE_SNAPSHOT_MODELS,
     ESTIMATED_USAGE_SNAPSHOT_REASON,
+    FETCH_SNAPSHOT_REASON,
     SPEECH_SNAPSHOT_REASON,
     TRANSCRIPTION_SNAPSHOT_REASON,
     billing_pricing_snapshot,
@@ -283,6 +285,11 @@ from trusted_router.user_model_rules import (
 from trusted_router.video_billing import (
     video_cost_microdollars,
     video_pricing_snapshot,
+)
+from trusted_router.web_fetch import (
+    FETCH_MODEL_ID,
+    FETCH_ROUTE_TYPE,
+    FETCH_UPSTREAM_COST_MICRODOLLARS,
 )
 
 logger = logging.getLogger(__name__)
@@ -1072,6 +1079,17 @@ def _authorize_gateway_sync_impl(
     is_image_request = body.route_type == "images"
     is_speech_request = body.route_type == "audio.speech"
     is_transcription_request = body.route_type == "audio.transcriptions"
+    is_fetch_request = body.route_type == FETCH_ROUTE_TYPE
+    if is_fetch_request:
+        if (
+            body.model != FETCH_MODEL_ID or body.models or custom_model is not None
+            or body.estimated_input_tokens != 0 or body.output_estimate != 1
+            or body.service_tier or body.inference_receipt or not body.request_fingerprint
+            or body.additional_cost_reservation_microdollars
+        ):
+            raise api_error(400, "Invalid Fetch authorization metadata", ErrorType.BAD_REQUEST)
+    elif route_model_id == FETCH_MODEL_ID:
+        raise api_error(400, "Fetch requires POST /v1/tools/fetch", ErrorType.MODEL_NOT_SUPPORTED)
     if is_transcription_request:
         if (
             body.model not in TRANSCRIPTION_MODELS or body.models
@@ -1360,6 +1378,8 @@ def _authorize_gateway_sync_impl(
             pricing_effective_at=pricing_effective_at,
             allowed_providers=video_allowed_providers,
         )
+    elif is_fetch_request:
+        endpoint_candidates = fetch_route_endpoint_candidates(normalized_routing)
     elif is_transcription_request:
         if custom_model is not None:
             raise api_error(400, "Custom models do not support transcription", ErrorType.MODEL_NOT_SUPPORTED)
@@ -1684,13 +1704,16 @@ def _authorize_gateway_sync_impl(
         if app_markup_basis_points:
             raise api_error(400, "Transcription does not support app markups", ErrorType.BAD_REQUEST)
         stage_d_reason = TRANSCRIPTION_SNAPSHOT_REASON
-    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON}:
-        pricing_snapshot = canonical_pricing_snapshot(
-            endpoint_pricing_document(
-                effective_endpoint(candidate_endpoint, at=pricing_effective_at)
-                for _candidate_model, candidate_endpoint in endpoint_candidates
-            )
+    if is_fetch_request:
+        stage_d_reason = FETCH_SNAPSHOT_REASON
+    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON, FETCH_SNAPSHOT_REASON}:
+        pricing_document = endpoint_pricing_document(
+            effective_endpoint(candidate_endpoint, at=pricing_effective_at)
+            for _candidate_model, candidate_endpoint in endpoint_candidates
         )
+        if is_fetch_request:
+            pricing_document["fetch_upstream_cost_microdollars"] = FETCH_UPSTREAM_COST_MICRODOLLARS
+        pricing_snapshot = canonical_pricing_snapshot(pricing_document)
     user_model_slot_acquired = False
     if user_model is not None:
         user_model_slot_acquired = acquire_user_model_slot(
@@ -2114,7 +2137,7 @@ def _authorize_gateway_sync_impl(
             video_pricing_snapshot=video_snapshot,
             settlement=settlement,
             **({"pricing_snapshot": pricing_snapshot, "stage_d_reason": stage_d_reason}
-               if stage_d_reason in {SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON} else {}),
+               if stage_d_reason in {SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON, FETCH_SNAPSHOT_REASON} else {}),
             expires_at=authorization_expires_at,
             # The outstanding increment rides the SAME transaction that
             # inserts the authorization, so an idempotent replay (which
@@ -3993,6 +4016,24 @@ def _settle_gateway_authorization(
         )
         actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
+    fetch_operator_cost = (
+        billing_snapshot.get("fetch_upstream_cost_microdollars")
+        if authorization.model_id == FETCH_MODEL_ID and billing_snapshot is not None else None
+    )
+    if authorization.model_id == FETCH_MODEL_ID:
+        if additional_cost or (success and (
+            body.route_type != FETCH_ROUTE_TYPE or total_input or output_tokens
+            or cache_read or cache_creation or body.service_tier
+            or billing_snapshot is None
+            or type(fetch_operator_cost) is not int or fetch_operator_cost <= 0
+            or actual_cost <= 0
+            or actual_cost + app_markup_microdollars(
+                actual_cost, authorization.app_markup_basis_points,
+            ) != authorization.estimated_microdollars
+        )):
+            raise api_error(400, "Fetch settlement must match its frozen request fee", ErrorType.BAD_REQUEST)
+    elif body.route_type == FETCH_ROUTE_TYPE:
+        raise api_error(400, "Authorization is not for Fetch", ErrorType.BAD_REQUEST)
     if authorization.model_id in TRANSCRIPTION_MODELS:
         transcription_spec = TRANSCRIPTION_MODELS[authorization.model_id]
         if success and transcription_spec.token_billed:
@@ -4124,6 +4165,8 @@ def _settle_gateway_authorization(
         if partner_mode == PartnerBillingMode.INTERNAL
         else None
     )
+    if authorization.model_id == FETCH_MODEL_ID:
+        operator_cost = fetch_operator_cost if success else 0
     if (
         success
         and selected_usage_type == UsageType.CREDITS

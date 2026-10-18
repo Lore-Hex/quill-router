@@ -7,13 +7,18 @@ import pytest
 
 from tests import catalog_vehicles
 from trusted_router import catalog_ingest
-from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.catalog_data import ModelEndpoint
 
 
 @pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
 def test_deepseek_endpoints_match_authenticated_manifest(usage_type: str) -> None:
     expected = catalog_ingest._authoritative_provider_model_ids("deepseek")
+    # Fetch is a separately documented tool API, not a /models chat entry.
+    if usage_type == "Credits":
+        expected = expected | {"deepseek/fetch"}
+        assert not MODELS["deepseek/fetch"].supports_chat
+        assert not MODELS["deepseek/fetch"].byok_available
     actual = {
         endpoint.model_id for endpoint in catalog_vehicles.registry_endpoints().values()
         if endpoint.provider == "deepseek" and endpoint.usage_type == usage_type

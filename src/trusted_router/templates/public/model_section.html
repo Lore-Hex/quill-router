@@ -143,7 +143,9 @@
     </div>
     <p class="signup-foot"><a href="/status">View public status</a> or inspect <a href="/models/{{ model.id }}/providers">provider routes</a>.</p>
     {% elif section == "pricing" %}
-    {% if model.transcription or (model.speech and model.speech.billing_unit != 'tokens') %}
+    {% if model.fetch %}
+    <p class="muted-copy">Fetch is billed per successful nonempty response. There is no token charge.</p>
+    {% elif model.transcription or (model.speech and model.speech.billing_unit != 'tokens') %}
     <p class="muted-copy">Audio prices use the units shown below. Output is included. Charges are settled in integer microdollars.</p>
     {% else %}
     <p class="muted-copy">Credits prices are shown as USD per million tokens and billed internally as integer microdollars, not floats. Cached input appears when the provider publishes a distinct cache-read rate.</p>
@@ -213,6 +215,12 @@
         </ul>
       </div>
     </div>
+    {% elif section == "api" and model.fetch %}
+    <p class="muted-copy">Submit a public URL to DeepSeek Fetch and receive Markdown. Not ZDR or confidential. <a href="/docs#web-fetch">Privacy, billing, and limits</a>.</p>
+    <pre class="code-block"><code>curl {{ api_base_url }}/tools/fetch \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'</code></pre>
     {% elif section == "api" and model.transcription %}
     <p class="muted-copy">Transcribe a WAV or MP3 file with the OpenAI SDK. <a href="/docs#transcription">Formats, timestamps, privacy, and limits</a>.</p>
     <pre class="code-block"><code>import os

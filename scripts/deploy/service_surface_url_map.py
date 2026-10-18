@@ -115,6 +115,7 @@ CONTROL_PATH_PATTERNS = (
     "/decide",
     "/evaluate",
     "/responses",
+    "/tools/fetch",
     "/audio",
     "/audio/*",
     "/rerank",
