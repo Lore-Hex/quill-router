@@ -686,6 +686,23 @@ def test_a_failed_insert_after_admission_gives_the_hold_back(door: _Door, monkey
     assert door.seen[1][1]["Envelope"] == "sealed-pilot"
 
 
+def test_an_insert_whose_outcome_is_unknown_keeps_the_hold_and_answers_503(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage_gcp
+    from trusted_router.storage_errors import LeasedOutcomeUnknown
+
+    store, _database, key = _seed()
+
+    def unknown(*_args: Any, **kwargs: Any) -> None:
+        raise LeasedOutcomeUnknown(kwargs["authorization_id"])
+
+    monkeypatch.setattr(storage_gcp.SpannerStore, "_authorize_gateway_leased", unknown)
+    with pytest.raises(Exception) as caught:
+        gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())
+    assert getattr(caught.value, "status_code", None) == 503
+    # The hold is kept for the row that may have landed: no refund is sent.
+    assert [path for path, _sent in door.seen] == ["/v1/authorize"]
+
+
 def test_a_byok_terminal_charges_the_lease_nothing(door: _Door) -> None:
     """A key's own provider paid: today's path books no credit usage for a
     BYOK terminal, and the lease is told nothing either."""

@@ -1,7 +1,7 @@
-"""The pilot key-usage backfill (scripts/backfill_leased_key_usage.py): its
-plan books each settled leased charge once, to the lifetime counter and to
-the windows whose current floor the charge is within, and leaves out what
-the finalize books itself or the records do not confirm."""
+"""The pilot key-usage backfill plan (scripts/backfill_leased_key_usage.py):
+each settled leased charge once, to the lifetime counter and to the windows
+its settle time falls in; nothing the finalize books itself or the records
+do not confirm; and the UPDATE as release_key's window SQL would book it."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import datetime as dt
 import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
     "backfill_leased_key_usage", Path(__file__).resolve().parents[1] / "scripts" / "backfill_leased_key_usage.py",
@@ -18,55 +20,60 @@ backfill = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = backfill
 _SPEC.loader.exec_module(backfill)
 
-A1 = "gwa-" + "1" * 32
-A2 = "gwa-" + "2" * 32
-A3 = "gwa-" + "3" * 32
-A4 = "gwa-" + "4" * 32
+A1, A2, A3, A4, A5 = ("gwa-" + digit * 32 for digit in "12345")
 KEY = "key_v2cQvb7NjlDKPiSAJ9qnD-RE"
 NOW = dt.datetime(2026, 10, 18, 18, 0, tzinfo=dt.UTC)  # a Sunday; the week floor is Monday 10-12
 UNTIL = dt.datetime(2026, 10, 18, 17, 0, tzinfo=dt.UTC)
 
 
-def _row(aid: str, created: str, cost: int, *, outcome: str = "settled", settled: bool = True) -> dict:
+def _won(aid: str, at: str, charge: int) -> str:
+    return f"{at}\tINFO trusted_router.fastpath fastpath pilot terminal won authorization_id={aid} kind=settle won=settle charge={charge} outcome="
+
+
+def _row(aid: str, cost: int, *, outcome: str = "settled", settled: bool = True) -> dict:
     return {
         "authorization_id": aid, "key_hash": KEY, "workspace_id": "ws-1", "settled": settled,
-        "finalization_outcome": outcome, "finalized_cost_microdollars": cost, "created_at": created,
+        "finalization_outcome": outcome, "finalized_cost_microdollars": cost,
     }
 
 
-def test_the_log_names_settled_leased_authorizations_and_their_charges() -> None:
+def test_the_log_names_settled_leased_authorizations_their_time_and_charge_and_the_deferred() -> None:
     lines = [
-        f"2026-10-17T05:00:00Z\tINFO trusted_router.fastpath fastpath pilot terminal won authorization_id={A1} kind=settle won=settle charge=306 outcome=",
+        _won(A1, "2026-10-17T05:00:00.123456Z", 306),
         f"2026-10-17T05:00:01Z\tINFO ... fastpath pilot terminal won authorization_id={A2} kind=refund won=refund charge=0 outcome=",
         f"2026-10-17T05:00:02Z\tINFO ... fastpath pilot terminal settled authorization_id={A3} kind=settle won= charge=0 outcome=settled",
+        f"2026-10-17T05:00:03Z\tWARNING ... fastpath pilot terminal undecided, left to the drain authorization_id={A4} why=settle: recorded",
+        f"2026-10-17T05:00:04Z\tERROR ... fastpath pilot records deferred after a decided terminal authorization_id={A5}",
+        f"2026-10-17T05:05:00Z\tWARNING ... settle outbox leased intent undecided authorization_id={A4} intent_kind=settle why=x age_seconds=300",
     ]
-    assert backfill.parse_log(lines) == {A1: 306}
+    settled, deferred = backfill.parse_log(lines)
+    assert settled == {A1: (dt.datetime(2026, 10, 17, 5, 0, 0, 123456, tzinfo=dt.UTC), 306)}
+    assert deferred == {A4, A5}
 
 
-def test_the_plan_books_each_charge_once_into_the_windows_it_falls_in() -> None:
-    charges = {A1: 100, A2: 20, A3: 7, A4: 5}
-    rows = [
-        _row(A1, "2026-10-17T05:00:00Z", 100),  # yesterday: lifetime, week, month; not today
-        _row(A2, "2026-10-18T06:00:00Z", 20),  # today: every window
-        _row(A3, "2026-10-18T17:30:00Z", 7),  # on or after --until: the finalize's own
-        _row(A4, "2026-10-18T07:00:00Z", 9),  # the record disagrees with the log
-    ]
-    entries, skipped = backfill.plan(rows, charges, until=UNTIL, now=NOW)
+def test_the_plan_books_each_charge_once_into_the_windows_its_settle_time_falls_in() -> None:
+    settled = {
+        A1: (dt.datetime(2026, 10, 17, 23, 59, tzinfo=dt.UTC), 100),  # yesterday: lifetime, week, month; not today
+        A2: (dt.datetime(2026, 10, 18, 6, 0, tzinfo=dt.UTC), 20),  # today: every window
+        A3: (dt.datetime(2026, 10, 18, 17, 30, tzinfo=dt.UTC), 7),  # on or after --until: the finalize's own
+        A4: (dt.datetime(2026, 10, 18, 7, 0, tzinfo=dt.UTC), 9),  # the record disagrees with the log
+        A5: (dt.datetime(2026, 10, 18, 8, 0, tzinfo=dt.UTC), 4),  # the drain was left to finish it
+    }
+    rows = [_row(A1, 100), _row(A2, 20), _row(A3, 7), _row(A4, 5), _row(A5, 4)]
+    entries, skipped = backfill.plan(rows, settled, {A5}, until=UNTIL, now=NOW)
     assert entries == [{"workspace_id": "ws-1", "key_hash": KEY, "usage": 120, "day": 20, "week": 120, "month": 120, "count": 2}]
-    assert [line.split(":")[0] for line in skipped] == [A3, A4]
+    assert sorted(line.split(":")[0] for line in skipped) == sorted([A3, A4, A5])
 
 
 def test_the_plan_skips_what_is_not_a_settled_record_and_names_missing_rows() -> None:
-    charges = {A1: 100, A2: 50}
-    rows = [_row(A1, "2026-10-18T06:00:00Z", 100, outcome="refunded", settled=True)]
-    entries, skipped = backfill.plan(rows, charges, until=UNTIL, now=NOW)
+    settled = {A1: (NOW, 100), A2: (NOW, 50)}
+    rows = [_row(A1, 100, outcome="refunded")]
+    entries, skipped = backfill.plan(rows, settled, set(), until=UNTIL, now=NOW)
     assert entries == []
     assert sorted(line.split(":")[0] for line in skipped) == [A1, A2]
 
 
 def test_the_update_refuses_a_key_hash_outside_its_charset() -> None:
-    import pytest
-
     with pytest.raises(ValueError):
         backfill.update_sql({"key_hash": "k' OR 1=1", "usage": 1, "day": 1, "week": 1, "month": 1}, now=NOW)
 

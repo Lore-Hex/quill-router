@@ -112,6 +112,7 @@ from trusted_router.storage_activity import (
 )
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_errors import (
+    LeasedOutcomeUnknown,
     StoreConflict,
     StoreUnavailable,
     is_duplicate_key_error,
@@ -5093,8 +5094,14 @@ class SpannerStore:
             # can follow a commit that applied. Read the row back before the
             # caller gives the hold back, since a row that landed is this
             # authorization, admitted, and a replay of it would be served
-            # under a hold the lease no longer has.
-            landed = self.get_gateway_authorization(authorization_id)
+            # under a hold the lease no longer has. A read that fails too
+            # (the route's budget is spent at a deadline) leaves the outcome
+            # unknown: the caller keeps the hold, which the lease ends
+            # uncharged at its end of life if no row landed.
+            try:
+                landed = self.get_gateway_authorization(authorization_id)
+            except Exception as read_exc:
+                raise LeasedOutcomeUnknown(authorization_id) from read_exc
             if landed is None:
                 raise
             return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), landed

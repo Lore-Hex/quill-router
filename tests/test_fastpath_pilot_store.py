@@ -345,6 +345,32 @@ def test_a_leased_insert_whose_outcome_is_unknown_is_read_back() -> None:
     assert "auth-lost" not in db.gateway_authorizations
 
 
+def test_a_leased_insert_whose_read_back_fails_too_keeps_the_hold() -> None:
+    """The route's budget can be spent by the deadline the insert answered
+    with: the read-back fails as well, and the outcome stays unknown. The
+    store says so, rather than letting the caller give the hold back."""
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+    from trusted_router.storage_errors import LeasedOutcomeUnknown
+
+    store, _db = _store()
+    workspace, key = _funded_workspace(store)
+
+    def lost(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise DeadlineExceeded("the answer was lost")
+
+    def budget_spent(self: Any, authorization_id: str) -> Any:
+        raise DeadlineExceeded("the budget is spent")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", lost)
+        patch.setattr(storage_gcp.SpannerStore, "get_gateway_authorization", budget_spent)
+        with pytest.raises(LeasedOutcomeUnknown) as caught:
+            _authorize(store, workspace, key, envelope="sealed-3", authorization_id="auth-unknown")
+    assert caught.value.authorization_id == "auth-unknown"
+
+
 def test_a_second_leased_settle_is_a_replay_not_a_second_record() -> None:
     store, db = _store()
     workspace, key = _funded_workspace(store)

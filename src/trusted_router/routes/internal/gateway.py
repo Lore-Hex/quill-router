@@ -236,6 +236,7 @@ from trusted_router.storage_custom_models import (
 )
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
+    LeasedOutcomeUnknown,
     StoreConflict,
     conflict_store_error_types,
     transient_store_error_types,
@@ -1859,6 +1860,20 @@ def _authorize_gateway_sync_impl(
                         else None
                     ),
                 )
+        except LeasedOutcomeUnknown as exc:
+            # The leased insert's outcome is unknown and could not be read
+            # back: the hold stays, so a row that landed keeps it and a
+            # replay is served under it; a row that did not land leaves the
+            # hold to end uncharged at its end of life. Only the slot goes.
+            release_user_model_slot_after_error()
+            logger.error(
+                "fastpath pilot hold kept, insert outcome unknown authorization_id=%s workspace_id=%s",
+                authorization_id,
+                workspace.id,
+            )
+            raise api_error(
+                503, "Authorization unavailable; retry", ErrorType.SERVICE_UNAVAILABLE, headers={"Retry-After": "1"},
+            ) from exc
         except conflict_store_error_types() as exc:
             release_after_error()
             # The generic 503 request log cannot identify a tenant hot row.
