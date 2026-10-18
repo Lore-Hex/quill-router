@@ -48,6 +48,14 @@ def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: 
             assert trusted["prompt_price_microdollars_per_million_tokens"] == 0
             assert trusted["completion_price_microdollars_per_million_tokens"] == 0
             continue
+        if fetch := trusted.get("fetch"):
+            assert model["id"] == "deepseek/fetch"
+            assert pricing == fetch["pricing"] == {"request": "0.000792"}
+            assert fetch["billing_unit"] == "successful_request"
+            assert trusted["prompt_price_microdollars_per_million_tokens"] == 0
+            assert trusted["completion_price_microdollars_per_million_tokens"] == 0
+            assert not trusted["supports_chat"]
+            continue
         if transcription := trusted.get("transcription"):
             assert pricing == transcription["pricing"]
             if transcription["billing_unit"] == "tokens":
