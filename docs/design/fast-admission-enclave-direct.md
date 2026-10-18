@@ -82,15 +82,19 @@ watch, and a way back that needs no deploy.
 - **What moves:** a Go edge on the fast path nodes, on a port of its own
   (W5 keeps `/v1` and `/owner` fleet-only), terminates the enclave's
   `/internal/gateway/*` for GCP enclaves behind `trustedrouter.com`: checks
-  the internal token, verifies the boot signature against a boot cache (the
-  `spend_lease_boot` rows and the signed digest policy Python refreshes
-  every 60 s), and proxies the request to Python unchanged, returning
-  Python's bytes unchanged.
+  the internal token, verifies the boot signature (the header, a registered
+  and verified boot from the `spend_lease_boot` rows, that boot's key over
+  the method, the path and the exact body), and proxies the request to
+  Python unchanged, returning Python's bytes unchanged. The signature
+  alone: Python's further questions, whether the body names the key the
+  signature is bound to and whether the boot's image digest is accepted,
+  stay Python's until E2, where the edge decides and needs them.
 - **Python keeps:** everything.
 - **Switch and way back:** the load balancer route, and an edge
   "pass everything" flag. Nothing durable changes.
-- **Measured:** the edge's added latency (under 1 ms p50); boot-verdict
-  parity with Python's, logged on both sides and alerted on any difference;
+- **Measured:** the edge's added latency (under 1 ms p50); the verdict's
+  parity with Python's own check of the same signature
+  (`verify_boot_signature`), logged on any difference;
   error-rate parity; the edge draining like a gateway at retirement and
   through a deploy (§4.12, W8).
 - **Why first:** it proves the host, TLS, load balancer, caller
