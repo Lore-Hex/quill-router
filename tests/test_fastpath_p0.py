@@ -9,6 +9,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_archive_deadline_covers_the_storage_flush_window() -> None:
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    archive = tf.split('resource "google_pubsub_subscription" "fastpath_archive" {', 1)[1]
+    archive = archive.split('\nresource "', 1)[0]
+    deadline = re.search(r"ack_deadline_seconds\s*=\s*(\d+)", archive)
+    duration = re.search(r'max_duration\s*=\s*"(\d+)s"', archive)
+    assert deadline and duration
+    assert int(deadline.group(1)) >= int(duration.group(1)) == 300
+
+
 def test_startup_script_gives_the_node_every_flag_it_needs() -> None:
     script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
     main = (ROOT / "fastpath" / "cmd" / "fastpath" / "main.go").read_text(encoding="utf-8")

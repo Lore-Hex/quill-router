@@ -114,7 +114,9 @@ resource "google_pubsub_subscription" "fastpath_archive" {
   project                    = local.gcp_project_id
   name                       = "${each.key}-archive"
   topic                      = each.value
-  ack_deadline_seconds       = 60
+  # Cloud Storage's max_duration cannot exceed this deadline. Preserve
+  # production's five-minute archive window on subsequent applies.
+  ack_deadline_seconds       = 300
   message_retention_duration = "604800s"
 
   expiration_policy {
