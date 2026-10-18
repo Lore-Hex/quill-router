@@ -59,8 +59,15 @@ in place. Recheck exact billing invariants, subscription lag, commit tails,
 and lock samples during representative traffic. The change is not a
 verified production repair until that rollout and observation are complete.
 
-The separate VM-local hourly audit wrapper's zero funding baseline is still
-an open investigation; this patch does not repair or suppress that audit.
+After operator reauthentication, the VM-local hourly audit loop was verified
+running with valid funding baselines and clean results for both pilot
+workspaces. The earlier caller that passed a zero baseline remains unidentified;
+this patch does not change balances or suppress the audit.
+
+PR #1839 and its main CI passed. Release-pin PR #1844 remains held because its
+Go gate exposed a separate [subscription shutdown cycle](2026-10-18-settlelog-shutdown.md).
+PR #1848 repairs that cycle. No production node has been replaced; the eventual
+pin must include both repairs and pass the normal release gates.
 
 ## Bounded tail diagnostic
 

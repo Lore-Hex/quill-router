@@ -462,13 +462,26 @@ func (s *Subscription) settle(m *pubsub.Message, ack bool) {
 // and comes back in its order. Nor does the library always let go of a
 // record its handler returned without settling, or one whose handler is
 // still running when it returns: it can go on extending its deadline, for up
-// to an hour. So when Receive returns it asks for every such record again
-// itself.
+// to an hour. Release every such record when cancellation starts or
+// Receive returns, whichever happens first. Waiting for Receive first can
+// deadlock with the library waiting for its message inventory to drain.
 func (s *Subscription) Receive(ctx context.Context, handle func(context.Context, *Delivery)) error {
 	// done is set, under s.mu, once Receive has asked again for what it
 	// held: a callback the library left running past its return keeps
 	// nothing, and asks for its record again too.
 	done := false
+	release := sync.OnceFunc(func() {
+		s.mu.Lock()
+		done = true
+		left := s.outstanding
+		s.outstanding = map[*pubsub.Message]bool{}
+		s.mu.Unlock()
+		for m := range left {
+			m.Nack()
+		}
+	})
+	stopRelease := context.AfterFunc(ctx, release)
+	defer stopRelease()
 	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
 		if beforeKeeping != nil {
 			beforeKeeping()
@@ -491,14 +504,7 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 		handle(cctx, &Delivery{Lease: lease, Data: m.Data, Attrs: m.Attributes, ID: m.ID,
 			PublishTime: m.PublishTime, Attempt: m.DeliveryAttempt, msg: m, sub: s})
 	})
-	s.mu.Lock()
-	done = true
-	left := s.outstanding
-	s.outstanding = map[*pubsub.Message]bool{}
-	s.mu.Unlock()
-	for m := range left {
-		m.Nack()
-	}
+	release()
 	return err
 }
 
@@ -567,12 +573,25 @@ func (s *RecordSubscription) settle(m *pubsub.Message, ack bool) {
 // service's does for one that comes once it is stopping, or whose handler
 // still runs when Receive returns, the client library can go on holding,
 // extending its deadline for up to an hour, as Subscription's Receive
-// says; so when Receive returns it asks for each such message again itself.
+// says; release each such message when cancellation starts or Receive
+// returns, without waiting for the library to drain that same inventory.
 func (s *RecordSubscription) Receive(ctx context.Context, handle func(context.Context, *RecordDelivery)) error {
 	// done is as Subscription's Receive keeps it: a callback the library
 	// left running past Receive's return keeps nothing, and asks for its
 	// message again, as one that begins once ctx has ended does.
 	done := false
+	release := sync.OnceFunc(func() {
+		s.mu.Lock()
+		done = true
+		left := s.outstanding
+		s.outstanding = map[*pubsub.Message]bool{}
+		s.mu.Unlock()
+		for m := range left {
+			m.Nack()
+		}
+	})
+	stopRelease := context.AfterFunc(ctx, release)
+	defer stopRelease()
 	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
 		if beforeKeeping != nil {
 			beforeKeeping()
@@ -588,13 +607,6 @@ func (s *RecordSubscription) Receive(ctx context.Context, handle func(context.Co
 		handle(cctx, &RecordDelivery{Authorization: m.Attributes[AuthorizationAttr], Kind: m.Attributes[KindAttr],
 			Data: m.Data, ID: m.ID, PublishTime: m.PublishTime, msg: m, sub: s})
 	})
-	s.mu.Lock()
-	done = true
-	left := s.outstanding
-	s.outstanding = map[*pubsub.Message]bool{}
-	s.mu.Unlock()
-	for m := range left {
-		m.Nack()
-	}
+	release()
 	return err
 }
