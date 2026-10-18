@@ -318,6 +318,10 @@ def _openai_service_tier_metadata(provider: str, model_id: str) -> dict[str, Any
 def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
     from trusted_router.speech import SPEECH_MODELS
     from trusted_router.transcription import TRANSCRIPTION_MODELS
+    from trusted_router.web_fetch import FETCH_MODEL_ID, fetch_pricing
+
+    if endpoint.model_id == FETCH_MODEL_ID:
+        return fetch_pricing()
 
     if transcription := TRANSCRIPTION_MODELS.get(endpoint.model_id):
         return transcription.pricing

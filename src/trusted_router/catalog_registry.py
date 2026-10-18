@@ -208,6 +208,7 @@ from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.request_capabilities import normalize_request_capabilities
 from trusted_router.speech import SPEECH_MODELS
 from trusted_router.transcription import TRANSCRIPTION_MODELS
+from trusted_router.web_fetch import FETCH_MODEL_ID, FETCH_PRICE_MICRODOLLARS, FETCH_PRICING_SOURCE
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1383,6 +1384,26 @@ for _transcription in TRANSCRIPTION_MODELS.values():
         ),
     )
 
+MODELS[FETCH_MODEL_ID] = Model(
+    id=FETCH_MODEL_ID, name="DeepSeek Fetch", provider="deepseek", upstream_id="fetch",
+    context_length=0, supports_chat=False, supports_messages=False,
+    prepaid_available=True, byok_available=False,
+    request_price_microdollars=FETCH_PRICE_MICRODOLLARS,
+    documentation=ModelDocumentation(
+        description="Fetch a public web page as Markdown. Billed per successful nonempty response, not tokens.",
+        input_format='POST /v1/tools/fetch with {"url":"https://example.com"}.',
+        output_format='JSON {"title":"...","content":"..."}. Billing is reported in response headers.',
+        example_input='{"url":"https://example.com"}',
+        example_output='{"title":"Example Domain","content":"# Example Domain"}',
+    ),
+)
+_MODEL_PROVIDER_PRIVACY_OVERRIDES[(FETCH_MODEL_ID, "deepseek")] = ModelProviderPrivacyOverride(
+    privacy_tier=0, provider_zero_data_retention=False,
+    provider_confidential_compute=False, provider_e2ee=False,
+    provider_policy="Standalone web fetching; no ZDR or confidential-inference commitment verified.",
+    provider_policy_url=FETCH_PRICING_SOURCE,
+)
+
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODELS[POLYPHEMUS_MODEL_ID] = Model(
     id=POLYPHEMUS_MODEL_ID,
@@ -1715,7 +1736,7 @@ HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
 HELD_PREPAID_SETTLEMENT_ENDPOINTS.update(_HELD_DECISION_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
-    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS) | frozenset(TRANSCRIPTION_MODELS),
+    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS) | frozenset(TRANSCRIPTION_MODELS) | {FETCH_MODEL_ID},
     at=CATALOG_RESOLVED_AT,
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)

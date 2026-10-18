@@ -263,6 +263,7 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
 )
 from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.transcription import TRANSCRIPTION_MODELS, transcription_metadata
+from trusted_router.web_fetch import FETCH_MODEL_ID, fetch_metadata, fetch_pricing
 
 # Uniform pricing: customer pays cost + 5.5%, floor $0.01/M tokens. Same
 # value goes into both `prompt_price_*` and `published_*` — TR no longer
@@ -729,6 +730,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         pricing = SPEECH_MODELS[model.id].non_token_pricing
     if model.id in TRANSCRIPTION_MODELS:
         pricing = TRANSCRIPTION_MODELS[model.id].pricing
+    if model.id == FETCH_MODEL_ID:
+        pricing = fetch_pricing()
     # The endpoint payloads have always published input_cache_read; the model
     # headline never did, so /v1/models hid the cache-read discount on more
     # than a thousand endpoints. OR convention, same field name.
@@ -893,6 +896,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         )
     if documentation is not None:
         tr_block["documentation"] = documentation
+    if model.id == FETCH_MODEL_ID:
+        tr_block["supports_fetch"] = True
+        tr_block["fetch"] = fetch_metadata()
     if model.id in SPEECH_MODELS:
         tr_block["speech"] = speech_metadata(model.id)
         tr_block["supports_speech"] = True

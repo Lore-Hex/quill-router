@@ -284,6 +284,18 @@ with httpx.Client() as client:
   </div>
 </section>
 
+<section class="marketing-section" id="web-fetch">
+  <h2>Web Fetch</h2>
+  <p><code>POST https://api.trustedrouter.com/v1/tools/fetch</code> forwards an explicitly submitted public URL to DeepSeek and returns <code>{"title":"...","content":"..."}</code>, with Markdown content.</p>
+  <pre><code>curl https://api.trustedrouter.com/v1/tools/fetch \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'</code></pre>
+  <p>Credits only; billed per successful nonempty response, with no token charge. See <a href="/models/deepseek/fetch/pricing">current pricing</a>. <code>X-Usage-Cost</code> reports USD and <code>X-Generation-Id</code> identifies the billing record. Failed fetches release the reservation. Reusing an idempotency key returns 409 without fetching again.</p>
+  <p>This endpoint is not ZDR or confidential inference. Those privacy floors reject the request. Do not submit URLs containing credentials or private access tokens. URLs and fetched text stay out of control-plane billing payloads and persistent router content storage.</p>
+  <p><a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/web-fetch.md">Fetch parameters, privacy, limits, and billing</a></p>
+</section>
+
 <section class="marketing-section" id="text-to-speech">
   <h2>Text to speech</h2>
   <p><code>POST https://api.trustedrouter.com/v1/audio/speech</code> accepts the OpenRouter speech format and returns raw audio. Use your existing TrustedRouter key and credits. Discover models, voices, formats, billing units, and prices at <a href="/v1/models?output_modalities=speech"><code>/v1/models?output_modalities=speech</code></a>.</p>
