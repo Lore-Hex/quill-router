@@ -38,17 +38,28 @@ def _row(aid: str, cost: int, *, outcome: str = "settled", settled: bool = True)
 
 
 def test_the_log_names_settled_leased_authorizations_their_time_and_charge_and_the_deferred() -> None:
+    """Lines in any order (the log reads newest first). A1 settled once,
+    with its authorize line before it. A4 settled and was named after by
+    any line, a failed terminal read here, so the drain may have finished
+    it. A5's latest won line counts, and the earlier one does not. A2 and A3
+    are no settles."""
     lines = [
-        _won(A1, "2026-10-17T05:00:00.123456Z", 306),
+        f"2026-10-17T05:10:00Z\tERROR ... fastpath pilot terminal read failed, left to the drain authorization_id={A4}",
+        _won(A4, "2026-10-17T05:09:00Z", 50),
+        _won(A5, "2026-10-17T05:08:00Z", 70),
+        _won(A5, "2026-10-17T05:07:00Z", 60),
         f"2026-10-17T05:00:01Z\tINFO ... fastpath pilot terminal won authorization_id={A2} kind=refund won=refund charge=0 outcome=",
         f"2026-10-17T05:00:02Z\tINFO ... fastpath pilot terminal settled authorization_id={A3} kind=settle won= charge=0 outcome=settled",
-        f"2026-10-17T05:00:03Z\tWARNING ... fastpath pilot terminal undecided, left to the drain authorization_id={A4} why=settle: recorded",
-        f"2026-10-17T05:00:04Z\tERROR ... fastpath pilot records deferred after a decided terminal authorization_id={A5}",
-        f"2026-10-17T05:05:00Z\tWARNING ... settle outbox leased intent undecided authorization_id={A4} intent_kind=settle why=x age_seconds=300",
+        _won(A1, "2026-10-17T05:00:00.123456Z", 306),
+        f"2026-10-17T04:59:59Z\tINFO ... fastpath pilot authorize admitted workspace_id=w authorization_id={A1} ms=9.9",
     ]
     settled, deferred = backfill.parse_log(lines)
-    assert settled == {A1: (dt.datetime(2026, 10, 17, 5, 0, 0, 123456, tzinfo=dt.UTC), 306)}
-    assert deferred == {A4, A5}
+    assert settled == {
+        A1: (dt.datetime(2026, 10, 17, 5, 0, 0, 123456, tzinfo=dt.UTC), 306),
+        A4: (dt.datetime(2026, 10, 17, 5, 9, tzinfo=dt.UTC), 50),
+        A5: (dt.datetime(2026, 10, 17, 5, 8, tzinfo=dt.UTC), 70),
+    }
+    assert deferred == {A4}
 
 
 def test_the_plan_books_each_charge_once_into_the_windows_its_settle_time_falls_in() -> None:

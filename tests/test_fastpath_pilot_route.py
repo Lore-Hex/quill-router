@@ -670,17 +670,17 @@ def test_the_drain_parks_an_undecided_leased_intent_without_spending_an_attempt(
 
 
 def test_a_failed_insert_after_admission_gives_the_hold_back(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
-    from google.api_core.exceptions import DeadlineExceeded
-
+    """An insert that failed for certain (the store raised something other
+    than an unknown outcome): the hold goes back at once."""
     from trusted_router import storage_gcp
 
     store, _database, key = _seed()
 
     def failing(*_args: Any, **_kwargs: Any) -> None:
-        raise DeadlineExceeded("spanner")
+        raise RuntimeError("the insert was refused")
 
     monkeypatch.setattr(storage_gcp.SpannerStore, "_authorize_gateway_leased", failing)
-    with pytest.raises(DeadlineExceeded):
+    with pytest.raises(RuntimeError):
         gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())
     assert [path for path, _sent in door.seen] == ["/v1/authorize", "/v1/refund"]
     assert door.seen[1][1]["Envelope"] == "sealed-pilot"

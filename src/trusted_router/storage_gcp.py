@@ -5091,19 +5091,18 @@ class SpannerStore:
             if not is_transient_store_error(exc):
                 raise
             # The commit's outcome is unknown: a deadline or a lost answer
-            # can follow a commit that applied. Read the row back before the
-            # caller gives the hold back, since a row that landed is this
-            # authorization, admitted, and a replay of it would be served
-            # under a hold the lease no longer has. A read that fails too
-            # (the route's budget is spent at a deadline) leaves the outcome
-            # unknown: the caller keeps the hold, which the lease ends
-            # uncharged at its end of life if no row landed.
+            # can follow a commit that applied, or one still in flight. A
+            # row read back is this authorization, admitted. No row proves
+            # nothing (a read does not fence a commit that lands after it),
+            # and a read that fails (the route's budget spent at a deadline)
+            # neither: the caller keeps the hold, which a row that lands
+            # uses and the lease ends uncharged at its end of life otherwise.
             try:
                 landed = self.get_gateway_authorization(authorization_id)
             except Exception as read_exc:
                 raise LeasedOutcomeUnknown(authorization_id) from read_exc
             if landed is None:
-                raise
+                raise LeasedOutcomeUnknown(authorization_id) from exc
             return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), landed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
 

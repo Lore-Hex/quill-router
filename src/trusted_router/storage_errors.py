@@ -54,8 +54,8 @@ class StoreUnavailable(StoreError):
 
 class LeasedOutcomeUnknown(StoreError):
     """A leased authorization's insert answered with a transient error and
-    the read-back failed too: the row may or may not have landed. The
-    caller keeps the hold the lease granted, which a row that landed uses
+    no read-back proved the row landed: it may have, or may still land. The
+    caller keeps the hold the lease granted, which a row that lands uses
     and a lease ends uncharged at its end of life otherwise."""
 
     def __init__(self, authorization_id: str) -> None:

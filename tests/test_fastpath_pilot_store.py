@@ -312,7 +312,7 @@ def test_a_leased_refund_marks_the_authorization_refunded_with_no_generation() -
 def test_a_leased_insert_whose_outcome_is_unknown_is_read_back() -> None:
     """A commit can apply and still answer with a deadline or a lost
     answer. The row that landed is this authorization, admitted; without
-    one, the error stands and the caller gives the hold back."""
+    one, the outcome stays unknown and the caller keeps the hold."""
     from google.api_core.exceptions import DeadlineExceeded
 
     from trusted_router import storage_gcp
@@ -335,14 +335,26 @@ def test_a_leased_insert_whose_outcome_is_unknown_is_read_back() -> None:
     assert "auth-landed" in db.gateway_authorizations
     assert len(_reservations(db, workspace.id)) == 1
 
-    def lost_before_commit(database: Any, txn: Any, **kwargs: Any) -> Any:
-        raise DeadlineExceeded("nothing landed")
+    # No row read back proves nothing: the commit may still land. The
+    # outcome is unknown and the caller keeps the hold.
+    from trusted_router.storage_errors import LeasedOutcomeUnknown
+
+    def lost_in_flight(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise DeadlineExceeded("no answer")
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(storage_gcp, "run_in_transaction_with_retry", lost_before_commit)
-        with pytest.raises(DeadlineExceeded):
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", lost_in_flight)
+        with pytest.raises(LeasedOutcomeUnknown):
             _authorize(store, workspace, key, envelope="sealed-2", authorization_id="auth-lost")
     assert "auth-lost" not in db.gateway_authorizations
+    # A failure that is not transient is a failure: the caller gives the hold back.
+    def refused(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise ValueError("not a transient error")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", refused)
+        with pytest.raises(ValueError, match="not a transient"):
+            _authorize(store, workspace, key, envelope="sealed-4", authorization_id="auth-refused")
 
 
 def test_a_leased_insert_whose_read_back_fails_too_keeps_the_hold() -> None:

@@ -8,24 +8,27 @@ lines, and prints one UPDATE per key for the operator to run (one statement
 each, through `gcloud spanner databases execute-sql`, under a named
 identity); it writes nothing itself.
 
-Input: the pilot's log lines, as
+Input: the pilot's log lines, every line that names an authorization, as
 
     gcloud logging read 'resource.type="cloud_run_revision" AND
-      textPayload:"fastpath pilot" AND timestamp>="2026-10-17T04:50:00Z"'
+      (textPayload:"fastpath pilot" OR textPayload:"settle outbox") AND
+      timestamp>="2026-10-17T04:50:00Z"'
       --format='value(timestamp,textPayload)'
 
-A settle counts when its `fastpath pilot terminal won ... kind=settle
+A settle counts when its latest `fastpath pilot terminal won ... kind=settle
 won=settle` line is before `--until` (the fix's deploy, less a margin) and
-no line says the drain was left to finish it (`terminal undecided`,
-`records deferred`, `leased intent undecided`), since a finalize after the
-deploy booked the key itself. Its windows are those of its settle time, the
-log line's, as `release_key` books into the window containing the
-settlement. The authorizations are point-read by primary key, in bounded
-chunks, for the key and the recorded cost, which must equal the log's
-charge. The UPDATE rolls a stale window forward as `release_key`'s window
-SQL does. The key's counters are printed with the plan, so the operator can
-check the row after the statement ran, and a lost answer to the statement
-is settled by reading the row, not by running it again.
+no line at all names the authorization after it: a later line, whatever it
+says (a terminal read that failed, records deferred, a parked or undecided
+intent), means the drain may have finished the terminal under the fixed
+code, which booked the key itself; those are left to the operator. Its
+windows are those of its settle time, the log line's, as `release_key`
+books into the window containing the settlement. The authorizations are
+point-read by primary key, in bounded chunks, for the key and the recorded
+cost, which must equal the log's charge. The UPDATE rolls a stale window
+forward as `release_key`'s window SQL does. The key's counters are printed
+with the plan, so the operator can check the row after the statement ran,
+and a lost answer to the statement is settled by reading the row, not by
+running it again.
 """
 
 from __future__ import annotations
@@ -49,10 +52,7 @@ READ_ACCOUNT = "tr-ops-local@quill-cloud-proxy.iam.gserviceaccount.com"
 CHUNK = 200
 GCLOUD = shutil.which("gcloud") or "gcloud"
 _WON = re.compile(r"^(\S+)\s.*fastpath pilot terminal won authorization_id=(gwa-[0-9a-f]{32}) kind=settle won=settle charge=(\d+)")
-_LATER = re.compile(
-    r"(?:fastpath pilot terminal undecided, left to the drain|fastpath pilot records deferred after a decided terminal"
-    r"|settle outbox leased intent undecided) authorization_id=(gwa-[0-9a-f]{32})"
-)
+_NAMED = re.compile(r"^(\S+)\s.*authorization_id=(gwa-[0-9a-f]{32})")
 _ID = re.compile(r"^gwa-[0-9a-f]{32}$")
 # Key hashes are `key_` and a URL-safe base64 digest (storage_models.ApiKey).
 _KEY_HASH = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
@@ -63,18 +63,24 @@ def _when(text: str) -> dt.datetime:
 
 
 def parse_log(lines: list[str]) -> tuple[dict[str, tuple[dt.datetime, int]], set[str]]:
-    """Each settled leased authorization with its settle time and the charge
-    the owner booked; and the authorizations the drain was left to finish."""
+    """Each settled leased authorization with its latest settle time and the
+    charge the owner booked then; and the authorizations some line names
+    after that, which the drain may have finished. Lines come in any order."""
     settled: dict[str, tuple[dt.datetime, int]] = {}
-    deferred: set[str] = set()
+    latest_named: dict[str, dt.datetime] = {}
     for line in lines:
         won = _WON.search(line)
         if won is not None:
-            settled[won.group(2)] = (_when(won.group(1)), int(won.group(3)))
+            at = _when(won.group(1))
+            if won.group(2) not in settled or at > settled[won.group(2)][0]:
+                settled[won.group(2)] = (at, int(won.group(3)))
             continue
-        later = _LATER.search(line)
-        if later is not None:
-            deferred.add(later.group(1))
+        named = _NAMED.search(line)
+        if named is not None:
+            at = _when(named.group(1))
+            if named.group(2) not in latest_named or at > latest_named[named.group(2)]:
+                latest_named[named.group(2)] = at
+    deferred = {aid for aid, (at, _charge) in settled.items() if aid in latest_named and latest_named[aid] > at}
     return settled, deferred
 
 
