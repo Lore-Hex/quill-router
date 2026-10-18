@@ -14,9 +14,9 @@ locals {
   fastpath_region = "us-central1"
   # A main commit whose CI passed and whose binaries fastpath-release.yml
   # uploaded; a node picks a new one up when reset or replaced
-  # (docs/runbooks/fastpath-p0.md). bfa94e22e: the merge of #1728, P1's run,
-  # the first release carrying loadgen, fastpathwatch and load-mix.json.
-  fastpath_release        = "93e69666a094e1169f3e507096d302eb40476f3c"
+  # (docs/runbooks/fastpath-deploy.md). #1839 removes ordinary auditor
+  # commit locks on the renewal columns without changing billing arithmetic.
+  fastpath_release        = "54e14f4a1e5d5a0cb42b4f2ed52213ea51a5143f"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -111,10 +111,12 @@ resource "google_pubsub_subscription" "fastpath_archive" {
     "records"    = google_pubsub_topic.fastpath_records.id
   }
 
-  project                    = local.gcp_project_id
-  name                       = "${each.key}-archive"
-  topic                      = each.value
-  ack_deadline_seconds       = 60
+  project = local.gcp_project_id
+  name    = "${each.key}-archive"
+  topic   = each.value
+  # Cloud Storage's max_duration cannot exceed this deadline. Preserve
+  # production's five-minute archive window on subsequent applies.
+  ack_deadline_seconds       = 300
   message_retention_duration = "604800s"
 
   expiration_policy {
