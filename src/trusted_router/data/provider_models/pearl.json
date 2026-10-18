@@ -340,7 +340,6 @@
         "temperature",
         "top_p",
         "top_k",
-        "min_p",
         "frequency_penalty",
         "presence_penalty",
         "stop",
@@ -480,6 +479,6 @@
       "cached_input_token_price_per_m": 4000
     }
   ],
-  "generated_at": "2026-10-18T09:53:43Z",
+  "generated_at": "2026-10-18T14:10:02Z",
   "model_count": 11
 }

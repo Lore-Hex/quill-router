@@ -174,8 +174,7 @@
       "routable": false,
       "routable_reason": "decision-model-namespace-unsupported",
       "input_token_price_per_m": 35000,
-      "output_token_price_per_m": 0,
-      "missing_since": "2026-10-18"
+      "output_token_price_per_m": 0
     },
     {
       "display_name": "Decision Models s1-fast-2 (GLOBAL)",
@@ -312,7 +311,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-10-18T09:53:43Z",
+  "generated_at": "2026-10-18T14:10:02Z",
   "price_scale": "microdollars_per_million",
   "model_count": 9,
   "pricing_valid_until": "2026-11-12T00:00:00Z"
