@@ -16,9 +16,12 @@ lock-wait seconds on one lease during the minute ending 06:14. This identifies
 contention, but does not establish which operation produced the notified tail
 latency. An average is not a substitute for the missing percentile breakdown.
 
-The read-only ops identity cannot read Cloud Monitoring time series; the
-existing operator login also requires reauthentication. The precise trigger
-remains open. No latency threshold, timeout, or billing invariant was relaxed.
+Subsequent transaction histograms and lock samples identified unnecessary
+expiry reads and revocation writes in the auditor commit, conflicting with
+lease renewal. See [the lease-lock investigation](2026-10-18-fastpath-lease-locks.md)
+for both alert windows and the repair in PR #1839. The renewed operator login
+also permits the deployment checks; the read-only ops identity was not broadened.
+No latency threshold, timeout, or billing invariant was relaxed.
 
 ## Earlier Spanner API failures
 
@@ -45,11 +48,14 @@ zero while the typed credit rows contained positive funding. Current indexed
 reads corroborate the positive funding and nonnegative available balances.
 This is not evidence that money disappeared.
 
-The hourly wrapper lives on the VM outside the repository. The ops identity's
-SSH was denied and the operator session has expired, so its parsing, process
-liveness, and subsequent hourly results have not been verified. Absence of
-new error logs is not proof that the audit is still running. Do not suppress
-the audit, rewrite customer balances, or claim this wrapper is repaired.
+After operator reauthentication, direct VM inspection confirmed the hourly
+wrapper was running continuously since October 17 05:15:23. Its indexed funding
+read rejects unreadable or nonnumeric output instead of defaulting to zero.
+Every recorded hourly audit for both pilot workspaces passed through October 18
+18:18:26. The first successful record at October 17 05:15:13 predates the current
+loop. The earlier 05:13 caller that explicitly supplied zero is not identified;
+this investigation did not modify the wrapper or customer balances. Preserve
+the VM-local loop when replacing the fast-path service.
 
 ## Confirmed repair: product-notice permission
 
@@ -63,8 +69,11 @@ Applied the separate, exact-sender policy documented in
 the denial before the repair, then allowed both required resource ARNs;
 alternate From addresses still failed. Readback matched the checked-in policy.
 No new CI IAM permissions, customer email rollout, or suppression changes were
-made. Actual application delivery must still be checked on a later preview
-or an operator-only canary.
+made. An operator-only canary using the application's actual SES sender identity
+and notices configuration set was accepted with HTTP 200 by SES, addressed only
+to Amazon's success mailbox simulator. Message ID:
+`010001a15075c243-4a9fd9b8-2367-49ec-9f46-6ebb1eaf00d6-000000`.
+This verifies real send authorization, not delivery to a customer's inbox.
 
 ## Serving and rollout checks
 
@@ -79,3 +88,10 @@ investigation. No traffic moved. Its completed owner and unchanged, healthy
 regional services permit recovery of that run's GCP reservation through the
 reviewed coordinator workflow. The separate manual AWS gateway reservation
 must not be cleared or borrowed.
+
+The later recovery workflow 39107703646 completed successfully. At October 18
+20:46, public status was up and a bounded Cloud Run check found no error-level
+or HTTP 5xx records since 20:00. The fast-path lock repair is merged but not
+deployed: release-pin PR #1844 is held after its CI exposed the separate
+[subscription shutdown cycle](2026-10-18-settlelog-shutdown.md), repaired in
+PR #1848. Neither production node was drained or replaced during these checks.
