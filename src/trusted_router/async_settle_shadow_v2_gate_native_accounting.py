@@ -19,7 +19,7 @@ from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
 
 
-def select_registrations(files: Mapping[str, bytes], declared_paths: Iterable[str],
+def registration_candidates(files: Mapping[str, bytes], declared_paths: Iterable[str],
                          registrations: tuple[dict[str, Any], ...] | None) -> tuple[dict[str, Any], ...]:
     """Only an absent declaration permits the conventional-path fallback."""
     from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
@@ -33,6 +33,18 @@ def select_registrations(files: Mapping[str, bytes], declared_paths: Iterable[st
     return tuple(dict(path=path, bytes=len(raw), sha256=file_digest(raw))
                  for path, raw in files.items() if path not in declared
                  and (path == 'stage/producer-captures.json' or path.endswith('/stage/producer-captures.json')))
+
+
+def select_registrations(files: Mapping[str, bytes], declared_paths: Iterable[str],
+                         registrations: tuple[dict[str, Any], ...] | None) -> tuple[dict[str, Any], ...]:
+    """Fix the effective selection only after the complete declared-role walk."""
+    from trusted_router.async_settle_shadow_v2_a2_evidence import MAX_PRODUCER_REGISTRATIONS
+    from trusted_router.async_settle_shadow_v2_gate_loading import PayloadError
+
+    selected = registration_candidates(files, declared_paths, registrations)
+    if len(selected) > MAX_PRODUCER_REGISTRATIONS:
+        raise PayloadError('transport/producer_registrations', 'evidence_schema_gap')
+    return selected
 
 
 def accounting_prefixes(files: Mapping[str, bytes], paths: Iterable[str],
@@ -119,7 +131,7 @@ def consume(graph: Any, payloads: dict[str, Any], rows: tuple[Any, ...], attachm
     if graph.producer_registrations is None:
         from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
         roles = dependencies(graph.files, payloads, graph.ports, 'post-flip', graph.ledgers,
-                             producer_registrations=(), _roles_only=True) if select_registrations(graph.files, (), None) else {}
+                             producer_registrations=(), _roles_only=True) if registration_candidates(graph.files, (), None) else {}
         graph.producer_registrations = select_registrations(graph.files, roles, None)
     totals = []
     for key, envelope in payloads.items():

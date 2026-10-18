@@ -68,7 +68,7 @@ def file_list(raw: bytes) -> Any:
 def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: Any, stage: str, ledgers: tuple[bytes, ...] = (), *,
                  references: dict[str, list[dict[str, Any]]] | None = None,
                  producer_registrations: tuple[dict[str, Any], ...] | None = None,
-                 _roles_only: bool = False, parsers: dict[str, Parser] | None = None) -> dict[str, Parser]:
+                 _roles_only: bool = False, _registrations_selected: bool = False, parsers: dict[str, Parser] | None = None) -> dict[str, Parser]:
     """Follow descriptors, including page links, without checking references.
 
     The independently approved file inventory resolves missing canonical pages
@@ -245,12 +245,14 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
     else:
         from trusted_router.async_settle_shadow_v2_gate_native_accounting import (
             accounting_page,
+            registration_candidates,
             select_registrations,
         )
         roles = (dependencies(files, payloads, ports, 'post-flip', ledgers,
                               producer_registrations=(), _roles_only=True)
-                 if producer_registrations is None and select_registrations(files, (), None) else parsers)
-        registrations = select_registrations(files, roles, producer_registrations)
+                 if producer_registrations is None and registration_candidates(files, (), None) else parsers)
+        registrations = (producer_registrations if _registrations_selected and producer_registrations is not None
+                         else select_registrations(files, roles, producer_registrations))
         prefixes = accounting_prefixes(files, accounting, registrations, parsers=parsers)
         for origin, node in accounting.items():
             prefix = prefixes.get(origin, '')

@@ -1781,3 +1781,74 @@ def test_round18_registration_envelope_arithmetic(originals: Any) -> None:
     assert (envelope, len(canonical(report)), 16384 - envelope) == (16013, 58737, 371)
     assert len(canonical(report)) <= 65536
     a2.GATE_REPORT(report)
+
+
+@pytest.mark.parametrize('count,explicit', [(1, False), (2, False), (3, False), (3, True)],
+                         ids=['fallback-1', 'fallback-2', 'fallback-3', 'explicit-3'])
+def test_round19_effective_registration_count(originals: Any, tmp_path: Path, monkeypatch: Any,
+                                                count: int, explicit: bool) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+
+    paths = [f'history-{i}/stage/producer-captures.json' for i in range(count)]
+    raw, ports = _round18_registrations(originals, paths)
+    value = json.loads(raw)
+    expected_refs = tuple(value['producer_registrations'])
+    if not explicit:
+        value.pop('producer_registrations')
+    raw = canonical(value)
+    select = consumer.select_registrations
+    selections = []
+    def selected(files: Any, roles: Any, registrations: Any) -> Any:
+        selections.append(registrations)
+        return select(files, roles, registrations)
+    with monkeypatch.context() as patch:
+        patch.setattr(consumer, 'select_registrations', selected)
+        loaded = load(raw, ports, gate='fleet-budgets-pre')
+    assert len(selections) == 1
+    issues = [issue for issue in loaded.a2_streams['loading_issues'] if issue['path'] == 'transport/producer_registrations']
+    assert issues == ([dict(gap='evidence_schema_gap', path='transport/producer_registrations', detail='evidence_schema_gap')]
+                      if count == 3 else [])
+    assert loaded.producer_registrations == (() if count == 3 else expected_refs)
+    if count < 3:
+        assert loaded.a2_streams['loading_issues'] == []
+    result = evaluate(loaded, ports, gate='fleet-budgets-pre')
+    rendered = render(result)
+    assert isinstance(rendered, tuple)
+    assert result.gate_report['producer_registrations'] == list(loaded.producer_registrations)
+    expected = json.loads(rendered[0])
+    assert expected['verdict'] == ('BLOCKED' if count == 3 else 'PASS')
+    assert library(raw, ports, 'fleet-budgets-pre') == expected
+    for which in ('report', 'pilot'):
+        assert tool(raw, ports, tmp_path / which, which, gate='fleet-budgets-pre') == expected
+
+
+def test_round19_prior_fallback_registration_count(originals: Any, tmp_path: Path, monkeypatch: Any) -> None:
+    from trusted_router import async_settle_shadow_v2_gate_prior as prior
+    from trusted_router.async_settle_shadow_v2_gate_loading import PayloadError
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+
+    original, ports, _ = originals
+    value = json.loads(transport(original))
+    value['producer_registrations'] = []
+    paths = [f'history-{i}/stage/producer-captures.json' for i in range(3)]
+    value['preimages'] += [dict(name=path, raw='{}') for path in paths]
+    loaded = load(canonical(value), ports, gate='fleet-budgets-pre')
+    assert loaded.a2_streams['loading_issues'] == []
+    result = evaluate(loaded, ports, gate='fleet-budgets-pre')
+    assert result.verdict == 'PASS'
+    replay = _round17_replay(original, loaded, result, old_registration=True)
+    resolve = prior._resolve
+    gaps = []
+    def resolved(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return resolve(*args, **kwargs)
+        except PayloadError as exc:
+            gaps.append((exc.path, str(exc)))
+            raise
+    monkeypatch.setattr(prior, '_resolve', resolved)
+    prior._VERIFIED.clear()
+    output = through_all(replay, ports, tmp_path, 'fleet-budgets')
+    assert output['verdict'] == 'BLOCKED'
+    assert set(output['gaps']) == {'artifact_gap', 'pre_enable_budget'}
+    assert gaps and set(gaps) == {('transport/producer_registrations', 'evidence_schema_gap')}

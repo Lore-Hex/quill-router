@@ -178,9 +178,21 @@ class PayloadGraph:
     def materialize_gate(self, payloads: dict[str, dict[str, Any]]) -> None:
         """Apply gate-stage dependency checks before shared payload assembly."""
         from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+        from trusted_router.async_settle_shadow_v2_gate_native_accounting import (
+            registration_candidates,
+            select_registrations,
+        )
+        roles = (dependencies(self.files, payloads, self.ports, 'post-flip', self.ledgers,
+                              producer_registrations=(), _roles_only=True)
+                 if self.producer_registrations is None and registration_candidates(self.files, (), None) else {})
+        try:
+            self.producer_registrations = select_registrations(self.files, roles, self.producer_registrations)
+        except PayloadError as exc:
+            self.producer_registrations = ()
+            self.reject(exc.path, exc)
         references: dict[str, list[dict[str, Any]]] = {}
         self.parsers.update(dependencies(self.files, payloads, self.ports, self.stage, self.ledgers, references=references,
-            producer_registrations=self.producer_registrations, parsers=self.parsers))
+            producer_registrations=self.producer_registrations, _registrations_selected=True, parsers=self.parsers))
         for path, parser in self.parsers.items():
             try:
                 if path not in self.files:
