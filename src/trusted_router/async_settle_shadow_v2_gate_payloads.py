@@ -180,7 +180,7 @@ class PayloadGraph:
         from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
         references: dict[str, list[dict[str, Any]]] = {}
         self.parsers.update(dependencies(self.files, payloads, self.ports, self.stage, self.ledgers, references=references,
-            producer_registrations=self.producer_registrations))
+            producer_registrations=self.producer_registrations, parsers=self.parsers))
         for path, parser in self.parsers.items():
             try:
                 if path not in self.files:

@@ -253,7 +253,7 @@ def _inventory_originals(ctx: Context) -> tuple[dict[str, bytes], list[dict[str,
             file=dict(path=path, sha256=roots.file_digest(raw), bytes=len(raw))))
 
     for member in ('rows', 'attachments'):
-        for row in getattr(ctx.bundle, member):
+        for row in dict.fromkeys(getattr(ctx.bundle, member)):
             add(member, 'rows/' + row.key.kind + '/' + row.key.id + '/' + roots.file_digest(row.raw),
                 row.raw, row.key.kind, row.key.id)
     for raw in ctx.bundle.ledgers:

@@ -68,7 +68,7 @@ def file_list(raw: bytes) -> Any:
 def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: Any, stage: str, ledgers: tuple[bytes, ...] = (), *,
                  references: dict[str, list[dict[str, Any]]] | None = None,
                  producer_registrations: tuple[dict[str, Any], ...] | None = None,
-                 _roles_only: bool = False) -> dict[str, Parser]:
+                 _roles_only: bool = False, parsers: dict[str, Parser] | None = None) -> dict[str, Parser]:
     """Follow descriptors, including page links, without checking references.
 
     The independently approved file inventory resolves missing canonical pages
@@ -80,7 +80,8 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
         accounting_root,
     )
 
-    parsers: dict[str, Parser] = {}
+    if parsers is None:
+        parsers = {}
     decoded: dict[str, Any] = {}
     by_digest: dict[str, str] = {}
     if isinstance(ports, LoadingPorts) and ports.release is not None:
@@ -250,7 +251,7 @@ def dependencies(files: Mapping[str, bytes], payloads: dict[str, Any], ports: An
                               producer_registrations=(), _roles_only=True)
                  if producer_registrations is None and select_registrations(files, (), None) else parsers)
         registrations = select_registrations(files, roles, producer_registrations)
-        prefixes = accounting_prefixes(files, accounting, registrations)
+        prefixes = accounting_prefixes(files, accounting, registrations, parsers=parsers)
         for origin, node in accounting.items():
             prefix = prefixes.get(origin, '')
             for refs in node['details'].values():

@@ -260,7 +260,7 @@ def signature_views(graph: PayloadGraph, rows: tuple[Row, ...], payloads: dict[s
         from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
         roles = dependencies(graph.files, payloads, graph.ports, 'post-flip', graph.ledgers,
                              producer_registrations=(), _roles_only=True)
-        if path in roles:
+        if path in roles or path in graph.parsers:
             raw = None
     if raw is None:
         raw = b'[]'

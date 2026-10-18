@@ -36,7 +36,8 @@ def select_registrations(files: Mapping[str, bytes], declared_paths: Iterable[st
 
 
 def accounting_prefixes(files: Mapping[str, bytes], paths: Iterable[str],
-                        registrations: Iterable[dict[str, Any]] = ()) -> dict[str, str]:
+                        registrations: Iterable[dict[str, Any]] = (), *,
+                        parsers: dict[str, Any] | None = None) -> dict[str, str]:
     """Check each selected registration and capture before resolving scope."""
     from trusted_router import async_settle_shadow_v2_a2_evidence as a2
     from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
@@ -48,6 +49,8 @@ def accounting_prefixes(files: Mapping[str, bytes], paths: Iterable[str],
         path = ref['path'] if isinstance(ref, dict) and isinstance(ref.get('path'), str) else owner
         try:
             a2.FILE_REF(ref)
+            if parsers is not None:
+                parsers.setdefault(path, retained_json)
             raw = files[path]
             require(len(raw) == ref['bytes'] and file_digest(raw) == ref['sha256'])
             return retained_json(raw)

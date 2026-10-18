@@ -125,8 +125,6 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
     from trusted_router.async_settle_shadow_v2_gate_native_accounting import select_registrations
     from trusted_router.async_settle_shadow_v2_gate_release import release_checks
     roles = dependencies(inventory, payloads, prior_ports, 'post-flip', producer_registrations=(), _roles_only=True)
-    registrations = select_registrations(inventory, roles, registrations)
-    graph.producer_registrations = registrations
     release_checks(graph, payloads)
     graph.detail(payloads['proof.post_budget_sha256']['v2_load']['segments'], 'segments')
     # Release files are live trusted checkout inputs even on a cache hit.
@@ -159,11 +157,6 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
                roots.file_digest(a.keyset), a.keys, a.source_pin, a.fixture_pin) for a in prior_ports.approvals),
         trusted, contract.validate_preimages, contract.validate_gate_output, Schema.parse, Schema._validate,
         load, evaluate, render)
-    if cache_key in _VERIFIED:
-        _VERIFIED.move_to_end(cache_key)
-        require(_VERIFIED[cache_key], 'artifact_gap')
-        return dict(verdict='PASS', gate=report['gate'], completed_at_us=report['completed_at_us'])
-    boots = graph.inventory(payloads, prior_ports)
     rows: list[Row] = []
     attachments: list[Row] = []
     ledgers: list[bytes] = []
@@ -215,6 +208,15 @@ def _resolve(ctx: Context, name: str, output: dict[str, Any]) -> dict[str, Any]:
                 ledgers.append(raw)
             elif path in ('prior-gates/transport', 'prior-gates/pre', 'prior-gates/fleet', 'prior-gates/serving'):
                 gates[path.split('/')[1]] = raw
+    roles = dependencies(inventory, payloads, prior_ports, 'post-flip', tuple(ledgers),
+                         producer_registrations=(), _roles_only=True)
+    registrations = select_registrations(inventory, roles, registrations)
+    graph.producer_registrations = registrations
+    if cache_key in _VERIFIED:
+        _VERIFIED.move_to_end(cache_key)
+        require(_VERIFIED[cache_key], 'artifact_gap')
+        return dict(verdict='PASS', gate=report['gate'], completed_at_us=report['completed_at_us'])
+    boots = graph.inventory(payloads, prior_ports)
     parsed_ledgers = {roots.file_digest(raw): a1.PREREQUISITE_LEDGER.parse(raw) for raw in ledgers}
     ledger_counts = Counter(roots.file_digest(raw) for raw in ledgers)
     # Reconstruct ledger order from links; inventory path order is not chain order.
