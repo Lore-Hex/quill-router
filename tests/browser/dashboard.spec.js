@@ -3,25 +3,18 @@ const { expect, test } = require("@playwright/test");
 test("homepage opens sign-in modal and handles missing MetaMask", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", {
-    name: "600+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
-  })).toBeVisible();
-  const headlineLines = page.locator(".charter-home-hero h1 .hero-line");
-  await expect(headlineLines).toHaveCount(3);
-  await expect(headlineLines.first()).toHaveCSS("display", "block");
-  await expect(headlineLines.last()).toHaveCSS("display", "block");
-  await expect(page.locator(".charter-home-hero .lead-claim")).toHaveText(
-    "Better privacy, better prices, better uptime, no subscriptions.",
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
+  await expect(page.locator("#top .hero-promises li")).toHaveCount(4);
+  await expect(page.locator("#top .hero .sub")).toHaveText(
+    "Access hundreds of models confidentially through a single OpenAI-compatible API.",
   );
-  const homepageStats = page.locator(".charter-stat-band .charter-stat");
-  await expect(homepageStats).toHaveCount(3);
-  await expect(homepageStats.nth(0)).toContainText("600+AI models");
-  await expect(homepageStats.nth(1)).toContainText("100+providers");
-  await expect(homepageStats.last()).toContainText("3 cloudsGCP · AWS · Azure");
-  await expect(page.locator(".region-map-card")).toHaveCount(0);
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Create my API key");
+  await expect(page.locator("#top .cta-note")).toContainText("No card required");
   await expect(page.locator("body")).toHaveCSS("font-size", "16px");
-  await expect(page.locator(".charter-pillar p a").first()).toHaveCSS("text-decoration-line", "underline");
+  await expect(page.locator("#customers .press .action-link")).toHaveCSS("text-decoration-line", "underline");
 
+  // The faintest running text (the no-card note under the hero CTA) must still
+  // meet AA contrast against the surface it sits on.
   const faintTextContrast = await page.evaluate(() => {
     const luminance = (color) => {
       const [red, green, blue] = color.match(/[\d.]+/g).slice(0, 3).map(Number).map((channel) => {
@@ -35,17 +28,22 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
       const darker = Math.min(luminance(foreground), luminance(background));
       return (lighter + 0.05) / (darker + 0.05);
     };
-    const measure = () => ratio(
-      getComputedStyle(document.querySelector(".charter-pillar-number")).color,
-      getComputedStyle(document.body).backgroundColor,
-    );
-    return { dark: measure() };
+    const surface = (element) => {
+      for (let node = element; node; node = node.parentElement) {
+        const color = getComputedStyle(node).backgroundColor;
+        if (color && !/rgba\(\d+, \d+, \d+, 0\)/.test(color) && color !== "transparent") return color;
+      }
+      return getComputedStyle(document.body).backgroundColor;
+    };
+    const note = document.querySelector("#top .cta-note");
+    const press = document.querySelector("#customers .press .src");
+    return {
+      note: ratio(getComputedStyle(note).color, surface(note)),
+      press: ratio(getComputedStyle(press).color, surface(press)),
+    };
   });
-  expect(faintTextContrast.dark).toBeGreaterThanOrEqual(4.5);
-  await expect(page.locator(".hero-sdk-swap")).toBeVisible();
-  await expect(page.locator(".hero-sdk-code-line.removed")).toContainText("api.openai.com/v1");
-  await expect(page.locator(".hero-sdk-code-line.added")).toContainText("api.trustedrouter.com/v1");
-  await expect(page.locator(".charter-home-hero .hero-links")).toHaveCSS("justify-content", "flex-start");
+  expect(faintTextContrast.note).toBeGreaterThanOrEqual(4.5);
+  expect(faintTextContrast.press).toBeGreaterThanOrEqual(4.5);
 
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
@@ -309,9 +307,7 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", {
-    name: "600+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
-  })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
   let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
 
@@ -362,17 +358,16 @@ test("Charter design remains shared and responsive across public surfaces", asyn
   }
 });
 
-test("homepage exposes privacy, no-subscription, and open-source claims", async ({ page }) => {
+test("homepage exposes confidentiality, free-start, migration and open-source claims", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("End-to-End Encrypted AI gateway").first()).toBeVisible();
-  await expect(page.getByText("No subscription required")).toBeVisible();
-  await expect(page.getByText("inspect, fork, or run yourself")).toBeVisible();
-  const sdkSwap = page.locator(".hero-sdk-swap");
-  await expect(sdkSwap).toBeVisible();
-  await expect(sdkSwap).toContainText("Change one line");
-  await expect(sdkSwap).toContainText('base_url="https://api.openai.com/v1"');
-  await expect(sdkSwap).toContainText('base_url="https://api.trustedrouter.com/v1"');
+  await expect(page.locator("#top .hero .sub")).toContainText("confidentially");
+  await expect(page.locator("#top .cta-note")).toContainText("No card required");
+  await expect(page.locator("#verify")).toContainText("Three clouds, visible fallback");
+  const migrate = page.locator("#migrate");
+  await expect(migrate.getByRole("heading", { level: 2 })).toContainText("base_url");
+  await expect(migrate).toContainText('base_url="https://api.openai.com/v1"');
+  await expect(migrate).toContainText('base_url="https://api.trustedrouter.com/v1"');
   await expect(
     page.locator('a[href="https://github.com/Lore-Hex/trusted-router-py"]').first(),
   ).toBeVisible();
@@ -384,16 +379,14 @@ test("homepage exposes privacy, no-subscription, and open-source claims", async 
 test("homepage links the Axios feature and demo result", async ({ page }) => {
   await page.goto("/");
 
-  const feature = page.locator(".home-press-mention");
+  const feature = page.locator("#customers .press");
   await expect(feature).toBeVisible();
-  await expect(feature).toContainText("Featured in Axios");
+  await expect(feature).toContainText("Featured in · Axios");
   await expect(feature).toContainText("DeepSeek model in under 30 seconds");
-  await expect(feature).toHaveAttribute(
+  await expect(feature.getByRole("link", { name: "Read the story" })).toHaveAttribute(
     "href",
     "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs",
   );
-  await expect(feature).toHaveAttribute("rel", "noopener noreferrer");
-  await expect(feature).toHaveAttribute("target", "_blank");
 });
 
 test("local trust page links the public source repositories and release files", async ({ page }) => {
@@ -546,7 +539,7 @@ test("model picker has no horizontal overflow at mobile width", async ({ page })
   expect(overflow).toBeLessThanOrEqual(2);
 });
 
-test("homepage explainer video contacts YouTube only after an explicit press", async ({
+test("blog explainer video contacts YouTube only after an explicit press", async ({
   page,
 }) => {
   const thirdParty = [];
@@ -556,19 +549,19 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
     }
   });
 
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "How TrustedRouter works" })).toBeVisible();
+  await page.goto("/blog/axios-tried-trustedrouter");
+  await expect(page.getByRole("heading", { name: "Axios tried TrustedRouter in under 30 seconds" })).toBeVisible();
 
   const facade = page.locator('[data-action="load-video"]');
   await expect(facade).toBeVisible();
   await facade.scrollIntoViewIfNeeded();
   await expect(facade.locator(".video-embed-poster")).toBeVisible();
-  await expect(facade).toContainText("Watch the demo");
+  await expect(facade).toContainText("Watch the onboarding");
   await expect.poll(() => facade.locator(".video-embed-poster").evaluate(
-    (image) => image.complete && image.naturalWidth === 1280 && image.naturalHeight === 720,
+    (image) => image.complete && image.naturalWidth === 1200 && image.naturalHeight === 630,
   )).toBe(true);
 
-  // The point of the facade: a privacy-first homepage must not hand Google a
+  // The point of the facade: a privacy-first site must not hand Google a
   // pageview to render. Nothing may be requested before the visitor asks.
   await expect(page.locator('[data-action="load-video"] iframe')).toHaveCount(0);
   expect(thirdParty).toEqual([]);
@@ -578,9 +571,11 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
   const frame = page.locator('[data-action="load-video"] iframe');
   await expect(frame).toHaveCount(1);
   const src = await frame.getAttribute("src");
-  // Privacy-enhanced host, and the timestamp the video actually explains from.
-  expect(src).toContain("youtube-nocookie.com/embed/UzLY4kvjklI");
-  expect(src).toContain("start=128");
+  // Privacy-enhanced host, autoplay on the explicit press, no start offset
+  // unless the facade carries one.
+  expect(src).toContain("youtube-nocookie.com/embed/vfOj_im2A1o");
+  expect(src).toContain("autoplay=1");
+  expect(src).not.toContain("start=");
 
   // Once loaded it is a player, not a button.
   await expect(facade).not.toHaveAttribute("role", "button");
@@ -588,8 +583,8 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
   await expect(frame).toHaveCount(1);
 });
 
-test("homepage explainer video is keyboard operable", async ({ page }) => {
-  await page.goto("/");
+test("blog explainer video is keyboard operable", async ({ page }) => {
+  await page.goto("/blog/axios-tried-trustedrouter");
   const facade = page.locator('[data-action="load-video"]');
   await expect(facade).toHaveAttribute("role", "button");
   await facade.focus();
