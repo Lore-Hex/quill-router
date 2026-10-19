@@ -43,6 +43,12 @@ _MODEL_MAP = {
     "qwen.qwen3-235b-a22b-2507": "qwen/qwen3-235b-a22b-instruct-2507",
     "mistral.mistral-large-3-675b-instruct": "mistralai/mistral-large-2512",
 }
+# These IDs already represent transcription-only contracts in our catalog.
+# Hold Mantle's text-chat variants until endpoint-specific modality routing is
+# supported; admitting them must not change existing audio API semantics.
+_AUDIO_CONTRACT_MODELS = frozenset({
+    "mistral.voxtral-mini-3b-2507", "mistral.voxtral-small-24b-2507",
+})
 
 
 def model_card_limits(html: str, native: str) -> dict[str, int]:
@@ -118,7 +124,10 @@ def _rate(terms: object, now: datetime) -> int:
         if multiplier is None or dim.get("beginRange") != "0" or dim.get("endRange") != "Inf":
             raise RuntimeError("bedrock: unsupported token price units/range")
         try:
-            amount = Decimal(dim["pricePerUnit"]["USD"]) * multiplier
+            usd = dim["pricePerUnit"]["USD"]
+            if not isinstance(usd, str):
+                raise TypeError("AWS USD prices must be decimal strings")
+            amount = Decimal(usd) * multiplier
         except (KeyError, TypeError, InvalidOperation) as exc:
             raise RuntimeError("bedrock: missing or invalid USD price") from exc
         if not amount.is_finite() or not 0 < amount <= 1_000_000_000 or amount != amount.to_integral_value():
@@ -187,6 +196,8 @@ def discover(catalog: object, tariffs: object) -> tuple[dict[str, ModelPrice], d
         rows[model_id] = row
         if source.get("status") != "available":
             row.update(routable=False, routable_reason="provider-unavailable")
+        elif native in _AUDIO_CONTRACT_MODELS:
+            row.update(routable=False, routable_reason="unsupported-audio-contract")
         elif native not in native_prices:
             row.update(routable=False, routable_reason="price-unavailable")
         else:

@@ -28,6 +28,15 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     ),
     "aion-labs": ProviderBrand("https://www.aionlabs.ai/"),
     "akashml": ProviderBrand("https://akashml.com/"),
+    "amazon-bedrock": ProviderBrand(
+        "https://aws.amazon.com/bedrock/",
+        description="Amazon Bedrock's regional OpenAI-compatible Mantle API. Credits routes use standard-tier pricing in US East (N. Virginia).",
+        resources=(
+            ("API documentation", "https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html"),
+            ("Pricing", "https://aws.amazon.com/bedrock/pricing/"),
+            ("Data protection", "https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html"),
+        ),
+    ),
     "arcee": ProviderBrand("https://www.arcee.ai/"),
     "baidu": ProviderBrand("https://intl.cloud.baidu.com/en/product/qianfan.html"),
     "byteplus": ProviderBrand("https://www.byteplus.com/en/product/modelark"),

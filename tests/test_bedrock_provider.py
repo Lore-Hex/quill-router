@@ -64,6 +64,7 @@ def test_other_region_and_runtime_prices_cannot_be_used():
     ("unit", "tokens"), ("beginRange", "1"), ("endRange", "100000"),
     ("pricePerUnit", {"EUR": "0.001"}), ("pricePerUnit", {"USD": "NaN"}),
     ("pricePerUnit", {"USD": "-1"}), ("pricePerUnit", {"USD": "0.00000000001"}),
+    ("pricePerUnit", {"USD": True}), ("pricePerUnit", {"USD": 0.00007}),
 ])
 def test_invalid_units_currency_range_and_precision_rejected(field, value):
     payload = tariff()
@@ -112,6 +113,13 @@ def test_discovery_is_exact_not_fuzzy_and_future_models_are_automatic():
 def test_empty_invalid_duplicate_catalog_does_not_publish(payload):
     with pytest.raises(RuntimeError):
         bedrock.discover(payload, tariff())
+
+
+@pytest.mark.parametrize("native", sorted(bedrock._AUDIO_CONTRACT_MODELS))
+def test_audio_models_cannot_change_existing_transcription_contract(native):
+    prices, rows = bedrock.discover(catalog("openai.gpt-oss-20b", native), tariff())
+    assert set(prices) == {"openai/gpt-oss-20b"}
+    assert rows[bedrock.canonical_model_id(native)]["routable_reason"] == "unsupported-audio-contract"
 
 
 def test_failed_fetch_resets_discovery(monkeypatch):

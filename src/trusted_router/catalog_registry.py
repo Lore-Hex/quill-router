@@ -138,6 +138,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
+    TIER_MODEL_ORDERS,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
@@ -1777,6 +1778,25 @@ for _proxy_id, _backing_id in PRIVATE_PROXY_MODEL_TARGETS.items():
                 value for value in _proxy.input_modalities if value not in _dropped
             ),
         )
+
+
+# Build tier aliases after ingestion and normalization so their context window
+# follows their members. A provider delisting must not prevent startup; tests
+# check the complete configured membership against the as-built catalog.
+for _tier_model_id, _tier_model_order in TIER_MODEL_ORDERS.items():
+    MODELS[_tier_model_id] = Model(
+        id=_tier_model_id,
+        name=f"TrustedRouter {_tier_model_id.split('/', 1)[1].title()}",
+        provider="trustedrouter",
+        context_length=min(
+            (MODELS[member].context_length for member in _tier_model_order if member in MODELS),
+            default=0,
+        ),
+        supports_messages=False,
+        prepaid_available=True,
+        # Like Fast, the alias permits BYOK; routing selects eligible endpoints.
+        byok_available=True,
+    )
 
 
 def _named_decision_model_with_chain_prices(model_id: str) -> Model:

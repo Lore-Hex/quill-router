@@ -1,6 +1,7 @@
-/* Shared site chrome: header, model search dialog and footer for every page,
- * the homepage included (templates/public/_nav.html), plus the console and
- * auth layouts. Colours, type and spacing come from tokens.css. */
+/* Shared site chrome: header, model search dialog and footer for every public
+ * page, the homepage included (templates/public/_nav.html, _footer.html).
+ * The signed-in console header is styled by console.css instead. Colours,
+ * type and spacing come from tokens.css. */
 
 .skip-link {
   position: absolute;
@@ -46,28 +47,6 @@ html {
   padding-inline: max(24px, calc((100vw - 1280px) / 2));
   border-bottom: 1px solid var(--tr-color-line-rule-soft);
   background: var(--tr-color-surface-bg);
-}
-
-.brand-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  white-space: nowrap;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.04em;
-  color: var(--tr-color-text-primary);
-  text-decoration: none;
-}
-
-.brand-link img {
-  width: 30px;
-  height: 30px;
-}
-
-.brand-link .brand-word {
-  font-size: inherit;
-  letter-spacing: inherit;
 }
 
 .trnav .search {
@@ -278,9 +257,7 @@ html {
 
 @media (max-width: 600px) {
   .trnav .tbar { gap: 14px; padding-inline: 20px; }
-  .brand-link { gap: 9px; font-size: 17px; }
-  .brand-link img { width: 25px; height: 25px; }
-  .brand-link > span { display: none; }
+  .brand-link .brand-word { display: none; }
   .trnav .menu { width: 44px; padding: 0; }
   .trnav .menu > span { display: none; }
   .trnav .signin.button-primary { min-height: 44px; padding: 0 14px; font-size: 14px; }
@@ -471,7 +448,7 @@ html {
   padding: 32px 0 28px;
 }
 
-.trft .brand {
+.trft .cols > .brand {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
@@ -480,11 +457,6 @@ html {
 
 .trft .brand-link {
   font-size: 18px;
-}
-
-.trft .brand img {
-  width: auto;
-  height: 22px;
 }
 
 .trft .col {
@@ -620,13 +592,13 @@ html {
 
 @media (max-width: 880px) {
   .trft .cols { grid-template-columns: repeat(3, 1fr); }
-  .trft .brand { flex-wrap: wrap; gap: 24px; }
+  .trft .cols > .brand { flex-wrap: wrap; gap: 24px; }
 }
 
 @media (max-width: 700px) {
   .trft { padding-top: 24px; padding-bottom: 16px; }
   .trft .cols { gap: 0; padding: 0 0 12px; }
-  .trft .brand { align-items: flex-start; margin-bottom: 16px; }
+  .trft .cols > .brand { align-items: flex-start; margin-bottom: 16px; }
   .trft .col h3 { font-size: 13px; }
   .trft .footer-links { gap: 0; }
   .trft .footer-links a { min-height: 44px; line-height: 1.5; }
@@ -639,7 +611,7 @@ html {
 @media (max-width: 600px) {
   .trft { padding-inline: 20px; }
   .trft .cols { grid-template-columns: 1fr; }
-  .trft .brand { display: block; }
+  .trft .cols > .brand { display: block; }
   .trft .footer-disclosure { border-top: 1px solid var(--tr-color-line-rule); }
   .trft .footer-disclosure:last-child { border-bottom: 1px solid var(--tr-color-line-rule); }
   .trft .footer-disclosure h3 { margin: 0; color: var(--tr-color-text-primary); font-size: 12px; }
