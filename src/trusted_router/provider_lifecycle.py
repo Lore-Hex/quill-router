@@ -64,6 +64,7 @@ DEEPINFRA_GRANITE_42_RETIREMENT_AT = datetime(2026, 10, 18, 0, 0, tzinfo=UTC)
 DEEPINFRA_INKLING_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT = datetime(2026, 10, 20, 0, 0, tzinfo=UTC)
 SCALEWAY_GLM_52_RETIREMENT_AT = datetime(2026, 11, 16, 0, 0, tzinfo=UTC)
+DEEPINFRA_HERMES_3_405B_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 # 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
 ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
@@ -969,6 +970,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"openai/gpt-oss-120b-Turbo"}),
         effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-oss-120b",),
+    ),
+    # DeepInfra's October 19 notice deprecates Hermes 3 405B on 2026-11-02
+    # and redirects later requests to the different DeepSeek V4.1 Flash
+    # weights. Retire DeepInfra's route at 00:00 UTC (date only).
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"nousresearch/hermes-3-llama-3.1-405b"}),
+        upstream_ids=frozenset({"NousResearch/Hermes-3-Llama-3.1-405B"}),
+        effective_at=DEEPINFRA_HERMES_3_405B_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
     ),
     # Alibaba Model Studio's October 19 notice decommissions legacy Qwen3.5
     # Plus snapshots and Qwen3.5 397B-A17B at 2027-01-19 10:00 UTC+8 and

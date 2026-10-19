@@ -21,6 +21,8 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "nousresearch/hermes-3-llama-3.1-405b", "NousResearch/Hermes-3-Llama-3.1-405B",
+         datetime(2026, 11, 2, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("alibaba", "qwen/qwen3.5-plus", "qwen3.5-plus",
          datetime(2027, 1, 19, 2, tzinfo=UTC), "qwen/qwen3.8-flash"),
     Case("alibaba", "qwen/qwen3.5-plus-2026-02-15", "qwen3.5-plus-2026-02-15",
