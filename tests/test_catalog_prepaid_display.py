@@ -305,7 +305,7 @@ def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
     # that still lists the model keeps its route.
     built = catalog_vehicles.registry_endpoints()
     for endpoint_id in (
-        "minimax/minimax-m2.5@minimax/byok",
+        "minimax/minimax-m2.5@novita/byok",
         "moonshotai/kimi-k2.6@kimi/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
         "z-ai/glm-5@zai/prepaid",
@@ -582,7 +582,7 @@ def test_novita_supplemental_prices_apply_manifest_scale(
         "z-ai/glm-5.3-flash@deepinfra/prepaid",
         "z-ai/glm-5.3-flash@io-net/prepaid",
         "z-ai/glm-5.3-flash@novita/prepaid",
-        "minimax/minimax-m2.5@minimax/byok",
+        "minimax/minimax-m3.1-flash@minimax/byok",
         "moonshotai/kimi-k2.6@kimi/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
         "openai/gpt-oss-120b@together/prepaid",
