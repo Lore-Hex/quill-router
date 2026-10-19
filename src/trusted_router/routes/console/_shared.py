@@ -19,6 +19,7 @@ from fastapi import Depends, HTTPException, Request
 
 from trusted_router.auth import SESSION_COOKIE_NAME, SettingsDep
 from trusted_router.config import Settings
+from trusted_router.dashboard import _static_version
 from trusted_router.domains import request_api_base_url
 from trusted_router.money import format_money_display
 from trusted_router.request_limits import enforce_authenticated_rate_limit
@@ -98,6 +99,9 @@ def render(
     active = str(context.get("active") or "")
     return render_template(
         template,
+        # Every console stylesheet and script must change URL with the release.
+        # Omitting this silently selects the templates' permanent v=local URL.
+        static_version=_static_version(settings),
         api_base_url=context.pop("api_base_url", ctx.api_base_url),
         user=ctx.user,
         user_email=ctx.user.email,
