@@ -367,7 +367,7 @@ async def test_real_writers_export_load_evaluate_render(monkeypatch, tmp_path):
         bundle = load(exported.transport, ports)
         assert bundle.shutdown is not None
         # DiagnosticCapIsolation proves the retained history itself is valid:
-        # reset_view currently parses every control row as a day MANIFEST.
+        # A3 selects day manifests separately from cap control rows.
         cap_isolated = json.loads(exported.transport)
         cap_isolated['rows'] = [r for r in cap_isolated['rows'] if not r['id'].endswith('/cap-v2')]
         assert load(canonical(cap_isolated), ports).reset_support is not None
@@ -376,17 +376,17 @@ async def test_real_writers_export_load_evaluate_render(monkeypatch, tmp_path):
         assert isinstance(rendered, tuple)
         assert json.loads(rendered[0])['verdict'] == 'BLOCKED'
         # MissingManifestCapRecovery: an absent collector must not erase proof
-        # siblings. Preserve the exact observed defect until its owner fixes it.
+        # siblings. A3 retains them and renders the missing day manifest as BLOCKED.
         missing_manifest = json.loads(exported.transport)
         missing_manifest['rows'] = [r for r in missing_manifest['rows'] if not r['id'].endswith('/manifest-v2')]
         damaged = load(canonical(missing_manifest), ports)
-        from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput
         raw_result = evaluate(damaged, ports, gate='transport')
         raw_rendered = render(raw_result)
-        assert isinstance(raw_rendered, UnavailableGateOutput)
-        assert raw_rendered.condition == 'proof_manifest_absent_or_undecodable'
-        assert damaged.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
-            path='transport/container', detail="'router_writers'")]
+        assert isinstance(raw_rendered, tuple)
+        assert json.loads(raw_rendered[0])['verdict'] == 'BLOCKED'
+        assert damaged.proof == bundle.proof
+        assert tuple((v['gap'], v['path'], v['detail']) for v in damaged.a2_streams['loading_issues']) == (
+            *EXPECTED_LOADING, ('evidence_schema_gap', 'proof.resolution_dag_sha256', 'evidence_schema_gap'))
         assert raw_result.gaps == RAW_EXPECTED_GAPS
         diagnostic = dict(loading=list(bundle.a2_streams.get('loading_issues', [])),
             validation=list(bundle.a2_streams.get('loading_validation', [])),
@@ -400,7 +400,7 @@ async def test_real_writers_export_load_evaluate_render(monkeypatch, tmp_path):
         assert result.gaps == EXPECTED_GAPS
         report_counts = json.loads(rendered[1][0])['failure_counts']
         assert {k: v['count'] for k, v in report_counts.items() if v['count']} == {
-            'artifact_gap': 14, 'evidence_schema_gap': 4}
+            'artifact_gap': 11, 'evidence_schema_gap': 4}
         assert {(f.gap, f.detail) for f in result.failures} == EXPECTED_FAILURE_DETAILS
         assert tuple((v['gap'], v['path'], v['detail']) for v in diagnostic['loading']) == EXPECTED_LOADING
         from collections import Counter
@@ -457,20 +457,21 @@ def test_export_invalid_bytes_are_retained():
 
 EXPECTED_LOADING = (('artifact_gap', 'proof.pre_budget_sha256', 'required payload absent'),
  ('artifact_gap', 'proof.post_budget_sha256', 'required payload absent'),
- ('evidence_schema_gap', 'proof.pre_budget_sha256', "'proof.pre_budget_sha256'"),
- ('artifact_gap', 'proof.external_proofs_sha256', 'artifact_gap'),
- ('evidence_schema_gap', 'proof.resolution_dag_sha256', 'evidence_schema_gap'))
+ ('evidence_schema_gap', 'loading/release-plan.json', 'evidence_schema_gap'),
+ ('evidence_schema_gap', 'proof.external_proofs_sha256', 'evidence_schema_gap'))
 
 EXPECTED_VALIDATION = {('artifact_gap', 'A2 manifest/proof preimage validation failed'): 1,
- ('artifact_gap', 'A2 required original preimage absent'): 2,
- ('artifact_gap', 'artifact_gap'): 1,
+ ('artifact_gap', 'prior_gate_original_graph: transport: original graph rejected'): 1,
+ ('artifact_gap', 'prior_gate_original_graph: fleet-budgets: original graph rejected'): 1,
+ ('artifact_gap', 'prior_gate_original_graph: fleet-budgets-pre: original graph rejected'): 1,
+ ('boot_prerequisite_gap', 'required prior graph did not verify'): 2,
+ ('pre_enable_budget', 'required prior graph did not verify'): 1,
  ('artifact_gap', 'coverage expected-set mismatch: close_result'): 1,
  ('artifact_gap', 'expected prerequisite ledger absent'): 1,
  ('artifact_gap', 'incomplete proof'): 1,
  ('artifact_gap', 'missing expected coverage pages'): 5,
  ('artifact_gap', 'required payload absent'): 2,
- ('evidence_schema_gap', "'proof.pre_budget_sha256'"): 1,
- ('evidence_schema_gap', 'evidence_schema_gap'): 1,
+ ('evidence_schema_gap', 'evidence_schema_gap'): 2,
  ('evidence_schema_gap', 'unexpected source outside expected population'): 2}
 
 
@@ -529,14 +530,10 @@ def test_cli_offline_capture_and_exclusive_output(monkeypatch, tmp_path, capsys)
 
 
 EXPECTED_FAILURE_DETAILS = {('artifact_gap', 'A2 manifest/proof preimage validation failed'),
- ('artifact_gap', 'artifact_gap'),
  ('artifact_gap', 'expected prerequisite ledger absent'),
  ('artifact_gap', 'incomplete proof'),
  ('artifact_gap', 'missing expected coverage pages'),
  ('artifact_gap', 'required payload absent'),
- ('artifact_gap', 'undefined preimage: budget'),
  ('artifact_gap', 'undefined preimage: external'),
- ('artifact_gap', 'undefined preimage: reset_support'),
- ('evidence_schema_gap', "'proof.pre_budget_sha256'"),
  ('evidence_schema_gap', 'evidence_schema_gap'),
  ('evidence_schema_gap', 'unexpected source outside expected population')}

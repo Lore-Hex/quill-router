@@ -210,12 +210,20 @@ textarea {
   border-bottom: 1px solid var(--border-hairline);
 }
 
+/* Brand lockup (_brand.html): one size, weight and colour set for the public
+ * header and footer, the console header and the auth card. Only room-driven
+ * tweaks live elsewhere (site-chrome.css). */
 .brand {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   color: var(--text-display);
-  font-weight: 500;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+  text-decoration: none;
 }
 
 .brand:hover {
@@ -247,11 +255,6 @@ textarea {
 .brand-mark-exit {
   stroke: var(--sage);
   stroke-width: 2;
-}
-
-.brand-word {
-  font-size: 15px;
-  letter-spacing: 0;
 }
 
 .btn,
@@ -1663,10 +1666,6 @@ body.auth.auth-shell {
 }
 
 @media (max-width: 520px) {
-  .brand-word {
-    font-size: 14px;
-  }
-
   .public-proof-strip {
     grid-template-columns: 1fr;
   }

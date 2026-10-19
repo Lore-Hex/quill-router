@@ -29,7 +29,8 @@ from trusted_router.detached_jws import canonical
 def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
                 fixtures: dict[str, dict[str, Any]], cohort: dict[str, Any],
                 source_shas: dict[str, str], complete_through_us: int,
-                reconciliation: TerminalReconciliation | None = None) -> dict[str, Any]:
+                reconciliation: TerminalReconciliation | None = None,
+                producer_registrations: tuple[dict[str, Any], ...] = ()) -> dict[str, Any]:
     """Producer outputs select all roots; caller-supplied assembly is not read."""
     for name in PRODUCERS:
         require(name in producers and bool(producers[name]), 'MissingProducer:' + name)
@@ -203,6 +204,7 @@ def compose_day(files: DayFiles, *, day: str, producers: dict[str, Any],
     subject = files.obj('days/' + day + '/subject.json', dict(day=day,
         manifest=files.refs[day + '/manifest-v2.json'], producers={name: producers[name] for name in ('ExternalPack', 'History')}, coverage=covered))
     transport = {**native, 'attachments': chain(attachments, generated), 'proof': a1.PROOF_MANIFEST.serialize(proof).decode(),
+        'producer_registrations': list(producer_registrations),
         'ledgers': [files.read(ref).decode() for ref in ready['ledgers']],
         'rows': chain(rows, [dict(kind=p1.KINDS[5], id=day + '/manifest-v2', raw=a1.MANIFEST.serialize(manifest).decode())])}
     return dict(subject=subject, transport=transport, manifest=manifest,

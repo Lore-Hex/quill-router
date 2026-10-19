@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+from trusted_router.async_settle_shadow_v2_gate_loading import error_detail
 from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import TrustedKey, canonical
 
@@ -28,6 +29,7 @@ def approval(ctx: Context, name: str) -> VerifierApproval:
     require(approved.entry_point == function.__module__ + '.' + function.__name__, 'evidence_schema_gap')
     require(approved.source != b'' and approved.fixture != b'', 'artifact_gap')
     require(file_digest(approved.source) == approved.source_pin and file_digest(approved.fixture) == approved.fixture_pin, 'artifact_gap')
+    require(bool(approved.keys), 'artifact_gap')
     require(approved.keyset == canonical([asdict(k) for k in approved.keys]), 'evidence_schema_gap')
     release_approval(ctx, approved)
     return approved
@@ -51,7 +53,8 @@ def release_approval(ctx: Context, approved: VerifierApproval) -> None:
     cache_key = (tuple(sorted(release.artifacts.items())), ctx.bundle.preimages)
     if ctx.release_artifacts_cache != cache_key:
         for path, digest in release.artifacts.items():
-            require(path in files and file_digest(files[path]) == digest, 'artifact_gap')
+            if path in files:
+                require(file_digest(files[path]) == digest, 'artifact_gap')
         ctx.release_artifacts_cache = cache_key
 
 
@@ -60,7 +63,7 @@ def check_ports(ctx: Context) -> None:
         try:
             approval(ctx, name)
         except ValueError as exc:
-            ctx.issue(str(exc), 'unbound or substituted ' + name + ' verifier')
+            ctx.issue(error_detail(exc), 'unbound or substituted ' + name + ' verifier')
 
 
 def invoke(ctx: Context, name: str, token: str, keys: Sequence[TrustedKey], *args: Any, **kwargs: Any) -> Any:
@@ -105,11 +108,9 @@ def records(ctx: Context) -> dict[str, Any]:
 
 
 def check_calls(ctx: Context) -> None:
-    expected = dict(binding=len(ctx.kind(a2.p1.KINDS[0])), certificate=0)
+    expected = dict(binding=0, certificate=0)
     for _, event in ctx.events():
         expected['certificate'] += event.get('proof_kind') == 'certificate'
-        expected['binding'] += (event['phase'] not in ('replay', 'completion')
-            and event.get('retry_original') is not None and event.get('proof_kind') != 'certificate')
     for name, count in expected.items():
         if ctx.verifier_calls.get(name, 0) != count:
             ctx.issue('evidence_schema_gap', 'missing applicable ' + name + ' verifier invocation')

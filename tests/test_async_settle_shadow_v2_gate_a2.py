@@ -9,7 +9,10 @@ from typing import Any
 
 import pytest
 
-from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
+from tests.shadow_v2_gate_cache import (  # noqa: F401
+    default_dependency_lookup_cache,
+    payloadgraph_shared_lookup_cache,
+)
 from tests.shadow_v2_gate_fixture_generator import (
     build,
     exhaustive,
@@ -159,8 +162,7 @@ def test_verifier_identity_and_keys_block(passing: Bundle, mode: str) -> None:
     elif mode == 'substituted':
         bound = replace(bound, verify_binding=lambda token, keys, now: None)
     else:
-        sig = passing.signatures[0]
-        passing = replace(passing, signatures=(replace(sig, keys=()),))
+        bound = replace(bound, approvals=tuple(replace(a, keys=()) if a.entry_point.endswith('.verify_binding') else a for a in bound.approvals))
     result = evaluate(passing, bound, gate='shadow-serving')
     assert {'artifact_gap', 'evidence_schema_gap'} & set(result.gaps)
     assert result.verdict == 'BLOCKED'
@@ -170,7 +172,7 @@ def test_unexercised_certificate_still_bound(passing: Bundle) -> None:
     result = evaluate(passing, ports(passing), gate='shadow-serving')
     assert result.gate_report is not None
     assert result.gate_report['verifiers']['certificate']['calls'] == 0
-    assert result.gate_report['verifiers']['binding']['calls'] == 1
+    assert result.gate_report['verifiers']['binding']['calls'] == 0
 
 
 def test_missing_preimage_never_accepts_digest(passing: Bundle) -> None:
@@ -188,11 +190,13 @@ def test_conflict_entry_commits_both_candidates() -> None:
     assert roots.entry_root([value], stream='counter_root') == '129591526645105fa353f07120da3ca4905ce6ec7ac74914a96604ec9fb1e2f1'
 
 
-def test_suppressed_call_is_not_a_transcript(passing: Bundle, monkeypatch: pytest.MonkeyPatch) -> None:
-    from trusted_router import async_settle_shadow_v2_gate_verifiers as v
-    def suppressed(ctx: Context, name: str, *args: Any, **kwargs: Any) -> Any:
-        return v.approval(ctx, name).function(*args, **kwargs)
-    monkeypatch.setattr(v, 'invoke', suppressed)
+def test_invented_compared_binding_transcript_is_rejected(passing: Bundle, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import async_settle_shadow_v2_gates as gates
+    original = gates.verify_samples
+    def invented(ctx: Context) -> None:
+        original(ctx)
+        ctx.verifier_calls['binding'] = 1
+    monkeypatch.setattr(gates, 'verify_samples', invented)
     assert 'evidence_schema_gap' in evaluate(passing, ports(passing), gate='shadow-serving').gaps
 
 
@@ -225,7 +229,15 @@ def test_release_files_are_checkout_inputs_outside_export_inventory(passing: Bun
     assert json.loads(raw)['verdict'] == 'PASS'
     assert result.gate_report is not None and result.gate_report['complete'] is True
     assert not set(RELEASE_FILES) & {source.name for source in passing.preimages}
-    refs = [ref for leaf in result.input_leaves.values() for ref in json.loads(leaf)['keys']]
+    refs = []
+    for raw_page in result.input_leaves.values():
+        page = json.loads(raw_page)
+        if 'keys' in page:
+            a2.INPUT_LEAF(page)
+            refs.extend(page['keys'])
+        else:
+            a2.ORIGINAL_ROLES(page)
+            refs.extend(entry['file'] for entry in page['entries'])
     assert not set(RELEASE_FILES) & {ref['path'] for ref in refs}
     assert all(ref['bytes'] <= 262144 for ref in refs)
 

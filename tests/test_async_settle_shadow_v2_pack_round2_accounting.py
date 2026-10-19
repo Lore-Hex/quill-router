@@ -106,13 +106,22 @@ async def test_real_writer_loader_original_deletion_matrix_is_base_defect(monkey
         target.parent.mkdir(exist_ok=True)
         target.write_bytes(raw)
         loaded = load(raw)
-        assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
-            path='transport/container', detail="'router_writers'")], name
+        assert loaded.a2_streams['loading_issues'] == [
+            {'gap': 'artifact_gap', 'path': 'proof.shutdown_inventory_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.cohort_seed_policy_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.pre_budget_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.post_budget_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.external_proofs_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'proof.resolution_dag_sha256', 'detail': 'required payload absent'},
+            {'gap': 'artifact_gap', 'path': 'manifest.independent_inventory_sha256', 'detail': 'artifact_gap'},
+            {'gap': 'artifact_gap', 'path': 'loading/release-plan.json', 'detail': 'artifact_gap'},
+            {'gap': 'artifact_gap', 'path': 'loading/signatures.json', 'detail': 'artifact_gap'},
+        ], name
         from tests.shadow_v2_pack_round5_vectors import corrected_result
         corrected = corrected_result('test_real_writer_loader_original_deletion_matrix_is_base_defect', case)
         assert corrected['rows'] == len(value['rows'])
         assert len(corrected['loading_validation']) == [36, 42, 36, 40, 41, 41, *([42] * 11)][case]
         result = render(evaluate(loaded, gate='transport'))
-        assert isinstance(result, UnavailableGateOutput), name
+        assert result == UnavailableGateOutput('proof_manifest_absent_or_undecodable'), name
     # This is the present-base diagnostic matrix, not rendered §7.5 counts.
     assert root_ref['path'] == 'accounting.json'

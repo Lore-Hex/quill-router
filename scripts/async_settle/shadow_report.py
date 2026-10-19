@@ -820,7 +820,8 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
     from trusted_router.async_settle_shadow_v2_gate_release import measurement_parsers
     measurements = measurement_parsers(release)
     from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
-    release_files = {path: (root / path).read_bytes() for path in RELEASE_FILES.values()}
+    from trusted_router.async_settle_shadow_v2_gate_release import TERMINAL_SOURCES
+    release_files = {path: (root / path).read_bytes() for path in (*RELEASE_FILES.values(), *TERMINAL_SOURCES)}
     return LoadingPorts(verify_certificate, verify_original_receipt, verify_binding,
         comparator_positive, positive_sample, known_exclusion, pilot_enablement.fleet_budgets_pre,
         collect_rollbacks, report, pilot_enablement.post_flip, tuple(approvals),
@@ -878,7 +879,22 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
         damaged_inputs.append('tool_input/key-descriptors')
         ports = shadow_v2_ports(None, None, release=release)
     try:
-        original = args.bundle.read_bytes()
+        from trusted_router.async_settle_shadow_v2_gate_plan import PlanInput
+        original_raw = args.bundle.read_bytes()
+        original = original_raw
+        if original_raw.lstrip().startswith(b'{'):
+            from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
+            try:
+                descriptor = retained_json(original_raw)
+            except (ValueError, UnicodeError):
+                descriptor = {}
+            if descriptor.get('format') == 'shadow-v2-captured-transport-1':
+                def read_part(path: str) -> bytes:
+                    target = (args.bundle.parent / path).resolve()
+                    if not target.is_relative_to(args.bundle.parent.resolve()):
+                        raise ValueError('artifact_gap')
+                    return target.read_bytes()
+                original = PlanInput(original_raw, read_part)
     except (OSError, ValueError):
         original = b''
     result, rendered = run(original, ports, gate=args.gate, damaged_inputs=tuple(damaged_inputs))

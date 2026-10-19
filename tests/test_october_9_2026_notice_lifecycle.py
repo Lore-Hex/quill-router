@@ -21,6 +21,8 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "openai/gpt-oss-120b-turbo", "openai/gpt-oss-120b-Turbo",
+         datetime(2026, 10, 20, tzinfo=UTC), "openai/gpt-oss-120b"),
     Case("scaleway", "z-ai/glm-5.2", "glm-5.2",
          datetime(2026, 11, 16, tzinfo=UTC), "z-ai/glm-5.3"),
     Case("deepinfra", "thinkingmachines/inkling", "thinkingmachines/Inkling",

@@ -45,6 +45,12 @@ def seeds() -> dict[str, Any]:
                     continue
                 result[name] = value
                 break
+    # Report transport metadata uses the same bounded original references.
+    result['ORIGINAL_ROLE'] = dict(member='rows', kind=e.p1.KINDS[5],
+        id='2026-10-06/manifest-v2', file=copy.deepcopy(result['FILE_REF']))
+    result['ORIGINAL_ROLES'] = {
+        **{field: result['INPUT_LEAF'][field] for field in ('v', 'policy_version', 'contract_revision')},
+        'entries': [copy.deepcopy(result['ORIGINAL_ROLE'])], 'previous': None}
     return result
 
 

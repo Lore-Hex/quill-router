@@ -1,10 +1,9 @@
-<span class="brand-mark" aria-hidden="true">
-  <svg viewBox="0 0 24 24" focusable="false">
-    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-      <path class="brand-mark-route" d="M1.4 7.5 H6.5 L11 12 M1.4 16.5 H4 L8.5 12 M1.4 12 H15.5"></path>
-      <circle class="brand-mark-node" cx="15.5" cy="12" r="1.9"></circle>
-      <path class="brand-mark-exit" d="M17.4 12 H22.6"></path>
-    </g>
-  </svg>
-</span>
-<span class="brand-word">{{ brand_name|default("TrustedRouter") }}</span>
+{#- Brand home link shared by the public header (public/_nav.html), the public
+    footer (public/_footer.html), the console header (console/_layout.html)
+    and the auth card (auth/_base.html). One inline mark, coloured from the
+    theme tokens so the same drawing reads on every surface. The house size
+    and colours live in static/charter.css (.brand*); each chrome only adds
+    room-driven tweaks there (site-chrome.css hides the word on phones and
+    sets the footer's smaller word). The mark carries the accessible name,
+    like the image it replaced, so the word stays decorative. -#}
+<a class="brand brand-link" href="/"><span class="brand-mark" role="img" aria-label="{{ brand_name|default('TrustedRouter') }}"><svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><g fill="none" stroke-linecap="round" stroke-linejoin="round"><path class="brand-mark-route" d="M1.4 7.5 H6.5 L11 12 M1.4 16.5 H4 L8.5 12 M1.4 12 H15.5"></path><circle class="brand-mark-node" cx="15.5" cy="12" r="1.9"></circle><path class="brand-mark-exit" d="M17.4 12 H22.6"></path></g></svg></span><span class="brand-word" aria-hidden="true">{{ brand_name|default("TrustedRouter") }}</span></a>
