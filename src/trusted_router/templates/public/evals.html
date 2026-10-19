@@ -22,7 +22,7 @@ def ask(model: str, prompt: str) -> str:
     )
     return response.choices[0].message.content or ""
 
-for model in ["trustedrouter/zdr", "trustedrouter/eu", "trustedrouter/auto", "trustedrouter/cheap"]:
+for model in ["trustedrouter/zdr", "trustedrouter/eu", "trustedrouter/auto", "trustedrouter/cheap", "trustedrouter/frontier", "trustedrouter/advanced", "trustedrouter/professional", "trustedrouter/efficient"]:
     print(model, ask(model, "Recommend 5 real albums for fans of Talk Talk."))</code></pre>
     </div>
   </div>
@@ -49,6 +49,10 @@ for model in ["trustedrouter/zdr", "trustedrouter/eu", "trustedrouter/auto", "tr
           <li><span class="mono">trustedrouter/eu</span> for Europe-focused model and provider selection.</li>
           <li><span class="mono">trustedrouter/auto</span> for availability and broad fallback testing.</li>
           <li><span class="mono">trustedrouter/cheap</span> for wide sweeps where cost matters more than top quality.</li>
+          <li><span class="mono">trustedrouter/frontier</span>: fixed frontier pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
+          <li><span class="mono">trustedrouter/advanced</span>: fixed advanced pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
+          <li><span class="mono">trustedrouter/professional</span>: fixed professional pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
+          <li><span class="mono">trustedrouter/efficient</span>: fixed efficient pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
         </ul>
       </div>
     </div>

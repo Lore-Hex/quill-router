@@ -2461,6 +2461,43 @@ CHEAP_MODEL_ID = "trustedrouter/cheap"
 
 FAST_MODEL_ID = "trustedrouter/fast"
 
+FRONTIER_MODEL_ID = "trustedrouter/frontier"
+
+ADVANCED_MODEL_ID = "trustedrouter/advanced"
+
+PROFESSIONAL_MODEL_ID = "trustedrouter/professional"
+
+EFFICIENT_MODEL_ID = "trustedrouter/efficient"
+
+# Fixed routing pools: the first member is preferred, the rest are fallbacks.
+# These aliases do not synthesize responses or imply an upstream privacy floor.
+TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
+    FRONTIER_MODEL_ID: (
+        "anthropic/claude-opus-5.5",
+        "openai/gpt-6-astra",
+        "anthropic/claude-fable-5.1",
+    ),
+    ADVANCED_MODEL_ID: (
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.3",
+        "anthropic/claude-opus-5",
+        "openai/gpt-6-sol",
+        "anthropic/claude-fable-5",
+    ),
+    PROFESSIONAL_MODEL_ID: (
+        "z-ai/glm-5.3-flash",
+        "deepseek/deepseek-v4.1-flash-1017",
+        "z-ai/glm-5.2",
+        "google/gemini-3.8-flash",
+    ),
+    EFFICIENT_MODEL_ID: (
+        "google/gemini-2.5-flash-lite",
+        "anthropic/claude-haiku-5.5",
+        "openai/gpt-6-luna",
+        "deepseek/deepseek-v4-flash-0731",
+    ),
+}
+
 EU_MODEL_ID = "trustedrouter/eu"
 
 ZDR_MODEL_ID = "trustedrouter/zdr"
@@ -2777,6 +2814,7 @@ META_MODEL_IDS = frozenset(
         FREE_MODEL_ID,
         CHEAP_MODEL_ID,
         FAST_MODEL_ID,
+        *TIER_MODEL_ORDERS,
         EU_MODEL_ID,
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
