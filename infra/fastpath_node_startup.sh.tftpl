@@ -55,7 +55,7 @@ address="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.interna
 attribute() {
   local url="http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1" body code try
   for try in 1 2 3 4 5; do
-    body="$(curl -s -H 'Metadata-Flavor: Google' -w '\n%%{http_code}' "$url")" || body=""
+    body="$(curl -s --max-time 10 -H 'Metadata-Flavor: Google' -w '\n%%{http_code}' "$url")" || body=""
     code="$${body##*$'\n'}"
     case "$code" in
       200) printf '%s' "$${body%$'\n'*}"; return 0 ;;

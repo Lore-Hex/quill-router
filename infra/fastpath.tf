@@ -26,8 +26,10 @@ locals {
   # and the internal token Python holds, a version pinned by its number
   # (the node reads secrets that way only; Python reads the latest). A
   # rotation is a new version, a Python deploy, this pin moved to the
-  # number, and the nodes reset one at a time. Set on the nodes'
-  # metadata, read when a node's startup script runs.
+  # number, and each node drained and restarted in turn with its running
+  # argument checked (docs/runbooks/fastpath-deploy.md): a reset alone
+  # leaves the unit systemd started from disk running with the old one.
+  # Set on the nodes' metadata, read when a node's startup script runs.
   fastpath_edge_port         = 8081
   fastpath_edge_upstream     = "https://trusted-router-vsjf6qu4la-uc.a.run.app"
   fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/1"

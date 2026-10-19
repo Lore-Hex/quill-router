@@ -174,7 +174,13 @@ the reason in the journal: a new node stays stopped; a rebooted node
 keeps the unit it had, since systemd starts it from disk before the
 script runs. The token is a secret version pinned by its number, the
 only form the node reads: a rotation is a new version, a Python deploy,
-the pin moved in `infra/fastpath.tf`, and the nodes reset one at a time.
+the pin moved in `infra/fastpath.tf`, then for each node in turn, the
+other serving: mark it leaving and wait for its leases, reset it, and
+restart the unit as "Taking a pinned release" does, since a reset alone
+leaves the unit systemd started from disk running with the old
+argument; the running argument is read from the process
+(`tr -d '\0' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`)
+and must name the new version before the next node is touched.
 
 A node keeps the startup script it was created with (`ignore_changes` in
 `infra/fastpath.tf`; a script change is not drift, so which script a
