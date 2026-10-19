@@ -6,7 +6,7 @@
 # The classic certificates stay attached until they are retired, and Terraform
 # ignores that list. Removing certificate_map here is the rollback; see
 # "Control load balancer certificates" in README.md for what it restores. The
-# forwarding rule and the URL map are not managed here.
+# forwarding rule is not managed here; the URL map is control_lb_url_map.tf.
 
 import {
   to = google_compute_target_https_proxy.control
@@ -15,7 +15,7 @@ import {
 
 resource "google_compute_target_https_proxy" "control" {
   name            = "trusted-router-control-https-proxy"
-  url_map         = "projects/${local.gcp_project_id}/global/urlMaps/trusted-router-control-map"
+  url_map         = google_compute_url_map.control.id
   certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.control.id}"
   ssl_policy      = "projects/${local.gcp_project_id}/global/sslPolicies/tr-min-tls12"
   tls_early_data  = "DISABLED"

@@ -503,7 +503,8 @@ This frees roughly 26–36 GB on node 1 (depending on whether `text_log` keeps
 - `verify_spanner_delivery` looks rows up by `generation_id`, which is not a
   prefix of the sort key `(tenant_id, created_at, generation_id)`, so each
   half-hourly run is a full `FINAL` scan (5.4 GB now). Fix: a projection
-  ordered by `generation_id` (`clickhouse/023_*`) finds each sampled ID's sort
+  ordered by `generation_id` (`clickhouse/023_*` on the cluster,
+  `clickhouse/024_*` on standalone nodes) finds each sampled ID's sort
   keys, and the rows are then read by key, so a run reads about one granule per
   sampled key instead of the whole table. Two rejected options: bounding the
   lookup by the sampled rows' `created_at` span hides a second copy of a
@@ -747,6 +748,6 @@ the firewall already admits the VPC ranges, so no node change is needed.
 | G3 | `--insert_quorum=2 --async_insert=0` in `clickhouse/ingest_outbox.py:214-223` and `clickhouse/ingest_operational_outbox.py:541-556`. |
 | G4 | `<prometheus>` block added by `scripts/deploy/clickhouse_cluster.sh:189-230`; Ops Agent receiver installed at `:277-291`; alert policies in Terraform. |
 | G5 | `scripts/deploy/clickhouse_node_config.sh` installs `config.d/tr-system-logs.xml` one node at a time (3, 2, then 1), restarting only a healthy node and waiting for `/tr_health` and its Keeper voter; `--drop-renamed-logs` drops the renamed `<log>_N` tables. |
-| G6 | The `by_generation_id` projection (`clickhouse/023_activity_generation_id_projection_replicated.sql`, applied with `scripts/deploy/clickhouse_replicated_migrate.sh`) and the key-based lookup in `clickhouse/operational_fingerprint.py`. The leaderboard query's 1 GiB cap is done (#1467); ranking in the rollup remains the volume-proof fix. |
+| G6 | The `by_generation_id` projection (`clickhouse/023_activity_generation_id_projection_replicated.sql`, applied with `scripts/deploy/clickhouse_replicated_migrate.sh`; `clickhouse/024_activity_generation_id_projection_single_node.sql` in the derived standalone schema set) and the key-based lookup in `clickhouse/operational_fingerprint.py`. The leaderboard query's 1 GiB cap is done (#1467); ranking in the rollup remains the volume-proof fix. |
 | G7 | `scripts/deploy/clickhouse_live_ingestion.sh:90-93` (replicated DDL, refuse non-replicated engines); `scripts/deploy/clickhouse_operational_writer.sh:16` (all nodes). Pinning the version in `scripts/deploy/clickhouse_startup.sh` is done (#1467). |
 | G8 | `clickhouse/archive_daily.py:90-164` (add the client telemetry datasets). |

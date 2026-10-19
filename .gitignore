@@ -19,3 +19,6 @@ playwright-report/
 proofs/states/
 # Code-review transcripts belong in a scratch directory, not the repository.
 .codex-review-*.md
+
+# Terraform working directories (provider binaries, state cache)
+.terraform/
