@@ -21,6 +21,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
@@ -305,11 +306,12 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		IdleConnTimeout:     90 * time.Second,
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport})
+		Transport: transport, Serving: func() bool { return !p.retiring.Load() }})
 	if err != nil {
 		_ = ln.Close()
 		return err
 	}
+	p.whenLeaving(func() { p.retiring.Store(true) })
 	handlers := &inFlight{}
 	requests, endRequests := context.WithCancel(context.Background())
 	srv := &http.Server{Handler: handlers.wrap(e), ReadHeaderTimeout: 5 * time.Second,
@@ -396,6 +398,8 @@ type parts struct {
 	// leaving run when the caller's context ends, while every part still
 	// runs, in order.
 	leaving []func()
+	// retiring also follows Leave, which keeps the parts running.
+	retiring atomic.Bool
 
 	mu  sync.Mutex
 	err error
@@ -585,6 +589,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	// that fails is written again with the node's next heartbeat. A
 	// stopping node's owner then hands its leases off.
 	leave := func(ctx context.Context) {
+		p.retiring.Store(true)
 		o.Retire()
 		ctx, cancel := context.WithTimeout(ctx, cfg.Store.LiveFor)
 		defer cancel()
