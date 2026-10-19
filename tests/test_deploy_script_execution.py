@@ -656,12 +656,19 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
-def test_rollout_pauses_unqualified_shadow_without_enabling_money_paths(
-    harness: DeployScriptHarness, region: str,
+def test_rollout_opts_the_probe_workspace_into_shadow_v2_without_enabling_money_paths(
+    harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from types import SimpleNamespace
+    from unittest.mock import Mock
 
-    from trusted_router.services import async_settle_shadow
+    from trusted_router import main, storage
+    from trusted_router.config import in_v2_cohort
+    from trusted_router.services import (
+        async_settle,
+        async_settle_shadow,
+        async_settle_shadow_cohort_runtime,
+        async_settle_shadow_health,
+    )
 
     run = harness.run(
         "scripts/deploy/rollout.sh",
@@ -681,19 +688,44 @@ def test_rollout_pauses_unqualified_shadow_without_enabling_money_paths(
     assert rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == "false"
     config = Settings(
         environment="test",
+        async_settle_shadow_policy=rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"],
         async_settle_shadow_workspaces=rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"],
+        async_settle_shadow_health_region=rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"],
+        async_settle_shadow_attachment_bucket=rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"],
         async_settle_enabled=rendered["TR_ASYNC_SETTLE_ENABLED"],
         async_settle_protection=rendered["TR_ASYNC_SETTLE_PROTECTION"],
+        settle_outbox_fast_drain_enabled=rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"],
     )
 
     class ForbiddenBackend:
-        @property
-        def _database(self):
-            pytest.fail("paused shadow must not access Spanner or install workers")
+        def __getattr__(self, name: str) -> Any:
+            pytest.fail(f"shadow installer selection must not access the backend: {name}")
 
-    app = SimpleNamespace(state=SimpleNamespace())
-    async_settle_shadow.install(app, config, ForbiddenBackend())
+    backend = ForbiddenBackend()
+    # Run create_app and its real v2 hook; replace backend-dependent installers
+    # so this checks selection without constructing observers or starting workers.
+    monkeypatch.setattr(storage, "typed_billing_store", lambda _: backend)
+    monkeypatch.setattr(async_settle, "load_runtime", Mock(return_value=None))
+    v1_install = Mock(side_effect=AssertionError("shadow v2 must not install the v1 observer"))
+    health_install = Mock()
+    cohort_install = Mock()
+    monkeypatch.setattr(async_settle_shadow, "install", v1_install)
+    monkeypatch.setattr(async_settle_shadow_health, "install", health_install)
+    monkeypatch.setattr(async_settle_shadow_cohort_runtime, "install", cohort_install)
+
+    app = main.create_app(config, configure_store_arg=False, init_observability=False)
+    v1_install.assert_not_called()
+    health_install.assert_called_once_with(app, config, backend)
+    cohort_install.assert_called_once_with(app, config, backend)
     assert not hasattr(app.state, "async_settle_shadow")
+    assert not config.async_settle_enabled
+    assert not config.async_settle_protection
+    assert not config.settle_outbox_fast_drain_enabled
+    assert config.async_settle_shadow_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
+                       config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
+    assert not in_v2_cohort(config.async_settle_shadow_policy, "stale-opt-in",
+                           config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
 
 
 @pytest.mark.parametrize("revision", ["abc12345", "not-a-commit", "f" * 40])
