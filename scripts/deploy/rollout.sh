@@ -653,7 +653,10 @@ ENV_VARS=(
   # the one dedicated probe workspace, the primary health region and the
   # attachments bucket. The v1 observer stays off because the policy is set
   # (main.py installs v1 only with an EMPTY policy). Money, protection and
-  # fast drain stay off. Opt-out = empty these four lines again.
+  # fast drain stay off. Opt-out (docs/design/async-settle-shadow-v2-activation.md,
+  # exact phase pins): empty the policy, workspaces and health-region lines and
+  # KEEP the attachment bucket pin until the retained export and retention work
+  # completes; never clear the attachment destination before that.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
   "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
