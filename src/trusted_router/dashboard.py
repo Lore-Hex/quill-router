@@ -2342,11 +2342,14 @@ def _model_hero(model: Model, view: dict[str, object]) -> tuple[str, str]:
     name = _hero_model_name(model)
     if view["is_meta"]:
         candidates = cast(list[object], view["candidate_models"])
-        reach = (
-            "routes through the attested preset"
-            if view["configuration_hidden"] or len(candidates) == 0
-            else f"routes across {len(candidates)} component models"
-        )
+        if view["configuration_hidden"] or len(candidates) == 0:
+            reach = "routes through the attested preset"
+        elif orchestration_primitive(model.id) is None:
+            # A pool (auto, green, zdr, ...) picks among whole models; a preset
+            # composes component models.
+            reach = f"picks among {len(candidates)} models"
+        else:
+            reach = f"routes across {len(candidates)} component models"
         return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach} with automatic failover."
     routes = cast(int, view["endpoint_count"])
     if routes >= 2:
@@ -2354,8 +2357,14 @@ def _model_hero(model: Model, view: dict[str, object]) -> tuple[str, str]:
     elif routes == 1:
         reach = "reaches this route and every other model in the catalog."
     else:
+        # The key the visitor brings is the serving provider's, which is the
+        # publisher's for most models and a reseller's for a few.
+        byok_providers = sorted(
+            {PROVIDERS[e.provider].name for e in endpoints_for_model(model.id) if e.usage_type == "BYOK"}
+        )
+        key = f"{byok_providers[0]} key" if len(byok_providers) == 1 else "provider key"
         return HERO_BRING_YOUR_OWN_KEY, (
-            f"Run {name} through TrustedRouter with your own {view['provider']} key. "
+            f"Run {name} through TrustedRouter with your own {key}. "
             "One base URL, usage records and spend limits, alongside every other model in the catalog."
         )
     return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
