@@ -60,8 +60,11 @@ including the confidential policy probe where required. Website deployment
 does not create API records or terminate prompt traffic. Preserve the website's
 apex/www routing and Certificate Manager authorization records. Publish the
 quickstart only after both API origins pass production tests. For a narrow
-release, back up and update only New York's index and the shared CSS, preserving
-concurrent asset versions and unrelated market pages.
+release, back up and update only New York's index and the isolated
+`assets/spot-api.css`, preserving concurrent asset versions and unrelated market
+pages. If the live homepage differs from the build, insert only the new
+stylesheet link, navigation link, hero action and spot API section into fresh
+live HTML. Verify reversing those four changes reproduces the original bytes.
 
 ### Public New York media kit
 

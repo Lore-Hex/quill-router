@@ -11,6 +11,7 @@ class SpotAPITests(unittest.TestCase):
         market = next(m for m in markets if m["slug"] == "new-york")
         page = render(market, markets, "test")
         self.assertIn('id="spot-api"', page)
+        self.assertRegex(page, r'href="/assets/spot-api\.css\?v=[a-f0-9]{12}"')
         self.assertIn('href="#spot-api">Use the spot exchange', page)
         self.assertIn("https://trustedrouter.com/docs#nyte-api", page)
         self.assertIn("https://api.nytokenexchange.com/v1", page)
@@ -30,6 +31,7 @@ class SpotAPITests(unittest.TestCase):
             if market["slug"] != "new-york":
                 page = render(market, markets, "test")
                 self.assertNotIn('id="spot-api"', page)
+                self.assertNotIn('/assets/spot-api.css', page)
                 self.assertIn('href="https://trustedrouter.com/trust">Verify a live route', page)
 
 
