@@ -17,6 +17,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/auditor"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/owner"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
@@ -74,6 +76,10 @@ type Config struct {
 	// Ring is how often a node writes its row and a front door reads the
 	// members.
 	Ring time.Duration
+
+	// Edge is the edge's (docs/design/fast-admission-enclave-direct.md,
+	// E1): Address empty runs none.
+	Edge EdgeConfig
 
 	// The parts' own settings. Run fills in what joins them: the store, the
 	// logs, the ring, the clock, and the times Store holds.
@@ -144,8 +150,23 @@ type Clients struct {
 	PubSub  *pubsub.Client
 }
 
+// EdgeConfig is the edge's: where it listens for the enclave's
+// control-plane calls (Listener, when set, else Address), Python's
+// internal surface it passes them to, the internal token the enclave
+// sends, as Python holds it, and how long a boot read may take before the
+// verdict is unread (edge.Config).
+type EdgeConfig struct {
+	Address  string
+	Listener net.Listener
+	Upstream string
+	Token    string
+	BootWait time.Duration
+}
+
 func (c Config) valid() error {
 	switch {
+	case c.Edge.Address != "" && (c.Edge.Upstream == "" || c.Edge.Token == ""):
+		return errors.New("service: an edge needs its upstream and the internal token")
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
 	case c.Address == "":
@@ -245,7 +266,67 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 				p.startFailed(ctx, err)
 			}
 		}
+		if cfg.Edge.Address != "" && p.ctx.Err() == nil {
+			if err := p.edge(cfg, s); err != nil {
+				p.startFailed(ctx, err)
+			}
+		}
 	})
+}
+
+// edge starts the edge's server: the enclave's control-plane calls, checked
+// and passed to Python with the edge's verdict (edge.Edge). It reads boots
+// from the store and nothing else of the node's; it stops as the node's
+// own server stops, requests under way given Stopping to end.
+func (p *parts) edge(cfg Config, s *store.Store) (err error) {
+	ln := cfg.Edge.Listener
+	if ln == nil {
+		if ln, err = net.Listen("tcp", cfg.Edge.Address); err != nil {
+			return err
+		}
+	}
+	upstream, err := url.Parse(cfg.Edge.Upstream)
+	if err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("service: the edge's upstream: %w", err)
+	}
+	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait})
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	srv := &http.Server{Handler: e, ReadHeaderTimeout: 5 * time.Second}
+	p.run("edge", func(ctx context.Context) error {
+		served := make(chan error, 1)
+		go func() { served <- srv.Serve(ln) }()
+		var err error
+		select {
+		case err = <-served:
+		case <-ctx.Done():
+			stopping, cancel := context.WithTimeout(context.Background(), cfg.Stopping)
+			_ = srv.Shutdown(stopping)
+			cancel()
+			err = <-served
+		}
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		_ = srv.Close()
+		return nil
+	})
+	return nil
+}
+
+// storeBoots reads the edge's boots from the store: production's entity
+// table, by key id.
+type storeBoots struct{ s *store.Store }
+
+func (b storeBoots) Boot(ctx context.Context, kid string) (edge.Boot, bool, error) {
+	boot, found, err := b.s.ReadBoot(ctx, kid)
+	if err != nil || !found {
+		return edge.Boot{}, false, err
+	}
+	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified}, true, nil
 }
 
 // lifecycle starts a process's parts with start and runs them until ctx

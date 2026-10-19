@@ -90,6 +90,11 @@ watch, and a way back that needs no deploy.
   signature is bound to and whether the boot's image digest is accepted,
   stay Python's until E2, where the edge decides and needs them.
 - **Python keeps:** everything.
+- **Where it runs:** on each node, beside the front door, when the unit
+  passes `-edge-address` (its own port), `-edge-upstream` (Python's
+  internal surface) and `-edge-token-secret` (the internal token, a pinned
+  Secret Manager version, the same secret Python holds); `-edge-boot-wait`
+  bounds the boot read. Nothing passes them yet.
 - **Switch and way back:** the load balancer route, and an edge
   "pass everything" flag. Nothing durable changes.
 - **Measured:** the edge's added latency (under 1 ms p50); the verdict's

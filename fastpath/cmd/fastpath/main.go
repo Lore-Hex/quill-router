@@ -78,6 +78,13 @@ func run() error {
 		"how long a stopping node's owner has to hand its leases off; 0 hands none off")
 	flag.DurationVar(&cfg.ClockOffset, "clock-offset", cfg.ClockOffset,
 		"added to the owner's clock readings, to inject an owner's clock error; 0 for a true clock")
+	flag.StringVar(&cfg.Edge.Address, "edge-address", "",
+		"where the edge listens for the enclave's control-plane calls (docs/design/fast-admission-enclave-direct.md, E1); "+
+			"empty runs none")
+	flag.StringVar(&cfg.Edge.Upstream, "edge-upstream", "", "the control plane's internal surface the edge passes calls to, a URL with no path")
+	edgeTokenSecret := flag.String("edge-token-secret", "",
+		"the internal service token the enclave sends, as a Secret Manager version pinned by its number")
+	flag.DurationVar(&cfg.Edge.BootWait, "edge-boot-wait", 2*time.Second, "how long the edge's boot read may take before its verdict is unread")
 	flag.Parse()
 
 	switch *roles {
@@ -104,6 +111,18 @@ func run() error {
 	var err error
 	if cfg.Key, cfg.AcceptKeys, err = keysOf(context.Background(), *keyPath, *keySecret, *acceptSecrets); err != nil {
 		return err
+	}
+	if (cfg.Edge.Address == "") != (*edgeTokenSecret == "") {
+		return errors.New("-edge-address and -edge-token-secret go together")
+	}
+	if *edgeTokenSecret != "" {
+		// The token's bytes as the secret holds them: Python compares its
+		// own copy of the same secret byte for byte.
+		token, err := readSecret(context.Background(), *edgeTokenSecret)
+		if err != nil {
+			return err
+		}
+		cfg.Edge.Token = string(token)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
