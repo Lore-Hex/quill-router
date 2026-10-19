@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,8 @@ def catalog():
                          "structured_output": False, "prompt_caching": False},
         "pricing": {"currency": "USD", "unit": "per_1m_tokens", "input": "0.10", "output": "0.10",
                     "cached_input": None, "cache_write": None, "minimum_request": "0"},
-        "lifecycle": {"status": "active", "deprecation_at": None, "retirement_at": None,
+        "lifecycle": {"status": "active", "deprecation_at": None,
+                      "retirement_at": (datetime.now(UTC) + timedelta(hours=2)).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
                       "replacement_model_id": None},
         "reliability": {"first_token_timeout_seconds": 30, "completion_timeout_seconds": 120,
                         "stream_idle_timeout_seconds": 30, "capacity_scope": "model"},
@@ -67,6 +69,52 @@ def test_successful_v2_fetch_publishes_only_canary_verified_route(monkeypatch, t
     assert row["upstream_id"] == "qwen/qwen3-0.6b"
     assert row["max_output_tokens"] == 256
     assert row["provider_reliability"]["provider_id"] == "hixtube"
+
+
+@pytest.mark.parametrize("value", [None, "bad", "2026-01-01T00:00:00Z", "2099-01-01T00:00:00Z"])
+def test_pilot_requires_finite_future_retirement(value):
+    payload = catalog()
+    payload["data"][0]["lifecycle"]["retirement_at"] = value
+    with pytest.raises(RuntimeError):
+        p.discover(payload)
+
+
+def test_runtime_cutoff_survives_refresh_without_extension(monkeypatch, tmp_path):
+    from trusted_router.provider_manifest_policy import provider_manifest_valid_until
+
+    payload = catalog()
+    cutoff = payload["data"][0]["lifecycle"]["retirement_at"]
+    monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
+    monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
+    monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: payload)
+    probes = []
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **kw: probes.append(kw) or True)
+    for _ in range(2):
+        p.write_provider_manifest(p.fetch())
+        raw = json.loads(p.MANIFEST_PATH.read_text())
+        assert raw["pricing_valid_until"] == cutoff
+        assert provider_manifest_valid_until("hixtube", raw) == datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
+    assert len(probes) == 2
+
+
+def test_failed_candidate_write_does_not_damage_last_known_manifest(monkeypatch, tmp_path):
+    monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
+    monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
+    monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: catalog())
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
+    p.write_provider_manifest(p.fetch())
+    before = p.MANIFEST_PATH.read_bytes()
+
+    def fail_write(*_args, manifest_path, **_kwargs):
+        assert manifest_path != p.MANIFEST_PATH
+        manifest_path.write_text("partial")
+        raise OSError("write failed")
+
+    monkeypatch.setattr(p, "write_discovered_chat_manifest", fail_write)
+    with pytest.raises(OSError):
+        p.write_provider_manifest(p.fetch())
+    assert p.MANIFEST_PATH.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [p.MANIFEST_PATH]
 
 
 @pytest.mark.parametrize("value", ["NaN", "-1", None, 0.1])
