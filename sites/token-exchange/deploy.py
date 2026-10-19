@@ -8,7 +8,6 @@ saved record inventory. This script preserves existing URL-map host rules.
 from __future__ import annotations
 
 import argparse
-import copy
 import hashlib
 import http.client
 import json
@@ -95,64 +94,21 @@ def certificate_requests(attached: list[dict], hosts: list[str]) -> list[tuple[s
     return requests
 
 
-def url_map(existing: dict) -> dict:
-    result = copy.deepcopy(existing)
-    wanted_hosts = {h for domain in domains() for h in (domain, "www." + domain)}
-    for rule in result.get("hostRules", []):
-        if not rule["pathMatcher"].startswith("exchange-") and wanted_hosts.intersection(
-            rule["hosts"]
-        ):
-            raise ValueError("Exchange hostname already routed by an unrelated matcher")
-    result["hostRules"] = [
-        r for r in result.get("hostRules", []) if not r["pathMatcher"].startswith("exchange-")
-    ]
-    result["pathMatchers"] = [
-        r for r in result.get("pathMatchers", []) if not r["name"].startswith("exchange-")
-    ]
-    service = (
-        f"https://www.googleapis.com/compute/v1/projects/{PROJECT}/global/backendBuckets/{BACKEND}"
-    )
+def unrouted_hosts(current: dict) -> list[str]:
+    """The exchange hosts the live map does not route through an exchange
+    matcher. Routing is Terraform's (infra/control_lb_url_map.tf reads
+    markets.json), so publish checks it and writes none."""
+    routed = {
+        host
+        for rule in current.get("hostRules", [])
+        if rule.get("pathMatcher", "").startswith("exchange-")
+        for host in rule.get("hosts", [])
+    }
+    wanted = []
     for market in load_markets():
-        name = "exchange-" + market["slug"]
-        result["hostRules"].append({"hosts": [market["domain"]], "pathMatcher": name})
-        rules = []
-        for path, file in (
-            ("/", "index.html"),
-            ("/index.html", "index.html"),
-            ("/robots.txt", "robots.txt"),
-            ("/sitemap.xml", "sitemap.xml"),
-        ):
-            rules.append(
-                {
-                    "paths": [path],
-                    "service": service,
-                    "routeAction": {
-                        "urlRewrite": {"pathPrefixRewrite": f"/{market['slug']}/{file}"}
-                    },
-                }
-            )
-        result["pathMatchers"].append({"name": name, "defaultService": service, "pathRules": rules})
-        aliases = [
-            "www." + market["domain"],
-            *market["aliases"],
-            *["www." + alias for alias in market["aliases"]],
-        ]
-        result["hostRules"].append({"hosts": aliases, "pathMatcher": name + "-aliases"})
-        result["pathMatchers"].append(
-            {
-                "name": name + "-aliases",
-                "defaultUrlRedirect": {
-                    "hostRedirect": market["domain"],
-                    "httpsRedirect": True,
-                    "redirectResponseCode": "MOVED_PERMANENTLY_DEFAULT",
-                    "stripQuery": False,
-                },
-            }
-        )
-    for field in ("kind", "id", "creationTimestamp", "selfLink"):
-        result.pop(field, None)
-    return result
-
+        wanted += [market["domain"], "www." + market["domain"]]
+        wanted += [h for alias in market["aliases"] for h in (alias, "www." + alias)]
+    return [h for h in wanted if h not in routed]
 
 def inventory(output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
@@ -299,17 +255,13 @@ def publish(output: Path, state: Path) -> None:
         "--custom-response-header=Referrer-Policy:strict-origin-when-cross-origin",
     )
     current = gcloud("compute", "url-maps", "describe", MAP, "--global", read=True)
-    state.mkdir(parents=True, exist_ok=True)
-    backup = state / "urlmap-before.json"
-    if not backup.exists():
-        backup.write_text(json.dumps(current, indent=2) + "\n")
-    proposed = state / "urlmap-proposed.json"
-    proposed.write_text(json.dumps(url_map(current), indent=2) + "\n")
-    gcloud("compute", "url-maps", "validate", f"--source={proposed}", "--global")
-    fresh = gcloud("compute", "url-maps", "describe", MAP, "--global", read=True)
-    if fresh["fingerprint"] != current["fingerprint"]:
-        raise RuntimeError("URL map changed concurrently. Rerun to merge against the latest map.")
-    gcloud("compute", "url-maps", "import", MAP, f"--source={proposed}", "--global")
+    missing = unrouted_hosts(current)
+    if missing:
+        raise RuntimeError(
+            "Not routed by the control load balancer: " + ", ".join(missing)
+            + ". Routing is Terraform's (infra/control_lb_url_map.tf reads markets.json): "
+            "merge the market and let infra apply first."
+        )
     if not certificate_map:
         publish_certificates()
 
