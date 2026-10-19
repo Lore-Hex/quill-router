@@ -122,6 +122,28 @@ def test_audio_models_cannot_change_existing_transcription_contract(native):
     assert rows[bedrock.canonical_model_id(native)]["routable_reason"] == "unsupported-audio-contract"
 
 
+@pytest.mark.parametrize("region,allowed", [
+    ("us-central1", True), ("europe-west4", True),
+    ("aws-eu-west-3", False), ("azure-australiaeast", False), ("unknown", False),
+])
+def test_catalog_waits_for_each_cloud_gateway_upgrade(monkeypatch, region, allowed):
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+    from trusted_router.catalog_deployment import apply_gateway_admission_holds
+
+    monkeypatch.setenv("TR_ENVIRONMENT", "production")
+    monkeypatch.setenv("TR_SERVING_REGION", region)
+    models, endpoints = dict(MODELS), dict(MODEL_ENDPOINTS)
+    baseline = {key for key, ep in endpoints.items() if ep.provider == "amazon-bedrock"}
+    assert baseline
+    other_qwen = {key for key, ep in endpoints.items()
+                  if ep.model_id == "qwen/qwen3-32b" and ep.provider != "amazon-bedrock"}
+    apply_gateway_admission_holds(models, endpoints)
+    assert bool(baseline & endpoints.keys()) is allowed
+    assert other_qwen <= endpoints.keys()
+    if not allowed:
+        assert all(ep.provider != "amazon-bedrock" for ep in endpoints.values())
+
+
 def test_failed_fetch_resets_discovery(monkeypatch):
     monkeypatch.delenv("BEDROCK_API_KEY", raising=False)
     monkeypatch.setattr(bedrock, "_DISCOVERED_ROWS", {"old": {"id": "old"}})

@@ -46,11 +46,15 @@ def apply_gateway_admission_holds(
 ) -> None:
     unavailable_models = unavailable_gateway_model_ids()
     unavailable_routes = unavailable_gateway_routes()
+    # Bedrock requires QCP #535 (including its AWS vsock tunnel and Azure
+    # sealed-bundle entry). Automatic CP catch-up cannot upgrade those gateways.
+    unavailable_providers = frozenset() if _gateway_cloud_upgraded() else frozenset({"amazon-bedrock"})
     affected_models = {model_id for model_id, _ in unavailable_routes}
     for identity, endpoint in tuple(endpoints.items()):
-        if endpoint.model_id in unavailable_models or (
+        if endpoint.provider in unavailable_providers or endpoint.model_id in unavailable_models or (
             endpoint.model_id, endpoint.provider
         ) in unavailable_routes:
+            affected_models.add(endpoint.model_id)
             del endpoints[identity]
     for model_id in unavailable_models:
         models.pop(model_id, None)
