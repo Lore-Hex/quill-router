@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.pricing.base import ModelPrice
+from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import minimax as minimax_parser
 from scripts.pricing.providers import _direct_openai, inception, minimax
 from trusted_router.provider_lifecycle import provider_model_retired
@@ -68,6 +68,32 @@ def _mercury_row(native_id: str = "mercury-3") -> dict:
         "max_output_length": 131_072, "supported_endpoints": ["chat.completions"],
         "pricing": {"prompt": "0", "completion": "0", "input_cache_reads": "0"},
     }
+
+
+def test_minimax_confirmed_retirements_do_not_block_repeated_refresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = tmp_path / "minimax.json"
+    old_rows = [{"id": f"minimax/{native.lower()}", "upstream_id": native} for native in (
+        "MiniMax-M2", "MiniMax-M2.1", "MiniMax-M2.5", "MiniMax-M2.7", "MiniMax-M3",
+    )]
+    manifest.write_text(json.dumps({"models": old_rows}))
+    monkeypatch.setenv("TR_LIFECYCLE_CLOCK_OVERRIDE", "2026-10-20T00:00:00Z")
+    monkeypatch.setattr(minimax, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(minimax, "_DISCOVERED_MANIFEST_ROWS", {
+        "minimax/minimax-m3": {"id": "minimax/minimax-m3", "upstream_id": "MiniMax-M3"},
+    })
+    result = ProviderPricingResult(slug="minimax", prices={
+        "minimax/minimax-m3": ModelPrice(300_000, 1_200_000),
+    }, source="api")
+    # A missing EXPECTED_MODELS entry is advisory, not a permanent publication
+    # gate. The reviewed retirement also must not trip the mass-prune guard.
+    for _ in range(2):
+        minimax.write_provider_manifest(result)
+    rows = json.loads(manifest.read_text())["models"]
+    assert all(row.get("routable") is False for row in rows if "minimax-m2" in row["id"])
+    assert next(row for row in rows if row["id"] == "minimax/minimax-m3")["input_token_price_per_m"] == 300_000
+    result.prices = {}
+    with pytest.raises(RuntimeError, match="unpriced live"):
+        minimax.write_provider_manifest(result)
 
 
 def test_inception_uses_current_documented_price_not_zero_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:

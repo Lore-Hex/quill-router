@@ -188,9 +188,9 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             updated.append(model_id)
         present_rows[model_id] = row
 
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
+    missing = sorted(set(_DISCOVERED_MANIFEST_ROWS) - set(updated))
     if missing:
-        raise RuntimeError(f"minimax manifest did not update expected model(s): {missing}")
+        raise RuntimeError(f"minimax manifest has unpriced live model(s): {missing}")
 
     rebuilt = reconcile_manifest_tombstones(
         rows,
