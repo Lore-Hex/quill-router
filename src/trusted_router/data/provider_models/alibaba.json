@@ -551,6 +551,8 @@
     {
       "id": "qwen/qwen3.5-397b-a17b",
       "upstream_id": "qwen3.5-397b-a17b",
+      "retirement_at": "2027-01-19T02:00:00Z",
+      "replacement_model_id": "qwen/qwen3.8-flash",
       "display_name": "Qwen3.5 397b A17b",
       "title": "qwen3.5-397b-a17b",
       "created": 1792344777,
@@ -614,6 +616,8 @@
     {
       "id": "qwen/qwen3.5-plus",
       "upstream_id": "qwen3.5-plus",
+      "retirement_at": "2027-01-19T02:00:00Z",
+      "replacement_model_id": "qwen/qwen3.8-flash",
       "display_name": "Qwen3.5 Plus",
       "title": "qwen3.5-plus",
       "created": 1792344777,
@@ -649,6 +653,8 @@
     {
       "id": "qwen/qwen3.5-plus-2026-02-15",
       "upstream_id": "qwen3.5-plus-2026-02-15",
+      "retirement_at": "2027-01-19T02:00:00Z",
+      "replacement_model_id": "qwen/qwen3.8-flash",
       "display_name": "Qwen3.5 Plus 2026 02 15",
       "title": "qwen3.5-plus-2026-02-15",
       "created": 1792344777,

@@ -64,6 +64,8 @@ DEEPINFRA_GRANITE_42_RETIREMENT_AT = datetime(2026, 10, 18, 0, 0, tzinfo=UTC)
 DEEPINFRA_INKLING_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT = datetime(2026, 10, 20, 0, 0, tzinfo=UTC)
 SCALEWAY_GLM_52_RETIREMENT_AT = datetime(2026, 11, 16, 0, 0, tzinfo=UTC)
+# 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
+ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
 XIAOMI_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
@@ -967,6 +969,31 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"openai/gpt-oss-120b-Turbo"}),
         effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-oss-120b",),
+    ),
+    # Alibaba Model Studio's October 19 notice decommissions legacy Qwen3.5
+    # Plus snapshots and Qwen3.5 397B-A17B at 2027-01-19 10:00 UTC+8 and
+    # recommends Qwen3.8 Flash. Retire only Alibaba's routes; other
+    # providers' Qwen3.5 routes stay.
+    _Retirement(
+        provider="alibaba",
+        model_ids=frozenset(
+            {
+                "qwen/qwen3.5-plus",
+                "qwen/qwen3.5-plus-2026-02-15",
+                "qwen/qwen3.5-plus-2026-04-20",
+                "qwen/qwen3.5-397b-a17b",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "qwen3.5-plus",
+                "qwen3.5-plus-2026-02-15",
+                "qwen3.5-plus-2026-04-20",
+                "qwen3.5-397b-a17b",
+            }
+        ),
+        effective_at=ALIBABA_QWEN35_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-flash",),
     ),
     # Scaleway's October 16 notice: GLM 5.2 reaches end of life on
     # 2026-11-16 and later requests are redirected to the different GLM 5.3
