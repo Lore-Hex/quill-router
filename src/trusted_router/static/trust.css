@@ -1,72 +1,79 @@
 /* /trust page body. The header and footer come from public/_base.html
-   (site-chrome.css); this sheet only lays out the panels under them. */
+   (site-chrome.css). The page reuses the /security and /docs patterns from
+   charter.css (ruled hero, divided strips, one bordered band) and this sheet
+   only sets the trust-specific pieces: the agent prompt, key/value lists, the
+   checklist, the repo tiles and the printed release record. */
 
 .trust-page .public-wrap {
   padding-top: 24px;
-  gap: 20px;
+  gap: 0;
 }
 
-.trust-page .public-wrap > .panel {
-  padding: 20px;
+.trust-page .public-wrap > section + section {
+  margin-top: var(--tr-space-stack-3xl);
 }
 
-.trust-page .panel h2,
-.trust-page .agent-verify-head h2 {
-  margin: 0 0 12px;
-  font-size: 18px;
-  line-height: 1.3;
-  letter-spacing: -0.02em;
+.trust-page .public-wrap > .trust-hero + section {
+  margin-top: var(--tr-space-stack-2xl);
 }
 
-.trust-page .panel p {
-  margin: 0 0 12px;
+/* Shared text sizes: the same reading size /docs uses. */
+.trust-page :is(.marketing-card, .quote-feature, .trust-hero-copy, .trust-notice) p {
+  margin: 0 0 var(--tr-space-stack-md);
   color: var(--text-body);
-  font-size: 15px;
-  line-height: 1.55;
+  font-size: 16px;
+  line-height: 1.7;
 }
 
-.trust-page .panel > :last-child {
+.trust-page :is(.marketing-card, .quote-feature > div, .trust-hero-copy) > :last-child {
   margin-bottom: 0;
 }
 
-.trust-page .panel.warn {
-  border-color: var(--warn-border);
-  background: var(--warn-bg);
-}
-
-.trust-page .panel.warn :is(h2, p, code) {
-  color: var(--amber);
+.trust-page .marketing-card h2,
+.trust-workload h2,
+.trust-open h2,
+.trust-record h2 {
+  margin: 0 0 var(--tr-space-stack-md);
+  color: var(--text-display);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 550;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
 }
 
 /* Agent prompt, first in main. */
 .agent-verify {
   min-width: 0;
-  padding: 0 0 18px;
+  padding: 8px 0 28px;
   border-bottom: 1px solid var(--border-hairline);
 }
 
 .agent-verify-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 12px 24px;
   align-items: center;
   justify-content: space-between;
   min-height: 44px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .agent-verify-head h2 {
   margin: 0;
   font-size: 22px;
+  font-weight: 550;
+  letter-spacing: -0.025em;
 }
 
 .agent-prompt {
   margin: 0;
-  padding: 4px 0 4px 18px;
+  padding: 6px 0 6px 20px;
   border-left: 3px solid var(--tr-color-accent-base);
 }
 
 .agent-prompt p {
+  max-width: 78ch;
   margin: 0;
   color: var(--text-display);
   font-size: 17px;
@@ -112,134 +119,325 @@
   line-height: 1.5;
 }
 
-/* Title panel and the current workload beside it. */
-.trust-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
-  gap: 20px;
-  align-items: start;
+/* Release warning, second in main when the live record is stale or missing. */
+.trust-page .trust-notice {
+  padding: 20px 24px;
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.trust-page .trust-notice h2 {
+  margin: 0 0 8px;
+  color: var(--amber);
+  font-size: 18px;
+  font-weight: 550;
+  letter-spacing: -0.025em;
+}
+
+.trust-page .trust-notice p {
+  color: var(--amber);
+}
+
+/* Title, lead copy and the links the page's own header used to carry. */
+.trust-page .trust-hero {
+  grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.7fr);
+  gap: 48px 64px;
+  padding: 28px 0 48px;
+}
+
+.trust-hero-copy code {
+  font-size: 0.9em;
 }
 
 .trust-hero h1 {
-  margin: 0 0 14px;
-  font-size: 38px;
-  line-height: 1.1;
+  max-width: 640px;
+  margin: 20px 0 20px;
+  font-size: 44px;
+  line-height: 1.08;
 }
 
-.trust-status {
-  display: inline-flex;
+.trust-page .trust-hero-copy .lead {
+  max-width: 600px;
+  margin-bottom: var(--tr-space-stack-md);
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.trust-hero-copy p {
+  max-width: 600px;
+}
+
+.trust-page .trust-links {
   gap: 8px;
-  align-items: center;
-  margin: 0 0 10px;
-  color: var(--tr-color-accent-base);
-  font-weight: 700;
+  margin: 28px 0 0;
 }
 
-.trust-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--tr-color-accent-base);
+.trust-links .btn {
+  text-decoration: none;
 }
 
-/* The links the page's own header used to carry. */
-.trust-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  margin: 0 0 16px;
-  font-size: 14px;
+.trust-workload {
+  min-width: 0;
+  padding-top: 6px;
 }
 
-.trust-links a {
-  color: var(--tr-color-link-base);
-  font-weight: 600;
-  text-decoration: underline;
-  text-decoration-color: var(--tr-color-link-underline);
-}
-
-.trust-links a:hover {
-  color: var(--tr-color-text-primary);
-}
-
-/* Key/value stacks, checklists, repo lists. */
-.trust-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
+/* Key/value lists: one ruled row per fact, label above a mono value. */
 .trust-kv {
   display: grid;
-  gap: 12px;
-  margin-top: 8px;
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid var(--border-default);
 }
 
-.trust-label {
-  margin-bottom: 3px;
+.trust-kv > div {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.trust-kv dt {
+  margin: 0 0 4px;
   color: var(--text-muted);
   font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
   text-transform: uppercase;
 }
 
-.trust-value {
+.trust-kv dd {
+  margin: 0;
+  color: var(--text-display);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
-.trust-page .trust-kv + p {
-  margin-top: 14px;
+.trust-page .marketing-card .trust-kv {
+  margin-bottom: var(--tr-space-stack-md);
 }
 
-.trust-repo-list {
+.trust-page .marketing-card .trust-kv + p {
+  margin-top: var(--tr-space-stack-lg);
+}
+
+/* Divided strips: cells share rules, so there is one box per strip at most. */
+.trust-page .trust-strip {
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.trust-page .trust-hero + .trust-strip {
+  border-top: 0;
+}
+
+.trust-page .trust-strip .marketing-card {
+  padding: 28px 28px 32px;
+  border-bottom: 0;
+}
+
+.trust-page .trust-strip .marketing-card:first-child {
+  padding-left: 0;
+}
+
+.trust-page .trust-strip .marketing-card:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.trust-page .trust-caution h2 {
+  color: var(--gold);
+}
+
+/* Checklist and file list: ruled rows, like the check-list on /docs. */
+.trust-checks,
+.trust-files {
   display: grid;
-  gap: 12px;
-}
-
-.trust-repo-list p {
-  margin: 3px 0 0;
-}
-
-.trust-checks {
-  display: grid;
-  gap: 10px;
+  gap: 0;
   margin: 0;
   padding: 0;
+  border-top: 1px solid var(--border-default);
   list-style: none;
 }
 
-.trust-checks li {
-  display: flex;
-  gap: 10px;
+.trust-checks li,
+.trust-files li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-hairline);
   color: var(--text-body);
-  line-height: 1.4;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.trust-checks li {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
 }
 
 .trust-check {
+  padding-top: 2px;
   color: var(--tr-color-accent-base);
   font-family: var(--font-mono);
-  font-weight: 800;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
 }
 
-.trust-page .panel pre {
+.trust-files a,
+.trust-repo-list a,
+.trust-kv a {
+  color: var(--tr-color-link-base);
+  text-decoration: underline;
+  text-decoration-color: var(--tr-color-link-underline);
+  text-underline-offset: 0.2em;
+}
+
+.trust-files a:hover,
+.trust-repo-list a:hover,
+.trust-kv a:hover {
+  color: var(--tr-color-text-primary);
+}
+
+/* The one bordered band: heading beside the explanation. */
+.trust-page .trust-why {
+  gap: 32px 48px;
+  padding: 32px;
+}
+
+.trust-why h2 {
   margin: 0;
-  padding: 16px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--r-control);
+  font-size: 28px;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+
+.trust-why strong {
+  color: var(--text-display);
+}
+
+/* Repository tiles, as on the /docs SDK block. */
+.trust-page .trust-repo-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.trust-page .trust-repo-list .repo-card {
+  padding: 22px 24px 24px;
+  border-right: 1px solid var(--border-hairline);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.trust-page .trust-repo-list .repo-card:nth-child(3n) {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.trust-page .trust-repo-list .repo-card:nth-child(3n + 1) {
+  padding-left: 0;
+}
+
+.trust-repo-list .repo-card a {
+  display: block;
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.trust-repo-list .repo-card p {
+  margin: 0;
+  color: var(--text-body);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Printed release record: heading plus the code block, as on /docs. */
+.trust-record pre {
+  margin: 0;
+  padding: 20px 24px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-panel);
+  background: var(--tr-color-surface-panel-inset);
+  color: var(--code-ink);
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 850px) {
-  .trust-hero,
-  .trust-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 1040px) {
+  .trust-page .public-wrap > section + section {
+    margin-top: var(--tr-space-stack-2xl);
+  }
+
+  .trust-page .trust-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+    padding: 32px 0 36px;
   }
 
   .trust-hero h1 {
+    font-size: 34px;
+  }
+
+  .trust-page .trust-hero-copy .lead {
+    font-size: 17px;
+  }
+
+  /* One column: every cell becomes a ruled row across the page gutter. */
+  .trust-page .trust-strip.marketing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trust-page .trust-strip .marketing-card {
+    padding: 24px 0 28px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-hairline);
+  }
+
+  .trust-page .trust-strip .marketing-card:last-child {
+    border-bottom: 0;
+  }
+
+  .trust-page .trust-why {
+    gap: 20px;
+    padding: 24px 20px;
+  }
+
+  .trust-why h2 {
+    font-size: 24px;
+  }
+
+  .trust-page .trust-repo-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trust-page .trust-repo-list .repo-card,
+  .trust-page .trust-repo-list .repo-card:nth-child(3n),
+  .trust-page .trust-repo-list .repo-card:nth-child(3n + 1) {
+    padding: 18px 0 20px;
+    border-right: 0;
+  }
+
+  .trust-record pre {
+    padding: 16px;
+    font-size: 12.5px;
+  }
+}
+
+@media (max-width: 600px) {
+  .trust-hero h1 {
     font-size: 30px;
+  }
+
+  .agent-verify-head h2 {
+    font-size: 20px;
+  }
+
+  .agent-prompt p {
+    font-size: 16px;
   }
 }
