@@ -169,12 +169,19 @@ reads both when it runs and passes `-edge-address`, `-edge-upstream` and
 flags (the edge role, #1859, and its health answer, #1875); an earlier
 release refuses them and the node stays stopped, which
 `tests/test_fastpath_p1.py` holds the pin to. A read of the metadata that
-fails, or one attribute without the other, also leaves the node stopped,
-with the reason in its journal.
+fails, or one attribute without the other, stops the startup script with
+the reason in the journal: a new node stays stopped; a rebooted node
+keeps the unit it had, since systemd starts it from disk before the
+script runs. The token is a secret version pinned by its number, the
+only form the node reads: a rotation is a new version, a Python deploy,
+the pin moved in `infra/fastpath.tf`, and the nodes reset one at a time.
 
 A node keeps the startup script it was created with (`ignore_changes` in
-`infra/fastpath.tf`), so the script that reads the attributes reaches the
-fleet as every change does: a node added under a new name, which starts
+`infra/fastpath.tf`; a script change is not drift, so which script a
+node runs is read from the instance, `gcloud compute instances describe
+NODE --format='value(metadata.startup-script)'`, against the template),
+so the script that reads the attributes reaches the fleet as every
+change does: a node added under a new name, which starts
 first, then the old one marked leaving, drained and removed, as "For
 each node replaced" says, one at a time, the other serving throughout. A
 same-name replacement of both nodes in one apply would leave admitted

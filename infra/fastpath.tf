@@ -23,14 +23,14 @@ locals {
   # The edge (E1): its port, the control plane's internal surface in the
   # nodes' region (the Cloud Run service behind /internal; its internal
   # ingress admits a VM of this project's VPC, Cloud NAT egress included)
-  # and the internal token Python holds, read as Python reads it
-  # (scripts/deploy/rollout.sh: the secret's latest version), so a
-  # rotation is a Python deploy and then the nodes reset, one at a time,
-  # with no edit here. Set on the nodes' metadata, read when a node's
-  # startup script runs.
+  # and the internal token Python holds, a version pinned by its number
+  # (the node reads secrets that way only; Python reads the latest). A
+  # rotation is a new version, a Python deploy, this pin moved to the
+  # number, and the nodes reset one at a time. Set on the nodes'
+  # metadata, read when a node's startup script runs.
   fastpath_edge_port         = 8081
   fastpath_edge_upstream     = "https://trusted-router-vsjf6qu4la-uc.a.run.app"
-  fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/latest"
+  fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/1"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -310,6 +310,10 @@ resource "google_compute_instance" "fastpath_node" {
     # ones drained and removed, not through a same-name replacement that
     # takes both down at once. A node keeps the script it was created
     # with; the pin and the edge attributes are metadata, applied in place.
+    # The cost: a script change is not drift here, so a node created
+    # before it runs the old script while the plan is clean and its
+    # binary matches the pin; which script a node runs is read from the
+    # instance (docs/runbooks/fastpath-deploy.md, "Turning the edge on").
     ignore_changes = [metadata_startup_script]
   }
 
