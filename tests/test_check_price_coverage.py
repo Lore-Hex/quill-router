@@ -85,6 +85,7 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "sakana-ai/sakana-namazu-v1.0",
     "system1models/s1-fast",
     "system1models-eu/s1-fast",
+    "qwen/qwen3-0.6b",
 }
 _NEW_AUTOMATIC_FEED_ALIASES = {
     "deepseek-v4-flash",
@@ -110,6 +111,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
     if "llm.eu.greenference.com" in url:
         return {"data": [{"id": "greenference/glm-5.3-flash"}]}
+    if "api.hixtube.com" in url:
+        return {"data": [{"id": "qwen/qwen3-0.6b"}]}
     if "api.inference.boundless.network" in url or "zro.moonmath.ai" in url:
         return {"data": [{"id": "glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:

@@ -134,6 +134,12 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "hixtube": (
+        "Checked the operator's Neocloud-in-a-Box repository and pilot runbook. "
+        "The Hixtube brand and separate hosting project are defined, but the "
+        "contracting legal entity is not yet declared. A planned US VM location "
+        "does not establish headquarters; excluded from corporate jurisdiction filters."
+    ),
     "fortanix": (
         "Checked the operator-supplied POC catalog and conformance report. "
         "Neither declares inference location or the contracting entity; no country filter claim."
