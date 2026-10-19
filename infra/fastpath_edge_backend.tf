@@ -16,7 +16,8 @@
 locals {
   fastpath_edge_port = 8081
   # Google's health checkers and the global external proxies, the only
-  # sources the edge's port admits (the enclave's calls arrive through them).
+  # sources outside the network the edge's port admits (the enclave's calls
+  # arrive through them); the network's own default-allow-internal stays.
   google_lb_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
 }
 
@@ -55,17 +56,26 @@ resource "google_compute_firewall" "fastpath_edge" {
   target_service_accounts = [google_service_account.fastpath_node.email]
 }
 
+# A group follows its node's identity, not its name: a node replaced under
+# the same name (a startup-script change) keeps its self link, and the
+# provider then compares membership by URL and can leave the new node out
+# of a group it already lists. The instance id in the name makes the
+# replacement a new group, created before the old one leaves the backend.
 resource "google_compute_instance_group" "fastpath_edge" {
   for_each = google_compute_instance.fastpath_node
 
   project   = local.gcp_project_id
-  name      = "${each.key}-edge"
+  name      = "${each.key}-edge-${substr(each.value.instance_id, 0, 8)}"
   zone      = each.value.zone
   instances = [each.value.self_link]
 
   named_port {
     name = "edge"
     port = local.fastpath_edge_port
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -97,6 +107,9 @@ resource "google_compute_backend_service" "fastpath_edge" {
   timeout_sec           = 30
   health_checks         = [google_compute_health_check.fastpath_edge.id]
   security_policy       = google_compute_security_policy.legacy_edge.id
+  # The unit's own stop timeout; a node marked leaving answers 503 and
+  # drains its requests within it.
+  connection_draining_timeout_sec = 30
 
   dynamic "backend" {
     for_each = google_compute_instance_group.fastpath_edge
