@@ -24,7 +24,8 @@ func words(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // production names fastpath.sql's copies of production's own tables and
 // index, which the migration leaves alone.
-var production = map[string]bool{"tr_credit_balance": true, "tr_reservation": true, "tr_reservation_by_expiry": true}
+var production = map[string]bool{"tr_credit_balance": true, "tr_reservation": true, "tr_reservation_by_expiry": true,
+	"tr_entities": true}
 
 // ownStatements are fastpath.sql's statements but production's, and what
 // each creates, and whether it is an index.

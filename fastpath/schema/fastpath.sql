@@ -62,6 +62,17 @@ CREATE TABLE tr_reservation (
 
 CREATE INDEX tr_reservation_by_expiry ON tr_reservation (settled, expires_at);
 
+-- Production's entity table, as scripts/deploy/infra.sh creates
+-- it, word for word: the edge reads an enclave's registered boot from it
+-- by primary key (kind `spend_lease_boot`, id the key id). The service
+-- never writes it; the migration leaves it alone.
+CREATE TABLE tr_entities (
+    kind STRING(64) NOT NULL,
+    id STRING(512) NOT NULL,
+    body STRING(MAX) NOT NULL,
+    updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+  ) PRIMARY KEY (kind, id);
+
 -- Leases (§4.2), keyed by workspace first, since a grant reads the
 -- workspace's leases under its lock.
 CREATE TABLE tr_lease (

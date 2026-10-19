@@ -93,6 +93,7 @@ from trusted_router.gateway_boot import (
     GatewayBoot,
     parse_boot_auth_header,
     verify_boot_auth,
+    verify_boot_signature,
 )
 from trusted_router.gateway_timing import (
     gateway_phase,
@@ -420,6 +421,34 @@ _SETTLE_REPAIR_FIELDS = frozenset(
         "video_generate_audio",
     }
 )
+
+# The fast path's edge (fastpath/internal/edge; docs/design/
+# fast-admission-enclave-direct.md, E1) puts its verdict on the boot
+# signature in this header: the signature alone, which this route checks
+# the same way (verify_boot_signature) beside its own verification, and
+# compares. A verdict the edge could not reach (unread, unchecked) is no
+# disagreement.
+_EDGE_BOOT_VERDICT_HEADER = "x-tr-edge-boot"
+_EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid"})
+
+
+def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None:
+    """An observation: nothing it does reaches the response."""
+    try:
+        verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
+        if verdict is None or verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+            return
+        if (verdict == "verified") != signed:
+            logger.warning(
+                "fastpath edge boot verdict differs edge=%s python=%s kid=%s path=%s",
+                verdict,
+                "verified" if signed else "invalid",
+                kid,
+                request.url.path,
+            )
+    except Exception:  # noqa: BLE001 - an observation must not change the response
+        return
+
 
 def _stage_d_accepted_image_digests(
     request: Request,
@@ -879,6 +908,21 @@ def _authorize_gateway_sync_impl(
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
         )
+        # Over the path as the server decoded it, which is what the edge
+        # signs over too; request.url.path is that path after URL parsing
+        # (control characters removed, a '?' or '#' it contains ending it).
+        edge_signed = verify_boot_signature(
+            boot=boot,
+            auth=boot_auth,
+            method=request.method,
+            path=str(request.scope.get("path", request.url.path)),
+            exact_body_bytes=cast(bytes, boot_context["raw_body"]),
+        )
+    else:
+        edge_signed = False
+    # Compared whatever the header parsed to: a header the edge verified and
+    # this route could not read (repeated, malformed) is a disagreement too.
+    _compare_edge_boot_verdict(request, boot_auth.kid if boot_auth is not None else "", edge_signed)
     if settings.speculative_provider_shadow_enabled:
         with speculation_shadow.isolate("boot_verified"):
             speculation_shadow.boot_verified(boot_context["boot_verified"], boot_auth.kid if boot_auth is not None else "")
