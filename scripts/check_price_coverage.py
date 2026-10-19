@@ -964,7 +964,8 @@ def _model_discovery_audit(
             raw_id = row.get("id") or row.get("name")
             if slug == "regolo":
                 raw_id = row.get("model_group")
-                if row.get("mode") != "chat" or str(raw_id).startswith("brick-"):
+                supported = row.get("mode") == "chat" or (row.get("mode") == "decision" and raw_id == "clef-flash")
+                if not supported or str(raw_id).startswith("brick-"):
                     continue
             if not isinstance(raw_id, str):
                 continue
