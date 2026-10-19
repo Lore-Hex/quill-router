@@ -233,7 +233,10 @@ ID samples (at most 20), `mismatch_fields`, and `ok` fields, plus `pending`,
 `extra`, and coverage fields. A missing row younger than `--grace-seconds`
 (default 300) is pending. Grace uses the later of `created_at` and the entity's
 `updated_at`, so a late settle gets time to drain. Extra IDs count only inside
-the requested half-open `created_at` window; older ClickHouse history is expected.
+the requested half-open `created_at` window; older ClickHouse history is expected,
+and an ID the scan did not see is rechecked by primary key before it counts: a
+settle inside the window that landed after the scan passed its ID is reported
+as `settled_after_scan`, not as extra.
 Exit 0 means a complete, clean check; discrepancies, incomplete coverage, and
 query failures exit nonzero. No row values or driver error text are printed.
 
@@ -283,7 +286,7 @@ On Azure, with the verifier's Postgres password and the node's ClickHouse
 environment already injected:
 
 ```bash
-export TR_POSTGRES_DSN='host=<postgres-host> port=5432 user=tr_verifier dbname=postgres sslmode=require'
+export TR_POSTGRES_DSN='host=<postgres-host> port=5432 user=tr_verifier dbname=trustedrouter sslmode=require'
 export TR_POSTGRES_IAM_AUTH=''
 PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
   --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 50000 \

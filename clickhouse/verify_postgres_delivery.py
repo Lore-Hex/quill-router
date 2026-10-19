@@ -118,6 +118,22 @@ class PostgresGenerationSource(PostgresOperationalOutboxSource):
         )
         return result
 
+    def existing(self, ids: list[str]) -> set[str]:
+        """The ids among `ids` that are generation entities now: point reads
+        by primary key, for rows the window scan passed before they were
+        written (a settle inside the window that landed after the scan)."""
+        found: set[str] = set()
+        for offset in range(0, len(ids), PAGE_SIZE):
+            chunk = ids[offset : offset + PAGE_SIZE]
+            rows = self._run(
+                lambda conn, chunk=chunk: conn.execute(
+                    "SELECT id FROM tr_entities WHERE kind = 'generation' AND id = ANY(%s)",
+                    (chunk,),
+                ).fetchall()
+            )
+            found.update(str(row[0]) for row in rows)
+        return found
+
 
 class ClickHouseGenerationSource(OperationalAnalyticsClient):
     def fetch_ids(self, ids: list[str]) -> dict[str, list[dict[str, Any]]]:
@@ -214,11 +230,12 @@ def verify_delivery(
             mismatch_fields.update(differences)
 
     extra: list[str] = []
+    settled_after_scan = 0
     complete = window.complete
     if complete:
         candidates = clickhouse.fetch_window(start=start, end=end, limit=limit + 1)
         complete = len(candidates) <= limit
-        extra = sorted(
+        unknown = sorted(
             {
                 str(row["generation_id"])
                 for row in candidates[:limit]
@@ -226,8 +243,14 @@ def verify_delivery(
                 and str(row["generation_id"]) not in window.known_ids
             }
         )
-        if any(SAFE_ID.fullmatch(gid) is None for gid in extra):
+        if any(SAFE_ID.fullmatch(gid) is None for gid in unknown):
             raise ValueError("ClickHouse contains an invalid generation ID")
+        # A record the scan did not see is extra only if Postgres has no
+        # such generation now: one settled inside the window after the scan
+        # passed its id is ordinary delivery, not a row from nowhere.
+        settled_after = source.existing(unknown)
+        settled_after_scan = len(settled_after)
+        extra = [gid for gid in unknown if gid not in settled_after]
     return {
         "sampled": len(expected),
         "found": len(stored),
@@ -242,6 +265,7 @@ def verify_delivery(
         "mismatched_ids": mismatched[:20],
         "duplicated_ids": duplicated[:20],
         "mismatch_fields": dict(sorted(mismatch_fields.items())),
+        "settled_after_scan": settled_after_scan,
         "scanned": window.scanned,
         "complete": complete,
         "extra_checked": window.complete,

@@ -37,6 +37,9 @@ def _row(gid: str = "gen-1", **changes: Any) -> dict[str, Any]:
 class FakeConnection:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = sorted(rows, key=lambda row: row["generation_id"])
+        # Generations the window scan never sees but a point read finds: a
+        # settle that landed after the scan passed its id.
+        self.late: list[str] = []
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
 
@@ -45,6 +48,11 @@ class FakeConnection:
 
     def execute(self, sql: str, params: tuple[Any, ...]) -> Any:
         self.calls.append((sql, params))
+        if "AND id = ANY(%s)" in sql:
+            assert sql == "SELECT id FROM tr_entities WHERE kind = 'generation' AND id = ANY(%s)"
+            (ids,) = params
+            present = {row["generation_id"] for row in self.rows} | set(self.late)
+            return SimpleNamespace(fetchall=lambda: [(gid,) for gid in ids if gid in present])
         assert "WHERE kind = 'generation' AND id > %s ORDER BY id LIMIT" in sql
         after = params[0]
         limit = params[1] if len(params) == 2 else 1
@@ -55,7 +63,10 @@ class FakeConnection:
             result = [
                 (
                     row["generation_id"],
-                    *(str(row[field]) if row.get(field) is not None else None for field in verifier.FIELDS),
+                    *(
+                        str(row[field]) if row.get(field) is not None else None
+                        for field in verifier.FIELDS
+                    ),
                     row.get("updated_at", row["created_at"]),
                 )
                 for row in selected
@@ -147,6 +158,7 @@ def test_matches_shared_fields_without_reporting_private_payloads() -> None:
         "mismatched_ids": [],
         "duplicated_ids": [],
         "mismatch_fields": {},
+        "settled_after_scan": 0,
         "scanned": 1,
         "complete": True,
         "extra_checked": True,
@@ -230,6 +242,34 @@ def test_extra_ids_only_count_inside_the_half_open_window() -> None:
     assert _verify([], [before, end])["ok"] is True
 
 
+def test_a_settle_that_landed_after_the_scan_passed_its_id_is_not_extra() -> None:
+    """The scan walks ids, not time: a request settled inside the window
+    after the scan passed its id is in ClickHouse and not in the scan. The
+    point read finds it, so healthy delivery is not reported as a row from
+    nowhere; a row Postgres has never had still is."""
+    late = _row("gen-late")
+    source, connection = _source([_row()])
+    connection.late = ["gen-late"]
+
+    result = verifier.verify_delivery(
+        source, FakeClickHouse([_row(), late]).client, start=START, end=END, now=END, limit=100
+    )
+
+    assert result["extra_ids"] == []
+    assert result["settled_after_scan"] == 1
+    assert result["ok"] is True
+    rechecks = [params for sql, params in connection.calls if "id = ANY(%s)" in sql]
+    assert rechecks == [(["gen-late"],)]
+
+    connection.late = []
+    result = verifier.verify_delivery(
+        source, FakeClickHouse([_row(), late]).client, start=START, end=END, now=END, limit=100
+    )
+    assert result["extra_ids"] == ["gen-late"]
+    assert result["settled_after_scan"] == 0
+    assert result["ok"] is False
+
+
 def test_reports_duplicate_sort_keys_and_does_not_pick_one_arbitrarily() -> None:
     shifted = _row(created_at="2026-10-17T12:00:00Z")
     result = _verify([_row()], [_row(), shifted])
@@ -309,7 +349,12 @@ def test_source_sql_projects_only_comparison_fields_through_the_primary_key() ->
     row = _row()
     database.execute(
         "INSERT INTO tr_entities VALUES (?, ?, ?, ?)",
-        ("generation", "gen-1", json.dumps(row | {"unrelated": "not projected"}), row["created_at"]),
+        (
+            "generation",
+            "gen-1",
+            json.dumps(row | {"unrelated": "not projected"}),
+            row["created_at"],
+        ),
     )
 
     class Connection:
@@ -326,7 +371,8 @@ def test_source_sql_projects_only_comparison_fields_through_the_primary_key() ->
     assert window.complete
     assert window.rows == {"gen-1": {field: row[field] for field in verifier.FIELDS}}
     plan = database.execute(
-        "EXPLAIN QUERY PLAN " + verifier.SELECT_PAGE_SQL.replace("%s", "?"), ("", 500),
+        "EXPLAIN QUERY PLAN " + verifier.SELECT_PAGE_SQL.replace("%s", "?"),
+        ("", 500),
     ).fetchall()
     assert any("SEARCH tr_entities USING INDEX" in detail for _, _, _, detail in plan)
     assert all("SCAN tr_entities" not in detail for _, _, _, detail in plan)
