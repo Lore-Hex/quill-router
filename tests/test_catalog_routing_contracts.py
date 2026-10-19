@@ -523,8 +523,8 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
     for endpoint_id in (
         "minimax/minimax-m3@minimax/prepaid",
         "minimax/minimax-m3@minimax/byok",
-        "minimax/minimax-m2.7@minimax/prepaid",
-        "minimax/minimax-m2.7-highspeed@minimax/byok",
+        "minimax/minimax-m3.1-flash@minimax/prepaid",
+        "minimax/minimax-m3.1-flash@minimax/byok",
     ):
         model_id = endpoint_id.partition("@")[0]
         row = _listed_row("minimax", model_id)
