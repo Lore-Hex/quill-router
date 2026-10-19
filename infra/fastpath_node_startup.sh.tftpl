@@ -46,6 +46,17 @@ if [ -z "$release" ]; then
   exit 0
 fi
 address="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip'):8080"
+# The edge (docs/design/fast-admission-enclave-direct.md, E1) runs when the
+# instance's metadata names its upstream and the internal token's secret
+# version; a node without them runs as before. Both are read at boot, so
+# turning the edge on or off is a metadata change and a reset, not a
+# replacement.
+edge_upstream="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-edge-upstream' || true)"
+edge_token_secret="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-edge-token-secret' || true)"
+edge_flags=""
+if [ -n "$edge_upstream" ] && [ -n "$edge_token_secret" ]; then
+  edge_flags="-edge-address $${address%:*}:${edge_port} -edge-upstream $edge_upstream -edge-token-secret $edge_token_secret"
+fi
 install -d /opt/fastpath
 for binary in fastpath fastpathctl; do
   gcloud storage cp "gs://${release_bucket}/fastpath/$release/$binary" "/opt/fastpath/$binary.new"
@@ -78,7 +89,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager
+  -subscriptions auditor,stager $edge_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30

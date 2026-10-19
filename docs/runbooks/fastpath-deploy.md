@@ -159,6 +159,27 @@ not read it. The first such field was the hold's boot binding on its
 first heartbeat record: one release read it and stated none, and the one
 after it states it.
 
+## Turning the edge on
+
+The edge (`docs/design/fast-admission-enclave-direct.md`, E1) runs on a
+node whose instance metadata names `fastpath-edge-upstream` and
+`fastpath-edge-token-secret` (`infra/fastpath.tf`); the startup script
+reads both at boot and passes `-edge-address`, `-edge-upstream` and
+`-edge-token-secret` to the unit. The release pinned alongside must know
+those flags (the edge role, #1859, and its health answer, #1875); an
+earlier release refuses them and the node stays stopped.
+
+The change that adds the attributes also changes the startup script, so
+it replaces both nodes in one apply. Before merging it: mark both nodes
+leaving and wait for their leases as "For each node replaced" says, with
+no new node to start first. After the apply: the nodes come up on the
+pinned release with the edge listening on 8081; run the infrastructure
+apply once more so the edge instance groups list the new nodes; then
+check each node's health answer from the balancer's view
+(`gcloud compute backend-services get-health tr-fastpath-edge-backend
+--global`) says `HEALTHY` before any route sends traffic to it. Emptying
+both attributes and resetting a node turns its edge off.
+
 ## Taking a pinned release
 
 A node takes a release pinned in `infra/fastpath.tf` (`fastpath_release`)

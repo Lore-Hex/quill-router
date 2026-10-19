@@ -20,6 +20,14 @@ locals {
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  # The edge (E1): its port, the control plane's internal surface in the
+  # nodes' region (the Cloud Run service behind /internal, reached over
+  # Private Google Access) and the internal token Python holds, a pinned
+  # version. Set on the nodes' metadata and read at boot; emptying both
+  # turns the edge off at the next reset.
+  fastpath_edge_port         = 8081
+  fastpath_edge_upstream     = "https://trusted-router-vsjf6qu4la-uc.a.run.app"
+  fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/1"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -157,6 +165,15 @@ resource "google_secret_manager_secret" "fastpath_envelope_key" {
   }
 }
 
+# The internal token the edge checks, the same secret the control plane
+# holds (scripts/deploy/secrets.sh creates it; it is not managed here).
+resource "google_secret_manager_secret_iam_member" "fastpath_node_gateway_token" {
+  project   = local.gcp_project_id
+  secret_id = "trustedrouter-internal-gateway-token"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.fastpath_node.member
+}
+
 resource "google_secret_manager_secret_iam_member" "fastpath_node_key" {
   project   = local.gcp_project_id
   secret_id = google_secret_manager_secret.fastpath_envelope_key.secret_id
@@ -261,8 +278,10 @@ resource "google_compute_instance" "fastpath_node" {
   }
 
   metadata = {
-    enable-oslogin   = "TRUE"
-    fastpath-release = local.fastpath_release
+    enable-oslogin             = "TRUE"
+    fastpath-release           = local.fastpath_release
+    fastpath-edge-upstream     = local.fastpath_edge_upstream
+    fastpath-edge-token-secret = local.fastpath_edge_token_secret
   }
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
@@ -271,6 +290,7 @@ resource "google_compute_instance" "fastpath_node" {
     database       = local.fastpath_database
     project        = local.gcp_project_id
     key_secret     = "projects/${local.gcp_project_id}/secrets/${google_secret_manager_secret.fastpath_envelope_key.secret_id}/versions/1"
+    edge_port      = local.fastpath_edge_port
   })
 
   labels = {
