@@ -94,7 +94,9 @@ watch, and a way back that needs no deploy.
   passes `-edge-address` (its own port), `-edge-upstream` (Python's
   internal surface) and `-edge-token-secret` (the internal token, a pinned
   Secret Manager version, the same secret Python holds); `-edge-boot-wait`
-  bounds the boot read. Nothing passes them yet.
+  bounds the boot read. Nothing passes them yet. The edge itself answers
+  `/internal/gateway/edge/health` without a token: 200 `{"status":"serving"}`
+  while serving, 503 `{"status":"leaving"}` once the node begins leaving.
 - **Switch and way back:** the load balancer route, and an edge
   "pass everything" flag. Nothing durable changes.
 - **Measured:** the edge's added latency (under 1 ms p50); the verdict's
