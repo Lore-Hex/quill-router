@@ -22,7 +22,7 @@ The canonicalisation below is EXTRACTED VERBATIM from
 clickhouse/ingest_operational_outbox.py so rows are byte-identical to what the
 drainer produced. The drainer keeps a frozen copy only until the outbox is
 decommissioned; clickhouse/ingest_operational_outbox_postgres.py (AWS/Azure)
-keeps its own until those planes cut over. Do not let the copies drift --
+imports that copy until those planes cut over. Do not let the copies drift --
 delete them.
 """
 
@@ -63,11 +63,14 @@ ACTIVITY_COLUMNS = (
     "provider",
     "provider_name",
     "app",
+    "app_id",
     "tokens_prompt",
     "tokens_completion",
     "cached_input_tokens",
     "reasoning_tokens",
     "total_cost_microdollars",
+    "app_markup_microdollars",
+    "custom_model_markup_microdollars",
     "usage_type",
     "speed_tokens_per_second",
     "finish_reason",
@@ -104,6 +107,9 @@ ACTIVITY_COLUMNS = (
     "client_failover_used",
 )
 ACTIVITY_OPTIONAL_DEFAULTS: dict[str, Any] = {
+    "app_id": None,
+    "app_markup_microdollars": 0,
+    "custom_model_markup_microdollars": 0,
     "gateway_request_id": "",
     "synthetic": 0,
     "client_source": "none",

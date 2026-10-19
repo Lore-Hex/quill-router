@@ -282,9 +282,10 @@ FORMAT JSON
         rows = self._query(
             """
 SELECT
-  generation_id, request_id, key_id, model, provider, provider_name, app,
+  generation_id, request_id, key_id, model, provider, provider_name, app, app_id,
   tokens_prompt, tokens_completion, cached_input_tokens, reasoning_tokens,
-  total_cost_microdollars, usage_type, speed_tokens_per_second,
+  total_cost_microdollars, app_markup_microdollars, custom_model_markup_microdollars,
+  usage_type, speed_tokens_per_second,
   finish_reason, status, streamed, usage_estimated, elapsed_milliseconds,
   first_token_milliseconds, ttfb_milliseconds, region, user, session_id,
   http_referer, app_categories, tags, created_at
@@ -496,9 +497,12 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         model=str(row["model"]),
         provider_name=str(row["provider_name"]),
         app=str(row["app"]),
+        app_id=str(row.get("app_id") or ""),
         tokens_prompt=int(row["tokens_prompt"]),
         tokens_completion=int(row["tokens_completion"]),
         total_cost_microdollars=int(row["total_cost_microdollars"]),
+        app_markup_microdollars=int(row.get("app_markup_microdollars") or 0),
+        custom_model_markup_microdollars=int(row.get("custom_model_markup_microdollars") or 0),
         usage_type=UsageType.coerce(row["usage_type"]),
         speed_tokens_per_second=float(row["speed_tokens_per_second"]),
         finish_reason=str(row["finish_reason"]),

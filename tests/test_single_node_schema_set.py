@@ -64,6 +64,33 @@ def test_the_workspace_id_migration_is_in_the_set() -> None:
     assert "011_workspace_directory_single_node.sql" in names
 
 
+def test_activity_app_fields_migrations_match_across_clouds() -> None:
+    replicated = (ROOT / "clickhouse/025_activity_generation_app_fields_replicated.sql").read_text()
+    single = ROOT / "clickhouse/026_activity_generation_app_fields_single_node.sql"
+    result = _derive(ROOT)
+    assert result.returncode == 0, result.stderr
+    assert single.name in {Path(line).name for line in result.stdout.split()}
+
+    def statements(text: str) -> list[str]:
+        sql = "\n".join(line for line in text.splitlines() if not line.startswith("--"))
+        return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+    cluster_statements = statements(replicated)
+    assert len(cluster_statements) == 3
+    assert all(
+        statement.startswith("ALTER TABLE tr.activity_generations ON CLUSTER trustedrouter\n")
+        for statement in cluster_statements
+    )
+    assert statements(single.read_text()) == [
+        statement.replace("tr.activity_generations ON CLUSTER trustedrouter", "activity_generations")
+        for statement in cluster_statements
+    ]
+    assert "ADD COLUMN IF NOT EXISTS app_id Nullable(String) DEFAULT NULL" in replicated
+    for field in ("app_markup_microdollars", "custom_model_markup_microdollars"):
+        assert f"ADD COLUMN IF NOT EXISTS {field} Int64 DEFAULT 0" in replicated
+    assert "operator_cost_microdollars" not in replicated
+
+
 def test_every_single_node_migration_targets_the_default_database() -> None:
     """Standalone nodes connect to `default`: the AWS control plane and drain
     installer both default CH_DATABASE to it, and so does Azure. Only GCP uses
