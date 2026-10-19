@@ -168,6 +168,7 @@ PROVIDER_SLUGS = [
     "regolo",
     "lyceum",
     "greenference",
+    "hixtube",
     "boundless",
     "zro",
     "byteplus",

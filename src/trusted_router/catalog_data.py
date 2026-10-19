@@ -1985,6 +1985,19 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://hyperbolic.ai/docs/overview/overview",
     ),
+    "hixtube": Provider(
+        slug="hixtube", name="Hixtube", supports_prepaid=True, supports_byok=False,
+        provider_zero_data_retention=False, provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Hixtube is an independently hosted integration pilot using the Apache-2.0 "
+            "Neocloud-in-a-Box toolkit. The initial Qwen3 0.6B CPU route uses standard "
+            "TLS, not verified confidential computing or provider-side E2EE. It is "
+            "not a frontier model or a high-availability production service. "
+            "Routes are published only after authenticated catalog and inference checks."
+        ),
+        provider_policy_url="https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box",
+    ),
     "greenference": Provider(
         slug="greenference",
         name="Greenference",
@@ -2327,6 +2340,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "system1models-eu",
         "lyceum",
         "greenference",
+        "hixtube",
         "boundless",
         "zro",
         "privatemode",
