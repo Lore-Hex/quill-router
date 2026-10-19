@@ -2478,7 +2478,6 @@ TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "anthropic/claude-fable-5.1",
     ),
     ADVANCED_MODEL_ID: (
-        "deepseek/deepseek-v4.1-flash-1017",
         "moonshotai/kimi-k3",
         "z-ai/glm-5.3",
         "anthropic/claude-opus-5",
@@ -2487,6 +2486,7 @@ TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     PROFESSIONAL_MODEL_ID: (
         "z-ai/glm-5.3-flash",
+        "deepseek/deepseek-v4.1-flash-1017",
         "z-ai/glm-5.2",
         "google/gemini-3.8-flash",
     ),
