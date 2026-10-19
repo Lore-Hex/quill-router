@@ -84,6 +84,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "scaleway": ProviderBrand("https://www.scaleway.com/"),
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
+    "hixtube": ProviderBrand("https://hixtube.com/"),
     "greenference": ProviderBrand("https://greenference.com/"),
     "boundless": ProviderBrand(
         "https://boundless.network/",
