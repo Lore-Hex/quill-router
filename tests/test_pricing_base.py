@@ -556,6 +556,18 @@ def test_guard_manifest_prune_allows_small_prune() -> None:
     assert guard_manifest_prune(old_rows, new_rows) is new_rows
 
 
+def test_guard_manifest_prune_only_allows_explicit_retained_quarantines() -> None:
+    old = [{"id": "a"}, {"id": "b"}]
+    new = [{"id": "a", "routable": False}, {"id": "b"}]
+    assert guard_manifest_prune(old, new, confirmed_disabled_ids={"a"}) is new
+    assert guard_manifest_prune(old, new) is old
+    assert guard_manifest_prune(old, new, confirmed_disabled_ids={"b"}) is old
+    assert guard_manifest_prune(old, [{"id": "b"}], confirmed_disabled_ids={"a"}) is old
+    assert guard_manifest_prune(old, [], confirmed_disabled_ids={"a", "b"}) is old
+    new[1]["routable"] = False
+    assert guard_manifest_prune(old, new, confirmed_disabled_ids={"a"}) is old
+
+
 def test_guard_manifest_prune_allows_confirmed_provider_delistings() -> None:
     old_rows = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
     new_rows = [

@@ -102,9 +102,21 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     with tempfile.TemporaryDirectory(dir=MANIFEST_PATH.parent, prefix=".hixtube-") as directory:
         candidate = Path(directory) / MANIFEST_PATH.name
         if MANIFEST_PATH.exists():
-            candidate.write_bytes(MANIFEST_PATH.read_bytes())
+            previous = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+            for row in previous["models"]:
+                # Only our retirement marker can recover this way. Fresh
+                # discovery already validated the cutoff, price and canary.
+                if (row.get("routable_reason") == "pilot-retired"
+                        and _DISCOVERED_ROWS.get(row["id"], {}).get("routable") is True):
+                    row.pop("routable", None)
+                    row.pop("routable_reason", None)
+            candidate.write_text(json.dumps(previous), encoding="utf-8")
         notes = write_discovered_chat_manifest(
             result, manifest_path=candidate, discovered_rows=_DISCOVERED_ROWS, source_url=URL,
+            confirmed_disabled_ids={
+                model_id for model_id, row in _DISCOVERED_ROWS.items()
+                if row.get("routable_reason") == "provider-canary-failed"
+            },
         )
         # A catalog mass-prune guard must not override a direct failed probe.
         set_manifest_model_canary_states(
@@ -124,3 +136,28 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         candidate.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
         candidate.replace(MANIFEST_PATH)
     return notes
+
+
+def confirmed_manifest_quarantines(
+    result: ProviderPricingResult, before_rows: list[Any], after_rows: list[Any],
+) -> frozenset[str]:
+    """Evidence for retained pilot quarantines at the outer publication gate."""
+    if result.source != "api":
+        return frozenset()
+    previous = {row["id"]: row for row in before_rows if isinstance(row, dict) and isinstance(row.get("id"), str)}
+    confirmed = set()
+    for row in after_rows:
+        if not isinstance(row, dict) or row.get("routable") is not False:
+            continue
+        model_id = row.get("id")
+        if not isinstance(model_id, str):
+            continue
+        discovered = _DISCOVERED_ROWS.get(model_id, {})
+        if (row.get("routable_reason") == discovered.get("routable_reason") == "provider-canary-failed"
+                and discovered.get("routable") is False and model_id in result.prices):
+            confirmed.add(model_id)
+        elif (row.get("routable_reason") == "pilot-retired" and model_id in previous
+              and row.get("retirement_at") == previous[model_id].get("retirement_at")
+              and _retirement_time(previous[model_id]) <= datetime.now(UTC)):
+            confirmed.add(model_id)
+    return frozenset(confirmed)

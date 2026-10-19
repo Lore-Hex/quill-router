@@ -9,6 +9,14 @@ import pytest
 from scripts.pricing.providers import hixtube as p
 
 
+def publish():
+    from scripts.pricing.refresh import _write_provider_manifests
+
+    notes, failures = _write_provider_manifests({p.SLUG: p.fetch()})
+    assert not failures
+    assert notes
+
+
 def catalog():
     return {"object": "list", "contract_version": "2.0", "provider": {
         "id": "hixtube", "status_url": "https://api.hixtube.com/healthz",
@@ -127,9 +135,9 @@ def test_failed_repeat_probe_cannot_be_undone_by_mass_prune_guard(monkeypatch, t
     monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
     monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: catalog())
     monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
-    p.write_provider_manifest(p.fetch())
+    publish()
     monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: False)
-    p.write_provider_manifest(p.fetch())
+    publish()
     raw = json.loads(p.MANIFEST_PATH.read_text())
     assert raw["models"][0]["routable"] is False
     assert raw["models"][0]["routable_reason"] == "provider-canary-failed"
@@ -142,7 +150,7 @@ def test_expired_missing_model_does_not_block_healthy_replacement(monkeypatch, t
     payload = catalog()
     monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: payload)
     monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
-    p.write_provider_manifest(p.fetch())
+    publish()
     later = datetime.now(UTC) + timedelta(hours=3)
 
     class Later(datetime):
@@ -155,12 +163,55 @@ def test_expired_missing_model_does_not_block_healthy_replacement(monkeypatch, t
     payload["data"][0]["id"] = "qwen/replacement"
     payload["data"][0]["lifecycle"]["retirement_at"] = (later + timedelta(hours=2)).isoformat()
     for _ in range(2):
-        p.write_provider_manifest(p.fetch())
+        publish()
         rows = {row["id"]: row for row in json.loads(p.MANIFEST_PATH.read_text())["models"]}
         assert rows["qwen/replacement"]["routable"] is True
         if "qwen/qwen3-0.6b" in rows:
             assert rows["qwen/qwen3-0.6b"]["routable"] is False
             assert rows["qwen/qwen3-0.6b"].get("missing_since") is not None
+
+    # A renewed, probed pilot may recover its machine-owned retirement hold.
+    payload["data"][0]["id"] = "qwen/qwen3-0.6b"
+    publish()
+    rows = {row["id"]: row for row in json.loads(p.MANIFEST_PATH.read_text())["models"]}
+    assert rows["qwen/qwen3-0.6b"]["routable"] is True
+    assert "routable_reason" not in rows["qwen/qwen3-0.6b"]
+    assert "missing_since" not in rows["qwen/qwen3-0.6b"]
+
+
+@pytest.mark.parametrize("reason", [None, "operator-safety-hold"])
+def test_publication_preserves_operator_hold_even_after_healthy_probe(monkeypatch, tmp_path, reason):
+    monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
+    monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
+    monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: catalog())
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
+    publish()
+    raw = json.loads(p.MANIFEST_PATH.read_text())
+    raw["models"][0]["routable"] = False
+    if reason:
+        raw["models"][0]["routable_reason"] = reason
+    p.MANIFEST_PATH.write_text(json.dumps(raw))
+    publish()
+    row = json.loads(p.MANIFEST_PATH.read_text())["models"][0]
+    assert row["routable"] is False
+    assert row.get("routable_reason") == reason
+
+
+def test_quarantine_confirmation_requires_current_evidence(monkeypatch):
+    from scripts.pricing.base import ProviderPricingResult
+
+    monkeypatch.setattr(p, "_DISCOVERED_ROWS", {})
+    before = [{"id": "a", "retirement_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}]
+    retired = [{**before[0], "routable": False, "routable_reason": "pilot-retired"}]
+    result = ProviderPricingResult(slug=p.SLUG, prices={}, source="api")
+    assert not p.confirmed_manifest_quarantines(result, before, retired)
+    retired[0]["retirement_at"] = "2026-01-01T00:00:00Z"
+    assert not p.confirmed_manifest_quarantines(result, before, retired)
+    failed = [{"id": "a", "routable": False, "routable_reason": "provider-canary-failed"}]
+    assert not p.confirmed_manifest_quarantines(result, before, failed)
+    before[0]["retirement_at"] = retired[0]["retirement_at"]
+    result.source = "stale_snapshot"
+    assert not p.confirmed_manifest_quarantines(result, before, retired)
 
 
 @pytest.mark.parametrize("value", ["NaN", "-1", None, 0.1])
