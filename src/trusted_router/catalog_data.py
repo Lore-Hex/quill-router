@@ -3949,6 +3949,15 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "inception": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Inception Labs",
+        source_url="https://www.inceptionlabs.ai/docs/terms-of-use",
+        note=(
+            "Inception AI, Inc.'s terms list its address in Redwood City, California. "
+            "This describes the model developer, not inference residency."
+        ),
+    ),
     "elevenlabs": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="ElevenLabs",

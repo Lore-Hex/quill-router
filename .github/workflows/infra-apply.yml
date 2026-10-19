@@ -8,11 +8,15 @@ on:
   pull_request:
     paths:
       - "infra/**"
+      # The control load balancer's URL map renders the token exchange
+      # sites' routing from this file (infra/control_lb_url_map.tf).
+      - "sites/token-exchange/markets.json"
   push:
     branches:
       - main
     paths:
       - "infra/**"
+      - "sites/token-exchange/markets.json"
   workflow_dispatch:
     inputs:
       operation:

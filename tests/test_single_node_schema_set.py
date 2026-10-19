@@ -102,6 +102,22 @@ def test_every_single_node_migration_targets_the_default_database() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_the_generation_id_projection_follows_its_schema_dependencies() -> None:
+    result = _derive(ROOT)
+
+    assert result.returncode == 0, result.stderr
+    names = [Path(line).name for line in result.stdout.split()]
+    projection = names.index("024_activity_generation_id_projection_single_node.sql")
+    for dependency in (
+        "006_operational_analytics_single_node.sql",
+        "009_client_events_single_node.sql",
+        "011_workspace_directory_single_node.sql",
+        "013_activity_generations_workspace_id_single_node.sql",
+    ):
+        assert names.index(dependency) < projection
+    assert "023_activity_generation_id_projection_replicated.sql" not in names
+
+
 def test_a_qualified_migration_is_refused(tmp_path: Path) -> None:
     """The guard above, shown failing. 011 and 013 really did ship qualified."""
     (tmp_path / "clickhouse").mkdir()

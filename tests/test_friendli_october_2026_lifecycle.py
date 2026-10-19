@@ -23,8 +23,10 @@ def test_friendli_minimax_m25_exact_boundary_and_scope() -> None:
     assert not retired("friendli", _MODEL, _NATIVE, at=_CUTOFF - timedelta(microseconds=1))
     assert retired("friendli", _MODEL, at=_CUTOFF)
     assert retired("friendli", "alternate-canonical-id", _NATIVE, at=_CUTOFF)
-    for other in ("novita", "gmi", "featherless", "io-net", "minimax"):
+    for other in ("novita", "gmi", "featherless", "io-net"):
         assert not retired(other, _MODEL, _NATIVE, at=_CUTOFF)
+    # MiniMax's own M2 lineup retired independently before Friendli's cutoff.
+    assert retired("minimax", _MODEL, at=_CUTOFF - timedelta(days=1))
     assert not retired("friendli", _OTHER, "zai-org/GLM-5.3", at=_CUTOFF)
 
 
