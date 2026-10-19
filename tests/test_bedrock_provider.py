@@ -158,7 +158,7 @@ def test_bedrock_request_region_requires_a_verified_gateway(region, allowed):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("region", ["us-central1", "aws-eu-west-3", "azure-uaenorth", "unknown"])
+@pytest.mark.parametrize("region", ["us-central1", "aws-eu-west-3", "azure-uaenorth", "unknown", "", None, "omitted"])
 async def test_gateway_checks_origin_region_before_bedrock_credit_reservation(monkeypatch, region):
     from tests.fixture_routes import serve_on_fixture_route
     from trusted_router.config import Settings
@@ -177,11 +177,14 @@ async def test_gateway_checks_origin_region_before_bedrock_credit_reservation(mo
     STORE.credit_workspace_once(workspace.id, 50_000_000, "seed")
     _, key = STORE.create_api_key(workspace_id=workspace.id, name="bedrock", creator_user_id=user.id)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-        response = await client.post("/v1/internal/gateway/authorize", json={
+        request = {
             "api_key_hash": key.hash, "model": "qwen/qwen3-32b", "region": region,
             "estimated_input_tokens": 10, "max_output_tokens": 16,
             "provider": {"only": ["amazon-bedrock"], "allow_fallbacks": False},
-        })
+        }
+        if region == "omitted":
+            del request["region"]
+        response = await client.post("/v1/internal/gateway/authorize", json=request)
     if region == "us-central1":
         assert response.status_code == 200, response.text
         payload = response.json().get("data", response.json())
