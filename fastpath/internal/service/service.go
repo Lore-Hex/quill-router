@@ -224,6 +224,9 @@ func PubSubOptions(region string) []option.ClientOption {
 // a leaving under way too (lifecycle). A Listener given it is its own,
 // closed however it returns.
 func Run(ctx context.Context, cfg Config, c Clients) error {
+	if cfg.Edge.Listener != nil {
+		defer cfg.Edge.Listener.Close()
+	}
 	if cfg.Listener != nil {
 		defer cfg.Listener.Close()
 	}
@@ -256,18 +259,20 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
 	return lifecycle(ctx, func(p *parts) {
-		if cfg.Admission {
+		// The edge first: one that cannot listen or has no upstream fails
+		// the process before the node takes its ring row.
+		if cfg.Edge.Address != "" {
+			if err := p.edge(cfg, s); err != nil {
+				p.startFailed(ctx, err)
+			}
+		}
+		if cfg.Admission && p.ctx.Err() == nil {
 			if err := p.admission(cfg, s, settle, records); err != nil {
 				p.startFailed(ctx, err)
 			}
 		}
 		if cfg.Auditor && p.ctx.Err() == nil {
 			if err := p.auditor(cfg, c, s, settle, records); err != nil {
-				p.startFailed(ctx, err)
-			}
-		}
-		if cfg.Edge.Address != "" && p.ctx.Err() == nil {
-			if err := p.edge(cfg, s); err != nil {
 				p.startFailed(ctx, err)
 			}
 		}
@@ -295,7 +300,10 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = ln.Close()
 		return err
 	}
-	srv := &http.Server{Handler: e, ReadHeaderTimeout: 5 * time.Second}
+	handlers := &inFlight{}
+	requests, endRequests := context.WithCancel(context.Background())
+	srv := &http.Server{Handler: handlers.wrap(e), ReadHeaderTimeout: 5 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return requests }}
 	p.run("edge", func(ctx context.Context) error {
 		served := make(chan error, 1)
 		go func() { served <- srv.Serve(ln) }()
@@ -308,10 +316,15 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 			cancel()
 			err = <-served
 		}
+		// A server that failed, not one shut down, fails the process at
+		// once, whatever the context did meanwhile; either way it is
+		// closed, its connections with it, and its handlers waited for.
 		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+			p.fail(fmt.Errorf("service: edge: %w", err))
 		}
 		_ = srv.Close()
+		endRequests()
+		handlers.wait()
 		return nil
 	})
 	return nil
@@ -617,6 +630,9 @@ func roles(cfg Config) []string {
 	}
 	if cfg.Auditor {
 		out = append(out, "auditor")
+	}
+	if cfg.Edge.Address != "" {
+		out = append(out, "edge")
 	}
 	return out
 }

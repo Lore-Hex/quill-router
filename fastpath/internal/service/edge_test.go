@@ -84,6 +84,37 @@ func TestTheEdgePassesTheEnclavesCallsToPythonWithItsVerdict(t *testing.T) {
 		t.Fatalf("python saw %+v", got)
 	}
 
+	// An unknown boot and an altered signature are Invalid: the verdict
+	// came from the store's boot and the signature over these bytes.
+	for name, header := range map[string]string{
+		"unknown boot":      "kid=boot-none,sig=" + base64.RawURLEncoding.EncodeToString(sig),
+		"altered signature": "kid=" + kid + ",sig=" + base64.RawURLEncoding.EncodeToString(append([]byte{sig[0] ^ 1}, sig[1:]...)),
+	} {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+edgeLn.Addr().String()+"/internal/gateway/authorize", strings.NewReader(request))
+		req.Header.Set(edge.TokenHeader, "token-1")
+		req.Header.Set(edge.BootHeader, header)
+		r, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		if got := <-saw; got.verdict != string(edge.Invalid) {
+			t.Fatalf("%s: verdict %q", name, got.verdict)
+		}
+	}
+	// The membership row names the edge.
+	eventually(t, 10*time.Second, "the membership row", func() (bool, error) {
+		row, err := shared.Single().ReadRow(ctx, "tr_fastpath_member", spanner.Key{ln.Addr().String()}, []string{"roles"})
+		if err != nil {
+			return false, err
+		}
+		var roles []string
+		if err := row.Column(0, &roles); err != nil {
+			return false, err
+		}
+		return strings.Join(roles, ",") == "owner,frontdoor,auditor,edge", nil
+	})
+
 	// The node's own front door still serves beside it, on its own port.
 	health, err := client.Post("http://"+ln.Addr().String()+"/v1/authorize", "application/json", strings.NewReader(`{}`))
 	if err != nil {
@@ -106,5 +137,46 @@ func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 	cfg.Edge.Upstream, cfg.Edge.Token = "http://python.internal", "t"
 	if err := cfg.valid(); err != nil {
 		t.Fatalf("a whole edge: %v", err)
+	}
+}
+
+// TestAnEdgeThatCannotListenFailsBeforeTheNodeJoins: the edge binds first,
+// so a port another serves on fails the process with no ring row taken,
+// and a supplied listener is closed however Run returns.
+func TestAnEdgeThatCannotListenFailsBeforeTheNodeJoins(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	cfg := config(ln)
+	cfg.Edge = EdgeConfig{Address: taken.Addr().String(), Upstream: "http://python.internal", Token: "t"}
+	err = Run(ctx, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	if err == nil || !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("an edge on a taken port: %v", err)
+	}
+	if _, err := shared.Single().ReadRow(ctx, "tr_fastpath_member", spanner.Key{ln.Addr().String()}, []string{"roles"}); err == nil {
+		t.Fatal("the node took its ring row before the edge failed")
+	}
+	// A supplied edge listener is closed when the configuration is refused.
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = config(ln)
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn}
+	if err := Run(ctx, cfg, Clients{Spanner: shared, PubSub: pubSub(t)}); err == nil {
+		t.Fatal("an edge without its upstream and token ran")
+	}
+	if _, err := edgeLn.Accept(); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("the supplied listener was not closed: %v", err)
 	}
 }
