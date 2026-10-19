@@ -26,7 +26,6 @@
 }
 
 .trust-page .marketing-card h2,
-.trust-workload h2,
 .trust-open h2,
 .trust-record h2 {
   margin: 0 0 var(--tr-space-stack-md);
@@ -135,6 +134,7 @@
 
 /* Title, lead copy and the links the page's own header used to carry. */
 .trust-page .trust-hero {
+  row-gap: 40px;
   padding: 28px 0 48px;
 }
 
@@ -167,13 +167,24 @@
 }
 
 .trust-page .trust-links {
+  grid-column: 1 / -1;
   gap: 8px;
-  margin: 28px 0 0;
+  margin: 0;
 }
 
 .trust-workload {
   min-width: 0;
   padding-top: 6px;
+}
+
+.trust-workload h2 {
+  margin: 0 0 var(--tr-space-stack-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 /* Key/value lists: one ruled row per fact, label above a mono value. */
@@ -392,7 +403,7 @@
   }
 
   .trust-page .trust-hero {
-    gap: 36px;
+    gap: 32px;
     padding: 32px 0 36px;
   }
 

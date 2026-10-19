@@ -33,14 +33,6 @@
         <p class="lead"><code>{{ api_hostname }}</code> is the prompt path. Public TLS terminates inside the measured GCP Confidential Space workload. The TrustedRouter control plane does not serve production inference routes and does not receive prompt or output bodies.</p>
         <p>Clients can fetch the live attestation, verify issuer/audience/digest, and compare the measured image digest with the release data published here.</p>
         <p>Preparing a security review? <a href="{{ control_origin }}/token-exchange/security">Get the Token Exchange security deck and whitepaper.</a></p>
-        <nav class="hero-actions trust-links" aria-label="Source repositories and release files">
-          <a class="btn" href="{{ control_repo }}">Control repo</a>
-          <a class="btn" href="{{ gateway_repo }}">Gateway repo</a>
-          <a class="btn" href="{{ infra_repo }}">Infra repo</a>
-          <a class="btn" href="/trust/gcp-release.json">gcp-release.json</a>
-          <a class="btn" href="{{ docs_url }}">API docs</a>
-          <a class="btn" href="{{ control_origin }}">Console</a>
-        </nav>
       </div>
       <aside class="trust-workload" aria-labelledby="trust-workload-title">
         <h2 id="trust-workload-title">Current GCP Workload</h2>
@@ -52,6 +44,14 @@
           <div><dt>API base</dt><dd>{{ api }}</dd></div>
         </dl>
       </aside>
+      <nav class="hero-actions trust-links" aria-label="Source repositories and release files">
+        <a class="btn" href="{{ control_repo }}">Control repo</a>
+        <a class="btn" href="{{ gateway_repo }}">Gateway repo</a>
+        <a class="btn" href="{{ infra_repo }}">Infra repo</a>
+        <a class="btn" href="/trust/gcp-release.json">gcp-release.json</a>
+        <a class="btn" href="{{ docs_url }}">API docs</a>
+        <a class="btn" href="{{ control_origin }}">Console</a>
+      </nav>
     </section>
     <section class="marketing-grid three trust-strip" aria-label="Verification checklist">
       <div class="marketing-card">
