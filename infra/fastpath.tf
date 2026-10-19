@@ -114,8 +114,9 @@ resource "google_pubsub_subscription" "fastpath_archive" {
   project = local.gcp_project_id
   name    = "${each.key}-archive"
   topic   = each.value
-  # A Cloud Storage subscription's deadline is reported as its max_duration
-  # (300 s) whatever is set, so this says 300 and a plan is clean.
+  # A Cloud Storage subscription's max_duration (300 s) must not exceed its
+  # deadline, and the live subscriptions report 300: so says this, and a
+  # plan is clean.
   ack_deadline_seconds       = 300
   message_retention_duration = "604800s"
 
