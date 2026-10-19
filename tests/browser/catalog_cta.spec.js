@@ -46,8 +46,11 @@ for (const { family, path, label, pitch } of PAGES) {
 test("a model with no Credits route makes no credit claim", async ({ page }) => {
   // Pick the first bring-your-own-key model from the live catalog instead of
   // pinning an id, so the test survives a provider funding that route later.
+  // TrustedRouter's own pools and orchestration models route through other
+  // models, so they are free to start with no route of their own: skip them.
   const catalog = await page.request.get("/v1/models/picker");
-  const models = (await catalog.json()).data.filter(m => !m.id.startsWith("trustedrouter/"));
+  const models = (await catalog.json()).data.filter(m =>
+    !m.id.startsWith("trustedrouter/") && m.trustedrouter?.route_kind === "model");
   let byok = null;
   for (const model of models) {
     const endpoints = await (await page.request.get(`/v1/models/${model.id}/endpoints`)).json();
