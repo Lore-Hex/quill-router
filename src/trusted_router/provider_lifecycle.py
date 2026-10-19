@@ -196,6 +196,24 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # Official FAQ observed 2026-10-19 marks these retired even though the
+    # list API still advertises them. Other providers are unaffected.
+    # https://platform.minimax.io/docs/faq/models
+    _Retirement(
+        provider="minimax",
+        model_ids=frozenset({
+            "minimax/minimax-m2", "minimax/minimax-m2.1",
+            "minimax/minimax-m2.1-highspeed", "minimax/minimax-m2.5",
+            "minimax/minimax-m2.5-highspeed", "minimax/minimax-m2.7",
+            "minimax/minimax-m2.7-highspeed",
+        }),
+        upstream_ids=frozenset({
+            "MiniMax-M2", "MiniMax-M2.1", "MiniMax-M2.1-highspeed",
+            "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+        }),
+        effective_at=datetime(2026, 10, 19, tzinfo=UTC),
+    ),
     # The supported-models page checked on 2026-10-07 states these models
     # are already past end of life. Use that fixed observation date rather
     # than inventing earlier dates or waiting for the catalog bot to delist.

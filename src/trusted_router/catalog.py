@@ -506,7 +506,6 @@ _OPEN_WEIGHT_PREFIXES = (
     "google/gemma",
     "ibm-granite/",
     "meta-llama/",
-    "minimax/minimax-m3",
     "mistralai/mistral-large-4",
     "moonshotai/kimi",
     "nvidia/nemotron",
@@ -543,7 +542,8 @@ def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> 
             return False
         next_seen = frozenset((*_seen, model.id))
         return all(model_open_weights(candidate, _seen=next_seen) for candidate in candidates)
-    return model_id.startswith(_OPEN_WEIGHT_PREFIXES) or any(
+    # M3.1's weights were announced for later release, not published at launch.
+    return model_id == "minimax/minimax-m3" or model_id.startswith(_OPEN_WEIGHT_PREFIXES) or any(
         marker in model_id for marker in _OPEN_WEIGHT_CONTAINS
     )
 

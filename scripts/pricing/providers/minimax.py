@@ -15,6 +15,7 @@ from scripts.pricing.base import (
     guard_manifest_prune,
     reconcile_manifest_tombstones,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "minimax"
 URL = "https://platform.minimax.io/docs/guides/pricing-paygo.md"
@@ -30,8 +31,7 @@ MANIFEST_PATH = (
 
 EXPECTED_MODELS = [
     "minimax/minimax-m3",
-    "minimax/minimax-m2.7",
-    "minimax/minimax-m2.7-highspeed",
+    "minimax/minimax-m3.1-flash",
 ]
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
@@ -86,6 +86,8 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
         if isinstance(status, int) and not isinstance(status, bool) and status != 1:
             continue
         model_id = f"minimax/{native_id.casefold()}"
+        if provider_model_retired(SLUG, model_id, native_id):
+            continue
         row: dict[str, Any] = {
             "id": model_id,
             "upstream_id": native_id,
@@ -97,6 +99,14 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
             "endpoints": ["chat/completions"],
             "status": 1,
         }
+        # The list API supplies IDs only. Limits and capabilities are from
+        # https://platform.minimax.io/docs/api-reference/text-chat-openai.
+        if model_id == "minimax/minimax-m3.1-flash":
+            row.update({
+                "context_length": 1_000_000,
+                "input_modalities": ["text", "image"],
+                "supported_parameters": ["tools", "tool_choice", "reasoning_effort"],
+            })
         for field, value in (
             ("created", source.get("created")),
             ("context_length", source.get("context_length")),
@@ -105,7 +115,7 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
             parsed = _positive_int(value)
             if parsed is not None:
                 row[field] = parsed
-        if "context_length" in row:
+        if _positive_int(source.get("context_length")) is not None:
             # Catalog ingestion lets a maker's API-reported window outrank
             # OpenRouter's listing of the maker's endpoint.
             row["context_length_source"] = "api"
@@ -188,8 +198,15 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         priced_ids=set(result.prices),
         source=result.source,
     )
-    guarded = guard_manifest_prune(rows, rebuilt, provider_slug=SLUG)
-    if guarded is rows:
+    # A reviewed retirement must not count as an accidental mass delisting.
+    # Keep the ordinary prune guard for every still-supported route.
+    active_rows = [
+        row for row in rows
+        if not isinstance(row, dict)
+        or not provider_model_retired(SLUG, str(row.get("id", "")), row.get("upstream_id"))
+    ]
+    guarded = guard_manifest_prune(active_rows, rebuilt, provider_slug=SLUG)
+    if guarded is active_rows:
         return ["minimax: kept old manifest (mass-prune guard)"]
 
     raw["source"] = MODELS_URL
