@@ -568,6 +568,11 @@ tbody tr:hover {
   line-height: 1.7;
 }
 
+/* Catalog pages (model, comparison, provider): one column, one sentence, one button. */
+.public-hero.catalog-hero {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .public-hero-metrics {
   border-top: 1px solid var(--border-default);
 }

@@ -2316,6 +2316,95 @@ def _seo_model_name(model: Model) -> str:
     return model.name
 
 
+def _hero_model_name(model: Model) -> str:
+    """The name the catalog hero sentence uses: the model without its publisher.
+
+    `_seo_model_name` only strips the prefix when it matches the stored
+    publisher string; "MoonshotAI: Kimi K3" with publisher "Moonshot AI" keeps
+    it. The hero sentence reads "Try Kimi K3 on us", so drop any leading
+    "Publisher: " segment here. Titles and headings keep the full name.
+    """
+    name = _seo_model_name(model)
+    return name.split(": ", 1)[1] if ": " in name else name
+
+
+# The catalog hero (model, comparison and provider pages) gives one
+# page-specific reason to sign up. "Free to start" rests on the starter credit,
+# which only pays for Credits routes, so a page without one says "Bring your
+# own key" and makes no credit claim. Keep the sentences free of "no", "not"
+# and "never": public-page copy avoids them.
+HERO_FREE_TO_START = "Free to start"
+HERO_BRING_YOUR_OWN_KEY = "Bring your own key"
+_HERO_STARTER = "Starter credit covers your first requests, then one key "
+
+
+def _model_hero(model: Model, view: dict[str, object]) -> tuple[str, str]:
+    name = _hero_model_name(model)
+    if view["is_meta"]:
+        candidates = cast(list[object], view["candidate_models"])
+        reach = (
+            "routes through the attested preset"
+            if view["configuration_hidden"] or len(candidates) == 0
+            else f"routes across {len(candidates)} component models"
+        )
+        return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach} with automatic failover."
+    routes = cast(int, view["endpoint_count"])
+    if routes >= 2:
+        reach = f"reaches all {routes} provider routes with automatic failover."
+    elif routes == 1:
+        reach = "reaches this route and every other model in the catalog."
+    else:
+        return HERO_BRING_YOUR_OWN_KEY, (
+            f"Run {name} through TrustedRouter with your own {view['provider']} key. "
+            "One base URL, usage records and spend limits, alongside every other model in the catalog."
+        )
+    return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
+
+
+def _comparison_hero(
+    left: Model,
+    right: Model,
+    left_view: dict[str, object],
+    right_view: dict[str, object],
+) -> tuple[str, str]:
+    left_name, right_name = _hero_model_name(left), _hero_model_name(right)
+    left_funded = cast(int, left_view["endpoint_count"]) > 0
+    right_funded = cast(int, right_view["endpoint_count"]) > 0
+    switch = "Switch by changing the model name."
+    if left_funded and right_funded:
+        return HERO_FREE_TO_START, (
+            f"Try both on us. {_HERO_STARTER}routes {left_name} and {right_name}. {switch}"
+        )
+    if left_funded or right_funded:
+        funded, byok = (left_name, right_name) if left_funded else (right_name, left_name)
+        return HERO_BRING_YOUR_OWN_KEY, (
+            f"One key routes both. Starter credit covers your first {funded} requests, "
+            f"while {byok} runs on your own provider key. {switch}"
+        )
+    return HERO_BRING_YOUR_OWN_KEY, (
+        f"Route {left_name} and {right_name} through one base URL with your own provider keys. {switch}"
+    )
+
+
+def _provider_hero(provider: Provider, credits_model_count: int) -> tuple[str, str]:
+    if provider.slug == "trustedrouter":
+        return HERO_FREE_TO_START, (
+            "Try the attested gateway on us. "
+            f"{_HERO_STARTER}reaches every model in the catalog."
+        )
+    name = provider.name
+    if credits_model_count >= 2:
+        reach = f"reaches all {credits_model_count} {name} models, with the privacy posture shown on every route."
+    elif credits_model_count == 1:
+        reach = f"reaches the {name} model, with its privacy posture shown on the route."
+    else:
+        return HERO_BRING_YOUR_OWN_KEY, (
+            f"Bring your own {name} key and route {name} models through TrustedRouter "
+            "with one base URL, usage records and spend limits."
+        )
+    return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
+
+
 def _seo_comparison_title(left: Model, right: Model) -> str:
     left_name = _seo_model_name(left)
     right_name = _seo_model_name(right)
@@ -4113,6 +4202,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
     test_mode = settings.environment == "test"
     served_models = _provider_model_rows(provider_slug, test_mode=test_mode)
     provider_faq_items = _provider_faq_items(provider, model_count=len(served_models))
+    hero_label, hero_pitch = _provider_hero(provider, len(served_models))
     return (
         _env()
         .get_template("public/provider_detail.html")
@@ -4121,6 +4211,8 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
             site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
             title=f"{provider.name} Models, Pricing & Privacy | TrustedRouter",
             heading=provider.name,
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=(
                 f"Explore {provider.name} models on TrustedRouter with current routes, token pricing, "
                 "policy sources, privacy posture, regional availability, and API support."
@@ -4236,6 +4328,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     seo_name = _seo_model_name(model)
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
     model_view = _model_detail_view(model, test_mode=test_mode)
+    hero_label, hero_pitch = _model_hero(model, model_view)
     route_evidence = _model_route_evidence(model, test_mode=test_mode)
     faq_items = _model_faq_items(model, route_evidence=route_evidence)
     return (
@@ -4246,6 +4339,8 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
             site_url=site_url,
             title=f"{seo_name} API, Pricing and Providers | TrustedRouter",
             heading=model.name,
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=(
                 f"Compare every TrustedRouter route for {seo_name}, including token pricing, context "
                 "limits, privacy policy, regional availability, measured uptime, and API support."
@@ -4280,6 +4375,9 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
     site_path = canonical_model_comparison_path(left.id, right.id)
     assert site_path is not None
     comparison = _comparison_view(left, right, test_mode=test_mode)
+    left_view = _model_detail_view(left, test_mode=test_mode, include_section_links=False)
+    right_view = _model_detail_view(right, test_mode=test_mode, include_section_links=False)
+    hero_label, hero_pitch = _comparison_hero(left, right, left_view, right_view)
     faq_items = _model_comparison_faq_items(left, right, comparison=comparison)
     return (
         _env()
@@ -4289,19 +4387,13 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             site_url=f"https://{settings.trusted_domain}{site_path}",
             title=_seo_comparison_title(left, right),
             heading=f"{left.name} vs {right.name}",
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=(
                 f"{comparison['summary']} Compare price, speed, context, and privacy."
             ),
-            left=_model_detail_view(
-                left,
-                test_mode=test_mode,
-                include_section_links=False,
-            ),
-            right=_model_detail_view(
-                right,
-                test_mode=test_mode,
-                include_section_links=False,
-            ),
+            left=left_view,
+            right=right_view,
             comparison=comparison,
             related_comparisons=_related_model_comparison_rows(
                 left.id,
@@ -4413,6 +4505,8 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     seo_name = _seo_model_name(model)
     measured = measured_for_model(model.id, test_mode=settings.environment == "test")
     section_indexable = _model_section_indexable(model, section, measured)
+    model_view = _model_detail_view(model, active_section=section, test_mode=test_mode)
+    hero_label, hero_pitch = _model_hero(model, model_view)
     return (
         _env()
         .get_template("public/model_section.html")
@@ -4422,8 +4516,10 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
             robots_meta=None if section_indexable else "noindex,follow",
             title=f"{seo_name} {label} | TrustedRouter",
             heading=f"{model.name} {label}",
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=_model_section_description(model, section),
-            model=_model_detail_view(model, active_section=section, test_mode=test_mode),
+            model=model_view,
             section=section,
             section_label=label,
             benchmark_links=_benchmark_links(model, test_mode=test_mode),
