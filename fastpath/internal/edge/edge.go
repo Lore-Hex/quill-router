@@ -206,8 +206,12 @@ func New(cfg Config) (*Edge, error) {
 			}
 			if caller.host == "" {
 				// A caller that named no host (HTTP/1.0) gets a relative
-				// redirect, which it resolves against what it asked.
+				// redirect, which it resolves against what it asked; an
+				// absolute path, so an empty one is the root, not nothing.
 				target.Scheme, target.Host = "", ""
+				if target.Path == "" {
+					target.Path = "/"
+				}
 			} else {
 				target.Scheme, target.Host = caller.scheme, caller.host
 			}

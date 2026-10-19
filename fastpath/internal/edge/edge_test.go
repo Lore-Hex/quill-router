@@ -614,3 +614,26 @@ func TestHeaderNamesAndSchemesFoldOverASCIIAlone(t *testing.T) {
 		t.Fatalf("a folded scheme: %q", resp.Header.Get("Location"))
 	}
 }
+
+func TestAHostlessRedirectToTheRootIsTheRoot(t *testing.T) {
+	h := newHarness(t)
+	for _, c := range []struct{ location, want string }{
+		{h.upstream.URL + "?x=1", "/?x=1"},
+		{h.upstream.URL, "/"},
+	} {
+		h.respond = func(w http.ResponseWriter) {
+			w.Header().Set("Location", c.location)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		}
+		conn, err := net.Dial("tcp", strings.TrimPrefix(h.server.URL, "http://"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = fmt.Fprintf(conn, "POST /internal/gateway/authorize/ HTTP/1.0\r\n%s: %s\r\nContent-Length: 0\r\n\r\n", TokenHeader, token)
+		raw, _ := io.ReadAll(conn)
+		conn.Close()
+		if !strings.Contains(string(raw), "Location: "+c.want+"\r\n") {
+			t.Fatalf("%s:\n%s", c.location, raw)
+		}
+	}
+}
