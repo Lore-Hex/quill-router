@@ -56,26 +56,26 @@ resource "google_compute_firewall" "fastpath_edge" {
   target_service_accounts = [google_service_account.fastpath_node.email]
 }
 
-# A group follows its node's identity, not its name: a node replaced under
-# the same name (a startup-script change) keeps its self link, and the
-# provider then compares membership by URL and can leave the new node out
-# of a group it already lists. The instance id in the name makes the
-# replacement a new group, created before the old one leaves the backend.
+# A group is named for its node, and its membership is read back on every
+# plan. A node replaced under the same name (a startup-script change) keeps
+# its self link, which the provider compares membership by, so the apply
+# that replaces the node does not re-add it: the next plan sees the group
+# empty and adds it back. A replacement therefore ends with a second apply
+# (docs/runbooks/fastpath-deploy.md), and the health check shows the gap
+# meanwhile. The lifecycle tricks that avoid the second apply (a group named
+# for the instance id, created before destroy) propagate create-before-
+# destroy to the fixed-name nodes, whose replacement they then break.
 resource "google_compute_instance_group" "fastpath_edge" {
   for_each = google_compute_instance.fastpath_node
 
   project   = local.gcp_project_id
-  name      = "${each.key}-edge-${substr(each.value.instance_id, 0, 8)}"
+  name      = "${each.key}-edge"
   zone      = each.value.zone
   instances = [each.value.self_link]
 
   named_port {
     name = "edge"
     port = local.fastpath_edge_port
-  }
-
-  lifecycle {
-    create_before_destroy = true
   }
 }
 
@@ -108,7 +108,8 @@ resource "google_compute_backend_service" "fastpath_edge" {
   health_checks         = [google_compute_health_check.fastpath_edge.id]
   security_policy       = google_compute_security_policy.legacy_edge.id
   # The unit's own stop timeout; a node marked leaving answers 503 and
-  # drains its requests within it.
+  # drains its requests within it. Draining covers a backend turning
+  # unhealthy or a node leaving a group, not a group detached whole.
   connection_draining_timeout_sec = 30
 
   dynamic "backend" {
