@@ -37,10 +37,12 @@
   letter-spacing: -0.025em;
 }
 
-/* Agent prompt, first in main. */
+/* Agent prompt, first in main: the page's one action, in the kit's mint panel. */
 .agent-verify {
-  padding: 8px 0 28px;
-  border-bottom: 1px solid var(--border-hairline);
+  padding: 24px 28px 20px;
+  border-radius: var(--r-panel);
+  background: var(--tr-color-panel-mint-bg);
+  color: var(--tr-color-panel-mint-ink);
 }
 
 .agent-verify-head {
@@ -55,6 +57,7 @@
 
 .agent-verify-head h2 {
   margin: 0;
+  color: inherit;
   font-size: 22px;
   font-weight: 550;
   letter-spacing: -0.025em;
@@ -63,13 +66,14 @@
 .agent-prompt {
   margin: 0;
   padding: 6px 0 6px 20px;
-  border-left: 3px solid var(--tr-color-accent-base);
+  border-left: 3px solid var(--tr-color-panel-mint-divider);
+  color: var(--tr-color-panel-mint-ink);
 }
 
 .agent-prompt p {
   max-width: 78ch;
   margin: 0;
-  color: var(--text-display);
+  color: inherit;
   font-size: 17px;
   line-height: 1.65;
   overflow-wrap: anywhere;
@@ -83,10 +87,10 @@
   justify-content: center;
   min-height: 44px;
   padding: 10px 16px;
-  border: 1px solid var(--tr-color-accent-base);
+  border: 1px solid var(--tr-color-panel-mint-ink);
   border-radius: var(--r-control);
-  background: var(--tr-color-accent-base);
-  color: var(--tr-color-accent-ink);
+  background: var(--tr-color-panel-mint-ink);
+  color: var(--tr-color-panel-mint-bg);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -97,7 +101,8 @@
 }
 
 .copy-prompt:hover {
-  background: var(--tr-color-accent-hover);
+  border-color: var(--tr-color-panel-mint-ink-2);
+  background: var(--tr-color-panel-mint-ink-2);
 }
 
 .copy-prompt:disabled {
@@ -108,7 +113,7 @@
   display: block;
   min-height: 24px;
   margin-top: 8px;
-  color: var(--text-muted);
+  color: var(--tr-color-panel-mint-ink-2);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -226,6 +231,20 @@
 
 .trust-page .marketing-card .trust-kv + p {
   margin-top: var(--tr-space-stack-lg);
+}
+
+/* The three clouds are detail: one size down from the verification strip. */
+.trust-page .trust-planes h2 {
+  font-size: 18px;
+}
+
+.trust-page .trust-planes p {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.trust-planes .trust-kv dd {
+  font-size: 13px;
 }
 
 /* Plane notes from trust.py: a quiet callout rather than a bold paragraph. */
@@ -473,6 +492,10 @@
 @media (max-width: 600px) {
   .trust-page .public-wrap > section + section {
     margin-top: var(--tr-space-stack-xl);
+  }
+
+  .agent-verify {
+    padding: 20px 18px 16px;
   }
 
   .trust-hero h1 {
