@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -169,9 +170,37 @@ def test_exact_phase_pins(plan, phase):
     assert expected['enclave']['TR_ASYNC_SETTLE_SHADOW'] == ('on' if phase == 'shadow-opt-in' else 'off')
     assert expected['router']['TR_ASYNC_SETTLE_SHADOW_WORKSPACES'] == (plan.workspace if phase == 'shadow-opt-in' else '')
     original = (ROOT / 'scripts/deploy/rollout.sh').read_text()
-    diff = patch(original, plan.releases.router.pin_file, expected['router'])
-    assert '--- a/scripts/deploy/rollout.sh' in diff
+
+    def assert_phase_patch(source):
+        current = {}
+        for name in expected['router']:
+            values = re.findall(rf'^  "{name}=([^"\n]*)"$', source, re.MULTILINE)
+            assert len(values) == 1
+            current[name] = values[0]
+        diff = patch(source, plan.releases.router.pin_file, expected['router'])
+        differing = {name for name, value in expected['router'].items() if current[name] != value}
+        if not differing:
+            assert diff == ''
+        else:
+            assert '--- a/scripts/deploy/rollout.sh' in diff
+            assert '+++ b/scripts/deploy/rollout.sh' in diff
+        changed_lines = [line for line in diff.splitlines()
+                         if line.startswith(('-', '+')) and not line.startswith(('---', '+++'))]
+        assert sorted(changed_lines) == sorted(
+            line for name in differing
+            for line in (f'-  "{name}={current[name]}"', f'+  "{name}={expected["router"][name]}"'))
+        return diff
+
+    diff = assert_phase_patch(original)
     assert '+  "TR_ASYNC_SETTLE_ENABLED=true"' not in diff
+
+    other_phase = 'shadow-opt-out' if phase == 'shadow-opt-in' else 'shadow-opt-in'
+    other = original
+    for name, value in pins(plan, other_phase)['router'].items():
+        if name not in MONEY_OFF:
+            other, count = re.subn(rf'^  "{name}=[^"\n]*"$', f'  "{name}={value}"', other, flags=re.MULTILINE)
+            assert count == 1
+    assert_phase_patch(other)
     assert (ROOT / 'scripts/deploy/rollout.sh').read_text() == original
 
 
