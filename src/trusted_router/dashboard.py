@@ -1,6 +1,6 @@
-"""Dashboard rendering. The page itself lives in templates/dashboard.html
+"""Public page rendering. The homepage lives in templates/homepage/index.html
 with HTML/CSS/JS in their own files; this module only resolves
-settings-driven values and renders the Jinja2 template."""
+settings-driven values and renders the Jinja2 templates."""
 
 from __future__ import annotations
 
@@ -99,7 +99,6 @@ from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
 from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
-from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
 from trusted_router.provider_branding import (
     PROVIDER_BRANDS,
     provider_homepage_url,
@@ -2390,8 +2389,6 @@ def dashboard_html(
     canonical_site_url = canonical_public_url(settings)
     site_url = site_url or canonical_site_url
     alternate_brand = brand_name != "TrustedRouter"
-    page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
-    homepage_enabled = settings.homepage_landscape_enabled and not alternate_brand
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment not in {"local", "test"} else DEV_USER_FALLBACK,
@@ -2403,27 +2400,20 @@ def dashboard_html(
     }
     from trusted_router.homepage import homepage_context
 
-    homepage = homepage_context(resolved_api_base_url) if homepage_enabled else {}
     return (
         _env()
-        .get_template("homepage/index.html" if homepage_enabled else "dashboard.html")
+        .get_template("homepage/index.html")
         .render(
-            **homepage,
-            homepage_noindex=environment in {"local", "test"},
+            **homepage_context(resolved_api_base_url),
+            # Local previews (tunnels) stay out of search; test renders like production.
+            homepage_noindex=environment == "local",
             organization_json_ld=_json_ld_graph(settings),
             api_base_url=resolved_api_base_url,
             site_url=site_url,
             canonical_site_url=canonical_site_url,
             brand_name=brand_name,
             alternate_brand=alternate_brand,
-            og_image=(
-                f"https://{domain}/static/homepage/social-card-v1.jpg"
-                if homepage_enabled else f"https://{domain}/og.png"
-            ),
-            og_title=page_title,
-            og_description=OG_DESCRIPTION,
-            og_image_width=OG_IMAGE_WIDTH,
-            og_image_height=OG_IMAGE_HEIGHT,
+            og_image=f"https://{domain}/static/homepage/social-card-v1.jpg",
             tr_config=json.dumps(tr_config),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,

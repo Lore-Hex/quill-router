@@ -320,10 +320,9 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
 
 def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) -> None:
     """Belt-and-suspenders for the alpha-removal: if a future deploy
-    accidentally restores 'Public Alpha' framing, this test fails. Production
-    serves the landscape homepage (TR_HOMEPAGE_LANDSCAPE_ENABLED), so the cloud
-    check looks for its verification section's multi-cloud proof point; the
-    local landscape test pins the same string."""
+    accidentally restores 'Public Alpha' framing, this test fails. The cloud
+    check looks for the landscape homepage's verification section and its
+    multi-cloud proof point; the local landscape test pins the same string."""
     response = client.get("/")
     assert response.status_code == 200
     body = response.text

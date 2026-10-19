@@ -469,14 +469,15 @@ def test_paid_domain_homepages_render_their_own_brand(
     response = client.get("/", headers={"host": host})
 
     assert response.status_code == 200
-    assert f"<title>{brand} | Every model. Privacy with proof.</title>" in response.text
+    # The paid domains serve the same landscape homepage under their own name.
+    assert f"<title>{brand}: The AI router that shows its work</title>" in response.text
+    assert f'property="og:title" content="{brand}: The AI router that shows its work"' in response.text
     assert f'<span class="brand-word" aria-hidden="true">{brand}</span>' in response.text
     assert f'property="og:site_name" content="{brand}"' in response.text
     assert f'property="og:url" content="https://{host}/"' in response.text
     assert '<link rel="canonical" href="https://trustedrouter.com/">' in response.text
-    assert "Powered by TrustedRouter" in response.text
-    assert f"Why developers choose {brand}." in response.text
-    assert f"What is {brand}?" in response.text
+    assert 'class="hero-promises"' in response.text
+    assert f"https://api.{host}/v1" in response.text
 
 
 def test_duplicate_api_reference_surfaces_redirect_to_canonical(
@@ -595,14 +596,18 @@ def test_llms_indexes_link_official_cli_distributions(client: TestClient) -> Non
 def test_homepage_has_plain_llm_seo_positioning(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200
-    assert "Why developers choose TrustedRouter." in response.text
+    # Plain-language positioning: every module heading names the job in words
+    # a search for an AI router, gateway or private LLM API would use.
+    assert "Encrypt all your" in response.text
+    assert "Every route labeled." in response.text
+    assert "Move over with one" in response.text
+    assert "Verify." in response.text
+    assert "See what your AI bill is made of." in response.text
+    assert "What developers ask before routing." in response.text
+    assert "Every model. One <em>verifiable</em> prompt path." in response.text
     assert "OpenRouter alternative" in response.text
-    assert "Better trust" in response.text
-    assert "Cheaper routes" in response.text
-    assert "Faster migration" in response.text
-    assert "More reliable inference" in response.text
-    assert "<strong>100+</strong><span>providers</span>" in response.text
-    assert 'href="/llms.txt"' in response.text
+    assert "AI router comparison" in response.text
+    assert 'href="/docs/llms.txt"' in response.text
 
 
 def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestClient) -> None:
@@ -1679,7 +1684,11 @@ def test_new_york_token_exchange_page_and_discovery_links(client: TestClient) ->
     assert "New York Token Exchange, or NYTE" in landing.text
     assert "not a cryptocurrency, securities, or financial exchange" in landing.text
     assert landing.text.count('href="https://nytokenexchange.com/"') >= 2
-    assert 'href="https://nytokenexchange.com/">New York Token Exchange</a>' in homepage.text
+    assert "<strong>New York Token Exchange</strong>" in homepage.text
+    assert (
+        'data-token-exchange-banner href="https://nytokenexchange.com/?utm_source=trustedrouter.com'
+        in homepage.text
+    )
     assert 'href="https://nytokenexchange.com/">New York Token Exchange</a>' in resources.text
 
 
