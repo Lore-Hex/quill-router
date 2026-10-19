@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 
 from scripts.pricing.providers import amazon_bedrock as bedrock
@@ -142,6 +143,54 @@ def test_catalog_waits_for_each_cloud_gateway_upgrade(monkeypatch, region, allow
     assert other_qwen <= endpoints.keys()
     if not allowed:
         assert all(ep.provider != "amazon-bedrock" for ep in endpoints.values())
+
+
+@pytest.mark.parametrize("region,allowed", [
+    ("us-central1", True), ("us-east4", True), ("europe-west4", True), ("us-west1", True),
+    ("eu-west-1", False), ("aws-eu-west-3", False),
+    ("australiaeast", False), ("azure-uaenorth", False), ("unknown", False), ("", False),
+])
+def test_bedrock_request_region_requires_a_verified_gateway(region, allowed):
+    from trusted_router.provider_contracts import provider_model_available_from_gateway_region
+
+    assert provider_model_available_from_gateway_region("amazon-bedrock", "qwen/qwen3-32b", region) is allowed
+    assert provider_model_available_from_gateway_region("openai", "openai/gpt-oss-20b", region)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", ["us-central1", "aws-eu-west-3", "azure-uaenorth", "unknown"])
+async def test_gateway_checks_origin_region_before_bedrock_credit_reservation(monkeypatch, region):
+    from tests.fixture_routes import serve_on_fixture_route
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+    from trusted_router.storage import STORE
+
+    serve_on_fixture_route(monkeypatch, "qwen/qwen3-32b", "amazon-bedrock", author="qwen")
+    # The receiving control plane only knows GCP. An unknown caller region
+    # must not become GCP through choose_region's default fallback.
+    app = create_app(Settings(
+        environment="test", internal_gateway_token=None,
+        primary_region="us-central1", regions="us-central1",
+    ), init_observability=False)
+    user = STORE.ensure_user("bedrock-region@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.credit_workspace_once(workspace.id, 50_000_000, "seed")
+    _, key = STORE.create_api_key(workspace_id=workspace.id, name="bedrock", creator_user_id=user.id)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post("/v1/internal/gateway/authorize", json={
+            "api_key_hash": key.hash, "model": "qwen/qwen3-32b", "region": region,
+            "estimated_input_tokens": 10, "max_output_tokens": 16,
+            "provider": {"only": ["amazon-bedrock"], "allow_fallbacks": False},
+        })
+    if region == "us-central1":
+        assert response.status_code == 200, response.text
+        payload = response.json().get("data", response.json())
+        assert payload["provider"] == "amazon-bedrock"
+    else:
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["type"] == "provider_not_supported"
+        assert not STORE.api_keys.reservations
+        assert not STORE.api_keys.gateway_authorizations
 
 
 def test_failed_fetch_resets_discovery(monkeypatch):

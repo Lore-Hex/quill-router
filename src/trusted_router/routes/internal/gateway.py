@@ -1475,7 +1475,9 @@ def _authorize_gateway_sync_impl(
         if provider_model_available_from_gateway_region(
             candidate_endpoint.provider,
             candidate_endpoint.model_id,
-            region,
+            # Use the caller's actual gateway region even when it is absent
+            # from this control plane's configured routing regions.
+            body.region or region,
         )
     ]
     byok_configs = _byok_configs_for_candidates(
