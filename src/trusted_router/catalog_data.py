@@ -2007,6 +2007,21 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://greenference.com/legal/dpa",
     ),
+    "amazon-bedrock": Provider(
+        slug="amazon-bedrock",
+        name="Amazon Bedrock",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Direct Amazon Bedrock Mantle inference through the US East (N. Virginia) "
+            "regional endpoint. Only exact-priced, account-tested standard-tier models "
+            "are enabled. No global or cross-region inference profiles are used. "
+            "These routes are Standard: no contracted ZDR or confidential-inference "
+            "guarantee is asserted. Model-specific data-retention terms apply."
+        ),
+        provider_policy_url="https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html",
+        provider_headquarters_country="US",
+    ),
     "lyceum": Provider(
         slug="lyceum",
         name="Lyceum",
@@ -2326,6 +2341,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "system1models",
         "system1models-eu",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "boundless",
         "zro",
