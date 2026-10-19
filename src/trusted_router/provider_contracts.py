@@ -88,6 +88,9 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
     ("sakana", SAKANA_FUGU_MODEL_ID): frozenset({"europe-west4"}),
     ("sakana", SAKANA_NAMAZU_MODEL_ID): frozenset({"europe-west4"}),
 }
+# QCP #535 must be verified on a gateway fleet before it can serve Bedrock.
+# An upgraded GCP control plane may also authorize older AWS/Azure gateways.
+BEDROCK_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
 
 # Fugu reports additive provider-side orchestration tokens only after a call.
 # They are included in exact settlement, but may exceed the caller-derived
@@ -134,6 +137,8 @@ def provider_model_available_from_gateway_region(
     model_id: str,
     gateway_region: str,
 ) -> bool:
+    if provider_slug == "amazon-bedrock":
+        return gateway_region in BEDROCK_GATEWAY_REGIONS
     unsupported = UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get(
         (provider_slug, model_id),
         frozenset(),

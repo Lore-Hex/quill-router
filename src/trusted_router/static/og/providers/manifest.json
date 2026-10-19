@@ -35,6 +35,15 @@
     "route_mode": "Prepaid",
     "slug": "alibaba"
   },
+  "amazon-bedrock": {
+    "card_version": 2,
+    "model_count": 34,
+    "name": "Amazon Bedrock",
+    "privacy": "Policy documented",
+    "route_count": 34,
+    "route_mode": "Prepaid",
+    "slug": "amazon-bedrock"
+  },
   "anthropic": {
     "card_version": 2,
     "model_count": 14,

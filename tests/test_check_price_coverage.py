@@ -98,6 +98,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "bedrock-mantle.us-east-1.api.aws" in url:
+        return {"data": [{"id": "openai.gpt-oss-120b", "status": "available"}]}
     if "api.meta.ai" in url:
         return {"data": [{"id": "muse-spark-1.3"}, {"id": "muse-spark-1.3-contributor"}]}
     if "ark.ap-southeast.bytepluses.com" in url:

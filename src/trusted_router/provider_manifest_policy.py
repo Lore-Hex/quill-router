@@ -37,6 +37,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "boundless",
         "zro",

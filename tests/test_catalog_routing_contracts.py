@@ -868,6 +868,7 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
         "anthropic",
         "aws",
         "bedrock",
+        "amazon-bedrock",
         "google-ai-studio",
     }
     configured = provider_slugs_requiring_reverification & set(PROVIDERS)
