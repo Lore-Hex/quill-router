@@ -181,6 +181,11 @@ def _unit_flags(script: str) -> set[str]:
         found = re.match(r"^\s*-([a-z][a-z-]*)", lines[i])
         assert found, lines[i]
         flags.add(found.group(1))
+    # Flags the script adds from the instance's metadata (the edge's) are
+    # the unit's too, on a node given them.
+    for line in lines:
+        if re.match(r"^\s*edge_flags=\"-", line):
+            flags.update(re.findall(r"(?:^|\s)-([a-z][a-z-]*)", line.split("=", 1)[1]))
     return flags
 
 
@@ -223,3 +228,5 @@ def test_a_flag_the_pinned_command_lacks_is_found() -> None:
     assert _unit_flags(unit) == {"roles", "hold-boot"}
     assert _command_flags(command) == {"roles", "boot"}
     assert _unit_flags(unit) - _command_flags(command) == {"hold-boot"}
+    given = 'edge_flags="-edge-address $x:8081 -edge-upstream $u"\n' + unit
+    assert _unit_flags(given) == {"roles", "hold-boot", "edge-address", "edge-upstream"}

@@ -164,21 +164,33 @@ after it states it.
 The edge (`docs/design/fast-admission-enclave-direct.md`, E1) runs on a
 node whose instance metadata names `fastpath-edge-upstream` and
 `fastpath-edge-token-secret` (`infra/fastpath.tf`); the startup script
-reads both at boot and passes `-edge-address`, `-edge-upstream` and
-`-edge-token-secret` to the unit. The release pinned alongside must know
-those flags (the edge role, #1859, and its health answer, #1875); an
-earlier release refuses them and the node stays stopped.
+reads both when it runs and passes `-edge-address`, `-edge-upstream` and
+`-edge-token-secret` to the unit. The pinned release must know those
+flags (the edge role, #1859, and its health answer, #1875); an earlier
+release refuses them and the node stays stopped, which
+`tests/test_fastpath_p1.py` holds the pin to. A read of the metadata that
+fails, or one attribute without the other, also leaves the node stopped,
+with the reason in its journal.
 
-The change that adds the attributes also changes the startup script, so
-it replaces both nodes in one apply. Before merging it: mark both nodes
-leaving and wait for their leases as "For each node replaced" says, with
-no new node to start first. After the apply: the nodes come up on the
-pinned release with the edge listening on 8081; run the infrastructure
-apply once more so the edge instance groups list the new nodes; then
-check each node's health answer from the balancer's view
+A node keeps the startup script it was created with (`ignore_changes` in
+`infra/fastpath.tf`), so the script that reads the attributes reaches the
+fleet as every change does: a node added under a new name, which starts
+first, then the old one marked leaving, drained and removed, as "For
+each node replaced" says, one at a time, the other serving throughout. A
+same-name replacement of both nodes in one apply would leave admitted
+requests no serving front door to settle through. The pilot's watches
+and its audit loop live on a node's disk (`fastpath-p1.md`,
+`fastpath-watch.md`); start them on the new node before the old one is
+drained.
+
+After a node with the edge serves: run the infrastructure apply once more
+so its edge instance group lists it, then check the balancer's view
 (`gcloud compute backend-services get-health tr-fastpath-edge-backend
---global`) says `HEALTHY` before any route sends traffic to it. Emptying
-both attributes and resetting a node turns its edge off.
+--global`) says `HEALTHY` for it before any route sends traffic to it.
+The way back is the route (`infra/control_lb_url_map.tf`), never the
+attributes: a reset leaves the unit systemd started from disk running
+with its old arguments, as "Taking a pinned release" explains for the
+binary.
 
 ## Taking a pinned release
 
