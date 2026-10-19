@@ -75,6 +75,7 @@
   margin: 0;
   color: inherit;
   font-size: 17px;
+  font-style: italic;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
@@ -114,7 +115,7 @@
   min-height: 24px;
   margin-top: 8px;
   color: var(--tr-color-panel-mint-ink-2);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.5;
 }
 
@@ -171,6 +172,10 @@
   max-width: 600px;
 }
 
+.trust-page .trust-hero-copy .trust-hero-aside {
+  color: var(--text-muted);
+}
+
 .trust-page .trust-links {
   grid-column: 1 / -1;
   gap: 8px;
@@ -185,7 +190,7 @@
 .trust-workload h2 {
   margin: 0 0 var(--tr-space-stack-sm);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
   letter-spacing: 0;
@@ -214,7 +219,7 @@
 .trust-kv dt {
   margin: 0 0 4px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
   text-transform: uppercase;
@@ -224,7 +229,7 @@
   margin: 0;
   color: var(--text-display);
   font-family: var(--font-mono);
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -239,12 +244,8 @@
 }
 
 .trust-page .trust-planes p {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.6;
-}
-
-.trust-planes .trust-kv dd {
-  font-size: 13px;
 }
 
 /* Plane notes from trust.py: a quiet callout rather than a bold paragraph. */
@@ -252,7 +253,7 @@
   padding: 2px 0 2px 14px;
   border-left: 2px solid var(--gold);
   color: var(--text-muted);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.6;
 }
 
@@ -300,8 +301,8 @@
   padding: 12px 0;
   border-bottom: 1px solid var(--border-hairline);
   color: var(--text-body);
-  font-size: 15px;
-  line-height: 1.55;
+  font-size: 16px;
+  line-height: 1.6;
 }
 
 .trust-checks li {
@@ -314,7 +315,7 @@
   padding-top: 2px;
   color: var(--tr-color-accent-base);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.6;
 }
@@ -370,7 +371,7 @@
   display: block;
   margin-bottom: 6px;
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
@@ -378,7 +379,7 @@
 .trust-repo-list .repo-card p {
   margin: 0;
   color: var(--text-body);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.6;
 }
 
@@ -410,7 +411,7 @@
   border-radius: var(--r-panel);
   background: var(--tr-color-surface-panel-inset);
   color: var(--code-ink);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -451,9 +452,6 @@
     padding: 10px 0;
   }
 
-  .trust-kv dd {
-    font-size: 13px;
-  }
 
   .trust-page .trust-strip .marketing-card:last-child {
     border-bottom: 0;
@@ -485,7 +483,7 @@
 
   .trust-record pre {
     padding: 16px;
-    font-size: 12px;
+    font-size: 13px;
   }
 }
 
@@ -495,7 +493,36 @@
   }
 
   .agent-verify {
+    display: flex;
+    flex-direction: column;
     padding: 20px 18px 16px;
+  }
+
+  .agent-verify-head {
+    display: contents;
+  }
+
+  .agent-verify-head h2 {
+    order: 1;
+    margin-bottom: 14px;
+  }
+
+  .agent-prompt {
+    order: 2;
+  }
+
+  .copy-prompt {
+    order: 3;
+    align-self: flex-start;
+    margin-top: 16px;
+  }
+
+  .copy-status {
+    order: 4;
+  }
+
+  .trust-workload {
+    order: 3;
   }
 
   .trust-hero h1 {
