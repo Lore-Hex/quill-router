@@ -79,7 +79,7 @@
         <p><code>{{ api_hostname }}</code> must remain DNS-only or TCP-passthrough. TLS termination by a CDN would break the hosted-code trust claim because the prompt path certificate key must remain inside the measured workload.</p>
       </div>
     </section>
-    <section class="marketing-grid three trust-strip trust-planes" aria-label="Attested serving planes">
+    <section class="marketing-grid three trust-strip" aria-label="Attested serving planes">
       <div class="marketing-card">
         <h2>GCP · Confidential Space</h2>
         <dl class="trust-kv">
@@ -141,8 +141,10 @@
       </div>
     </section>
     <section class="trust-record" aria-labelledby="trust-record-title">
-      <h2 id="trust-record-title">Machine-readable release</h2>
-      <pre>{{ release_json|safe }}</pre>
+      <details class="content-disclosure trust-record-disclosure">
+        <summary><h2 id="trust-record-title">Machine-readable release</h2></summary>
+        <pre>{{ release_json|safe }}</pre>
+      </details>
     </section>
 {% endblock %}
 {% block body_scripts %}<script src="/static/copy-prompt.js" defer></script>{% endblock %}

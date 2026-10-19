@@ -13,10 +13,6 @@
   margin-top: var(--tr-space-stack-3xl);
 }
 
-.trust-page .public-wrap > .trust-hero + section {
-  margin-top: var(--tr-space-stack-2xl);
-}
-
 /* Shared text sizes: the same reading size /docs uses. */
 .trust-page :is(.marketing-card, .quote-feature, .trust-hero-copy, .trust-notice) p {
   margin: 0 0 var(--tr-space-stack-md);
@@ -25,7 +21,7 @@
   line-height: 1.7;
 }
 
-.trust-page :is(.marketing-card, .quote-feature > div, .trust-hero-copy) > :last-child {
+.trust-page :is(.marketing-card, .quote-feature > div, .trust-hero-copy, .trust-notice) > :last-child {
   margin-bottom: 0;
 }
 
@@ -44,7 +40,6 @@
 
 /* Agent prompt, first in main. */
 .agent-verify {
-  min-width: 0;
   padding: 8px 0 28px;
   border-bottom: 1px solid var(--border-hairline);
 }
@@ -140,9 +135,13 @@
 
 /* Title, lead copy and the links the page's own header used to carry. */
 .trust-page .trust-hero {
-  grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.7fr);
-  gap: 48px 64px;
   padding: 28px 0 48px;
+}
+
+/* The hero's own rule draws the line under it; the first strip adds none. */
+.trust-page .trust-hero + section {
+  margin-top: var(--tr-space-stack-2xl);
+  border-top: 0;
 }
 
 .trust-hero-copy code {
@@ -151,7 +150,7 @@
 
 .trust-hero h1 {
   max-width: 640px;
-  margin: 20px 0 20px;
+  margin: 20px 0;
   font-size: 44px;
   line-height: 1.08;
 }
@@ -172,10 +171,6 @@
   margin: 28px 0 0;
 }
 
-.trust-links .btn {
-  text-decoration: none;
-}
-
 .trust-workload {
   min-width: 0;
   padding-top: 6px;
@@ -192,6 +187,12 @@
 .trust-kv > div {
   padding: 12px 0;
   border-bottom: 1px solid var(--border-hairline);
+}
+
+.trust-kv > div:last-child,
+.trust-checks li:last-child,
+.trust-files li:last-child {
+  border-bottom: 0;
 }
 
 .trust-kv dt {
@@ -212,26 +213,31 @@
   overflow-wrap: anywhere;
 }
 
-.trust-page .marketing-card .trust-kv {
-  margin-bottom: var(--tr-space-stack-md);
-}
-
 .trust-page .marketing-card .trust-kv + p {
   margin-top: var(--tr-space-stack-lg);
+}
+
+/* Plane notes from trust.py: a quiet callout rather than a bold paragraph. */
+.trust-page .marketing-card .trust-plane-note {
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--gold);
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.trust-plane-note strong {
+  color: var(--gold);
+  font-weight: 500;
 }
 
 /* Divided strips: cells share rules, so there is one box per strip at most. */
 .trust-page .trust-strip {
   border-top: 1px solid var(--border-default);
-  border-bottom: 1px solid var(--border-default);
-}
-
-.trust-page .trust-hero + .trust-strip {
-  border-top: 0;
 }
 
 .trust-page .trust-strip .marketing-card {
-  padding: 28px 28px 32px;
+  padding: 28px 28px 8px;
   border-bottom: 0;
 }
 
@@ -286,16 +292,8 @@
 .trust-files a,
 .trust-repo-list a,
 .trust-kv a {
-  color: var(--tr-color-link-base);
   text-decoration: underline;
   text-decoration-color: var(--tr-color-link-underline);
-  text-underline-offset: 0.2em;
-}
-
-.trust-files a:hover,
-.trust-repo-list a:hover,
-.trust-kv a:hover {
-  color: var(--tr-color-text-primary);
 }
 
 /* The one bordered band: heading beside the explanation. */
@@ -354,9 +352,29 @@
   line-height: 1.6;
 }
 
-/* Printed release record: heading plus the code block, as on /docs. */
-.trust-record pre {
+/* Printed release record: folded behind its heading, since the same record
+   is one click away as gcp-release.json and the text is long on a phone. */
+.trust-record {
+  --content-note-color: var(--text-display);
+
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.trust-record summary {
+  min-height: 64px;
+}
+
+.trust-record summary h2 {
   margin: 0;
+}
+
+.trust-record summary::after {
+  color: var(--text-muted);
+}
+
+.trust-record pre {
+  margin: 0 0 24px;
   padding: 20px 24px;
   border: 1px solid var(--border-hairline);
   border-radius: var(--r-panel);
@@ -374,7 +392,6 @@
   }
 
   .trust-page .trust-hero {
-    grid-template-columns: minmax(0, 1fr);
     gap: 36px;
     padding: 32px 0 36px;
   }
@@ -393,9 +410,19 @@
   }
 
   .trust-page .trust-strip .marketing-card {
-    padding: 24px 0 28px;
+    padding: 20px 0 24px;
     border-right: 0;
     border-bottom: 1px solid var(--border-hairline);
+  }
+
+  .trust-kv > div,
+  .trust-checks li,
+  .trust-files li {
+    padding: 10px 0;
+  }
+
+  .trust-kv dd {
+    font-size: 13px;
   }
 
   .trust-page .trust-strip .marketing-card:last-child {
@@ -418,19 +445,31 @@
   .trust-page .trust-repo-list .repo-card,
   .trust-page .trust-repo-list .repo-card:nth-child(3n),
   .trust-page .trust-repo-list .repo-card:nth-child(3n + 1) {
-    padding: 18px 0 20px;
+    padding: 16px 0 18px;
     border-right: 0;
+  }
+
+  .trust-record summary {
+    min-height: 56px;
   }
 
   .trust-record pre {
     padding: 16px;
-    font-size: 12.5px;
+    font-size: 12px;
   }
 }
 
 @media (max-width: 600px) {
+  .trust-page .public-wrap > section + section {
+    margin-top: var(--tr-space-stack-xl);
+  }
+
   .trust-hero h1 {
     font-size: 30px;
+  }
+
+  .trust-page .trust-hero-copy .lead {
+    font-size: 16px;
   }
 
   .agent-verify-head h2 {

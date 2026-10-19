@@ -397,13 +397,13 @@ def trust_html(
     def _plane_note(payload: Mapping[str, Any], status: str) -> str:
         if payload["release_metadata_status"] == NOT_CONFIGURED:
             return (
-                "<p><strong>No measurement is available for this plane right now.</strong> "
+                "<p class=\"trust-plane-note\"><strong>No measurement is available for this plane right now.</strong> "
                 "Do not treat its absence as a measurement of zero — verify against a "
                 "live attestation before sending sensitive data.</p>"
             )
         if status == "stale":
             return (
-                "<p><strong>This plane's release record could not be refreshed.</strong> "
+                "<p class=\"trust-plane-note\"><strong>This plane's release record could not be refreshed.</strong> "
                 "This is the last validated copy — verify against a live attestation "
                 "before sending sensitive data.</p>"
             )
