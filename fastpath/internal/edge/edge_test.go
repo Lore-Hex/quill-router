@@ -563,3 +563,23 @@ func TestARedirectToACallerWithNoHostIsRelative(t *testing.T) {
 		t.Fatalf("a hostless caller's redirect:\n%s", raw)
 	}
 }
+
+func TestTheTokenIsReadFromTheHeadersPythonWillSee(t *testing.T) {
+	h := newHarness(t)
+	boot := h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody))
+	// A wrong bearer token the request drops as hop-by-hop is not Python's
+	// credential; the header token is, and the signature is checked.
+	h.send(t, http.MethodPost, authorizePath, authorizeBody, map[string]string{
+		"Authorization": "Bearer wrong", "Connection": "Authorization", TokenHeader: token, BootHeader: boot,
+	})
+	if h.last.verdict != string(Verified) || h.last.headers.Get("Authorization") != "" {
+		t.Fatalf("a dropped bearer: verdict %q, python saw %q", h.last.verdict, h.last.headers.Get("Authorization"))
+	}
+	// And a right token the request drops is no credential at all.
+	h.send(t, http.MethodPost, authorizePath, authorizeBody, map[string]string{
+		"Connection": TokenHeader, TokenHeader: token, BootHeader: boot,
+	})
+	if h.last.verdict != "" || h.last.headers.Get(TokenHeader) != "" {
+		t.Fatalf("a dropped token: verdict %q, python saw %q", h.last.verdict, h.last.headers.Get(TokenHeader))
+	}
+}

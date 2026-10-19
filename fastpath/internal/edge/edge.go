@@ -316,13 +316,22 @@ func printableASCII(s string) bool {
 // first, then the header.
 func (e *Edge) tokenOK(r *http.Request) bool {
 	supplied := ""
-	if auth := r.Header.Get("Authorization"); len(auth) >= 7 && strings.EqualFold(auth[:7], "bearer ") {
+	if auth := forPython(r.Header, "Authorization"); len(auth) >= 7 && strings.EqualFold(auth[:7], "bearer ") {
 		supplied = trimPythonSpace(auth[7:])
 	}
 	if supplied == "" {
-		supplied = r.Header.Get(TokenHeader)
+		supplied = forPython(r.Header, TokenHeader)
 	}
 	return supplied != "" && subtle.ConstantTimeCompare([]byte(supplied), []byte(e.cfg.Token)) == 1
+}
+
+// forPython is a header's first value as Python will see it: none when the
+// request names the header as hop-by-hop, since the proxy drops it.
+func forPython(h http.Header, name string) string {
+	if listedAsHopByHop(h, name) {
+		return ""
+	}
+	return h.Get(name)
 }
 
 // verdict checks a boot header against the request it signs.
