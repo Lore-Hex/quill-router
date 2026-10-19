@@ -189,12 +189,7 @@
 
 .trust-workload h2 {
   margin: 0 0 var(--tr-space-stack-sm);
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.5;
   letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 /* Key/value lists: one ruled row per fact, label above a mono value. */
@@ -218,6 +213,10 @@
 
 .trust-kv dt {
   margin: 0 0 4px;
+}
+
+.trust-workload h2,
+.trust-kv dt {
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 500;
@@ -238,14 +237,9 @@
   margin-top: var(--tr-space-stack-lg);
 }
 
-/* The three clouds are detail: one size down from the verification strip. */
+/* The three clouds are detail: headings one size down from the verification strip. */
 .trust-page .trust-planes h2 {
   font-size: 18px;
-}
-
-.trust-page .trust-planes p {
-  font-size: 16px;
-  line-height: 1.6;
 }
 
 /* Plane notes from trust.py: a quiet callout rather than a bold paragraph. */
@@ -253,7 +247,6 @@
   padding: 2px 0 2px 14px;
   border-left: 2px solid var(--gold);
   color: var(--text-muted);
-  font-size: 16px;
   line-height: 1.6;
 }
 
@@ -435,6 +428,11 @@
     font-size: 17px;
   }
 
+  /* One column: the link buttons follow the copy, the facts come after. */
+  .trust-workload {
+    order: 3;
+  }
+
   /* One column: every cell becomes a ruled row across the page gutter. */
   .trust-page .trust-strip.marketing-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -451,7 +449,6 @@
   .trust-files li {
     padding: 10px 0;
   }
-
 
   .trust-page .trust-strip .marketing-card:last-child {
     border-bottom: 0;
@@ -505,6 +502,7 @@
   .agent-verify-head h2 {
     order: 1;
     margin-bottom: 14px;
+    font-size: 20px;
   }
 
   .agent-prompt {
@@ -521,20 +519,12 @@
     order: 4;
   }
 
-  .trust-workload {
-    order: 3;
-  }
-
   .trust-hero h1 {
     font-size: 30px;
   }
 
   .trust-page .trust-hero-copy .lead {
     font-size: 16px;
-  }
-
-  .agent-verify-head h2 {
-    font-size: 20px;
   }
 
   .agent-prompt p {
