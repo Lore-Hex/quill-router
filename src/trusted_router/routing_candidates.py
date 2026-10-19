@@ -80,6 +80,7 @@ from trusted_router.catalog_data import (
     SYNTH_QUALITY_1M_MIN_MEMBER_CONTEXT,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_ZEUS_3_MODEL_ORDER,
+    TIER_MODEL_ORDERS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
@@ -210,6 +211,14 @@ def fast_candidate_models(limit: int = 8) -> list[Model]:
         if len(candidates) >= limit:
             return candidates
     return candidates
+
+
+def tier_candidate_models(model_id: str) -> list[Model]:
+    return [
+        model
+        for member_id in TIER_MODEL_ORDERS[model_id]
+        if (model := MODELS.get(member_id)) is not None and _is_regular_chat_model(model)
+    ]
 
 
 def monitor_candidate_models(limit: int = 12) -> list[Model]:
@@ -406,6 +415,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return cheap_candidate_models()
     if model_id == FAST_MODEL_ID:
         return fast_candidate_models()
+    if model_id in TIER_MODEL_ORDERS:
+        return tier_candidate_models(model_id)
     if model_id == EU_MODEL_ID:
         return eu_candidate_models()
     if model_id == GREEN_MODEL_ID:
@@ -485,6 +496,8 @@ def _meta_route_kind(model_id: str) -> str:
         return "cheap_pool"
     if model_id == FAST_MODEL_ID:
         return "fast_pool"
+    if model_id in TIER_MODEL_ORDERS:
+        return "tier_pool"
     if model_id == EU_MODEL_ID:
         return "eu_pool"
     if model_id == ZDR_MODEL_ID:

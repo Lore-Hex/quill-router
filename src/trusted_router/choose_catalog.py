@@ -13,21 +13,26 @@ from typing import Any
 
 from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.catalog import (
+    ADVANCED_MODEL_ID,
     ADVISOR_MODEL_ID,
     AUTO_MODEL_ID,
     CHEAP_MODEL_ID,
     CONFIDENTIAL_MODEL_ID,
     E2E_MODEL_ID,
+    EFFICIENT_MODEL_ID,
     EU_MODEL_ID,
     FAST_MODEL_ID,
+    FRONTIER_MODEL_ID,
     META_MODEL_IDS,
     MODELS,
     ORCHESTRATION_PRIMITIVE_MODEL_IDS,
     PRIVACY_TIER_LABELS,
+    PROFESSIONAL_MODEL_ID,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
     ROUTING_MODEL_MIN_PRIVACY_TIERS,
     SYNTH_MODEL_ID,
+    TIER_MODEL_ORDERS,
     ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
@@ -49,6 +54,7 @@ _ROUTE_IDS = (
     AUTO_MODEL_ID,
     FAST_MODEL_ID,
     CHEAP_MODEL_ID,
+    *TIER_MODEL_ORDERS,
     EU_MODEL_ID,
     ZDR_MODEL_ID,
     E2E_MODEL_ID,
@@ -68,6 +74,18 @@ _ROUTE_DESCRIPTIONS = {
     ),
     CHEAP_MODEL_ID: (
         "Chooses from the lowest-cost paid candidates. No upstream privacy floor is implied."
+    ),
+    FRONTIER_MODEL_ID: (
+        "Fixed frontier model pool with ordered fallback. No upstream privacy floor is implied."
+    ),
+    ADVANCED_MODEL_ID: (
+        "Fixed advanced model pool with ordered fallback. No upstream privacy floor is implied."
+    ),
+    PROFESSIONAL_MODEL_ID: (
+        "Fixed professional model pool with ordered fallback. No upstream privacy floor is implied."
+    ),
+    EFFICIENT_MODEL_ID: (
+        "Fixed efficient model pool with ordered fallback. No upstream privacy floor is implied."
     ),
     EU_MODEL_ID: (
         "Prefers EU-focused providers. Use the EU regional API hostname when gateway region "
