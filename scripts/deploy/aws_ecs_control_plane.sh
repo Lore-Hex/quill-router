@@ -45,8 +45,8 @@ await_serving_release() {
 [ "${TR_CLOUD_BAKE_AWS_BACKEND:-ecs}" = ecs ] || die "this deployment requires the ECS fleet gate"
 RELEASE="$(git rev-parse HEAD)"
 # Cloud-level declaration, read as text by cloud_rollout_completeness: AWS
-# publishes operational analytics, from the one region that has ClickHouse.
-# The per-region table below derives that region's expectation from it.
+# publishes operational analytics from both serving regions into shared DSQL.
+# The per-region table below derives both expectations from it.
 TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
 # GitHub's shallow build checkout uses seven-character tags. Resolve it
 # unambiguously in the full checkout before trusting the registry lookup.
@@ -117,11 +117,9 @@ docker pull --platform linux/amd64 "$SOURCE_IMAGE" >/dev/null
 
 REGIONS=(eu-west-1 eu-west-3)
 SERVICES=(tr-cp-euw1 tr-cp-euw3)
-# eu-west-1 has no ClickHouse secret, so its outbox is off by design
-# (see aws_eu_control_plane.sh). The clone NEVER changes this flag.
-# A live value differing from this table is drift in either direction
-# and refuses the rollout.
-EXPECTED_OUTBOX=(false "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
+# Both regions enqueue into the same DSQL outbox; the Paris drain delivers it.
+# Enabling eu-west-1 needs no ClickHouse URL or secret on the control plane.
+EXPECTED_OUTBOX=("$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
 [[ ${#REGIONS[@]} -eq ${#SERVICES[@]} && ${#REGIONS[@]} -eq ${#EXPECTED_OUTBOX[@]} ]] \
   || die "REGIONS, SERVICES, and EXPECTED_OUTBOX must have the same length"
 for region in "${REGIONS[@]}"; do

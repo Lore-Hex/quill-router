@@ -43,7 +43,8 @@ main whose checks all passed.
    Its owner retires: it asks for no lease, admits nothing more and closes
    its leases to admission, while it serves their holds; its row says
    leaving, and the front doors give it no new request, its heartbeats and
-   terminals still reaching it.
+   terminals still reaching it. The balancer stops sending to the node once
+   USR1 marks it leaving: its edge's `/internal/gateway/edge/health` answers 503.
 3. Wait until it owns no open lease:
 
    ```bash

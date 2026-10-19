@@ -1464,6 +1464,8 @@
       "status": 1,
       "id": "nousresearch/hermes-3-llama-3.1-405b",
       "upstream_id": "NousResearch/Hermes-3-Llama-3.1-405B",
+      "retirement_at": "2026-11-02T00:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4.1-flash-1017",
       "context_length": 131072,
       "max_output_tokens": 131072,
       "input_token_price_per_m": 1000000,
