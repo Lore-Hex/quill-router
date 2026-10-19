@@ -140,6 +140,27 @@ func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 	}
 }
 
+// TestAnEdgeUpstreamIsAnHTTPURL: a scheme the edge cannot speak fails the
+// process before any row is taken, as a taken port does.
+func TestAnEdgeUpstreamIsAnHTTPURL(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config(ln)
+	cfg.Edge = EdgeConfig{Address: "127.0.0.1:0", Upstream: "ftp://python.internal", Token: "t"}
+	err = Run(context.Background(), cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	if err == nil || !strings.Contains(err.Error(), "not an http or https URL") {
+		t.Fatalf("an ftp upstream: %v", err)
+	}
+	if _, err := shared.Single().ReadRow(context.Background(), "tr_fastpath_member", spanner.Key{ln.Addr().String()}, []string{"roles"}); err == nil {
+		t.Fatal("the node took its ring row")
+	}
+}
+
 // TestAnEdgeThatCannotListenFailsBeforeTheNodeJoins: the edge binds first,
 // so a port another serves on fails the process with no ring row taken,
 // and a supplied listener is closed however Run returns.

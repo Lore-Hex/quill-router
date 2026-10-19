@@ -291,11 +291,21 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		}
 	}
 	upstream, err := url.Parse(cfg.Edge.Upstream)
-	if err != nil {
+	if err != nil || (upstream.Scheme != "http" && upstream.Scheme != "https") {
 		_ = ln.Close()
-		return fmt.Errorf("service: the edge's upstream: %w", err)
+		return fmt.Errorf("service: the edge's upstream %q is not an http or https URL", cfg.Edge.Upstream)
 	}
-	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait})
+	// The transport is the process's: its idle connections close once the
+	// edge's handlers have returned, as the node's own do.
+	transport := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableCompression:  true,
+		MaxIdleConnsPerHost: 256,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
+		Transport: transport})
 	if err != nil {
 		_ = ln.Close()
 		return err
@@ -325,6 +335,7 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = srv.Close()
 		endRequests()
 		handlers.wait()
+		transport.CloseIdleConnections()
 		return nil
 	})
 	return nil
