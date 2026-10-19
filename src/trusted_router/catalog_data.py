@@ -2487,7 +2487,6 @@ TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     PROFESSIONAL_MODEL_ID: (
         "z-ai/glm-5.3-flash",
-        "deepseek/deepseek-v4.1-flash",
         "z-ai/glm-5.2",
         "google/gemini-3.8-flash",
     ),
