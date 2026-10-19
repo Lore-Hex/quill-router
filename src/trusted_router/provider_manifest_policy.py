@@ -80,7 +80,10 @@ def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
     image_price = row.get("decision_image_input_price_per_m")
     return (
         isinstance(model_id, str)
-        and re.fullmatch(r"system1models(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+        and (
+            re.fullmatch(r"system1models(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+            or (model_id == "cloudflare/clef-flash" and row.get("upstream_id") == "clef-flash")
+        )
         and (
             hold is None
             or (isinstance(hold, str) and hold in DECISION_CONTRACT_HOLDS and row.get("routable") is False)

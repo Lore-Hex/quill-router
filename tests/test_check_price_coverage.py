@@ -1455,7 +1455,7 @@ def test_wandb_flash_ci_discovery_replay_has_no_publication_blocker(
     assert "wandb: model discovery matched catalog (1 id(s)) ✓" in info
 
 
-def test_regolo_discovery_uses_model_groups_and_excludes_nonchat_and_nested_routers(
+def test_regolo_discovery_includes_clef_and_excludes_unsupported_and_nested_routers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = next(
@@ -1469,10 +1469,12 @@ def test_regolo_discovery_uses_model_groups_and_excludes_nonchat_and_nested_rout
         fetch_text=lambda _url: "Supported Models: GLM-5.2",
         fetch_json=lambda _url, _env_names: {"data": [
             {"model_group": "glm5.2", "mode": "chat"},
+            {"model_group": "clef-flash", "mode": "decision"},
+            {"model_group": "unknown-decision", "mode": "decision"},
             {"model_group": "brick-fast", "mode": "chat"},
             {"model_group": "embedding-new", "mode": "embedding"},
         ]},
         published_model_ids=set(),
     )
     assert not any(warning.startswith("regolo:") for warning in warnings), warnings
-    assert "regolo: model discovery matched catalog (1 id(s)) ✓" in info
+    assert "regolo: model discovery matched catalog (2 id(s)) ✓" in info
