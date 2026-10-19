@@ -9,9 +9,9 @@
 # The health check is the edge's /internal/gateway/edge/health, 200 while the
 # node serves and 503 once SIGUSR1 marks it leaving, so the backend follows
 # membership: a retiring node stops receiving before its requests drain. The
-# nodes keep no external address; the edge reaches Cloud Run's internal
-# ingress through Private Google Access on the subnet, which the nodes' Cloud
-# NAT egress does not count as (NAT-sourced calls are external to Cloud Run).
+# edge's upstream is Cloud Run's internal ingress, which counts a request
+# from a VM in this project's VPC as internal, Cloud NAT egress included
+# (Cloud Run, "Restricting network ingress"): the nodes need nothing more.
 
 locals {
   fastpath_edge_port = 8081
@@ -19,25 +19,6 @@ locals {
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
   google_lb_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
-}
-
-import {
-  to = google_compute_subnetwork.fastpath_default
-  id = "projects/quill-cloud-proxy/regions/us-central1/subnetworks/default"
-}
-
-# The default subnet the nodes sit in, adopted for one setting.
-resource "google_compute_subnetwork" "fastpath_default" {
-  project                  = local.gcp_project_id
-  name                     = "default"
-  region                   = local.fastpath_region
-  network                  = "default"
-  ip_cidr_range            = "10.128.0.0/20"
-  private_ip_google_access = true
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "google_compute_firewall" "fastpath_edge" {
