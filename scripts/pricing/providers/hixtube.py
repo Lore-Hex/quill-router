@@ -12,6 +12,7 @@ from typing import Any
 from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json, validate
 from scripts.pricing.manifest import (
     apply_canary_results,
+    set_manifest_model_canary_states,
     write_discovered_chat_manifest,
 )
 from scripts.pricing.openai_catalog import probe_openai_chat
@@ -43,7 +44,7 @@ def discover(payload: object) -> tuple[dict[str, ModelPrice], dict[str, dict[str
     return prices, rows
 
 
-def _retirement(row: dict[str, Any]) -> datetime:
+def _retirement_time(row: dict[str, Any]) -> datetime:
     value = row.get("retirement_at")
     if not isinstance(value, str):
         raise RuntimeError("hixtube: public pilot retirement is required")
@@ -51,8 +52,15 @@ def _retirement(row: dict[str, Any]) -> datetime:
         deadline = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise RuntimeError("hixtube: invalid retirement") from error
+    if deadline.tzinfo is None:
+        raise RuntimeError("hixtube: retirement must have a timezone")
+    return deadline.astimezone(UTC)
+
+
+def _retirement(row: dict[str, Any]) -> datetime:
+    deadline = _retirement_time(row)
     now = datetime.now(UTC)
-    if deadline.tzinfo is None or not now < deadline <= now + timedelta(hours=24):
+    if not now < deadline <= now + timedelta(hours=24):
         raise RuntimeError("hixtube: retirement must be within the next 24 hours")
     return deadline.astimezone(UTC)
 
@@ -98,10 +106,20 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         notes = write_discovered_chat_manifest(
             result, manifest_path=candidate, discovered_rows=_DISCOVERED_ROWS, source_url=URL,
         )
+        # A catalog mass-prune guard must not override a direct failed probe.
+        set_manifest_model_canary_states(
+            candidate, checked_model_ids=_DISCOVERED_ROWS,
+            healthy_model_ids={model_id for model_id, row in _DISCOVERED_ROWS.items() if row.get("routable") is True},
+        )
         raw = json.loads(candidate.read_text(encoding="utf-8"))
+        now = datetime.now(UTC)
         for row in raw["models"]:
             if row.get("routable", True):
-                deadline = min(deadline, _retirement(row))
+                retired_at = _retirement_time(row)
+                if retired_at <= now:
+                    row.update(routable=False, routable_reason="pilot-retired")
+                else:
+                    deadline = min(deadline, retired_at)
         raw["pricing_valid_until"] = deadline.isoformat().replace("+00:00", "Z")
         candidate.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
         candidate.replace(MANIFEST_PATH)

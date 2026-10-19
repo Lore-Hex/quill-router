@@ -117,6 +117,52 @@ def test_failed_candidate_write_does_not_damage_last_known_manifest(monkeypatch,
     assert list(tmp_path.iterdir()) == [p.MANIFEST_PATH]
 
 
+def test_failed_repeat_probe_cannot_be_undone_by_mass_prune_guard(monkeypatch, tmp_path):
+    from trusted_router.provider_manifest_policy import (
+        EXPIRED_PROVIDER_MANIFEST,
+        provider_manifest_valid_until,
+    )
+
+    monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
+    monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
+    monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: catalog())
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
+    p.write_provider_manifest(p.fetch())
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: False)
+    p.write_provider_manifest(p.fetch())
+    raw = json.loads(p.MANIFEST_PATH.read_text())
+    assert raw["models"][0]["routable"] is False
+    assert raw["models"][0]["routable_reason"] == "provider-canary-failed"
+    assert provider_manifest_valid_until("hixtube", raw) == EXPIRED_PROVIDER_MANIFEST
+
+
+def test_expired_missing_model_does_not_block_healthy_replacement(monkeypatch, tmp_path):
+    monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
+    monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
+    payload = catalog()
+    monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: payload)
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
+    p.write_provider_manifest(p.fetch())
+    later = datetime.now(UTC) + timedelta(hours=3)
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return later.astimezone(tz) if tz else later.replace(tzinfo=None)
+
+    monkeypatch.setattr(p, "datetime", Later)
+    payload = catalog()
+    payload["data"][0]["id"] = "qwen/replacement"
+    payload["data"][0]["lifecycle"]["retirement_at"] = (later + timedelta(hours=2)).isoformat()
+    for _ in range(2):
+        p.write_provider_manifest(p.fetch())
+        rows = {row["id"]: row for row in json.loads(p.MANIFEST_PATH.read_text())["models"]}
+        assert rows["qwen/replacement"]["routable"] is True
+        if "qwen/qwen3-0.6b" in rows:
+            assert rows["qwen/qwen3-0.6b"]["routable"] is False
+            assert rows["qwen/qwen3-0.6b"].get("missing_since") is not None
+
+
 @pytest.mark.parametrize("value", ["NaN", "-1", None, 0.1])
 def test_invalid_price_cannot_publish(value):
     payload = catalog()
