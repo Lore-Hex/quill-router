@@ -1658,7 +1658,13 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         ),
     ),
     "scripts/deploy/aws_eu_clickhouse.sh": ScriptFixture(
-        responses=((r"ssm get-command-invocation.*--query Status", "Success"),),
+        responses=(
+            (r"ssm get-command-invocation.*--query Status", "Success"),
+            (
+                r"secretsmanager describe-secret.*tr-eu-clickhouse-read-password.*--query ARN",
+                "arn:aws:secretsmanager:eu-west-3:123456789012:secret:quill/tr-eu-clickhouse-read-password-harness",
+            ),
+        ),
     ),
     # GCP's out-of-band check needs nothing from an operator: it runs the gate,
     # retries while a Cloud Run revision takes traffic, and returns the gate's

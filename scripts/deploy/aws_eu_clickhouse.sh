@@ -41,6 +41,9 @@ CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"   # DSQL, matches the dra
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
 # ---------------------------------------------------------------------------
 # 1. Password. Generated once and kept in Secrets Manager, never echoed.
 # ---------------------------------------------------------------------------
@@ -48,13 +51,12 @@ if aws secretsmanager describe-secret --region "$REGION" --secret-id "$SECRET_ID
   log "reusing existing ClickHouse password secret"
 else
   log "creating ClickHouse password secret"
+  (umask 077; openssl rand -base64 32 | tr -d '\n/+=' | head -c 40 > "$WORK/password")
   aws secretsmanager create-secret --region "$REGION" --name "$SECRET_ID" \
-    --secret-string "$(openssl rand -base64 32 | tr -d '\n/+=' | head -c 40)" >/dev/null
+    --secret-string "file://$WORK/password" >/dev/null
+  rm -f "$WORK/password"
 fi
-CH_PASSWORD="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET_ID" --query SecretString --output text)"
 
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 if aws secretsmanager describe-secret --region "$REGION" --secret-id "$READER_SECRET_ID" >/dev/null 2>&1; then
   log "reusing existing ClickHouse read password secret"
 else
@@ -64,13 +66,12 @@ else
     --secret-string "file://$WORK/read-password" >/dev/null
   rm -f "$WORK/read-password"
 fi
-reader_password="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$READER_SECRET_ID" --query SecretString --output text)"
-[ -n "$reader_password" ] && [ "$reader_password" != None ] || {
-  echo "ClickHouse read password secret is empty" >&2
+READER_SECRET_ARN="$(aws secretsmanager describe-secret --region "$REGION" \
+  --secret-id "$READER_SECRET_ID" --query ARN --output text)"
+[ -n "$READER_SECRET_ARN" ] && [ "$READER_SECRET_ARN" != None ] || {
+  echo "Could not resolve ClickHouse read password secret ARN" >&2
   exit 1
 }
-READER_HASH="$(printf '%s' "$reader_password" | shasum -a 256 | awk '{print $1}')"
-unset reader_password
 
 # The standalone schema, DERIVED (see the helper for why a literal list rots).
 # Built before the node so a bad set fails here rather than half-way through a
@@ -105,7 +106,24 @@ if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
   done
 fi
 log "security group: $SG_ID"
-READER_SETUP="$(single_node_reader_setup "$VPC_CIDR")"
+READER_SETUP="$(cat <<READER
+reader_python=python3
+if [ -x /opt/tr-clickhouse/venv/bin/python ]; then
+  reader_python=/opt/tr-clickhouse/venv/bin/python
+fi
+reader_hash=\$("\$reader_python" - <<'PYEOF'
+import hashlib
+import boto3
+password = boto3.client('secretsmanager', region_name='${REGION}').get_secret_value(
+    SecretId='${READER_SECRET_ID}')['SecretString']
+if not password:
+    raise SystemExit('ClickHouse read password secret is empty')
+print(hashlib.sha256(password.encode()).hexdigest())
+PYEOF
+)
+$(single_node_reader_setup "$VPC_CIDR")
+READER
+)"
 
 # ---------------------------------------------------------------------------
 # 3. IAM: a least-privilege role for THIS node, created here so it exists.
@@ -117,7 +135,7 @@ READER_SETUP="$(single_node_reader_setup "$VPC_CIDR")"
 # (~40 of them), the Cloudflare token, the cross-cloud SA key, and the ability
 # to decrypt with any key in the account including the CloudTrail CMK.
 # Thirty days of CloudTrail showed this node using exactly one secret and one
-# key. The role below is that observed set and nothing more.
+# key. The role below adds only the separate control-plane reader secret.
 #
 # It is created HERE rather than by hand because a control that lives only in
 # live cloud state dies with the resource: the role was split by CLI once, and
@@ -149,6 +167,8 @@ ROLE_POLICY="$(cat <<JSON
  {"Sid":"OwnPasswordSecretOnly","Effect":"Allow",
   "Action":["secretsmanager:GetSecretValue","secretsmanager:DescribeSecret"],
   "Resource":"arn:aws:secretsmanager:$REGION:$ACCOUNT:secret:$SECRET_ID-*"},
+ {"Sid":"ControlReaderPasswordSecretOnly","Effect":"Allow",
+  "Action":["secretsmanager:GetSecretValue"],"Resource":"$READER_SECRET_ARN"},
  {"Sid":"DecryptSecretsManagerKeyOnly","Effect":"Allow",
   "Action":["kms:Decrypt","kms:DescribeKey"],"Resource":"$SM_KEY_ARN"},
  {"Sid":"DsqlOutboxDrain","Effect":"Allow","Action":["dsql:DbConnect"],
@@ -242,7 +262,7 @@ else
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y apt-transport-https ca-certificates dirmngr gnupg curl
+apt-get install -y apt-transport-https ca-certificates dirmngr gnupg curl python3-boto3
 
 GNUPGHOME=\$(mktemp -d)
 GNUPGHOME=\$GNUPGHOME gpg --no-default-keyring --keyring /usr/share/keyrings/clickhouse-keyring.gpg \
@@ -267,11 +287,21 @@ cat > /etc/clickhouse-server/config.d/listen.xml <<XML
 </clickhouse>
 XML
 
+CH_PASSWORD=\$(python3 - <<'PYEOF'
+import boto3
+password = boto3.client('secretsmanager', region_name='${REGION}').get_secret_value(
+    SecretId='${SECRET_ID}')['SecretString']
+if not password:
+    raise SystemExit('ClickHouse password secret is empty')
+print(password, end='')
+PYEOF
+)
+umask 077
 cat > /etc/clickhouse-server/users.d/default-password.xml <<XML
 <clickhouse>
   <users>
     <default>
-      <password>${CH_PASSWORD}</password>
+      <password>\${CH_PASSWORD}</password>
       <networks><ip>${VPC_CIDR}</ip><ip>127.0.0.1</ip></networks>
     </default>
   </users>
@@ -289,7 +319,7 @@ systemctl restart clickhouse-server
 
 # Apply the standalone schema HERE rather than printing it for someone to run.
 # It used to be step 1 of NEXT_STEPS, described as a human step needing the
-# ClickHouse password -- but this script already read that password from Secrets
+# ClickHouse password -- but the node already read that password from Secrets
 # Manager to write users.d above, so the only thing the human step added was a
 # chance to run a stale command. The set it told you to apply was the glob
 # clickhouse/00 star .sql, which silently stopped matching at 010.
@@ -300,15 +330,15 @@ cat > /root/operational_schema.sql <<'SQLEOF'
 ${OPERATIONAL_SCHEMA}
 SQLEOF
 for attempt in \$(seq 1 60); do
-  if CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then
+  if CLICKHOUSE_PASSWORD="\$CH_PASSWORD" clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then
     break
   fi
   sleep 5
 done
-CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default \
+CLICKHOUSE_PASSWORD="\$CH_PASSWORD" clickhouse-client --user default --database default \
   --multiquery < /root/operational_schema.sql
 rm -f /root/operational_schema.sql
-reader_hash='${READER_HASH}'
+unset CH_PASSWORD
 ${READER_SETUP}
 USERDATA
 )"
@@ -329,12 +359,11 @@ PRIVATE_IP="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INS
 log "instance $INSTANCE_ID at $PRIVATE_IP"
 
 # User-data only runs at first boot. Converge the reader on existing nodes too,
-# using a hash in SSM rather than a password in command history or output.
+# fetching and hashing the secret on the node; SSM carries only its name.
 if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
   python3 -c 'import json,sys; json.dump({"commands": [sys.stdin.read()]}, sys.stdout)' \
     > "$WORK/reader.json" <<REMOTE
 set -eu
-reader_hash='${READER_HASH}'
 ${READER_SETUP}
 REMOTE
   COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE_ID" \
@@ -349,7 +378,7 @@ REMOTE
     exit 1
   }
 fi
-unset READER_HASH READER_SETUP
+unset READER_SETUP
 
 # ---------------------------------------------------------------------------
 # 5. App Runner VPC connector, so tr-eu can reach a PRIVATE ClickHouse.

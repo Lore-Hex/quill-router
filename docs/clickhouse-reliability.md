@@ -86,8 +86,13 @@ corresponding control plane. Each creates a missing reader secret, reuses an
 existing value, and installs `users.d/tr-control-reader.xml` on new and
 existing nodes. The XML contains a SHA-256 password hash and is owned by
 `clickhouse` with mode `0640`; unchanged configuration does not restart the
-server. AWS updates existing nodes through SSM; Azure fetches the reader
-secret on the node using its managed identity. The control-plane deploy
+server. AWS fetches and hashes the reader secret on the node with boto3 under
+its instance profile; user-data and SSM commands carry only the secret name,
+never the password or hash. The role receives `GetSecretValue` on that secret's
+exact ARN before an existing node is converged. Azure fetches the reader
+secret on the node using its managed identity, and creates reader or writer
+secrets only on an explicit Key Vault `SecretNotFound`; other lookup failures
+stop provisioning without creating a new version. The control-plane deploy
 scripts select the reader secret by reference, without retrieving its value.
 
 The Postgres outbox drains retain `default` and the writer secrets. Stockholm

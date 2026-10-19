@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Emit the node-side install shared by standalone bootstrap and reruns.
-# The caller supplies reader_hash on the node; no password enters the script.
+# The caller fetches and hashes the password on the node, never in deployment data.
 single_node_reader_setup() {
   cat <<READER
 umask 077

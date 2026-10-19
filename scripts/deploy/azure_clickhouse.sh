@@ -135,11 +135,15 @@ echo __TR_RUNCMD_OK__" --query "value[0].message" -o tsv 2>&1)" || {
 }
 
 ensure_password_secret() {
-  local secret_name="$1" pw_file
+  local secret_name="$1" pw_file lookup_error
   say "ClickHouse password in ${VAULT}/${secret_name}"
-  if az keyvault secret show --vault-name "$VAULT" -n "$secret_name" >/dev/null 2>&1; then
+  if lookup_error="$(az keyvault secret show --vault-name "$VAULT" -n "$secret_name" \
+    --query id -o tsv 2>&1 >/dev/null)"; then
     echo "  already exists, reusing"
   else
+    if ! printf '%s\n' "$lookup_error" | grep -Eq '^(ERROR: )?\(SecretNotFound\)|^Code: SecretNotFound$'; then
+      die "could not look up ${VAULT}/${secret_name}; refusing to create a password version"
+    fi
     pw_file="$(mktemp)"
     chmod 600 "$pw_file"
     if ! openssl rand -hex 20 | tr -d '\n' > "$pw_file"; then

@@ -36,6 +36,7 @@ that list ever grows without a reason, or if the docs stop saying so.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -1402,6 +1403,11 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
         and "quill/tr-eu-clickhouse-read-password" in call
     ]
     assert len(clickhouse_secrets) == 1
+    assert not any(
+        call[:3] == ["aws", "secretsmanager", "get-secret-value"]
+        and "quill/tr-eu-clickhouse-read-password" in call
+        for call in run.calls
+    )
     observer_secret_reads = [
         call
         for call in run.calls
@@ -2232,12 +2238,22 @@ def test_azure_observer_keeps_all_retired_private_env_names_absent(tmp_path: Pat
     assert retired <= removed
 
 
-def test_azure_clickhouse_password_never_enters_argv_or_logs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("cloud", ["aws_eu", "azure"])
+def test_control_plane_clickhouse_password_never_enters_argv_or_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cloud: str,
+) -> None:
     password = "harness-clickhouse-password-S3CR3T"  # noqa: S105 - leak canary
-    isolated = DeployScriptHarness(tmp_path / "azure-analytics-password-isolation")
+    script = f"scripts/deploy/{cloud}_control_plane.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(SCRIPT_FIXTURES, script, replace(fixture, responses=(
+        (r"secretsmanager get-secret-value.*clickhouse", password),
+        (r"keyvault secret show.*clickhouse.*--query value", password),
+        *fixture.responses,
+    )))
+    isolated = DeployScriptHarness(tmp_path / "analytics-password-isolation")
 
     run = isolated.run(
-        "scripts/deploy/azure_control_plane.sh",
+        script,
         verifier_rc=0,
         extra_env={"CLICKHOUSE_PASSWORD": password},
     )
@@ -2245,11 +2261,19 @@ def test_azure_clickhouse_password_never_enters_argv_or_logs(tmp_path: Path) -> 
     assert run.returncode == 0, summarise(run)
     observable = "\n".join((run.stdout, run.stderr, *("\t".join(call) for call in run.calls)))
     assert password not in observable
-    key_vault_calls = [
-        call for call in run.calls if call[:4] == ["az", "keyvault", "secret", "show"]
-    ]
-    assert len(key_vault_calls) == 1
-    assert key_vault_calls[0][key_vault_calls[0].index("--query") + 1] == "id"
+    assert hashlib.sha256(password.encode()).hexdigest() not in observable
+    if cloud == "azure":
+        key_vault_calls = [
+            call for call in run.calls if call[:4] == ["az", "keyvault", "secret", "show"]
+        ]
+        assert len(key_vault_calls) == 1
+        assert key_vault_calls[0][key_vault_calls[0].index("--query") + 1] == "id"
+    else:
+        assert not any(
+            call[:3] == ["aws", "secretsmanager", "get-secret-value"]
+            and any("clickhouse" in argument for argument in call)
+            for call in run.calls
+        )
 
 
 def test_azure_canary_persists_a_missing_dedicated_attribution_secret_before_update(

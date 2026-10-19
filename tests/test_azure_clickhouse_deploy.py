@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -44,7 +45,10 @@ def _new_node_fixture() -> ScriptFixture:
             ),
             (r"vm list-ip-addresses", "10.61.3.4"),
         ),
-        failures=(r"vm show", r"keyvault secret show", r"nsg rule show"),
+        failures=(
+            r"vm show", r"keyvault secret show" + "\tERROR: (SecretNotFound) Secret does not exist",
+            r"nsg rule show",
+        ),
     )
 
 
@@ -126,7 +130,9 @@ def test_secrets_never_enter_xtrace_or_process_argv(
     assert len(secret_sets) == 2
     assert all(" --file " in call and " --value " not in call for call in secret_sets)
     observable = "\n".join((*calls, cloud_init, run.stdout, run.stderr))
-    assert "harness-password-that-must-not-reach-argv" not in observable
+    password = "harness-password-that-must-not-reach-argv"  # noqa: S105 - leak canary
+    assert password not in observable
+    assert hashlib.sha256(password.encode()).hexdigest() not in observable
 
 
 def test_existing_node_is_validated_before_any_mutation_and_never_rotates_secret(
@@ -154,13 +160,17 @@ def test_existing_node_is_validated_before_any_mutation_and_never_rotates_secret
     assert "--user tr_control_read" in remote
 
 
+@pytest.mark.parametrize("error", [
+    "ERROR: (SecretNotFound) Secret does not exist", "Code: SecretNotFound",
+])
 def test_existing_node_creates_only_the_missing_reader_secret_after_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    error: str,
 ) -> None:
     fixture = replace(
         _existing_node_fixture(),
-        failures=(r"keyvault secret show.*tr-azure-clickhouse-read-password",),
+        failures=(r"keyvault secret show.*tr-azure-clickhouse-read-password" + "\t" + error,),
     )
     harness = _harness(tmp_path, monkeypatch, fixture)
 
@@ -174,6 +184,40 @@ def test_existing_node_creates_only_the_missing_reader_secret_after_validation(
     remote = [call for call in calls if "vm run-command invoke" in call]
     assert len(remote) == 2
     assert calls.index(remote[0]) < calls.index(secret_sets[0]) < calls.index(remote[1])
+
+
+@pytest.mark.parametrize("existing,secret_name", [
+    (True, "tr-azure-clickhouse-read-password"),
+    (False, "tr-azure-clickhouse-read-password"),
+    (False, "tr-azure-clickhouse-password"),
+])
+@pytest.mark.parametrize("error", [
+    "ERROR: (ServiceUnavailable) Please retry later",
+    "ERROR: (Forbidden) Access denied",
+    "ERROR: (VaultNotFound) Vault does not exist",
+    "ERROR: timed out while checking SecretNotFound",
+    "",
+])
+def test_secret_lookup_failure_does_not_create_a_password_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+    secret_name: str,
+    error: str,
+) -> None:
+    fixture = _existing_node_fixture() if existing else _new_node_fixture()
+    fixture = replace(fixture, failures=(
+        rf"keyvault secret show.*-n {secret_name} " + "\t" + error,
+        *(pattern for pattern in fixture.failures if "keyvault secret show" not in pattern),
+    ))
+    run = _harness(tmp_path, monkeypatch, fixture).run(SCRIPT)
+
+    assert run.returncode != 0
+    assert f"could not look up trquillkv/{secret_name}" in run.stderr
+    calls = _joined_calls(run)
+    assert not any("keyvault secret set" in call for call in calls)
+    assert not any("vm create" in call for call in calls)
+    assert not any("--user tr_control_read" in call for call in calls)
 
 
 def test_existing_node_reader_failure_is_not_reported_as_success(
