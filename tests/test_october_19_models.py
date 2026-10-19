@@ -125,6 +125,17 @@ def test_inception_preserves_native_positive_prices_and_skips_non_chat(monkeypat
     assert inception._normalize_rows([row, decision]) == [row]
 
 
+@pytest.mark.parametrize("endpoint,active", [
+    ("chat.completions", True), ("chat/completions", True),
+    ("v1/chat/completions", True), ("decisions", False),
+    ("v1/fim/completions", False), ("v1/edit/completions", False),
+])
+def test_discovery_audit_respects_native_endpoint_declaration(endpoint: str, active: bool) -> None:
+    from scripts.check_price_coverage import _active_discovery_row
+
+    assert _active_discovery_row({"supported_endpoints": [endpoint]}) is active
+
+
 def test_inception_ambiguous_prices_fail_closed() -> None:
     with pytest.raises(ValueError, match="ambiguous"):
         inception._parse_documented_prices(INCEPTION_DOC.replace("~~$0.20~~", "$0.20"))

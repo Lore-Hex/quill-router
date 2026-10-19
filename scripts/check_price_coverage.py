@@ -794,9 +794,12 @@ def _active_discovery_row(row: dict[str, Any]) -> bool:
         "stopped",
     }:
         return False
-    endpoints = row.get("endpoints")
+    endpoints = row.get("endpoints") or row.get("supported_endpoints")
     if isinstance(endpoints, list) and endpoints:
-        normalized = {str(value).casefold() for value in endpoints}
+        normalized = {
+            str(value).casefold().lstrip("/").removeprefix("v1/").replace(".", "/")
+            for value in endpoints
+        }
         if "chat/completions" not in normalized and "responses" not in normalized:
             return False
     output_modalities = row.get("output_modalities")
