@@ -5,7 +5,7 @@ const root = path.resolve(__dirname, '../..');
 
 // Use the complete production shell and stylesheet order, not a reduced shell.
 function fixture(kind) {
-  return execFileSync(process.env.TEST_PYTHON || 'python3', ['-c', `
+  return execFileSync(process.env.TEST_PYTHON || path.join(root, '.venv', 'bin', 'python'), ['-c', `
 import sys
 from types import SimpleNamespace as NS
 from trusted_router.config import Settings
