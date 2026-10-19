@@ -1,6 +1,7 @@
 """Mixed sessions must release P5 data without walking or collecting the heap."""
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -89,3 +90,30 @@ def test_module_checks_measure_only_in_package_sessions(
         assert output.splitlines() == [
             f'P5 {path.name}: reachable_objects and live_objects budget checks skipped '
             '(mixed session; heap measurements are package-only)']
+
+
+def test_bundle_assembly_after_gate_cache_release(tmp_path: Path, monkeypatch: Any) -> None:
+    from scripts.async_settle.shadow_v2_window import collect_day
+    from tests.shadow_v2_gate_cache import release_data_caches
+    from tests.shadow_v2_pack_round3_captures import writer_capture
+    from tests.test_async_settle_shadow_v2_pack_round3_composition import stage_capture
+    from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
+
+    capture = writer_capture(tmp_path / 'writer')
+    plan = stage_capture(tmp_path / 'capture', capture)
+    release_data_caches()
+    materialize = PayloadGraph.materialize
+    assembled = []
+
+    def shared(graph: Any, payloads: Any) -> None:
+        materialize(graph, payloads)
+        if graph.ports is None and 'proof.external_proofs_sha256' in payloads:
+            assert graph.parsers == {}
+            assert graph.issues == []
+            assembled.append(True)
+
+    monkeypatch.setattr(PayloadGraph, 'materialize', shared)
+    result = collect_day(tmp_path / 'capture', tmp_path / 'output', plan)
+    assert assembled
+    assert not result['complete']
+    assert result['gate']['verdict'] == 'BLOCKED'

@@ -16,6 +16,20 @@ import pytest
 
 
 @pytest.fixture(scope='module', autouse=True)
+def default_dependency_lookup_cache(payloadgraph_shared_lookup_cache):
+    """Share pure byte decoding in default modules that import this fixture."""
+    from trusted_router import async_settle_shadow_v2_gate_dependencies as dependencies
+    from trusted_router import async_settle_shadow_v2_gate_payloads as payloads
+    original = dependencies.retained_json
+    dependencies.retained_json = payloads.retained_json
+    try:
+        yield
+    finally:
+        dependencies.retained_json = original
+    assert dependencies.retained_json is original
+
+
+@pytest.fixture(scope='module', autouse=True)
 def payloadgraph_shared_lookup_cache():
     from trusted_router import async_settle_shadow_v2_a2_contract as contract
     from trusted_router import async_settle_shadow_v2_gate_payloads as payloads
@@ -165,7 +179,7 @@ def payloadgraph_shared_lookup_cache():
 
 
 PACKAGE_MODULES = frozenset('test_async_settle_shadow_v2_' + name + '.py' for name in (
-    'gates', 'gate_export', 'gate_a2', 'gate_cli', 'gate_loading', 'gate_complete',
+    'gates', 'gate_export', 'gate_a2', 'gate_a3', 'gate_cli', 'gate_loading', 'gate_complete',
     'gate_retained', 'gate_window'))
 
 

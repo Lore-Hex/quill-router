@@ -8,6 +8,7 @@ from trusted_router import async_settle_shadow_v2_a1_health as health
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_inputs import Key
+from trusted_router.async_settle_shadow_v2_gate_loading import error_detail
 from trusted_router.async_settle_shadow_v2_gate_result import Subject
 from trusted_router.async_settle_shadow_v2_schema import day_at, sha256
 
@@ -92,7 +93,7 @@ def trace_keys(ctx: Context) -> set[str]:
 
 
 def audit_expected(ctx: Context) -> None:
-    manifests = {m['day']: m for m in ctx.kind(p1.KINDS[5])}
+    manifests = {m['day']: m for m in ctx.manifests()}
     for day in ctx.bundle.days:
         if day not in manifests:
             ctx.issue('artifact_gap', 'expected day manifest absent', Subject(wire=a2.O(p1.KINDS[5], day + '/manifest-v2')))
@@ -152,8 +153,8 @@ def audit_expected(ctx: Context) -> None:
                     region=lifetime.region, lifetime=dict(start_us=lifetime.start_us, end_us=lifetime.end_us))},
                     termination_applies=lifetime.termination_applies)
             except ValueError as exc:
-                gap = 'writer_closure_gap' if str(exc) == 'writer_closure_gap' else 'close_result_identity_gap'
-                ctx.issue(gap, 'original close binding: ' + str(exc),
+                gap = 'writer_closure_gap' if error_detail(exc) == 'writer_closure_gap' else 'close_result_identity_gap'
+                ctx.issue(gap, 'original close binding: ' + error_detail(exc),
                     Subject(wire=a2.O(a1.KINDS[-1], day + '/' + boot)) if gap == 'close_result_identity_gap' else Subject(day=day, boot=boot))
         handoffs = [h for h in ctx.attached('handoff_accounting') if (h['day'], h['boot']) == (day, boot)]
         if len(handoffs) != 1 or result is None or handoffs[0]['result_sha256'] != sha256(result):
