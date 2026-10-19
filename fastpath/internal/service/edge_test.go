@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -244,6 +245,35 @@ func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 	cfg.Edge.Upstream, cfg.Edge.Token = "http://python.internal", "t"
 	if err := cfg.valid(); err != nil {
 		t.Fatalf("a whole edge: %v", err)
+	}
+	// An edge leaves with the admission node; a member without one would
+	// answer the balancer serving for ever.
+	cfg.Admission, cfg.Auditor = false, true
+	cfg.SettleSubscription, cfg.RecordSubscription = "projects/spike/subscriptions/auditor", "projects/spike/subscriptions/stager"
+	if err := cfg.valid(); err == nil || !strings.Contains(err.Error(), "admission node") {
+		t.Fatalf("an edge without an admission node: %v", err)
+	}
+}
+
+// TestAFailedProcessIsNotServing: a part's failure ends the parts without
+// their leaving, so the edge's answer follows the parts' context too.
+func TestAFailedProcessIsNotServing(t *testing.T) {
+	p := &parts{caller: context.Background(), armed: make(chan struct{})}
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+	defer p.cancel()
+	if !p.serving() {
+		t.Fatal("a running process is serving")
+	}
+	p.fail(errors.New("a part failed"))
+	if p.serving() {
+		t.Fatal("a failed process still serving")
+	}
+	q := &parts{caller: context.Background(), armed: make(chan struct{})}
+	q.ctx, q.cancel = context.WithCancel(context.Background())
+	defer q.cancel()
+	q.retiring.Store(true)
+	if q.serving() {
+		t.Fatal("a retiring process still serving")
 	}
 }
 

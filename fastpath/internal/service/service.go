@@ -168,6 +168,10 @@ func (c Config) valid() error {
 	switch {
 	case c.Edge.Address != "" && (c.Edge.Upstream == "" || c.Edge.Token == ""):
 		return errors.New("service: an edge needs its upstream and the internal token")
+	case c.Edge.Address != "" && !c.Admission:
+		// The edge leaves with the admission node, whose Leave it follows; a
+		// process without one would answer the balancer serving for ever.
+		return errors.New("service: an edge runs beside an admission node")
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
 	case c.Address == "":
@@ -306,7 +310,7 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		IdleConnTimeout:     90 * time.Second,
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport, Serving: func() bool { return !p.retiring.Load() }})
+		Transport: transport, Serving: p.serving})
 	if err != nil {
 		_ = ln.Close()
 		return err
@@ -403,6 +407,13 @@ type parts struct {
 
 	mu  sync.Mutex
 	err error
+}
+
+// serving is the edge's answer to the balancer: the node serves until the
+// process begins leaving (Leave, or the caller's context) or a part has
+// failed, which ends the parts without their leaving.
+func (p *parts) serving() bool {
+	return !p.retiring.Load() && p.ctx.Err() == nil
 }
 
 // fail ends the process with err, the first failure kept.
