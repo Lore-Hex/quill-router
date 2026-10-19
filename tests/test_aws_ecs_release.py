@@ -42,7 +42,7 @@ def task_definition(region: str = "eu-west-3") -> dict:
             "environment": [
                 {"name": "TR_RELEASE", "value": "old-release"},
                 {"name": "TR_SERVICE_SURFACE", "value": "observer"},
-                {"name": "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED", "value": "true" if region == "eu-west-3" else "false"},
+                {"name": "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED", "value": "true"},
                 {"name": "TR_ATTESTATION_PCR0", "value": "unchanged-pin"},
                 {"name": "TR_CONFIG_SENTINEL", "value": ENV_SENTINEL},
                 {"name": "RELEASE_COMMIT", "value": "old-release"},
@@ -74,6 +74,8 @@ def expected_registration(original: dict, image: str) -> dict:
     for entry in expected["containerDefinitions"][0]["environment"]:
         if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
             entry["value"] = "c" * 40
+        elif entry["name"] == "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED":
+            entry["value"] = "true"
     expected["containerDefinitions"][0]["environment"].append(
         {"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"}
     )
@@ -99,18 +101,20 @@ def test_tagged_task_definition_keeps_its_tags() -> None:
     assert result["tags"] == payload["tags"] and result["tags"]
 
 
-@pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "false"), ("eu-west-3", "true")])
-def test_image_release_update_preserves_all_native_runtime_configuration(region: str, required_outbox: str) -> None:
+@pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
+@pytest.mark.parametrize("live_outbox", ["false", "true"])
+def test_image_release_update_enables_outbox_and_preserves_native_configuration(region: str, live_outbox: str) -> None:
     original = task_definition(region)
+    original["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = live_outbox
     before = copy.deepcopy(original)
     image = "registry/trusted-router@sha256:" + "b" * 64
-    result = load_builder()(original, image, "c" * 40, required_outbox)
+    result = load_builder()(original, image, "c" * 40, "true")
     expected = expected_registration(original, image)
     assert result == expected
     assert original == before
 
 
-@pytest.mark.parametrize("fault", ["unknown_field", "wrong_container", "outbox_off", "wrong_surface", "tag_only", "bad_release"])
+@pytest.mark.parametrize("fault", ["unknown_field", "wrong_container", "outbox_invalid", "wrong_surface", "tag_only", "bad_release"])
 def test_task_builder_fails_closed(fault: str) -> None:
     payload = task_definition()
     container = payload["taskDefinition"]["containerDefinitions"][0]
@@ -119,8 +123,8 @@ def test_task_builder_fails_closed(fault: str) -> None:
         payload["taskDefinition"]["futureRuntimeSetting"] = "must-not-drop"
     elif fault == "wrong_container":
         container["name"] = "other-app"
-    elif fault == "outbox_off":
-        container["environment"][2]["value"] = "false"
+    elif fault == "outbox_invalid":
+        container["environment"][2]["value"] = ""
     elif fault == "wrong_surface":
         container["environment"][1]["value"] = "combined"
     elif fault == "tag_only":
@@ -149,7 +153,7 @@ def test_release_keeps_an_existing_false_pin_without_duplicating_it() -> None:
     payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
         {"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"}
     )
-    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "false")
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
     assert _in_process_values(result) == ["false"]
 
 
@@ -165,22 +169,25 @@ def test_release_refuses_an_in_process_remediator_on_aws(value: str) -> None:
     assert payload == before
 
 
-@pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "true"), ("eu-west-3", "false")])
-def test_task_builder_refuses_outbox_drift(region: str, required_outbox: str) -> None:
-    # Keep the live secret/flag pair consistent to isolate the regional expectation.
+@pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
+def test_task_builder_refuses_to_disable_an_enabled_outbox(region: str) -> None:
     payload = task_definition(region)
     before = copy.deepcopy(payload)
     with pytest.raises(ValueError, match="TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"):
-        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, required_outbox)
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "false")
     assert payload == before
 
 
-@pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "true"), ("eu-west-3", "false")])
-def test_task_builder_refuses_inconsistent_clickhouse_secret(region: str, required_outbox: str) -> None:
-    payload = task_definition(region)
-    payload["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = required_outbox
-    with pytest.raises(ValueError, match="TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"):
-        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, required_outbox)
+def test_task_builder_enables_ireland_without_clickhouse_credentials() -> None:
+    payload = task_definition("eu-west-1")
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = "false"
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    container = result["containerDefinitions"][0]
+    values = {e["name"]: e["value"] for e in container["environment"]}
+    assert values["TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"] == "true"
+    assert "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL" not in values
+    assert "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD" not in values
+    assert all(s["name"] != "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD" for s in container["secrets"])
 
 
 @pytest.mark.parametrize("required_outbox", ["yes", "", "TRUE"])
@@ -516,18 +523,16 @@ def test_ecs_completeness_exit_code_is_preserved(tmp_path: Path, verifier_rc: in
 
 
 @pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
-@pytest.mark.parametrize("consistent_clickhouse", [False, True], ids=["flag-only", "consistent-secret"])
-def test_ecs_rollout_refuses_outbox_drift_without_rolling_back_healthy_region(
-    tmp_path: Path, region: str, consistent_clickhouse: bool,
+@pytest.mark.parametrize("live_outbox", [None, "", "TRUE"])
+def test_ecs_rollout_refuses_invalid_outbox_without_rolling_back_healthy_region(
+    tmp_path: Path, region: str, live_outbox: str | None,
 ) -> None:
     definitions = {name: task_definition(name) for name in ("eu-west-1", "eu-west-3")}
     container = definitions[region]["taskDefinition"]["containerDefinitions"][0]
-    other = task_definition("eu-west-3" if region == "eu-west-1" else "eu-west-1")
-    other_container = other["taskDefinition"]["containerDefinitions"][0]
-    container["environment"][2]["value"] = other_container["environment"][2]["value"]
-    if consistent_clickhouse:
-        container["environment"] = other_container["environment"]
-        container["secrets"] = other_container["secrets"]
+    if live_outbox is None:
+        container["environment"].pop(2)
+    else:
+        container["environment"][2]["value"] = live_outbox
     result, recorded = run_ecs_fixture(tmp_path, definitions=definitions)
     assert result.returncode != 0
     assert "Cannot safely clone the ECS workload; no runtime configuration printed" in result.stderr
@@ -562,10 +567,19 @@ def test_ecs_rollout_registers_untagged_live_definitions(tmp_path: Path) -> None
     assert [c[c.index("--region") + 1] for c in updates] == ["eu-west-1", "eu-west-3"]
 
 
+def test_ecs_rollout_enables_the_legacy_ireland_outbox(tmp_path: Path) -> None:
+    definitions = {region: task_definition(region) for region in ("eu-west-1", "eu-west-3")}
+    definitions["eu-west-1"]["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = "false"
+    result, recorded = run_ecs_fixture(tmp_path, definitions=definitions)
+    assert result.returncode == 0, result.stderr
+    assert_registrations_preserve_regional_configuration(tmp_path)
+    assert ["verify_cloud_complete.sh", "aws"] in recorded
+
+
 @pytest.mark.parametrize(("full_table", "short_table"), [
     ("REGIONS=(eu-west-1 eu-west-3)", "REGIONS=(eu-west-1)"),
     ("SERVICES=(tr-cp-euw1 tr-cp-euw3)", "SERVICES=(tr-cp-euw1)"),
-    ('EXPECTED_OUTBOX=(false "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")', "EXPECTED_OUTBOX=(false)"),
+    ('EXPECTED_OUTBOX=("$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")', "EXPECTED_OUTBOX=(true)"),
 ])
 def test_ecs_rollout_refuses_misaligned_tables_before_registration(
     tmp_path: Path, full_table: str, short_table: str,
