@@ -107,9 +107,10 @@ resource "google_compute_backend_service" "fastpath_edge" {
   timeout_sec           = 30
   health_checks         = [google_compute_health_check.fastpath_edge.id]
   security_policy       = google_compute_security_policy.legacy_edge.id
-  # The unit's own stop timeout; a node marked leaving answers 503 and
-  # drains its requests within it. Draining covers a backend turning
-  # unhealthy or a node leaving a group, not a group detached whole.
+  # The unit's own stop timeout. Draining runs only when a node is removed
+  # from its group, not when its health check fails or a whole group is
+  # detached: a node marked leaving answers 503 and finishes its own
+  # requests within the unit's stop timeout, which this does not extend.
   connection_draining_timeout_sec = 30
 
   dynamic "backend" {
