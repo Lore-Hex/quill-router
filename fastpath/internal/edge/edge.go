@@ -204,17 +204,7 @@ func New(cfg Config) (*Edge, error) {
 			if !ok {
 				return nil
 			}
-			if caller.host == "" {
-				// A caller that named no host (HTTP/1.0) gets a relative
-				// redirect, which it resolves against what it asked; an
-				// absolute path, so an empty one is the root, not nothing.
-				target.Scheme, target.Host = "", ""
-				if target.Path == "" {
-					target.Path = "/"
-				}
-			} else {
-				target.Scheme, target.Host = caller.scheme, caller.host
-			}
+			target.Scheme, target.Host = caller.scheme, caller.host
 			resp.Header.Set("Location", target.String())
 			return nil
 		},
@@ -253,6 +243,12 @@ func answer(w http.ResponseWriter, code int, message, kind string) {
 // for Python's own 401, and reads nothing here. The enclave's requests
 // are JSON bodies with no trailers; the edge carries none.
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Host == "" {
+		// Every caller names a host (the load balancer's); a redirect for
+		// one that did not has no form that keeps its authority.
+		answer(w, http.StatusBadRequest, "A Host header is required", "bad_request")
+		return
+	}
 	r = r.WithContext(withCaller(r))
 	if !e.tokenOK(r) {
 		e.proxy.ServeHTTP(w, r)
@@ -278,9 +274,15 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.proxy.ServeHTTP(w, out)
 		return
 	}
+	// The path as the proxy sends it and Python reads it: an empty one (a
+	// request target in absolute form) is the root.
+	path := r.URL.Path
+	if path == "" {
+		path = "/"
+	}
 	verdict := Unchecked
-	if printableASCII(r.URL.Path) {
-		verdict = e.verdict(r.Context(), headers, r.Method, r.URL.Path, body)
+	if printableASCII(path) {
+		verdict = e.verdict(r.Context(), headers, r.Method, path, body)
 	}
 	out := r.Clone(context.WithValue(r.Context(), verdictKey{}, verdict))
 	out.Body = io.NopCloser(bytes.NewReader(body))

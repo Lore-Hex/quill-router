@@ -545,25 +545,6 @@ func TestTheBootCacheIsBounded(t *testing.T) {
 	}
 }
 
-func TestARedirectToACallerWithNoHostIsRelative(t *testing.T) {
-	h := newHarness(t)
-	h.respond = func(w http.ResponseWriter) {
-		w.Header().Set("Location", h.upstream.URL+"/internal/gateway/authorize?x=1")
-		w.WriteHeader(http.StatusTemporaryRedirect)
-	}
-	// An HTTP/1.0 request names no host.
-	conn, err := net.Dial("tcp", strings.TrimPrefix(h.server.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	_, _ = fmt.Fprintf(conn, "POST /internal/gateway/authorize/ HTTP/1.0\r\n%s: %s\r\nContent-Length: 0\r\n\r\n", TokenHeader, token)
-	raw, _ := io.ReadAll(conn)
-	if !strings.Contains(string(raw), "Location: /internal/gateway/authorize?x=1\r\n") {
-		t.Fatalf("a hostless caller's redirect:\n%s", raw)
-	}
-}
-
 func TestTheTokenIsReadFromTheHeadersPythonWillSee(t *testing.T) {
 	h := newHarness(t)
 	boot := h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody))
@@ -615,25 +596,32 @@ func TestHeaderNamesAndSchemesFoldOverASCIIAlone(t *testing.T) {
 	}
 }
 
-func TestAHostlessRedirectToTheRootIsTheRoot(t *testing.T) {
+func TestACallerWithNoHostIsRefusedInPythonsEnvelope(t *testing.T) {
 	h := newHarness(t)
-	for _, c := range []struct{ location, want string }{
-		{h.upstream.URL + "?x=1", "/?x=1"},
-		{h.upstream.URL, "/"},
-	} {
-		h.respond = func(w http.ResponseWriter) {
-			w.Header().Set("Location", c.location)
-			w.WriteHeader(http.StatusTemporaryRedirect)
-		}
-		conn, err := net.Dial("tcp", strings.TrimPrefix(h.server.URL, "http://"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = fmt.Fprintf(conn, "POST /internal/gateway/authorize/ HTTP/1.0\r\n%s: %s\r\nContent-Length: 0\r\n\r\n", TokenHeader, token)
-		raw, _ := io.ReadAll(conn)
-		conn.Close()
-		if !strings.Contains(string(raw), "Location: "+c.want+"\r\n") {
-			t.Fatalf("%s:\n%s", c.location, raw)
-		}
+	conn, err := net.Dial("tcp", strings.TrimPrefix(h.server.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = fmt.Fprintf(conn, "POST /internal/gateway/authorize/ HTTP/1.0\r\n%s: %s\r\nContent-Length: 0\r\n\r\n", TokenHeader, token)
+	raw, _ := io.ReadAll(conn)
+	if !strings.HasPrefix(string(raw), "HTTP/1.0 400") || !strings.Contains(string(raw), `"type":"bad_request"`) || h.last != nil {
+		t.Fatalf("a hostless caller:\n%s\npassed: %v", raw, h.last != nil)
+	}
+}
+
+func TestAnAbsoluteFormTargetWithNoPathIsTheRoot(t *testing.T) {
+	h := newHarness(t)
+	header := h.header("boot-1", http.MethodPost, "/", []byte(authorizeBody))
+	conn, err := net.Dial("tcp", strings.TrimPrefix(h.server.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = fmt.Fprintf(conn, "POST http://edge.example HTTP/1.1\r\nHost: edge.example\r\n%s: %s\r\n%s: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		TokenHeader, token, BootHeader, header, len(authorizeBody), authorizeBody)
+	raw, _ := io.ReadAll(conn)
+	if !strings.HasPrefix(string(raw), "HTTP/1.1 402") || h.last == nil || h.last.verdict != string(Verified) || h.last.path != "/" {
+		t.Fatalf("an absolute-form target:\n%s\nlast %+v", raw, h.last)
 	}
 }
