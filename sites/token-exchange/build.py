@@ -105,6 +105,13 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
+            "spot_api_link": '<a href="#spot-api">Spot API</a>' if market["slug"] == "new-york" else "",
+            "hero_secondary": (
+                '<a class="button secondary" href="#spot-api">Use the spot exchange</a>'
+                if market["slug"] == "new-york" else
+                '<a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a>'
+            ),
+            "spot_api": (HERE / "spot-api.html").read_text() if market["slug"] == "new-york" else "",
             "media_kit_url": "https://nytokenexchange.com/media-kit" if market["slug"] == "new-york" else "https://trustedrouter.com/media-kit",
             "hero_headline": headline,
             "provider_ticker": provider_ticker(),
