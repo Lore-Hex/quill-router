@@ -583,3 +583,34 @@ func TestTheTokenIsReadFromTheHeadersPythonWillSee(t *testing.T) {
 		t.Fatalf("a dropped token: verdict %q, python saw %q", h.last.verdict, h.last.headers.Get(TokenHeader))
 	}
 }
+
+func TestHeaderNamesAndSchemesFoldOverASCIIAlone(t *testing.T) {
+	h := newHarness(t)
+	boot := h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody))
+	// A Connection token with a long s is not the token header's name: the
+	// proxy keeps the header, Python reads it, and so does the edge.
+	h.send(t, http.MethodPost, authorizePath, authorizeBody, map[string]string{
+		"Connection": "X-Tru\u017ftedrouter-Internal-Token", TokenHeader: token, BootHeader: boot,
+	})
+	if h.last.verdict != string(Verified) || h.last.headers.Get(TokenHeader) != token {
+		t.Fatalf("a folded name: verdict %q, python saw %q", h.last.verdict, h.last.headers.Get(TokenHeader))
+	}
+	// And `httpſ` is not https.
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Location", h.upstream.URL+"/internal/gateway/authorize")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}
+	client := &http.Client{Transport: plainClient.Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/internal/gateway/authorize/", strings.NewReader(authorizeBody))
+	req.Host = "edge.example"
+	req.Header.Set(TokenHeader, token)
+	req.Header.Set("X-Forwarded-Proto", "http\u017f")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("Location") != "http://edge.example/internal/gateway/authorize" {
+		t.Fatalf("a folded scheme: %q", resp.Header.Get("Location"))
+	}
+}

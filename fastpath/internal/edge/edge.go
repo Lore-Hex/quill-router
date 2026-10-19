@@ -226,7 +226,7 @@ type callerKey struct{}
 
 func withCaller(r *http.Request) context.Context {
 	scheme := "http"
-	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	if r.TLS != nil || asciiEqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		scheme = "https"
 	}
 	return context.WithValue(r.Context(), callerKey{}, callerAuthority{scheme: scheme, host: r.Host})
@@ -291,12 +291,34 @@ func listedAsHopByHop(h http.Header, name string) bool {
 		for _, token := range strings.Split(value, ",") {
 			// Trimmed as the proxy trims the tokens it drops (ASCII
 			// whitespace only), so the edge sees what the proxy will see.
-			if strings.EqualFold(textproto.TrimString(token), name) {
+			if asciiEqualFold(textproto.TrimString(token), name) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// asciiEqualFold compares case-insensitively over ASCII letters alone, as
+// HTTP does (strings.EqualFold folds Unicode too, so a long s or a Kelvin
+// sign would match a header name the proxy keeps apart).
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
 
 // printableASCII: every byte of the decoded path is printable ASCII, which
