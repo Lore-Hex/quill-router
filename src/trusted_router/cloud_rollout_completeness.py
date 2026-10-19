@@ -988,9 +988,9 @@ def declared_outbox_value(cloud: str, root: Path | None = None) -> str | None:
     comment or in operator instructions does not count, see
     :data:`_OUTBOX_DECLARATION_PATTERNS`. These scripts say in their own headers
     that they are THE SOURCE OF TRUTH for the service environment, so the
-    absence of the variable is the absence of the setting. Azure and AWS now
-    both declare a deploy-time value; their runtime evidence comes from the
-    public freshness stages rather than this static read.
+    absence of the variable is the absence of the setting. AWS declares true
+    for both ECS regions; Azure computes its value at deploy time. Runtime
+    freshness evidence comes from the public stages rather than this static read.
 
     Read as text on purpose. This must run from a laptop with no cloud
     credentials, and a check that needs ``az``/``aws`` to run is a check that
@@ -1040,8 +1040,8 @@ def outbox_enabled_blockers(cloud: str, root: Path | None = None) -> list[str]:
             f"environment — never sets {OUTBOX_ENABLED_ENV}, so settle enqueues NOTHING "
             "and the pipeline is empty by construction. A drain over an empty outbox "
             f"publishes drain_lag_seconds=0.0 and looks perfectly healthy. Fix: set "
-            f"{OUTBOX_ENABLED_ENV}=true in {script} alongside the ClickHouse URL/"
-            f"password wiring, then {entry.drain_install_command}"
+            f"{OUTBOX_ENABLED_ENV}=true in {script}, then {entry.drain_install_command}. "
+            "A Postgres producer needs no ClickHouse URL or password when its drain runs elsewhere."
         ]
     if value.casefold() in _OUTBOX_DISABLED_LITERALS:
         return [
@@ -1076,7 +1076,7 @@ def outbox_fact(cloud: str, root: Path | None = None) -> str:
 def outbox_note(cloud: str, root: Path | None = None) -> str | None:
     """The extra line a stage (e) that passes on a COMPUTED value needs.
 
-    AWS and Azure write ``"${OUTBOX_ENABLED}"``. Statically that is "enabled";
+    Azure writes ``"${OUTBOX_ENABLED}"``. Statically that is "enabled";
     at runtime it may not be. Say so rather than imply more than was measured.
     """
     value = declared_outbox_value(cloud, root=root)
