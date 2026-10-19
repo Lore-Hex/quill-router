@@ -174,9 +174,12 @@ authorized operator. Do not broaden service-account IAM as part of a site deploy
    records and active DNSSEC delegations fail closed. Add any additional
    registrar records to the target zone and verify them before delegation.
 4. Run `deploy.py publish --state /path/to/state --output /tmp/token-exchange-build`.
-   This uploads public assets, validates a merged URL map and requests Google-managed
-   certificates for every hostname that no managed certificate on the HTTPS proxy lists.
-   The pre-deploy URL map is saved once for rollback; existing routing remains.
+   This uploads public assets, checks that the control load balancer routes
+   every host and requests Google-managed certificates for every hostname that
+   no managed certificate on the HTTPS proxy lists. Routing is Terraform's:
+   `infra/control_lb_url_map.tf` reads `markets.json`, so a new market's routing
+   is its entry in that file, merged and applied by infra before publish, which
+   refuses while a host is unrouted and writes no routing itself.
    When the HTTPS proxy has a certificate map (`infra/control_lb_certificate_map.tf`),
    the proxy serves that map's certificates and ignores its classic ones. Then
    publish requests and attaches no certificate, and it refuses before any change

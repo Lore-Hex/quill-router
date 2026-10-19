@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 import deploy
 from build import PROVIDERS, build, load_markets, render, tracked_url
-from deploy import certificate_requests, domains, publish_certificates, url_map
+from deploy import certificate_requests, domains, publish_certificates, unrouted_hosts
 
 RIYADH = ["riyadhtokenexchange.com", "www.riyadhtokenexchange.com"]
 REAL_BROCHURE_GAPS = deploy.brochure_gaps
@@ -77,22 +77,31 @@ class PublishCloud(FakeCloud):
         replies = {
             ("storage", "buckets", "list"): [{"name": deploy.BUCKET}],
             ("compute", "backend-buckets", "list"): [{"name": deploy.BACKEND}],
-            ("compute", "url-maps", "describe"): {
-                "name": deploy.MAP,
-                "fingerprint": "abc",
-                "hostRules": [],
-                "pathMatchers": [],
-            },
+            ("compute", "url-maps", "describe"): routed_map(getattr(self, "unrouted", ())),
         }
-        writes = {
-            ("compute", "backend-buckets", "update"),
-            ("compute", "url-maps", "validate"),
-            ("compute", "url-maps", "import"),
-        }
+        writes = {("compute", "backend-buckets", "update")}
         if args[:3] in replies or args[:3] in writes or args[:2] == ("storage", "rsync"):
             self.calls.append(args)
             return copy.deepcopy(replies.get(args[:3]))
         return super().__call__(*args, read=read)
+
+
+def routed_map(without=()):
+    """The live map as Terraform renders it from markets.json: a matcher for
+    each market's domain and one for its aliases; `without` names hosts left
+    out."""
+    rules = []
+    for market in load_markets():
+        name = "exchange-" + market["slug"]
+        aliases = ["www." + market["domain"], *market["aliases"], *["www." + a for a in market["aliases"]]]
+        rules.append({"hosts": [h for h in [market["domain"]] if h not in without], "pathMatcher": name})
+        rules.append({"hosts": [h for h in aliases if h not in without], "pathMatcher": name + "-aliases"})
+    return {
+        "name": deploy.MAP,
+        "fingerprint": "abc",
+        "hostRules": [{"hosts": ["trustedrouter.com"], "pathMatcher": "main"}, *rules],
+        "pathMatchers": [{"name": "main", "defaultService": "live"}],
+    }
 
 
 def with_certificate_map(cloud, states=None):
@@ -268,26 +277,30 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(query["utm_campaign"], ["token-exchange-launch"])
         self.assertEqual(query["utm_content"], ["seller"])
 
-    def test_map_preserves_and_is_idempotent(self):
-        current = {
-            "name": "production",
-            "fingerprint": "abc",
-            "defaultService": "live",
-            "hostRules": [{"hosts": ["trustedrouter.com"], "pathMatcher": "main"}],
-            "pathMatchers": [{"name": "main", "defaultService": "live"}],
-        }
-        result = url_map(current)
-        self.assertEqual(result["hostRules"][0], current["hostRules"][0])
-        self.assertEqual(result["pathMatchers"][0], current["pathMatchers"][0])
-        self.assertEqual(result["defaultService"], "live")
-        self.assertEqual(result["fingerprint"], "abc")
-        self.assertEqual(url_map(result), result)
-        self.assertEqual(len({h for r in result["hostRules"] for h in r["hosts"]}), 61)
-        self.assertEqual(len(current["pathMatchers"]), 1)
-        for matcher in result["pathMatchers"][1:]:
-            if "defaultUrlRedirect" in matcher:
-                self.assertFalse(matcher["defaultUrlRedirect"]["stripQuery"])
-                self.assertTrue(matcher["defaultUrlRedirect"]["httpsRedirect"])
+    def test_publish_checks_routing_and_writes_none(self):
+        # Rule: routing is Terraform's (infra/control_lb_url_map.tf reads
+        # markets.json); publish checks every host is routed and never
+        # imports a map.
+        self.assertEqual(unrouted_hosts(routed_map()), [])
+        self.assertEqual(
+            unrouted_hosts(routed_map(without={"nytokenexchange.com", "www.nytoken.exchange"})),
+            ["nytokenexchange.com", "www.nytoken.exchange"],
+        )
+        # A host routed by another matcher is not routed for the exchange.
+        other = routed_map(without={"nytokenexchange.com"})
+        other["hostRules"].append({"hosts": ["nytokenexchange.com"], "pathMatcher": "someone-else"})
+        self.assertEqual(unrouted_hosts(other), ["nytokenexchange.com"])
+        self.assertEqual(len({h for r in routed_map()["hostRules"][1:] for h in r["hosts"]}), 60)
+
+    def test_publish_refuses_an_unrouted_host(self):
+        cloud = with_certificate_map(production_before_riyadh(PublishCloud))
+        cloud.unrouted = {"riyadhtokenexchange.com"}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(deploy, "gcloud", cloud):
+            with self.assertRaisesRegex(RuntimeError, "Not routed .*riyadhtokenexchange.com"):
+                deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
+        commands = [c[:3] for c in cloud.calls]
+        self.assertNotIn(("compute", "url-maps", "import"), commands)
+        self.assertNotIn(("compute", "ssl-certificates", "create"), commands)
 
     def test_certificates_requested_only_for_uncovered_hosts(self):
         hosts = [h for d in domains() for h in (d, "www." + d)]
@@ -331,7 +344,8 @@ class ExchangeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(deploy, "gcloud", cloud):
             deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
         commands = [c[:3] for c in cloud.calls]
-        self.assertIn(("compute", "url-maps", "import"), commands)
+        self.assertIn(("compute", "url-maps", "describe"), commands)
+        self.assertNotIn(("compute", "url-maps", "import"), commands)
         self.assertEqual(
             cloud.calls[:3],
             [
@@ -484,12 +498,6 @@ class ExchangeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Certificate limit reached"):
                 publish_certificates()
         self.assertEqual((cloud.created, cloud.updates), ([], 0))
-
-    def test_collision_rejected(self):
-        with self.assertRaises(ValueError):
-            url_map(
-                {"hostRules": [{"hosts": ["nytokenexchange.com"], "pathMatcher": "someone-else"}]}
-            )
 
     def test_build(self):
         with tempfile.TemporaryDirectory() as directory:
