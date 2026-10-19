@@ -65,6 +65,34 @@ The pre-migration local node-1 table is retained as
 `provider_benchmark_samples_local_backup`. Do not delete it until a later,
 explicitly reviewed cleanup.
 
+## Activity generation lookup schema
+
+The `by_generation_id` projection finds every stored copy of a generation ID
+before the full rows are read by `(tenant_id, created_at, generation_id)` with
+`FINAL`. The inner lookup uses the projection's primary index rather than
+scanning the whole activity table.
+
+| Topology | Migration |
+|---|---|
+| GCP replicated cluster (`tr`) | `clickhouse/023_activity_generation_id_projection_replicated.sql`, applied through `scripts/deploy/clickhouse_replicated_migrate.sh` |
+| AWS Paris, AWS Stockholm and Azure standalone nodes (`default`) | `clickhouse/024_activity_generation_id_projection_single_node.sql` |
+
+`scripts/deploy/_clickhouse_single_node_schema.sh` derives the standalone set
+from `*_single_node.sql` in filename order, so 024 follows 006/009/011/013.
+It uses unqualified table names and requires no Keeper or `ON CLUSTER` DDL.
+Both variants use `ADD PROJECTION IF NOT EXISTS` and can be applied again.
+`deduplicate_merge_projection_mode = 'rebuild'` keeps the projection correct
+when `ReplacingMergeTree` merges redelivered rows. `MATERIALIZE PROJECTION`
+also builds it for existing parts as a background mutation; check
+`system.mutations` for completion and `system.projection_parts` for active
+`by_generation_id` parts before considering the projection built.
+
+Keep `lightweight_mutation_projection_mode` at its default, `throw`.
+Lightweight `DELETE` is refused with code 344: on 26.7.1.1315, `rebuild` could
+return deleted rows through the projection until a merge, while `drop` lost
+the touched part's projection even after a forced merge. Use
+`ALTER TABLE ... DELETE`, which rewrites the projection with the part.
+
 ## Durable archive
 
 `clickhouse/archive_daily.py` exports each closed UTC day with `FINAL` for
