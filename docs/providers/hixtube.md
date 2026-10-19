@@ -1,11 +1,12 @@
 # Hixtube Pilot
 
-Hixtube serves a small real Qwen3 0.6B integration pilot using the Apache-2.0
+Hixtube's planned service is a small real Qwen3 0.6B integration pilot using the Apache-2.0
 [Neocloud-in-a-Box toolkit](https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box).
-It runs in a separate cloud project, not on TrustedRouter production resources.
+It must run in a separate cloud project, not on TrustedRouter production resources.
 
 - Intended API base: `https://api.hixtube.com/v1`.
-- Catalog/pricing: authenticated `GET /models`, Provider Catalog v2.
+- Catalog/pricing: public metadata `GET /models`, Provider Catalog v2;
+  inference and discovery canaries require authentication.
 - Model identity: `qwen/qwen3-0.6b`; 4,096-token context and 256 output tokens.
 - Credential: `HIXTUBE_API_KEY`, secret name `trustedrouter-hixtube-api-key`.
 - Standard TLS only. No ZDR, confidential-compute or E2EE eligibility.

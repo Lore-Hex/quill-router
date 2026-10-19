@@ -9,7 +9,14 @@ from scripts.pricing.providers import hixtube as p
 
 
 def catalog():
-    return {"object": "list", "data": [{
+    return {"object": "list", "contract_version": "2.0", "provider": {
+        "id": "hixtube", "status_url": "https://api.hixtube.com/healthz",
+        "support_contact": "mailto:support@trustedrouter.com",
+        "incident_contact": "mailto:support@trustedrouter.com",
+        "regions": ["US"], "request_id_header": "X-Request-Id",
+        "error_contract": {"rate_limit_status": 429, "overload_status": 503,
+                           "retry_after_header": "Retry-After", "account_quota_error_codes": []},
+    }, "data": [{
         "id": "qwen/qwen3-0.6b", "object": "model", "owned_by": "qwen",
         "name": "Qwen3 0.6B (Hixtube CPU pilot)", "type": "chat",
         "context_length": 4096, "max_output_tokens": 256,
@@ -20,6 +27,8 @@ def catalog():
                     "cached_input": None, "cache_write": None, "minimum_request": "0"},
         "lifecycle": {"status": "active", "deprecation_at": None, "retirement_at": None,
                       "replacement_model_id": None},
+        "reliability": {"first_token_timeout_seconds": 30, "completion_timeout_seconds": 120,
+                        "stream_idle_timeout_seconds": 30, "capacity_scope": "model"},
     }]}
 
 
@@ -32,6 +41,32 @@ def test_catalog_preserves_price_capacity_and_native_identity():
     assert row["context_length"] == 4096
     assert row["max_output_tokens"] == 256
     assert "vision" not in row["supported_features"]
+    reliability = row["provider_reliability"]
+    assert reliability["provider_id"] == "hixtube"
+    assert reliability["regions"] == ["US"]
+    assert row["reliability"]["completion_timeout_seconds"] == 120
+    assert "support_contact" not in reliability and "incident_contact" not in reliability
+
+
+def test_catalog_v2_contract_requires_full_reliability():
+    payload = catalog()
+    del payload["data"][0]["reliability"]["capacity_scope"]
+    with pytest.raises(RuntimeError, match="capacity_scope"):
+        p.discover(payload)
+
+
+def test_successful_v2_fetch_publishes_only_canary_verified_route(monkeypatch, tmp_path):
+    monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
+    monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
+    monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: catalog())
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
+    result = p.fetch()
+    p.write_provider_manifest(result)
+    row = json.loads(p.MANIFEST_PATH.read_text())["models"][0]
+    assert row["routable"] is True
+    assert row["upstream_id"] == "qwen/qwen3-0.6b"
+    assert row["max_output_tokens"] == 256
+    assert row["provider_reliability"]["provider_id"] == "hixtube"
 
 
 @pytest.mark.parametrize("value", ["NaN", "-1", None, 0.1])
