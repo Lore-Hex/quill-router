@@ -231,6 +231,18 @@ outbox first and drained asynchronously by `/internal/broadcast/drain`, so a
 PostHog/webhook outage does not block inference or lose already-settled
 metadata on process restart.
 
+## Fixed routing tiers
+
+These aliases use an explicitly ordered model pool: the first member is preferred
+and the rest are fallbacks. They run one model per attempt, with no synthesis,
+orchestration, or implicit privacy floor. Set `provider.min_privacy` explicitly
+when needed. The live `/v1/models` catalog publishes each pool in `auto_candidates`.
+
+- `trustedrouter/frontier`: fixed frontier model pool.
+- `trustedrouter/advanced`: fixed advanced model pool.
+- `trustedrouter/professional`: fixed professional model pool.
+- `trustedrouter/efficient`: fixed efficient model pool.
+
 ## Synthetic Monitoring
 
 TrustedRouter has a separate synthetic monitoring plane for public uptime.

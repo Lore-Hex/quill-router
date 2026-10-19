@@ -45,7 +45,7 @@
     <p class="microcopy">Start with aliases, then pin the exact model and provider combination that wins your eval.</p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Three model bakeoff</span><span>Python</span></div>
+    <div class="code-head"><span>Routing alias bakeoff</span><span>Python</span></div>
     <pre><code>import os
 from openai import OpenAI
 
@@ -59,6 +59,10 @@ prompt = "Write a retry helper with exponential backoff."
 for model in (
     "trustedrouter/fast",
     "trustedrouter/cheap",
+    "trustedrouter/frontier",
+    "trustedrouter/advanced",
+    "trustedrouter/professional",
+    "trustedrouter/efficient",
     "trustedrouter/zdr",
 ):
     response = client.chat.completions.create(
@@ -103,7 +107,7 @@ for model in (
     <h2>Evaluate on your work, not somebody else's average.</h2>
     <ul class="check-list">
       <li>Start with three prompts that represent real success and failure.</li>
-      <li>Compare <code>trustedrouter/fast</code>, <code>trustedrouter/cheap</code>, and a model picked from the live catalog.</li>
+      <li>Compare <code>trustedrouter/fast</code>, <code>trustedrouter/cheap</code>, <code>trustedrouter/frontier</code>, <code>trustedrouter/advanced</code>, <code>trustedrouter/professional</code>, <code>trustedrouter/efficient</code>, and a model picked from the live catalog. The four tiers use fixed ordered fallback pools with no synthesis or implicit privacy floor.</li>
       <li>Measure answer quality, total cost, first-token latency, and failures.</li>
       <li>Pin the winner, keep a fallback, and expand the eval only when it changes a decision.</li>
     </ul>
