@@ -254,8 +254,17 @@ def test_current_loader_cap_result_is_expected_base_defect():
         rows=[dict(kind=p1.KINDS[5], id=DAY + '/cap-v2', raw=p1.CAP.serialize(cap).decode())]))
     loaded = load(raw)
     assert loaded.proof is None
-    assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
-        path='transport/container', detail="'router_writers'")], 'A3-E base changed; update this expectation deliberately'
+    assert loaded.a2_streams['loading_issues'] == [
+        {'gap': 'artifact_gap', 'path': 'proof.shutdown_inventory_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.cohort_seed_policy_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.pre_budget_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.post_budget_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.external_proofs_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.resolution_dag_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'manifest.independent_inventory_sha256', 'detail': 'artifact_gap'},
+        {'gap': 'artifact_gap', 'path': 'loading/release-plan.json', 'detail': 'artifact_gap'},
+        {'gap': 'artifact_gap', 'path': 'loading/signatures.json', 'detail': 'artifact_gap'},
+    ], 'A3-E base changed; update this expectation deliberately'
 
     # Expected after the A3-E correction; current output above remains asserted.
     from tests.shadow_v2_pack_round5_vectors import corrected_result
@@ -469,8 +478,17 @@ def test_cap_survives_split_transport_with_expected_base_result(tmp_path):
     plan = split_transport(captured, tmp_path / 'parts')
     restored = restore_transport(PackFiles(tmp_path / 'parts'), plan, tmp_path / 'restored')
     loaded = load(restored.read_bytes())
-    assert loaded.a2_streams['loading_issues'] == [dict(gap='evidence_schema_gap',
-        path='transport/container', detail="'router_writers'")]
+    assert loaded.a2_streams['loading_issues'] == [
+        {'gap': 'artifact_gap', 'path': 'proof.shutdown_inventory_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.cohort_seed_policy_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.pre_budget_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.post_budget_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.external_proofs_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'proof.resolution_dag_sha256', 'detail': 'required payload absent'},
+        {'gap': 'artifact_gap', 'path': 'manifest.independent_inventory_sha256', 'detail': 'artifact_gap'},
+        {'gap': 'artifact_gap', 'path': 'loading/release-plan.json', 'detail': 'artifact_gap'},
+        {'gap': 'artifact_gap', 'path': 'loading/signatures.json', 'detail': 'artifact_gap'},
+    ]
 
     # Expected after the A3-E correction; current output above remains asserted.
     from tests.shadow_v2_pack_round5_vectors import corrected_result

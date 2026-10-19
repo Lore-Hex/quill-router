@@ -62,6 +62,8 @@ DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=U
 DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
 DEEPINFRA_GRANITE_42_RETIREMENT_AT = datetime(2026, 10, 18, 0, 0, tzinfo=UTC)
 DEEPINFRA_INKLING_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
+DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT = datetime(2026, 10, 20, 0, 0, tzinfo=UTC)
+SCALEWAY_GLM_52_RETIREMENT_AT = datetime(2026, 11, 16, 0, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
 XIAOMI_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
@@ -936,6 +938,28 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"thinkingmachines/Inkling"}),
         effective_at=DEEPINFRA_INKLING_RETIREMENT_AT,
         replacement_model_ids=("thinkingmachines/inkling-small",),
+    ),
+    # DeepInfra's October 18 notice deprecates gpt-oss-120b-Turbo on
+    # 2026-10-20 and redirects later requests to the standard gpt-oss-120b
+    # serving tier. Retire DeepInfra's Turbo route at 00:00 UTC (date only)
+    # instead of silently changing its speed and price.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"openai/gpt-oss-120b-turbo"}),
+        upstream_ids=frozenset({"openai/gpt-oss-120b-Turbo"}),
+        effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-oss-120b",),
+    ),
+    # Scaleway's October 16 notice: GLM 5.2 reaches end of life on
+    # 2026-11-16 and later requests are redirected to the different GLM 5.3
+    # weights. Retire Scaleway's route at 00:00 UTC (date only) instead of
+    # accepting the substitution; other providers' GLM 5.2 routes stay.
+    _Retirement(
+        provider="scaleway",
+        model_ids=frozenset({"z-ai/glm-5.2"}),
+        upstream_ids=frozenset({"glm-5.2"}),
+        effective_at=SCALEWAY_GLM_52_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
     ),
     # Google Cloud's October 5 notice: Vertex (Gemini Enterprise) requests to
     # Gemini 3.6 Flash fail with 404 from November 19, 2026 and to Gemini 3.7

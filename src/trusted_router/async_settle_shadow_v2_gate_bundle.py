@@ -11,6 +11,7 @@ from trusted_router import async_settle_shadow_v2_a1_reconciliation as reconcili
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Key, Ports
+from trusted_router.async_settle_shadow_v2_gate_loading import error_detail
 from trusted_router.async_settle_shadow_v2_gate_result import Subject
 from trusted_router.async_settle_shadow_v2_schema import decode, require, sha256
 
@@ -59,6 +60,10 @@ class Context:
 
     def kind(self, kind: str) -> list[dict[str, Any]]:
         return [v for k, v in self.rows.items() if k.kind == kind]
+
+    def manifests(self) -> list[dict[str, Any]]:
+        from trusted_router.async_settle_shadow_v2_gate_controls import manifests
+        return manifests(self.rows)
 
     def attached(self, kind: str) -> list[dict[str, Any]]:
         return [v for k, v in self.attachments.items() if k.kind == kind]
@@ -114,7 +119,7 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
                     or row.key.kind in a1.KINDS[3:] and tags.get('contract_revision') != 'a1'):
                 ctx.issue('policy_version_gap', 'changed policy or contract revision', sub)
             if row.key.kind != p1.KINDS[2] or not invalid_events(ctx, row.key, tags):
-                ctx.issue('evidence_schema_gap', str(exc), sub)
+                ctx.issue('evidence_schema_gap', error_detail(exc), sub)
             owner = {p1.KINDS[2]: 'terminal_coverage_gap', p1.KINDS[3]: 'phase_coverage_gap',
                      p1.KINDS[4]: 'writer_closure_gap', a1.KINDS[-1]: 'close_result_identity_gap',
                      'health_basis': 'shadow_health_gap', 'publisher_trace': 'publisher_trace_gap',
@@ -123,9 +128,9 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
             if owner:
                 parts = row.key.id.split('/')
                 diagnostic = Subject(parts[0], parts[1], object_id=row.key.id) if len(parts) == 2 else Subject(object_id=row.key.id)
-                ctx.issue(owner, 'invalid required row: ' + str(exc), diagnostic)
-            if str(exc) == 'a1-publisher-conservation':
-                ctx.issue('publisher_accounting_gap', str(exc), diagnostic)
+                ctx.issue(owner, 'invalid required row: ' + error_detail(exc), diagnostic)
+            if error_detail(exc) == 'a1-publisher-conservation':
+                ctx.issue('publisher_accounting_gap', error_detail(exc), diagnostic)
     verified_aliases = {row.key: row.raw for row in bundle.shutdown.aliases} if bundle.shutdown else {}
     supplied_aliases = {row.key: row.raw for row in bundle.attachments if row.key.kind in ('shutdown_entry', 'shutdown_measurement')}
     for key in sorted(verified_aliases.keys() | supplied_aliases.keys()):
@@ -143,12 +148,12 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
         assert bundle.proof is not None
         ctx.proof = a1.PROOF_MANIFEST.parse(bundle.proof)
     except ValueError as exc:
-        ctx.issue('artifact_gap', 'proof manifest: ' + str(exc))
+        ctx.issue('artifact_gap', 'proof manifest: ' + error_detail(exc))
     for raw in bundle.ledgers:
         try:
             ctx.ledgers.append(a1.PREREQUISITE_LEDGER.parse(raw))
         except ValueError as exc:
-            ctx.issue('boot_prerequisite_gap', str(exc))
+            ctx.issue('boot_prerequisite_gap', error_detail(exc))
     for name in ('transport', 'fleet', 'pre', 'serving'):
         gate_raw = getattr(bundle, name)
         if gate_raw is None:
@@ -160,7 +165,7 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
             from trusted_router.async_settle_shadow_v2_gate_prior import verified_prior_gate
             verified_prior_gate(ctx, name, value)
         except ValueError as exc:
-            ctx.issue('artifact_gap', name + ': ' + str(exc), Subject(wire=a2.O('prior_gate', name)))
+            ctx.issue('artifact_gap', name + ': ' + error_detail(exc), Subject(wire=a2.O('prior_gate', name)))
             from trusted_router.async_settle_shadow_v2_gate_prior import verified_prior_gate
             verified_prior_gate(ctx, name, {})
     if ctx.proof is not None:
@@ -196,7 +201,7 @@ def coverage_issues(ctx: Context) -> None:
     for (day, stream), pages in grouped.items():
         try:
             root = a1.coverage_root(sorted(pages, key=lambda p: p['page_seq']))
-            manifest = next((m for m in ctx.kind(p1.KINDS[5]) if m.get('day') == day and 'router_writers' in m), None)
+            manifest = next((m for m in ctx.manifests() if m.get('day') == day and 'router_writers' in m), None)
             if manifest is not None and stream + '_root' in manifest:
                 require(root == manifest[stream + '_root'], 'artifact_gap')
             for page in pages:
@@ -206,7 +211,7 @@ def coverage_issues(ctx: Context) -> None:
                     require(raw is not None and hashlib.sha256(raw).hexdigest() == entry['sha256']
                             and len(raw) == entry['bytes'], 'artifact_gap')
         except ValueError as exc:
-            ctx.issue('artifact_gap', str(exc), Subject(day=day, object_id=stream))
+            ctx.issue('artifact_gap', error_detail(exc), Subject(day=day, object_id=stream))
 
 
 def verify_samples(ctx: Context) -> None:
@@ -218,25 +223,14 @@ def verify_samples(ctx: Context) -> None:
     signatures = {s.object_id: s for s in ctx.bundle.signatures}
     for sample in ctx.kind(p1.KINDS[0]):
         key = sample['authorization_day'] + '/' + sample['authorization_id']
-        sig = signatures.get(key)
-        if sig is None:
-            ctx.issue('artifact_gap', 'missing binding material', Subject(object_id=key))
-            continue
         try:
-            claims = invoke(ctx, 'binding', sig.token, sig.keys, sig.now)
-            claims_dict = claims.model_dump(mode='json')
-            require(claims_dict['authorization_id'] == sample['authorization_id'], 'identity')
-            require(claims_dict['snapshot_hash'] == sample['snapshot_hash'], 'hash')
-            require(sig.now == sample['observed_at_us'] // 1000000, 'proof_expired')
-            reference = sample['original_terminal_receipt']
-            originals = [event for page, event in ctx.events() if
-                (page['day'], page['boot'], event['seq']) == (reference['day'], reference['boot'], reference['event_seq'])]
-            require(len(originals) == 1 and originals[0]['identity'] == p1.committed_identity(claims_dict), 'identity')
+            from trusted_router.async_settle_shadow_v2_gate_compared import sample_terminal
+            sample_terminal(ctx, sample)
             ctx.verified.add(key)
-        except ValueError as exc:
-            if str(exc) in ('artifact_gap', 'evidence_schema_gap'):
-                ctx.issue(str(exc), 'binding invocation refused')
-            ctx.issue('eligible_coverage_gap', str(exc), Subject(object_id=key))
+        except ValueError:
+            ctx.issue('eligible_coverage_gap', 'retained compared sample join failed', Subject(object_id=key))
+    from trusted_router.async_settle_shadow_v2_gate_compared import verify_terminals
+    verify_terminals(ctx)
     for page, event in ctx.events():
         if event.get('proof_kind') != 'certificate':
             continue
@@ -257,8 +251,8 @@ def verify_samples(ctx: Context) -> None:
             require(sha256(sig.claims['original_receipt']) == sha256(locator), 'exclusion_proof_gap')
             ctx.verified.add(key)
         except ValueError as exc:
-            ctx.issue('exclusion_conflict' if str(exc) == 'exclusion_conflict' else 'exclusion_proof_gap',
-                      str(exc), subject(page, event['seq']))
+            ctx.issue('exclusion_conflict' if error_detail(exc) == 'exclusion_conflict' else 'exclusion_proof_gap',
+                      error_detail(exc), subject(page, event['seq']))
 
 
 def invalid_events(ctx: Context, key: Key, value: Any) -> bool:

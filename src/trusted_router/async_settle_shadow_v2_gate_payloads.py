@@ -5,6 +5,7 @@ semantics. The loader keeps the retained adapter seam closed independently.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,6 +18,7 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import (
     Cohort,
     Inventory,
     Key,
+    LoadingPorts,
     Ports,
     Row,
     Shutdown,
@@ -44,7 +46,7 @@ from trusted_router.detached_jws import canonical
 
 @dataclass
 class PayloadGraph:
-    files: dict[str, bytes]
+    files: Mapping[str, bytes]
     completed_at_us: int | None = None
     streams: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     decoded: dict[str, Any] = field(default_factory=dict)
@@ -52,30 +54,47 @@ class PayloadGraph:
     _bad_pages: dict[tuple[str, str], PayloadError] = field(default_factory=dict)
     _containers: dict[int, list[tuple[str, str, dict[str, Any] | None, str | None]]] = field(default_factory=dict)
     _indexed: set[str] = field(default_factory=set)
-    _lookups: dict[bytes, Any] = field(default_factory=dict)
+    _lookups: dict[str, Any] = field(default_factory=dict)
     issues: list[LoadingIssue] = field(default_factory=list)
     limits: dict[str, dict[str, Any]] = field(default_factory=dict)
     shutdown: Shutdown | None = None
     ports: Ports | None = None
+    stage: str = 'pre-flip'
+    parsers: dict[str, Any] = field(default_factory=dict)
+    ledgers: tuple[bytes, ...] = ()
+    producer_registrations: tuple[dict[str, Any], ...] | None = None
 
     def reject(self, path: str, exc: Exception) -> None:
         if isinstance(exc, PayloadError):
             path = exc.path
-        self.issues.append(LoadingIssue(error_gap(exc), path, str(exc)))
+        if not any(issue.path == path for issue in self.issues):
+            self.issues.append(LoadingIssue(error_gap(exc), path, error_gap(exc)))
 
     def file(self, reference: dict[str, Any]) -> bytes:
         a2.FILE_REF(reference)
         raw = self.files.get(reference['path'])
-        if raw is None or len(raw) != reference['bytes'] or roots.file_digest(raw) != reference['sha256']:
+        if raw is None:
+            raise PayloadError(reference['path'], 'artifact_gap')
+        parser = self.parsers.get(reference['path'])
+        if parser is not None:
+            try:
+                parser(raw)
+            except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                raise PayloadError(reference['path'], 'evidence_schema_gap') from exc
+        if len(raw) != reference['bytes'] or roots.file_digest(raw) != reference['sha256']:
             raise PayloadError(reference['path'], 'artifact_gap')
         return raw
 
     def object(self, reference: dict[str, Any], schema: Schema) -> dict[str, Any]:
-        raw = self.file(reference)
+        a2.FILE_REF(reference)
+        raw = self.files.get(reference['path'])
+        if raw is None:
+            raise PayloadError(reference['path'], 'artifact_gap')
         try:
             value = contract._object_bytes(raw, schema)
         except ValueError as exc:
             raise PayloadError(reference['path'], error_gap(exc)) from exc
+        self.file(reference)
         self.decoded[reference['path']] = value
         self.references(value)
         return value
@@ -103,61 +122,32 @@ class PayloadGraph:
         schema = roots.STREAMS[stream][1]
         require(schema is not None, 'evidence_schema_gap')
         assert schema is not None
-        if stream not in self._indexed:
-            # DETAIL supplies hashes, not paths. Candidate files come only from
-            # the finite supplied file inventory, never from disk discovery.
-            if id(schema) not in self._containers:
-                containers: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
-                for path, raw in self.files.items():
-                    # Lookup only. Most dependencies are source/fixture files,
-                    # not page containers. Reject them before the much more
-                    # expensive contract traversal; accepted pages still go
-                    # through the contract on their original bytes below.
-                    if raw not in self._lookups:
-                        try:
-                            self._lookups[raw] = retained_json(raw)
-                        except ValueError:
-                            self._lookups[raw] = None
-                    lookup = self._lookups[raw]
-                    if type(lookup) is not dict or 'entries' not in lookup:
-                        continue
-                    try:
-                        value = contract._object_bytes(raw, schema)
-                    except ValueError as exc:
-                        try:
-                            # Lookup only: a committed but invalid page must be
-                            # a schema failure, not misreported as missing bytes.
-                            rejected = retained_json(raw)
-                            if type(rejected) is dict and 'entries' in rejected:
-                                containers.append((path, sha256(rejected), None, error_gap(exc)))
-                        except ValueError:
-                            pass
-                    else:
-                        containers.append((path, sha256(value), value, None))
-                self._containers[id(schema)] = containers
-            for path, digest, candidate, error in self._containers[id(schema)]:
-                if candidate is None:
-                    self._bad_pages[stream, digest] = PayloadError(path, error or 'evidence_schema_gap')
-                    continue
-                try:
-                    for entry in candidate['entries']:
-                        roots.STREAMS[stream][0](entry)
-                except ValueError as exc:
-                    self._bad_pages[stream, digest] = PayloadError(path, error_gap(exc))
-                    continue
-                self._pages[stream, digest] = candidate
-            self._indexed.add(stream)
+        # Hash lookup does not parse ordinary source-list originals.
+        if not self._lookups:
+            for path, raw in self.files.items():
+                self._lookups[roots.file_digest(raw)] = path
+                if raw.endswith(b'\n'):
+                    self._lookups[roots.file_digest(raw[:-1])] = path
         tail = reference['tail_sha256']
         pages: list[dict[str, Any]] = []
         visited: set[str] = set()
         while tail is not None:
             require(tail not in visited and len(pages) < reference['pages'], 'evidence_schema_gap')
             visited.add(tail)
-            page = self._pages.get((stream, tail))
-            if page is None and (stream, tail) in self._bad_pages:
-                raise self._bad_pages[stream, tail]
-            require(page is not None, 'artifact_gap')
-            assert page is not None
+            key = (stream, tail)
+            if key not in self._pages:
+                located = self._lookups.get(tail)
+                require(isinstance(located, str), 'artifact_gap')
+                assert isinstance(located, str)
+                path = located
+                try:
+                    page = contract._object_bytes(self.files[path], schema)
+                    for entry in page['entries']:
+                        roots.STREAMS[stream][0](entry)
+                    self._pages[key] = page
+                except ValueError as exc:
+                    raise PayloadError(path, error_gap(exc)) from exc
+            page = self._pages[key]
             pages.append(page)
             tail = page['previous_sha256']
         pages.reverse()
@@ -178,9 +168,60 @@ class PayloadGraph:
         self.detail(value['dependencies'], 'files')
         # Decode the untouched v1 payload, retaining binary64 values. Semantic
         # validation is performed by the named retained callable, never A2.
-        self.decoded[value['payload']['path']] = retained_json(self.file(value['payload']))
+        try:
+            self.decoded[value['payload']['path']] = retained_json(self.file(value['payload']))
+        except PayloadError:
+            raise
+        except ValueError as exc:
+            raise PayloadError(value['payload']['path'], 'evidence_schema_gap') from exc
+
+    def materialize_gate(self, payloads: dict[str, dict[str, Any]]) -> None:
+        """Apply gate-stage dependency checks before shared payload assembly."""
+        from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+        from trusted_router.async_settle_shadow_v2_gate_native_accounting import (
+            registration_candidates,
+            select_registrations,
+        )
+        roles = (dependencies(self.files, payloads, self.ports, 'post-flip', self.ledgers,
+                              producer_registrations=(), _roles_only=True)
+                 if self.producer_registrations is None and registration_candidates(self.files, (), None) else {})
+        try:
+            self.producer_registrations = select_registrations(self.files, roles, self.producer_registrations)
+        except PayloadError as exc:
+            self.producer_registrations = ()
+            self.reject(exc.path, exc)
+        references: dict[str, list[dict[str, Any]]] = {}
+        self.parsers.update(dependencies(self.files, payloads, self.ports, self.stage, self.ledgers, references=references,
+            producer_registrations=self.producer_registrations, _registrations_selected=True, parsers=self.parsers))
+        for path, parser in self.parsers.items():
+            try:
+                if path not in self.files:
+                    raise PayloadError(path, 'artifact_gap')
+                raw = self.files[path]
+                parser(raw)
+                digest = roots.file_digest(raw)
+                for reference in references.get(path, ()):
+                    a2.FILE_REF(reference)
+                    if len(raw) != reference['bytes'] or digest != reference['sha256']:
+                        raise PayloadError(path, 'artifact_gap')
+                if isinstance(self.ports, LoadingPorts) and self.ports.release is not None:
+                    expected = self.ports.release.artifacts.get(path)
+                    if expected is not None and digest != expected:
+                        raise PayloadError(path, 'artifact_gap')
+            except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                self.reject(path, exc)
+        from trusted_router.async_settle_shadow_v2_gate_policy import closure
+        selected = {}
+        for path, value in payloads.items():
+            qualified = path.split('/', 1)[-1] if '/manifest.' in path else path
+            if qualified == 'proof.external_proofs_sha256':
+                value = {**value, 'requirements': [r for r in value['requirements'] if r['stage'] in closure(self.stage)],
+                         'pilot': value['pilot'] if self.stage in ('pre-flip', 'post-flip') else None}
+            selected[path] = value
+        self.materialize(selected)
 
     def materialize(self, payloads: dict[str, dict[str, Any]]) -> None:
+        """Assemble shared A2 payloads; export spools keep their own path scope."""
         for path, value in payloads.items():
             try:
                 self.materialize_one(path, value)
@@ -194,8 +235,8 @@ class PayloadGraph:
             self.reject('proof.post_budget_sha256', ValueError('evidence_schema_gap'))
 
     def materialize_one(self, path: str, value: dict[str, Any]) -> None:
-        self.references(value)
         qualified = path.split('/', 1)[-1] if '/manifest.' in path else path
+        self.references(value)
         if qualified == 'proof.shutdown_inventory_sha256':
             require(value['complete'], 'artifact_gap')
             self.approved_subject(value['approval'], value['measurements'])

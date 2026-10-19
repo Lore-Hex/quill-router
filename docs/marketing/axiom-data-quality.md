@@ -74,6 +74,28 @@ cover regional leases and idempotency, avoid high-cardinality unbounded logging,
 and avoid adding acquisition-table reads to every API call. This repair does
 not relabel historical clicks as server requests or fabricate missing starts.
 
+## Console and social reward panels
+
+The Conversion Funnel dashboard reports `console_api_keys_viewed` page views,
+`social_rewards_invitation_viewed` impressions, `social_rewards_opened` opens,
+`social_reward_clicked` clicks and `social_reward_claimed` grants as separate
+stages, never as one total. A click records that the user opened a social
+destination and asked for credit; it is not a verified follow, star or
+subscription. A grant is server-confirmed credit, logged only for workspaces
+with an attribution record, so it is a lower bound; the billing ledger is the
+source of truth. Console records carry `account_fingerprint` and grants carry
+`workspace_fingerprint`; the panels count the two separately and never join them.
+
+These panels are built from the same deduplicated, filtered event snapshot as
+every other event panel, so the dashboard filters always apply. Internal and QA
+activity is excluded only through the existing diagnostic tag (`utm_medium` of
+`internal` or `utm_source` of `test`), and the excluded volume is shown in its
+own panel. No staff, QA account or workspace list exists in the worker
+configuration or its secrets, so untagged QA activity in production counts as
+customer activity; adding such a list would be a new configuration decision.
+`scripts.axiom_growth.dashboards --validate` checks these panels against an
+ephemeral datatable fixture before publication.
+
 ## Recovery and rollout
 
 1. Run `python -m scripts.axiom_growth.quality_report --end <UTC-cutoff>` before

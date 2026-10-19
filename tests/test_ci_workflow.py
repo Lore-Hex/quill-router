@@ -191,11 +191,11 @@ def test_proof_oracle_ci_split(request, tmp_path):
     assert command == ['uv', 'run', 'pytest', '-q', '-n', '4', '--dist', 'loadgroup',
                        '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
                        'tests/test_async_settle_shadow_v2_gate_window.py',
-                       '--splits', '4', '--group', '${{', 'matrix.shard', '}}',
+                       '--splits', '6', '--group', '${{', 'matrix.shard', '}}',
                        '--splitting-algorithm', 'least_duration']
     assert job['runs-on'] == 'ubuntu-latest'
     assert job['timeout-minutes'] == 45
-    assert job['strategy']['matrix'] == {'clock': ['default', 'post-cutover'], 'shard': [1, 2, 3, 4]}
+    assert job['strategy']['matrix'] == {'clock': ['default', 'post-cutover'], 'shard': [1, 2, 3, 4, 5, 6]}
     assert job['strategy']['fail-fast'] is False
     assert job['permissions'] == {'contents': 'read'}
     assert 'continue-on-error' not in job

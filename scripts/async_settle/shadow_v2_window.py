@@ -100,10 +100,10 @@ def _collect_day(source: Path, out: Path, plan: dict[str, Any], *,
     require(measured.pre is not None and measured.post is not None, 'MissingProducer:Budget')
     result = compose_day(files, day=plan['day'], producers=producers, fixtures=plan['fixtures'],
         cohort=plan['cohort'], source_shas=plan['source_shas'], complete_through_us=plan['complete_through_us'],
-        reconciliation=reconciliation)
+        reconciliation=reconciliation,
+        producer_registrations=(files.obj('stage/producer-captures.json', captures),))
     for producer in PRODUCERS:
         files.read(captures[producer])
-    files.obj('stage/producer-captures.json', captures)
     criteria: dict[str, list[str]] = {name: list(checks) for name, checks in CHECKS.items()}
     for stage, names in plan['required_stages'].items():
         for name in names:

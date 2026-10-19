@@ -9,6 +9,12 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts, Rele
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
 from trusted_router.async_settle_shadow_v2_schema import require
 
+# Source-file inputs for the injected reader, not runtime module references.
+TERMINAL_SOURCES = tuple(
+    f'src/trusted_router/{directory}async_settle_shadow_{basename}.py'
+    for directory, basename in (('services/', 'cohort_runtime'), ('', 'cohort'))
+)
+
 
 def plan(graph: PayloadGraph) -> ReleasePlan:
     ports = graph.ports
@@ -25,15 +31,25 @@ def approved_file(graph: PayloadGraph, reference: dict[str, Any]) -> None:
     require(release.artifacts.get(reference['path']) == file_digest(raw), 'artifact_gap')
 
 
-def validate_proof(graph: PayloadGraph, proof: dict[str, Any]) -> None:
+def validate_proof(graph: PayloadGraph, proof: dict[str, Any], stage: str | None = None) -> None:
     release = plan(graph)
-    expected = release.criteria.get(proof['criterion'])
+    from trusted_router.async_settle_shadow_v2_gate_policy import required_checks
+    expected = release.criteria.get((stage + '.' if stage else '') + proof['criterion'])
+    if stage is not None:
+        require(set(required_checks(proof['criterion'], stage)) <= {c['name'] for c in proof['checks']}, 'evidence_schema_gap')
     require(expected is not None and bool(expected), 'evidence_schema_gap')
     assert expected is not None
     require(tuple(sorted(c['name'] for c in proof['checks'])) == tuple(sorted(expected)), 'evidence_schema_gap')
     require(graph.completed_at_us is not None and proof['completed_at_us'] <= graph.completed_at_us, 'evidence_schema_gap')
     sources = graph.detail(proof['sources'], 'files')
     require(bool(sources), 'artifact_gap')
+    if proof['criterion'] in ('p4a_fail_closed', 'money_echo'):
+        ports = graph.ports
+        require(ports is not None and ports.read_release_file is not None, 'artifact_gap')
+        assert ports is not None and ports.read_release_file is not None
+        for path in TERMINAL_SOURCES:
+            expected_source = ports.read_release_file(path)
+            require(any(graph.file(ref) == expected_source for ref in sources), 'artifact_gap')
     for reference in [*sources, *(c['evidence'] for c in proof['checks'])]:
         approved_file(graph, reference)
     require(all(c['result'] == 'pass' for c in proof['checks']), 'evidence_schema_gap')
@@ -41,11 +57,14 @@ def validate_proof(graph: PayloadGraph, proof: dict[str, Any]) -> None:
 
 def release_checks(graph: PayloadGraph, payloads: dict[str, dict[str, Any]]) -> None:
     release = plan(graph)
+    from trusted_router.async_settle_shadow_v2_gate_policy import validate_policy
+    validate_policy(release.required, dict(release.required_stages), dict(release.criteria))
     # Every transitive source/fixture/CI dependency comes from the independently
     # approved plan, not just the top-level function source hash.
     for path, digest in release.artifacts.items():
         raw = graph.files.get(path)
-        require(raw is not None and file_digest(raw) == digest, 'artifact_gap')
+        if raw is not None:
+            require(file_digest(raw) == digest, 'artifact_gap')
 
     def visit(value: Any) -> None:
         if type(value) is dict:
@@ -57,7 +76,11 @@ def release_checks(graph: PayloadGraph, payloads: dict[str, dict[str, Any]]) -> 
         elif type(value) is list:
             for child in value:
                 visit(child)
-    for value in payloads.values():
+    from trusted_router.async_settle_shadow_v2_gate_policy import closure
+    for path, value in payloads.items():
+        if path == 'proof.external_proofs_sha256':
+            value = {**value, 'requirements': [r for r in value['requirements'] if r['stage'] in closure(graph.stage)],
+                     'pilot': value['pilot'] if graph.stage in ('pre-flip', 'post-flip') else None}
         visit(value)
     ports = graph.ports
     assert isinstance(ports, LoadingPorts)
@@ -112,6 +135,8 @@ def decode_release_plan(raw: bytes, approved_sha256: str) -> ReleasePlan:
         require(stage in REQUIRED_RULES and type(criteria) is list and bool(criteria) and all(type(c) is str for c in criteria)
             and len(criteria) == len(set(criteria)) and set(criteria) <= set(value['required']), 'evidence_schema_gap')
     require(not required_stages or {c for values in required_stages.values() for c in values} == set(value['required']), 'evidence_schema_gap')
+    # This parser is also used while composing bundle files. Gate policy is
+    # checked by release_checks after loading, including prior-stage loading.
     return ReleasePlan('loading/release-plan.json', raw, value['artifacts'],
         {k: tuple(v) for k, v in value['criteria'].items()}, verifiers, tuple(value['required']), {stage: tuple(values) for stage, values in required_stages.items()})
 

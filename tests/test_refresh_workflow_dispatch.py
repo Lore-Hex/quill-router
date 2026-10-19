@@ -590,7 +590,7 @@ def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     assert "if" not in job
     assert "continue-on-error" not in job
     assert job["strategy"]["matrix"] == {
-        "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4],
+        "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4, 5, 6],
     }
     proof_steps = [step for step in job["steps"] if "-m proof_oracle" in step.get("run", "")]
     assert len(proof_steps) == 1

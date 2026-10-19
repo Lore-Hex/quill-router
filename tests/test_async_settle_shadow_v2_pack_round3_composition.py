@@ -300,3 +300,158 @@ def test_recipe_cannot_supply_omitted_capture(tmp_path):
     with pytest.raises(ValueError, match='MissingProducer:Budget'):
         collect_day(source, tmp_path / 'output', plan)
     assert not (tmp_path / 'output/stage/transport.json').exists()
+
+
+@pytest.mark.parametrize('part', ['dependency-pages', 'accounting-consumption'])
+def test_real_prefixed_export_accounting_differential(tmp_path, composed, assembled, monkeypatch, part):
+    from tests.shadow_v2_gate_accounting import assert_accounting_equal
+    from trusted_router import async_settle_shadow_v2_gate_native_accounting as consumer
+    from trusted_router.async_settle_shadow_v2_collect_ports import Files
+    from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Key, Row
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
+    from trusted_router.async_settle_shadow_v2_pack_accounting_stream import (
+        compare_export_accounting_streamed,
+    )
+    from trusted_router.detached_jws import canonical
+
+    root, plan = composed
+    capture = json.loads((root / 'capture' / plan['captures']['NativeExport']['path']).read_bytes())
+    passed = capture['passes'][0]
+    prefix = passed['prefix']
+    assert prefix == 'native-export/'
+    original, ports = assembled
+    registrations = tuple(original['producer_registrations'])
+    originals = {item['name']: item['raw'].encode() for item in original['preimages']}
+    before = dict(originals)
+    accounting = json.loads(originals[passed['accounting']['path']])
+    files = Files(tmp_path / 'originals')
+    for path, raw in originals.items():
+        files.put(path, raw)
+    entries = [entry for ref in accounting['details']['entries']
+               for entry in json.loads(originals[prefix + ref['path']])['entries']]
+    records = [dict(kind=e['kind'], id=e['key'], raw=originals[prefix + e['original']].decode()) for e in entries]
+    rows = [row for row in records if row['kind'] in consumer.DAY_KINDS]
+    attachments = [row for row in records if row['kind'] not in consumer.DAY_KINDS]
+    bundle = tmp_path / 'native.json'
+    bundle.write_bytes(canonical(dict(rows=rows, attachments=attachments)))
+    expected = compare_export_accounting_streamed(files, passed['accounting'], bundle,
+        day=accounting['day'], object_plan=passed['object_plan'], prefix=prefix)
+    assert expected.complete and not expected.missing and expected.native_rpcs == 19
+    name = 'manifest.independent_inventory_sha256'
+    payloads = {name: json.loads(originals[name])}
+    page_refs = [ref for refs in accounting['details'].values() for ref in refs]
+    if part == 'dependency-pages':
+        references = {}
+        parsers = dependencies(originals, payloads, ports, 'transport', references=references, producer_registrations=registrations)
+        for ref in page_refs:
+            located = {**ref, 'path': prefix + ref['path']}
+            assert ref['path'] not in parsers
+            assert references[located['path']] == [located]
+            assert parsers[located['path']](originals[located['path']]) == json.loads(originals[located['path']])
+        loaded = load(canonical(original), ports)
+        page_paths = {ref['path'] for ref in page_refs} | {prefix + ref['path'] for ref in page_refs}
+        assert not [issue for issue in loaded.a2_streams['loading_issues'] if issue['path'] in page_paths]
+    else:
+        compared = []
+        def compare(*args, **kwargs):
+            actual = compare_export_accounting_streamed(*args, **kwargs)
+            assert_accounting_equal(actual, expected)
+            compared.append(actual)
+            return actual
+        monkeypatch.setattr(consumer, 'compare_export_accounting_streamed', compare)
+        graph = PayloadGraph(originals, producer_registrations=registrations)
+        consumer.consume(graph, payloads,
+            tuple(Row(Key(row['kind'], row['id']), row['raw'].encode()) for row in rows),
+            tuple(Row(Key(row['kind'], row['id']), row['raw'].encode()) for row in attachments))
+        assert compared == [expected]
+        assert graph.streams['export_accounting'][0]['native_rpcs'] == expected.native_rpcs
+    assert originals == before
+
+
+@pytest.mark.parametrize('support', ['ci/review/workflow.yml', 'ci/review/stage/producer-captures.json'])
+def test_real_prefixed_export_with_opaque_support(tmp_path, composed, assembled, monkeypatch, support):
+    from tests.shadow_v2_gate_accounting import assert_accounting_equal
+    from trusted_router import async_settle_shadow_v2_gate_native_accounting as consumer
+    from trusted_router.async_settle_shadow_v2_gate_dependencies import dependencies
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Key, Row
+    from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
+    from trusted_router.async_settle_shadow_v2_pack_accounting_stream import (
+        compare_export_accounting_streamed,
+    )
+    from trusted_router.detached_jws import canonical
+
+    root, plan = composed
+    capture = json.loads((root / 'capture' / plan['captures']['NativeExport']['path']).read_bytes())
+    passed = capture['passes'][0]
+    original, ports = assembled
+    registrations = tuple(original['producer_registrations'])
+    originals = {item['name']: item['raw'].encode() for item in original['preimages']}
+    accounting = json.loads(originals[passed['accounting']['path']])
+    entries = [entry for ref in accounting['details']['entries']
+               for entry in json.loads(originals[passed['prefix'] + ref['path']])['entries']]
+    records = [Row(Key(e['kind'], e['key']), originals[passed['prefix'] + e['original']]) for e in entries]
+    rows = tuple(row for row in records if row.key.kind in consumer.DAY_KINDS)
+    attachments = tuple(row for row in records if row.key.kind not in consumer.DAY_KINDS)
+    name = 'manifest.independent_inventory_sha256'
+    payloads = {name: json.loads(originals[name])}
+    compared = []
+    def compare(*args, **kwargs):
+        actual = compare_export_accounting_streamed(*args, **kwargs)
+        compared.append(actual)
+        return actual
+    monkeypatch.setattr(consumer, 'compare_export_accounting_streamed', compare)
+    baseline = PayloadGraph(originals, producer_registrations=registrations)
+    consumer.consume(baseline, payloads, rows, attachments)
+    baseline_refs = {}
+    baseline_parsers = dependencies(originals, payloads, ports, 'transport', references=baseline_refs, producer_registrations=registrations)
+    body = b'{"passes":[{"bundle":"example.json","accounting":{"path":"unused-accounting.json"},"prefix":null,"object_plan":{}}]}'
+    if support.endswith('producer-captures.json'):
+        body = canonical(dict(NativeExport=dict(path=support), passes=[dict(
+            bundle='example.json', accounting=dict(path=passed['accounting']['path']), prefix=None, object_plan={})]))
+    with_support = {**originals, support: body}
+    actual_refs = {}
+    actual_parsers = dependencies(with_support, payloads, ports, 'transport', references=actual_refs, producer_registrations=registrations)
+    assert actual_refs == baseline_refs
+    assert actual_parsers.keys() == baseline_parsers.keys()
+    for refs in accounting['details'].values():
+        for ref in refs:
+            path = passed['prefix'] + ref['path']
+            assert actual_parsers[path](with_support[path]) == baseline_parsers[path](originals[path])
+    actual = PayloadGraph(with_support, producer_registrations=registrations)
+    consumer.consume(actual, payloads, rows, attachments)
+    assert len(compared) == 2
+    assert compared[0].complete and compared[0].native_rpcs == 19
+    assert_accounting_equal(compared[1], compared[0])
+    assert actual.streams == baseline.streams
+    assert {path: raw for path, raw in with_support.items() if path != support} == originals
+
+
+@pytest.mark.parametrize('opaque', [False, True], ids=['round5', 'round7'])
+def test_round13_historical_real_writer_scope(tmp_path, assembled, monkeypatch, opaque):
+    from tests.test_async_settle_shadow_v2_gate_a3 import through_all
+    from trusted_router import async_settle_shadow_v2_gate_native_accounting as consumer
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.detached_jws import canonical
+    original, ports = assembled
+    value = json.loads(canonical(original))
+    value.pop('producer_registrations')
+    if opaque:
+        value['preimages'].append(dict(name='ci/review/stage/producer-captures.json', raw=canonical(dict(
+            NativeExport=dict(path='ci/review/stage/producer-captures.json'), passes=[dict(bundle='example.json',
+            accounting=dict(path='native-export/accounting.json'), prefix=None, object_plan={})])).decode()))
+    raw = canonical(value)
+    seen = []
+    compare = consumer.compare_export_accounting_streamed
+    def recorded(*args, **kwargs):
+        assert kwargs['prefix'] == 'native-export/'
+        result = compare(*args, **kwargs)
+        assert result.native_rpcs == 19
+        seen.append(result)
+        return result
+    monkeypatch.setattr(consumer, 'compare_export_accounting_streamed', recorded)
+    loaded = load(raw, ports, gate='transport')
+    assert not [issue for issue in loaded.a2_streams['loading_issues'] if issue['path'].startswith('export/')]
+    through_all(raw, ports, tmp_path)
+    assert seen

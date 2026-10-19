@@ -18,8 +18,14 @@
 <script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
 </head>
 <body class="console">
+  {#- Console header. It shares only the brand home link (_brand.html) with the
+      public header in public/_nav.html; the rest differs on purpose: a dark
+      workspace bar with Help and Account menus in place of model search, the
+      marketing links and Sign in, and on phones the Menu button opens the
+      workspace sidebar (these utilities move into it) instead of a link drawer.
+      Styles live in static/console.css and behaviour in static/console.js. -#}
   <header class="console-topbar">
-    <a class="brand" href="/">{% include "_brand.html" %}</a>
+    {% include "_brand.html" %}
     <div class="console-utilities">
       <nav class="console-topnav" aria-label="Resources">
         <a href="/models">Models</a>

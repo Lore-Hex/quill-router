@@ -212,6 +212,52 @@ def test_dashboards_use_live_cohort_age_and_source_watermark():
         assert doc['dashboard']['owner'] == 'X-AXIOM-EVERYONE'
 
 
+@pytest.mark.parametrize('name', ['DEVICE_QUERY', 'REWARDS_QUERY', 'REWARD_ACTIONS_QUERY', 'INTERNAL_QUERY'])
+def test_console_panels_reuse_the_filtered_event_snapshot(name):
+    from scripts.axiom_growth import dashboards as d
+    query = getattr(d, name)
+    assert query.startswith(d.EVENTS)  # one dedupe, one filter chain, shared with every event panel
+    assert d.FILTER in d.EVENTS and d.EVENTS.index('arg_max(exported_at') < d.EVENTS.index(d.FILTER)
+    for column in ('account_fingerprint', 'workspace_fingerprint', 'device_category', 'reward_action'):
+        assert column in d.EVENTS[:d.EVENTS.index(d.FILTER)]
+
+
+def test_console_panels_exclude_only_tagged_internal_traffic_and_show_what_was_excluded():
+    from scripts.axiom_growth import dashboards as d
+    assert d.INTERNAL_TAG == "utm_medium == 'internal' or utm_source == 'test'"
+    for name in ('DEVICE_QUERY', 'REWARDS_QUERY', 'REWARD_ACTIONS_QUERY'):
+        assert '| where not(internal_tagged)' in getattr(d, name)
+    assert '| where not(internal_tagged)' not in d.INTERNAL_QUERY
+    assert 'Internal_tagged=countif(internal_tagged)' in d.INTERNAL_QUERY
+    funnel = next(doc for doc in d.build() if doc['uid'] == 'tr-growth-funnel-v1')
+    assert any('no staff account list exists' in c['name'] for c in funnel['dashboard']['charts'])
+    assert 'no QA account list exists' in funnel['dashboard']['description']
+
+
+def test_reward_panels_separate_views_impressions_opens_clicks_and_grants():
+    from scripts.axiom_growth import dashboards as d
+    stages = dict(d.REWARD_STAGES)
+    assert stages['acquisition.social_reward_clicked'] == '4 Action clicks (not verified follows)'
+    assert 'attributed workspaces only' in stages['acquisition.social_reward_claimed']
+    # Console records carry account identity; grants carry workspace identity. Count both, never merge.
+    for field in ('Accounts=dcountif(account_fingerprint', 'Workspaces=dcountif(workspace_fingerprint',
+                  'Visitors=dcountif(anonymous_fingerprint'):
+        assert field in d.REWARDS_QUERY
+    assert 'Grants=countif' in d.REWARD_ACTIONS_QUERY and 'by reward_action' in d.REWARD_ACTIONS_QUERY
+    funnel = next(doc for doc in d.build() if doc['uid'] == 'tr-growth-funnel-v1')
+    assert any('clicks are not verified follows' in c['name'] for c in funnel['dashboard']['charts'])
+
+
+def test_console_fixture_rows_match_their_columns_and_stages():
+    from scripts.axiom_growth import validate_onboarding as v
+    from scripts.axiom_growth.dashboards import REWARD_STAGES
+    header, body = v.console_fixture()[len('datatable('):].rstrip(']').split(')[', 1)
+    assert header.count(':') == len(v.CONSOLE_COLUMNS)
+    rows = body.count("'acquisition.")  # no literal in the fixture contains a comma
+    assert body.count(',') + 1 == rows * len(v.CONSOLE_COLUMNS)
+    assert all(repr(name) in body for name, _ in REWARD_STAGES) and "'internal'" in body
+
+
 def test_stale_alert_debounces_and_checks_observed_data_not_only_job_time():
     from scripts.axiom_growth.alerts import QUERY
     assert 'observed_through' in QUERY

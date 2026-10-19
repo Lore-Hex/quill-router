@@ -25,6 +25,7 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from types import MappingProxyType
 from typing import Any
 
@@ -211,9 +212,11 @@ class Schema:
     invariant: Check | None = None
     retained_strings: bool = False
     binary64_paths: tuple[tuple[str, ...], ...] = ()
+    optional_fields: Mapping[str, Check] = dataclass_field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", MappingProxyType(dict(self.fields)))
+        object.__setattr__(self, "optional_fields", MappingProxyType(dict(self.optional_fields)))
 
     def __call__(self, value: Any) -> None:
         # Inspect the original native object before any subclass delegation or
@@ -225,11 +228,15 @@ class Schema:
         self._validate(value)
 
     def _validate(self, value: Any) -> None:
-        require(type(value) is dict and set(value) == set(self.fields))
+        require(type(value) is dict and set(self.fields) <= set(value)
+                <= self.fields.keys() | self.optional_fields.keys())
         raw = canonical(value)
         self._decode(raw)
         for field, check in self.fields.items():
             check(value[field])
+        for field, check in self.optional_fields.items():
+            if field in value:
+                check(value[field])
         if self.invariant is not None:
             self.invariant(value)
 

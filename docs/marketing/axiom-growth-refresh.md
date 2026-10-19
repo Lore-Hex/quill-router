@@ -69,6 +69,10 @@ Bootstrap only once from the validated sanitized cache using
 require generation zero and cannot silently replace an existing checkpoint.
 Keep source transport and timestamps unchanged when replaying historical data.
 
+The `deploy-growth-sync` workflow keeps the gateway-attempt and billing-owner
+collector flags exactly as the running job has them unless the operator picks
+`true` or `false` for that run; its summary records the before and after values.
+
 To pause: pause the `trusted-router-growth-sync` Cloud Scheduler job. To roll
 back: restore its preceding image digest. Retain the checkpoint; failures are
 replay-safe. Never delete the live state to make a failing job look healthy.

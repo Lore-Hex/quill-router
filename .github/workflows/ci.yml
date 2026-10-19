@@ -425,9 +425,10 @@ jobs:
       fail-fast: false
       matrix:
         clock: [default, post-cutover]
-        # Four shards per clock: the matrix alone is ~42 runner-minutes at -n 4
-        # (round-13 measurement), which would otherwise set deploy latency.
-        shard: [1, 2, 3, 4]
+        # Four-group runs 38924732345 took 43 to 45+ minutes with 1,252 cases.
+        # Six groups per clock bound estimated single-worker work per group
+        # to about two thirds of the four-group work; keep the 45-minute cap.
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
@@ -452,7 +453,7 @@ jobs:
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           -m proof_oracle tests/test_async_settle_proof_oracle.py tests/test_async_settle_shadow_v2_gate_window.py
-          --splits 4 --group ${{ matrix.shard }}
+          --splits 6 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
 
   browser:

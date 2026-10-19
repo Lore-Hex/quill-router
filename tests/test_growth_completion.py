@@ -257,8 +257,12 @@ def test_worker_release_preserves_main_ci_gate_and_existing_configuration():
     assert 'sha256:' in run
     for forbidden in ('--set-secrets', '--service-account', 'add-iam-policy-binding', '--hotfix'):
         assert forbidden not in run
+    # A plain redeploy must not switch a collector off; only an explicit choice changes it.
     for field in ('gateway_attempts', 'billing_owners'):
-        assert workflow[True]['workflow_dispatch']['inputs'][field]['default'] is False
+        spec = workflow[True]['workflow_dispatch']['inputs'][field]
+        assert spec['default'] == 'keep' and spec['options'] == ['keep', 'true', 'false']
+    assert 'new_gateway="$old_gateway"' in run and 'new_owners="$old_owners"' in run and 'keep) ;;' in run
+    assert '--update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$new_gateway,GROWTH_BILLING_OWNERS_ENABLED=$new_owners"' in run
 
 
 @pytest.mark.parametrize('cell,label', [('run_request', 'Run my first API request'),
