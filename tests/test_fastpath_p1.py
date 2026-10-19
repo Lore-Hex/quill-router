@@ -185,7 +185,7 @@ def _unit_flags(script: str) -> set[str]:
     # the unit's too, on a node given them.
     for line in lines:
         if re.match(r"^\s*edge_flags=\"-", line):
-            flags.update(re.findall(r"(?:^|\s)-([a-z][a-z-]*)", line.split("=", 1)[1]))
+            flags.update(re.findall(r"(?:^|\s)-([a-z][a-z-]*)", line.split("=", 1)[1].strip().strip('"')))
     return flags
 
 
