@@ -72,8 +72,12 @@ IDENTITY="${IDENTITY:-tr-azure-clickhouse-identity}"
 VAULT="${VAULT:-trquillkv}"
 VAULT_RG="${VAULT_RG:-TR-TEE-DUBAI}"
 CH_SECRET="${CH_SECRET:-tr-azure-clickhouse-password}"
+CH_READER_SECRET="${CH_READER_SECRET:-tr-azure-clickhouse-read-password}"
 IMAGE="${IMAGE:-Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# shellcheck source=scripts/deploy/_clickhouse_single_node_reader.sh
+. "$(dirname "${BASH_SOURCE[0]}")/_clickhouse_single_node_reader.sh"
 
 say() { printf '\n=== %s\n' "$*" >&2; }
 die() { printf '\n[FAIL] %s\n' "$*" >&2; exit 1; }
@@ -108,7 +112,7 @@ refuse_existing() {
   cat >&2 <<EOF
 Inspect the Azure resource shape with exactly:
   az vm show -g ${RG} -n ${VM} --query '{nic:networkProfile.networkInterfaces[0].id,identities:keys(identity.userAssignedIdentities)}' -o json
-No credential was created or rotated.
+Existing credentials were not rotated.
 EOF
   exit 1
 }
@@ -128,6 +132,43 @@ echo __TR_RUNCMD_OK__" --query "value[0].message" -o tsv 2>&1)" || {
     refuse_existing "$label: remote command failed"
   }
   printf '%s' "$out" | grep -vE "^\s*$|__TR_RUNCMD_OK__|^\[stdout\]|^\[stderr\]" || true
+}
+
+ensure_password_secret() {
+  local secret_name="$1" pw_file
+  say "ClickHouse password in ${VAULT}/${secret_name}"
+  if az keyvault secret show --vault-name "$VAULT" -n "$secret_name" >/dev/null 2>&1; then
+    echo "  already exists, reusing"
+  else
+    pw_file="$(mktemp)"
+    chmod 600 "$pw_file"
+    if ! openssl rand -hex 20 | tr -d '\n' > "$pw_file"; then
+      rm -f "$pw_file"
+      die "could not generate the ClickHouse password"
+    fi
+    if ! az keyvault secret set --vault-name "$VAULT" -n "$secret_name" \
+      --file "$pw_file" --encoding utf-8 -o none; then
+      shred -u "$pw_file" 2>/dev/null || rm -f "$pw_file"
+      die "could not create ${VAULT}/${secret_name}"
+    fi
+    shred -u "$pw_file" 2>/dev/null || rm -f "$pw_file"
+    echo "  created"
+  fi
+}
+
+reader_setup() {
+  cat <<READER
+TOKEN=\$(curl -fsS -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net&client_id=${IDENTITY_CLIENT}' | jq -er .access_token)
+reader_password=\$(curl -fsS -H "Authorization: Bearer \$TOKEN" 'https://${VAULT}.vault.azure.net/secrets/${CH_READER_SECRET}?api-version=7.4' | jq -er '.value | select(type == "string" and length > 0)')
+reader_hash=\$(printf '%s' "\$reader_password" | sha256sum | awk '{print \$1}')
+$(single_node_reader_setup "$VNET_CIDR")
+for attempt in \$(seq 1 60); do
+  if CLICKHOUSE_PASSWORD="\$reader_password" clickhouse-client --user tr_control_read --database default --query 'SELECT 1' >/dev/null 2>&1; then break; fi
+  sleep 5
+done
+CLICKHOUSE_PASSWORD="\$reader_password" clickhouse-client --user tr_control_read --database default --query 'SELECT 1 FROM activity_generations LIMIT 0' >/dev/null
+unset reader_password TOKEN
+READER
 }
 
 # -- preflight ---------------------------------------------------------------
@@ -195,6 +236,9 @@ touch /var/lib/clickhouse/.tr-schema-013-applied
 echo 'ClickHouse authenticated; schema is at migration 013'
 "
 
+  ensure_password_secret "$CH_READER_SECRET"
+  run_existing "ClickHouse control-plane reader" "$(reader_setup)"
+
   PRIVATE_IP="$(az vm list-ip-addresses -g "$RG" -n "$VM" \
     --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv)"
   [ -n "$PRIVATE_IP" ] || refuse_existing "could not read the private IP"
@@ -259,28 +303,11 @@ used="${family_used_limit% *}"; limit="${family_used_limit#* }"
 echo "  ${FAMILY} quota ${used}/${limit} — room for ${VM_SIZE} (${VCPUS} vCPU)"
 
 # -- password ----------------------------------------------------------------
-# This is a new-node-only branch. Existing nodes returned above before the
-# vault could be touched; live credential rotation must be a separate,
-# explicitly named operation. The generated value travels through a 0600 file,
+# Existing nodes only ensure the separate reader secret above. Neither path
+# rotates an existing credential; generated values travel through 0600 files,
 # never the az process argv.
-say "ClickHouse password in ${VAULT}/${CH_SECRET}"
-if az keyvault secret show --vault-name "$VAULT" -n "$CH_SECRET" >/dev/null 2>&1; then
-  echo "  already exists, reusing"
-else
-  pw_file="$(mktemp)"
-  chmod 600 "$pw_file"
-  if ! openssl rand -hex 20 | tr -d '\n' > "$pw_file"; then
-    rm -f "$pw_file"
-    die "could not generate the ClickHouse password"
-  fi
-  if ! az keyvault secret set --vault-name "$VAULT" -n "$CH_SECRET" \
-    --file "$pw_file" --encoding utf-8 -o none; then
-    shred -u "$pw_file" 2>/dev/null || rm -f "$pw_file"
-    die "could not create ${VAULT}/${CH_SECRET}"
-  fi
-  shred -u "$pw_file" 2>/dev/null || rm -f "$pw_file"
-  echo "  created"
-fi
+ensure_password_secret "$CH_SECRET"
+ensure_password_secret "$CH_READER_SECRET"
 
 # -- identity ----------------------------------------------------------------
 say "managed identity ${IDENTITY}"
@@ -407,6 +434,7 @@ systemctl restart clickhouse-server
 for i in \$(seq 1 60); do CLICKHOUSE_PASSWORD="\$CH_PW" clickhouse-client --user default --query "SELECT 1" >/dev/null 2>&1 && break; sleep 5; done
 CLICKHOUSE_PASSWORD="\$CH_PW" clickhouse-client --user default --database default --multiquery < /root/operational_schema.sql
 shred -u /root/operational_schema.sql || rm -f /root/operational_schema.sql
+$(reader_setup)
 touch /var/lib/clickhouse/.tr-schema-013-applied
 BOOTSTRAP
   echo "runcmd:"
@@ -483,9 +511,9 @@ the same "configured, healthy, and empty" shape as having no ClickHouse:
      ENV_VARS), which is what turns the outbox ON:
        TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
        TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=${CLICKHOUSE_URL}
-       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=default
+       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=tr_control_read
        TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=default
-       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD -> ${VAULT}/${CH_SECRET}
+       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD -> ${VAULT}/${CH_READER_SECRET}
 
   2. install the drain on this node, mirroring
      scripts/deploy/aws_eu_clickhouse_drain_install.sh. Enabling step 1

@@ -104,7 +104,7 @@ def test_a_failed_key_vault_lookup_reports_its_error(
 
     assert run.returncode != 0
     assert "Azure analytics discovery was incomplete" in run.stderr
-    assert f"tr-azure-clickhouse-password: not found (az: {message}" in run.stderr
+    assert f"tr-azure-clickhouse-read-password: not found (az: {message}" in run.stderr
     # The lookups that worked say nothing extra.
     assert "private IP   VM tr-azure-clickhouse-1 in resource group tr-azure: 10.61.3.4\n" in run.stderr
 

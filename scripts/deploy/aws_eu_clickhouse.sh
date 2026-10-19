@@ -34,6 +34,7 @@ VOLUME_GB="${VOLUME_GB:-100}"
 NAME="${NAME:-tr-eu-clickhouse-1}"
 SG_NAME="${SG_NAME:-tr-eu-clickhouse-sg}"
 SECRET_ID="${SECRET_ID:-quill/tr-eu-clickhouse-password}"
+READER_SECRET_ID="${READER_SECRET_ID:-quill/tr-eu-clickhouse-read-password}"
 ROLE_NAME="${ROLE_NAME:-tr-eu-clickhouse-role}"
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-tr-eu-clickhouse-instance-profile}"
 CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"   # DSQL, matches the drain installer.
@@ -52,12 +53,33 @@ else
 fi
 CH_PASSWORD="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET_ID" --query SecretString --output text)"
 
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+if aws secretsmanager describe-secret --region "$REGION" --secret-id "$READER_SECRET_ID" >/dev/null 2>&1; then
+  log "reusing existing ClickHouse read password secret"
+else
+  log "creating ClickHouse read password secret"
+  (umask 077; openssl rand -base64 32 | tr -d '\n/+=' | head -c 40 > "$WORK/read-password")
+  aws secretsmanager create-secret --region "$REGION" --name "$READER_SECRET_ID" \
+    --secret-string "file://$WORK/read-password" >/dev/null
+  rm -f "$WORK/read-password"
+fi
+reader_password="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$READER_SECRET_ID" --query SecretString --output text)"
+[ -n "$reader_password" ] && [ "$reader_password" != None ] || {
+  echo "ClickHouse read password secret is empty" >&2
+  exit 1
+}
+READER_HASH="$(printf '%s' "$reader_password" | shasum -a 256 | awk '{print $1}')"
+unset reader_password
+
 # The standalone schema, DERIVED (see the helper for why a literal list rots).
 # Built before the node so a bad set fails here rather than half-way through a
 # boot, and so this script cannot create a node it has no schema for.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/deploy/_clickhouse_single_node_schema.sh
 . "$(dirname "${BASH_SOURCE[0]}")/_clickhouse_single_node_schema.sh"
+# shellcheck source=scripts/deploy/_clickhouse_single_node_reader.sh
+. "$(dirname "${BASH_SOURCE[0]}")/_clickhouse_single_node_reader.sh"
 SCHEMA_FILES=()
 while IFS= read -r _schema; do
   SCHEMA_FILES+=("$_schema")
@@ -83,6 +105,7 @@ if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
   done
 fi
 log "security group: $SG_ID"
+READER_SETUP="$(single_node_reader_setup "$VPC_CIDR")"
 
 # ---------------------------------------------------------------------------
 # 3. IAM: a least-privilege role for THIS node, created here so it exists.
@@ -189,6 +212,7 @@ if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
   # so nothing breaks at the moment of the swap. That same property is why a
   # BROKEN role here would fail late — hence the role above grants the set that
   # CloudTrail shows this node actually using, rather than a guess.
+  # shellcheck disable=SC2016 # Backticks are JMESPath literals.
   CUR_ASSOC="$(aws ec2 describe-iam-instance-profile-associations --region "$REGION" \
     --filters "Name=instance-id,Values=$INSTANCE_ID" \
     --query 'IamInstanceProfileAssociations[?State==`associated`].[AssociationId,IamInstanceProfile.Arn]' \
@@ -215,7 +239,7 @@ else
   log "launching $NAME from $AMI"
   USER_DATA="$(cat <<USERDATA
 #!/bin/bash
-set -eux
+set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y apt-transport-https ca-certificates dirmngr gnupg curl
@@ -284,6 +308,8 @@ done
 CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default \
   --multiquery < /root/operational_schema.sql
 rm -f /root/operational_schema.sql
+reader_hash='${READER_HASH}'
+${READER_SETUP}
 USERDATA
 )"
   INSTANCE_ID="$(aws ec2 run-instances --region "$REGION" \
@@ -301,6 +327,29 @@ aws ec2 wait instance-running --region "$REGION" --instance-ids "$INSTANCE_ID"
 PRIVATE_IP="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)"
 log "instance $INSTANCE_ID at $PRIVATE_IP"
+
+# User-data only runs at first boot. Converge the reader on existing nodes too,
+# using a hash in SSM rather than a password in command history or output.
+if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
+  python3 -c 'import json,sys; json.dump({"commands": [sys.stdin.read()]}, sys.stdout)' \
+    > "$WORK/reader.json" <<REMOTE
+set -eu
+reader_hash='${READER_HASH}'
+${READER_SETUP}
+REMOTE
+  COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE_ID" \
+    --document-name AWS-RunShellScript --comment "clickhouse: install control-plane reader" \
+    --parameters "file://$WORK/reader.json" --query 'Command.CommandId' --output text)"
+  aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" \
+    --instance-id "$INSTANCE_ID" 2>/dev/null || true
+  COMMAND_STATUS="$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" \
+    --instance-id "$INSTANCE_ID" --query Status --output text)"
+  [ "$COMMAND_STATUS" = Success ] || {
+    echo "ClickHouse reader install failed: status=$COMMAND_STATUS command-id=$COMMAND_ID" >&2
+    exit 1
+  }
+fi
+unset READER_HASH READER_SETUP
 
 # ---------------------------------------------------------------------------
 # 5. App Runner VPC connector, so tr-eu can reach a PRIVATE ClickHouse.

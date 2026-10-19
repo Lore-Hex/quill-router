@@ -1391,6 +1391,17 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     assert '"TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS": "0"' in service_config
     assert '"TR_SYNTHETIC_RUN_DEADLINE_SECONDS": "240"' in service_config
     assert '"TR_REMEDIATOR_IN_PROCESS_ENABLED": "false"' in service_config
+    assert '"TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "tr_control_read"' in service_config
+    assert (
+        '"TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": '
+        '"arn:aws:secretsmanager:eu-west-3:123456789012:secret:quill/tr-eu-clickhouse-read-password-harness"'
+    ) in service_config
+    clickhouse_secrets = [
+        call for call in run.calls
+        if call[:3] == ["aws", "secretsmanager", "describe-secret"]
+        and "quill/tr-eu-clickhouse-read-password" in call
+    ]
+    assert len(clickhouse_secrets) == 1
     observer_secret_reads = [
         call
         for call in run.calls
@@ -2041,7 +2052,7 @@ def test_azure_observer_refuses_to_drop_its_only_synthetic_owner(
 def _azure_without_analytics_discovery(fixture: ScriptFixture) -> ScriptFixture:
     discovery_fragments = (
         "vm list-ip-addresses",
-        "keyvault secret show.*tr-azure-clickhouse-password",
+        "keyvault secret show.*tr-azure-clickhouse-read-password",
         "identity show.*tr-azure-clickhouse-identity",
     )
     return replace(
@@ -2049,7 +2060,7 @@ def _azure_without_analytics_discovery(fixture: ScriptFixture) -> ScriptFixture:
         responses=(
             (r"vm list-ip-addresses.*tr-azure-clickhouse-1", ""),
             (
-                r"keyvault secret show.*tr-azure-clickhouse-password.*--query id",
+                r"keyvault secret show.*tr-azure-clickhouse-read-password.*--query id",
                 "",
             ),
             (
@@ -2103,7 +2114,7 @@ def test_azure_observer_emits_the_discovered_operational_analytics_env(
     } == {
         "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "http://10.61.3.4:8123",
-        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "default",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "tr_control_read",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "default",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": "secretref:clickhouse-password",
     }
@@ -2122,7 +2133,7 @@ def test_azure_observer_emits_the_discovered_operational_analytics_env(
     )
     assert clickhouse_reference == (
         "clickhouse-password=keyvaultref:https://trquillkv.vault.azure.net/"
-        "secrets/tr-azure-clickhouse-password/harness-version,identityref:/subscriptions/"
+        "secrets/tr-azure-clickhouse-read-password/harness-version,identityref:/subscriptions/"
         "harness/resourceGroups/tr-azure/providers/Microsoft.ManagedIdentity/"
         "userAssignedIdentities/tr-azure-clickhouse-identity"
     )

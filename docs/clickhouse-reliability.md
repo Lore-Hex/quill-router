@@ -65,6 +65,37 @@ The pre-migration local node-1 table is retained as
 `provider_benchmark_samples_local_backup`. Do not delete it until a later,
 explicitly reviewed cleanup.
 
+## Credentials
+
+Control-plane operational reads use `tr_control_read`. On GCP,
+`scripts/deploy/clickhouse_control_reader.sh` installs the account with
+table-scoped SELECT grants in `tr`; its password lives in Secret Manager as
+`trustedrouter-clickhouse-control-read-password`.
+
+The standalone Paris and Azure nodes store their analytics in `default`.
+Their provisioners install the same read-only profile with only
+`GRANT SELECT ON default.*`, restricted to the local VPC/VNet and loopback:
+
+| Cloud | Reader password secret | Writer password secret |
+|---|---|---|
+| AWS (eu-west-3 Secrets Manager) | `quill/tr-eu-clickhouse-read-password` | `quill/tr-eu-clickhouse-password` |
+| Azure (Key Vault `trquillkv`) | `tr-azure-clickhouse-read-password` | `tr-azure-clickhouse-password` |
+
+Run `aws_eu_clickhouse.sh` or `azure_clickhouse.sh` before redeploying the
+corresponding control plane. Each creates a missing reader secret, reuses an
+existing value, and installs `users.d/tr-control-reader.xml` on new and
+existing nodes. The XML contains a SHA-256 password hash and is owned by
+`clickhouse` with mode `0640`; unchanged configuration does not restart the
+server. AWS updates existing nodes through SSM; Azure fetches the reader
+secret on the node using its managed identity. The control-plane deploy
+scripts select the reader secret by reference, without retrieving its value.
+
+The Postgres outbox drains retain `default` and the writer secrets. Stockholm
+is a second drain target, not a configured control-plane read endpoint; its
+regional writer credential is unchanged. The AWS ECS release script clones
+the running task's configuration, so these provisioner defaults alone do not
+migrate an existing ECS task definition.
+
 ## Durable archive
 
 `clickhouse/archive_daily.py` exports each closed UTC day with `FINAL` for
