@@ -4859,7 +4859,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_generations:1": {
-      "fingerprint": "777a7115659f53dc88a33f618d311a4edd1a05ec4bccaefe7f59f98557f96a35",
+      "fingerprint": "dbecda7db667610039a37a70b1c7a04edccc680253e2f531a89e7d862d06cb19",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:client_reliability_summary:1": {
