@@ -21,10 +21,11 @@ locals {
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
   # The edge (E1): its port, the control plane's internal surface in the
-  # nodes' region (the Cloud Run service behind /internal, reached over
-  # Private Google Access) and the internal token Python holds, a pinned
-  # version. Set on the nodes' metadata and read at boot; emptying both
-  # turns the edge off at the next reset.
+  # nodes' region (the Cloud Run service behind /internal; its internal
+  # ingress admits a VM of this project's VPC, Cloud NAT egress included)
+  # and the internal token Python holds, a pinned version. Set on the
+  # nodes' metadata and read at boot; emptying both turns the edge off at
+  # the next reset.
   fastpath_edge_port         = 8081
   fastpath_edge_upstream     = "https://trusted-router-vsjf6qu4la-uc.a.run.app"
   fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/1"
