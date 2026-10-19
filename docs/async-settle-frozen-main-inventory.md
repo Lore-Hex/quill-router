@@ -2,11 +2,11 @@
 
 Observed inventory: **330 modules, 1630 distinct qualified names, 1665 execution entries**.
 
-BASE: `8d781cf096c43cdc29aa54c37f8d3820b80cf587` plus the source changes in `worktree-pins.json`. CPython 3.12.3.
+BASE: `8d781cf096c43cdc29aa54c37f8d3820b80cf587` plus the source changes in `worktree-pins.json`. CPython 3.12.13.
 
-Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 full proof_oracle runs, default and post-cutover clocks (union of eight worker JSON files); negative controls excluded. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; module/class bodies and comprehensions are included. No observed live router call is permitted.
+Guarded frozen setup and HTTP/drain/state-capture executions in full proof_oracle runs, default and post-cutover clocks (union of the workers' JSON files); negative controls excluded. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; module/class bodies and comprehensions are included. No observed live router call is permitted.
 
-Archive SHA-256: `886540b447d9d779855d2d1f3843c288e722e981b65619a80b2b2687be77e345`.
+Archive SHA-256: `b9a751f24e21c7841f988f3d8c1e83ce31aebf9207bcead44fd06d1daed08d52`.
 
 [Machine-readable records](../tests/fakes/frozen_main/execution-inventory.json) · [all file pins](../tests/fakes/frozen_main/pins.json) · [regeneration instructions](../tests/fakes/frozen_main/README.md) · [guard coverage and scope](design/async-settle-outbox-v1.md#frozen-main-coverage)
 
@@ -4189,7 +4189,7 @@ SHA-256: `342accdd3d8e7649ef2fdfecc26d5be6d6c759cd1c0d7fdb062607d84fb0d27d`.
 
 Frozen alias: `frozen_main.storage_operational_analytics`. Member: `src/trusted_router/storage_operational_analytics.py`.
 
-SHA-256: `195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2`.
+SHA-256: `d2bf1e1e805bf3fc7680cd6c2ad20ee5ae932bd22a5f18e5c146898b44e245f7`.
 
 | Callable / executed code unit | Code line |
 |---|---|

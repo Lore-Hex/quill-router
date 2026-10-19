@@ -41,7 +41,7 @@ from types import (
 )
 
 SNAPSHOT = Path(__file__).with_name('frozen_main')
-ARCHIVE_SHA256 = '886540b447d9d779855d2d1f3843c288e722e981b65619a80b2b2687be77e345'
+ARCHIVE_SHA256 = 'b9a751f24e21c7841f988f3d8c1e83ce31aebf9207bcead44fd06d1daed08d52'
 ALIAS = 'frozen_main'
 PINS = json.loads((SNAPSHOT / 'pins.json').read_text())
 _TEMP = tempfile.TemporaryDirectory(prefix='frozen-main-')

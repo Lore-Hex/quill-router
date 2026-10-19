@@ -4,13 +4,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = ROOT / 'tests/fakes/frozen_main'
 DOCUMENT = ROOT / 'docs/async-settle-frozen-main-inventory.md'
-SCOPE = ('Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 '
-         'full proof_oracle runs, default and post-cutover clocks (union of eight worker JSON files); negative controls excluded')
+SCOPE = ('Guarded frozen setup and HTTP/drain/state-capture executions in full proof_oracle runs, '
+         'default and post-cutover clocks (union of the workers\' JSON files); negative controls excluded')
 
 
 def render(data: dict) -> str:
@@ -18,7 +19,7 @@ def render(data: dict) -> str:
         '# Frozen-main execution inventory', '',
         f"Observed inventory: **{data['modules']} modules, {data['callables']} distinct qualified names, "
         f"{data['execution_entries']} execution entries**.", '',
-        f"BASE: `{data['baseline']}` plus the source changes in `worktree-pins.json`. CPython 3.12.3.", '',
+        f"BASE: `{data['baseline']}` plus the source changes in `worktree-pins.json`. CPython {data['python']}.", '',
         data['scope'] + '. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; '
         'module/class bodies and comprehensions are included. No observed live router call is permitted.', '',
         f"Archive SHA-256: `{data['archive_sha256']}`.", '',
@@ -69,7 +70,7 @@ def main() -> None:
     data = dict(baseline=(SNAPSHOT / 'BASE').read_text().strip(),
                 archive='tests/fakes/frozen_main/package.tar.gz',
                 archive_sha256=hashlib.sha256((SNAPSHOT / 'package.tar.gz').read_bytes()).hexdigest(),
-                scope=SCOPE, modules=len({r['module'] for r in records}),
+                scope=SCOPE, python=platform.python_version(), modules=len({r['module'] for r in records}),
                 execution_entries=len(records), callables=len({(r['module'], r['qualname']) for r in records}),
                 records=records)
     (SNAPSHOT / 'execution-inventory.json').write_text(json.dumps(data, indent=2) + '\n')
