@@ -55,21 +55,23 @@ node_ssh() {
     "$@"
 }
 
-# The statement travels base64-encoded in the ssh command line and is decoded
-# into clickhouse-client's stdin on the node. The command passes through two
-# shells there (the login shell's `bash -c`, then `sudo sh -c '...'`), and no
-# quoting of SQL survives both: printf %q's backslash escapes end sh's single
-# quotes at the first `'`, so every query failed before reaching ClickHouse.
-# Base64's alphabet needs no quoting in either. The plain statement is printed
-# here, before the call, so the transcript still shows which statement ran on
-# which node.
+# The statement travels on the ssh session's stdin into clickhouse-client
+# (--multiquery). The remote command contains no SQL, so nothing in a
+# migration needs quoting for the two shells it passes through on the node
+# (the login shell's `bash -c`, then `sudo sh -c '...'`); quoting SQL into it
+# with printf %q failed at the first `'`. clickhouse-client is exec'd, so its
+# exit status is the command's. The plain statement is printed here, before
+# the call, so the transcript shows which statement ran on which node.
 node_query() {
   local index="$1"
   local query="$2"
-  local encoded
+  if [ -z "$query" ]; then
+    echo "refusing an empty statement for ${NAMES[$index]}" >&2
+    exit 2
+  fi
   printf '[clickhouse_replicated_migrate] %s: %s\n' "${NAMES[$index]}" "$query" >&2
-  encoded="$(printf '%s' "$query" | base64 | tr -d '\n')"
-  node_ssh "$index" --command="sudo sh -c 'set -eu; set -a; . /etc/tr-clickhouse-ingest.env; set +a; printf %s ${encoded} | base64 -d | /usr/bin/clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr --multiquery'"
+  printf '%s' "$query" | node_ssh "$index" \
+    --command="sudo sh -c 'set -eu; set -a; . /etc/tr-clickhouse-ingest.env; set +a; exec /usr/bin/clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr --multiquery'"
 }
 
 # Replica host names for a cluster: every replica answers clusterAllReplicas.

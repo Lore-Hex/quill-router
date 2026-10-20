@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import base64
+import os
 import re
 import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -482,17 +483,59 @@ TABLES_QUERY = (
     "SELECT hostName() FROM clusterAllReplicas('trustedrouter', system.tables) "
     "WHERE database = 'tr' AND name = 'spend_lease_shadow' ORDER BY 1 FORMAT TSV"
 )
+ALL_REPLICAS = "tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3"
+APPLIED = "10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t0\t\t1\t0\n10.128.0.34\t9000\t0\t\t0\t0"
+
+# A gcloud that records each call's argv and stdin, and answers a statement by
+# what it reads: the script now sends SQL on the ssh session's stdin, which
+# the shared deploy harness drains unread.
+RECORDING_GCLOUD = r"""#!/usr/bin/env bash
+set -euo pipefail
+d="$STUB_DIR"
+n=$(( $(find "$d" -maxdepth 1 -name 'call.*.stdin' | wc -l) + 1 ))
+printf '%s\0' "$@" > "$d/call.$n.argv"
+cat > "$d/call.$n.stdin"
+case " $* " in *" projects describe "*) echo 44325983244; exit 0 ;; esac
+case "$(cat "$d/call.$n.stdin")" in
+  *"system.one"*) cat "$d/replicas" ;;
+  *"system.tables"*) cat "$d/present" ;;
+  *) cat "$d/statuses" ;;
+esac
+"""
 
 
-def _encoded(query: str) -> str:
-    """A statement as the script carries it: base64, one line."""
-    return base64.b64encode(query.encode()).decode()
-
-
-def _carries(query: str) -> str:
-    """An extended regex matching a call that carries ``query``; ``+`` is the
-    only base64 character ERE treats specially."""
-    return _encoded(query).replace("+", "[+]")
+def _run_replicated_migrate(
+    tmp_path: Path,
+    *,
+    present_on: str,
+    apply: bool,
+    statuses: str = APPLIED,
+    migration: str = MIGRATION_017,
+) -> SimpleNamespace:
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    gcloud = stub / "gcloud"
+    gcloud.write_text(RECORDING_GCLOUD)
+    gcloud.chmod(0o755)
+    (stub / "replicas").write_text(ALL_REPLICAS + "\n")
+    (stub / "present").write_text(present_on + "\n")
+    (stub / "statuses").write_text(statuses + "\n")
+    args = ["--apply", migration] if apply else [migration]
+    run = subprocess.run(  # noqa: S603 - the script under test, from the checkout
+        ["bash", str(ROOT / "scripts/deploy/clickhouse_replicated_migrate.sh"), *args],  # noqa: S607
+        cwd=ROOT,
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}", "STUB_DIR": str(stub),
+             "PROJECT_ID": "quill-cloud-proxy"},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    count = len(list(stub.glob("call.*.stdin")))
+    argvs = [(stub / f"call.{n}.argv").read_bytes().decode().split("\0")[:-1] for n in range(1, count + 1)]
+    stdins = [(stub / f"call.{n}.stdin").read_text() for n in range(1, count + 1)]
+    return SimpleNamespace(returncode=run.returncode, stdout=run.stdout, stderr=run.stderr,
+                           calls=argvs, stdins=stdins)
 
 
 def _migration_017() -> str:
@@ -500,67 +543,35 @@ def _migration_017() -> str:
     return (ROOT / MIGRATION_017).read_text().rstrip("\n")
 
 
-def _run_replicated_migrate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    present_on: str,
-    apply: bool,
-    statuses: str = "10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t0\t\t1\t0\n10.128.0.34\t9000\t0\t\t0\t0",
-):
-    from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture
-
-    script = "scripts/deploy/clickhouse_replicated_migrate.sh"
-    monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
-        responses=(
-            (r"projects describe.*projectNumber", "44325983244"),
-            (r"compute ssh .*" + _carries(REPLICAS_QUERY), "tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3"),
-            (r"compute ssh .*" + _carries(TABLES_QUERY), present_on),
-            (r"compute ssh .*" + _carries(_migration_017()), statuses),
-        ),
-    ))
-    isolated = DeployScriptHarness(tmp_path / "replicated-migrate")
-    args = [MIGRATION_017]
-    if apply:
-        args.insert(0, "--apply")
-    return isolated.run(script, args=tuple(args))
+def _applied(run: SimpleNamespace, sql: str | None = None) -> bool:
+    return (sql or _migration_017()) in run.stdins
 
 
-def _applied(run) -> bool:
-    return any(_encoded(_migration_017()) in " ".join(call) for call in run.calls)
-
-
-def test_replicated_migrate_refuses_when_a_target_table_is_missing_on_a_replica(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_replicated_migrate(
-        tmp_path, monkeypatch, present_on="tr-clickhouse-1", apply=True,
-    )
+def test_replicated_migrate_refuses_when_a_target_table_is_missing_on_a_replica(tmp_path: Path) -> None:
+    run = _run_replicated_migrate(tmp_path, present_on="tr-clickhouse-1", apply=True)
     assert run.returncode != 0
     assert "tr.spend_lease_shadow is missing on tr-clickhouse-2 tr-clickhouse-3" in run.stderr
     assert "CREATE TABLE IF NOT EXISTS tr.spend_lease_shadow ON CLUSTER trustedrouter" in run.stderr
+    assert REPLICAS_QUERY in run.stdins and TABLES_QUERY in run.stdins
     assert not _applied(run)
 
 
-def test_replicated_migrate_applies_when_every_replica_has_the_table(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_replicated_migrate(
-        tmp_path, monkeypatch,
-        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=True,
-    )
+def test_replicated_migrate_applies_when_every_replica_has_the_table(tmp_path: Path) -> None:
+    run = _run_replicated_migrate(tmp_path, present_on=ALL_REPLICAS, apply=True)
     assert run.returncode == 0, run.stderr
     assert "present on all 3 replicas of trustedrouter" in run.stdout
     assert _applied(run)
-    assert "applied clickhouse/017_regional_coverage_replicated.sql on every replica" in run.stdout
+    assert f"applied {MIGRATION_017} on every replica" in run.stdout
+    # No SQL rides the command line: the remote command is the same for every
+    # statement, and none of the migration's text is in any argv.
+    commands = {arg for call in run.calls for arg in call if arg.startswith("--command=")}
+    assert len(commands) == 1, commands
+    assert not any("spend_lease_shadow" in arg for call in run.calls for arg in call)
 
 
-def test_replicated_migrate_fails_on_a_non_zero_replica_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_replicated_migrate_fails_on_a_non_zero_replica_status(tmp_path: Path) -> None:
     run = _run_replicated_migrate(
-        tmp_path, monkeypatch,
-        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=True,
+        tmp_path, present_on=ALL_REPLICAS, apply=True,
         statuses="10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t60\tCode: 60. DB::Exception: Could not find table\t1\t0",
     )
     assert run.returncode != 0
@@ -568,30 +579,23 @@ def test_replicated_migrate_fails_on_a_non_zero_replica_status(
     assert "10.128.0.28: Code: 60" in run.stderr
 
 
-def test_replicated_migrate_dry_run_checks_without_applying(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_replicated_migrate(
-        tmp_path, monkeypatch,
-        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=False,
-    )
+def test_replicated_migrate_dry_run_checks_without_applying(tmp_path: Path) -> None:
+    run = _run_replicated_migrate(tmp_path, present_on=ALL_REPLICAS, apply=False)
     assert run.returncode == 0, run.stderr
     assert "dry-run" in run.stdout
+    assert REPLICAS_QUERY in run.stdins and TABLES_QUERY in run.stdins
     assert not _applied(run)
 
 
-def test_replicated_migrate_statement_survives_both_remote_shells(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The --command the script hands gcloud runs on the node through the login
-    shell's `bash -c` and then `sudo sh -c '...'`. Run exactly that string
-    through both here, with sudo, the env file and clickhouse-client stubbed
-    (their absolute paths swapped for temporary ones, which quoting does not
-    touch), and require ClickHouse to receive the migration byte for byte.
-    The quoting this replaced (printf %q inside sh's single quotes) failed at
-    the first `'` of every query, presence checks included."""
-    from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture
-
+def test_replicated_migrate_statement_survives_both_remote_shells(tmp_path: Path) -> None:
+    """On the node, gcloud's --command runs through the login shell's `bash -c`
+    and then `sudo sh -c '...'`, with the ssh session's stdin. Run exactly the
+    script's command string through both here, with the statement the script
+    sent on stdin, sudo, the env file and clickhouse-client stubbed (their
+    absolute paths swapped for temporary ones, which quoting does not touch),
+    and require ClickHouse to receive the migration byte for byte. The quoting
+    this replaced (printf %q inside sh's single quotes) failed at the first
+    `'` of every query, presence checks included."""
     migration = tmp_path / "900_quoting_replicated.sql"
     migration.write_text(
         "-- the table's (owner's) note: $HOME `date` \"double\" \\backslash; 'unbalanced\n"
@@ -599,27 +603,14 @@ def test_replicated_migrate_statement_survives_both_remote_shells(
         "    ADD COLUMN IF NOT EXISTS note String DEFAULT 'it''s (fine)';\n"
     )
     sql = migration.read_text().rstrip("\n")
-    script = "scripts/deploy/clickhouse_replicated_migrate.sh"
-    monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
-        responses=(
-            (r"projects describe.*projectNumber", "44325983244"),
-            (r"compute ssh .*" + _carries(REPLICAS_QUERY), "tr-clickhouse-1"),
-            (r"compute ssh .*" + _carries(TABLES_QUERY), "tr-clickhouse-1"),
-            (r"compute ssh .*" + _carries(sql), "10.128.15.214\t9000\t0\t\t0\t0"),
-        ),
-    ))
-    run = DeployScriptHarness(tmp_path / "harness").run(script, args=("--apply", str(migration)))
+    run = _run_replicated_migrate(
+        tmp_path, present_on=ALL_REPLICAS, apply=True, migration=str(migration),
+    )
     assert run.returncode == 0, run.stderr
     # The transcript names each statement and the node it ran on, in plain text.
     assert f"tr-clickhouse-1: {sql}" in run.stderr
-
-    commands = [
-        arg.removeprefix("--command=")
-        for call in run.calls
-        for arg in call
-        if arg.startswith("--command=") and _encoded(sql) in arg
-    ]
-    assert len(commands) == 1, commands
+    sent = run.stdins.index(sql)
+    [command] = [arg.removeprefix("--command=") for arg in run.calls[sent] if arg.startswith("--command=")]
 
     node = tmp_path / "node"
     (node / "bin").mkdir(parents=True)
@@ -627,22 +618,24 @@ def test_replicated_migrate_statement_survives_both_remote_shells(
     env_file.write_text("CH_PASSWORD='fixture-only'\n")
     received, argv = node / "stdin.sql", node / "argv"
     client = node / "clickhouse-client"
-    client.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {argv}\ncat > {received}\n')
+    client.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {argv}\ncat > {received}\nexit 7\n')
     sudo = node / "bin" / "sudo"
     sudo.write_text('#!/bin/sh\nexec "$@"\n')
     for executable in (client, sudo):
         executable.chmod(0o755)
-    remote = commands[0].replace("/etc/tr-clickhouse-ingest.env", str(env_file)).replace(
+    remote = command.replace("/etc/tr-clickhouse-ingest.env", str(env_file)).replace(
         "/usr/bin/clickhouse-client", str(client)
     )
     login = subprocess.run(  # noqa: S603 - the script's own command string is the subject
         ["bash", "-c", remote],  # noqa: S607 - bash from PATH, as the node's login shell
+        input=run.stdins[sent],
         env={"PATH": f"{node / 'bin'}:/usr/bin:/bin"},
         capture_output=True,
         text=True,
         check=False,
     )
-    assert login.returncode == 0, login.stderr
+    # clickhouse-client's own exit status is the command's (the stub exits 7).
+    assert login.returncode == 7, login.stderr
     assert received.read_text() == sql
     passed = argv.read_text().splitlines()
     assert "--multiquery" in passed
