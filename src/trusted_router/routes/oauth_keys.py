@@ -810,7 +810,10 @@ def _oauth_error(error: str, description: str, *, status: int = 400, headers: di
 
 def _pkce_matches(code: OAuthAuthorizationCode, verifier: str) -> bool:
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
-    return hmac.compare_digest(expected, str(code.code_challenge or ""))
+    # compare_digest(str, str) raises for non-ASCII input. A malformed stored
+    # challenge is an authentication failure, not an internal server error.
+    challenge = str(code.code_challenge or "")
+    return challenge.isascii() and hmac.compare_digest(expected, challenge)
 
 
 def _rate_limit_exchange(request: Request, *, rfc: bool) -> JSONResponse | None:

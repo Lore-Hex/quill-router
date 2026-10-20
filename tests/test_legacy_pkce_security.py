@@ -51,3 +51,22 @@ def test_legacy_s256_exchange_still_returns_house_envelope(
     assert response.status_code == 200, response.text
     assert {"key", "user_id", "identity", "data"} <= response.json().keys()
     assert "access_token" not in response.json()
+
+
+def test_non_ascii_stored_challenge_returns_auth_error_not_server_error(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
+    code, _ = _create_code(client, user_headers, code_challenge="\u00e9" * 43)
+    response = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["message"] == "Invalid code_verifier"
+
+
+@pytest.mark.parametrize("verifier", ["a" * 42, "a" * 129, "!" * 48])
+def test_legacy_verifier_must_meet_rfc7636(
+    client: TestClient, user_headers: dict[str, str], verifier: str
+) -> None:
+    code, _ = _create_code(client, user_headers, verifier=verifier)
+    response = client.post("/v1/auth/keys", json={"code": code, "code_verifier": verifier})
+    assert response.status_code == 400
+    assert not STORE.list_keys(next(iter(STORE.oauth_code_store.codes.values())).workspace_id)
