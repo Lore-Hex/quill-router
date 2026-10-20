@@ -16,7 +16,7 @@
 # local.fastpath_edge_port is infra/fastpath.tf's; the nodes' unit reads it too.
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
-  fastpath_edge_retiring = ["tr-fastpath-1", "tr-fastpath-2"]
+  fastpath_edge_retiring = []
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
