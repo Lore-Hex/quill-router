@@ -13,3 +13,15 @@
   -H "Authorization: Bearer $TR_MANAGEMENT_KEY"</code></pre>
   <p>Keep management keys on your server. Use an inference key in your model client.</p>
 </section>
+
+<section id="nyte-api" class="routing-feature-section" style="margin-top:40px">
+  <h2>New York Token Exchange API</h2>
+  <p>Use <code>https://api.nytokenexchange.com/v1</code> as an alternate inference base URL. It accepts the same TrustedRouter API keys, request arguments, provider controls and streaming formats. Requests use your existing balance and key limits. Key creation and account management remain at <code>{{ control_plane_api_base_url }}</code>.</p>
+  <p>Every <code>trustedrouter/</code> model also accepts the <code>nyte/</code> prefix: <code>nyte/auto</code>, <code>nyte/fast</code>, <code>nyte/zdr</code>, <code>nyte/confidential</code> and named combination models. These are alternate names, with identical routing and billing. The catalog keeps one entry per model and lists aliases in <code>trustedrouter.aliases</code>.</p>
+  <p>For confidential-only inference, use <code>https://api.confidential.nytokenexchange.com/v1</code> and include <code>provider.min_privacy: "confidential"</code>. This endpoint rejects missing or weaker privacy settings and unsupported operations. It requires verified provider-side confidential compute, end-to-end encryption and explicit zero retention, and fails closed when no qualifying route is available. The ordinary endpoint does not impose this privacy floor.</p>
+  <pre><code>curl https://api.confidential.nytokenexchange.com/v1/chat/completions \
+  -H "Authorization: Bearer $TR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nyte/auto","messages":[{"role":"user","content":"Hello"}],"provider":{"min_privacy":"confidential"},"stream":true}'</code></pre>
+  <p>Use <code>GET /v1/models</code> for discovery and <code>/attestation</code> on either API hostname for gateway verification. See the <a href="/trust">trust center</a> and the <a href="https://nytokenexchange.com/#spot-api">spot exchange quickstart</a>.</p>
+</section>

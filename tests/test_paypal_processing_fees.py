@@ -115,40 +115,44 @@ def test_paypal_checkout_uses_the_existing_stripe_card_fee_schedule(
     unit = captured["purchase_units"][0]
     assert unit["amount"] == {
         "currency_code": "USD",
-        "value": "26.06",
-        "breakdown": {"item_total": {"currency_code": "USD", "value": "26.06"}},
+        "value": "26.59",
+        "breakdown": {"item_total": {"currency_code": "USD", "value": "26.59"}},
     }
     assert [(item["name"], item["unit_amount"]["value"]) for item in unit["items"]] == [
         ("TrustedRouter credits", "25.00"),
-        ("Payment processing fee", "1.06"),
+        ("Payment processing fee", "1.59"),
     ]
     reference = json.loads(unit["custom_id"])
     assert reference["c"] == 2500
-    assert reference["t"] == 2606
+    assert reference["t"] == 2659
     initiating_user = STORE.find_user_by_email("alice@example.com")
     assert initiating_user is not None
     assert reference == {
         "w": unit["reference_id"],
         "u": initiating_user.id,
         "c": 2500,
-        "t": 2606,
+        "t": 2659,
     }
     data = response.json()["data"]
     assert data["amount_microdollars"] == 25_000_000
-    assert data["processing_fee_microdollars"] == 1_060_000
-    assert data["total_microdollars"] == 26_060_000
+    assert data["processing_fee_microdollars"] == 1_590_000
+    assert data["total_microdollars"] == 26_590_000
 
 
+@pytest.mark.parametrize("credit_cents,fee_cents", [(1000, 80), (2500, 106), (2500, 159)])
 def test_paypal_capture_credits_only_principal_and_is_idempotent(
     client: TestClient,
     user_headers: dict[str, str],
+    credit_cents: int,
+    fee_cents: int,
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     before = live_credit_summary(workspace_id)
     assert before is not None
     order = _completed_order(
         workspace_id=workspace_id,
-        custom_id=f"tr1|{workspace_id}|2500|2606",
+        custom_id=f"tr1|{workspace_id}|{credit_cents}|{credit_cents + fee_cents}",
+        value=f"{(credit_cents + fee_cents) // 100}.{(credit_cents + fee_cents) % 100:02d}",
     )
 
     first = credit_paypal_capture(order, expected_workspace_id=workspace_id)
@@ -156,12 +160,12 @@ def test_paypal_capture_credits_only_principal_and_is_idempotent(
 
     assert first.credited is True
     assert second.credited is False
-    assert first.amount_microdollars == 25_000_000
-    assert first.processing_fee_microdollars == 1_060_000
-    assert first.charge_amount_microdollars == 26_060_000
+    assert first.amount_microdollars == credit_cents * 10_000
+    assert first.processing_fee_microdollars == fee_cents * 10_000
+    assert first.charge_amount_microdollars == (credit_cents + fee_cents) * 10_000
     after = live_credit_summary(workspace_id)
     assert after is not None
-    assert after["total_credits"] - before["total_credits"] == 25_000_000
+    assert after["total_credits"] - before["total_credits"] == credit_cents * 10_000
 
 
 def test_paypal_capture_rejects_charge_that_does_not_match_reference(
@@ -355,39 +359,42 @@ def test_mock_paypal_checkout_reports_same_fee_breakdown(
     data = response.json()["data"]
     assert data["mode"] == "mock_paypal"
     assert data["amount_microdollars"] == 25_000_000
-    assert data["processing_fee_microdollars"] == 1_060_000
-    assert data["total_microdollars"] == 26_060_000
+    assert data["processing_fee_microdollars"] == 1_590_000
+    assert data["total_microdollars"] == 26_590_000
 
 
-def test_paypal_checkout_rejects_amount_below_ten_dollars(
+@pytest.mark.parametrize("amount", ["1", "9.99", "10", "19.99"])
+def test_paypal_checkout_rejects_amount_below_twenty_dollars(
     client: TestClient,
     user_headers: dict[str, str],
+    amount: str,
 ) -> None:
     response = client.post(
         "/v1/billing/checkout",
         headers=user_headers,
-        json={"amount": "9.99", "payment_method": "paypal"},
+        json={"amount": amount, "payment_method": "paypal"},
     )
 
     assert response.status_code == 400
     assert response.json()["error"]["type"] == "bad_request"
+    assert "at least 20" in response.json()["error"]["message"]
 
 
-def test_minimum_paypal_checkout_applies_eighty_cent_fee_floor(
+def test_minimum_paypal_checkout_preserves_twenty_dollars_of_credits(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
     response = client.post(
         "/v1/billing/checkout",
         headers=user_headers,
-        json={"amount": 10, "payment_method": "paypal"},
+        json={"amount": 20, "payment_method": "paypal"},
     )
 
     assert response.status_code == 201, response.text
     data = response.json()["data"]
-    assert data["amount_microdollars"] == 10_000_000
-    assert data["processing_fee_microdollars"] == 800_000
-    assert data["total_microdollars"] == 10_800_000
+    assert data["amount_microdollars"] == 20_000_000
+    assert data["processing_fee_microdollars"] == 1_370_000
+    assert data["total_microdollars"] == 21_370_000
 
 
 def test_non_paypal_checkout_keeps_one_dollar_minimum(

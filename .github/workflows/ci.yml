@@ -16,7 +16,7 @@ on:
 # succeeds, so the gate semantics are unchanged by the split.
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
@@ -32,7 +32,7 @@ jobs:
         run: uv run python scripts/update_model_changes.py --check
 
   spanner-emulator:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       SPANNER_EMULATOR_HOST: 127.0.0.1:9010
@@ -100,7 +100,7 @@ jobs:
           docker logs ${{ job.services.spanner.id }}
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -118,7 +118,7 @@ jobs:
         run: npx stylelint "src/trusted_router/static/*.css"
 
   production-import:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
@@ -178,7 +178,7 @@ jobs:
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/merged-durations.json
         # Review the output, copy it to .test_durations, and commit.
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "12"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
@@ -297,7 +297,7 @@ jobs:
     # partial run is not a measurement of this commit.
     needs: test
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
@@ -370,7 +370,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "8"
     steps:
@@ -417,7 +417,7 @@ jobs:
   # Frozen reference tracing is intentionally separate from coverage tracing.
   # Both lifecycle clocks retain the complete matrix; no cloud identity needed.
   proof-oracle:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -457,7 +457,7 @@ jobs:
           --splitting-algorithm least_duration
 
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
@@ -503,7 +503,7 @@ jobs:
   # test_an_unchanged_write_side_is_silent_and_reads_no_network, which drives
   # the real main() with every network seam replaced by a function that raises.
   byok-format-ordering:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
@@ -542,7 +542,7 @@ jobs:
   # the pinned TLC from proofs/ on a small instance and compares every step,
   # so this job needs Java as well as Go.
   fastpath:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     # The module stays on Go 1.24, the enclave's: a dependency that needs a
     # later Go fails the build rather than fetching a newer toolchain.
@@ -586,7 +586,7 @@ jobs:
   # With FASTPATH_SPANNER_EMULATOR=1 an emulator that cannot be reached fails
   # the tests; the fastpath job, without it, skips them.
   fastpath-spanner:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GOTOOLCHAIN: local
@@ -633,7 +633,7 @@ jobs:
   # so the store job leaves them out; each runs here in a job of its own,
   # without the race detector, against an emulator of its own.
   fastpath-walks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 260
     strategy:
       fail-fast: false
@@ -670,7 +670,7 @@ jobs:
         run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
 
   proofs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

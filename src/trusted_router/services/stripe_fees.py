@@ -22,6 +22,7 @@ class ProcessingFee:
     fixed_fee_cents: int
     minimum_fee_cents: int = 0
     max_fee_cents: int | None = None
+    fee_multiplier_basis_points: int = 10_000
 
     @property
     def credit_amount_microdollars(self) -> int:
@@ -103,6 +104,7 @@ class ProcessingFee:
             "fee_variable_basis_points": str(self.variable_basis_points),
             "fee_fixed_cents": str(self.fixed_fee_cents),
             "fee_minimum_cents": str(self.minimum_fee_cents),
+            "fee_multiplier_basis_points": str(self.fee_multiplier_basis_points),
         }
         if self.max_fee_cents is not None:
             metadata["fee_max_cents"] = str(self.max_fee_cents)
@@ -118,13 +120,15 @@ def processing_fee(
     fixed_fee_cents: int,
     minimum_fee_cents: int = 0,
     max_fee_cents: int | None = None,
+    fee_multiplier_basis_points: int = 10_000,
 ) -> ProcessingFee:
     """Gross up a USD-cent principal so it survives the configured fee.
 
     If the processor charges ``rate * total + fixed``, the total required
     to preserve ``principal`` is ``ceil((principal + fixed) / (1-rate))``.
-    All operations stay integer-only and round in the customer's favor only
-    when doing so still covers the configured processing cost.
+    The customer surcharge multiplier applies after the base floor and cap,
+    rounded up to cents. Processor cost estimates keep the original schedule.
+    All operations stay integer-only.
     """
     if credit_amount_cents <= 0:
         raise ValueError("credit_amount_cents must be positive")
@@ -155,6 +159,9 @@ def processing_fee(
         charge_amount_cents - credit_amount_cents,
         minimum_fee_cents,
     )
+    processing_fee_cents = scale_processing_fee_cents(
+        processing_fee_cents, fee_multiplier_basis_points
+    )
     charge_amount_cents = credit_amount_cents + processing_fee_cents
     return ProcessingFee(
         credit_amount_cents=credit_amount_cents,
@@ -164,7 +171,17 @@ def processing_fee(
         fixed_fee_cents=fixed_fee_cents,
         minimum_fee_cents=minimum_fee_cents,
         max_fee_cents=max_fee_cents,
+        fee_multiplier_basis_points=fee_multiplier_basis_points,
     )
+
+
+def scale_processing_fee_cents(cents: int, multiplier_basis_points: int) -> int:
+    """Apply the customer surcharge multiplier, rounding up once to cents."""
+    if cents < 0:
+        raise ValueError("fee cents cannot be negative")
+    if multiplier_basis_points < 10_000:
+        raise ValueError("fee_multiplier_basis_points must be at least 10000")
+    return _ceil_div(cents * multiplier_basis_points, 10_000)
 
 
 def _ceil_div(numerator: int, denominator: int) -> int:

@@ -1,0 +1,19 @@
+.spot-api{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:40px;border-bottom:1px solid var(--line)}
+.spot-api h2{font-size:38px}.spot-api h3{margin-top:0}.spot-api p{color:var(--muted)}.spot-api .section-intro h2+p{margin-top:24px}
+.spot-api-actions{margin-top:28px}.spot-api-example{min-width:0}
+.spot-api pre{max-width:100%;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:22px;background:#101814;border:1px solid var(--line);border-radius:6px;font:13px/1.8 monospace;tab-size:2}
+.spot-api-note{font-size:15px}.spot-api-note code,.spot-api-aliases code{overflow-wrap:anywhere}
+.spot-api-aliases{grid-column:1/-1;font-size:15px;margin:0}
+@media(max-width:800px){.spot-api{grid-template-columns:1fr;gap:28px}.spot-api h2{font-size:32px}.spot-api pre{padding:16px}}
+.spot-api .spot-api-steps{padding-left:22px;margin:24px 0;color:var(--muted)}
+.spot-api-steps li{padding:6px 0}.spot-api-steps code{overflow-wrap:anywhere;font-size:14px}
+.spot-api .spot-api-status{font-size:14px;line-height:1.7;border-left:2px solid #c9b78b;padding-left:16px}
+.spot-api-status strong{color:var(--ink)}.spot-api-status code{overflow-wrap:anywhere}
+.open-stack{border-block:1px solid var(--line)}.open-stack h2{font-size:38px}
+.open-stack-intro{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:start}
+.open-stack-intro p{color:var(--muted);margin-top:0}.open-stack-intro h2{margin-bottom:24px}
+.open-stack .actions{gap:12px;flex-wrap:wrap}.open-stack .stack-status{font-size:14px;margin-top:20px}
+.stack-flow{list-style:none;padding:28px 0;margin:30px 0 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;border-block:1px solid var(--line)}
+.stack-flow li{min-width:0}.stack-flow span{font-size:13px;color:#c9b78b}.stack-flow h3{font-size:20px;margin:12px 0}.stack-flow p{font-size:16px;color:var(--muted)}
+.stack-index{display:flex;justify-content:space-between;align-items:center;gap:28px;padding-top:30px}.stack-index h3{margin:0 0 12px;font-size:24px}.stack-index p{max-width:640px;color:var(--muted);margin:0}.stack-index a{flex-shrink:0}
+@media(max-width:800px){.open-stack-intro,.stack-flow{grid-template-columns:1fr;gap:24px}.open-stack h2{font-size:32px}.stack-index{align-items:start;flex-direction:column}}
