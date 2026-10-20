@@ -644,7 +644,8 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
             assert trace["rpc_elapsed_us"] == sum(expected)
             assert trace["cycle_us"] == (sum(expected) if outcome != "missed" else None)
             if outcome == "lost_claim":
-                assert trace["claim_at_ns"] == NOW_US*1000
+                assert trace["claim_at_ns"] is None
+                assert trace["rpc_count"] == 1  # Committed claim snapshot, no transaction.
         histogram = publisher["rpc_us"]
         expected_counts = [0]*len(histogram["counts"])
         for elapsed_us in expected:
