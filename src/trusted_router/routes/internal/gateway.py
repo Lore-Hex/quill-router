@@ -439,7 +439,7 @@ def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None
 
     Each authorize that came through the edge (it carries the verdict
     header) and reaches this comparison is counted, as agree, differ or
-    skipped (nothing to compare: unread, unchecked or absent; split it by
+    skipped (nothing to compare: unread, unchecked, absent or other; split it by
     the edge= label), so the absence of
     disagreements can be told from the absence of comparisons; a
     disagreement is also a warning. A call rejected before it (internal
