@@ -1356,7 +1356,8 @@ def test_console_workspace_selector_persists_session_workspace(
 
     credits_page = client.get("/console/credits")
     normalized_credits = " ".join(credits_page.text.split())
-    assert "with an $0.80 minimum fee" in normalized_credits
+    assert "with a $1.20 minimum fee" in normalized_credits
+    assert "ACH fee is capped at $7.50" in normalized_credits
 
     created = client.post(
         "/console/api-keys",
@@ -1556,12 +1557,12 @@ def test_console_checkout_exposes_and_enforces_paypal_minimum(
     page = client.get("/console/credits")
 
     assert page.status_code == 200
-    assert 'data-paypal-minimum="10"' in page.text
-    assert "PayPal purchases have a $10 minimum." in page.text
+    assert 'data-paypal-minimum="20"' in page.text
+    assert "PayPal purchases have a $20 minimum." in page.text
 
     too_small = client.post(
         "/console/credits/checkout",
-        data={"amount": "9.99", "payment_method": "paypal"},
+        data={"amount": "19.99", "payment_method": "paypal"},
         follow_redirects=False,
     )
     assert too_small.status_code == 303
@@ -1569,7 +1570,7 @@ def test_console_checkout_exposes_and_enforces_paypal_minimum(
 
     minimum = client.post(
         "/console/credits/checkout",
-        data={"amount": "10", "payment_method": "paypal"},
+        data={"amount": "20", "payment_method": "paypal"},
         follow_redirects=False,
     )
     assert minimum.status_code == 303
@@ -1653,8 +1654,8 @@ def test_console_checkout_redirects_to_stripe_stablecoin_session(monkeypatch) ->
     assert captured["metadata"]["workspace_id"] == workspace.id
     assert captured["metadata"]["payment_method"] == "stablecoin"
     assert captured["metadata"]["credit_amount_microdollars"] == "25000000"
-    assert captured["metadata"]["processing_fee_cents"] == "39"
-    assert captured["metadata"]["charge_amount_cents"] == "2539"
+    assert captured["metadata"]["processing_fee_cents"] == "59"
+    assert captured["metadata"]["charge_amount_cents"] == "2559"
     assert captured["success_url"].endswith("/console/credits?checkout=success")
     assert captured["cancel_url"].endswith("/console/credits?checkout=cancel")
 

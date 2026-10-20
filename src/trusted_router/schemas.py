@@ -40,6 +40,7 @@ from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
+    MIN_PAYPAL_CHECKOUT_DOLLARS,
     MIN_PAYPAL_CHECKOUT_MICRODOLLARS,
     dollars_to_microdollars,
 )
@@ -121,7 +122,9 @@ class CheckoutRequest(_Lenient):
             self.payment_method == "paypal"
             and dollars_to_microdollars(self.amount) < MIN_PAYPAL_CHECKOUT_MICRODOLLARS
         ):
-            raise ValueError("PayPal checkout amount must be at least 10")
+            raise ValueError(
+                f"PayPal checkout amount must be at least {MIN_PAYPAL_CHECKOUT_DOLLARS}"
+            )
         return self
 
 

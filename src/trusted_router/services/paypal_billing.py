@@ -86,6 +86,7 @@ def create_paypal_checkout_session(
         variable_basis_points=settings.stripe_card_fee_basis_points,
         fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
         minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
+        fee_multiplier_basis_points=settings.stripe_paypal_fee_multiplier_basis_points,
     )
     workspace = STORE.get_workspace(workspace_id)
     if workspace is None:
