@@ -73,6 +73,7 @@ INPUT_ONLY_PROVIDER_MODELS = frozenset(
     ("scaledown", f"scaledown/{task}")
     for task in ("compress", "summarize", "extract", "classify")
 )
+INPUT_ONLY_PROVIDER_MODELS |= {("cloudflare-workers-ai", "cloudflare/clairic")}
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS |= INPUT_ONLY_PROVIDER_MODELS
 PASSTHROUGH_RETAIL_PROVIDER_MODELS = frozenset(
     {
@@ -91,6 +92,9 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 # QCP #535 must be verified on a gateway fleet before it can serve Bedrock.
 # An upgraded GCP control plane may also authorize older AWS/Azure gateways.
 BEDROCK_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
+# Clairic needs the native /ai/run adapter. Publish only after the GCP fleet
+# rolls; older AWS/Azure gateways must not send extraction tasks to chat.
+CLAIRIC_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
 
 # Fugu reports additive provider-side orchestration tokens only after a call.
 # They are included in exact settlement, but may exceed the caller-derived
@@ -139,6 +143,8 @@ def provider_model_available_from_gateway_region(
 ) -> bool:
     if provider_slug == "amazon-bedrock":
         return gateway_region in BEDROCK_GATEWAY_REGIONS
+    if (provider_slug, model_id) == ("cloudflare-workers-ai", "cloudflare/clairic"):
+        return gateway_region in CLAIRIC_GATEWAY_REGIONS
     unsupported = UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get(
         (provider_slug, model_id),
         frozenset(),

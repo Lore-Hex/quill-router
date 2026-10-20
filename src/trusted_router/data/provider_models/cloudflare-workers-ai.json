@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-21T18:21:23Z",
   "price_scale": "microdollars_per_million",
   "model_count": 40,
   "models": [
@@ -817,7 +817,7 @@
       "unresolved_since": "2026-10-17"
     },
     {
-      "display_name": "@cf/cloudflare/clairic",
+      "display_name": "Cloudflare Clairic",
       "title": "@cf/cloudflare/clairic",
       "model_type": "chat",
       "input_modalities": [
@@ -833,9 +833,21 @@
       "id": "cloudflare/clairic",
       "upstream_id": "@cf/cloudflare/clairic",
       "context_length": 65536,
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-10-20"
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Preview typed extraction model: extract, compute, estimate or forecast values. Input-only billing, with confidence scores and distributions. Not a conversational model. Weights are not yet public.",
+        "input_format": "POST /v1/chat/completions with cloudflare/clairic. Put native task JSON in exactly one user message: state, fields, and optionally reference_date, options and embedded images (PNG/JPEG/WebP, up to 4). Field types: text, number, date, time, datetime, duration, list, estimate, forecast. No tools, response_format or chat history. Native schema: https://developers.cloudflare.com/workers-ai/models/clairic/",
+        "output_format": "JSON in choices[0].message.content: answers, confidence/probability metadata, truncated and native usage. Streaming delivers the completed extraction as one result. prompt_tokens is the provider's billable input_tokens across all passes; completion_tokens is zero. A null value means insufficient evidence. Check truncated before relying on the result.",
+        "example_input": "{\"state\": \"Invoice INV-2291: total USD 1080.\", \"fields\": {\"invoice_number\": {\"type\": \"text\"}, \"total\": {\"type\": \"number\"}}}",
+        "example_output": "{\"answers\": {\"invoice_number\": {\"type\": \"text\", \"value\": \"INV-2291\", \"confidence\": 0.99}, \"total\": {\"type\": \"number\", \"value\": 1080, \"confidence\": 0.99}}, \"truncated\": false}"
+      },
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 0
     },
     {
       "display_name": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
