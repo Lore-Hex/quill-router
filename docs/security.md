@@ -201,6 +201,17 @@ Pages and the mirror publish those bundles unchanged; they do not sign them.
 Verify signatures and live attestation against the published measurements,
 not just the existence of an HTTPS page.
 
+For GCP, compare the verified live `submods.container.image_digest` with
+`accepted_image_digests` in the signed release record. The scalar `image_digest`
+and `source_commit` describe the target release, not every serving region during
+a rolling deployment. The deployment publishes the approved transition set
+before switching regions and narrows it only after the rollout succeeds.
+Reject an empty or malformed set and any live digest outside it. Keep the
+Google signature, issuer, audience, fresh nonce, TLS-session binding, and
+production debug-state checks; accepting a published transition set does not
+replace those checks. A locally pinned single-image policy can intentionally
+block during a rollout, but that is different from an unpublished image.
+
 ## Legacy delegated-key PKCE
 
 Both `/v1/auth/keys/code` and the legacy `/auth` consent flow require a PKCE
