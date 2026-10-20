@@ -1,6 +1,19 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
+
+from .deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, summarise
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -445,7 +458,7 @@ def test_analytics_nodes_create_the_role_they_launch_with() -> None:
         assert "iam add-role-to-instance-profile" in script
 
 
-def test_analytics_role_is_scoped_to_one_secret_and_one_key() -> None:
+def test_analytics_role_is_scoped_to_its_own_secrets_and_one_key() -> None:
     for path in (PARIS, STOCKHOLM):
         script = path.read_text()
         # Its own password secret, not the whole quill/ namespace.
@@ -474,3 +487,217 @@ def test_paris_converges_the_profile_on_an_existing_node() -> None:
     holding the enclave profile forever."""
     script = PARIS.read_text()
     assert "replace-iam-instance-profile-association" in script
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("secret_exists", [False, True])
+def test_paris_installs_reader_on_new_and_existing_nodes_without_rotating_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+    secret_exists: bool,
+) -> None:
+    script = "scripts/deploy/aws_eu_clickhouse.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    password = "harness-reader-only"  # noqa: S105 - leak canary
+    writer_password = "harness-writer-only"  # noqa: S105 - leak canary
+    generated_password = "harness-generated-password"  # noqa: S105 - leak canary
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES, script, replace(
+            fixture,
+            responses=(
+                (r"ec2 describe-instances.*InstanceId", "i-existing" if existing else "None"),
+                (r"ec2 describe-vpcs", "10.50.0.0/16"),
+                (r"secretsmanager get-secret-value.*tr-eu-clickhouse-read-password", password),
+                (r"secretsmanager get-secret-value.*tr-eu-clickhouse-password", writer_password),
+                (r"openssl rand", generated_password),
+                *fixture.responses,
+            ),
+            failures=() if secret_exists else (
+                r"secretsmanager describe-secret.*--secret-id quill/tr-eu-clickhouse(-read)?-password$",
+            ),
+        ),
+    )
+    harness = DeployScriptHarness(tmp_path / "harness")
+    captured = tmp_path / "ssm.json"
+
+    run = harness.run(script, extra_env={"HARNESS_CAPTURE_SSM_PARAMETERS": str(captured)})
+
+    assert run.returncode == 0, summarise(run)
+    creates = [call for call in run.calls if call[:3] == ["aws", "secretsmanager", "create-secret"]]
+    if secret_exists:
+        assert not creates
+    else:
+        assert {call[call.index("--name") + 1] for call in creates} == {
+            "quill/tr-eu-clickhouse-password", "quill/tr-eu-clickhouse-read-password",
+        }
+        assert len(creates) == 2
+        assert all(call[call.index("--secret-string") + 1].startswith("file://") for call in creates)
+    assert not any(call[:3] == ["aws", "secretsmanager", "get-secret-value"] for call in run.calls)
+    role_update = next(call for call in run.calls if call[:3] == ["aws", "iam", "put-role-policy"])
+    policy = json.loads(role_update[role_update.index("--policy-document") + 1].replace("\\n", "\n"))
+    reader_grants = [s for s in policy["Statement"] if "clickhouse-read-password" in s["Resource"]]
+    assert reader_grants == [{
+        "Sid": "ControlReaderPasswordSecretOnly",
+        "Effect": "Allow",
+        "Action": ["secretsmanager:GetSecretValue"],
+        "Resource": "arn:aws:secretsmanager:eu-west-3:123456789012:secret:quill/tr-eu-clickhouse-read-password-harness",
+    }]
+    launches = [call for call in run.calls if call[:3] == ["aws", "ec2", "run-instances"]]
+    if existing:
+        assert not launches
+        commands = json.loads(captured.read_text())["commands"]
+        assert len(commands) == 1
+        remote = commands[0]
+        converge = next(call for call in run.calls if call[:3] == ["aws", "ssm", "send-command"])
+        assert run.calls.index(role_update) < run.calls.index(converge)
+    else:
+        assert len(launches) == 1
+        remote = launches[0][launches[0].index("--user-data") + 1].replace("\\n", "\n")
+        assert "apt-get install -y" in remote and "python3-boto3" in remote
+        assert not captured.exists()
+    assert "SecretId='quill/tr-eu-clickhouse-read-password'" in remote
+    assert "boto3.client('secretsmanager', region_name='eu-west-3')" in remote
+    assert "hashlib.sha256(password.encode()).hexdigest()" in remote
+    assert "GRANT SELECT ON default.*" in remote
+    assert "<ip>10.50.0.0/16</ip>" in remote
+    assert "<readonly>1</readonly>" in remote
+    assert "tr-control-reader.xml" in remote
+    assert not re.search(r"(?m)^set -[^\n]*x", remote)
+    observable = "\n".join((run.stdout, run.stderr, remote, *(" ".join(c) for c in run.calls)))
+    for secret in (password, writer_password, generated_password):
+        assert secret not in observable
+        assert hashlib.sha256(secret.encode()).hexdigest() not in observable
+
+
+def test_paris_reader_install_checks_ssm_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/aws_eu_clickhouse.sh"
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES, script, replace(
+            SCRIPT_FIXTURES[script],
+            responses=((r"ssm get-command-invocation.*--query Status", "Failed"),),
+        ),
+    )
+    run = DeployScriptHarness(tmp_path / "harness").run(script)
+
+    assert run.returncode != 0
+    assert "ClickHouse reader install failed: status=Failed" in run.stderr
+    assert not run.verifier_calls
+
+
+@pytest.mark.parametrize("drain_venv", [False, True])
+def test_paris_reader_fetches_and_hashes_on_the_node(tmp_path: Path, drain_venv: bool) -> None:
+    captured = tmp_path / "ssm.json"
+    run = DeployScriptHarness(tmp_path / "harness").run(
+        "scripts/deploy/aws_eu_clickhouse.sh",
+        extra_env={"HARNESS_CAPTURE_SSM_PARAMETERS": str(captured)},
+    )
+    assert run.returncode == 0, summarise(run)
+    remote = json.loads(captured.read_text())["commands"][0]
+    users = tmp_path / "users.d"
+    users.mkdir()
+    drain_python = tmp_path / "drain-python"
+    if drain_venv:
+        drain_python.symlink_to(sys.executable)
+    script = tmp_path / "reader.sh"
+    script.write_text(remote.replace(
+        "/etc/clickhouse-server/users.d", str(users),
+    ).replace("/opt/tr-clickhouse/venv/bin/python", str(drain_python)))
+    (tmp_path / "boto3.py").write_text('''
+import os
+
+def client(service, *, region_name):
+    assert service == 'secretsmanager' and region_name == 'eu-west-3'
+    return Secrets()
+
+class Secrets:
+    def get_secret_value(self, *, SecretId):
+        assert SecretId == 'quill/tr-eu-clickhouse-read-password'
+        if os.environ.get('LOOKUP_FAILURE'):
+            raise RuntimeError('secret lookup failed')
+        return {'SecretString': os.environ['NODE_PASSWORD']}
+''')
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    (commands / "install").write_text('#!/bin/sh\nshift 4\nexec /usr/bin/install "$@"\n')
+    restarts = tmp_path / "restarts"
+    (commands / "systemctl").write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{restarts}"\n')
+    for command in commands.iterdir():
+        command.chmod(0o755)
+    password = "node-only-reader-password"  # noqa: S105 - leak canary
+    env = {
+        **os.environ, "PATH": f"{commands}:{os.environ['PATH']}",
+        "PYTHONPATH": str(tmp_path), "NODE_PASSWORD": password,
+    }
+    config = users / "tr-control-reader.xml"
+    for _ in range(2):
+        result = subprocess.run(  # noqa: S603
+            ["bash", str(script)], env=env, text=True, capture_output=True, check=True,  # noqa: S607
+        )
+        assert not result.stdout and not result.stderr
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    assert ET.fromstring(config.read_text()).findtext(  # noqa: S314 - locally generated XML
+        "users/tr_control_read/password_sha256_hex",
+    ) == password_hash
+    assert stat.S_IMODE(config.stat().st_mode) == 0o640
+    before = config.read_text()
+    for failure in ({"LOOKUP_FAILURE": "1"}, {"NODE_PASSWORD": ""}):
+        result = subprocess.run(  # noqa: S603
+            ["bash", str(script)], env={**env, **failure}, text=True, capture_output=True,  # noqa: S607
+        )
+        assert result.returncode != 0
+        assert password not in result.stdout + result.stderr
+        assert password_hash not in result.stdout + result.stderr
+        assert config.read_text() == before
+    assert restarts.read_text().splitlines() == ["restart clickhouse-server"]
+
+
+def test_single_node_reader_installer_is_read_only_and_idempotent(tmp_path: Path) -> None:
+    helper = ROOT / "scripts/deploy/_clickhouse_single_node_reader.sh"
+    generated = subprocess.run(  # noqa: S603
+        ["bash", "-c", '. "$1"; single_node_reader_setup 10.50.0.0/16', "bash", str(helper)],  # noqa: S607
+        text=True, capture_output=True, check=True,
+    ).stdout
+    users = tmp_path / "users.d"
+    users.mkdir()
+    writer = users / "default-password.xml"
+    writer.write_text("unchanged writer configuration")
+    script = tmp_path / "reader.sh"
+    script.write_text("set -eu\n" + generated.replace("/etc/clickhouse-server/users.d", str(users)))
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    # Keep the real install/cmp/filesystem behavior; only the host account and
+    # service manager differ from a ClickHouse node.
+    (commands / "install").write_text('#!/bin/sh\nshift 4\nexec /usr/bin/install "$@"\n')
+    restarts = tmp_path / "restarts"
+    (commands / "systemctl").write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{restarts}"\n')
+    for command in commands.iterdir():
+        command.chmod(0o755)
+    env = {**os.environ, "PATH": f"{commands}:{os.environ['PATH']}", "reader_hash": "a" * 64}
+    for _ in range(2):
+        subprocess.run(["bash", str(script)], env=env, check=True, capture_output=True)  # noqa: S603,S607
+
+    config = users / "tr-control-reader.xml"
+    assert stat.S_IMODE(config.stat().st_mode) == 0o640
+    assert writer.read_text() == "unchanged writer configuration"
+    assert restarts.read_text().splitlines() == ["restart clickhouse-server"]
+    tree = ET.fromstring(config.read_text())  # noqa: S314 - locally generated XML
+    assert tree.findtext("profiles/tr_control_readonly/readonly") == "1"
+    user = tree.find("users/tr_control_read")
+    assert user is not None
+    assert user.findtext("password_sha256_hex") == "a" * 64
+    assert user.findtext("profile") == "tr_control_readonly"
+    assert [query.text for query in user.findall("grants/query")] == ["GRANT SELECT ON default.*"]
+    assert [ip.text for ip in user.findall("networks/ip")] == ["10.50.0.0/16", "127.0.0.1"]
+    assert user.find("access_management") is None
+
+    subprocess.run(  # noqa: S603
+        ["bash", str(script)], env={**env, "reader_hash": "b" * 64},  # noqa: S607
+        check=True, capture_output=True,
+    )
+    assert restarts.read_text().splitlines() == ["restart clickhouse-server"] * 2
+    assert ET.fromstring(config.read_text()).findtext(  # noqa: S314
+        "users/tr_control_read/password_sha256_hex"
+    ) == "b" * 64

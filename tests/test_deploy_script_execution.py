@@ -36,6 +36,7 @@ that list ever grows without a reason, or if the docs stop saying so.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -1391,6 +1392,22 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     assert '"TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS": "0"' in service_config
     assert '"TR_SYNTHETIC_RUN_DEADLINE_SECONDS": "240"' in service_config
     assert '"TR_REMEDIATOR_IN_PROCESS_ENABLED": "false"' in service_config
+    assert '"TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "tr_control_read"' in service_config
+    assert (
+        '"TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": '
+        '"arn:aws:secretsmanager:eu-west-3:123456789012:secret:quill/tr-eu-clickhouse-read-password-harness"'
+    ) in service_config
+    clickhouse_secrets = [
+        call for call in run.calls
+        if call[:3] == ["aws", "secretsmanager", "describe-secret"]
+        and "quill/tr-eu-clickhouse-read-password" in call
+    ]
+    assert len(clickhouse_secrets) == 1
+    assert not any(
+        call[:3] == ["aws", "secretsmanager", "get-secret-value"]
+        and "quill/tr-eu-clickhouse-read-password" in call
+        for call in run.calls
+    )
     observer_secret_reads = [
         call
         for call in run.calls
@@ -2041,7 +2058,7 @@ def test_azure_observer_refuses_to_drop_its_only_synthetic_owner(
 def _azure_without_analytics_discovery(fixture: ScriptFixture) -> ScriptFixture:
     discovery_fragments = (
         "vm list-ip-addresses",
-        "keyvault secret show.*tr-azure-clickhouse-password",
+        "keyvault secret show.*tr-azure-clickhouse-read-password",
         "identity show.*tr-azure-clickhouse-identity",
     )
     return replace(
@@ -2049,7 +2066,7 @@ def _azure_without_analytics_discovery(fixture: ScriptFixture) -> ScriptFixture:
         responses=(
             (r"vm list-ip-addresses.*tr-azure-clickhouse-1", ""),
             (
-                r"keyvault secret show.*tr-azure-clickhouse-password.*--query id",
+                r"keyvault secret show.*tr-azure-clickhouse-read-password.*--query id",
                 "",
             ),
             (
@@ -2103,7 +2120,7 @@ def test_azure_observer_emits_the_discovered_operational_analytics_env(
     } == {
         "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "http://10.61.3.4:8123",
-        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "default",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "tr_control_read",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "default",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": "secretref:clickhouse-password",
     }
@@ -2122,7 +2139,7 @@ def test_azure_observer_emits_the_discovered_operational_analytics_env(
     )
     assert clickhouse_reference == (
         "clickhouse-password=keyvaultref:https://trquillkv.vault.azure.net/"
-        "secrets/tr-azure-clickhouse-password/harness-version,identityref:/subscriptions/"
+        "secrets/tr-azure-clickhouse-read-password/harness-version,identityref:/subscriptions/"
         "harness/resourceGroups/tr-azure/providers/Microsoft.ManagedIdentity/"
         "userAssignedIdentities/tr-azure-clickhouse-identity"
     )
@@ -2221,12 +2238,22 @@ def test_azure_observer_keeps_all_retired_private_env_names_absent(tmp_path: Pat
     assert retired <= removed
 
 
-def test_azure_clickhouse_password_never_enters_argv_or_logs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("cloud", ["aws_eu", "azure"])
+def test_control_plane_clickhouse_password_never_enters_argv_or_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cloud: str,
+) -> None:
     password = "harness-clickhouse-password-S3CR3T"  # noqa: S105 - leak canary
-    isolated = DeployScriptHarness(tmp_path / "azure-analytics-password-isolation")
+    script = f"scripts/deploy/{cloud}_control_plane.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(SCRIPT_FIXTURES, script, replace(fixture, responses=(
+        (r"secretsmanager get-secret-value.*clickhouse", password),
+        (r"keyvault secret show.*clickhouse.*--query value", password),
+        *fixture.responses,
+    )))
+    isolated = DeployScriptHarness(tmp_path / "analytics-password-isolation")
 
     run = isolated.run(
-        "scripts/deploy/azure_control_plane.sh",
+        script,
         verifier_rc=0,
         extra_env={"CLICKHOUSE_PASSWORD": password},
     )
@@ -2234,11 +2261,19 @@ def test_azure_clickhouse_password_never_enters_argv_or_logs(tmp_path: Path) -> 
     assert run.returncode == 0, summarise(run)
     observable = "\n".join((run.stdout, run.stderr, *("\t".join(call) for call in run.calls)))
     assert password not in observable
-    key_vault_calls = [
-        call for call in run.calls if call[:4] == ["az", "keyvault", "secret", "show"]
-    ]
-    assert len(key_vault_calls) == 1
-    assert key_vault_calls[0][key_vault_calls[0].index("--query") + 1] == "id"
+    assert hashlib.sha256(password.encode()).hexdigest() not in observable
+    if cloud == "azure":
+        key_vault_calls = [
+            call for call in run.calls if call[:4] == ["az", "keyvault", "secret", "show"]
+        ]
+        assert len(key_vault_calls) == 1
+        assert key_vault_calls[0][key_vault_calls[0].index("--query") + 1] == "id"
+    else:
+        assert not any(
+            call[:3] == ["aws", "secretsmanager", "get-secret-value"]
+            and any("clickhouse" in argument for argument in call)
+            for call in run.calls
+        )
 
 
 def test_azure_canary_persists_a_missing_dedicated_attribution_secret_before_update(
