@@ -11,5 +11,5 @@ a{color:var(--text-accent);text-underline-offset:4px}a:hover{color:#fff}a:focus-
 .index-button{padding:12px 22px;border-radius:4px;background:var(--sage);color:#08110d;text-decoration:none;font-weight:600}.index-button:hover{background:#e0f1e7;color:#08110d}
 .token-index .index-small{font-size:14px;max-width:760px;color:var(--text-muted)}
 .index-footer{display:flex;justify-content:space-between;align-items:center;gap:24px;padding-block:32px;font-size:14px}
-.ti-button,.ti-chip{min-height:40px}.ti-chart{overflow:hidden}.ti-chart .ti-svg{overflow:visible}
+.token-index *{letter-spacing:0}.ti-button,.ti-chip{min-height:40px}.ti-chart .ti-svg{overflow:visible}
 @media(max-width:700px){.index-header{align-items:start;flex-direction:column;padding-block:22px;gap:12px}.index-header nav{gap:20px}.index-footer{align-items:start;flex-direction:column}.index-brand{font-size:17px}.index-supply h2{font-size:32px}}
