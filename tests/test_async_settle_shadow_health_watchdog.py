@@ -152,7 +152,41 @@ async def test_escaping_publish_exception_delivers_and_schedules(monkeypatch, ca
 
 
 @pytest.mark.asyncio
-async def test_watchdog_releases_never_delivered_reply_and_schedules(monkeypatch):
+async def test_delivered_publisher_can_submit_before_worker_returns(monkeypatch, caplog):
+    svc, wall, mono, job = owner()
+    svc.loop = asyncio.get_running_loop()
+    scheduled, release = asyncio.Event(), threading.Event()
+    original = svc.loop.call_soon_threadsafe
+    def held_delivery(callback, *args, **kwargs):
+        handle = original(callback, *args, **kwargs)
+        if getattr(callback, "__name__", "") == "deliver" and not release.is_set():
+            original(scheduled.set)
+            assert release.wait(10), "test did not release delivery"
+        return handle
+    monkeypatch.setattr(svc.loop, "call_soon_threadsafe", held_delivery)
+    svc.submit_publisher(job.slot, wall[0])
+    worker = svc.publisher_worker
+    try:
+        await asyncio.wait_for(scheduled.wait(), 5)
+        await svc.publisher_job
+        assert not worker.done()
+        assert entries(svc)[-1]["outcome"] == "published"
+        next_job = next_cycle(svc, wall, mono)
+        svc.submit_publisher(next_job.slot, wall[0])
+        assert "publisher_worker_busy" not in caplog.text
+        assert svc.state.job == next_job
+        assert svc.publisher_worker is not worker
+    finally:
+        release.set()
+        await asyncio.wrap_future(worker)
+    await asyncio.wait_for(svc.publisher_job, 5)
+    assert svc.state.job is None
+    assert [e["outcome"] for e in entries(svc)] == ["published", "missed", "published"]
+    accounting(svc)
+
+
+@pytest.mark.asyncio
+async def test_watchdog_releases_never_delivered_reply_and_schedules(monkeypatch, caplog):
     svc, wall, mono, job = owner()
     svc.loop = asyncio.get_running_loop()
     entered, release = asyncio.Event(), threading.Event()
@@ -182,6 +216,7 @@ async def test_watchdog_releases_never_delivered_reply_and_schedules(monkeypatch
         next_job = next_cycle(svc, wall, mono)
         # Still-running I/O cannot fill an unbounded executor queue.
         svc.submit_publisher(next_job.slot, wall[0])
+        assert "publisher_worker_busy" in caplog.text
         assert svc.state.job is None and svc.publisher_worker is worker
         assert entries(svc)[-1]["outcome"] == "failed"
         accounting(svc)

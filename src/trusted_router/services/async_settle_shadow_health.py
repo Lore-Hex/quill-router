@@ -604,6 +604,7 @@ class Service:
         self.task: asyncio.Task[None] | None = None
         self.publisher_job: asyncio.Future[Any] | None = None
         self.publisher_worker: Future[None] | None = None
+        self.publisher_worker_active = threading.Event()
         self.flush_job: asyncio.Future[Any] | None = None
         self.counters: dict[str, dict[str, Any]] = {}
         self.unknown_batches: set[Reservation] = set()
@@ -1341,7 +1342,8 @@ class Service:
             return
         args = (self.store, self.journal.boot, self.settings.effective_serving_region,
                 self.settings.source_revision, job, stamp, self, self.is_incumbent(slot))
-        if self.publisher_worker is not None and not self.publisher_worker.done():
+        if (self.publisher_worker is not None and not self.publisher_worker.cancelled()
+                and self.publisher_worker_active.is_set()):
             # A watchdog cannot stop a running thread. Keep the one-worker
             # executor bounded while its old call remains outstanding.
             self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_worker_busy"))
@@ -1358,6 +1360,9 @@ class Service:
         loop = self.loop
         reply = loop.create_future()
         self.publisher_job = reply
+        worker_active = threading.Event()
+        worker_active.set()
+        self.publisher_worker_active = worker_active
         def deliver(result: PublisherReply) -> None:
             try:
                 self.publisher_reply(result, job=job)
@@ -1372,10 +1377,13 @@ class Service:
                 logger.exception("shadow_v2_publisher_failed slot=%s generation=%s", job.slot, job.generation)
                 raise
             finally:
+                # Delivery can run before the executor marks its Future done.
+                worker_active.clear()
                 loop.call_soon_threadsafe(deliver, result)
         try:
             self.publisher_worker = self.publisher_executor.submit(execute)
         except Exception:
+            worker_active.clear()
             deliver(fallback)
             raise
 
