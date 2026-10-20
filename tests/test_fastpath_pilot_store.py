@@ -11,7 +11,7 @@ import pytest
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_models import CreditProvenance, Generation
 from trusted_router.types import UsageType
 
@@ -81,14 +81,15 @@ def test_a_leased_authorize_writes_the_authorization_row_and_holds_nothing() -> 
 
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert authorization is not None
-    assert authorization.credit_reservation_id is None
     assert authorization.fastpath_envelope == "sealed-1"
     assert authorization.fastpath_end_of_life == "2026-10-14T06:00:00Z"
     assert _credit_rows(db, workspace.id) == before, "no credit hold"
-    assert _reservations(db, workspace.id) == [], "no reservation row"
+    rows = _reservations(db, workspace.id)
+    assert len(rows) == 1 and rows[0]["credit_reserved_micro"] == 0 and rows[0]["key_reserved_micro"] == 0
+    assert rows[0]["authorization_id"] == authorization.id and rows[0]["settled"] is False
     stored = store.get_gateway_authorization(authorization.id)
     assert stored is not None
-    assert stored.fastpath_envelope == "sealed-1" and stored.credit_reservation_id is None
+    assert stored.fastpath_envelope == "sealed-1" and stored.credit_reservation_id == rows[0]["reservation_id"]
     assert not stored.settled
 
 
@@ -116,6 +117,92 @@ def test_a_leased_authorize_is_not_refused_by_the_unleased_headroom_check() -> N
     outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1")
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert authorization is not None and authorization.fastpath_envelope == "sealed-1"
+
+
+def test_a_scope_row_that_landed_first_answers_a_leased_authorize() -> None:
+    """Two attempts of one key, on either path: the scope's unique index
+    decides, and the loser replays the winner."""
+    store, _db = _store()
+    workspace, key = _funded_workspace(store)
+    first_outcome, first = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id="auth-reserved-1", estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="shared-key", idempotency_fingerprint="body-1",
+        skip_key_limit=True,
+    )
+    assert first_outcome == AuthorizeOutcome.ACCEPTED and first is not None and first.fastpath_envelope is None
+    outcome, replayed = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id="auth-leased-2", estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="shared-key", idempotency_fingerprint="body-1",
+        skip_key_limit=True, fastpath_envelope="sealed-2", fastpath_end_of_life="2026-10-14T06:00:00Z",
+    )
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == first.id
+    mismatch, none = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id="auth-leased-3", estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="shared-key", idempotency_fingerprint="body-2",
+        skip_key_limit=True, fastpath_envelope="sealed-3", fastpath_end_of_life="2026-10-14T06:00:00Z",
+    )
+    assert mismatch == AuthorizeOutcome.IDEMPOTENCY_MISMATCH and none is None
+
+
+def _typed_authorize(store: Any, workspace: Any, key: Any, *, authorization_id: str, fingerprint: str, envelope: str | None) -> tuple[Any, Any]:
+    return store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, authorization_id=authorization_id, estimate=1_000,
+        has_credit_candidate=True, reservation_usage_type="Credits", model_id="model", provider="provider",
+        requested_model_id=None, candidate_model_ids=["model"], region="us-central1", endpoint_id="endpoint",
+        candidate_endpoint_ids=["endpoint"], idempotency_key="raced-key", idempotency_fingerprint=fingerprint,
+        skip_key_limit=True, fastpath_envelope=envelope,
+        fastpath_end_of_life="2026-10-14T06:00:00Z" if envelope else None,
+    )
+
+
+def test_two_attempts_at_once_conflict_on_the_scope_and_the_loser_replays_the_winner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both attempts miss the scope on their first read (the winner has not
+    committed yet), then the winner commits: the loser's INSERT conflicts
+    on the scope's unique index and it replays the winner, on either path
+    order, with no second authorization."""
+    from trusted_router import storage_gcp_authorize, storage_gcp_counter_dml
+
+    real = storage_gcp_counter_dml.read_reservation_by_idempotency
+
+    def misses_once(counter: list[int]) -> Any:
+        def read(snapshot: Any, pt: Any, scope: str) -> Any:
+            counter[0] += 1
+            return None if counter[0] == 1 else real(snapshot, pt, scope)
+        return read
+
+    # Today's path won; the leased attempt's first read missed it.
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _o, winner = _typed_authorize(store, workspace, key, authorization_id="auth-win-1", fingerprint="body", envelope=None)
+    assert winner is not None
+    reads = [0]
+    monkeypatch.setattr(storage_gcp_counter_dml, "read_reservation_by_idempotency", misses_once(reads))
+    outcome, replayed = _typed_authorize(store, workspace, key, authorization_id="auth-lose-1", fingerprint="body", envelope="sealed")
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == winner.id
+    assert reads[0] == 2, "the first read missed, the conflict's read found the winner"
+    assert store.get_gateway_authorization("auth-lose-1") is None
+    assert len(_reservations(db, workspace.id)) == 1
+    monkeypatch.undo()
+
+    # The leased attempt won; today's path's first read missed it.
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _o, winner = _typed_authorize(store, workspace, key, authorization_id="auth-win-2", fingerprint="body", envelope="sealed")
+    assert winner is not None and winner.fastpath_envelope == "sealed"
+    reads = [0]
+    monkeypatch.setattr(storage_gcp_authorize, "read_reservation_by_idempotency", misses_once(reads))
+    outcome, replayed = _typed_authorize(store, workspace, key, authorization_id="auth-lose-2", fingerprint="body", envelope=None)
+    assert outcome == AuthorizeOutcome.REPLAY and replayed is not None and replayed.id == winner.id
+    assert store.get_gateway_authorization("auth-lose-2") is None
+    rows = _reservations(db, workspace.id)
+    assert len(rows) == 1 and rows[0]["credit_reserved_micro"] == 0
+    assert sum(row["reserved"] for row in _credit_rows(db, workspace.id)) == 0, "no hold survives the loss"
 
 
 def test_a_leased_authorize_needs_its_id_up_front() -> None:
@@ -152,12 +239,13 @@ def _generation(authorization: Any, *, cost: int) -> Generation:
     )
 
 
-def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
+def test_a_leased_settle_writes_the_records_books_the_key_usage_and_no_credit() -> None:
     store, db = _store()
     workspace, key = _funded_workspace(store)
     _outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1")
     assert authorization is not None
     credit_before = _credit_rows(db, workspace.id)
+    key_before = dict(db.typed[KEY_LIMIT_TABLE][(key.hash, 0)])
     generation = _generation(authorization, cost=700)
 
     result = store.typed_finalize_leased_result(
@@ -177,9 +265,31 @@ def test_a_leased_settle_writes_the_records_and_books_no_money() -> None:
     assert db.gateway_authorizations[authorization.id]["terminal_at"] is None
     assert stored.fastpath_envelope == "sealed-1"
     assert _credit_rows(db, workspace.id) == credit_before, "the lease booked the usage, not this commit"
-    assert _reservations(db, workspace.id) == []
+    # The key's usage and window counters, as today's settle books them for
+    # a key that held nothing (docs/design/fast-admission-pilot.md).
+    key_row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert key_row["reserved"] == key_before["reserved"] == 0
+    assert key_row["usage"] == key_before["usage"] + 700 and key_row["byok_usage"] == 0
+    assert (key_row["day_usage"], key_row["week_usage"], key_row["month_usage"]) == (700, 700, 700)
+    assert key_row["day_start"] is not None and key_row["week_start"] is not None and key_row["month_start"] is not None
+    rows = _reservations(db, workspace.id)
+    assert len(rows) == 1 and rows[0]["settled"] is True and rows[0]["credit_reserved_micro"] == 0
     activity = _activity(db, workspace.id)
     assert len(activity) == 1, activity
+
+
+def test_a_leased_byok_settle_books_the_key_usage_to_its_byok_column() -> None:
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    _outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1")
+    assert authorization is not None
+    result = store.typed_finalize_leased_result(
+        authorization.id, success=True, actual_microdollars=500, selected_usage_type="BYOK",
+        generation=_generation(authorization, cost=500), authorization_snapshot=authorization, mark_intent=None,
+    )
+    assert result is not None
+    key_row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert (key_row["usage"], key_row["byok_usage"]) == (0, 500)
 
 
 def test_a_leased_refund_marks_the_authorization_refunded_with_no_generation() -> None:
@@ -195,6 +305,82 @@ def test_a_leased_refund_marks_the_authorization_refunded_with_no_generation() -
     _finalize, finalized = result
     assert finalized.settled and finalized.finalization_outcome == "refunded"
     assert _activity(db, workspace.id) == []
+    key_row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert (key_row["usage"], key_row["day_usage"], key_row["reserved"]) == (0, 0, 0)
+
+
+def test_a_leased_insert_whose_outcome_is_unknown_is_read_back() -> None:
+    """A commit can apply and still answer with a deadline or a lost
+    answer. The row that landed is this authorization, admitted; without
+    one, the outcome stays unknown and the caller keeps the hold."""
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+
+    store, db = _store()
+    workspace, key = _funded_workspace(store)
+    original = storage_gcp.run_in_transaction_with_retry
+
+    def landed_then_lost(database: Any, txn: Any, **kwargs: Any) -> Any:
+        result = original(database, txn, **kwargs)
+        raise DeadlineExceeded("the answer was lost") from None
+        return result  # noqa: RET503 - unreachable, keeps the shape
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", landed_then_lost)
+        outcome, authorization = _authorize(store, workspace, key, envelope="sealed-1", authorization_id="auth-landed")
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None and authorization.id == "auth-landed"
+    assert authorization.fastpath_envelope == "sealed-1"
+    assert "auth-landed" in db.gateway_authorizations
+    assert len(_reservations(db, workspace.id)) == 1
+
+    # No row read back proves nothing: the commit may still land. The
+    # outcome is unknown and the caller keeps the hold.
+    from trusted_router.storage_errors import LeasedOutcomeUnknown
+
+    def lost_in_flight(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise DeadlineExceeded("no answer")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", lost_in_flight)
+        with pytest.raises(LeasedOutcomeUnknown):
+            _authorize(store, workspace, key, envelope="sealed-2", authorization_id="auth-lost")
+    assert "auth-lost" not in db.gateway_authorizations
+    # A failure that is not transient is a failure: the caller gives the hold back.
+    def refused(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise ValueError("not a transient error")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", refused)
+        with pytest.raises(ValueError, match="not a transient"):
+            _authorize(store, workspace, key, envelope="sealed-4", authorization_id="auth-refused")
+
+
+def test_a_leased_insert_whose_read_back_fails_too_keeps_the_hold() -> None:
+    """The route's budget can be spent by the deadline the insert answered
+    with: the read-back fails as well, and the outcome stays unknown. The
+    store says so, rather than letting the caller give the hold back."""
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp
+    from trusted_router.storage_errors import LeasedOutcomeUnknown
+
+    store, _db = _store()
+    workspace, key = _funded_workspace(store)
+
+    def lost(database: Any, txn: Any, **kwargs: Any) -> Any:
+        raise DeadlineExceeded("the answer was lost")
+
+    def budget_spent(self: Any, authorization_id: str) -> Any:
+        raise DeadlineExceeded("the budget is spent")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage_gcp, "run_in_transaction_with_retry", lost)
+        patch.setattr(storage_gcp.SpannerStore, "get_gateway_authorization", budget_spent)
+        with pytest.raises(LeasedOutcomeUnknown) as caught:
+            _authorize(store, workspace, key, envelope="sealed-3", authorization_id="auth-unknown")
+    assert caught.value.authorization_id == "auth-unknown"
 
 
 def test_a_second_leased_settle_is_a_replay_not_a_second_record() -> None:

@@ -124,9 +124,9 @@ SECRETS_DIR="${SECRETS_DIR:-$HOME/.quill-secrets}"
 # process, argv, cloud-init, or an operator-visible log.
 CLICKHOUSE_NODE="${CLICKHOUSE_NODE:-tr-azure-clickhouse-1}"
 CLICKHOUSE_VAULT="${CLICKHOUSE_VAULT:-trquillkv}"
-CLICKHOUSE_SECRET_NAME="${CLICKHOUSE_SECRET_NAME:-tr-azure-clickhouse-password}"
+CLICKHOUSE_SECRET_NAME="${CLICKHOUSE_SECRET_NAME:-tr-azure-clickhouse-read-password}"
 CLICKHOUSE_IDENTITY="${CLICKHOUSE_IDENTITY:-tr-azure-clickhouse-identity}"
-CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-tr_control_read}"
 CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-default}"
 
 # This is deliberately a decision, not a boolean that could be inherited by
@@ -536,6 +536,8 @@ ENV_VARS=(
   "TR_ENVIRONMENT=canary"
   "TR_SERVICE_SURFACE=observer"
   "TR_NEW_SIGNUPS_ENABLED=false"
+  "TR_SOCIAL_REWARDS_ENABLED=false"
+  "TR_SOCIAL_REWARDS_PLANE_ID=azure"
   # Container Apps cannot safely overwrite the trusted client-IP header while
   # this service is directly exposed. Ignore any caller-supplied value and use
   # the conservative aggregate application bucket; the platform scale cap is

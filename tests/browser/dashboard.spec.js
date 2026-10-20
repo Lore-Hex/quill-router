@@ -3,25 +3,18 @@ const { expect, test } = require("@playwright/test");
 test("homepage opens sign-in modal and handles missing MetaMask", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", {
-    name: "600+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
-  })).toBeVisible();
-  const headlineLines = page.locator(".charter-home-hero h1 .hero-line");
-  await expect(headlineLines).toHaveCount(3);
-  await expect(headlineLines.first()).toHaveCSS("display", "block");
-  await expect(headlineLines.last()).toHaveCSS("display", "block");
-  await expect(page.locator(".charter-home-hero .lead-claim")).toHaveText(
-    "Better privacy, better prices, better uptime, no subscriptions.",
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
+  await expect(page.locator("#top .hero-promises li")).toHaveCount(4);
+  await expect(page.locator("#top .hero .sub")).toHaveText(
+    "Access hundreds of models confidentially through a single OpenAI-compatible API.",
   );
-  const homepageStats = page.locator(".charter-stat-band .charter-stat");
-  await expect(homepageStats).toHaveCount(3);
-  await expect(homepageStats.nth(0)).toContainText("600+AI models");
-  await expect(homepageStats.nth(1)).toContainText("100+providers");
-  await expect(homepageStats.last()).toContainText("3 cloudsGCP · AWS · Azure");
-  await expect(page.locator(".region-map-card")).toHaveCount(0);
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Create my API key");
+  await expect(page.locator("#top .cta-note")).toContainText("No card required");
   await expect(page.locator("body")).toHaveCSS("font-size", "16px");
-  await expect(page.locator(".charter-pillar p a").first()).toHaveCSS("text-decoration-line", "underline");
+  await expect(page.locator("#customers .press .action-link")).toHaveCSS("text-decoration-line", "underline");
 
+  // The faintest running text (the no-card note under the hero CTA) must still
+  // meet AA contrast against the surface it sits on.
   const faintTextContrast = await page.evaluate(() => {
     const luminance = (color) => {
       const [red, green, blue] = color.match(/[\d.]+/g).slice(0, 3).map(Number).map((channel) => {
@@ -35,17 +28,22 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
       const darker = Math.min(luminance(foreground), luminance(background));
       return (lighter + 0.05) / (darker + 0.05);
     };
-    const measure = () => ratio(
-      getComputedStyle(document.querySelector(".charter-pillar-number")).color,
-      getComputedStyle(document.body).backgroundColor,
-    );
-    return { dark: measure() };
+    const surface = (element) => {
+      for (let node = element; node; node = node.parentElement) {
+        const color = getComputedStyle(node).backgroundColor;
+        if (color && !/rgba\(\d+, \d+, \d+, 0\)/.test(color) && color !== "transparent") return color;
+      }
+      return getComputedStyle(document.body).backgroundColor;
+    };
+    const note = document.querySelector("#top .cta-note");
+    const press = document.querySelector("#customers .press .src");
+    return {
+      note: ratio(getComputedStyle(note).color, surface(note)),
+      press: ratio(getComputedStyle(press).color, surface(press)),
+    };
   });
-  expect(faintTextContrast.dark).toBeGreaterThanOrEqual(4.5);
-  await expect(page.locator(".hero-sdk-swap")).toBeVisible();
-  await expect(page.locator(".hero-sdk-code-line.removed")).toContainText("api.openai.com/v1");
-  await expect(page.locator(".hero-sdk-code-line.added")).toContainText("api.trustedrouter.com/v1");
-  await expect(page.locator(".charter-home-hero .hero-links")).toHaveCSS("justify-content", "flex-start");
+  expect(faintTextContrast.note).toBeGreaterThanOrEqual(4.5);
+  expect(faintTextContrast.press).toBeGreaterThanOrEqual(4.5);
 
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
@@ -271,103 +269,6 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   expect(copiedAgentMessage).toContain("sk-tr-v1-layout-regression-key");
 });
 
-test("first-call activation runs live request and copies agent chat prompt", async ({ page }) => {
-  const apiKey = "sk-tr-v1-browser-activation-key";
-  const analytics = [];
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: async (value) => { window.__activationClipboard = value; },
-        readText: async () => window.__activationClipboard || "",
-      },
-    });
-  });
-  await page.route("**/analytics/events", async (route) => {
-    analytics.push(route.request().postDataJSON().event);
-    await route.fulfill({ status: 204, body: "" });
-  });
-  await page.route("**/chat-proxy/v1/chat/completions", async (route) => {
-    expect(route.request().headers().authorization).toBe(`Bearer ${apiKey}`);
-    expect(route.request().headers()["idempotency-key"]).toMatch(/^welcome-/);
-    expect(route.request().postDataJSON()).toEqual({
-      model: "trustedrouter/cheap",
-      messages: [{ role: "user", content: "Reply with exactly PONG." }],
-      temperature: 0,
-      max_tokens: 512,
-      stream: false,
-    });
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: {
-        "x-trustedrouter-provider": "cerebras",
-        "x-trustedrouter-served-model": "openai/gpt-oss-120b",
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-oss-120b",
-        choices: [{ message: { role: "assistant", content: "PONG" } }],
-        usage: { cost_microdollars: 17 },
-      }),
-    });
-  });
-  await page.route("**/activation-test", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "text/html",
-      body: `<!doctype html>
-        <html lang="en"><head>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <link rel="stylesheet" href="/static/dashboard.css">
-          <link rel="stylesheet" href="/static/charter.css">
-          <link rel="stylesheet" href="/static/console.css">
-          <script defer src="/static/console.js"></script>
-        </head><body class="console"><main class="console-main"><div class="console-page-body">
-          <div class="activation-flow" data-first-call-flow data-endpoint="/chat-proxy/v1/chat/completions" data-key-source="welcome-api-key">
-            <ol class="activation-progress"><li class="complete"><span>1</span><strong>Account</strong></li><li class="current"><span>2</span><strong>First call</strong></li><li><span>3</span><strong>Connect app</strong></li></ol>
-            <section class="panel activation-key-panel"><div class="panel-head"><h2>Save it now</h2></div><div class="panel-body"><div class="activation-code-panel activation-onboarding-agent"><div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy message</button></div><pre id="welcome-agent-message" data-copy-lines><span>Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital of France?"</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="secret-row"><code id="welcome-api-key">${apiKey}</code><button class="btn" data-copy-secret="welcome-api-key">Copy</button></div></div></section>
-            <section class="panel activation-test-panel"><div class="panel-head activation-panel-head"><div><p class="activation-eyebrow">Live gateway check</p><h2>Run your first API request</h2><p class="panel-kicker">A real, inexpensive PONG request confirms the route.</p></div><span class="activation-step-number">02</span></div><div class="panel-body">
-              <button class="btn primary activation-run-button" type="button" data-action="run-first-call"><span data-run-label>Run my first API request</span><span class="activation-button-arrow">&#8594;</span></button>
-              <div class="activation-call-error" data-call-error hidden><strong data-call-error-title></strong><p data-call-error-message></p><a data-call-error-action hidden></a></div>
-              <div class="activation-call-result" data-call-result hidden><div class="activation-result-head"><div><span class="activation-success-mark">&#10003;</span><div><strong>Production request passed</strong><p>Your key is ready.</p></div></div><code data-result-output></code></div><dl class="activation-result-grid"><div><dt>Model</dt><dd data-result-model></dd></div><div><dt>Provider</dt><dd data-result-provider></dd></div><div><dt>Latency</dt><dd data-result-latency></dd></div><div><dt>Exact cost</dt><dd data-result-cost></dd></div></dl><div data-success-actions></div></div>
-            </div></section>
-            <section class="panel activation-setup-panel"><div class="panel-body"><div class="activation-tabs" role="tablist"><button class="activation-tab" role="tab" aria-selected="true" data-setup-tab="setup-python">Python</button></div><div class="activation-code-panel" id="setup-python" data-setup-panel><pre>Python setup</pre></div></div></section>
-          </div>
-        </div></main></body></html>`,
-    });
-  });
-
-  await page.goto("/activation-test");
-  const rawCopies = await page.evaluate(
-    (secret) => document.body.innerHTML.split(secret).length - 1,
-    apiKey,
-  );
-  expect(rawCopies).toBe(2);
-
-  await page.getByRole("button", { name: "Run my first API request" }).click();
-  await expect(page.getByText("Production request passed")).toBeVisible();
-  await expect(page.locator("[data-result-output]")).toHaveText("PONG");
-  await expect(page.locator("[data-result-model]")).toHaveText("openai/gpt-oss-120b");
-  await expect(page.locator("[data-result-provider]")).toHaveText("cerebras");
-  await expect(page.locator("[data-result-latency]")).toContainText("ms");
-  await expect(page.locator("[data-result-cost]")).toHaveText("$0.000017");
-  await expect.poll(() => analytics).toContain("onboarding_call_started");
-  await expect.poll(() => analytics).toContain("onboarding_call_succeeded");
-
-  await page.getByRole("button", { name: "Copy message" }).click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital of France?"\n\nTrustedRouter API key: ${apiKey}`,
-  );
-  await page.getByRole("tab", { name: "Python" }).click();
-  await expect(page.locator("#setup-python")).toBeVisible();
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth - window.innerWidth,
-  );
-  expect(overflow).toBeLessThanOrEqual(2);
-});
-
 test("delegated sign-in explains zero-credit onboarding", async ({ page }) => {
   const target = encodeURIComponent(
     "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",
@@ -406,9 +307,7 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", {
-    name: "600+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
-  })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
   let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
 
@@ -459,17 +358,16 @@ test("Charter design remains shared and responsive across public surfaces", asyn
   }
 });
 
-test("homepage exposes privacy, no-subscription, and open-source claims", async ({ page }) => {
+test("homepage exposes confidentiality, free-start, migration and open-source claims", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("End-to-End Encrypted AI gateway").first()).toBeVisible();
-  await expect(page.getByText("No subscription required")).toBeVisible();
-  await expect(page.getByText("inspect, fork, or run yourself")).toBeVisible();
-  const sdkSwap = page.locator(".hero-sdk-swap");
-  await expect(sdkSwap).toBeVisible();
-  await expect(sdkSwap).toContainText("Change one line");
-  await expect(sdkSwap).toContainText('base_url="https://api.openai.com/v1"');
-  await expect(sdkSwap).toContainText('base_url="https://api.trustedrouter.com/v1"');
+  await expect(page.locator("#top .hero .sub")).toContainText("confidentially");
+  await expect(page.locator("#top .cta-note")).toContainText("No card required");
+  await expect(page.locator("#verify")).toContainText("Three clouds, visible fallback");
+  const migrate = page.locator("#migrate");
+  await expect(migrate.getByRole("heading", { level: 2 })).toContainText("base_url");
+  await expect(migrate).toContainText('base_url="https://api.openai.com/v1"');
+  await expect(migrate).toContainText('base_url="https://api.trustedrouter.com/v1"');
   await expect(
     page.locator('a[href="https://github.com/Lore-Hex/trusted-router-py"]').first(),
   ).toBeVisible();
@@ -481,16 +379,14 @@ test("homepage exposes privacy, no-subscription, and open-source claims", async 
 test("homepage links the Axios feature and demo result", async ({ page }) => {
   await page.goto("/");
 
-  const feature = page.locator(".home-press-mention");
+  const feature = page.locator("#customers .press");
   await expect(feature).toBeVisible();
-  await expect(feature).toContainText("Featured in Axios");
+  await expect(feature).toContainText("Featured in · Axios");
   await expect(feature).toContainText("DeepSeek model in under 30 seconds");
-  await expect(feature).toHaveAttribute(
+  await expect(feature.getByRole("link", { name: "Read the story" })).toHaveAttribute(
     "href",
     "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs",
   );
-  await expect(feature).toHaveAttribute("rel", "noopener noreferrer");
-  await expect(feature).toHaveAttribute("target", "_blank");
 });
 
 test("local trust page links the public source repositories and release files", async ({ page }) => {
@@ -643,7 +539,7 @@ test("model picker has no horizontal overflow at mobile width", async ({ page })
   expect(overflow).toBeLessThanOrEqual(2);
 });
 
-test("homepage explainer video contacts YouTube only after an explicit press", async ({
+test("blog explainer video contacts YouTube only after an explicit press", async ({
   page,
 }) => {
   const thirdParty = [];
@@ -653,19 +549,19 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
     }
   });
 
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "How TrustedRouter works" })).toBeVisible();
+  await page.goto("/blog/axios-tried-trustedrouter");
+  await expect(page.getByRole("heading", { name: "Axios tried TrustedRouter in under 30 seconds" })).toBeVisible();
 
   const facade = page.locator('[data-action="load-video"]');
   await expect(facade).toBeVisible();
   await facade.scrollIntoViewIfNeeded();
   await expect(facade.locator(".video-embed-poster")).toBeVisible();
-  await expect(facade).toContainText("Watch the demo");
+  await expect(facade).toContainText("Watch the onboarding");
   await expect.poll(() => facade.locator(".video-embed-poster").evaluate(
-    (image) => image.complete && image.naturalWidth === 1280 && image.naturalHeight === 720,
+    (image) => image.complete && image.naturalWidth === 1200 && image.naturalHeight === 630,
   )).toBe(true);
 
-  // The point of the facade: a privacy-first homepage must not hand Google a
+  // The point of the facade: a privacy-first site must not hand Google a
   // pageview to render. Nothing may be requested before the visitor asks.
   await expect(page.locator('[data-action="load-video"] iframe')).toHaveCount(0);
   expect(thirdParty).toEqual([]);
@@ -675,9 +571,11 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
   const frame = page.locator('[data-action="load-video"] iframe');
   await expect(frame).toHaveCount(1);
   const src = await frame.getAttribute("src");
-  // Privacy-enhanced host, and the timestamp the video actually explains from.
-  expect(src).toContain("youtube-nocookie.com/embed/UzLY4kvjklI");
-  expect(src).toContain("start=128");
+  // Privacy-enhanced host, autoplay on the explicit press, no start offset
+  // unless the facade carries one.
+  expect(src).toContain("youtube-nocookie.com/embed/vfOj_im2A1o");
+  expect(src).toContain("autoplay=1");
+  expect(src).not.toContain("start=");
 
   // Once loaded it is a player, not a button.
   await expect(facade).not.toHaveAttribute("role", "button");
@@ -685,8 +583,8 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
   await expect(frame).toHaveCount(1);
 });
 
-test("homepage explainer video is keyboard operable", async ({ page }) => {
-  await page.goto("/");
+test("blog explainer video is keyboard operable", async ({ page }) => {
+  await page.goto("/blog/axios-tried-trustedrouter");
   const facade = page.locator('[data-action="load-video"]');
   await expect(facade).toHaveAttribute("role", "button");
   await facade.focus();

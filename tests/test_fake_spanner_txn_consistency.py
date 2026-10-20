@@ -172,3 +172,49 @@ def test_mf2_guard_zero_count_aborts_when_enqueue_commits_before_claim() -> None
     assert db.run_in_transaction(txn_body) == 1
     assert counts == [0, 1]
     assert db.aborts == 1
+
+
+def test_concurrent_grant_after_receipt_read_retries_without_double_credit(monkeypatch) -> None:
+    from trusted_router import storage_gcp
+    from trusted_router.typed_balance import live_credit_summary
+
+    store, db = make_fake_store()
+    user = store.ensure_user('grant-race@example.com', trial_credit_microdollars=150_000,
+                             social_rewards_issuer='primary')
+    enrollment = store.get_social_reward_enrollment(user.id)
+    assert enrollment is not None
+    workspace_id = enrollment.workspace_id
+    event_id = 'grant-race:github'
+    original = storage_gcp.insert_credit_trust_event
+    raced = False
+
+    def insert_with_competing_commit(transaction, param_types, event):
+        nonlocal raced
+        if event.event_id == event_id and not raced:
+            raced = True
+            assert store.credit_workspace_once(
+                workspace_id, 30_000, event_id, required_owner_user_id=user.id,
+            )
+        return original(transaction, param_types, event)
+
+    monkeypatch.setattr(storage_gcp, 'insert_credit_trust_event', insert_with_competing_commit)
+    aborts_before = db.aborts
+    assert not store.credit_workspace_once(
+        workspace_id, 30_000, event_id, required_owner_user_id=user.id,
+    )
+    assert raced
+    assert db.aborts == aborts_before + 1
+    assert store.has_credit_grant(workspace_id, event_id)
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None and summary['total_credits'] == 180_000
+
+    # A genuinely duplicate insert on a fresh transaction must still fail.
+    import pytest
+
+    from tests.fakes.spanner import FakeAlreadyExists
+
+    record = db.typed['tr_trust_event'][(workspace_id, event_id)]
+    with pytest.raises(FakeAlreadyExists):
+        db.run_in_transaction(lambda txn: txn.execute_update(
+            'INSERT INTO tr_trust_event', params=record, param_types=None,
+        ))

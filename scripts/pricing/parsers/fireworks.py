@@ -66,6 +66,10 @@ _SIZE_BASED_FALLBACK = {
         "prompt_micro_per_m": 900_000,
         "completion_micro_per_m": 900_000,
     },
+    "meta/muse-spark-open": {
+        "prompt_micro_per_m": 900_000,
+        "completion_micro_per_m": 900_000,
+    },
 }
 
 

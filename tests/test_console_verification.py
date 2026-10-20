@@ -75,7 +75,7 @@ def test_console_verification_renders_four_live_steps_and_actions() -> None:
     ) in initial.text
     assert "Each new verification attempt costs $5.00." in initial.text
     assert "Identity submitted — the decision arrives automatically." in initial.text
-    assert 'href="/console/account/verification" class="sidebar-link active"' in initial.text
+    assert 'href="/console/account/verification" aria-current="page"' in initial.text
 
     STORE.mark_user_email_verified(user.id)
     _fund_and_verify_phone(user, workspace)

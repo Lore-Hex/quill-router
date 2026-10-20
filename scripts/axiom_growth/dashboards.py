@@ -52,10 +52,44 @@ JOURNEY=ACCOUNT_JOURNEYS+FILTER+"""
 | extend has_engaged=isnotnull(engaged), has_signup=isnotnull(signup), signup_after_engaged=isnotnull(signup) and isnotnull(engaged) and signup>=engaged, active_after_signup=isnotnull(activated) and isnotnull(signup) and activated>=signup, paid_after_signup=isnotnull(paid) and isnotnull(signup) and paid>=signup
 """
 USAGE=snapshot('growth.daily_usage')+FILTER
+# Console-only columns may not exist in the dataset yet; Axiom cannot carry a column_ifexists
+# default through arg_max, so they are grouping keys (stable per event_id) instead.
 EVENTS=f"""['{DATASET}'] | where event startswith 'acquisition.'
-| summarize arg_max(exported_at, _time, event, anonymous_fingerprint, utm_source, utm_medium, utm_campaign, creative_id, landing_path, referrer_domain, customer_domain, amount_microdollars) by event_id
+| extend device_category=tostring(column_ifexists('device_category','')), reward_action=tostring(column_ifexists('reward_action',''))
+| summarize arg_max(exported_at, _time, event, anonymous_fingerprint, account_fingerprint, workspace_fingerprint, utm_source, utm_medium, utm_campaign, creative_id, landing_path, referrer_domain, customer_domain, amount_microdollars) by event_id, device_category, reward_action
 """+FILTER
 FRESH=f"['{DATASET}'] | where event == 'growth.sync_completed' | summarize arg_max(_time, observed_through) | project Latest_export=todatetime(_time), Observed_through=todatetime(observed_through) | extend Minutes_behind=datetime_diff('minute',now(),Observed_through) | extend Status=iff(isnull(Observed_through) or Minutes_behind>15,'STALE: refresh delayed','Automatic refresh every 5 minutes')"
+REWARD_STAGES=(
+    ('acquisition.console_api_keys_viewed','1 API keys page views'),
+    ('acquisition.social_rewards_invitation_viewed','2 Invitation impressions'),
+    ('acquisition.social_rewards_opened','3 Rewards panel opens'),
+    ('acquisition.social_reward_clicked','4 Action clicks (not verified follows)'),
+    ('acquisition.social_reward_claimed','5 Granted rewards (server-confirmed credit; attributed workspaces only)'),
+)
+# The existing diagnostic-traffic tag. No staff or QA account list exists, so untagged internal
+# activity is not excluded; see docs/marketing/axiom-data-quality.md.
+INTERNAL_TAG="utm_medium == 'internal' or utm_source == 'test'"
+CONSOLE_EVENTS=EVENTS+f"""| where event in ({', '.join(repr(e) for e,_ in REWARD_STAGES)})
+| extend device_category=iff(isempty(device_category),'unknown',device_category), internal_tagged=({INTERNAL_TAG})
+"""
+CUSTOMER_CONSOLE=CONSOLE_EVENTS+"| where not(internal_tagged)\n"
+DEVICE_QUERY=CUSTOMER_CONSOLE+"""| where event=='acquisition.console_api_keys_viewed' and isnotempty(account_fingerprint)
+| summarize Desktop=countif(device_category=='desktop'), Mobile=countif(device_category=='mobile'), Tablet=countif(device_category=='tablet'), Unknown=countif(device_category=='unknown'), Views=count() by account_fingerprint
+| extend Device_group=case(Desktop>0 and Mobile==0 and Tablet==0 and Unknown==0,'Desktop only',Mobile>0 and Desktop==0 and Tablet==0 and Unknown==0,'Mobile only',Tablet>0 and Desktop==0 and Mobile==0 and Unknown==0,'Tablet only',Unknown>0 and Desktop==0 and Mobile==0 and Tablet==0,'Unknown only','Multiple categories')
+| summarize Accounts=count(), Page_views=sum(Views) by Device_group
+"""
+REWARDS_QUERY=CUSTOMER_CONSOLE+"| extend Stage=case("+', '.join(f"event=='{e}','{label}'" for e,label in REWARD_STAGES)+""", event)
+| summarize Records=count(), Accounts=dcountif(account_fingerprint,isnotempty(account_fingerprint)), Workspaces=dcountif(workspace_fingerprint,isnotempty(workspace_fingerprint)), Visitors=dcountif(anonymous_fingerprint,isnotempty(anonymous_fingerprint)), First_seen=min(todatetime(_time)), Last_seen=max(todatetime(_time)) by Stage
+| sort by Stage asc
+"""
+REWARD_ACTIONS_QUERY=CUSTOMER_CONSOLE+"""| where event in ('acquisition.social_reward_clicked','acquisition.social_reward_claimed')
+| summarize Clicks=countif(event=='acquisition.social_reward_clicked'), Clicking_accounts=dcountif(account_fingerprint,event=='acquisition.social_reward_clicked' and isnotempty(account_fingerprint)), Grants=countif(event=='acquisition.social_reward_claimed'), Granted_workspaces=dcountif(workspace_fingerprint,event=='acquisition.social_reward_claimed' and isnotempty(workspace_fingerprint)) by reward_action
+| sort by Clicks desc
+"""
+INTERNAL_QUERY=CONSOLE_EVENTS+"""| summarize Records=count(), Internal_tagged=countif(internal_tagged), Untagged=countif(not(internal_tagged)) by event
+| sort by event asc
+"""
+
 ONBOARDING=f"""['{DATASET}'] | where event in ('acquisition.onboarding_call_started','acquisition.onboarding_call_succeeded','acquisition.onboarding_call_failed')
 | extend attempt_id=tostring(column_ifexists('attempt_id','')), failure_reason=tostring(column_ifexists('failure_reason','')), http_status=tolong(column_ifexists('http_status',0)), elapsed_ms=tolong(column_ifexists('elapsed_ms',0))
 | where isnotempty(attempt_id)
@@ -159,8 +193,12 @@ def build():
     freshness=('Data freshness: stale after 15 minutes','Table',FRESH,12)
     return [
       dashboard('tr-growth-funnel-v1','TR Growth | Conversion Funnel',
-        'Continuously refreshed cohorts of pseudonymous visitors, not total people. First step is a recorded 1.5s engagement, not every first visit. Purchase and 7+ day return are branches, not mandatory linear steps. Conversion timestamps must be ordered. Age filter compares mature cohorts. Source gaps and cookie resets remain gaps. Automatic incremental refresh every five minutes. Browser attribution is missing Aug 23 15:56 UTC to Sep 4 18:52 UTC; missing visits are not zero traffic. Usage and conversions remain available.',[
+        'Continuously refreshed cohorts of pseudonymous visitors, not total people. First step is a recorded 1.5s engagement, not every first visit. Purchase and 7+ day return are branches, not mandatory linear steps. Conversion timestamps must be ordered. Age filter compares mature cohorts. Source gaps and cookie resets remain gaps. Automatic incremental refresh every five minutes. Browser attribution is missing Aug 23 15:56 UTC to Sep 4 18:52 UTC; missing visits are not zero traffic. Usage and conversions remain available. Console panels exclude internal-tagged traffic only (no QA account list exists); grants count workspaces, not accounts, and only attributed ones.',[
         freshness,
+        ('API Keys page views by account device (multiple categories include unknown)','Table',DEVICE_QUERY,12),
+        ('Social rewards stages: page views, impressions, opens, clicks and grants are separate records','Table',REWARDS_QUERY,12),
+        ('Reward actions: clicks are not verified follows; grants are server-confirmed credit for attributed workspaces only','Table',REWARD_ACTIONS_QUERY,12),
+        ('Internal-tagged console records excluded above (utm_medium=internal or utm_source=test); no staff account list exists','Table',INTERNAL_QUERY,12),
         ('Daily event coverage: missing visits are not zero traffic','Table',EVENTS+" | summarize Engagement_events=countif(event=='acquisition.landing_engaged'), Signup_events=countif(event=='acquisition.signup_completed'), Activation_events=countif(event=='acquisition.first_successful_api_call'), Purchase_events=countif(event=='acquisition.credit_purchase_completed') by Day=bin(_time,1d) | extend Browser_coverage=case(Day>=datetime(2026-08-24) and Day<datetime(2026-09-04),'Missing visitor attribution',Day==datetime(2026-08-23) or Day==datetime(2026-09-04),'Partial visitor attribution','Observed records') | sort by Day desc",12),
         ('Ordered funnel and conversion percentages','Table',funnel_query(),12),
         ('Welcome test: matched attempts only (browser-reported, not all API traffic)','Table',onboarding_query(),12),
@@ -226,9 +264,11 @@ def main():
     failures=[]
     validations=[]
     if args.validate or args.publish:
-        from scripts.axiom_growth.validate_onboarding import validate
+        from scripts.axiom_growth.validate_onboarding import validate, validate_console
         validate()
         print('PASS matched-attempt APL arithmetic fixture',flush=True)
+        validate_console()
+        print('PASS console reward stage and filter APL fixture',flush=True)
         result=query(f"['{DATASET}'] | summarize Rows=count()")
         raw_rows=result['tables'][0]['columns'][0][0]
         if raw_rows >= INPUT_LIMIT:

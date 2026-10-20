@@ -32,10 +32,75 @@
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 750000,
       "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "Inception: Mercury 2.5",
+      "title": "mercury-2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "inception/mercury-2.5",
+      "upstream_id": "mercury-2.5",
+      "context_length": 260000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "stop"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 150000,
+      "cached_input_token_price_per_m": 4000
+    },
+    {
+      "display_name": "Inception: Mercury 3",
+      "title": "mercury-3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "inception/mercury-3",
+      "upstream_id": "mercury-3",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "stop"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 350000,
+      "cached_input_token_price_per_m": 10000
     }
   ],
   "source": "https://api.inceptionlabs.ai/v1/models",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-19T18:25:43Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 1
+  "model_count": 3,
+  "pricing_source": "https://docs.inceptionlabs.ai/get-started/models.md"
 }

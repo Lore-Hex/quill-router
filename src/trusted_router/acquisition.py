@@ -1,7 +1,7 @@
 """First-party, privacy-bounded acquisition attribution.
 
 This module never receives prompt or output content. It only handles public
-landing metadata, account/workspace conversion milestones, and integer money.
+landing and console metadata, account/workspace conversion milestones, and integer money.
 """
 
 from __future__ import annotations
@@ -601,28 +601,62 @@ def log_browser_funnel_event(
     http_status: int | None = None, elapsed_ms: int | None = None,
     failure_reason: str | None = None, finish_reason: str | None = None,
 ) -> None:
+    _log_attributed_event(request, event, {
+        # Page counts describe the sender, not the visitor's original landing.
+        **({"page_path": same_site_referer_path(request) or ""}
+           if event in {"landing_viewed", "landing_engaged"} else {}),
+        **({
+            "attempt_id": attempt_id, "flow": "welcome_test",
+            "http_status": http_status, "elapsed_ms": elapsed_ms,
+            "failure_reason": failure_reason, "finish_reason": finish_reason,
+        } if attempt_id is not None else {}),
+    })
+
+
+def _log_attributed_event(request: Request, event: str, fields: dict[str, object]) -> None:
+    """Shared envelope for validated, first-party observations; never pass raw bodies."""
     context = request_attribution(request)
     if context is None:
         return
     touch = context.last_touch
-    log.info(
-        f"acquisition.{event}",
-        extra={
-            "event": f"acquisition.{event}",
-            "anonymous_fingerprint": _fingerprint(context.anonymous_id),
-            **_safe_touch_log_fields(touch),
-            **_click_id_log_fields(touch),
-            # Keep campaign attribution intact; page counts describe the page
-            # that sent this event, not the visitor's original landing page.
-            **({"page_path": same_site_referer_path(request) or ""}
-               if event in {"landing_viewed", "landing_engaged"} else {}),
-            **({
-                "attempt_id": attempt_id, "flow": "welcome_test",
-                "http_status": http_status, "elapsed_ms": elapsed_ms,
-                "failure_reason": failure_reason, "finish_reason": finish_reason,
-            } if attempt_id is not None else {}),
-        },
-    )
+    log.info(f"acquisition.{event}", extra={
+        "event": f"acquisition.{event}",
+        "anonymous_fingerprint": _fingerprint(context.anonymous_id),
+        **_safe_touch_log_fields(touch),
+        **_click_id_log_fields(touch),
+        **fields,
+    })
+
+
+def device_category(user_agent: str) -> str:
+    """Coarse UA inference, not hardware verification; never retain the UA."""
+    ua = user_agent.lower()
+    if 'ipad' in ua or 'tablet' in ua or ('android' in ua and 'mobile' not in ua):
+        return 'tablet'
+    if any(marker in ua for marker in ('iphone', 'ipod', 'mobile')):
+        return 'mobile'
+    if any(marker in ua for marker in ('windows nt', 'macintosh', 'x11')):
+        return 'desktop'
+    return 'unknown'
+
+
+def track_console(
+    request: Request, settings: Settings, user_id: str, event: str, *,
+    placement: str = '', action: str = '', observation_id: str = '',
+) -> None:
+    try:
+        if (settings.environment.lower() in {'local', 'test'}
+                or _privacy_signal_enabled(request) or acquisition_request_is_automated(request)):
+            return
+        _log_attributed_event(request, event, {
+            'account_fingerprint': _fingerprint('tr-account:' + user_id),
+            'page_path': '/console/api-keys' if event == 'console_api_keys_viewed' else '',
+            'device_category': device_category(request.headers.get('user-agent', '')),
+            'reward_placement': placement, 'reward_action': action,
+            'observation_id': observation_id or str(uuid.uuid4()),
+        })
+    except Exception:  # noqa: BLE001 - observational analytics must fail open.
+        log.warning('console.telemetry_failed')
 
 
 def exchange_site_campaign(request: Request, campaign: object) -> dict[str, str]:
@@ -676,26 +710,6 @@ def log_exchange_site_funnel_event(
             **_safe_touch_log_fields(touch),
         },
     )
-
-
-def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, record: bool = True) -> str:
-    """Record only a rendered, actionable treatment, using already-loaded IDs."""
-    context = request_attribution(request)
-    if context is None or context.first_touch.get('experiment_id') != ONBOARDING_EXPERIMENT_ID:
-        return ''
-    cell = context.first_touch.get('experiment_cell_id', '')
-    if not valid_experiment_identity(ONBOARDING_EXPERIMENT_ID, cell):
-        return ''
-    if not record:
-        return cell
-    log.info('acquisition.experiment_exposed', extra={
-        'event': 'acquisition.experiment_exposed',
-        'anonymous_fingerprint': _fingerprint(context.anonymous_id),
-        'account_fingerprint': _fingerprint('tr-account:' + user_id),
-        'workspace_fingerprint': _fingerprint(workspace_id),
-        **_safe_touch_log_fields(context.first_touch),
-    })
-    return cell
 
 
 def pageview_attribution_fields(request: Request) -> dict[str, object]:

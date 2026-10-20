@@ -278,6 +278,17 @@ if [ "${0##*/}" = "az" ] && [ -n "${HARNESS_CAPTURE_CUSTOM_DATA:-}" ]; then
   done
 fi
 
+if [ "${0##*/}" = "aws" ] && [ -n "${HARNESS_CAPTURE_SSM_PARAMETERS:-}" ]; then
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "parameters" ]; then
+      cp "${argument#file://}" "$HARNESS_CAPTURE_SSM_PARAMETERS"
+      break
+    fi
+    [ "$argument" = "--parameters" ] && previous="parameters" || previous=""
+  done
+fi
+
 if { [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; } \
     && [[ " $* " == *" run services describe "* ]] \
     && [[ " $* " == *"status.traffic[?tag="* ]]; then
@@ -1646,7 +1657,15 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             ),
         ),
     ),
-    "scripts/deploy/aws_eu_clickhouse.sh": ScriptFixture(),
+    "scripts/deploy/aws_eu_clickhouse.sh": ScriptFixture(
+        responses=(
+            (r"ssm get-command-invocation.*--query Status", "Success"),
+            (
+                r"secretsmanager describe-secret.*tr-eu-clickhouse-read-password.*--query ARN",
+                "arn:aws:secretsmanager:eu-west-3:123456789012:secret:quill/tr-eu-clickhouse-read-password-harness",
+            ),
+        ),
+    ),
     # GCP's out-of-band check needs nothing from an operator: it runs the gate,
     # retries while a Cloud Run revision takes traffic, and returns the gate's
     # status. Listed explicitly rather than falling through to the default so
@@ -1666,6 +1685,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_CLOUD_BAKE_OVERRIDE": "deploy-script harness isolation",
         },
         responses=(
+            (
+                r"secretsmanager describe-secret.*quill/tr-eu-clickhouse-read-password",
+                "arn:aws:secretsmanager:eu-west-3:123456789012:secret:quill/tr-eu-clickhouse-read-password-harness",
+            ),
             # It deploys by DIGEST and then refuses to believe App Runner until
             # the service reports it is serving that exact digest.
             (r"ecr describe-images", _DIGEST),
@@ -1765,9 +1788,9 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                 "10.61.3.4",
             ),
             (
-                r"keyvault secret show.*tr-azure-clickhouse-password.*--query id",
+                r"keyvault secret show.*tr-azure-clickhouse-read-password.*--query id",
                 "https://trquillkv.vault.azure.net/secrets/"
-                "tr-azure-clickhouse-password/harness-version",
+                "tr-azure-clickhouse-read-password/harness-version",
             ),
             (
                 r"identity show.*tr-azure-clickhouse-identity.*--query id",

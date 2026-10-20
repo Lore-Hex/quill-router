@@ -61,12 +61,13 @@
       "routable_reason": "provider-geographic-restriction",
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 150000
+      "cached_input_token_price_per_m": 150000,
+      "max_output_tokens": 65536
     }
   ],
   "source": "https://api.sakana.ai/v1/models",
   "pricing_source": "https://console.sakana.ai/pricing",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-18T17:34:11Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }

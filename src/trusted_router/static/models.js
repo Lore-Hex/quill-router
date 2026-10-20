@@ -55,11 +55,7 @@
 
   function render() {
     const query = normalize(search.value);
-    const terms = query.split(" ").filter(Boolean);
-    const matches = sortCards(cards.filter((card) => {
-      const haystack = normalize(card.dataset.searchText || "");
-      return terms.every((term) => haystack.includes(term));
-    }));
+    const matches = sortCards(cards.filter((card) => window.TRModelSearch.matches(card.dataset.searchText || "", query)));
 
     matches.forEach((card) => results.append(card));
     const visible = matches.slice(0, visibleLimit);

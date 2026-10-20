@@ -49,6 +49,7 @@ from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.provider_ranking import measured_provider_rank
 from trusted_router.routing_state import Thresholds, parse_thresholds
 from trusted_router.speech import SPEECH_MODELS
+from trusted_router.transcription import TRANSCRIPTION_MODELS
 from trusted_router.types import ErrorType
 from trusted_router.video_billing import video_endpoint_for_resolution
 
@@ -420,6 +421,52 @@ def routing_pool_discovery(
     return union_supported_parameters(published), tuple(modalities)
 
 
+def transcription_route_endpoint_candidates(
+    inputs: NormalizedRoutingInputs,
+) -> list[tuple[Model, ModelEndpoint]]:
+    if (
+        len(inputs.model_ids) != 1
+        or inputs.model_ids[0] not in TRANSCRIPTION_MODELS
+        or inputs.model_ids[0] not in MODELS
+    ):
+        raise api_error(400, "Model does not support transcription", ErrorType.MODEL_NOT_SUPPORTED)
+    if not TRANSCRIPTION_MODELS[inputs.model_ids[0]].token_billed and (
+        inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
+        or inputs.preferences.max_completion_price_microdollars_per_million_tokens is not None
+    ):
+        raise api_error(400, "Token-price limits do not apply to non-token-billed transcription", ErrorType.BAD_REQUEST)
+    spec = TRANSCRIPTION_MODELS[inputs.model_ids[0]]
+    candidates = [
+        (m, e) for m, e in catalog_endpoint_candidates(MODELS[spec.id], inputs.preferences)
+        if not e.is_byok and e.provider == spec.provider and e.upstream_id == spec.upstream_id
+    ]
+    if not candidates:
+        raise api_error(400, "No transcription route meets the requested provider and privacy filters", ErrorType.MODEL_NOT_SUPPORTED)
+    return candidates
+
+
+def fetch_route_endpoint_candidates(
+    inputs: NormalizedRoutingInputs,
+) -> list[tuple[Model, ModelEndpoint]]:
+    from trusted_router.web_fetch import FETCH_MODEL_ID
+
+    if inputs.model_ids != (FETCH_MODEL_ID,):
+        raise api_error(400, "Model does not support Fetch", ErrorType.MODEL_NOT_SUPPORTED)
+    if (
+        inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
+        or inputs.preferences.max_completion_price_microdollars_per_million_tokens is not None
+    ):
+        raise api_error(400, "Token-price limits do not apply to Fetch", ErrorType.BAD_REQUEST)
+    candidates = [
+        (model, endpoint)
+        for model, endpoint in catalog_endpoint_candidates(MODELS[FETCH_MODEL_ID], inputs.preferences)
+        if not endpoint.is_byok and endpoint.provider == "deepseek" and endpoint.upstream_id == "fetch"
+    ]
+    if not candidates:
+        raise api_error(400, "No Fetch route meets the requested provider and privacy filters", ErrorType.MODEL_NOT_SUPPORTED)
+    return candidates
+
+
 def speech_route_endpoint_candidates(
     inputs: NormalizedRoutingInputs,
 ) -> list[tuple[Model, ModelEndpoint]]:
@@ -430,7 +477,7 @@ def speech_route_endpoint_candidates(
         inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
         or inputs.preferences.max_completion_price_microdollars_per_million_tokens is not None
     ):
-        raise api_error(400, "Token-price limits do not apply to character-billed speech", ErrorType.BAD_REQUEST)
+        raise api_error(400, "Token-price limits do not apply to non-token-billed speech", ErrorType.BAD_REQUEST)
     model = MODELS[inputs.model_ids[0]]
     candidates = catalog_endpoint_candidates(model, inputs.preferences)
     candidates = [(m, e) for m, e in candidates if not e.is_byok]

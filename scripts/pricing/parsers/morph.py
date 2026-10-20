@@ -12,6 +12,8 @@ import re
 from decimal import Decimal
 from typing import TypeAlias
 
+from bs4 import BeautifulSoup
+
 PriceRow: TypeAlias = dict[str, int]
 
 MODEL_IDS = {
@@ -23,6 +25,7 @@ MODEL_IDS = {
     "morph-minimax27-230b": "minimax/minimax-m2.7",
     "morph-minimax3-428b": "minimax/minimax-m3",
     "morph-dsv4flash": "deepseek/deepseek-v4-flash",
+    "morph-dsv41flash-1017": "deepseek/deepseek-v4.1-flash-1017",
 }
 
 # Published pricing (USD per 1M tokens) for Morph's current chat catalog.
@@ -34,6 +37,7 @@ FALLBACK_PRICES: dict[str, tuple[Decimal, Decimal, Decimal | None]] = {
     "minimax/minimax-m2.7": (Decimal("0.28"), Decimal("1.20"), None),
     "minimax/minimax-m3": (Decimal("0.60"), Decimal("2.40"), None),
     "deepseek/deepseek-v4-flash": (Decimal("0.14"), Decimal("0.28"), None),
+    "deepseek/deepseek-v4.1-flash-1017": (Decimal("0.12"), Decimal("0.80"), Decimal("0.008")),
     "morph/morph-v3-fast": (Decimal("0.80"), Decimal("1.20"), None),
     "morph/morph-v3-large": (Decimal("0.90"), Decimal("1.90"), None),
 }
@@ -60,13 +64,19 @@ def _checkpoint_blocked(html: str) -> bool:
 def parse(html: str) -> dict[str, PriceRow]:
     output: dict[str, PriceRow] = {}
 
-    for raw_line in html.splitlines():
+    # HTML is commonly minified onto one line. Reading that as a price row
+    # pairs the first model's input with another model's output. Scope to
+    # table rows; normalized text fixtures retain their one-row-per-line form.
+    soup = BeautifulSoup(html, "html.parser")
+    table_rows = soup.find_all("tr")
+    lines = [row.get_text(" ", strip=True) for row in table_rows] if table_rows else html.splitlines()
+    for raw_line in lines:
         line = re.sub(r"\s+", " ", raw_line)
         native_id = next((item for item in MODEL_IDS if item in line), None)
         if native_id is None:
             continue
         values = _line_prices(line)
-        if len(values) < 2:
+        if len(values) not in {2, 3}:
             continue
         row: PriceRow = {
             "prompt_micro_per_m": _micro_per_m(values[0]),

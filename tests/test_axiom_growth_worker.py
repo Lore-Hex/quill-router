@@ -17,6 +17,19 @@ def event(name='signup_completed', **kwargs):
         'utm_source': 'google', **kwargs}, 'axiom')
 
 
+@pytest.mark.parametrize('name', [
+    'social_rewards_exposed', 'social_reward_clicked', 'social_reward_claimed',
+])
+def test_social_rewards_export_is_distinct_from_purchase_and_follower_verification(name):
+    row = project({
+        '_time': '2026-10-15T02:30:00Z', 'event': 'acquisition.' + name,
+        'anonymous_fingerprint': 'a' * 64, 'amount_microdollars': 30_000,
+    }, 'axiom' if name == 'social_reward_claimed' else 'cloud_logging')
+    assert row['event'] == 'acquisition.' + name
+    assert 'amount_microdollars' not in row  # Promotional grants are not purchases.
+    assert 'verified' not in row
+
+
 class FakeIO:
     def __init__(self, events=(), daily=(), fail=False):
         self.rows = list(events)
@@ -199,6 +212,52 @@ def test_dashboards_use_live_cohort_age_and_source_watermark():
         assert doc['dashboard']['owner'] == 'X-AXIOM-EVERYONE'
 
 
+@pytest.mark.parametrize('name', ['DEVICE_QUERY', 'REWARDS_QUERY', 'REWARD_ACTIONS_QUERY', 'INTERNAL_QUERY'])
+def test_console_panels_reuse_the_filtered_event_snapshot(name):
+    from scripts.axiom_growth import dashboards as d
+    query = getattr(d, name)
+    assert query.startswith(d.EVENTS)  # one dedupe, one filter chain, shared with every event panel
+    assert d.FILTER in d.EVENTS and d.EVENTS.index('arg_max(exported_at') < d.EVENTS.index(d.FILTER)
+    for column in ('account_fingerprint', 'workspace_fingerprint', 'device_category', 'reward_action'):
+        assert column in d.EVENTS[:d.EVENTS.index(d.FILTER)]
+
+
+def test_console_panels_exclude_only_tagged_internal_traffic_and_show_what_was_excluded():
+    from scripts.axiom_growth import dashboards as d
+    assert d.INTERNAL_TAG == "utm_medium == 'internal' or utm_source == 'test'"
+    for name in ('DEVICE_QUERY', 'REWARDS_QUERY', 'REWARD_ACTIONS_QUERY'):
+        assert '| where not(internal_tagged)' in getattr(d, name)
+    assert '| where not(internal_tagged)' not in d.INTERNAL_QUERY
+    assert 'Internal_tagged=countif(internal_tagged)' in d.INTERNAL_QUERY
+    funnel = next(doc for doc in d.build() if doc['uid'] == 'tr-growth-funnel-v1')
+    assert any('no staff account list exists' in c['name'] for c in funnel['dashboard']['charts'])
+    assert 'no QA account list exists' in funnel['dashboard']['description']
+
+
+def test_reward_panels_separate_views_impressions_opens_clicks_and_grants():
+    from scripts.axiom_growth import dashboards as d
+    stages = dict(d.REWARD_STAGES)
+    assert stages['acquisition.social_reward_clicked'] == '4 Action clicks (not verified follows)'
+    assert 'attributed workspaces only' in stages['acquisition.social_reward_claimed']
+    # Console records carry account identity; grants carry workspace identity. Count both, never merge.
+    for field in ('Accounts=dcountif(account_fingerprint', 'Workspaces=dcountif(workspace_fingerprint',
+                  'Visitors=dcountif(anonymous_fingerprint'):
+        assert field in d.REWARDS_QUERY
+    assert 'Grants=countif' in d.REWARD_ACTIONS_QUERY and 'by reward_action' in d.REWARD_ACTIONS_QUERY
+    funnel = next(doc for doc in d.build() if doc['uid'] == 'tr-growth-funnel-v1')
+    assert any('clicks are not verified follows' in c['name'] for c in funnel['dashboard']['charts'])
+
+
+def test_console_fixture_rows_match_their_columns_and_stages():
+    from scripts.axiom_growth import validate_onboarding as v
+    from scripts.axiom_growth.dashboards import REWARD_STAGES
+    header, body = v.console_fixture()[len('datatable('):].rstrip(']').split(')[', 1)
+    assert header.count(':') == len(v.CONSOLE_COLUMNS)
+    rows = body.count("'acquisition.")  # no literal in the fixture contains a comma
+    assert body.count(',') + 1 == rows * len(v.CONSOLE_COLUMNS)
+    assert all(repr(name) in body for name, _ in REWARD_STAGES) and "'internal'" in body
+
+
 def test_stale_alert_debounces_and_checks_observed_data_not_only_job_time():
     from scripts.axiom_growth.alerts import QUERY
     assert 'observed_through' in QUERY
@@ -246,7 +305,7 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     value = source_filter()
     assert '=~' not in value
     assert '\\' not in value
-    assert value.count('jsonPayload.event=') == 34
+    assert value.count('jsonPayload.event=') == 40
     for name in m.BROWSER_EVENTS | m.CONVERSION_EVENTS:
         assert f'jsonPayload.event="{name}"' in value
     assert 'resource.type="cloud_run_revision"' in value
@@ -445,3 +504,24 @@ def test_missing_pre_auth_cookie_is_unknown_not_an_invented_direct_visit():
 @pytest.mark.parametrize('label', ['(unknown)', '(unattributed)', '(redacted)'])
 def test_known_missing_source_labels_remain_explicit(label):
     assert m.canonical_source(label) == label
+
+
+def test_console_observation_projection_replay_and_allowlist():
+    raw = {'_time': '2026-10-15T02:30:00Z',
+           'event': 'acquisition.social_reward_clicked', 'anonymous_fingerprint': 'a' * 64,
+           'account_fingerprint': 'b' * 64, 'reward_action': 'github',
+           'reward_placement': 'api_key_setup', 'device_category': 'mobile',
+           'observation_id': '84c35821-8c8f-48ea-8aba-19724a965078',
+           'user_agent': 'private browser data', 'email': 'private@example.com'}
+    first = project(raw, 'cloud_logging')
+    replay = project({**raw, '_time': '2026-10-15T02:31:00Z'}, 'cloud_logging')
+    assert first['event_id'] == replay['event_id']
+    assert first['reward_action'] == 'github'
+    assert first['reward_placement'] == 'api_key_setup'
+    assert first['device_category'] == 'mobile'
+    assert 'user_agent' not in first and 'email' not in first
+    invalid = project({**raw, 'reward_action': 'secret', 'device_category': 'raw UA',
+                       'reward_placement': 'https://private'}, 'cloud_logging')
+    assert not {'reward_action', 'device_category', 'reward_placement'} & invalid.keys()
+    grant = event('social_reward_claimed', reward_action='github')
+    assert grant['reward_action'] == 'github'

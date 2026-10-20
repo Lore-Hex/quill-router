@@ -37,6 +37,28 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
     """Control-plane stubs for media operations implemented by the gateway."""
 
     @router.post(
+        "/tools/fetch",
+        openapi_extra={
+            "summary": "Fetch a web page as Markdown",
+            "description": "Standalone DeepSeek-compatible Fetch on the attested API origin. Only successful nonempty results are billed per request. Credits only; not ZDR or confidential. X-Usage-Cost reports USD and X-Generation-Id identifies billing metadata. Idempotency replays return 409 because page contents are not retained.",
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                "type": "object", "required": ["url"], "additionalProperties": False,
+                "properties": {
+                    "url": {"type": "string", "format": "uri", "maxLength": 8192},
+                    "model": {"type": "string", "enum": ["deepseek/fetch"], "default": "deepseek/fetch"},
+                    "provider": {"type": "object"},
+                },
+            }}}},
+            "responses": {"200": {"description": "Fetched page", "content": {"application/json": {"schema": {
+                "type": "object", "required": ["title", "content"],
+                "properties": {"title": {"type": "string"}, "content": {"type": "string"}},
+            }}}}},
+        },
+    )
+    async def tools_fetch() -> JSONResponse:
+        return not_supported()
+
+    @router.post(
         "/audio/speech",
         response_class=Response,
         openapi_extra={

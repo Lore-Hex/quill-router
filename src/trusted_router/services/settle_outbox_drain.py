@@ -43,6 +43,10 @@ _DRAIN_LEASE_SECONDS = 300
 # burn attempts toward dead, and retries after a fix lands without operator
 # SQL. Transient errors keep the attempts-counted exponential backoff.
 _DETERMINISTIC_PARK_SECONDS = 3600
+# A leased intent the fast path has not decided: asked again at the drain's
+# next pass, no attempt spent (settle_outbox_apply bounds this by the row's
+# age).
+_LEASED_UNDECIDED_PARK_SECONDS = 300
 
 _monotonic = time.monotonic
 
@@ -449,6 +453,21 @@ def _resolve_row(
         )
         logger.warning(
             "settle outbox parked typed row authorization_id=%s intent_kind=%s",
+            row.authorization_id,
+            row.intent_kind,
+        )
+        return
+
+    if outcome == ApplyOutcome.PARK_LEASED_UNDECIDED:
+        outbox.park(
+            row.authorization_id,
+            row.intent_kind,
+            lease_owner=lease_owner,
+            retry_after_seconds=_LEASED_UNDECIDED_PARK_SECONDS,
+            note="fast path undecided",
+        )
+        logger.warning(
+            "settle outbox parked undecided leased intent authorization_id=%s intent_kind=%s",
             row.authorization_id,
             row.intent_kind,
         )

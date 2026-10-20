@@ -139,3 +139,23 @@ func TestTheDrainCursorSkipsNothing(t *testing.T) {
 		t.Fatalf("the read after: %v %v", ids(rows), err)
 	}
 }
+
+// TestAnAppendRetriedAfterTheLeaseClosedIsRefused: a terminal retried once
+// its lease is closed finds its row and is refused all the same, so the
+// front door answers it from the authorization's disposition instead of
+// `recorded` for as long as the row lives.
+func TestAnAppendRetriedAfterTheLeaseClosedIsRefused(t *testing.T) {
+	s := spikeStore(t)
+	ref := grantLease(t, s, 30, 100)
+	first := appendOK(t, s, terminal(ref, "a1", "r1", 15, 10))
+	execLease(t, ref, closeIt)
+	before := readLease(t, s, ref)
+	got, err := s.Append(context.Background(), terminal(ref, "a1", "r1", 15, 10))
+	if err != nil || got.Refused != RefusedClosed || got.Raise != first.Raise {
+		t.Fatalf("the retry after close: %+v %v, first %+v", got, err, first)
+	}
+	rows, _, _ := s.ReadDrainSince(context.Background(), ref, time.Time{})
+	if len(rows) != 1 || readLease(t, s, ref) != before {
+		t.Fatalf("the refused retry wrote rows %v or changed the lease", rows)
+	}
+}

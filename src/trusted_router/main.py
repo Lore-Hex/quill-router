@@ -130,6 +130,10 @@ _ACQUISITION_CLOUD_FIELDS = (
     "first_creative_id",
     "landing_path",
     "page_path",
+    "device_category",
+    "reward_action",
+    "reward_placement",
+    "observation_id",
     "site_domain",
     "experiment_id",
     "experiment_cell_id",
@@ -214,6 +218,10 @@ def _v2_install_hook(app: Any, settings: Settings, backend: Any, workspace: str)
         return None
     from trusted_router.services.async_settle_shadow_cohort_runtime import install
     install(app, settings, backend)
+    from trusted_router.services.async_settle_shadow_startup_harness import (
+        install as install_startup,
+    )
+    install_startup(app, settings, getattr(app.state, "async_settle_shadow_cohort", None))
 
 
 def create_app(
@@ -307,6 +315,10 @@ def create_app(
         elif settings.async_settle_shadow_workspace_ids and not settings.async_settle_shadow_policy:
             from trusted_router.services.async_settle_shadow import install as install_settle_shadow
             install_settle_shadow(app, settings, typed_billing_store(STORE))
+    from trusted_router.services.async_settle_shadow_startup_harness import (
+        install as install_startup_harness,
+    )
+    install_startup_harness(app, settings)
     app.state.settings = settings
     stage_d_policy_resolver = StageDPolicyResolver(
         settings,
@@ -634,7 +646,10 @@ def create_app(
             workspace_id = str(UUID(workspace_id)) if isinstance(workspace_id, str) else "unknown"
         except ValueError:
             workspace_id = "unknown"
-        timing = " ".join(f"{name}={value}" for name, value in gateway_error_timing_fields(exc).items())
+        from trusted_router.storage_gcp_io import spanner_failure_fields
+
+        fields = {**gateway_error_timing_fields(exc), **spanner_failure_fields(exc)}
+        timing = " ".join(f"{name}={value}" for name, value in fields.items())
         _storage_error_logger.warning(
             "%s method=%s route=%s request_id=%s error_class=%s workspace_id=%s%s",
             event,

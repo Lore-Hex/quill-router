@@ -11,6 +11,10 @@ from bs4 import BeautifulSoup
 from scripts.pricing.base import ModelPrice, fetch_html, fetch_provider
 from scripts.pricing.model_ids import canonicalize_unqualified_model_id
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
+from trusted_router.provider_contracts import (
+    STREAMLAKE_KIMI_K2_0905_HOLD_REASON,
+    STREAMLAKE_KIMI_K2_0905_MODEL_ID,
+)
 
 SLUG = "streamlake"
 BASE_URL = "https://vanchin.streamlake.ai/api/gateway/v1/endpoints"
@@ -75,6 +79,7 @@ CATALOG = DirectOpenAIProvider(
         model_id_resolver=model_id,
         pricing_source_url=URL, price_loader=_prices,
         expected_models=tuple(EXPECTED_MODELS),
+        operator_hold_reasons={STREAMLAKE_KIMI_K2_0905_MODEL_ID: STREAMLAKE_KIMI_K2_0905_HOLD_REASON},
         canary_require_usage=True, canary_require_message=True, canary_max_tokens=32,
     ),
     manifest_path=MANIFEST_PATH,

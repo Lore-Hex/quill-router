@@ -109,6 +109,8 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
             rows.append({
                 "id": model_id,
                 "name": view["name"],
+                # Catalog names read "Lab: Model"; the lab names the icon.
+                "lab": view["name"].split(":", 1)[0],
                 "detail_href": view["detail_href"],
                 "icon": icons.get(model_id.split("/")[0], "/static/homepage/mark.svg"),
                 "provider_count": view["provider_count"],

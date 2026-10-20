@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import MODELS
+from trusted_router.catalog_aliases import MODEL_LISTING_ALIASES
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes import catalog as catalog_routes
@@ -12,12 +13,11 @@ from trusted_router.routes import catalog as catalog_routes
 
 def test_v1_models_builds_expensive_shapes_once(monkeypatch) -> None:
     catalog_routes._public_catalog_payload.cache_clear()
-    calls = 0
+    calls: list[str] = []
     original = catalog_routes.model_to_openrouter_shape
 
     def counted(model):
-        nonlocal calls
-        calls += 1
+        calls.append(model.id)
         return original(model)
 
     monkeypatch.setattr(catalog_routes, "model_to_openrouter_shape", counted)
@@ -28,7 +28,8 @@ def test_v1_models_builds_expensive_shapes_once(monkeypatch) -> None:
 
     assert first.status_code == 200
     assert second.content == first.content
-    assert calls == len(MODELS)
+    expected = [model_id for model_id in MODELS if MODEL_LISTING_ALIASES.get(model_id) not in MODELS]
+    assert calls == expected
 
 
 def test_v1_models_is_publicly_cacheable_and_revalidates_with_etag(client: TestClient) -> None:

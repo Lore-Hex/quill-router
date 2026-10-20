@@ -97,6 +97,36 @@ def test_watchdog_falls_back_to_current_checks_and_normalizes_degraded(monkeypat
     ) == {"us-central1": "degraded", "europe-west4": "up"}
 
 
+@pytest.mark.parametrize("regional_status", ["up", "down", "trust_degraded", "degraded", "unknown"])
+def test_watchdog_reads_pinned_regions_missing_from_canonical_slo(monkeypatch, regional_status) -> None:
+    watchdog = _load_watchdog()
+    payload = {
+        "data": {
+            "slo_classes": {"router_core": {"current_by_region": {
+                "global": {"status": "up"},
+                "us-central1": {"status": "up"},
+                "europe-west4": {"status": "unknown"},
+            }}},
+            "current": {"checks": [
+                {"target_region": "us-east4", "probe_type": "tls_health", "status": regional_status},
+                {"target_region": "europe-west4", "probe_type": "tls_health", "status": "up"},
+            ]},
+        },
+    }
+    monkeypatch.setattr(
+        watchdog.urllib.request, "urlopen", lambda *_a, **_k: _FakeResponse(json.dumps(payload).encode()),
+    )
+    assert watchdog.fetch_per_region(
+        "https://status.example", iter(["us-central1", "us-east4", "europe-west4", "southamerica-east1"]),
+    ) == {
+        "us-central1": "up",
+        "us-east4": regional_status,
+        # An explicitly published SLO status remains authoritative.
+        "europe-west4": "unknown",
+        "southamerica-east1": "unknown",
+    }
+
+
 def test_trust_degraded_is_preserved_not_folded_into_degraded(monkeypatch) -> None:
     """An attested gateway that cannot prove what it runs is BROKEN.
 
@@ -165,11 +195,13 @@ def test_rollback_statuses_cover_down_and_trust_degraded() -> None:
         "future_probe",
     ],
 )
+@pytest.mark.parametrize("canonical_slo_present", [False, True])
 def test_legacy_watchdog_does_not_blend_other_probes_into_release_health(
     monkeypatch,
     slo_class: str,
     core_probe: str,
     other_probe: str,
+    canonical_slo_present: bool,
 ) -> None:
     watchdog = _load_watchdog()
     payload = {
@@ -183,6 +215,8 @@ def test_legacy_watchdog_does_not_blend_other_probes_into_release_health(
             }
         }
     }
+    if canonical_slo_present:
+        payload["data"]["slo_classes"] = {slo_class: {"current_by_region": {"global": {"status": "up"}}}}
     monkeypatch.setattr(
         watchdog.urllib.request,
         "urlopen",
@@ -207,7 +241,8 @@ def test_legacy_watchdog_does_not_blend_other_probes_into_release_health(
         "provider_fallback",
     ],
 )
-def test_legacy_watchdog_keeps_router_failures_blocking(monkeypatch, probe: str) -> None:
+@pytest.mark.parametrize("canonical_slo_present", [False, True])
+def test_legacy_watchdog_keeps_router_failures_blocking(monkeypatch, probe: str, canonical_slo_present: bool) -> None:
     watchdog = _load_watchdog()
     payload = {
         "data": {
@@ -218,6 +253,8 @@ def test_legacy_watchdog_keeps_router_failures_blocking(monkeypatch, probe: str)
             }
         }
     }
+    if canonical_slo_present:
+        payload["data"]["slo_classes"] = {"router_core": {"current_by_region": {"global": {"status": "up"}}}}
     monkeypatch.setattr(
         watchdog.urllib.request,
         "urlopen",

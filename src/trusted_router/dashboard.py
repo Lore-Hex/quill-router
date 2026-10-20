@@ -1,6 +1,6 @@
-"""Dashboard rendering. The page itself lives in templates/dashboard.html
+"""Public page rendering. The homepage lives in templates/homepage/index.html
 with HTML/CSS/JS in their own files; this module only resolves
-settings-driven values and renders the Jinja2 template."""
+settings-driven values and renders the Jinja2 templates."""
 
 from __future__ import annotations
 
@@ -63,6 +63,7 @@ from trusted_router.catalog import (
     provider_is_routable,
     providers_for_display,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.competitor_comparisons import (
@@ -98,7 +99,6 @@ from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
 from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
-from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
 from trusted_router.provider_branding import (
     PROVIDER_BRANDS,
     provider_homepage_url,
@@ -127,6 +127,8 @@ from trusted_router.seo_meta import (
 )
 from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.storage_models import BedrockGroupBuyPledge
+from trusted_router.transcription import TRANSCRIPTION_MODELS, transcription_metadata
+from trusted_router.web_fetch import FETCH_MODEL_ID, fetch_metadata, fetch_price_label
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -989,7 +991,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "What is the difference between an LLM router and an AI gateway?",
-                "An LLM router picks which model serves each request. An AI gateway is the layer between your app and providers that handles authentication, fallback, and billing. TrustedRouter is both: meta-routes like trustedrouter/auto, trustedrouter/cheap, and trustedrouter/fast pick the model, while the gateway handles automatic provider fallback, prepaid credits, BYOK, and a privacy tier on every route: Open, Zero-Data-Retention, or TEE.",
+                "An LLM router picks which model serves each request. An AI gateway is the layer between your app and providers that handles authentication, fallback, and billing. TrustedRouter is both: meta-routes like trustedrouter/auto, trustedrouter/cheap, trustedrouter/fast, trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, and trustedrouter/efficient pick the model, while the gateway handles automatic provider fallback, prepaid credits, BYOK, and a privacy tier on every route: Open, Zero-Data-Retention, or TEE.",
             ),
             (
                 "Do I have to rewrite my code to switch LLM routers?",
@@ -1181,7 +1183,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models can I pay for with crypto?",
-                "Crypto funding works against the catalog of 220+ routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4, Kimi, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral, plus meta-routes such as trustedrouter/auto and trustedrouter/cheap. Each route lists a privacy tier, so you can hold wallet-funded work to Zero-Data-Retention or TEE routes.",
+                "Crypto funding works against the catalog of 220+ routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4, Kimi, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral, plus meta-routes such as trustedrouter/auto and trustedrouter/cheap. trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, and trustedrouter/efficient use fixed ordered pools: the first member is preferred and the rest are fallbacks, with no synthesis or implicit privacy floor. Each route lists a privacy tier, so you can hold wallet-funded work to Zero-Data-Retention or TEE routes.",
             ),
         ),
     ),
@@ -1196,7 +1198,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which model routes are cheapest for coding agents?",
-                "trustedrouter/cheap automatically selects the cheapest capable route, which suits high-volume agent loops. trustedrouter/fast optimizes for speed instead. Fixed routes for open models such as GLM glm-5.2-fast, DeepSeek V4 Flash, and Kimi K2.7 are listed with transparent per-model pricing, a thin markup over provider list prices, at trustedrouter.com/pricing.",
+                "trustedrouter/cheap automatically selects the cheapest capable route, which suits high-volume agent loops. trustedrouter/fast optimizes for speed instead. trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, and trustedrouter/efficient use fixed ordered pools: the first member is preferred and the rest are fallbacks, with no synthesis or implicit privacy floor. Fixed routes for open models such as GLM glm-5.2-fast, DeepSeek V4 Flash, and Kimi K2.7 are listed with transparent per-model pricing, a thin markup over provider list prices, at trustedrouter.com/pricing.",
             ),
             (
                 "Is my code private when an agent routes through TrustedRouter?",
@@ -1273,7 +1275,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models can I use for document extraction?",
-                f"There are 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, Llama, and Mistral. {VENDOR_EXCLUSION_CLAIM} Meta-routes help batch pipelines: trustedrouter/auto picks a best-fit route per request, trustedrouter/cheap picks the cheapest capable route, and automatic fallback covers provider outages.",
+                f"There are 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, Llama, and Mistral. {VENDOR_EXCLUSION_CLAIM} Meta-routes help batch pipelines: trustedrouter/auto picks a best-fit route per request, trustedrouter/cheap picks the cheapest capable route, and automatic fallback covers provider outages. trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, and trustedrouter/efficient use fixed ordered pools: the first member is preferred and the rest are fallbacks, with no synthesis or implicit privacy floor.",
             ),
         ),
     ),
@@ -1338,7 +1340,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models can an agent pay for with x402?",
-                "The same catalog as every other payment method: 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral. Meta-routes help agents that should not hardcode a model: trustedrouter/auto picks the best fit per request, trustedrouter/cheap picks the cheapest capable route, and trustedrouter/fast optimizes for latency. Per-model pricing is listed at /pricing.",
+                "The same catalog as every other payment method: 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral. Meta-routes help agents that should not hardcode a model: trustedrouter/auto picks the best fit per request, trustedrouter/cheap picks the cheapest capable route, and trustedrouter/fast optimizes for latency. trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, and trustedrouter/efficient use fixed ordered pools: the first member is preferred and the rest are fallbacks, with no synthesis or implicit privacy floor. Per-model pricing is listed at /pricing.",
             ),
             (
                 "Is my agent's prompt private when it pays per request?",
@@ -1380,6 +1382,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "Do I have to pick one model?",
                 "No. trustedrouter/auto provides general rollover without an implicit upstream "
                 "privacy floor, trustedrouter/cheap chooses low-cost paid candidates, "
+                "trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, and "
+                "trustedrouter/efficient use fixed ordered pools without synthesis or a privacy floor, "
                 "trustedrouter/zdr enforces zero retention, and trustedrouter/e2e enforces "
                 "confidential compute plus provider-side encryption.",
             ),
@@ -2039,7 +2043,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which model does the quick setup use?",
-                "The first message asks DeepSeek a tiny question so you can see the flow work. For later requests, tell the agent to call trustedrouter/cheap, trustedrouter/fast, trustedrouter/zdr, or any named model in the catalog.",
+                "The first message asks DeepSeek a tiny question so you can see the flow work. For later requests, tell the agent to call trustedrouter/cheap, trustedrouter/fast, trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, trustedrouter/efficient, trustedrouter/zdr, or any named model in the catalog.",
             ),
             (
                 "How should I think about savings?",
@@ -2070,7 +2074,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which model should I try first?",
-                "Use trustedrouter/auto for general routing, trustedrouter/fast when latency matters, trustedrouter/cheap when cost matters, or trustedrouter/zdr when zero data retention is required. Then compare the same real prompt across routes before choosing production defaults.",
+                "Use trustedrouter/auto for general routing, trustedrouter/fast when latency matters, trustedrouter/cheap when cost matters, or trustedrouter/zdr when zero data retention is required. trustedrouter/frontier, trustedrouter/advanced, trustedrouter/professional, and trustedrouter/efficient use fixed ordered pools: the first member is preferred and the rest are fallbacks, with no synthesis or implicit privacy floor. Then compare the same real prompt across routes before choosing production defaults.",
             ),
             (
                 "Does TrustedRouter store prompts or outputs?",
@@ -2385,8 +2389,6 @@ def dashboard_html(
     canonical_site_url = canonical_public_url(settings)
     site_url = site_url or canonical_site_url
     alternate_brand = brand_name != "TrustedRouter"
-    page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
-    homepage_enabled = settings.homepage_landscape_enabled and not alternate_brand
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment not in {"local", "test"} else DEV_USER_FALLBACK,
@@ -2398,27 +2400,20 @@ def dashboard_html(
     }
     from trusted_router.homepage import homepage_context
 
-    homepage = homepage_context(resolved_api_base_url) if homepage_enabled else {}
     return (
         _env()
-        .get_template("homepage/index.html" if homepage_enabled else "dashboard.html")
+        .get_template("homepage/index.html")
         .render(
-            **homepage,
-            homepage_noindex=environment in {"local", "test"},
+            **homepage_context(resolved_api_base_url),
+            # Local previews (tunnels) stay out of search; test renders like production.
+            homepage_noindex=environment == "local",
             organization_json_ld=_json_ld_graph(settings),
             api_base_url=resolved_api_base_url,
             site_url=site_url,
             canonical_site_url=canonical_site_url,
             brand_name=brand_name,
             alternate_brand=alternate_brand,
-            og_image=(
-                f"https://{domain}/static/homepage/social-card-v1.jpg"
-                if homepage_enabled else f"https://{domain}/og.png"
-            ),
-            og_title=page_title,
-            og_description=OG_DESCRIPTION,
-            og_image_width=OG_IMAGE_WIDTH,
-            og_image_height=OG_IMAGE_HEIGHT,
+            og_image=f"https://{domain}/static/homepage/social-card-v1.jpg",
             tr_config=json.dumps(tr_config),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -3658,7 +3653,8 @@ def subprocessors_json(settings: Settings) -> str:
 
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
-    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values() if not model.internal_only]
+    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()
+                  if not model.internal_only and not is_listing_alias(model.id, MODELS)]
     all_models.sort(key=_model_discovery_sort_key)
     models = all_models
     normalized_filter = model_filter.strip().lower()
@@ -4578,7 +4574,8 @@ def _sitemap_lastmod() -> str:
 
 def llms_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
-    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only)
+    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID
+                      and not model.internal_only and not is_listing_alias(model.id, MODELS))
     provider_count = len(providers_for_display())
     lines = [
         "# TrustedRouter",
@@ -4718,7 +4715,9 @@ def llms_txt(settings: Settings) -> str:
         (
             "- Model aliases include trustedrouter/auto, trustedrouter/zdr, "
             "trustedrouter/e2e (also trustedrouter/confidential), trustedrouter/eu, trustedrouter/cheap, and "
-            "trustedrouter/free. Advisor orchestration IDs include the primitive trustedrouter/advisor, "
+            "trustedrouter/free. Fixed ordered pools include trustedrouter/frontier, trustedrouter/advanced, "
+            "trustedrouter/professional, and trustedrouter/efficient, with no synthesis or implicit privacy floor. "
+            "Advisor orchestration IDs include the primitive trustedrouter/advisor, "
             "the rolling preset trustedrouter/socrates, and pinned presets trustedrouter/socrates-1.1 and trustedrouter/socrates-1.0. Versioned Synth aliases include trustedrouter/iris-1.0, trustedrouter/iris-2.0, "
             "trustedrouter/prometheus-1.0, trustedrouter/prometheus-2.0, trustedrouter/zeus-1.0, and their -code variants. "
             "Unversioned Synth aliases track the latest preset."
@@ -4811,6 +4810,11 @@ def docs_llms_txt(settings: Settings) -> str:
                 "This compact document is not an exhaustive model list."
             ),
             (
+                "Fixed ordered routing pools: trustedrouter/frontier, trustedrouter/advanced, "
+                "trustedrouter/professional, and trustedrouter/efficient. The first member is "
+                "preferred and the rest are fallbacks, with no synthesis or implicit privacy floor."
+            ),
+            (
                 "For Europe-focused routing, use "
                 "https://api-europe-west4.quillrouter.com/v1 and model trustedrouter/eu."
             ),
@@ -4869,7 +4873,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "",
         "## Positioning",
         "- Better trust: open-source router, public attestation, published source commit, published image digest, and no prompt or output logs. Always.",
-        "- Faster integration: one OpenAI-compatible base URL, one key, and aliases for auto, ZDR, E2E, EU, cheap, free, and synth routing.",
+        "- Faster integration: one OpenAI-compatible base URL, one key, and aliases for auto, ZDR, E2E, EU, cheap, free, frontier, advanced, professional, efficient, and synth routing.",
         "- Lower-cost options: routes to inexpensive open-weight models such as GLM, DeepSeek, Gemma, Kimi, MiniMax, and Qwen, plus prepaid and BYOK support.",
         "- Better reliability: provider fallback, measured leaderboard data, public status, and regional API endpoints.",
         "- Clear privacy boundary: the control plane handles metadata, billing, and keys; prompt traffic terminates in the attested gateway.",
@@ -4927,6 +4931,10 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/eu: EU-focused provider selection.",
         "- trustedrouter/green: directly hosted models on provider-declared 100% renewable inference electricity. Fallback stays in the qualifying pool; this is not a provider TEE claim.",
         "- trustedrouter/cheap: low-cost paid route pool.",
+        "- trustedrouter/frontier: fixed frontier pool; first member preferred, then ordered fallback; no synthesis or implicit privacy floor.",
+        "- trustedrouter/advanced: fixed advanced pool; first member preferred, then ordered fallback; no synthesis or implicit privacy floor.",
+        "- trustedrouter/professional: fixed professional pool; first member preferred, then ordered fallback; no synthesis or implicit privacy floor.",
+        "- trustedrouter/efficient: fixed efficient pool; first member preferred, then ordered fallback; no synthesis or implicit privacy floor.",
         "- trustedrouter/free: free pool with no SLA.",
         "- trustedrouter/synth: attested multi-model panel, selectable judge, and final synthesis.",
         "- trustedrouter/subagent: primitive for OpenRouter-compatible subtask delegation with tool type openrouter:subagent or trustedrouter:subagent.",
@@ -5060,8 +5068,13 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         completion = _price(model.completion_price_microdollars_per_million_tokens)
     speech = SPEECH_MODELS.get(model.id)
     if speech and not speech.token_billed:
-        prompt = f"{format_money_precise(speech.customer_rate)}/M characters"
+        prompt = speech.non_token_price_label
         completion = "Included"
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
+    if transcription:
+        prompt, completion = transcription.price_label, "Included"
+    if model.id == FETCH_MODEL_ID:
+        prompt, completion = fetch_price_label(), "Included"
     cached_prices = _cached_prompt_prices(route_endpoints)
     if cached_prices:
         cached_prompt = _price_values_range(cached_prices, include_zero=True)
@@ -5118,8 +5131,10 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "context_length_compact": _compact_token_count(model.context_length),
         "context_length_int": model.context_length,
         "prompt_price": prompt,
-        "cached_prompt_price": "Not applicable" if speech else cached_prompt,
+        "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else cached_prompt,
+        "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
         "speech": speech_metadata(model.id) if speech else None,
+        "transcription": transcription_metadata(model.id) if transcription else None,
         "completion_price": completion,
         "prompt_price_sort": prompt_price_sort,
         "cached_price_sort": min(cached_prices) if cached_prices else None,
@@ -5480,6 +5495,7 @@ def _model_detail_view(
 ) -> dict[str, object]:
     publisher = _model_publisher(model)
     speech = SPEECH_MODELS.get(model.id)
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
     is_meta = model.id in META_MODEL_IDS
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
@@ -5502,9 +5518,9 @@ def _model_detail_view(
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
                 "provider_logo_url": provider_logo_url(endpoint.provider),
-                "prompt_price": f"{format_money_precise(speech.customer_rate)}/M characters" if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
-                "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range((endpoint,)),
-                "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
+                "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else _cached_prompt_price_range((endpoint,)),
+                "completion_price": "Included" if transcription or (speech and not speech.token_billed) or model.id == FETCH_MODEL_ID else _endpoint_price_range(
                     (endpoint,), "completion_price_microdollars_per_million_tokens"
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
@@ -5551,11 +5567,13 @@ def _model_detail_view(
         "context_length_int": model.context_length,
         "fixed_price": fixed_price,
         "speech": speech_metadata(model.id) if speech else None,
-        "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
+        "transcription": transcription_metadata(model.id) if transcription else None,
+        "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
+        "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _price(model.prompt_price_microdollars_per_million_tokens),
         "cached_prompt_price": (
-            "selected route" if is_meta else _cached_prompt_price_range(endpoints)
+            "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else "selected route" if is_meta else _cached_prompt_price_range(endpoints)
         ),
-        "completion_price": _price(
+        "completion_price": "Included" if transcription or (speech and not speech.token_billed) or model.id == FETCH_MODEL_ID else _price(
             model.completion_price_microdollars_per_million_tokens,
             include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
         ),
@@ -5793,7 +5811,8 @@ def _benchmark_links(model: Model, *, test_mode: bool = False) -> list[dict[str,
 
 def _public_models_for_seo() -> list[Model]:
     return sorted(
-        [model for model in MODELS.values() if model.id not in META_MODEL_IDS and not model.internal_only],
+        [model for model in MODELS.values() if model.id not in META_MODEL_IDS
+         and not model.internal_only and not is_listing_alias(model.id, MODELS)],
         key=lambda model: model.id,
     )
 
@@ -5801,7 +5820,8 @@ def _public_models_for_seo() -> list[Model]:
 def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
     """Return the complete public catalog used by the agent-facing full document."""
     models = sorted(
-        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID and not model.internal_only),
+        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID
+         and not model.internal_only and not is_listing_alias(model.id, MODELS)),
         key=lambda model: model.id,
     )
     return [_model_view(model, test_mode=test_mode) for model in models]
@@ -5902,6 +5922,11 @@ def _model_route_evidence(
     ]
     lowest_prompt = min(prompt_prices) if prompt_prices else None
     lowest_completion = min(completion_prices) if completion_prices else None
+    speech = SPEECH_MODELS.get(model.id)
+    transcription = TRANSCRIPTION_MODELS.get(model.id)
+    audio_price = transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else None
+    if model.id == FETCH_MODEL_ID:
+        audio_price = fetch_price_label()
 
     ttft_rows = [
         row
@@ -5948,9 +5973,9 @@ def _model_route_evidence(
         else None
     )
     return {
-        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else None,
+        "lowest_prompt_price": (audio_price or _price(lowest_prompt)) if lowest_prompt is not None else None,
         "lowest_completion_price": (
-            _price(
+            "Included" if audio_price and endpoints else _price(
                 lowest_completion,
                 include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
             )
@@ -6011,7 +6036,15 @@ def _model_faq_items(
         provider_answer = ", ".join(str(name) for name in provider_names[:-1])
         provider_answer = f"{provider_answer}, and {provider_names[-1]}"
     if route_evidence["route_count"]:
+        speech = SPEECH_MODELS.get(model.id)
+        transcription = TRANSCRIPTION_MODELS.get(model.id)
+        non_token_audio = (transcription is not None and not transcription.token_billed) or (speech is not None and not speech.token_billed)
         price_answer = (
+            f"The current Credits price is {fetch_price_label()}. No token charge applies."
+            if model.id == FETCH_MODEL_ID else
+            f"The current Credits price is {route_evidence['lowest_prompt_price']}. "
+            "Output is included; these are audio prices, not text-token prices."
+            if non_token_audio else
             f"The current lowest Credits input price is "
             f"{route_evidence['lowest_prompt_price']} and the lowest Credits output price is "
             f"{route_evidence['lowest_completion_price']}. Prices are per one million tokens "
@@ -6345,6 +6378,7 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
         if not endpoints:
             continue
         speech = SPEECH_MODELS.get(model.id)
+        transcription = TRANSCRIPTION_MODELS.get(model.id)
         rows.append(
             {
                 "id": model.id,
@@ -6361,13 +6395,15 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                 ),
                 "context_length": f"{model.context_length:,}",
                 "speech": speech_metadata(model.id) if speech else None,
+                "transcription": transcription_metadata(model.id) if transcription else None,
                 "endpoint_count": len(endpoints),
-                "prompt_price": f"{format_money_precise(speech.customer_rate)}/M characters" if speech and not speech.token_billed else _endpoint_price_range(
+                "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
+                "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
                     endpoints,
                     "prompt_price_microdollars_per_million_tokens",
                 ),
-                "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range(endpoints),
-                "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
+                "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else _cached_prompt_price_range(endpoints),
+                "completion_price": "Included" if transcription or (speech and not speech.token_billed) or model.id == FETCH_MODEL_ID else _endpoint_price_range(
                     endpoints,
                     "completion_price_microdollars_per_million_tokens",
                 ),

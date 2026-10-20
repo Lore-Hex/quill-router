@@ -15,6 +15,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
     _PROVIDER_UNSERVED_CREDITS_MODELS,
     _UNSERVED_CREDITS_MODELS,
+    ADVANCED_MODEL_ID,
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
     ARCHIMEDES_1_0_MODEL_ID,
@@ -35,10 +36,12 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
     E2E_MODEL_ID,
+    EFFICIENT_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
     EU_MODEL_ID,
     FAST_MODEL_ID,
     FREE_MODEL_ID,
+    FRONTIER_MODEL_ID,
     FUSION_CODE_MODEL_ID,
     FUSION_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -91,6 +94,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
     PRIVATE_PROXY_MODEL_TARGETS,
+    PROFESSIONAL_MODEL_ID,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
@@ -137,6 +141,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
+    TIER_MODEL_ORDERS,
     TREV_1_0_MODEL_ID,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
@@ -258,10 +263,13 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
     meta_candidate_models,
     monitor_candidate_models,
     socrates_candidate_models,
+    tier_candidate_models,
     validate_auto_model_order,
     zdr_candidate_models,
 )
 from trusted_router.speech import SPEECH_MODELS, speech_metadata
+from trusted_router.transcription import TRANSCRIPTION_MODELS, transcription_metadata
+from trusted_router.web_fetch import FETCH_MODEL_ID, fetch_metadata, fetch_pricing
 
 # Uniform pricing: customer pays cost + 5.5%, floor $0.01/M tokens. Same
 # value goes into both `prompt_price_*` and `published_*` — TR no longer
@@ -498,11 +506,12 @@ _OPEN_WEIGHT_PREFIXES = (
     "google/gemma",
     "ibm-granite/",
     "meta-llama/",
-    "minimax/minimax-m3",
     "mistralai/mistral-large-4",
     "moonshotai/kimi",
     "nvidia/nemotron",
     "qwen/",
+    # Reflection's released Beam 1.0 weights are Apache-2.0, not a preview claim.
+    "reflection/beam-1.0",
     "tencent/hy4",
     "thinkingmachines/",
     "xiaomi/mimo",
@@ -533,7 +542,8 @@ def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> 
             return False
         next_seen = frozenset((*_seen, model.id))
         return all(model_open_weights(candidate, _seen=next_seen) for candidate in candidates)
-    return model_id.startswith(_OPEN_WEIGHT_PREFIXES) or any(
+    # M3.1's weights were announced for later release, not published at launch.
+    return model_id == "minimax/minimax-m3" or model_id.startswith(_OPEN_WEIGHT_PREFIXES) or any(
         marker in model_id for marker in _OPEN_WEIGHT_CONTAINS
     )
 
@@ -722,12 +732,12 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
     if model.id in SPEECH_MODELS and not SPEECH_MODELS[model.id].token_billed:
-        # Do not advertise a character-billed service as free text generation.
-        pricing = {
-            "input_character": microdollars_per_million_tokens_to_token_decimal(
-                SPEECH_MODELS[model.id].customer_rate
-            ),
-        }
+        # Non-token tariffs must not appear to be free text generation.
+        pricing = SPEECH_MODELS[model.id].non_token_pricing
+    if model.id in TRANSCRIPTION_MODELS:
+        pricing = TRANSCRIPTION_MODELS[model.id].pricing
+    if model.id == FETCH_MODEL_ID:
+        pricing = fetch_pricing()
     # The endpoint payloads have always published input_cache_read; the model
     # headline never did, so /v1/models hid the cache-read discount on more
     # than a thousand endpoints. OR convention, same field name.
@@ -892,9 +902,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         )
     if documentation is not None:
         tr_block["documentation"] = documentation
+    if model.id == FETCH_MODEL_ID:
+        tr_block["supports_fetch"] = True
+        tr_block["fetch"] = fetch_metadata()
     if model.id in SPEECH_MODELS:
         tr_block["speech"] = speech_metadata(model.id)
         tr_block["supports_speech"] = True
+    if model.id in TRANSCRIPTION_MODELS:
+        tr_block["transcription"] = transcription_metadata(model.id)
+        tr_block["supports_transcription"] = True
     usage_estimation = provider_usage_estimation_policy(model.provider)
     if usage_estimation is not None:
         tr_block["usage_estimation"] = usage_estimation

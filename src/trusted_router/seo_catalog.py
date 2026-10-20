@@ -26,6 +26,7 @@ from trusted_router.catalog import (
     endpoints_for_model,
     provider_confidential_inference,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.measured import measured_snapshot
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.provider_branding import provider_logo_url
@@ -75,7 +76,8 @@ _DEFAULT_PROVIDER_SLUGS: tuple[str, ...] = (
 
 
 def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str, object]:
-    public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS and not model.internal_only]
+    public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS
+                     and not model.internal_only and not is_listing_alias(model.id, MODELS)]
     public_model_ids = {model.id for model in public_models}
     public_endpoints = [
         endpoint

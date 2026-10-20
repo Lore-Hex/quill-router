@@ -119,6 +119,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "nscale": (("NSCALE_API_KEY",), "https://inference.api.nscale.com/v1"),
     "regolo": (("REGOLO_API_KEY",), "https://api.regolo.ai/v1"),
     "lyceum": (("LYCEUM_API_KEY",), "https://api.lyceum.technology/openai/v1"),
+    "amazon-bedrock": (("BEDROCK_API_KEY",), "https://bedrock-mantle.us-east-1.api.aws/v1"),
     "greenference": (("GREENFERENCE_API_KEY",), "https://llm.eu.greenference.com/trustedrouter/v1"),
     "boundless": (("BOUNDLESS_API_KEY",), "https://api.inference.boundless.network/v1"),
     "zro": (("ZRO_API_KEY",), "https://zro.moonmath.ai/v1"),

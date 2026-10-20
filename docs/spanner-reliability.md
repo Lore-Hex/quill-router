@@ -250,6 +250,18 @@ For a gateway billing-path incident:
 5. Confirm post-fix requests settle across multiple shards, no new `5xx`
    appears, and the invariant audit remains clean.
 
+For a single legacy hot account, prefer `scripts/expand_billing_shards.py`
+when its exact-key preflight permits the repair. It atomically adds capacity
+without pausing traffic or modifying existing holds, usage, or spend limits.
+Non-strict daily/weekly/monthly-only caps are supported with the explicit
+`--allow-window-caps` option. The cap values must agree in metadata and every
+typed row; new rows retain those same values and start with zero usage. Window
+enforcement still sums all configured shards, so this does not multiply the
+customer's allowance. Strict and lifetime-capped keys remain ineligible.
+Use the read-only ops credential for the default dry run; `--apply` requires
+a separate named deployment identity and repeats every check transactionally.
+Do not remove a customer cap or change strict mode to qualify for this repair.
+
 Authorize, idempotency-replay, settle, refund, and typed-finalize transactions
 carry stable `tr_*` Spanner transaction tags. Tags identify the operation in
 transaction and lock insights without containing a workspace, key, request,

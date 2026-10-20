@@ -65,6 +65,70 @@ The pre-migration local node-1 table is retained as
 `provider_benchmark_samples_local_backup`. Do not delete it until a later,
 explicitly reviewed cleanup.
 
+## Credentials
+
+Control-plane operational reads use `tr_control_read`. On GCP,
+`scripts/deploy/clickhouse_control_reader.sh` installs the account with
+table-scoped SELECT grants in `tr`; its password lives in Secret Manager as
+`trustedrouter-clickhouse-control-read-password`.
+
+The standalone Paris and Azure nodes store their analytics in `default`.
+Their provisioners install the same read-only profile with only
+`GRANT SELECT ON default.*`, restricted to the local VPC/VNet and loopback:
+
+| Cloud | Reader password secret | Writer password secret |
+|---|---|---|
+| AWS (eu-west-3 Secrets Manager) | `quill/tr-eu-clickhouse-read-password` | `quill/tr-eu-clickhouse-password` |
+| Azure (Key Vault `trquillkv`) | `tr-azure-clickhouse-read-password` | `tr-azure-clickhouse-password` |
+
+Run `aws_eu_clickhouse.sh` or `azure_clickhouse.sh` before redeploying the
+corresponding control plane. Each creates a missing reader secret, reuses an
+existing value, and installs `users.d/tr-control-reader.xml` on new and
+existing nodes. The XML contains a SHA-256 password hash and is owned by
+`clickhouse` with mode `0640`; unchanged configuration does not restart the
+server. AWS fetches and hashes the reader secret on the node with boto3 under
+its instance profile; user-data and SSM commands carry only the secret name,
+never the password or hash. The role receives `GetSecretValue` on that secret's
+exact ARN before an existing node is converged. Azure fetches the reader
+secret on the node using its managed identity, and creates reader or writer
+secrets only on an explicit Key Vault `SecretNotFound`; other lookup failures
+stop provisioning without creating a new version. The control-plane deploy
+scripts select the reader secret by reference, without retrieving its value.
+
+The Postgres outbox drains retain `default` and the writer secrets. Stockholm
+is a second drain target, not a configured control-plane read endpoint; its
+regional writer credential is unchanged. The AWS ECS release script clones
+the running task's configuration, so these provisioner defaults alone do not
+migrate an existing ECS task definition.
+
+## Activity generation lookup schema
+
+The `by_generation_id` projection finds every stored copy of a generation ID
+before the full rows are read by `(tenant_id, created_at, generation_id)` with
+`FINAL`. The inner lookup uses the projection's primary index rather than
+scanning the whole activity table.
+
+| Topology | Migration |
+|---|---|
+| GCP replicated cluster (`tr`) | `clickhouse/023_activity_generation_id_projection_replicated.sql`, applied through `scripts/deploy/clickhouse_replicated_migrate.sh` |
+| AWS Paris, AWS Stockholm and Azure standalone nodes (`default`) | `clickhouse/024_activity_generation_id_projection_single_node.sql` |
+
+`scripts/deploy/_clickhouse_single_node_schema.sh` derives the standalone set
+from `*_single_node.sql` in filename order, so 024 follows 006/009/011/013.
+It uses unqualified table names and requires no Keeper or `ON CLUSTER` DDL.
+Both variants use `ADD PROJECTION IF NOT EXISTS` and can be applied again.
+`deduplicate_merge_projection_mode = 'rebuild'` keeps the projection correct
+when `ReplacingMergeTree` merges redelivered rows. `MATERIALIZE PROJECTION`
+also builds it for existing parts as a background mutation; check
+`system.mutations` for completion and `system.projection_parts` for active
+`by_generation_id` parts before considering the projection built.
+
+Keep `lightweight_mutation_projection_mode` at its default, `throw`.
+Lightweight `DELETE` is refused with code 344: on 26.7.1.1315, `rebuild` could
+return deleted rows through the projection until a merge, while `drop` lost
+the touched part's projection even after a forced merge. Use
+`ALTER TABLE ... DELETE`, which rewrites the projection with the part.
+
 ## Durable archive
 
 `clickhouse/archive_daily.py` exports each closed UTC day with `FINAL` for
@@ -217,6 +281,85 @@ scripts/deploy/clickhouse_failover_smoke.sh --apply
 The apply mode arms a remote automatic restart before stopping one node, runs
 20 SQL reads through the load balancer with two zones healthy, restores the
 node, waits for 3/3 health, and synchronizes the replica.
+
+### Generation delivery verifiers
+
+`clickhouse.verify_spanner_delivery` compares typed Spanner generations with
+`activity_generations FINAL` on GCP. Its scheduled unit is
+`tr-clickhouse-spanner-delivery.service`; its JSON history is
+`/var/lib/tr-clickhouse-ingest/spanner-delivery.jsonl`.
+
+`clickhouse.verify_postgres_delivery` is the AWS/Azure counterpart. It compares
+generation IDs, total cost in microdollars, prompt/completion/cached/reasoning
+token counts, model, provider, status, and creation time (within one second).
+It reports the same `sampled`, `found`, `missing`, `mismatched`, `duplicated`,
+ID samples (at most 20), `mismatch_fields`, and `ok` fields, plus `pending`,
+`extra`, and coverage fields. A missing row younger than `--grace-seconds`
+(default 300) is pending. Grace uses the later of `created_at` and the entity's
+`updated_at`, so a late settle gets time to drain. Extra IDs count only inside
+the requested half-open `created_at` window; older ClickHouse history is expected,
+and an ID the scan did not see is rechecked by primary key before it counts: a
+settle inside the window that landed after the scan passed its ID is reported
+as `settled_after_scan`, not as extra.
+Exit 0 means a complete, clean check; discrepancies, incomplete coverage, and
+query failures exit nonzero. No row values or driver error text are printed.
+
+Postgres generation writes currently leave `indexed_at` NULL. Until a
+generation timestamp index is populated, this verifier reads bounded pages
+through the `(kind, id)` primary key and filters `created_at` in memory. It
+never uses an unindexed JSON timestamp predicate. `--scan-limit` (default
+50000) bounds the source rows inspected, plus one key-only continuation probe;
+`--limit` (default 5000) bounds the generations compared. A cap produces
+`complete: false` and cannot report success. `extra_checked: false` means the
+source coverage was incomplete, so ClickHouse rows were not classified as
+extra. This is not an indexed day-range scan: narrowing the window alone does
+not reduce source history reads. A populated timestamp index is needed for
+efficient complete checks of larger histories.
+
+ClickHouse lookups use server-bound IDs in chunks of 500 and the
+`by_generation_id` projection, which must be installed/materialized on each
+standalone node as part of R0. The extra-ID check reads only the requested
+time window with `LIMIT limit + 1`. Every ClickHouse query also has a one-million
+row read ceiling and a 30-second execution ceiling; exceeding either fails
+the check rather than allowing unbounded work.
+
+Run from a host with private access to both databases. Use a verifier Postgres
+role permitted to SELECT generation entities; the drain's outbox-only role
+does not have that permission. Connection handling is reused from the Postgres
+drain: DSQL mints an IAM token for the configured role, and Azure uses libpq's
+`PGPASSWORD` or password file. Keep passwords in the protected environment or
+password file, never in the DSN or command arguments. The checkout's drain
+uses `clickhouse-client`; this verifier reuses the operational analytics HTTP
+reader with the drain's `CH_PASSWORD`, `_USER`, and `_DATABASE` settings.
+`TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD` takes precedence for a separate
+read credential. Set `_URL` to one node's HTTP endpoint (default localhost:8123),
+and check each durable copy separately with its own credentials and history file.
+
+On AWS, with the existing AWS role and ClickHouse environment loaded:
+
+```bash
+export TR_POSTGRES_DSN='host=<dsql-endpoint> port=5432 user=tr_verifier dbname=postgres sslmode=require'
+export TR_POSTGRES_IAM_AUTH=aws-dsql
+export TR_POSTGRES_IAM_REGION=eu-west-3
+PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
+  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 50000 \
+  --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl
+```
+
+On Azure, with the verifier's Postgres password and the node's ClickHouse
+environment already injected:
+
+```bash
+export TR_POSTGRES_DSN='host=<postgres-host> port=5432 user=tr_verifier dbname=trustedrouter sslmode=require'
+export TR_POSTGRES_IAM_AUTH=''
+PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
+  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 50000 \
+  --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-azure.jsonl
+```
+
+Use `--start 2026-10-18T00:00:00Z --end 2026-10-19T00:00:00Z` for a fixed
+window. The verifier does not repair records, delete outbox rows, or change
+settlement writes.
 
 ## Restore procedures
 

@@ -1,8 +1,9 @@
-"""Atomically expand a live typed workspace and one uncapped key, without a pause.
+"""Atomically expand a live typed workspace and one eligible key, without a pause.
 
 Dry-run uses the read-only ops credential. Apply requires a separately named
 gcloud identity. Existing holds, usage, window counters and pause ownership are
 never modified. Only free credit capacity moves; new counter rows start at zero.
+Non-strict window-only caps require explicit opt-in and remain unchanged.
 """
 
 from __future__ import annotations
@@ -40,6 +41,11 @@ CAP_FIELDS = (
     "limit_microdollars", "limit_daily_microdollars", "limit_weekly_microdollars",
     "limit_monthly_microdollars",
 )
+WINDOW_CAP_FIELDS = {
+    "day_limit_micro": "limit_daily_microdollars",
+    "week_limit_micro": "limit_weekly_microdollars",
+    "month_limit_micro": "limit_monthly_microdollars",
+}
 
 
 def expand_credit_rows(rows: list[dict[str, Any]], target: int) -> list[dict[str, Any]]:
@@ -89,7 +95,7 @@ def make_plan(
     workspace: dict[str, Any], credit: dict[str, Any], key: dict[str, Any],
     credit_rows: list[dict[str, Any]], key_rows: list[dict[str, Any]],
     owner: dict[str, Any], owner_credits: dict[str, dict[str, Any]], target: int,
-    *, allow_management_key: bool = False,
+    *, allow_management_key: bool = False, allow_window_caps: bool = False,
 ) -> dict[str, Any]:
     """Validate one coherent transactional snapshot before staging mutations."""
     ws = workspace["id"]
@@ -105,8 +111,18 @@ def make_plan(
     # selection permits counter expansion, never a change in key privileges.
     if key.get("management") and not allow_management_key:
         raise ValueError("management key requires --allow-management-key")
-    if any(key.get(name) is not None for name in CAP_FIELDS):
+    if key.get("budget_strict", False):
+        raise ValueError("strict keys require the strict-budget maintenance path")
+    if key.get("limit_microdollars") is not None or (
+        not allow_window_caps and any(key.get(name) is not None for name in CAP_FIELDS)
+    ):
         raise ValueError("only uncapped keys may be expanded without a pause")
+    window_caps = {}
+    for column, field in WINDOW_CAP_FIELDS.items():
+        value = key.get(field)
+        window_caps[column] = None if value is None else _integer(value, field)
+        if window_caps[column] is not None and window_caps[column] < 0:
+            raise ValueError("negative key window cap")
     current = _integer(credit.get("shard_count", 1), "credit shard count")
     key_current = _integer(key.get("usage_shard_count", 1), "key shard count")
     if not 1 <= current <= target <= MAX_CREDIT_SHARDS or not 1 <= key_current <= target:
@@ -120,8 +136,13 @@ def make_plan(
     for row in key_rows:
         if row["key_hash"] != key["hash"]:
             raise ValueError("key row identity mismatch")
-        if any(row.get(name) is not None for name in ("limit_micro", "day_limit_micro", "week_limit_micro", "month_limit_micro")):
-            raise ValueError("typed key caps disagree with uncapped metadata")
+        if row.get("limit_micro") is not None:
+            raise ValueError("typed key lifetime cap disagrees with uncapped metadata")
+        for column, expected in window_caps.items():
+            value = row.get(column)
+            actual = None if value is None else _integer(value, column)
+            if actual != expected:
+                raise ValueError("typed key window caps disagree with metadata")
         if int(row["reserved"]) != 0:
             raise ValueError("uncapped key has a reserved hold")
         if any(int(row[name]) < 0 for name in ("usage", "byok_usage", "day_usage", "week_usage", "month_usage")):
@@ -156,10 +177,11 @@ def make_plan(
 
 
 class Reader:
-    def __init__(self, client: Any, session: str, transaction: dict[str, Any], deadline: float, *, priority: str = "PRIORITY_LOW", allow_management_key: bool = False):
+    def __init__(self, client: Any, session: str, transaction: dict[str, Any], deadline: float, *, priority: str = "PRIORITY_LOW", allow_management_key: bool = False, allow_window_caps: bool = False):
         self.client, self.session, self.transaction, self.deadline = client, session, transaction, deadline
         self.priority = priority
         self.allow_management_key = allow_management_key
+        self.allow_window_caps = allow_window_caps
 
     def timeout(self) -> float:
         remaining = self.deadline - time.monotonic()
@@ -211,7 +233,7 @@ class Reader:
         key_rows = self.read("tr_key_limit", KEY_COLUMNS, [[key_id, str(shard)] for shard in range(MAX_CREDIT_SHARDS)])
         credits.sort(key=lambda row: int(row["shard"]))
         key_rows.sort(key=lambda row: int(row["shard"]))
-        return make_plan(workspace, records[("credit", workspace_id)], records[("api_key", key_id)], credits, key_rows, owned[("user", owner_id)], {ws: owned[("credit", ws)] for ws in inventory}, target, allow_management_key=self.allow_management_key)
+        return make_plan(workspace, records[("credit", workspace_id)], records[("api_key", key_id)], credits, key_rows, owned[("user", owner_id)], {ws: owned[("credit", ws)] for ws in inventory}, target, allow_management_key=self.allow_management_key, allow_window_caps=self.allow_window_caps)
 
 
 def mutations(plan: dict[str, Any]) -> list[dict[str, Any]]:
@@ -232,8 +254,8 @@ def mutations(plan: dict[str, Any]) -> list[dict[str, Any]]:
         }})
     if plan["current_key_shards"] != target:
         changes.append({"insert": {
-            "table": "tr_key_limit", "columns": ["key_hash", "shard", "include_byok", "source_updated_at", "updated_at"],
-            "values": [[key_id, str(shard), plan["key"].get("include_byok_in_limit", True), "spanner.commit_timestamp()", "spanner.commit_timestamp()"] for shard in range(plan["current_key_shards"], target)],
+            "table": "tr_key_limit", "columns": ["key_hash", "shard", "include_byok", *WINDOW_CAP_FIELDS, "source_updated_at", "updated_at"],
+            "values": [[key_id, str(shard), plan["key"].get("include_byok_in_limit", True), *[_wire(plan["key"].get(field)) for field in WINDOW_CAP_FIELDS.values()], "spanner.commit_timestamp()", "spanner.commit_timestamp()"] for shard in range(plan["current_key_shards"], target)],
         }})
     changes.append({"update": {
         "table": "tr_entities", "columns": ["kind", "id", "body", "updated_at"],
@@ -246,7 +268,7 @@ def _wire(value: Any) -> Any:
     return str(value) if isinstance(value, int) and not isinstance(value, bool) else value
 
 
-def execute(client: Any, session: str, ws: str, key: str, target: int, *, apply: bool, allow_management_key: bool = False) -> dict[str, Any]:
+def execute(client: Any, session: str, ws: str, key: str, target: int, *, apply: bool, allow_management_key: bool = False, allow_window_caps: bool = False) -> dict[str, Any]:
     from google.api_core.exceptions import Aborted
 
     deadline = time.monotonic() + (APPLY_SECONDS if apply else 30)
@@ -256,7 +278,7 @@ def execute(client: Any, session: str, ws: str, key: str, target: int, *, apply:
             raise TimeoutError("bounded billing expansion deadline expired")
         mode = {"read_write": {}} if apply else {"read_only": {"strong": True}}
         tx = client.begin_transaction(request={"session": session, "options": mode}, timeout=min(READ_SECONDS, remaining), retry=None)
-        reader = Reader(client, session, {"id": tx.id}, deadline, priority="PRIORITY_MEDIUM" if apply else "PRIORITY_LOW", allow_management_key=allow_management_key)
+        reader = Reader(client, session, {"id": tx.id}, deadline, priority="PRIORITY_MEDIUM" if apply else "PRIORITY_LOW", allow_management_key=allow_management_key, allow_window_caps=allow_window_caps)
         committed = False
         aborted = False
         try:
@@ -288,6 +310,7 @@ def main() -> int:
     parser.add_argument("--shards", type=int, default=16)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--allow-management-key", action="store_true", help="Allow the explicitly selected uncapped management key; preserve all permissions and billing guards")
+    parser.add_argument("--allow-window-caps", action="store_true", help="Preserve non-strict daily/weekly/monthly caps; lifetime-capped and strict keys remain ineligible")
     parser.add_argument("--account", help="Separate gcloud deployment identity, required for apply")
     args = parser.parse_args()
     from google.cloud.spanner_v1.services.spanner import SpannerClient
@@ -302,7 +325,7 @@ def main() -> int:
         with SpannerClient(credentials=credentials) as client:
             session = client.create_session(request={"database": database}, timeout=READ_SECONDS, retry=None)
             try:
-                return execute(client, session.name, args.workspace, args.key_id, args.shards, apply=apply, allow_management_key=args.allow_management_key)
+                return execute(client, session.name, args.workspace, args.key_id, args.shards, apply=apply, allow_management_key=args.allow_management_key, allow_window_caps=args.allow_window_caps)
             finally:
                 client.delete_session(request={"name": session.name}, timeout=READ_SECONDS, retry=None)
 

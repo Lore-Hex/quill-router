@@ -122,6 +122,12 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
         if target_path in sitemap_paths:
             continue
         response = client.get(target_path, follow_redirects=False)
+        location = response.headers.get("location", "")
+        if 300 <= response.status_code < 400 and location.startswith("/?reason=signin"):
+            # The homepage's API-key calls to action link into the signed-in
+            # console; anonymous requests are sent to the sign-in dialog on
+            # purpose, so that is the auth gate, not a stale internal link.
+            continue
         if 300 <= response.status_code < 400:
             linked_redirects.append(
                 f"{target_path}: {response.status_code} -> "

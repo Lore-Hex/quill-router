@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
@@ -446,7 +446,7 @@ def _report(v: Any) -> None:
     require(len(canonical(v)) - len(canonical(v["failure_counts"])) <= 16384, "evidence_size")
 
 
-GATE_REPORT = _a2({"gate": GATE, "completed_at_us": integer, "proof_manifest_sha256": digest,
+GATE_REPORT = replace(_a2({"gate": GATE, "completed_at_us": integer, "proof_manifest_sha256": digest,
     "prerequisite_ledger_root": digest, "days": array(day, 32, 1), "window": p1.INTERVAL,
     "rules": Schema(dict.fromkeys((f"G{i}" for i in range(1, 12)), literal("pass", "fail", "unevaluable", "not_required")), 512),
     "comparator": COMPARATOR, "admission": ADMISSION, "partition": PARTITION, "attempts": ATTEMPTS,
@@ -455,7 +455,9 @@ GATE_REPORT = _a2({"gate": GATE, "completed_at_us": integer, "proof_manifest_sha
     **dict.fromkeys("first_seed_at_us first_reset_at_us first_gap_at_us clock_start_us elapsed_seconds".split(), nullable(integer)),
     "failure_counts": FAILURE_COUNTS,
     **dict.fromkeys("writers regions failures input_inventory reset_history".split(), DETAIL),
-    "verifiers": VERIFIERS, "complete": boolean}, 65536, _report)
+    "verifiers": VERIFIERS, "complete": boolean}, 65536, _report),
+    optional_fields={"producer_registrations": lambda v: array(FILE_REF, MAX_PRODUCER_REGISTRATIONS)(v),
+                     "original_roles": lambda v: nullable(FILE_REF)(v)})
 WRITER_REPORT = _a2({"day": day, "boot": identity, "role": ROLE, "revision": revision,
     "region": nullable(name), "interval": p1.INTERVAL, "partition": PARTITION, "admission": ADMISSION,
     "comparator": COMPARATOR, "attempts": ATTEMPTS, "checkpoint": CHECKPOINT,
@@ -471,7 +473,15 @@ def _path(v: Any) -> None:
     require(not v.startswith("/") and "://" not in v and all(p != ".." for p in v.split("/")))
 
 
-FILE_REF = Schema({"path": _path, "sha256": digest, "bytes": _bounded(262144)}, 768)
+MAX_PRODUCER_REGISTRATIONS = 2
+FILE_REF: Schema = Schema({"path": _path, "sha256": digest, "bytes": _bounded(262144)}, 768)
+ORIGINAL_ROLE = Schema({"member": literal("rows", "attachments", "ledgers", "proof", "transport", "pre", "fleet", "serving"),
+    "kind": nullable(text(512)), "id": nullable(text(512)), "file": FILE_REF}, 2048,
+    lambda v: require((v["kind"] is not None and v["id"] is not None)
+                      if v["member"] in ("rows", "attachments") else v["kind"] is None and v["id"] is None))
+ORIGINAL_ROLES = _a2({"entries": array(ORIGINAL_ROLE, 128), "previous": nullable(FILE_REF)})
+
+
 APPROVAL = Schema({"subject_sha256": digest, "reviewer": name, "reviewed_at_us": integer,
     "decision": literal("approved"), "record": FILE_REF}, 1024)
 INPUT_LEAF = _a2({"keys": array(FILE_REF, 10000), "complete": boolean}, invariant=lambda v: _sorted([r["path"] for r in v["keys"]]))

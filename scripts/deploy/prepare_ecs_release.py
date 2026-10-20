@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Clone a live ECS task definition, changing only its image and release marker.
+"""Clone a live ECS task definition with its new image and release marker.
 
 It also pins TR_REMEDIATOR_IN_PROCESS_ENABLED=false: on AWS the EventBridge tick
 (infra/aws_synthetic_monitoring.tf) is the only remediator scheduler.
+The regional outbox expectation can enable a previously disabled producer.
 """
 
 from __future__ import annotations
@@ -50,14 +51,12 @@ def prepare(payload: dict, image: str, release: str, required_outbox: str = "tru
         raise ValueError("duplicate environment variables")
     if values.get("TR_SERVICE_SURFACE") != "observer" or not values.get("TR_RELEASE"):
         raise ValueError("expected live observer with release marker")
-    if values.get("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED") != required_outbox:
+    # Both regions write the shared DSQL outbox; only the drain needs ClickHouse
+    # credentials. Permit the false -> true rollout, never the reverse or an
+    # absent/invalid live setting.
+    live_outbox = values.get("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
+    if live_outbox != required_outbox and (live_outbox, required_outbox) != ("false", "true"):
         raise ValueError("live TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED differs from regional expectation")
-    has_clickhouse_secret = any(
-        secret["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
-        for secret in container.get("secrets", [])
-    )
-    if (values.get("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED") == "true") != has_clickhouse_secret:
-        raise ValueError("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED conflicts with TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
     # The in-process remediator loop defaults on. A live definition without the
     # setting gets it added as false; any value other than false is refused.
     in_process = values.get("TR_REMEDIATOR_IN_PROCESS_ENABLED")
@@ -67,6 +66,8 @@ def prepare(payload: dict, image: str, release: str, required_outbox: str = "tru
     for entry in env:
         if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
             entry["value"] = release
+        elif entry["name"] == "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED":
+            entry["value"] = required_outbox
     if in_process is None:
         env.append({"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"})
     return result

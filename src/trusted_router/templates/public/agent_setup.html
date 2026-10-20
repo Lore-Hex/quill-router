@@ -60,6 +60,10 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
           <li><span class="mono">trustedrouter/eu</span>: EU-focused routing. Use with <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> for the EU regional gateway.</li>
           <li><span class="mono">trustedrouter/auto</span>: broad provider fallback when availability matters more than the strictest privacy filter.</li>
           <li><span class="mono">trustedrouter/cheap</span>: low-cost paid route pool for cost-sensitive tests.</li>
+          <li><span class="mono">trustedrouter/frontier</span>: fixed frontier pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
+          <li><span class="mono">trustedrouter/advanced</span>: fixed advanced pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
+          <li><span class="mono">trustedrouter/professional</span>: fixed professional pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
+          <li><span class="mono">trustedrouter/efficient</span>: fixed efficient pool with ordered fallback, no synthesis, and no implicit privacy floor.</li>
           <li><span class="mono">trustedrouter/socrates</span>: rolling named advisor model. Use <span class="mono">trustedrouter/socrates-1.1</span> for the current pinned version; <span class="mono">trustedrouter/socrates-1.0</span> remains available only for old pinned integrations.</li>
           <li><span class="mono">trustedrouter/subagent</span>: primitive for OpenRouter-compatible subtask delegation. Use a concrete parent model with a <span class="mono">trustedrouter:subagent</span> or <span class="mono">openrouter:subagent</span> tool.</li>
           <li><span class="mono">trustedrouter/iris-2.0</span>, <span class="mono">trustedrouter/prometheus-2.0</span>, <span class="mono">trustedrouter/zeus-1.0</span>: versioned budget, open, and frontier Synth presets inside the attested gateway.</li>

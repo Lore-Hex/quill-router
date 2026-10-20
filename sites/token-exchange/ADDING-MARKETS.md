@@ -158,7 +158,10 @@ galleries and review archives are temporary artifacts, not production output.
 
 Adding a JSON record or merging a PR is not proof that the site is live. Review
 the current deployment workflows and README launch runbook; a new domain may
-also need DNS, routing and certificates. Publishing is a separate authorized
+also need DNS, routing and certificates. Routing is Terraform's: a market in
+`markets.json` is routed by `infra/control_lb_url_map.tf` once the change is
+merged and infra has applied; `deploy.py publish` refuses while a host is
+unrouted. Publishing is a separate authorized
 operation, followed by public HTTPS, asset and redirect checks. Do not deploy a
 temporary capture directory or assume the control-plane deploy publishes these
 static sites.

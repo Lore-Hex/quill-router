@@ -17,9 +17,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
@@ -27,6 +29,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/auditor"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/owner"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
@@ -74,6 +77,10 @@ type Config struct {
 	// Ring is how often a node writes its row and a front door reads the
 	// members.
 	Ring time.Duration
+
+	// Edge is the edge's (docs/design/fast-admission-enclave-direct.md,
+	// E1): Address empty runs none.
+	Edge EdgeConfig
 
 	// The parts' own settings. Run fills in what joins them: the store, the
 	// logs, the ring, the clock, and the times Store holds.
@@ -144,8 +151,27 @@ type Clients struct {
 	PubSub  *pubsub.Client
 }
 
+// EdgeConfig is the edge's: where it listens for the enclave's
+// control-plane calls (Listener, when set, else Address), Python's
+// internal surface it passes them to, the internal token the enclave
+// sends, as Python holds it, and how long a boot read may take before the
+// verdict is unread (edge.Config).
+type EdgeConfig struct {
+	Address  string
+	Listener net.Listener
+	Upstream string
+	Token    string
+	BootWait time.Duration
+}
+
 func (c Config) valid() error {
 	switch {
+	case c.Edge.Address != "" && (c.Edge.Upstream == "" || c.Edge.Token == ""):
+		return errors.New("service: an edge needs its upstream and the internal token")
+	case c.Edge.Address != "" && !c.Admission:
+		// The edge leaves with the admission node, whose Leave it follows; a
+		// process without one would answer the balancer serving for ever.
+		return errors.New("service: an edge runs beside an admission node")
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
 	case c.Address == "":
@@ -203,6 +229,9 @@ func PubSubOptions(region string) []option.ClientOption {
 // a leaving under way too (lifecycle). A Listener given it is its own,
 // closed however it returns.
 func Run(ctx context.Context, cfg Config, c Clients) error {
+	if cfg.Edge.Listener != nil {
+		defer cfg.Edge.Listener.Close()
+	}
 	if cfg.Listener != nil {
 		defer cfg.Listener.Close()
 	}
@@ -235,7 +264,14 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
 	return lifecycle(ctx, func(p *parts) {
-		if cfg.Admission {
+		// The edge first: one that cannot listen or has no upstream fails
+		// the process before the node takes its ring row.
+		if cfg.Edge.Address != "" {
+			if err := p.edge(cfg, s); err != nil {
+				p.startFailed(ctx, err)
+			}
+		}
+		if cfg.Admission && p.ctx.Err() == nil {
 			if err := p.admission(cfg, s, settle, records); err != nil {
 				p.startFailed(ctx, err)
 			}
@@ -246,6 +282,81 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 			}
 		}
 	})
+}
+
+// edge starts the edge's server: the enclave's control-plane calls, checked
+// and passed to Python with the edge's verdict (edge.Edge). It reads boots
+// from the store and nothing else of the node's; it stops as the node's
+// own server stops, requests under way given Stopping to end.
+func (p *parts) edge(cfg Config, s *store.Store) (err error) {
+	ln := cfg.Edge.Listener
+	if ln == nil {
+		if ln, err = net.Listen("tcp", cfg.Edge.Address); err != nil {
+			return err
+		}
+	}
+	upstream, err := url.Parse(cfg.Edge.Upstream)
+	if err != nil || (upstream.Scheme != "http" && upstream.Scheme != "https") {
+		_ = ln.Close()
+		return fmt.Errorf("service: the edge's upstream %q is not an http or https URL", cfg.Edge.Upstream)
+	}
+	// The transport is the process's: its idle connections close once the
+	// edge's handlers have returned, as the node's own do.
+	transport := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableCompression:  true,
+		MaxIdleConnsPerHost: 256,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
+		Transport: transport, Serving: p.serving})
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	p.whenLeaving(func() { p.retiring.Store(true) })
+	handlers := &inFlight{}
+	requests, endRequests := context.WithCancel(context.Background())
+	srv := &http.Server{Handler: handlers.wrap(e), ReadHeaderTimeout: 5 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return requests }}
+	p.run("edge", func(ctx context.Context) error {
+		served := make(chan error, 1)
+		go func() { served <- srv.Serve(ln) }()
+		var err error
+		select {
+		case err = <-served:
+		case <-ctx.Done():
+			stopping, cancel := context.WithTimeout(context.Background(), cfg.Stopping)
+			_ = srv.Shutdown(stopping)
+			cancel()
+			err = <-served
+		}
+		// A server that failed, not one shut down, fails the process at
+		// once, whatever the context did meanwhile; either way it is
+		// closed, its connections with it, and its handlers waited for.
+		if !errors.Is(err, http.ErrServerClosed) {
+			p.fail(fmt.Errorf("service: edge: %w", err))
+		}
+		_ = srv.Close()
+		endRequests()
+		handlers.wait()
+		transport.CloseIdleConnections()
+		return nil
+	})
+	return nil
+}
+
+// storeBoots reads the edge's boots from the store: production's entity
+// table, by key id.
+type storeBoots struct{ s *store.Store }
+
+func (b storeBoots) Boot(ctx context.Context, kid string) (edge.Boot, bool, error) {
+	boot, found, err := b.s.ReadBoot(ctx, kid)
+	if err != nil || !found {
+		return edge.Boot{}, false, err
+	}
+	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified}, true, nil
 }
 
 // lifecycle starts a process's parts with start and runs them until ctx
@@ -291,9 +402,18 @@ type parts struct {
 	// leaving run when the caller's context ends, while every part still
 	// runs, in order.
 	leaving []func()
+	// retiring also follows Leave, which keeps the parts running.
+	retiring atomic.Bool
 
 	mu  sync.Mutex
 	err error
+}
+
+// serving is the edge's answer to the balancer: the node serves until the
+// process begins leaving (Leave, or the caller's context) or a part has
+// failed, which ends the parts without their leaving.
+func (p *parts) serving() bool {
+	return !p.retiring.Load() && p.ctx.Err() == nil
 }
 
 // fail ends the process with err, the first failure kept.
@@ -480,6 +600,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	// that fails is written again with the node's next heartbeat. A
 	// stopping node's owner then hands its leases off.
 	leave := func(ctx context.Context) {
+		p.retiring.Store(true)
 		o.Retire()
 		ctx, cancel := context.WithTimeout(ctx, cfg.Store.LiveFor)
 		defer cancel()
@@ -536,6 +657,9 @@ func roles(cfg Config) []string {
 	}
 	if cfg.Auditor {
 		out = append(out, "auditor")
+	}
+	if cfg.Edge.Address != "" {
+		out = append(out, "edge")
 	}
 	return out
 }

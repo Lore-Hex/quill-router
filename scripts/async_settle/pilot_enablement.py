@@ -524,6 +524,16 @@ def header_probe(base_url: str, model: str, key: str, gateway_token: str,
 
 
 def main() -> None:
+    import sys
+    if '--policy' in sys.argv[1:] or any(a.startswith('--policy=') for a in sys.argv[1:]):
+        argv = sys.argv[1:]
+        stages = {'transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'}
+        command = next((a for a in argv if a in stages), 'pre-flip')
+        if command in argv:
+            argv = list(argv)
+            argv.remove(command)
+        shadow_report.shadow_v2_main(argv, gate=command)
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     for name in ('shadow-serving', 'fleet-budgets', 'pre-flip', 'post-flip'):

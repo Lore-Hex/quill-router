@@ -21,9 +21,9 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 235095,
-      "output_token_price_per_m": 764059,
-      "cached_input_token_price_per_m": 47019
+      "input_token_price_per_m": 236313,
+      "output_token_price_per_m": 768018,
+      "cached_input_token_price_per_m": 47263
     },
     {
       "display_name": "GLM-5.3",
@@ -45,9 +45,9 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 1821987,
-      "output_token_price_per_m": 6747227,
-      "cached_input_token_price_per_m": 176322
+      "input_token_price_per_m": 1831426,
+      "output_token_price_per_m": 6782184,
+      "cached_input_token_price_per_m": 177235
     },
     {
       "display_name": "GLM-5.3-Flash",
@@ -70,14 +70,106 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 235095,
-      "output_token_price_per_m": 764059,
-      "cached_input_token_price_per_m": 58774
+      "input_token_price_per_m": 236313,
+      "output_token_price_per_m": 768018,
+      "cached_input_token_price_per_m": 59079
+    },
+    {
+      "display_name": "DeepSeek OCR 2",
+      "title": "deepseek-ocr-2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-ocr-2",
+      "upstream_id": "deepseek-ocr-2",
+      "context_length": 8192,
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": true,
+      "input_token_price_per_m": 909806,
+      "output_token_price_per_m": 1500588,
+      "cached_input_token_price_per_m": 94526
+    },
+    {
+      "display_name": "Qwen3-Embedding 4B",
+      "title": "qwen3-embedding-4b",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-embedding-4b",
+      "upstream_id": "qwen3-embedding-4b",
+      "context_length": 32768,
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": true,
+      "input_token_price_per_m": 153604,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Voxtral Mini 3B",
+      "title": "voxtral-mini-3b",
+      "model_type": "audio",
+      "input_modalities": [
+        "audio"
+      ],
+      "output_modalities": [
+        "transcription"
+      ],
+      "endpoints": [
+        "audio/transcriptions"
+      ],
+      "status": 1,
+      "id": "mistralai/voxtral-mini-3b-2507",
+      "upstream_id": "voxtral-mini-3b",
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": true,
+      "billing_unit": "audio_minute",
+      "audio_minute_price_microdollars": 4727
+    },
+    {
+      "display_name": "Whisper large-v3",
+      "title": "whisper-large-v3",
+      "model_type": "audio",
+      "input_modalities": [
+        "audio"
+      ],
+      "output_modalities": [
+        "transcription"
+      ],
+      "endpoints": [
+        "audio/transcriptions"
+      ],
+      "status": 1,
+      "id": "openai/whisper-large-v3",
+      "upstream_id": "whisper-large-v3",
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": true,
+      "billing_unit": "audio_minute",
+      "audio_minute_price_microdollars": 16542
     }
   ],
   "source": "https://docs.privatemode.ai/models/overview/",
   "pricing_source": "https://docs.privatemode.ai/pricing/",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-18T17:34:11Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3
+  "model_count": 7
 }

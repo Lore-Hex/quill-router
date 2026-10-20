@@ -35,6 +35,8 @@ func TestSchemaIsAsWritten(t *testing.T) {
 	}
 	want := map[string]string{
 		"tr_credit_balance":     " |  | ",
+		"tr_reservation":        " |  | ",
+		"tr_entities":           " |  | ",
 		"tr_lease":              " |  | OLDER_THAN(retire_at, INTERVAL 7 DAY)",
 		"tr_lease_donor":        "tr_lease | CASCADE | ",
 		"tr_lease_hold":         "tr_lease | CASCADE | ",
@@ -72,7 +74,8 @@ func TestSchemaIsAsWritten(t *testing.T) {
 	sort.Strings(indexes)
 	wantIndexes := "tr_lease_by_id ON tr_lease IN , tr_lease_by_owner ON tr_lease IN , tr_lease_by_state ON tr_lease IN , " +
 		"tr_lease_drain_by_commit ON tr_lease_drain IN tr_lease, " +
-		"tr_lease_staged_by_lease ON tr_lease_staged IN , tr_lease_winners_by_work ON tr_lease_winners IN "
+		"tr_lease_staged_by_lease ON tr_lease_staged IN , tr_lease_winners_by_work ON tr_lease_winners IN , " +
+		"tr_reservation_by_expiry ON tr_reservation IN "
 	if got := strings.Join(indexes, ", "); got != wantIndexes {
 		t.Errorf("the indexes are %s", got)
 	}

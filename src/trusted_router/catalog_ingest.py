@@ -287,6 +287,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "boundless",
         "zro",
@@ -670,6 +671,11 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "openai/gpt-5-mini",
             "openai/o3",
             "openai/o3-mini",
+            # Listed since 2026-10-04 but never served: since 2026-10-06 every
+            # request returns HTTP 500 wrapping upstream 404 "page not found",
+            # while the same key serves lightning-ai/glm-5.3. Re-admit only
+            # after a paid canary passes.
+            "lightning-ai/glm-5.3-flash",
         }
     ),
     # route-health first sweep 2026-07-18, 100% failure. These ids may be
@@ -1131,6 +1137,7 @@ def _supplemental_provider_models_and_endpoints(
         "scaleway",
         "regolo",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "boundless",
         "zro",
@@ -1665,14 +1672,13 @@ def _input_only_manifest_cost(
 
 
 # Providers through which we route Anthropic-authored (anthropic/*) models on
-# Credits. Anthropic-direct only today; add "vertex"/"bedrock" here if/when
-# first-party Claude routing through those surfaces is enabled. Resellers that
+# Credits. First-party Anthropic, Vertex, and Bedrock surfaces are allowed. Resellers that
 # merely list Claude ids are intentionally excluded (see _keep policy below).
 _ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
     # First-party Anthropic surfaces are OK for Claude Credits routing; resellers
     # are not. Vertex + Bedrock included per product decision (2026-07-18) so
     # Claude-on-Vertex/Bedrock Credits routes are permitted when they exist.
-    {"anthropic", "google-vertex", "bedrock", "aws-bedrock"}
+    {"anthropic", "google-vertex", "bedrock", "aws-bedrock", "amazon-bedrock"}
 )
 
 

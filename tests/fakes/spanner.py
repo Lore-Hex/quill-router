@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import functools
 import json
 import re
 import sqlite3
@@ -296,7 +297,9 @@ class FakeSpannerDatabase:
         # Spanner would abort it.
         self.entity_kind_versions: dict[str, int] = {}
         self._global_version = 0
-        self._commit_lock = threading.Lock()
+        # Reentrant: reads take it too (see _holds_commit_lock), and commit-time
+        # checks and batch_update re-enter read helpers on the same thread.
+        self._commit_lock = threading.RLock()
         self._ready_barrier = ready_barrier
         self.aborts = 0
         self.commits = 0
@@ -521,6 +524,23 @@ class FakeSpannerDatabase:
         return _FakeBatch(self)
 
 
+def _holds_commit_lock(method: Any) -> Any:
+    """Run a read or DML statement against state that no commit is mutating.
+
+    Commits mutate the shared dicts under ``_commit_lock``. A statement that
+    iterates them unlocked can raise "dictionary changed size during
+    iteration" when a concurrent test commits mid-scan, and could observe half
+    of a commit, which real Spanner never shows a reader.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with self.db._commit_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class _FakeTransaction:
     def __init__(self, db: FakeSpannerDatabase) -> None:
         self.db = db
@@ -549,6 +569,7 @@ class _FakeTransaction:
         self._in_batch = False
         self.rolled_back = False
 
+    @_holds_commit_lock
     def execute_sql(
         self,
         sql: str,
@@ -793,6 +814,7 @@ class _FakeTransaction:
             self._in_batch = False
         return Status(), row_counts
 
+    @_holds_commit_lock
     def execute_update(
         self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
     ) -> int:
@@ -1048,6 +1070,14 @@ class _FakeTransaction:
             if duplicate_reference:
                 return 0
             if pk in self.db.typed.get("tr_trust_event", {}):
+                # A concurrent grant can commit after our absent receipt read.
+                # Real Spanner aborts that stale read/write transaction. Keep
+                # genuine duplicate inserts as AlreadyExists on a fresh read.
+                marker = ("stripe_event", p["event_id"])
+                current = self.db.rows.get(marker)
+                if (marker in self.read_versions and current is not None
+                        and self.read_versions[marker] != current.version):
+                    raise FakeAborted()
                 raise FakeAlreadyExists(f"tr_trust_event/{pk}")
             record = dict(p)
             self.pending_writes.append(("insert_typed_dml", "tr_trust_event", pk, record))
@@ -2262,6 +2292,23 @@ class _FakeTransaction:
             else:
                 self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
 
+    def update(
+        self, *, table: str, columns: tuple[str, ...], values: list[tuple]
+    ) -> None:
+        from google.api_core.exceptions import NotFound
+
+        if self._did_dml:
+            raise RuntimeError("mutation after DML in the same transaction")
+        for value in values:
+            record = dict(zip(columns, value, strict=True))
+            pk = tuple(record[column] for column in _TYPED_PRIMARY_KEYS[table])
+            if self._typed_current(table, pk) is None:
+                raise NotFound("update mutation requires an existing row")
+        self._did_mutation = True
+        self.pending_writes.extend(
+            ("upsert_typed", table, columns, value) for value in values
+        )
+
     def delete(self, table: str, keyset: _KeySet) -> None:
         if self._did_dml:
             raise RuntimeError(
@@ -2289,6 +2336,7 @@ class _FakeSnapshot:
     def __exit__(self, *_: Any) -> None:
         return None
 
+    @_holds_commit_lock
     def execute_sql(
         self,
         sql: str,
@@ -4051,6 +4099,8 @@ def _execute_sql(
             rows = [
                 row for row in rows if row.get("workspace_id") == params["workspace_id"]
             ]
+        if "event_id" in params:
+            rows = [row for row in rows if row.get("event_id") == params["event_id"]]
         if "ids" in params:
             wanted = set(params["ids"])
             rows = [row for row in rows if row.get("workspace_id") in wanted]

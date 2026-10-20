@@ -534,15 +534,15 @@
     if (state.privacy >= 3) return [confidential].filter(Boolean);
     if (state.privacy >= 2) return [routeById("trustedrouter/zdr")].filter(Boolean);
     if (state.quality === "frontier" || state.preference.quality >= 0.5) {
-      return [routeById("trustedrouter/synth"), routeById("trustedrouter/auto")].filter(Boolean);
+      return [routeById("trustedrouter/synth"), routeById("trustedrouter/auto"), routeById("trustedrouter/frontier"), routeById("trustedrouter/advanced")].filter(Boolean);
     }
     if (state.preference.cost >= 0.45) {
-      return [routeById("trustedrouter/cheap"), routeById("trustedrouter/auto")].filter(Boolean);
+      return [routeById("trustedrouter/cheap"), routeById("trustedrouter/auto"), routeById("trustedrouter/efficient")].filter(Boolean);
     }
     if (state.preference.speed >= 0.45) {
       return [routeById("trustedrouter/fast"), routeById("trustedrouter/auto")].filter(Boolean);
     }
-    return [routeById("trustedrouter/auto"), routeById("trustedrouter/cheap")].filter(Boolean);
+    return [routeById("trustedrouter/auto"), routeById("trustedrouter/cheap"), routeById("trustedrouter/professional"), routeById("trustedrouter/advanced")].filter(Boolean);
   }
 
   function routePriceLabel(route) {

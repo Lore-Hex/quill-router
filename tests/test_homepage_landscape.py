@@ -16,21 +16,19 @@ from trusted_router.config import Settings
 from trusted_router.homepage import _pricing_comparison, homepage_context
 
 
-def test_homepage_rollout_is_explicit_and_alternate_brands_unchanged() -> None:
+def test_homepage_is_the_landscape_page_for_every_brand() -> None:
+    # No setting chooses the page: the default Settings serve the landscape
+    # homepage, and alternate brands get the same page under their own name.
     settings = Settings(environment="test", storage_backend="memory")
-    assert not settings.homepage_landscape_enabled
-    assert 'class="hero-promises"' not in dashboard.dashboard_html(settings)
-    settings.homepage_landscape_enabled = True
     assert 'class="hero-promises"' in dashboard.dashboard_html(settings)
     alternate = dashboard.dashboard_html(settings, brand_name="UptimeRouter")
-    assert 'class="hero-promises"' not in alternate
-    assert "UptimeRouter" in alternate
+    assert 'class="hero-promises"' in alternate
+    assert 'property="og:site_name" content="UptimeRouter"' in alternate
+    assert "<title>UptimeRouter: The AI router that shows its work</title>" in alternate
+    assert "600+ AI Models at your fingertips" not in alternate
 
 
-def test_landscape_root_integrates_catalog_assets_csp_and_signin(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
+def test_landscape_root_integrates_catalog_assets_csp_and_signin(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200
     page = BeautifulSoup(response.text, "html.parser")
@@ -84,7 +82,7 @@ def test_catalog_prices_and_privacy_follow_application_view(
 
 
 def test_exchange_banner_links_to_tagged_new_york_site() -> None:
-    settings = Settings(environment="test", storage_backend="memory", homepage_landscape_enabled=True)
+    settings = Settings(environment="test", storage_backend="memory")
     page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
     banner = page.select_one("main > a[data-token-exchange-banner]")
     assert banner is not None
@@ -152,10 +150,7 @@ def test_pricing_comparison_does_not_reuse_a_removed_model_or_missing_prices(
     assert _pricing_comparison({"z-ai/glm-5.3-flash"}) is None
 
 
-def test_homepage_social_card_is_fetchable_and_scoped_to_rollout(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
+def test_homepage_social_card_is_fetchable_for_every_brand(client: TestClient) -> None:
     page = BeautifulSoup(client.get("/").text, "html.parser")
     url = page.select_one('meta[property="og:image"]')["content"]
     assert url.startswith("https://")
@@ -168,16 +163,15 @@ def test_homepage_social_card_is_fetchable_and_scoped_to_rollout(
     assert image.status_code == 200
     assert image.headers["content-type"].startswith("image/jpeg")
     assert image.content.startswith(b"\xff\xd8\xff")
-    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", False)
-    legacy = BeautifulSoup(client.get("/").text, "html.parser")
-    assert legacy.select_one('meta[property="og:image"]')["content"].endswith("/og.png")
-    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
-    alternate = dashboard.dashboard_html(client.app.state.settings, brand_name="UptimeRouter")
-    assert "social-card-v1.jpg" not in alternate
+    alternate = BeautifulSoup(
+        dashboard.dashboard_html(client.app.state.settings, brand_name="UptimeRouter"), "html.parser",
+    )
+    assert alternate.select_one('meta[property="og:image"]')["content"] == url
+    assert alternate.select_one('meta[property="og:site_name"]')["content"] == "UptimeRouter"
 
 
 @pytest.mark.parametrize("google,github", [(False, False), (True, False), (False, True), (True, True)])
-def test_redesigned_signin_matches_legacy_provider_options(google: bool, github: bool) -> None:
+def test_signin_dialog_offers_exactly_the_configured_providers(google: bool, github: bool) -> None:
     settings = Settings(
         environment="test", storage_backend="memory",
         google_client_id="test-google" if google else "",
@@ -185,15 +179,10 @@ def test_redesigned_signin_matches_legacy_provider_options(google: bool, github:
         github_client_id="test-github" if github else "",
         github_client_secret="test-only" if github else "",
     )
-    def options(enabled: bool) -> list[tuple[str, str | None, str | None]]:
-        settings.homepage_landscape_enabled = enabled
-        page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
-        return [(button.get_text(" ", strip=True), button.get("href"), button.get("data-action"))
-                for button in page.select("#signinModal .signin-providers .signin-btn")]
-    legacy = options(False)
-    redesigned = options(True)
-    assert redesigned == legacy
-    assert len(redesigned) == 1 + int(google) + int(github)
-    assert any("MetaMask" in label for label, _, _ in redesigned)
-    assert any(href == "/auth/google/login" for _, href, _ in redesigned) == google
-    assert any(href == "/auth/github/login" for _, href, _ in redesigned) == github
+    page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
+    options = [(button.get_text(" ", strip=True), button.get("href"), button.get("data-action"))
+               for button in page.select("#signinModal .signin-providers .signin-btn")]
+    assert len(options) == 1 + int(google) + int(github)
+    assert any("MetaMask" in label for label, _, _ in options)
+    assert any(href == "/auth/google/login" for _, href, _ in options) == google
+    assert any(href == "/auth/github/login" for _, href, _ in options) == github

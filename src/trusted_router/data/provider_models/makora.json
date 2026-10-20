@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-18T17:34:11Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 18,
+  "model_count": 19,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -103,7 +103,7 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 280000,
+      "output_token_price_per_m": 180000,
       "input_modalities": [
         "text",
         "image",
@@ -633,7 +633,7 @@
       ],
       "status": 1,
       "context_length": 1048576,
-      "max_output_tokens": 393216,
+      "max_output_tokens": 943718,
       "features": [
         "tools",
         "logprobs",
@@ -732,7 +732,31 @@
       ],
       "input_token_price_per_m": 830000,
       "output_token_price_per_m": 2501000,
-      "cached_input_token_price_per_m": 41000
+      "cached_input_token_price_per_m": 41000,
+      "missing_since": "2026-10-17",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
+    },
+    {
+      "display_name": "meta-models/Muse-Spark-Open-816B-A42B-NVFP4",
+      "title": "meta-models/Muse-Spark-Open-816B-A42B-NVFP4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-models/muse-spark-open-816b-a42b-nvfp4",
+      "upstream_id": "meta-models/Muse-Spark-Open-816B-A42B-NVFP4",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 4250000,
+      "cached_input_token_price_per_m": 150000
     }
   ]
 }

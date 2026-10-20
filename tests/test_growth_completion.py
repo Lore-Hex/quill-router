@@ -125,35 +125,6 @@ def test_onboarding_assignment_is_balanced_and_stable():
     assert cells == [assigned_onboarding_cell(f'{i:032x}') for i in range(2000)]
 
 
-@pytest.mark.parametrize('cell', ['run_request', 'get_answer'])
-def test_onboarding_experiment_roundtrip_and_projection(cell, caplog):
-    from starlette.requests import Request
-
-    from trusted_router import acquisition as a
-    from trusted_router.config import Settings
-    from trusted_router.main import _ApplicationConsoleFormatter
-    from trusted_router.marketing_experiments import ONBOARDING_EXPERIMENT_ID
-    settings = Settings()
-    now = dt.datetime.now(dt.UTC).isoformat()
-    touch = {'utm_source': 'qa', 'utm_campaign': 'attribution_test', 'landing_path': '/',
-             'captured_at': now, 'experiment_id': ONBOARDING_EXPERIMENT_ID, 'experiment_cell_id': cell}
-    context = a.AttributionContext('a'*32, touch, touch, now)
-    request = Request({'type': 'http', 'headers': []})
-    request.state.acquisition_attribution = context
-    snapshot = a.oauth_attribution_snapshot(request, settings, 'state')
-    callback = Request({'type': 'http', 'headers': []})
-    a.restore_oauth_attribution(callback, settings, 'state', snapshot)
-    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
-    assert a.onboarding_exposure(callback, user_id='private', workspace_id='ws-private') == cell
-    record = next(r for r in caplog.records if r.getMessage() == 'acquisition.experiment_exposed')
-    payload = json.loads(_ApplicationConsoleFormatter().format(record))
-    assert payload['account_fingerprint'] == m.digest('tr-account:private')
-    assert payload['workspace_fingerprint'] == m.digest('ws-private')
-    projected = m.project_event({**payload, '_time': now}, source='cloud_logging')
-    assert projected['experiment_cell_id'] == cell and projected['utm_source'] == 'qa'
-    assert 'private' not in json.dumps(projected)
-
-
 def test_cloud_acquisition_formatter_rejects_raw_identity():
     from trusted_router.main import _ApplicationConsoleFormatter
     record = logging.makeLogRecord({'name': 'trusted_router.acquisition',
@@ -286,20 +257,23 @@ def test_worker_release_preserves_main_ci_gate_and_existing_configuration():
     assert 'sha256:' in run
     for forbidden in ('--set-secrets', '--service-account', 'add-iam-policy-binding', '--hotfix'):
         assert forbidden not in run
+    # A plain redeploy must not switch a collector off; only an explicit choice changes it.
     for field in ('gateway_attempts', 'billing_owners'):
-        assert workflow[True]['workflow_dispatch']['inputs'][field]['default'] is False
+        spec = workflow[True]['workflow_dispatch']['inputs'][field]
+        assert spec['default'] == 'keep' and spec['options'] == ['keep', 'true', 'false']
+    assert 'new_gateway="$old_gateway"' in run and 'new_owners="$old_owners"' in run and 'keep) ;;' in run
+    assert '--update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$new_gateway,GROWTH_BILLING_OWNERS_ENABLED=$new_owners"' in run
 
 
 @pytest.mark.parametrize('cell,label', [('run_request', 'Run my first API request'),
                                       ('get_answer', 'Get my first AI answer')])
-def test_welcome_renders_actual_assigned_treatment(client, cell, label, caplog, monkeypatch):
+def test_key_first_welcome_does_not_expose_removed_treatment(client, cell, label, caplog, monkeypatch):
     from trusted_router.acquisition import (
         ATTRIBUTION_COOKIE_NAME,
         AttributionContext,
         encode_attribution_cookie,
     )
     from trusted_router.marketing_experiments import ONBOARDING_EXPERIMENT_ID
-    from trusted_router.routes.console import welcome
     from trusted_router.storage import STORE
     user = STORE.ensure_user('experiment@example.test')
     token, _ = STORE.create_auth_session(user_id=user.id, provider='google',
@@ -311,12 +285,11 @@ def test_welcome_renders_actual_assigned_treatment(client, cell, label, caplog, 
              'experiment_id': ONBOARDING_EXPERIMENT_ID, 'experiment_cell_id': cell}
     client.cookies.set(ATTRIBUTION_COOKIE_NAME,
         encode_attribution_cookie(AttributionContext('a'*32, touch, touch, now), client.app.state.settings))
-    monkeypatch.setattr(welcome, 'live_credit_summary', lambda _: {'total_credits': 300000})
     caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
     response = client.get('/console/welcome?first=1')
-    assert response.status_code == 200 and label in response.text
+    assert response.status_code == 200 and label not in response.text
     assert 'data-copy-template-target="welcome-agent-message"' in response.text
-    assert len([r for r in caplog.records if r.getMessage() == 'acquisition.experiment_exposed']) == 1
+    assert not any(r.getMessage() == 'acquisition.experiment_exposed' for r in caplog.records)
     caplog.clear()
     client.cookies.delete('tr_pending_reveal')
     assert client.get('/console/welcome').status_code == 200

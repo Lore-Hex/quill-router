@@ -405,7 +405,6 @@ ENV_VARS=(
   'TR_SPECULATION_SHADOW_ROUTES=[]'
   'TR_SPECULATION_SHADOW_IMAGES=[]'
   "TR_ENVIRONMENT=production"
-  "TR_HOMEPAGE_LANDSCAPE_ENABLED=true"
   "TR_SERVICE_SURFACE=combined"
   "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"
   "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"
@@ -425,9 +424,13 @@ ENV_VARS=(
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
   "TR_TRUSTED_DOMAIN_ALIASES=allyrouter.com,uptimerouter.com"
   "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
-  # Exactly $0.30 once per newly created email/social OAuth account. Wallet-only
-  # accounts stay at $0. Keep this explicit so stale env cannot change policy.
+  # Base signup allowance when rewards do not apply. Enrolled accounts receive
+  # $0.15 plus fixed rewards, at most $0.30 total. Wallet-only accounts stay at $0.
   "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"
+  # Primary issuer campaign is enabled; disable through a code rollout if needed.
+  "TR_SOCIAL_REWARDS_ENABLED=true"
+  "TR_SOCIAL_REWARDS_PLANE_ID=gcp-primary"
+  "TR_SOCIAL_REWARDS_ISSUER_ID=gcp-primary"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   # Owner notifications. The identifiers here are not secrets — the numbers are
   # public and the ids name resources, not authorise them — so they live in
@@ -622,8 +625,10 @@ ENV_VARS=(
   # 45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
   # The fast path's pilot (docs/design/fast-admission-pilot.md): Joseph's
-  # workspace, admitted by the front doors from the us-central1 control plane.
-  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # workspace and, on his word (2026-10-16), one customer's, admitted by the
+  # front doors from the us-central1 control plane. Rollback: Joseph's ID
+  # alone, or TR_FASTPATH_PILOT_ENABLED=false.
+  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb"
   "TR_FASTPATH_PILOT_ENABLED=true"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
@@ -643,7 +648,11 @@ ENV_VARS=(
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET="
+  # Shadow v2 opted out after the 2026-10-20 session leak. Empty BOTH the
+  # policy and cohort so v1 is not selected either. Preserve the attachment
+  # destination for retained close/export evidence; re-enable only after a
+  # bounded session-lifecycle canary passes. Money and fast drain stay off.
+  "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
   "TR_ASYNC_SETTLE_SHADOW_POLICY="
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="

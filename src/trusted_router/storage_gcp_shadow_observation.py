@@ -108,6 +108,9 @@ class ObservationStore:
         self.workspace_database = database
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
+        self.startup_retention = False
+        self.startup_claim_raw: bytes | None = None
+        self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
         configure(self.database)
@@ -173,7 +176,9 @@ class ObservationStore:
 
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
+        original = None
         def run(tx: Any) -> bool:
+            nonlocal original
             rows = self.query(tx, shadow_health_claim_read(), budget, CYCLE_SECONDS)
             require(len(rows) == 1, "point_bound")
             body, server = rows[0]
@@ -184,9 +189,15 @@ class ObservationStore:
             old = Row(CLAIM_KIND, "local/publish", body.encode()).value() if body is not None else None
             if not claim_allowed(old, slot):
                 return False
-            self.write(tx, [Row.build(CLAIM_KIND, "local/publish", value)], budget)
+            row = Row.build(CLAIM_KIND, "local/publish", value)
+            self.write(tx, [row], budget)
+            if self.startup_retention:
+                original = row.body
             return True
-        return self.transaction(run, budget, CYCLE_SECONDS)
+        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed and self.startup_retention:
+            self.startup_claim_raw = original
+        return landed
 
     def publish(self, value: dict[str, Any], budget: Budget) -> bool:
         row = Row.build(HEALTH_KIND, "local/fleet", value)
@@ -197,7 +208,10 @@ class ObservationStore:
                 return False
             self.write(tx, [row], budget)
             return True
-        return self.transaction(run, budget, CYCLE_SECONDS)
+        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed and self.startup_retention:
+            self.startup_publication_raw = row.body
+        return landed
 
     def snapshot_query(self, statement: Statement, budget: Budget, cap: float) -> tuple[list[Any], int]:
         with rpc_scope(budget.deadline, cap, budget.clock):
@@ -404,3 +418,16 @@ def _monotonic_counts(previous: Any, value: Any, name: str = "") -> None:
                 _monotonic_counts(old, new)
     elif type(previous) is bool and previous:
         require(value is True, "counter_erasure")
+
+
+def startup_instance() -> str:
+    """One bounded platform instance read for the released startup mapping."""
+    import urllib.request
+
+    request = urllib.request.Request(
+        "http://metadata.google.internal/computeMetadata/v1/instance/id",
+        headers={"Metadata-Flavor": "Google"},
+    )
+    with urllib.request.urlopen(request, timeout=1) as response:  # noqa: S310 - fixed platform URL
+        raw = response.read(129)
+    return raw.decode("ascii")

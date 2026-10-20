@@ -5,6 +5,8 @@ SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
 NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
+STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
+STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
@@ -29,17 +31,34 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview
     "perplexity": "billing-contract-unverified",
 }
+# Lightning revoked platform access during its October 16 security incident.
+# This applies to both managed and customer keys. Require reviewed recovery,
+# including fresh credentials and canaries, before removing the hold.
+# https://lightning.ai/ (October 2026 Security Incident notice)
+PROVIDER_INCIDENT_HOLD_REASONS = {"lightning": "provider-security-incident"}
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
         # A listed alias is not proof of serving availability. Require a
         # reviewed recovery before refresh can re-enable this route.
         ("nextbit", NEXTBIT_UNSLOPNEMO_MODEL_ID),
+        # October 17: repeated production 404s reproduced directly as
+        # model_not_found on the operator key; Kimi K2.6 succeeds on that key.
+        # Public catalog/pricing still list this ID. Require a reviewed live
+        # recovery before re-enabling; no official retirement date is known.
+        ("streamlake", STREAMLAKE_KIMI_K2_0905_MODEL_ID),
         # September 20: discovery admits these standard RedPill IDs, but the
         # enclave's reviewed Phala dispatch map does not. Keep them out of
         # routing until a reviewed adapter release, not an attestation bypass.
         ("phala", "z-ai/glm-5.3"),
         ("phala", "z-ai/glm-5.3-flash"),
+        # October 15: every NEAR AI GLM 5.3 Flash request since 2026-10-12
+        # 18:06Z is refused by the gateway's attestation sidecar ("deployment
+        # history is outside the reviewed policy"): NEAR appended a deployment
+        # action on the reviewed host, so the pinned action-log hash in
+        # quill-cloud-proxy near_ai_policy.json no longer matches. Hold the
+        # route, not the verification, until a reviewed re-pin ships.
+        ("near-ai", "z-ai/glm-5.3-flash"),
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
@@ -69,6 +88,9 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
     ("sakana", SAKANA_FUGU_MODEL_ID): frozenset({"europe-west4"}),
     ("sakana", SAKANA_NAMAZU_MODEL_ID): frozenset({"europe-west4"}),
 }
+# QCP #535 must be verified on a gateway fleet before it can serve Bedrock.
+# An upgraded GCP control plane may also authorize older AWS/Azure gateways.
+BEDROCK_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
 
 # Fugu reports additive provider-side orchestration tokens only after a call.
 # They are included in exact settlement, but may exceed the caller-derived
@@ -86,6 +108,8 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 def provider_model_operator_held(
     provider_slug: str, model_id: str, upstream_id: str | None = None,
 ) -> bool:
+    if provider_slug in PROVIDER_INCIDENT_HOLD_REASONS:
+        return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id
     if native_prefix is not None and not native_id.startswith(native_prefix):
@@ -113,6 +137,8 @@ def provider_model_available_from_gateway_region(
     model_id: str,
     gateway_region: str,
 ) -> bool:
+    if provider_slug == "amazon-bedrock":
+        return gateway_region in BEDROCK_GATEWAY_REGIONS
     unsupported = UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get(
         (provider_slug, model_id),
         frozenset(),

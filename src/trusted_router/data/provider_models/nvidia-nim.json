@@ -2,8 +2,8 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-10-15T12:03:30Z",
-  "model_count": 124,
+  "generated_at": "2026-10-18T17:34:11Z",
+  "model_count": 125,
   "models": [
     {
       "id": "01-ai/yi-large",
@@ -294,7 +294,7 @@
       "upstream_id": "google/gemma-4-31b-it",
       "display_name": "google/gemma-4-31b-it",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -306,7 +306,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "google/recurrentgemma-2b",
@@ -736,7 +737,8 @@
       "upstream_id": "moonshotai/kimi-k3",
       "display_name": "moonshotai/kimi-k3",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -2138,9 +2140,10 @@
       "status": 1,
       "id": "z-ai/glm-5.3-flash",
       "upstream_id": "z-ai/glm-5.3-flash",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "z-ai/glm-5.3",
@@ -2178,9 +2181,10 @@
       "status": 1,
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek-ai/deepseek-v4.1-flash",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "stepfun-ai/step-5-preview",
@@ -2198,6 +2202,27 @@
       "status": 1,
       "id": "stepfun-ai/step-5-preview",
       "upstream_id": "stepfun-ai/step-5-preview",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "title": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "upstream_id": "nvidia/nemotron-3.5-super-vl-120b-a12b",
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000

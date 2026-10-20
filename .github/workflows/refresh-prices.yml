@@ -185,6 +185,7 @@ jobs:
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
                       LYCEUM_API_KEY:trustedrouter-lyceum-api-key \
+                      BEDROCK_API_KEY:trustedrouter-bedrock-api-key \
                       GREENFERENCE_API_KEY:trustedrouter-greenference-api-key \
                       BOUNDLESS_API_KEY:trustedrouter-boundless-api-key \
                       ZRO_API_KEY:trustedrouter-zro-api-key \
@@ -257,6 +258,7 @@ jobs:
         run: |
           set -o pipefail
           uv run python -m scripts.pricing.speech
+          uv run python -m scripts.pricing.transcription
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
 
       - name: Sanity-check for price spikes + record deltas
@@ -351,6 +353,7 @@ jobs:
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
             src/trusted_router/data/speech_pricing.json \
+            src/trusted_router/data/transcription_pricing.json \
             src/trusted_router/data/provider_routing_evidence.json \
             src/trusted_router/data/provider_models/ \
             src/trusted_router/data/model_changes.jsonl \

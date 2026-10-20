@@ -1,0 +1,19 @@
+{
+  "checked_on": "2026-10-18",
+  "minute_prices": {
+    "mistralai/voxtral-mini-2602": 3000,
+    "mistralai/voxtral-mini-3b-2507": 4727,
+    "openai/whisper-1": 6000,
+    "openai/whisper-large-v3": 16542
+  },
+  "request_prices": {
+    "openai/whisper-large-v3-turbo": 10000
+  },
+  "token_prices": {
+    "mistralai/voxtral-small-24b": {
+      "input": 200000,
+      "output": 600000
+    }
+  },
+  "unit": "microdollars"
+}

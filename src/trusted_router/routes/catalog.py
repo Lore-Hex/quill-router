@@ -31,6 +31,7 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
     providers_for_display,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_capabilities import (
     provider_extension_parameters,
     union_supported_parameters,
@@ -170,6 +171,8 @@ def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
     shapes: list[dict[str, Any]] = []
     last_changes = last_route_changes(timestamp(_utc_now()))
     for model in MODELS.values():
+        if is_listing_alias(model.id, MODELS):
+            continue
         shape = model_to_openrouter_shape(model)
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
@@ -314,9 +317,16 @@ def _openai_service_tier_metadata(provider: str, model_id: str) -> dict[str, Any
 
 def _endpoint_pricing_payload(endpoint: ModelEndpoint) -> dict[str, str]:
     from trusted_router.speech import SPEECH_MODELS
+    from trusted_router.transcription import TRANSCRIPTION_MODELS
+    from trusted_router.web_fetch import FETCH_MODEL_ID, fetch_pricing
 
+    if endpoint.model_id == FETCH_MODEL_ID:
+        return fetch_pricing()
+
+    if transcription := TRANSCRIPTION_MODELS.get(endpoint.model_id):
+        return transcription.pricing
     if (spec := SPEECH_MODELS.get(endpoint.model_id)) and not spec.token_billed:
-        return {"input_character": microdollars_per_million_tokens_to_token_decimal(spec.customer_rate)}
+        return spec.non_token_pricing
     payload = {
         "prompt": microdollars_per_million_tokens_to_token_decimal(
             endpoint.prompt_price_microdollars_per_million_tokens

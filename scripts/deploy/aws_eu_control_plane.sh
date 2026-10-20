@@ -178,7 +178,7 @@ unset LEGACY_GATEWAY_TOKEN_VALUE
 # Analytics is optional, so its secret must be too. A standby region has no
 # ClickHouse node and no replica of this secret; requiring it would block the
 # region whose entire job is to survive the loss of the one that has it.
-CLICKHOUSE_SECRET_ARN="${CLICKHOUSE_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/tr-eu-clickhouse-password --query ARN --output text 2>/dev/null || true)}"
+CLICKHOUSE_SECRET_ARN="${CLICKHOUSE_SECRET_ARN:-$(aws secretsmanager describe-secret --region "$REGION" --secret-id quill/tr-eu-clickhouse-read-password --query ARN --output text 2>/dev/null || true)}"
 
 # This cloud's OWN ClickHouse (tools/aws_eu_clickhouse.sh), private in the
 # VPC. Deliberately NOT replicated from the GCP cluster: each cloud owns its
@@ -188,7 +188,7 @@ CLICKHOUSE_SECRET_ARN="${CLICKHOUSE_SECRET_ARN:-$(aws secretsmanager describe-se
 # database the config defaults to. Passing the wrong database yields an
 # empty-but-healthy analytics path -- queries succeed against nothing.
 CLICKHOUSE_URL="${CLICKHOUSE_URL:-http://172.31.10.143:8123}"
-CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-tr_control_read}"
 CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-default}"
 
 # App Runner's defaults (100 concurrent requests and 25 instances) are much
@@ -275,6 +275,8 @@ CONFIG=$(cat <<JSON
         "TR_ENVIRONMENT": "canary",
         "TR_SERVICE_SURFACE": "observer",
         "TR_NEW_SIGNUPS_ENABLED": "false",
+        "TR_SOCIAL_REWARDS_ENABLED": "false",
+        "TR_SOCIAL_REWARDS_PLANE_ID": "aws",
         "TR_RELEASE": "${RELEASE_COMMIT}",
         "TR_STORAGE_BACKEND": "postgres",
         "TR_POSTGRES_DSN": "host=${DSQL_HOST} port=5432 user=admin dbname=postgres sslmode=require",

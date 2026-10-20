@@ -178,35 +178,110 @@ def test_a_slow_membership_read_cannot_hold_the_caller_past_the_budget() -> None
     assert real_time.monotonic() - started < 1.0
 
 
-def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_later() -> None:
+def test_with_every_worker_busy_a_call_is_todays_path_at_once_and_is_never_sent_later(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With every worker's permit held, a call takes none: it asks for one
+    without waiting, starts no thread and sends nothing, then or later. The
+    test holds the permits itself, so no schedule frees one; a race of
+    holder threads against a sleep left one free on a slow runner."""
+    sent: list[tuple[str, str]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        sent.append((request.url.path, json.loads(request.content)["Request"]))
+        return httpx.Response(200, json=ADMIT)
+
+    # A budget no scheduler outlasts, so the call that is let through below
+    # cannot time out on a worker held off the CPU.
+    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=30.0, transport=httpx.MockTransport(handle))
+    permits = client._permits
+    for _ in range(fd.WORKERS):
+        assert permits.acquire(blocking=False)
+    asked: list[tuple[tuple[object, ...], dict[str, object], bool]] = []
+
+    class Spy:
+        def acquire(self, *args: Any, **kwargs: Any) -> bool:
+            got = permits.acquire(*args, **kwargs)
+            asked.append((args, kwargs, got))
+            return got
+
+        def release(self) -> None:
+            permits.release()
+
+    # Every thread made while the refused call runs, whatever its target:
+    # nothing else in this test makes one.
+    started: list[object] = []
+    real_thread = fd.threading.Thread
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        started.append(kwargs.get("target"))
+        return real_thread(*args, **kwargs)
+
+    # And every sleep: the refused call falls back at once, with no backoff.
+    slept: list[float] = []
+    monkeypatch.setattr(client, "_permits", Spy())
+    monkeypatch.setattr(fd.threading, "Thread", counted)
+    monkeypatch.setattr(fd.time, "sleep", slept.append)
+    began = fd.time.monotonic()
+    assert client.authorize(workspace_id="ws", request="late", estimate=1, stream=False, boot=b"b") is None
+    took = fd.time.monotonic() - began
+    assert asked == [((), {"blocking": False}, False)], "asked once, without waiting, and refused"
+    assert started == [] and sent == [], "nothing started, nothing sent"
+    assert slept == [], "no backoff"
+    # A loose bound on the rest, far under the budget a waiting call spends.
+    assert took < 1.0
+    monkeypatch.undo()
+    # Freed, the permits leave nothing behind that sends the call later, and
+    # a call now takes a worker and is sent: the refusal was the permits'.
+    for _ in range(fd.WORKERS):
+        permits.release()
+    assert sent == []
+    assert client.authorize(workspace_id="ws", request="next", estimate=1, stream=False, boot=b"b") is not None
+    client.close()
+    # Only the call let through was sent, as itself: the refused one never.
+    assert sent == [("/v1/authorize", "next")]
+
+
+def test_a_worker_keeps_its_permit_until_its_call_ends_even_after_its_caller_left() -> None:
+    """A worker holds its permit for as long as its request runs, past its
+    caller's budget: the permits bound the requests in flight, not the
+    callers waiting. The client's clock stands still, so the worker always
+    sends whatever the scheduler does; the door holds the request until the
+    test lets it go."""
     import threading as real_threading
     import time as real_time
 
     gate = real_threading.Event()
-    sent: list[str] = []
+    entered = real_threading.Event()
 
     def handle(request: httpx.Request) -> httpx.Response:
-        sent.append(request.url.path)
-        gate.wait(5.0)
+        entered.set()
+        gate.wait(30.0)
         return httpx.Response(200, json=ADMIT)
 
-    client = fd.FrontDoorClient(lambda _b: ("10.0.0.1:8080",), timeout_seconds=0.2, transport=httpx.MockTransport(handle))
-    # Hold every worker on a call that never answers in time.
-    holders = [
-        real_threading.Thread(target=client.authorize, kwargs={"workspace_id": "ws", "request": f"r{i}", "estimate": 1, "stream": False, "boot": b"b"})
-        for i in range(fd.WORKERS)
-    ]
-    for h in holders:
-        h.start()
-    real_time.sleep(0.05)
-    started = real_time.monotonic()
-    assert client.authorize(workspace_id="ws", request="late", estimate=1, stream=False, boot=b"b") is None
-    assert real_time.monotonic() - started < 0.1, "no worker free: today's path at once"
-    gate.set()
-    for h in holders:
-        h.join(5.0)
-    # The call with no worker was never sent, not even after the workers freed.
-    assert len(sent) == fd.WORKERS
+    client = fd.FrontDoorClient(
+        lambda _b: ("10.0.0.1:8080",), timeout_seconds=0.05, clock=lambda: 0.0, transport=httpx.MockTransport(handle),
+    )
+    permits = client._permits
+
+    def free() -> int:
+        taken = 0
+        while permits.acquire(blocking=False):
+            taken += 1
+        for _ in range(taken):
+            permits.release()
+        return taken
+
+    assert free() == fd.WORKERS
+    try:
+        # The caller gives up at its budget; its worker is still at the door.
+        assert client.authorize(workspace_id="ws", request="r", estimate=1, stream=False, boot=b"b") is None
+        assert entered.wait(10.0), "the worker reached the door"
+        assert free() == fd.WORKERS - 1, "the worker still holds its permit"
+    finally:
+        gate.set()
+    deadline = real_time.monotonic() + 10.0
+    while free() < fd.WORKERS and real_time.monotonic() < deadline:
+        real_time.sleep(0.01)
+    assert free() == fd.WORKERS, "the permit comes back when the call ends"
     client.close()
 
 
@@ -399,7 +474,6 @@ _ELIGIBLE: dict[str, Any] = {
     "standard_endpoint_pricing": True,
     "credit_funded": True,
     "boot_verified": True,
-    "idempotency_key": None,
     "service_tier": None,
     "key_capped": False,
     "budget_strict": False,
@@ -418,7 +492,6 @@ def test_the_narrowest_cohort_is_eligible_and_each_departure_names_itself() -> N
         ("standard_endpoint_pricing", False, "pricing"),
         ("credit_funded", False, "funding"),
         ("boot_verified", False, "boot"),
-        ("idempotency_key", "idem-1", "idempotency"),
         ("service_tier", "priority", "service_tier"),
         ("key_capped", True, "key_cap"),
         ("budget_strict", True, "key_cap"),

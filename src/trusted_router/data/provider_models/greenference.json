@@ -503,7 +503,7 @@
     }
   ],
   "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-18T17:34:11Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

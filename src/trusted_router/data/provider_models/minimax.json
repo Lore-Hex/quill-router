@@ -1,8 +1,8 @@
 {
   "provider": "minimax",
   "source": "https://api.minimax.io/v1/models",
-  "generated_at": "2026-10-14T02:11:04Z",
-  "model_count": 8,
+  "generated_at": "2026-10-19T18:25:41Z",
+  "model_count": 9,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -69,7 +69,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-10-19"
     },
     {
       "id": "minimax/minimax-m2.7-highspeed",
@@ -96,7 +97,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-10-19"
     },
     {
       "id": "minimax/minimax-m2.5",
@@ -123,7 +125,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-10-19"
     },
     {
       "id": "minimax/minimax-m2.5-highspeed",
@@ -150,7 +153,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-10-19"
     },
     {
       "id": "minimax/minimax-m2.1",
@@ -177,7 +181,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-10-19"
     },
     {
       "id": "minimax/minimax-m2.1-highspeed",
@@ -204,7 +209,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-10-19"
     },
     {
       "id": "minimax/minimax-m2",
@@ -231,7 +237,36 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-10-19"
+    },
+    {
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "MiniMax-M3.1-Flash",
+      "display_name": "MiniMax-M3.1-Flash",
+      "title": "MiniMax-M3.1-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "context_length": 1000000,
+      "supported_parameters": [
+        "tools",
+        "tool_choice",
+        "reasoning_effort"
+      ],
+      "created": 1789556118,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 15000
     }
   ],
   "pricing_source": "https://platform.minimax.io/docs/guides/pricing-paygo.md"

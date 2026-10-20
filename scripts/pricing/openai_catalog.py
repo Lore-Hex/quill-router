@@ -166,9 +166,16 @@ def discover_available_priced_chat_catalog(
         }
         context_length = positive_int(
             source.get("context_length") or source.get("max_context_length")
+            or source.get("context_window")
         )
         if context_length is not None:
             row["context_length"] = context_length
+        max_output = positive_int(
+            source.get("max_output_tokens") or source.get("max_output_length")
+            or source.get("max_completion_tokens")
+        )
+        if max_output is not None:
+            row["max_output_tokens"] = max_output
         created = positive_int(source.get("created"))
         if created is not None:
             row["created"] = created

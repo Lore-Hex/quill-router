@@ -121,15 +121,20 @@ five minutes, at the first 30-second poll past the ceiling.
 
 ## What the two runs found
 
-Three defects, each fixed on main and on the nodes before run 3:
+Three defects, each fixed on main before run 3; the first two ran on the
+nodes from run 3 on, the third from 2026-10-15 ("The release the nodes
+ran", below):
 
 1. **A reaped hold's boot binding** (above). The fix took two releases,
    since an auditor from before a record field refuses a record carrying
    it and the settle after that record is then acknowledged past a gap:
    first every auditor reads the authorization's boot binding on a hold's
    first heartbeat record (#1751, release `2eef83dec`), then the owner
-   states it there (#1754, release `4f58c6efa`), pinned once both nodes
-   ran the reader. `docs/runbooks/fastpath-deploy.md` now says how a
+   states it there (#1754, release `4f58c6efa`). The writer was pinned
+   (2026-10-14 01:00Z) while the nodes still ran `bfa94e22e`, before
+   either ran the reader; it reached them in order all the same, the
+   reader from 01:02Z and the writer from 04:04Z, since each reset ran
+   the release before its pin. `docs/runbooks/fastpath-deploy.md` now says how a
    record field is added. The packs run 2 left pending are from before
    the fix; they stay pending until an operator marks their work done,
    which the audit reports and the watch's ceiling would stop run 3 on.
@@ -152,8 +157,10 @@ the accounting, which held in both runs.
 
 ## Runs 3 to 5: the fixes on the nodes, the rate raised by steps
 
-2026-10-14, nodes on release `f96c21395` (the three fixes above), the
-legacy pending packs marked done by an operator first. Each run the full
+2026-10-14, nodes running release `4f58c6efa`, with fixes 1 and 2 above;
+`f96c21395`, the alerts' severity, was pinned but ran only from 2026-10-15
+("The release the nodes ran", below). The legacy pending packs were
+marked done by an operator first. Each run the full
 ten minutes, the generator ending on its own, the watch exiting 0, the
 audit exiting 0 with no problem.
 
@@ -183,7 +190,7 @@ runs, an empty `/owner/ping` (`fastpath/internal/frontdoor/http.go`, a
 generator sends every other request to each front door
 (`fastpath/internal/loadgen`), and a front door may forward an
 authorization to the other node's owner; the authorize path between
-the two releases is unchanged (`git log bfa94e22e..f96c21395 --
+the two releases is unchanged (`git log bfa94e22e..4f58c6efa --
 fastpath/` touches the heartbeat record and the alert line); the
 observed load during run 4 was low (load average 0.11 on two vCPUs,
 the logging agent at six percent, no journal line per request). The
@@ -230,9 +237,157 @@ stop at P4 holds a real workspace's room for that long; the hand-off at
 a planned stop (`fastpath-deploy.md`) is the way around it, and the
 watch's stop could list the holds the same way.
 
+## Run 6: eight a second, stopped by the spend ceiling
+
+2026-10-14 15:18:22Z, on the release of runs 3 to 5 (`4f58c6efa`), after Joseph's second
+admin grant (`fastpath_p1_funding_2026_10_b`) raised the funding to 200 USD
+and the run's spend ceiling, a tenth of it, to 20 USD. Floors 0.13 ms here
+and 1.40 ms to the other node. The watch stopped the stage at 9.5 minutes
+of a planned ten: "spent 23,344,055 past 20,000,000", ten leases revoked.
+
+| started | admitted / busy | settles / refunds | streams complete / cut off | heartbeats |
+|---|---|---|---|---|
+| 4,560 | 4,549 / 11 | 4,335 / 70 | 2,134 / 144 | 3,426 |
+
+Authorize admitted p50 2.69 ms, p99 3.90 ms, max 6.33 ms; heartbeat p50
+13.8 ms, p99 40 ms; settle p50 25 ms, p99 69 ms, max 450 ms. The audit
+after the stop found no problem, usage 35,571,241 of the 200,000,000
+funded, 29.2 million reserved, and five packs pending and seventeen
+records staged, in flight. The audit before run 7 found no problem and
+nothing reserved, with 597 micro-credits booked since this one. Cloud
+Logging holds no fast path alert after 04:33Z on 2026-10-14, before run 3,
+so none came during runs 3 to 10.
+
+## Runs 7 to 10: sixteen to 128 a second
+
+2026-10-16, both nodes running release `f96c21395`. `afa671dc9`, which
+adds the drain-log refund taking its hold's boot (#1783) and the owner
+releasing no-heartbeat holds at their end of life (#1784), was pinned but
+did not run until 2026-10-17 ("The release the nodes ran", below). Each
+run about 2,900
+generations, its duration halved as its rate doubled, so that its expected
+spend, about 12 USD at the charges so far, sits under the 20 USD ceiling;
+run 10's heavy tail took it to 19.5. The watch ran on every run with the
+runbook's ceilings. The pilot's own watch on Joseph's workspace, with the
+same production-wide ceilings (Spanner's CPU, the subscriptions' backlog,
+pending work overdue), ran through all four runs. It stopped at
+02:00:07Z, thirteen minutes after run 10 ended, not on a ceiling but on
+its lost-view rule: three looks in a row had a read that failed, the last
+because the newest point of one Spanner CPU series (`us-west2`, the
+database's system work) was up to six minutes old, past `-fresh` of five.
+Since it reads each series with Monitoring's delay, a ceiling passed
+during the runs would have stopped it first, for that reason. It was
+re-armed with `-fresh 15m -window 20m`.
+
+| run | rate, duration | started | admitted / busy | settles / refunds | streams complete | heartbeats |
+|---|---|---|---|---|---|---|
+| 7 (01:23Z) | 16/s, 3 min | 2,880 | 2,868 / 12 | 2,821 / 47 | 1,421 | 2,263 |
+| 8 (01:30Z) | 32/s, 90 s | 2,880 | 2,878 / 2 | 2,847 / 31 | 1,447 | 2,298 |
+| 9 (01:40Z) | 64/s, 45 s | 2,880 | 2,877 / 3 | 2,837 / 40 | 1,485 | 2,318 |
+| 10 (01:45Z) | 128/s, 23 s | 2,944 | 2,942 / 2 | 2,906 / 36 | 1,465 | 2,370 |
+
+None not started, none cancelled, every run ending on its own with the
+watch exiting 0.
+
+| run | floor here / other | authorize admitted p50 / p90 / p99 / max | heartbeat p50 / p99 | settle p50 / p99 / max |
+|---|---|---|---|---|
+| 7 | 0.13 / 1.49 ms | 2.60 / 3.56 / 4.03 / 8.48 ms | 13.6 / 33.2 ms | 24.0 / 71.0 / 575 ms |
+| 8 | 0.13 / 1.03 ms | 2.70 / 3.48 / 4.03 / 6.08 ms | 13.6 / 31.8 ms | 23.2 / 57.5 / 119 ms |
+| 9 | 0.14 / 1.43 ms | 2.62 / 3.64 / 4.53 / 7.90 ms | 14.3 / 41.5 ms | 23.4 / 58.1 / 386 ms |
+| 10 | 0.14 / 1.17 ms | 2.50 / 3.26 / 4.31 / 7.55 ms | 15.0 / 38.9 ms | 24.8 / 73.8 / 170 ms |
+
+**The admission's cost barely moves with the rate.** Its p50 stays
+between 2.4 and 3.0 ms in runs 3 to 10, from one to 128 a second. Its p99 is
+4.0 to 4.5 ms from sixteen to 128 a second, against 3.65 to 3.93 ms from
+one to eight (runs 3 to 6), under the 10 ms budget at every quantile.
+
+**Busy answers.** Run 7's first six came within 0.31 s of its start, when
+the workspace reserved nothing (its audit before the run), so no lease
+held room for them yet. Runs 8 to 10 started with 23.0, 28.0 and 45.8
+million reserved by leases from the run before (their audits before), and
+their first busy answer came 34, 23 and 13 seconds in. The rest came mid-run, two to six a run, about one request in
+a thousand: requests no lease took at that moment (the front door's
+`busy`). The pilot sends a busy answer to today's path.
+
+Each run's usage booked is the difference of the audits before and after
+it; the audit before run 7 found 35,571,838.
+
+| run | usage booked | open leases / reserved after | packs pending a minute after |
+|---|---|---|---|
+| 7 | 11,985,948 | 7 / 22,998,232 | 0 |
+| 8 | 12,205,431 | 9 / 30,792,801 | 0 |
+| 9 | 12,259,627 | 11 / 45,759,044 | 11, none two minutes after |
+| 10 | 19,502,113 | 13 / 46,256,931 | 13, none 90 seconds after |
+
+**The audits** found no problem after each run: no fault usage, the
+leases' consumption equal to the usage booked, every winner decided once.
+The pending packs after runs 9 and 10 were in flight and done well inside
+the watch's five minutes. Run 10 booked 19.5 USD for about the same count
+of generations (2,944) that cost run 7 12.0 (2,880): the charges are
+heavy-tailed, so a run's spend is not its count times an average.
+
+**Load.** Spanner's high-priority CPU in `us-central1`, the highest
+minute of each run: 4.8% in run 7, 5.6% in 8, 4.8% in 9 and 7.7% in 10,
+over 2.4 to 3.3% between runs; the other regions at most 3.8%. The nodes'
+CPU, a minute's average: `tr-fastpath-1`, where the generator runs too, at
+most 19%, `tr-fastpath-2` at most 14%. A run's starts last its duration,
+23 seconds to three minutes, and its streams and terminals go on after
+them (run 10's generator ended about 105 seconds after its start), so in the
+short runs a minute's average spreads the starts' peak over quieter
+seconds.
+
+**The mix's streams.** The load mix's stream share, one half, is the
+runbook's assumption. Production's, measured on 2026-10-16 over seven days
+of organic successes (`provider_benchmark_samples`), is 2.9% of requests,
+though 60% of spend. These runs carry about seventeen times production's
+share of streams; how many heartbeats a production stream sends is not
+measured (the mix's one to four is the runbook's assumption too), so the
+heartbeat load per request is not compared. The pilot leaves streams out
+(Joseph, 2026-10-16).
+
+## The release the nodes ran
+
+Each pin's nodes ran the release before it, until 2026-10-17. A reset
+boots the node with its unit enabled, so systemd starts the binary on disk,
+the previous release, about forty seconds before the startup script
+downloads the pinned one; the script's `systemctl enable --now` leaves the
+running unit alone, and it keeps the old binary, deleted on disk, until it
+next starts. `/opt/fastpath/release` and the instance's metadata named
+the pin, and the service reported itself active. The nodes' journals in Cloud
+Logging say what each start ran:
+
+| started | node | running | pinned then |
+|---|---|---|---|
+| 2026-10-13 22:25Z | both | `bfa94e22e` | `bfa94e22e` |
+| 2026-10-14 00:23Z | both | `bfa94e22e` | `2eef83dec` |
+| 2026-10-14 01:02Z | both | `2eef83dec` | `4f58c6efa` |
+| 2026-10-14 04:04Z | both | `4f58c6efa` | `f96c21395` |
+| 2026-10-15 02:13Z | both | `f96c21395` | `afa671dc9` |
+| 2026-10-17 05:04:49Z | 1 | `afa671dc9` | `93e69666a` |
+| 2026-10-17 05:07:48Z | 1 | `93e69666a` | `93e69666a` |
+| 2026-10-17 05:08:55Z | 2 | `afa671dc9` | `93e69666a` |
+| 2026-10-17 05:10:09Z | 2 | `93e69666a` | `93e69666a` |
+
+So runs 3 to 6 ran `4f58c6efa` and runs 7 to 10 `f96c21395`; their numbers
+and audits stand for those releases. The boot binding's two releases still
+reached the nodes in order, the reader before the writer. Node 2 ran
+`f96c21395` until its reset at about 05:08:40Z, node 1 having reset at
+05:04Z. The two `93e69666a` starts were restarts after each node was marked leaving and drained, and
+the running binary's hash then matched the installed one. A node now takes
+a pin by "Taking a pinned release" in `docs/runbooks/fastpath-deploy.md`,
+which reads the release from the process.
+
 ## Next
 
-The rate's next step, eight a second, spends about 16 USD in ten
-minutes, past the run's spend ceiling of a tenth of the funding, and the
-workspace has 60 USD of room left: the next runs need either more
-funding or five-minute runs, the owner's timings read for the p50 first.
+The climb stops at 128 a second for now, for three reasons. A run's spend
+is heavy-tailed, as run 10's shows. The generator runs on `tr-fastpath-1`
+beside its front door and owner, so past this rate a run measures the
+generator too. And the workspace has about 62 USD of room: 200 funded,
+91.5 booked, 46.3 reserved by its open leases.
+
+The design's figure for a lease is about 1,000 generations a second
+(§6). A sustained run there needs a generator on its own machine in the
+network, and either more funding or a mix of smaller charges, with the
+spend ceiling raised to match. At this mix a minute at 1,000 a second
+books 250 to 400 USD: runs 7 to 9 averaged about 4,200 micro-credits a
+generation, run 10 about 6,600.

@@ -52,6 +52,17 @@ class StoreUnavailable(StoreError):
     """
 
 
+class LeasedOutcomeUnknown(StoreError):
+    """A leased authorization's insert answered with a transient error and
+    no read-back proved the row landed: it may have, or may still land. The
+    caller keeps the hold the lease granted, which a row that lands uses
+    and a lease ends uncharged at its end of life otherwise."""
+
+    def __init__(self, authorization_id: str) -> None:
+        super().__init__(f"leased insert outcome unknown for {authorization_id}")
+        self.authorization_id = authorization_id
+
+
 class DeferredSettlementCapReached(StoreError):
     """This plane already holds the maximum unsettled spend for a workspace.
 

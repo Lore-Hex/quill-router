@@ -1,0 +1,30 @@
+{
+  "name": "New York Token Exchange",
+  "short_name": "NYTE",
+  "website": "https://nytokenexchange.com",
+  "updated": "2026-10-15",
+  "contact": "help@trustedrouter.com",
+  "one_sentence": "New York Token Exchange (NYTE), powered by TrustedRouter, helps enterprises buy AI inference across providers with model choice, cost controls and verifiable privacy requirements.",
+  "boilerplate": "New York Token Exchange (NYTE) is an enterprise AI inference service powered by TrustedRouter and operated by Lore Hex Corp, a Delaware corporation. It brings model and provider selection, routing, cost controls and privacy requirements into one OpenAI-compatible API. Buyers can evaluate representative workloads and select providers against their quality, cost and confidentiality requirements. Inference providers can apply to make capacity available through the exchange. NYTE requires confidential AI routes, with verification evidence and eligibility assessed for the selected route. AI tokens measure model inputs and outputs; NYTE is not a securities or cryptocurrency exchange. Learn more at nytokenexchange.com.",
+  "founder_bio": "Joseph Perla is the founder and CEO of Lore Hex Corp, the company behind TrustedRouter and New York Token Exchange. TrustedRouter was built around the principle that a model gateway should not become another place that collects every prompt. Its gateway publishes source code and hardware-attestation evidence so customers can verify the software handling their requests.",
+  "facts": [
+    ["Name", "New York Token Exchange"],
+    ["Short name", "NYTE"],
+    ["Category", "Enterprise AI inference"],
+    ["Powered by", "TrustedRouter"],
+    ["Operator", "Lore Hex Corp, a Delaware corporation"],
+    ["Founder and CEO", "Joseph Perla"],
+    ["Website", "nytokenexchange.com"],
+    ["Press contact", "help@trustedrouter.com"]
+  ],
+  "questions": [
+    ["What is a token?", "A token is a unit used to measure model inputs and outputs, such as pieces of text. Here, tokens refer to AI inference usage, not cryptocurrency or a financial asset."],
+    ["How does NYTE relate to TrustedRouter?", "NYTE is the enterprise exchange offering powered by TrustedRouter, not a separate model developer. Lore Hex Corp operates both. TrustedRouter provides the model gateway, provider integrations and verification infrastructure."],
+    ["What do buyers and providers do?", "Buyers bring a workload and define quality, cost and privacy requirements. Providers apply with callable model endpoints, pricing, capacity, serving regions and policy evidence. Listing, eligibility and purchase volumes depend on review and demand; there is no guaranteed volume or savings percentage."],
+    ["What does confidential mean here?", "Confidential inference protects data while it is being processed in a verified execution environment. Attestation supplies evidence about that environment. End-to-end encryption concerns the encrypted request path, while zero data retention is a data-handling policy. They are distinct properties: NYTE's confidential-route requirements and live evidence should be checked for the specific route. Not every provider in the wider TrustedRouter catalog qualifies."],
+    ["Does New York mean requests stay in New York?", "No. The name identifies the market audience, not an inference location, office address or residency guarantee. Processing locations and eligibility depend on the selected provider, route and agreed terms."],
+    ["Are capacity futures or derivatives live?", "No. Those are roadmap topics, not live products. The current offering is access to AI inference. NYTE is not a securities or cryptocurrency exchange and is not affiliated with the New York Stock Exchange."],
+    ["Where can I check prices, availability and security claims?", "Use the live model catalog, provider pages, status page and trust center linked below. Catalog totals, rates and availability change. Request a dated confirmation before quoting a figure; public assets and illustrative demos are not service-level or savings guarantees."],
+    ["Can I request an interview, founder photo or a custom asset?", "Yes. Email help@trustedrouter.com with your publication, topic, deadline and time zone. The team can coordinate interviews, current company figures, approved photography and additional formats. This kit contains public materials only; commercial decks are shared through their separate request flows."]
+  ]
+}

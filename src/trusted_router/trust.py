@@ -6,12 +6,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from trusted_router.config import Settings
-from trusted_router.dashboard import _organization_node
+from trusted_router.dashboard import _organization_node, _static_version
 from trusted_router.domains import (
     api_base_url_for_domain,
     canonical_public_url,
     configured_control_domains,
 )
+from trusted_router.views import render_template
 
 ATTESTED_GATEWAY_REPO = "https://github.com/Lore-Hex/quill-cloud-proxy"
 CLOUD_INFRA_REPO = "https://github.com/Lore-Hex/quill-cloud-infra"
@@ -351,22 +352,18 @@ def trust_html(
         release_metadata=release_metadata,
         release_metadata_status=release_metadata_status,
     )
-    digest = html.escape(str(release["image_digest"]))
-    image = html.escape(str(release["image_reference"]))
-    source = html.escape(str(release["source_commit"]))
     domain = public_domain or settings.trusted_domain
     resolved_api_base_url = api_base_url or api_base_url_for_domain(settings, domain)
-    api = html.escape(resolved_api_base_url)
-    api_hostname = html.escape(resolved_api_base_url.removeprefix("https://").split("/", 1)[0])
-    control_origin = html.escape(f"https://{domain}")
-    canonical_url = html.escape(canonical_public_url(settings, "/trust"), quote=True)
-    docs_url = html.escape(canonical_public_url(settings, "/api/reference"), quote=True)
+    api_hostname = resolved_api_base_url.removeprefix("https://").split("/", 1)[0]
+    control_origin = f"https://{domain}"
+    canonical_url = canonical_public_url(settings, "/trust")
+    docs_url = canonical_public_url(settings, "/api/reference")
     trust_title = "Verify TrustedRouter Attestation and Running Code"
     trust_description = (
         "Verify the live TrustedRouter gateway attestation, image digest, source commit, "
         "TLS boundary, and open-source deployment before sending prompts."
     )
-    og_image = html.escape(canonical_public_url(settings, "/og.png"), quote=True)
+    og_image = canonical_public_url(settings, "/og.png")
     # The @graph form so the operating company travels with the page. /trust is
     # where somebody lands to decide whether this vendor is real, which makes it
     # the worst page to omit the contact and address from.
@@ -379,7 +376,7 @@ def trust_html(
                     "@type": "WebPage",
                     "name": trust_title,
                     "description": trust_description,
-                    "url": canonical_public_url(settings, "/trust"),
+                    "url": canonical_url,
                     "about": {
                         "@type": "SoftwareApplication",
                         "name": "TrustedRouter",
@@ -391,49 +388,22 @@ def trust_html(
         },
         separators=(",", ":"),
     ).replace("<", "\\u003c")
-    control_repo = html.escape(CONTROL_PLANE_REPO)
-    gateway_repo = html.escape(ATTESTED_GATEWAY_REPO)
-    infra_repo = html.escape(CLOUD_INFRA_REPO)
-    python_sdk_repo = html.escape(PYTHON_SDK_REPO)
-    javascript_sdk_repo = html.escape(JAVASCRIPT_SDK_REPO)
-    provider_check_repo = html.escape(PROVIDER_CHECK_REPO)
-    agent_prompt = html.escape(TRUST_AGENT_PROMPT)
-    if release_metadata_status == "stale":
-        release_warning = (
-            '<section class="panel warn"><h2>Release record temporarily stale</h2>'
-            "<p>This page is showing the last validated gateway release record and returns "
-            "HTTP 503. Verify the canonical trust record before sending sensitive data.</p></section>"
-        )
-    elif release_metadata_status == "unavailable":
-        release_warning = (
-            '<section class="panel warn"><h2>Live release record unavailable</h2>'
-            "<p>This page cannot currently verify the running gateway digest and returns "
-            "HTTP 503. Do not rely on an older embedded digest.</p></section>"
-        )
-    else:
-        release_warning = ""
-    release_json = html.escape(json.dumps(release, indent=2, sort_keys=True) + "\n")
 
     # The records /trust/aws-release.json and /trust/azure-release.json serve,
     # with the status each of those routes reports.
     aws = aws_record if aws_record is not None else aws_release(settings)
     azure = azure_record if azure_record is not None else azure_release(settings)
-    aws_pcr0 = html.escape(str(aws["pcr0"]))
-    aws_api = html.escape(str(aws["api_base_url"]))
-    azure_hostdata = html.escape(str(azure["hostdata"]))
-    azure_api = html.escape(str(azure["api_base_url"]))
-    azure_issuers = html.escape(", ".join(azure["attestation_issuers"]) or NOT_CONFIGURED)
 
     def _plane_note(payload: Mapping[str, Any], status: str) -> str:
         if payload["release_metadata_status"] == NOT_CONFIGURED:
             return (
-                "<p><strong>No measurement is available for this plane right now.</strong> "
+                "<p class=\"trust-plane-note\"><strong>No measurement is available for this plane right now.</strong> "
                 "Do not treat its absence as a measurement of zero — verify against a "
                 "live attestation before sending sensitive data.</p>"
             )
         if status == "stale":
             return (
-                "<p><strong>This plane's release record could not be refreshed.</strong> "
+                "<p class=\"trust-plane-note\"><strong>This plane's release record could not be refreshed.</strong> "
                 "This is the last validated copy — verify against a live attestation "
                 "before sending sensitive data.</p>"
             )
@@ -441,200 +411,41 @@ def trust_html(
 
     aws_note = _plane_note(aws, aws_status)
     azure_note = _plane_note(azure, azure_status)
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{trust_title}</title>
-  <meta name="description" content="{trust_description}">
-  <link rel="canonical" href="{canonical_url}">
-  <meta property="og:type" content="website">
-  <meta property="og:site_name" content="TrustedRouter">
-  <meta property="og:title" content="{trust_title}">
-  <meta property="og:description" content="{trust_description}">
-  <meta property="og:url" content="{canonical_url}">
-  <meta property="og:image" content="{og_image}">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{trust_title}">
-  <meta name="twitter:description" content="{trust_description}">
-  <meta name="twitter:image" content="{og_image}">
-  <script type="application/ld+json">{trust_json_ld}</script>
-  <style>
-    :root {{
-      color-scheme: light;
-      --ink:#172027; --muted:#5c6974; --line:#d8e1e8; --bg:#f6f8fa;
-      --panel:#ffffff; --green:#11724c; --blue:#2355a6; --red:#b42318; --nav:#101820;
-    }}
-    * {{ box-sizing:border-box; }}
-    body {{ margin:0; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }}
-    header {{ border-bottom:1px solid var(--line); background:#fff; position:sticky; top:0; z-index:3; }}
-    nav {{ max-width:1120px; margin:0 auto; padding:14px 22px; display:flex; align-items:center; justify-content:space-between; gap:16px; }}
-    a {{ color:var(--blue); text-decoration:none; }}
-    .brand {{ font-weight:800; color:var(--ink); display:flex; align-items:center; gap:10px; }}
-    .mark {{ width:30px; height:30px; border-radius:7px; background:linear-gradient(135deg,#2c6ecb,#19a06d); display:grid; place-items:center; font-size:13px; color:#fff; }}
-    .links {{ display:flex; gap:14px; flex-wrap:wrap; font-size:14px; }}
-    .wrap {{ max-width:1120px; margin:0 auto; padding:34px 22px 56px; display:grid; gap:18px; }}
-    .agent-verify {{ padding:0 0 18px; border-bottom:1px solid var(--line); min-width:0; }}
-    .agent-verify-head {{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; min-height:44px; margin-bottom:14px; }}
-    .agent-verify-head h2 {{ font-size:22px; line-height:1.3; margin:0; text-wrap:balance; }}
-    .agent-prompt {{ margin:0; border-left:3px solid var(--green); padding:4px 0 4px 18px; }}
-    .agent-prompt p {{ color:var(--ink); margin:0; font-size:17px; line-height:1.65; overflow-wrap:anywhere; }}
-    .copy-prompt {{ display:inline-flex; flex-shrink:0; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:10px 16px; border:1px solid var(--green); border-radius:6px; background:var(--green); color:#fff; font:inherit; font-weight:600; cursor:pointer; }}
-    .copy-prompt[hidden] {{ display:none; }}
-    .copy-prompt:hover {{ background:#0d5a3c; }}
-    .copy-prompt:focus-visible {{ outline:3px solid var(--blue); outline-offset:3px; }}
-    .copy-prompt:disabled {{ cursor:wait; }}
-    .copy-status {{ display:block; min-height:24px; margin-top:8px; color:var(--muted); font-size:14px; line-height:1.5; }}
-    .hero {{ display:grid; grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr); gap:20px; align-items:start; }}
-    h1 {{ font-size:42px; line-height:1.08; margin:0 0 12px; letter-spacing:0; }}
-    h2 {{ font-size:17px; margin:0 0 12px; letter-spacing:0; }}
-    p {{ color:var(--muted); line-height:1.55; margin:0 0 14px; }}
-    code {{ background:#edf2f6; border:1px solid #d7e0e7; border-radius:6px; padding:2px 6px; font-size:.92em; overflow-wrap:anywhere; }}
-    .panel {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:18px; min-width:0; }}
-    .grid {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }}
-    .status {{ display:inline-flex; align-items:center; gap:8px; font-weight:700; color:var(--green); }}
-    .dot {{ width:9px; height:9px; border-radius:50%; background:var(--green); }}
-    .kv {{ display:grid; gap:12px; margin-top:8px; }}
-    .label {{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:0; margin-bottom:3px; }}
-    .value {{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:13px; overflow-wrap:anywhere; }}
-    .repo-list {{ display:grid; gap:12px; margin:0; }}
-    .repo-list p {{ margin:3px 0 0; }}
-    .checks {{ list-style:none; padding:0; margin:0; display:grid; gap:10px; }}
-    .checks li {{ display:flex; gap:10px; color:#2d3742; line-height:1.4; }}
-    .check {{ color:var(--green); font-weight:800; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-    pre {{ white-space:pre-wrap; overflow-wrap:anywhere; background:#101820; color:#eef6ff; border-radius:8px; padding:16px; margin:0; font-size:13px; line-height:1.45; }}
-    .warn {{ border-color:#ead49b; background:#fff8e4; color:#5a3b00; }}
-    .warn p {{ color:#5a3b00; }}
-    @media (max-width:850px) {{
-      .hero, .grid {{ grid-template-columns:1fr; }}
-      nav {{ align-items:flex-start; flex-direction:column; }}
-      h1 {{ font-size:31px; }}
-    }}
-  </style>
-  <script src="/static/copy-prompt.js" defer></script>
-</head>
-<body>
-  <header>
-    <nav>
-      <a class="brand" href="{control_origin}"><span class="mark">TR</span><span>TrustedRouter</span></a>
-      <div class="links"><a href="{control_repo}">Control repo</a><a href="{gateway_repo}">Gateway repo</a><a href="{infra_repo}">Infra repo</a><a href="/trust/gcp-release.json">gcp-release.json</a><a href="{docs_url}">API docs</a><a href="{control_origin}">Console</a></div>
-    </nav>
-  </header>
-  <main class="wrap">
-    <section class="agent-verify" aria-labelledby="agent-verify-title">
-      <div class="agent-verify-head">
-        <h2 id="agent-verify-title">Ask your agent to verify TrustedRouter</h2>
-        <button class="copy-prompt" id="copy-trust-prompt" type="button" data-copy-prompt-target="trust-agent-prompt" data-copy-prompt-status="trust-copy-status" aria-controls="trust-agent-prompt" title="Copy verification prompt" hidden><img src="/static/copy-icon.svg" width="18" height="18" alt="Copy" aria-hidden="true"><span>Copy prompt</span></button>
-      </div>
-      <blockquote class="agent-prompt"><p id="trust-agent-prompt">{agent_prompt}</p></blockquote>
-      <span class="copy-status" id="trust-copy-status" role="status" aria-live="polite" aria-atomic="true"></span>
-    </section>
-    {release_warning}
-    <section class="hero">
-      <div class="panel">
-        <p class="status"><span class="dot"></span>Trust boundary</p>
-        <h1>Verify that the hosted API runs the published open-source workload.</h1>
-        <p><code>{api_hostname}</code> is the prompt path. Public TLS terminates inside the measured GCP Confidential Space workload. The TrustedRouter control plane does not serve production inference routes and does not receive prompt or output bodies.</p>
-        <p>Clients can fetch the live attestation, verify issuer/audience/digest, and compare the measured image digest with the release data published here.</p>
-        <p>Preparing a security review? <a href="{control_origin}/token-exchange/security">Get the Token Exchange security deck and whitepaper.</a></p>
-      </div>
-      <aside class="panel">
-        <h2>Current GCP Workload</h2>
-        <div class="kv">
-          <div><div class="label">Source commit</div><div class="value">{source}</div></div>
-          <div><div class="label">Image</div><div class="value">{image}</div></div>
-          <div><div class="label">Digest</div><div class="value">{digest}</div></div>
-          <div><div class="label">Attested gateway repo</div><div class="value"><a href="{gateway_repo}">Lore-Hex/quill-cloud-proxy</a></div></div>
-          <div><div class="label">API base</div><div class="value">{api}</div></div>
-        </div>
-      </aside>
-    </section>
-    <section class="grid" aria-label="Verification checklist">
-      <div class="panel">
-        <h2>Client Verification</h2>
-        <ul class="checks">
-          <li><span class="check">OK</span><span>Fetch <code>https://{api_hostname}/attestation</code> over normal public TLS.</span></li>
-          <li><span class="check">OK</span><span>Verify the JWT issuer is <code>https://confidentialcomputing.googleapis.com</code>.</span></li>
-          <li><span class="check">OK</span><span>Verify the audience is <code>quill-cloud</code>.</span></li>
-          <li><span class="check">OK</span><span>Compare the attested image digest with this page.</span></li>
-          <li><span class="check">OK</span><span>Check the TLS certificate fingerprint is bound into the attestation nonce.</span></li>
-        </ul>
-      </div>
-      <div class="panel">
-        <h2>Published Files</h2>
-        <p><a href="/trust/image-digest-gcp.txt">image-digest-gcp.txt</a></p>
-        <p><a href="/trust/image-reference-gcp.txt">image-reference-gcp.txt</a></p>
-        <p><a href="/trust/gcp-release.json">gcp-release.json</a></p>
-        <p><a href="/trust/aws-release.json">aws-release.json</a></p>
-        <p><a href="/trust/azure-release.json">azure-release.json</a></p>
-      </div>
-      <div class="panel warn">
-        <h2>DNS Requirement</h2>
-        <p><code>{api_hostname}</code> must remain DNS-only or TCP-passthrough. TLS termination by a CDN would break the hosted-code trust claim because the prompt path certificate key must remain inside the measured workload.</p>
-      </div>
-    </section>
-    <section class="grid" aria-label="Attested serving planes">
-      <div class="panel">
-        <h2>GCP · Confidential Space</h2>
-        <div class="kv">
-          <div><div class="label">Measures</div><div class="value">Container image digest</div></div>
-          <div><div class="label">Image digest</div><div class="value">{digest}</div></div>
-          <div><div class="label">Attestation issuer</div><div class="value">confidentialcomputing.googleapis.com</div></div>
-          <div><div class="label">API base</div><div class="value">{api}</div></div>
-          <div><div class="label">Release record</div><div class="value"><a href="/trust/gcp-release.json">gcp-release.json</a></div></div>
-        </div>
-        <p>Compare <code>image_digest</code> against the digest in a live attestation JWT from the issuer above, checking its audience is <code>quill-cloud</code>. The certificate fingerprint is bound into the attestation nonce, so the connection you are on is the connection that was attested.</p>
-      </div>
-      <div class="panel">
-        <h2>AWS · Nitro Enclaves</h2>
-        {aws_note}
-        <div class="kv">
-          <div><div class="label">Measures</div><div class="value">PCR0 over the enclave image file (SHA-384)</div></div>
-          <div><div class="label">PCR0</div><div class="value">{aws_pcr0}</div></div>
-          <div><div class="label">Attestation</div><div class="value">COSE_Sign1, AWS Nitro PKI</div></div>
-          <div><div class="label">API base</div><div class="value">{aws_api}</div></div>
-          <div><div class="label">Release record</div><div class="value"><a href="/trust/aws-release.json">aws-release.json</a></div></div>
-        </div>
-        <p>This plane serves a certificate generated inside the enclave rather than one from a public CA. Its fingerprint and the TLS exporter value are bound into the attestation, so the connection you are on is the connection that was attested. Verify with <code>--attested-cert-only</code>; chain validation is replaced by that binding, not dropped.</p>
-      </div>
-      <div class="panel">
-        <h2>Azure · Confidential Containers</h2>
-        {azure_note}
-        <div class="kv">
-          <div><div class="label">Measures</div><div class="value">SEV-SNP hostdata, sha256 over the CCE policy</div></div>
-          <div><div class="label">hostdata</div><div class="value">{azure_hostdata}</div></div>
-          <div><div class="label">MAA issuers</div><div class="value">{azure_issuers}</div></div>
-          <div><div class="label">API base</div><div class="value">{azure_api}</div></div>
-          <div><div class="label">Release record</div><div class="value"><a href="/trust/azure-release.json">azure-release.json</a></div></div>
-        </div>
-        <p>Compare <code>hostdata</code> against <code>x-ms-sevsnpvm-hostdata</code> in a live MAA token. Each serving region runs its own MAA instance, so accept any issuer listed above.</p>
-      </div>
-    </section>
-    <section class="panel">
-      <h2>Why the three measurements look different</h2>
-      <p>Each platform measures the artifact its own hardware can attest to, so there is no single number to compare across all three. GCP measures the container image; AWS measures the enclave image file into PCR0; Azure measures the policy that constrains what the container is allowed to be. A verifier checks one plane at a time, against that plane's own record.</p>
-      <p>Measurements published here are a <strong>set</strong>, not a single value. During a rollout the released key is deliberately bound to both the outgoing and incoming measurement so the old enclave keeps serving while the new one starts. A verifier pinned to exactly one value would fail during precisely that window, which is why each record carries the full accepted set alongside the value expected to be serving.</p>
-    </section>
-    <section class="grid">
-      <div class="panel"><h2>No Prompt Logs</h2><p>Ordinary synchronous and streaming prompt/output storage is disabled. The opt-in Batch API uses separately documented encrypted retention. Generation content endpoint returns a compatible <code>content_not_stored</code> response.</p></div>
-      <div class="panel">
-        <h2>Hosted Open Source</h2>
-        <div class="repo-list">
-          <div><a href="{control_repo}">Lore-Hex/quill-router</a><p>Control plane, billing, keys, compatibility routes, dashboard, and trust page.</p></div>
-          <div><a href="{gateway_repo}">Lore-Hex/quill-cloud-proxy</a><p>Attested prompt gateway, release digest, and Confidential Space verification path.</p></div>
-          <div><a href="{infra_repo}">Lore-Hex/quill-cloud-infra</a><p>Cloud deployment scripts, measured workload bringup, and trust publication flow.</p></div>
-          <div><a href="{python_sdk_repo}">Lore-Hex/trusted-router-py</a><p>Python SDK repository for attestation-aware client helpers.</p></div>
-          <div><a href="{javascript_sdk_repo}">Lore-Hex/trusted-router-js</a><p>JavaScript SDK repository for browser and Node integrations.</p></div>
-          <div><a href="{provider_check_repo}">Lore-Hex/trustedrouter-provider-check</a><p>Public provider conformance suite for validating the attested gateway translator contract.</p></div>
-        </div>
-      </div>
-      <div class="panel"><h2>Fail Closed</h2><p>If attestation, billing authorization, or the gateway contract is unavailable, the prompt path should fail rather than silently downgrade to a non-attested route.</p></div>
-    </section>
-    <section class="panel">
-      <h2>Machine-readable release</h2>
-      <pre>{release_json}</pre>
-    </section>
-  </main>
-</body>
-</html>"""
+    return render_template(
+        "public/trust.html",
+        title=trust_title,
+        description=trust_description,
+        site_url=canonical_url,
+        canonical_url=canonical_url,
+        og_image=og_image,
+        og_image_alt="Verify TrustedRouter attestation and running code",
+        json_ld_blob=trust_json_ld,
+        api_base_url=resolved_api_base_url,
+        static_version=_static_version(settings),
+        agent_prompt=TRUST_AGENT_PROMPT,
+        release_metadata_status=release_metadata_status,
+        control_repo=CONTROL_PLANE_REPO,
+        gateway_repo=ATTESTED_GATEWAY_REPO,
+        infra_repo=CLOUD_INFRA_REPO,
+        python_sdk_repo=PYTHON_SDK_REPO,
+        javascript_sdk_repo=JAVASCRIPT_SDK_REPO,
+        provider_check_repo=PROVIDER_CHECK_REPO,
+        docs_url=docs_url,
+        control_origin=control_origin,
+        api_hostname=api_hostname,
+        api=resolved_api_base_url,
+        source=str(release["source_commit"]),
+        image=str(release["image_reference"]),
+        digest=str(release["image_digest"]),
+        # Escaped here and printed with |safe, as the page always printed it:
+        # tests pin the &quot; form of the record's quotes
+        # (tests/private_repository.py).
+        release_json=html.escape(json.dumps(release, indent=2, sort_keys=True) + "\n"),
+        aws_note=aws_note,
+        aws_pcr0=str(aws["pcr0"]),
+        aws_api=str(aws["api_base_url"]),
+        azure_note=azure_note,
+        azure_hostdata=str(azure["hostdata"]),
+        azure_api=str(azure["api_base_url"]),
+        azure_issuers=", ".join(azure["attestation_issuers"]) or NOT_CONFIGURED,
+    )

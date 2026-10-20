@@ -824,6 +824,7 @@ PROVIDERS: dict[str, Provider] = {
         slug="tinfoil",
         name="Tinfoil",
         supports_prepaid=True,
+        supports_embeddings=True,
         stores_content=False,
         provider_zero_data_retention=True,
         provider_confidential_compute=True,
@@ -839,6 +840,7 @@ PROVIDERS: dict[str, Provider] = {
         slug="privatemode",
         name="Privatemode",
         supports_prepaid=True,
+        supports_embeddings=True,
         supports_byok=False,
         stores_content=False,
         provider_zero_data_retention=True,
@@ -2005,6 +2007,21 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://greenference.com/legal/dpa",
     ),
+    "amazon-bedrock": Provider(
+        slug="amazon-bedrock",
+        name="Amazon Bedrock",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Direct Amazon Bedrock Mantle inference through the US East (N. Virginia) "
+            "regional endpoint. Only exact-priced, account-tested standard-tier models "
+            "are enabled. No global or cross-region inference profiles are used. "
+            "These routes are Standard: no contracted ZDR or confidential-inference "
+            "guarantee is asserted. Model-specific data-retention terms apply."
+        ),
+        provider_policy_url="https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html",
+        provider_headquarters_country="US",
+    ),
     "lyceum": Provider(
         slug="lyceum",
         name="Lyceum",
@@ -2324,6 +2341,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "system1models",
         "system1models-eu",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "boundless",
         "zro",
@@ -2458,6 +2476,43 @@ FREE_MODEL_ID = "trustedrouter/free"
 CHEAP_MODEL_ID = "trustedrouter/cheap"
 
 FAST_MODEL_ID = "trustedrouter/fast"
+
+FRONTIER_MODEL_ID = "trustedrouter/frontier"
+
+ADVANCED_MODEL_ID = "trustedrouter/advanced"
+
+PROFESSIONAL_MODEL_ID = "trustedrouter/professional"
+
+EFFICIENT_MODEL_ID = "trustedrouter/efficient"
+
+# Fixed routing pools: the first member is preferred, the rest are fallbacks.
+# These aliases do not synthesize responses or imply an upstream privacy floor.
+TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
+    FRONTIER_MODEL_ID: (
+        "anthropic/claude-opus-5.5",
+        "openai/gpt-6-astra",
+        "anthropic/claude-fable-5.1",
+    ),
+    ADVANCED_MODEL_ID: (
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.3",
+        "anthropic/claude-opus-5",
+        "openai/gpt-6-sol",
+        "anthropic/claude-fable-5",
+    ),
+    PROFESSIONAL_MODEL_ID: (
+        "z-ai/glm-5.3-flash",
+        "deepseek/deepseek-v4.1-flash-1017",
+        "z-ai/glm-5.2",
+        "google/gemini-3.8-flash",
+    ),
+    EFFICIENT_MODEL_ID: (
+        "google/gemini-2.5-flash-lite",
+        "anthropic/claude-haiku-5.5",
+        "openai/gpt-6-luna",
+        "deepseek/deepseek-v4-flash-0731",
+    ),
+}
 
 EU_MODEL_ID = "trustedrouter/eu"
 
@@ -2775,6 +2830,7 @@ META_MODEL_IDS = frozenset(
         FREE_MODEL_ID,
         CHEAP_MODEL_ID,
         FAST_MODEL_ID,
+        *TIER_MODEL_ORDERS,
         EU_MODEL_ID,
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
@@ -3893,6 +3949,15 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "inception": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Inception Labs",
+        source_url="https://www.inceptionlabs.ai/docs/terms-of-use",
+        note=(
+            "Inception AI, Inc.'s terms list its address in Redwood City, California. "
+            "This describes the model developer, not inference residency."
+        ),
+    ),
     "elevenlabs": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="ElevenLabs",
@@ -3937,6 +4002,17 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "Meta Platforms, Inc.'s 2025 Form 10-K gives principal executive "
             "offices in Menlo Park, California. This records the model maker's "
             "home, not an inference serving region or a data-retention guarantee."
+        ),
+    ),
+    "meta-models": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Meta",
+        source_url="https://www.sec.gov/Archives/edgar/data/1326801/000162828026003942/meta-20251231.htm",
+        note=(
+            "Meta's verified publisher at https://huggingface.co/meta-models "
+            "publishes Muse weights. The country records Meta Platforms' "
+            "principal executive offices, not an inference serving region "
+            "or a data-retention guarantee."
         ),
     ),
     "meta-llama": ModelOrigin(

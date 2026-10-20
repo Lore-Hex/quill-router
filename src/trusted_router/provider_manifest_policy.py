@@ -37,6 +37,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "boundless",
         "zro",
@@ -97,6 +98,38 @@ def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
     )
 
 
+def request_billed_speech_price_is_valid(row: dict[str, Any]) -> bool:
+    return (
+        row.get("model_type") == "tts"
+        and row.get("endpoints") == ["audio/speech"]
+        and row.get("billing_unit") == "request"
+        and type(row.get("fixed_request_price_microdollars")) is int
+        and row["fixed_request_price_microdollars"] > 0
+        and not {"input_token_price_per_m", "output_token_price_per_m", "cached_input_token_price_per_m", "price_tiers"}.intersection(row)
+    )
+
+
+def request_billed_transcription_price_is_valid(row: dict[str, Any]) -> bool:
+    if row.get("model_type") != "audio" or row.get("endpoints") != ["audio/transcriptions"]:
+        return False
+    if row.get("billing_unit") == "tokens":
+        return provider_manifest_price_profile_is_valid(row) and not {
+            "fixed_request_price_microdollars", "audio_minute_price_microdollars",
+        }.intersection(row)
+    unit_field = {
+        "request": "fixed_request_price_microdollars",
+        "audio_minute": "audio_minute_price_microdollars",
+    }.get(str(row.get("billing_unit")))
+    if unit_field is None:
+        return False
+    return (
+        type(row.get(unit_field)) is int
+        and row[unit_field] > 0
+        and not {"input_token_price_per_m", "output_token_price_per_m", "cached_input_token_price_per_m", "price_tiers"}.intersection(row)
+        and not ({"fixed_request_price_microdollars", "audio_minute_price_microdollars"} - {unit_field}).intersection(row)
+    )
+
+
 def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
     model_type = row.get("model_type") or "chat"
     try:
@@ -104,6 +137,10 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
             return provider_manifest_price_profile_is_valid(row)
         if model_type == "decision":
             return decision_manifest_price_is_valid(row)
+        if model_type == "tts":
+            return request_billed_speech_price_is_valid(row)
+        if model_type == "audio":
+            return request_billed_transcription_price_is_valid(row)
         if model_type == "image":
             fixed = row.get("fixed_output_price_microdollars")
             return (

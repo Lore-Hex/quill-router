@@ -59,7 +59,7 @@ func TestStatementsAreTheFastPathsTablesAndIndexes(t *testing.T) {
 		}
 		names = append(names, m[2])
 	}
-	want := "tr_credit_balance tr_lease tr_lease_by_state tr_lease_by_owner tr_lease_by_id tr_lease_donor tr_lease_hold tr_lease_handoff tr_lease_winners " +
+	want := "tr_credit_balance tr_reservation tr_reservation_by_expiry tr_entities tr_lease tr_lease_by_state tr_lease_by_owner tr_lease_by_id tr_lease_donor tr_lease_hold tr_lease_handoff tr_lease_winners " +
 		"tr_lease_winners_by_work tr_lease_drain tr_lease_drain_by_commit tr_lease_record tr_lease_staged " +
 		"tr_lease_staged_by_lease tr_fastpath_workspace tr_fastpath_member"
 	if got := strings.Join(names, " "); got != want {
@@ -102,6 +102,53 @@ func TestCreditBalanceIsProductions(t *testing.T) {
 	for _, m := range added {
 		if !regexp.MustCompile(`\b` + string(m[1]) + ` `).MatchString(ours) {
 			t.Errorf("production adds %s to tr_credit_balance, and fastpath.sql lacks it", m[1])
+		}
+	}
+}
+
+// TestReservationIsProductions holds fastpath.sql's tr_reservation and its
+// index by expiry to production's (scripts/deploy/migrate_typed_counters.sh),
+// up to whitespace, and to every column the script adds to the table since.
+func TestReservationIsProductions(t *testing.T) {
+	const table, index, applied = "CREATE TABLE tr_reservation ", "CREATE INDEX tr_reservation_by_expiry ", `apply_ddl "`
+	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "deploy", "migrate_typed_counters.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs := map[string][][]byte{
+		table: regexp.MustCompile(`(?s)` + applied + `(` + regexp.QuoteMeta(table) + `\(.*?\) PRIMARY KEY \(reservation_id\))"`).
+			FindSubmatch(script),
+		index: regexp.MustCompile(applied + `(` + regexp.QuoteMeta(index) + `ON tr_reservation \(settled, expires_at\))"`).
+			FindSubmatch(script),
+	}
+	statements, err := Statements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ours := map[string]string{}
+	for _, s := range statements {
+		for name := range theirs {
+			if strings.HasPrefix(s, name) {
+				ours[name] = s
+			}
+		}
+	}
+	spaces := regexp.MustCompile(`\s+`)
+	for name, m := range theirs {
+		if m == nil {
+			t.Fatalf("the script no longer matches %q", name)
+		}
+		if got, want := spaces.ReplaceAllString(ours[name], " "), spaces.ReplaceAllString(string(m[1]), " "); got != want {
+			t.Fatalf("fastpath.sql's %s:\n%s\nproduction's:\n%s", name, got, want)
+		}
+	}
+	added := regexp.MustCompile(`(?m)^ensure_column tr_reservation (\w+) `).FindAllSubmatch(script, -1)
+	if len(added) == 0 {
+		t.Fatal("the script adds no column to tr_reservation: the pattern no longer matches it")
+	}
+	for _, m := range added {
+		if !regexp.MustCompile(`\b` + string(m[1]) + ` `).MatchString(ours[table]) {
+			t.Errorf("production adds %s to tr_reservation, and fastpath.sql lacks it", m[1])
 		}
 	}
 }

@@ -380,12 +380,8 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
 
-def test_agent_discovery_surfaces_model_advisor_skill(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The skill is discoverable from the production homepage; the legacy page
-    # served to alternate brands no longer carries it in the shared footer.
-    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
+def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:
+    # The skill is discoverable from the homepage and the docs.
     for path in ["/", "/docs", "/docs/agent-setup"]:
         response = client.get(path)
         assert response.status_code == 200
@@ -912,27 +908,22 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     # keyed API catalog.
     assert 'href="/models"' in response.text
     assert 'href="https://api.trustedrouter.com/v1/models"' not in response.text
-    # Redesigned homepage (2026-06): a static routing-diagram hero replaces the
-    # animated orbital scene, on the friend-provided modern layout. Assert the
-    # new conversion surface rather than the old orbital-scene markup.
-    assert "600+ AI Models at your fingertips." in response.text
-    assert "One Unified Interface." in response.text
-    assert "Privacy with proof." in response.text
-    assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
-    assert "<strong>100+</strong><span>providers</span>" in response.text
-    assert "<strong>3 clouds</strong><span>GCP · AWS · Azure</span>" in response.text
+    # Landscape homepage (2026-10): assert its conversion surface, and that the
+    # previous hero and the older orbital-scene markup stay gone.
+    assert "Encrypt all your" in response.text
+    assert "Access hundreds of models confidentially" in response.text
+    assert "600+ AI Models at your fingertips." not in response.text
     assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" not in response.text
-    assert 'class="hero-sdk-swap"' in response.text
     assert 'base_url="https://api.openai.com/v1"' in response.text
     assert f'base_url="{client.app.state.settings.api_base_url}"' in response.text
-    assert 'src="/static/trustedrouter-explainer.jpg"' in response.text
-    assert "Get API key" in response.text  # primary CTA
-    assert "Provider failover" in response.text  # hero proof row
+    assert 'src="/static/trustedrouter-explainer.jpg"' not in response.text
+    assert "Create my API key" in response.text  # primary CTA
+    assert "No card required." in response.text
     assert 'min_privacy": "confidential"' in response.text
     assert 'href="/eu"' in response.text
-    assert "/static/charter.css?v=" in response.text
+    assert "/static/homepage/homepage-landscape.css?v=" in response.text
     assert 'class="brand-mark"' in response.text
 
 

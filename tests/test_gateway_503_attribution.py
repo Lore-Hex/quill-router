@@ -134,7 +134,10 @@ async def test_app_level_unavailable_503_logs_path_and_error_class(
     key = _seed_key()
 
     def raise_transient(_self: Any, _workspace_id: str) -> Any:
-        raise DeadlineExceeded(ROW_NAMING_BACKEND_MESSAGE)
+        error = DeadlineExceeded(ROW_NAMING_BACKEND_MESSAGE)
+        error.tr_spanner_rpc_method = "execute_streaming_sql"
+        error.tr_spanner_rpc_elapsed_ms = 19900
+        raise error
 
     monkeypatch.setattr(InMemoryStore, "get_workspace", raise_transient)
 
@@ -148,6 +151,9 @@ async def test_app_level_unavailable_503_logs_path_and_error_class(
     assert f"workspace_id={key.workspace_id}" in line
     assert "key_lookup_ms=" in line
     assert "spanner_rpcs=" in line
+    assert "spanner_rpc_method=execute_streaming_sql" in line
+    assert "spanner_rpc_elapsed_ms=19900" in line
+    assert "spanner_rpc_method" not in response.text
     _assert_attributable_and_safe(line, key, "req-app-unavailable")
 
 

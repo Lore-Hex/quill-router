@@ -103,6 +103,7 @@ def test_minimax_marks_the_windows_its_api_reports(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
+    monkeypatch.setenv("TR_LIFECYCLE_CLOCK_OVERRIDE", "2026-10-18T00:00:00Z")
     manifest = tmp_path / "minimax.json"
     manifest.write_text(
         json.dumps(

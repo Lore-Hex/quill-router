@@ -523,8 +523,8 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
     for endpoint_id in (
         "minimax/minimax-m3@minimax/prepaid",
         "minimax/minimax-m3@minimax/byok",
-        "minimax/minimax-m2.7@minimax/prepaid",
-        "minimax/minimax-m2.7-highspeed@minimax/byok",
+        "minimax/minimax-m3.1-flash@minimax/prepaid",
+        "minimax/minimax-m3.1-flash@minimax/byok",
     ):
         model_id = endpoint_id.partition("@")[0]
         row = _listed_row("minimax", model_id)
@@ -868,6 +868,7 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
         "anthropic",
         "aws",
         "bedrock",
+        "amazon-bedrock",
         "google-ai-studio",
     }
     configured = provider_slugs_requiring_reverification & set(PROVIDERS)
@@ -909,10 +910,11 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
     ]
     assert any(endpoint.usage_type == "Credits" for endpoint in openai_endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in openai_endpoints)
-    sora_models = {"openai/sora-2", "openai/sora-2-pro"}
+    # Chat's account-level commitment is not evidence for video or transcription.
+    unverified_retention_models = {"openai/sora-2", "openai/sora-2-pro", "openai/whisper-1"}
     assert all(
         endpoint_zero_data_retention(endpoint)
-        is (endpoint.usage_type == "Credits" and endpoint.model_id not in sora_models)
+        is (endpoint.usage_type == "Credits" and endpoint.model_id not in unverified_retention_models)
         for endpoint in openai_endpoints
     )
 

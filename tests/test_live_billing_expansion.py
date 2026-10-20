@@ -12,7 +12,11 @@ from hypothesis import strategies as st
 
 from scripts import expand_billing_shards as repair
 from tests.test_key_usage_row_sharding import _auth_body, _seed
-from trusted_router.storage_gcp_authorize import authorize_atomic, settle_atomic
+from trusted_router.storage_gcp_authorize import (
+    authorize_atomic,
+    key_window_limit_decision,
+    settle_atomic,
+)
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 
 
@@ -92,6 +96,48 @@ def test_key_cap_refuses_all_mutations(cap, management):
     inputs[2][cap] = 1000000
     with pytest.raises(ValueError, match="uncapped"):
         repair.make_plan(*inputs, allow_management_key=management)
+
+
+@pytest.mark.parametrize("column,field", [
+    ("day_limit_micro", "limit_daily_microdollars"),
+    ("week_limit_micro", "limit_weekly_microdollars"),
+    ("month_limit_micro", "limit_monthly_microdollars"),
+])
+def test_explicit_window_expansion_preserves_caps_and_existing_counters(column, field):
+    inputs = state()
+    inputs[2][field] = 1000000
+    inputs[4][0][column] = 1000000
+    before = copy.deepcopy(inputs)
+    plan = repair.make_plan(*inputs, allow_window_caps=True)
+    assert inputs == before
+    assert plan["key"] == {**before[2], "usage_shard_count": 16}
+    changes = repair.mutations(plan)
+    new_keys = next(c["insert"] for c in changes if "insert" in c and c["insert"]["table"] == "tr_key_limit")
+    assert "usage" not in new_keys["columns"]
+    assert "reserved" not in new_keys["columns"]
+    for row in new_keys["values"]:
+        assert dict(zip(new_keys["columns"], row, strict=True))[column] == "1000000"
+
+
+@pytest.mark.parametrize("defect", ["strict", "lifetime", "divergent", "negative", "boolean"])
+def test_window_expansion_opt_in_still_rejects_unsafe_keys(defect):
+    inputs = state()
+    inputs[2]["limit_weekly_microdollars"] = 1000000
+    inputs[4][0]["week_limit_micro"] = 1000000
+    if defect == "strict":
+        inputs[2]["budget_strict"] = True
+    elif defect == "lifetime":
+        inputs[2]["limit_microdollars"] = 1000000
+    elif defect == "divergent":
+        inputs[4][0]["week_limit_micro"] = 999999
+    elif defect == "negative":
+        inputs[2]["limit_weekly_microdollars"] = -1
+        inputs[4][0]["week_limit_micro"] = -1
+    elif defect == "boolean":
+        inputs[2]["limit_weekly_microdollars"] = True
+        inputs[4][0]["week_limit_micro"] = True
+    with pytest.raises(ValueError):
+        repair.make_plan(*inputs, allow_window_caps=True)
 
 
 @pytest.mark.parametrize("management", [False, True])
@@ -184,8 +230,12 @@ def test_aborted_commit_recomputes_entire_plan_and_timeout_is_not_retried(monkey
 
 @pytest.mark.parametrize("refund_old", [False, True])
 @pytest.mark.parametrize("management", [False, True])
-def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(refund_old, management):
+@pytest.mark.parametrize("weekly_cap", [None, 16000])
+def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(refund_old, management, weekly_cap):
     store, database, key = _seed(key_shards=1)
+    key.limit_weekly_microdollars = weekly_cap
+    for row in database.typed[KEY_LIMIT_TABLE].values():
+        row["week_limit_micro"] = weekly_cap
     def authorize(index, shard):
         return authorize_atomic(store._database, store._param_types,
             workspace_id=key.workspace_id, key_hash=key.hash, estimate=1000,
@@ -204,7 +254,7 @@ def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(re
     inputs[3] = rows
     inputs[4] = list(database.typed[KEY_LIMIT_TABLE].values())
     inputs[6] = {key.workspace_id: inputs[1]}
-    plan = repair.make_plan(*inputs, allow_management_key=management)
+    plan = repair.make_plan(*inputs, allow_management_key=management, allow_window_caps=weekly_cap is not None)
     # Apply the generated mutations through the store's transaction API.
     def apply(tx):
         for change in repair.mutations(plan):
@@ -213,7 +263,7 @@ def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(re
             values = copy.deepcopy(body["values"])
             for row in values:
                 for n, column in enumerate(columns):
-                    if column in {"shard", "total_credits", "total_usage", "reserved", "pause_epoch", "trust_tier", "trust_override_tier"} and row[n] is not None:
+                    if column in {"shard", "total_credits", "total_usage", "reserved", "pause_epoch", "trust_tier", "trust_override_tier", *repair.WINDOW_CAP_FIELDS} and row[n] is not None:
                         row[n] = int(row[n])
                     if row[n] == "spanner.commit_timestamp()":
                         row[n] = None
@@ -235,6 +285,28 @@ def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(re
     assert sum(row["reserved"] for row in database.typed[CREDIT_BALANCE_TABLE].values()) == 0
     assert len([row for row in database.typed[KEY_LIMIT_TABLE].values() if row["usage"] > 0]) == 16
     assert json.loads(database.rows[("credit", key.workspace_id)].body)["shard_count"] == 16
+    assert all(row["week_limit_micro"] == weekly_cap for row in database.typed[KEY_LIMIT_TABLE].values())
+    if weekly_cap is not None:
+        decision = key_window_limit_decision(
+            database, store._param_types, key_hash=key.hash,
+            estimate=1, window_limits={"weekly": weekly_cap}, shard_count=16,
+        )
+        assert decision is not None
+        assert decision.allowed == (expected < weekly_cap)
+        # Differential against the same settled spend on the original one row.
+        sharded = copy.deepcopy(database.typed[KEY_LIMIT_TABLE])
+        consolidated = copy.deepcopy(next(iter(sharded.values())))
+        for name in ("usage", "byok_usage", "day_usage", "week_usage", "month_usage"):
+            consolidated[name] = sum(row[name] for row in sharded.values())
+        database.typed[KEY_LIMIT_TABLE] = {(key.hash, 0): consolidated}
+        reference = key_window_limit_decision(
+            database, store._param_types, key_hash=key.hash,
+            estimate=1, window_limits={"weekly": weekly_cap}, shard_count=1,
+        )
+        assert reference is not None
+        assert (reference.allowed, reference.limit, reference.remaining, reference.resets_at) == (
+            decision.allowed, decision.limit, decision.remaining, decision.resets_at,
+        )
 
 
 def test_read_contract_is_exact_key_bounded_and_uses_same_transaction():
@@ -256,7 +328,8 @@ def test_read_contract_is_exact_key_bounded_and_uses_same_transaction():
 
 
 @pytest.mark.parametrize("management", [False, True])
-def test_dry_run_never_commits_or_rolls_back(monkeypatch, management):
+@pytest.mark.parametrize("window_caps", [False, True])
+def test_dry_run_never_commits_or_rolls_back(monkeypatch, management, window_caps):
     class Client:
         def begin_transaction(self, **kwargs):
             assert kwargs["request"]["options"] == {"read_only": {"strong": True}}
@@ -267,29 +340,37 @@ def test_dry_run_never_commits_or_rolls_back(monkeypatch, management):
             pytest.fail("dry-run tried to mutate transaction state")
     def plan(reader, *args):
         assert reader.allow_management_key is management
+        assert reader.allow_window_caps is window_caps
         inputs = state()
         inputs[2]["management"] = management
-        return repair.make_plan(*inputs, allow_management_key=reader.allow_management_key)
+        if window_caps:
+            inputs[2]["limit_weekly_microdollars"] = 1000000
+            inputs[4][0]["week_limit_micro"] = 1000000
+        return repair.make_plan(*inputs, allow_management_key=reader.allow_management_key, allow_window_caps=reader.allow_window_caps)
     monkeypatch.setattr(repair.Reader, "plan", plan)
-    result = repair.execute(Client(), "session", "ws", "key", 16, apply=False, allow_management_key=management)
+    result = repair.execute(Client(), "session", "ws", "key", 16, apply=False, allow_management_key=management, allow_window_caps=window_caps)
     assert result["changed"] and not result["applied"]
     assert "secret_hash" not in json.dumps(result)
 
 
 @pytest.mark.parametrize("management", [False, True])
-def test_transaction_reads_credit_before_key_to_match_settlement(monkeypatch, management):
+@pytest.mark.parametrize("window_caps", [False, True])
+def test_transaction_reads_credit_before_key_to_match_settlement(monkeypatch, management, window_caps):
     from google.cloud.spanner_v1.types import ResultSet
 
     inputs = state()
     ws, credit, key, credit_rows, key_rows, owner, _, _ = inputs
     key["management"] = management
+    if window_caps:
+        key["limit_weekly_microdollars"] = 1000000
+        key_rows[0]["week_limit_micro"] = 1000000
     entities = {("workspace", "ws"): ws, ("credit", "ws"): credit, ("api_key", "key"): key, ("user", "owner"): owner}
     class Client:
         def execute_sql(self, **kwargs):
             assert "WHERE owner_user_id=@owner" in kwargs["request"]["sql"]
             assert "LIMIT 33" in kwargs["request"]["sql"]
             return ResultSet(rows=[["ws"]])
-    reader = repair.Reader(Client(), "s", {"id": b"tx"}, repair.time.monotonic() + 10, allow_management_key=management)
+    reader = repair.Reader(Client(), "s", {"id": b"tx"}, repair.time.monotonic() + 10, allow_management_key=management, allow_window_caps=window_caps)
     monkeypatch.setattr(reader, "entities", lambda keys: {tuple(k): entities[tuple(k)] for k in keys})
     tables = []
     def read(table, columns, keys):

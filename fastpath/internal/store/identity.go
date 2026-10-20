@@ -12,8 +12,10 @@ import (
 // breaks the design's accounting, for tests and the spike's own audit:
 //
 //   - section 4.7's identity, per credit shard: reserved is the remaining
-//     allocation, donor by donor, of every open or draining lease (the spike
-//     has no synchronous holds);
+//     allocation, donor by donor, of every open or draining lease, and the
+//     workspace's synchronous holds on the shard, today's unsettled
+//     reservations (a workspace with requests of its own has them in flight;
+//     the spike's has none);
 //   - each live lease's allocation and consumption are its donors' sums;
 //   - no row is negative unless every row is marked, rows are marked only
 //     while the signed sum is negative, and every row has the same mark.
@@ -97,10 +99,35 @@ func (s *Store) CheckIdentity(ctx context.Context, workspace string) ([]string, 
 	if err != nil {
 		return nil, err
 	}
+	// Today's holds, unsettled, read through the index by expiry: its
+	// unsettled entries are the requests in flight, not the reservations kept
+	// after they settle, which a scan of the table would read.
+	synchronous := make([]*big.Int, len(reserved))
+	for i := range synchronous {
+		synchronous[i] = new(big.Int)
+	}
+	err = query(`SELECT COALESCE(credit_shard, 0), credit_reserved_micro
+	               FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_expiry}
+	              WHERE settled = FALSE AND workspace_id = @w`, func(row *spanner.Row) error {
+		var shard int64
+		var hold spanner.NullInt64
+		if err := row.Columns(&shard, &hold); err != nil {
+			return err
+		}
+		if shard < 0 || shard >= int64(len(synchronous)) {
+			problems = append(problems, fmt.Sprintf("a synchronous hold is on shard %d, which has no row", shard))
+			return nil
+		}
+		synchronous[shard].Add(synchronous[shard], big.NewInt(hold.Int64))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	for shard := range reserved {
-		if big.NewInt(reserved[shard]).Cmp(held[shard]) != 0 {
-			problems = append(problems, fmt.Sprintf("shard %d reserves %d, and its live leases' donors hold %s",
-				shard, reserved[shard], held[shard]))
+		if big.NewInt(reserved[shard]).Cmp(new(big.Int).Add(held[shard], synchronous[shard])) != 0 {
+			problems = append(problems, fmt.Sprintf("shard %d reserves %d; its live leases' donors hold %s and its synchronous holds %s",
+				shard, reserved[shard], held[shard], synchronous[shard]))
 		}
 	}
 	for lease, t := range live {

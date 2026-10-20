@@ -42,6 +42,7 @@ from scripts.pricing.providers import (
     abliterate,
     aion_labs,
     akashml,
+    amazon_bedrock,
     arcee,
     bfl,
     boundless,
@@ -506,6 +507,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         nscale._canonical_id,
     ),
     ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
+    ("amazon-bedrock", amazon_bedrock.URL, ("BEDROCK_API_KEY",), amazon_bedrock.canonical_model_id),
     ("greenference", greenference.URL, ("GREENFERENCE_API_KEY",), greenference.canonical_model_id),
     ("boundless", boundless.URL, ("BOUNDLESS_API_KEY",), boundless.canonical_model_id),
     ("zro", zro.URL, ("ZRO_API_KEY",), zro.canonical_model_id),
@@ -552,6 +554,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     nscale,
     nvidia_nim,
     lyceum,
+    amazon_bedrock,
     greenference,
     boundless,
     zro,
@@ -791,9 +794,12 @@ def _active_discovery_row(row: dict[str, Any]) -> bool:
         "stopped",
     }:
         return False
-    endpoints = row.get("endpoints")
+    endpoints = row.get("endpoints") or row.get("supported_endpoints")
     if isinstance(endpoints, list) and endpoints:
-        normalized = {str(value).casefold() for value in endpoints}
+        normalized = {
+            str(value).casefold().lstrip("/").removeprefix("v1/").replace(".", "/")
+            for value in endpoints
+        }
         if "chat/completions" not in normalized and "responses" not in normalized:
             return False
     output_modalities = row.get("output_modalities")

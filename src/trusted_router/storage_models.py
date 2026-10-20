@@ -23,6 +23,17 @@ def decode_auth_record(raw: str, cls: type[T]) -> T:
     return cls(**{key: value for key, value in data.items() if key in known})
 
 
+@dataclass
+class SocialRewardEnrollment:
+    """Immutable campaign destination, created with the reduced signup grant."""
+
+    user_id: str
+    workspace_id: str
+    issuer: str
+    dismissed: bool = False
+    first_call_complete: bool = False
+
+
 class AmbiguousGatewayRequestId(ValueError):
     """A parent trace contains multiple independently billable authorizations."""
 

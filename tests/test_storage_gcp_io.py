@@ -436,6 +436,45 @@ class _CommitDatabase:
         return result
 
 
+@pytest.mark.parametrize("error_class", [DeadlineExceeded, ServiceUnavailable, InternalServerError])
+def test_failed_rpc_records_only_fixed_operation_and_elapsed_time(
+    monkeypatch: pytest.MonkeyPatch, error_class: type[Exception],
+) -> None:
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+    error = error_class("private backend detail")
+
+    class FailingApi(_CommitApi):
+        def commit(self, *args: object, **kwargs: object) -> str:
+            clock.now += 0.125
+            raise error
+
+    database = _CommitDatabase(FailingApi())
+    configure_spanner_rpc_deadlines(database)
+    with pytest.raises(error_class) as raised:
+        database.spanner_api.commit(request="private SQL or values")
+    assert raised.value is error
+    assert io_mod.spanner_failure_fields(error) == {
+        "spanner_rpc_method": "commit", "spanner_rpc_elapsed_ms": 125,
+    }
+
+
+@pytest.mark.parametrize("method", [None, [], {}, 4, "private SQL", "commit\nprivate"])
+def test_failed_rpc_metadata_rejects_unrecognized_methods(method: Any) -> None:
+    error = DeadlineExceeded("private")
+    error.tr_spanner_rpc_method = method
+    error.tr_spanner_rpc_elapsed_ms = 1
+    assert io_mod.spanner_failure_fields(error) == {}
+
+
+@pytest.mark.parametrize("elapsed", [None, "private", True, -1, 2**31, float("inf")])
+def test_failed_rpc_metadata_rejects_unbounded_or_private_timing(elapsed: Any) -> None:
+    error = DeadlineExceeded("private")
+    error.tr_spanner_rpc_method = "execute_streaming_sql"
+    error.tr_spanner_rpc_elapsed_ms = elapsed
+    assert io_mod.spanner_failure_fields(error) == {"spanner_rpc_method": "execute_streaming_sql"}
+
+
 def test_configure_spanner_rpc_deadlines_caps_commit_and_retry_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

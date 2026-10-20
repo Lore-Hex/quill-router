@@ -1,0 +1,408 @@
+[
+  {
+    "gap": "policy_version_gap",
+    "rule": "G1",
+    "family": "short",
+    "stage": "transport",
+    "why": "Each expected source/artifact logical object O, or receipt E/I, for its own policy/cohort check; cohort configuration uses its O; a single-day population suffices."
+  },
+  {
+    "gap": "evidence_schema_gap",
+    "rule": "G1",
+    "family": "short",
+    "stage": "transport",
+    "why": "Each expected source/artifact logical object O, or receipt E/I, for schema/identity/commitment checks; a single-day population suffices."
+  },
+  {
+    "gap": "artifact_gap",
+    "rule": "G1",
+    "family": "short",
+    "stage": "transport",
+    "why": "Each expected source/artifact logical object O for availability/digest/provenance; interrupted/incomplete run N; a single-day population suffices."
+  },
+  {
+    "gap": "writer_roster_gap",
+    "rule": "G2",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each scoped day D; all manifest/inventory writer-set disagreements that day; a single-day population suffices."
+  },
+  {
+    "gap": "regional_roster_unknown",
+    "rule": "G2",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each inventory/observed writer-day W; a single-day population suffices."
+  },
+  {
+    "gap": "legacy_region_label",
+    "rule": "G2",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each inventory/observed writer-day W; a single-day population suffices."
+  },
+  {
+    "gap": "legacy_sample_region",
+    "rule": "G2",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each retained sample logical key O; a single-day population suffices."
+  },
+  {
+    "gap": "flag_interval_gap",
+    "rule": "G2",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each inventory/observed writer-day W; all four flags/lifetime segments together; a single-day population suffices."
+  },
+  {
+    "gap": "boot_prerequisite_gap",
+    "rule": "G2",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each traffic writer-day W; all readiness/ledger prerequisites together; a single-day population suffices."
+  },
+  {
+    "gap": "authorize_coverage_gap",
+    "rule": "G3",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each router writer-day W; fresh/replay counts and receipt-chain coverage together; a single-day population suffices."
+  },
+  {
+    "gap": "authorization_link_gap",
+    "rule": "G3",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each receipt-derived authorization obligation E at its original_receipt; a single-day population suffices."
+  },
+  {
+    "gap": "authorization_obligation_gap",
+    "rule": "G3",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each router writer-day W; projection/count/root completeness together; a single-day population suffices."
+  },
+  {
+    "gap": "authorization_terminal_conflict",
+    "rule": "G3",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each receipt-derived authorization obligation E at its original_receipt; a single-day population suffices."
+  },
+  {
+    "gap": "authorization_horizon_gap",
+    "rule": "G3",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each receipt-derived authorization obligation E at its original_receipt; a single-day population suffices."
+  },
+  {
+    "gap": "observed_partition_gap",
+    "rule": "G4",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each settle/refund bucket B; partition equation and C=0; a single-day population suffices."
+  },
+  {
+    "gap": "terminal_coverage_gap",
+    "rule": "G4",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each original or retry settle/refund receipt E; proof/booking/once-only coverage after valid completion reconciliation; a single-day population suffices."
+  },
+  {
+    "gap": "phase_coverage_gap",
+    "rule": "G4",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each router writer-day W; phase/aggregate/retained-array equations together; a single-day population suffices."
+  },
+  {
+    "gap": "exclusion_proof_gap",
+    "rule": "G4",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each original or retry settle/refund receipt E; applicable exclusion proofs and original-receipt worker subcodes together; a single-day population suffices."
+  },
+  {
+    "gap": "eligible_coverage_gap",
+    "rule": "G5",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; independent eligible-attempt enumeration and comparator coverage together; a single-day population suffices."
+  },
+  {
+    "gap": "prediction_demand_gap",
+    "rule": "G5",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each settle/refund bucket B; independent E and Y+N+U equation/known-demand checks; a single-day population suffices."
+  },
+  {
+    "gap": "prediction_unknown_gap",
+    "rule": "G5",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each settle/refund bucket B; unchanged unknown fraction; a single-day population suffices."
+  },
+  {
+    "gap": "observer_cadence_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all observer intervals together; a single-day population suffices."
+  },
+  {
+    "gap": "observer_budget_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all observer read/failure/streak/degraded limits together; a single-day population suffices."
+  },
+  {
+    "gap": "shadow_health_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all required health coverage/usability checks together; a single-day population suffices."
+  },
+  {
+    "gap": "health_source_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all source/isolation checks together; a single-day population suffices."
+  },
+  {
+    "gap": "health_timestamp_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all referenced health bases' O/C/R timestamp checks together; a single-day population suffices."
+  },
+  {
+    "gap": "health_elapsed_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all referenced bases' q/e/deadline checks together; a single-day population suffices."
+  },
+  {
+    "gap": "health_slot_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all reader references and publisher claim/slot/version fences together; a single-day population suffices."
+  },
+  {
+    "gap": "publisher_accounting_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all scheduled/attempted/outcome and operation conservation checks together; a single-day population suffices."
+  },
+  {
+    "gap": "publisher_trace_gap",
+    "rule": "G6",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all required slots/batches/chains/histogram reconciliation together; a single-day population suffices."
+  },
+  {
+    "gap": "simultaneous_capacity_gap",
+    "rule": "G7",
+    "family": "short",
+    "stage": "fleet-budgets-pre",
+    "why": "Each required budget stage and fleet/actual-region scope K; all simultaneous/configured/startup/churn cap checks together; a single-day population suffices."
+  },
+  {
+    "gap": "pre_enable_budget",
+    "rule": "G7",
+    "family": "short",
+    "stage": "fleet-budgets-pre",
+    "why": "Required pre-enable budget approval/prerequisites A(pre), once per run; a single-day population suffices."
+  },
+  {
+    "gap": "publisher_budget_gap",
+    "rule": "G7",
+    "family": "short",
+    "stage": "fleet-budgets-pre",
+    "why": "Each router writer-day W; all contender/publication RPC/read/write limits together; a single-day population suffices."
+  },
+  {
+    "gap": "fleet_headroom_gap",
+    "rule": "G7",
+    "family": "short",
+    "stage": "fleet-budgets-pre",
+    "why": "Each required budget stage and fleet/actual-region scope K; CPU/headroom/approval/pre-post matching together; a single-day population suffices."
+  },
+  {
+    "gap": "freshness_budget_gap",
+    "rule": "G7",
+    "family": "short",
+    "stage": "fleet-budgets-pre",
+    "why": "Each router writer-day W; all conservative-chain/component-deadline evidence together; a single-day population suffices."
+  },
+  {
+    "gap": "evidence_export_budget_gap",
+    "rule": "G7",
+    "family": "short",
+    "stage": "fleet-budgets-pre",
+    "why": "Run N; complete approved plan, every pass/rerun/cleanup and envelope approval together; a single-day population suffices."
+  },
+  {
+    "gap": "close_handoff_budget_gap",
+    "rule": "G7",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each closing router writer-day W; final-pass/result/burst/grace measurements together; a single-day population suffices. Actual close timing is not required during pre-enable."
+  },
+  {
+    "gap": "checkpoint_reconciliation_gap",
+    "rule": "G8",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; every checkpoint/page/HWM/recovery check together; a single-day population suffices."
+  },
+  {
+    "gap": "evidence_loss_gap",
+    "rule": "G8",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each router writer-day W; all loss/overflow diagnostics together; a single-day population suffices."
+  },
+  {
+    "gap": "writer_closure_gap",
+    "rule": "G8",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each expected closing router writer-day W; original close/closure/acknowledgement together; a single-day population suffices."
+  },
+  {
+    "gap": "retry_original_gap",
+    "rule": "G8",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each retry or completion receipt E; all original/context/order checks together; a single-day population suffices."
+  },
+  {
+    "gap": "close_result_identity_gap",
+    "rule": "G8",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each expected close-result row O(async_settle_shadow_close_result_v2,day+\"/\"+boot); a single-day population suffices."
+  },
+  {
+    "gap": "close_result_conflict",
+    "rule": "G8",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each expected close-result row O(async_settle_shadow_close_result_v2,day+\"/\"+boot); all conflicting bodies together; a single-day population suffices."
+  },
+  {
+    "gap": "handoff_coverage_gap",
+    "rule": "G8",
+    "family": "short",
+    "stage": "fleet-budgets",
+    "why": "Each closing router writer-day W; expected result/coverage/accounting together; a single-day population suffices."
+  },
+  {
+    "gap": "hash",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of reason hash, subject to retained active/reset predicate; a single-day population suffices."
+  },
+  {
+    "gap": "identity",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of reason identity, subject to retained active/reset predicate; a single-day population suffices."
+  },
+  {
+    "gap": "normalization",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of reason normalization, subject to retained active/reset predicate; a single-day population suffices."
+  },
+  {
+    "gap": "evaluator_disagreement",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of that reason, subject to retained active/reset predicate; a single-day population suffices."
+  },
+  {
+    "gap": "counter_mismatch",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of reason counter_mismatch, including unsampled history; a single-day population suffices."
+  },
+  {
+    "gap": "reviewed_resolution",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of reason reviewed_resolution; all resolution checks together; a single-day population suffices."
+  },
+  {
+    "gap": "revision_rollback",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of reason revision_rollback; all rollback checks together; a single-day population suffices."
+  },
+  {
+    "gap": "missing_support",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q whose full provenance cannot be established; a single-day population suffices."
+  },
+  {
+    "gap": "exclusion_conflict",
+    "rule": "G9",
+    "family": "short",
+    "stage": "shadow-serving",
+    "why": "Each retained reset fact Q of reason exclusion_conflict; G5 forwards evidence to this producer; a single-day population suffices."
+  },
+  {
+    "gap": "positive_seed_gap",
+    "rule": "G10",
+    "family": "long",
+    "stage": "pre-flip",
+    "why": "Strict prerequisite seed time on the otherwise complete seven-day window; shared regional-seed mutation."
+  },
+  {
+    "gap": "regional_seed_gap",
+    "rule": "G10",
+    "family": "long",
+    "stage": "pre-flip",
+    "why": "Pre-flip traffic-region seed requirement; shared positive-seed mutation on the seven-day window."
+  },
+  {
+    "gap": "continuous_window_gap",
+    "rule": "G10",
+    "family": "long",
+    "stage": "pre-flip",
+    "why": "Elapsed and day-continuity rule: truncate the seven-day observation below 604800 seconds."
+  },
+  {
+    "gap": "external_proofs_missing",
+    "rule": "G11",
+    "family": "short",
+    "stage": "post-flip",
+    "why": "Each stage-required external proof P(stage,name); all checks/dependencies/approval together; a single-day population suffices. Post-flip is the first applicable short stage: pre-flip also requires the seven-day G10 window."
+  },
+  {
+    "gap": "pilot_prerequisite_gap",
+    "rule": "G11",
+    "family": "short",
+    "stage": "post-flip",
+    "why": "Each required pilot stage P(stage,pilot); all retained pilot prerequisites together; a single-day population suffices. Post-flip is the first applicable short stage: pre-flip also requires the seven-day G10 window."
+  }
+]

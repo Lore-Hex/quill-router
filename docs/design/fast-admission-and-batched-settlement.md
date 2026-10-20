@@ -2411,7 +2411,8 @@ leases, and was retired on 2026-09-27.
    decided (§9): until then a dispute the reconciler has not seen leaves a
    workspace its tier. Then move keyed requests, capped keys, payouts and the
    remaining route types (§4.11) one at a time; then retire the Python hot
-   path.
+   path. The stages of that retirement are in
+   `fast-admission-enclave-direct.md`.
 
 ## 9. Not decided here
 
@@ -2475,7 +2476,8 @@ leases, and was retired on 2026-09-27.
   endpoint reads Spanner, which has no row for a fast-path authorization
   until the auditor books it (§4.13).
 - **Where request records live at 100T:** ClickHouse rather than Spanner
-  (§6).
+  (§6). Tried first on the Postgres planes, where the readers and the
+  verifier are built: `records-to-clickhouse-postgres-planes.md`.
 - **The trust tier that allows leases.** It is 3 at first (§4.11). Lowering
   it widens who is on the fast path and who can reach the window in §4.13.
 - **What leases do about a stale trust reconciliation.** The watermark is

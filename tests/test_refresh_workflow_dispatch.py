@@ -255,6 +255,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
     for name in (
         "src/trusted_router/data/openrouter_snapshot.json",
         "src/trusted_router/data/speech_pricing.json",
+        "src/trusted_router/data/transcription_pricing.json",
         "src/trusted_router/data/provider_routing_evidence.json",
         "src/trusted_router/data/provider_models/fixture.json",
         "src/trusted_router/data/model_changes.jsonl",
@@ -589,7 +590,7 @@ def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     assert "if" not in job
     assert "continue-on-error" not in job
     assert job["strategy"]["matrix"] == {
-        "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4],
+        "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4, 5, 6],
     }
     proof_steps = [step for step in job["steps"] if "-m proof_oracle" in step.get("run", "")]
     assert len(proof_steps) == 1

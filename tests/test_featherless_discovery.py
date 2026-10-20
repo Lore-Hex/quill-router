@@ -188,3 +188,11 @@ def test_malformed_availability_preserves_committed_row(
     curated.update(availability)
     with pytest.raises(RuntimeError, match="not available on current plan"):
         featherless.fetch()
+def test_stepfun_releases_are_discovered() -> None:
+    """Step 5 Preview launched on Featherless; StepFun is a first-party publisher we route."""
+    from scripts.pricing.providers import featherless
+
+    row = {"id": "stepfun-ai/Step-5-Preview", "available_on_current_plan": True}
+    assert featherless._is_discovery_candidate(row)
+    assert not featherless._is_discovery_candidate({**row, "id": "someone/step-5-finetune"})
+    assert not featherless._is_discovery_candidate({**row, "available_on_current_plan": None})

@@ -1,4 +1,4 @@
-"""Lyceum's live catalog intersected with its first-party USD model cards."""
+"""Lyceum's authenticated catalog and exact, currency-labelled USD token tariffs."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import math
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_html, fetch_json, validate
+from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json, validate
 from scripts.pricing.manifest import (
     apply_canary_results,
     models_requiring_canary,
@@ -25,7 +25,7 @@ from scripts.pricing.openai_catalog import probe_openai_chat
 SLUG = "lyceum"
 BASE_URL = "https://api.lyceum.technology/openai/v1"
 URL = f"{BASE_URL}/models"
-PRICING_URL = "https://lyceum.technology/products/inference/models/"
+PRICING_URL = URL
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/lyceum.json"
 MANIFEST_STALE_FALLBACK = True
 UPSTREAM_ID_MAP: dict[str, str] = {}
@@ -159,6 +159,103 @@ def _probe(api_key: str, row: dict[str, Any]) -> bool:
         return False
 
 
+def _api_tariffs(source: dict[str, Any]) -> dict[str, int]:
+    prices: dict[str, int] = {}
+    allowed = {
+        "input_modalities": {"prompt", "cached_prompt"},
+        "output_modalities": {"completion"},
+    }
+    for field, meters in allowed.items():
+        modalities = source.get(field)
+        if not isinstance(modalities, list) or not modalities:
+            raise RuntimeError(f"lyceum: missing {field}")
+        for modality in modalities:
+            if not isinstance(modality, dict) or not isinstance(modality.get("type"), str):
+                raise RuntimeError("lyceum: invalid modality tariffs")
+            tariffs = modality.get("pricing", [])
+            if not isinstance(tariffs, list):
+                raise RuntimeError("lyceum: invalid modality tariffs")
+            seen: set[str] = set()
+            for tariff in tariffs:
+                if not isinstance(tariff, dict):
+                    raise RuntimeError("lyceum: invalid tariff")
+                if tariff.get("currency") != "USD":
+                    continue
+                meter = tariff.get("meter")
+                match = next((name for name in meters if meter == f"serverless_inference_{name}_tokens"), None)
+                value = tariff.get("unit_price")
+                if match is None or match in seen or not isinstance(value, str) or len(value) > 64:
+                    raise RuntimeError("lyceum: unknown or duplicate USD token tariff")
+                seen.add(match)
+                try:
+                    amount = Decimal(value) * 1_000_000_000_000
+                except InvalidOperation as exc:
+                    raise RuntimeError("lyceum: invalid USD token price") from exc
+                if not amount.is_finite() or not 0 <= amount <= 10**12 or amount != amount.to_integral_value():
+                    raise RuntimeError("lyceum: invalid USD token price precision")
+                if match in prices and prices[match] != amount:
+                    raise RuntimeError("lyceum: modality-dependent token prices are unsupported")
+                prices[match] = int(amount)
+    return prices
+
+
+def discover_api(payload: object) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise RuntimeError("lyceum: catalog has no data list")
+    prices: dict[str, ModelPrice] = {}
+    rows: dict[str, dict[str, Any]] = {}
+    for source in payload["data"]:
+        native = source.get("id") if isinstance(source, dict) else None
+        model_id = canonical_model_id(native) if isinstance(native, str) else None
+        if model_id is None or model_id in rows:
+            raise RuntimeError("lyceum: invalid or duplicate catalog ID")
+        row: dict[str, Any] = {"id": model_id, "upstream_id": native, "display_name": native}
+        rows[model_id] = row
+        # Old model IDs and router/instant aliases now redirect to different
+        # weights or behavior. Never silently attribute those calls to the old ID.
+        if source.get("model_id") != native:
+            row.update(routable=False, routable_reason="upstream-model-alias")
+            continue
+        if source.get("publication_status") != "published":
+            row.update(routable=False, routable_reason="provider-unpublished")
+            continue
+        kind = source.get("kind")
+        if kind not in {"chat", "embedding"}:
+            row.update(routable=False, routable_reason="unsupported-endpoint")
+            continue
+        embedding = kind == "embedding"
+        limit = source.get("context_length")
+        max_output = 0 if embedding else source.get("max_output_tokens")
+        if type(limit) is not int or limit <= 0 or type(max_output) is not int or not 0 <= max_output <= limit or (not embedding and max_output == 0):
+            raise RuntimeError("lyceum: invalid token limits")
+        tariffs = _api_tariffs(source)
+        prompt = tariffs.get("prompt", 0)
+        completion = tariffs.get("completion", 0)
+        cached = tariffs.get("cached_prompt")
+        if prompt <= 0 or (embedding and completion != 0) or (not embedding and completion <= 0):
+            raise RuntimeError("lyceum: missing or nonpositive USD token tariff")
+        if cached is not None and (cached > prompt or (embedding and cached != 0)):
+            raise RuntimeError("lyceum: unsupported cache price")
+        if embedding:
+            cached = None
+        inputs = {m.get("type") for m in source["input_modalities"]}
+        outputs = {m.get("type") for m in source["output_modalities"]}
+        if "text" not in inputs or outputs != ({"embedding"} if embedding else {"text"}):
+            raise RuntimeError("lyceum: unsupported modalities")
+        prices[model_id] = ModelPrice(prompt, completion, prompt_cached_micro_per_m=cached)
+        row.update(
+            display_name=source.get("display_name") or native,
+            model_type=kind, context_length=limit, max_output_tokens=max_output,
+            input_modalities=["text", "image"] if "image" in inputs and not embedding else ["text"],
+            output_modalities=["embeddings"] if embedding else ["text"],
+            endpoints=["embeddings"] if embedding else ["chat/completions"],
+            supported_features=[] if embedding else ["tools", "streaming"] + (["prompt_caching"] if cached is not None else []),
+        )
+    if not prices or (errors := validate(prices, [])):
+        raise RuntimeError("lyceum: no valid priced models" if not prices else "; ".join(errors))
+    return prices, rows
+
+
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_ROWS  # noqa: PLW0603
     _DISCOVERED_ROWS = {}
@@ -166,7 +263,7 @@ def fetch() -> ProviderPricingResult:
     key = os.environ.get("LYCEUM_API_KEY", "").strip()
     if not key:
         raise RuntimeError("lyceum: LYCEUM_API_KEY is required for discovery")
-    prices, rows = discover(fetch_json(URL, extra_headers={"Authorization": f"Bearer {key}"}), fetch_html(PRICING_URL))
+    prices, rows = discover_api(fetch_json(URL, extra_headers={"Authorization": f"Bearer {key}"}))
     UPSTREAM_ID_MAP.update({model_id: row["upstream_id"] for model_id, row in rows.items()})
     checked = sorted(models_requiring_canary(MANIFEST_PATH, set(prices)))
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -187,5 +284,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     return write_discovered_chat_manifest(
         result, manifest_path=MANIFEST_PATH, discovered_rows=_DISCOVERED_ROWS,
         source_url=URL, pricing_source_url=PRICING_URL,
-        operator_hold_reasons={model_id: "price-unavailable" for model_id in REVIEWED_UNPRICED_IDS if model_id not in result.prices},
+        operator_hold_reasons={model_id: row["routable_reason"] for model_id, row in _DISCOVERED_ROWS.items() if row.get("routable") is False and row.get("routable_reason") != "provider-canary-failed"},
     )

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from trusted_router.acquisition import track_console
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
@@ -66,12 +67,15 @@ def register(app: FastAPI) -> None:
 
     @app.get("/console/api-keys")
     def console_api_keys(
+        request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
         saved: str | None = None,
         error: str | None = None,
     ) -> Response:
-        return _render_page(ctx, settings, saved=saved, error=error)
+        response = _render_page(ctx, settings, saved=saved, error=error)
+        track_console(request, settings, ctx.user.id, "console_api_keys_viewed")
+        return response
 
     @app.post("/console/api-keys")
     def console_create_api_key(

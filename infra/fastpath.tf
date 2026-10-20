@@ -16,7 +16,7 @@ locals {
   # uploaded; a node picks a new one up when reset or replaced
   # (docs/runbooks/fastpath-p0.md). bfa94e22e: the merge of #1728, P1's run,
   # the first release carrying loadgen, fastpathwatch and load-mix.json.
-  fastpath_release        = "afa671dc9924ead8b3ff3637374e8e415a5b752d"
+  fastpath_release        = "d99cdc04936a0257fc71c3b64eda12c01c7c8812"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -111,10 +111,13 @@ resource "google_pubsub_subscription" "fastpath_archive" {
     "records"    = google_pubsub_topic.fastpath_records.id
   }
 
-  project                    = local.gcp_project_id
-  name                       = "${each.key}-archive"
-  topic                      = each.value
-  ack_deadline_seconds       = 60
+  project = local.gcp_project_id
+  name    = "${each.key}-archive"
+  topic   = each.value
+  # A Cloud Storage subscription's max_duration (300 s) must not exceed its
+  # deadline, and the live subscriptions report 300: so says this, and a
+  # plan is clean.
+  ack_deadline_seconds       = 300
   message_retention_duration = "604800s"
 
   expiration_policy {

@@ -354,7 +354,8 @@
       "id": "moonshotai/kimi-k2-instruct-0905",
       "upstream_id": "Kimi-K2-Instruct-0905",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-model-not-found",
       "input_token_price_per_m": 571000,
       "output_token_price_per_m": 2286000,
       "cached_input_token_price_per_m": 143000
@@ -467,7 +468,8 @@
       "id": "qwen/qwen3-235b-a22b-thinking-2507",
       "upstream_id": "Qwen3-235B-A22B-Thinking-2507",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 4200000
     },
@@ -488,7 +490,8 @@
       "id": "qwen/qwen3-30b-a3b-instruct-2507",
       "upstream_id": "Qwen3-30B-A3B-Instruct-2507",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 107000,
       "output_token_price_per_m": 429000,
       "cached_input_token_price_per_m": 22000
@@ -578,7 +581,8 @@
       "id": "qwen/qwen3-vl-235b-a22b-instruct",
       "upstream_id": "Qwen3-VL-235B-A22B-Instruct",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 1400000,
       "cached_input_token_price_per_m": 57000
@@ -874,7 +878,7 @@
       "cached_input_token_price_per_m": 30000
     }
   ],
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-18T17:34:11Z",
   "model_count": 38,
   "pricing_source": "https://www.streamlake.ai/document/DOC/mgrnm4xm362hvp5wyce"
 }

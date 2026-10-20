@@ -20,6 +20,11 @@ Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 
 from __future__ import annotations
 
+from trusted_router import launch_descriptor_state
+
+if __name__ == "__main__":
+    launch_descriptor_state.claim()
+
 import logging
 import math
 import os
@@ -70,6 +75,19 @@ class DrainingServer(uvicorn.Server):
         self.drain_seconds = max(0.0, min(drain_seconds, MAX_DRAIN_SECONDS))
         self.drain_deadline: float | None = None
 
+    async def startup(self, sockets: list | None = None) -> None:
+        await super().startup(sockets=sockets)
+        if self.started:
+            try:
+                from trusted_router.services.async_settle_shadow_startup_harness import (
+                    listener_started,
+                    serving_application,
+                )
+                listener_started(serving_application(self))
+            except Exception:
+                # Startup records must not interrupt ordinary serving.
+                return
+
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         if sig == signal.SIGTERM and self.drain_deadline is None and self.drain_seconds > 0:
             # Keep accepting: the front end may still dispatch a request that
@@ -115,10 +133,13 @@ def build_config(environ: dict[str, str] | None = None) -> uvicorn.Config:
 
 
 def main() -> int:
-    config = build_config()
-    server = DrainingServer(config, drain_seconds=drain_seconds_from_env())
-    server.run()
-    return 0
+    try:
+        config = build_config()
+        server = DrainingServer(config, drain_seconds=drain_seconds_from_env())
+        server.run()
+        return 0
+    finally:
+        launch_descriptor_state.close()
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point

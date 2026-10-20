@@ -41,6 +41,31 @@ def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: 
             == trusted["completion_price_microdollars_per_million_tokens"]
         )
         speech = trusted.get("speech", {})
+        if "request_price" in speech:
+            assert set(pricing) == {"request"}
+            assert Decimal(pricing["request"]) == Decimal(speech["request_price"])
+            assert Decimal(pricing["request"]) > 0
+            assert trusted["prompt_price_microdollars_per_million_tokens"] == 0
+            assert trusted["completion_price_microdollars_per_million_tokens"] == 0
+            continue
+        if fetch := trusted.get("fetch"):
+            assert model["id"] == "deepseek/fetch"
+            assert pricing == fetch["pricing"] == {"request": "0.000792"}
+            assert fetch["billing_unit"] == "successful_request"
+            assert trusted["prompt_price_microdollars_per_million_tokens"] == 0
+            assert trusted["completion_price_microdollars_per_million_tokens"] == 0
+            assert not trusted["supports_chat"]
+            continue
+        if transcription := trusted.get("transcription"):
+            assert pricing == transcription["pricing"]
+            if transcription["billing_unit"] == "tokens":
+                assert set(pricing) == {"prompt", "completion"}
+                assert Decimal(pricing["prompt"]) == Decimal(_per_token_decimal(trusted["prompt_price_microdollars_per_million_tokens"]))
+                assert Decimal(pricing["completion"]) == Decimal(_per_token_decimal(trusted["completion_price_microdollars_per_million_tokens"]))
+            else:
+                assert set(pricing) in ({"request"}, {"input_audio_minute"})
+            assert all(Decimal(value) > 0 for value in pricing.values())
+            continue
         if "input_character_price_per_million" in speech:
             assert "prompt" not in pricing and "completion" not in pricing
             assert Decimal(pricing["input_character"]) * 1_000_000 == Decimal(

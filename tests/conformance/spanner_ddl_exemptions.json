@@ -32,6 +32,10 @@
       "created := regexp.MustCompile(`(?s)apply_ddl \"(CREATE TABLE tr_credit_balance \\(.*?\\) PRIMARY KEY \\(workspace_id, shard\\))\"`).": {
         "count": 1,
         "reason": "A test's pattern that reads production's CREATE TABLE tr_credit_balance out of scripts/deploy/migrate_typed_counters.sh to hold the fast path's copy equal to it; it dispatches no DDL."
+      },
+      "const table, index, applied = \"CREATE TABLE tr_reservation \", \"CREATE INDEX tr_reservation_by_expiry \", `apply_ddl \"`": {
+        "count": 1,
+        "reason": "A test's names for production's CREATE TABLE tr_reservation and CREATE INDEX tr_reservation_by_expiry and the apply_ddl call that carries them, read out of scripts/deploy/migrate_typed_counters.sh to hold the fast path's copies equal to them; it dispatches no DDL."
       }
     },
     "fastpath/schema/testdata/gcloud": {

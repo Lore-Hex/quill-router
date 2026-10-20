@@ -6,7 +6,10 @@ import pytest
 
 from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.catalog_ingest import _filter_unserved_provider_endpoints
-from trusted_router.provider_contracts import provider_model_operator_held
+from trusted_router.provider_contracts import (
+    PROVIDER_INCIDENT_HOLD_REASONS,
+    provider_model_operator_held,
+)
 
 
 @pytest.mark.parametrize("model_id", [
@@ -18,8 +21,10 @@ from trusted_router.provider_contracts import provider_model_operator_held
 @pytest.mark.parametrize("provider", ["lightning", "cloudflare-workers-ai"])
 @pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
 def test_stale_or_future_passthrough_cannot_bypass_policy(
-    model_id: str, provider: str, usage_type: str,
+    monkeypatch: pytest.MonkeyPatch, model_id: str, provider: str, usage_type: str,
 ) -> None:
+    # Hosting restrictions must still apply after a temporary incident clears.
+    monkeypatch.delitem(PROVIDER_INCIDENT_HOLD_REASONS, provider, raising=False)
     template = next(iter(MODEL_ENDPOINTS.values()))
     endpoint = replace(template, id="stale-passthrough", provider=provider, model_id=model_id,
                        upstream_id=model_id, usage_type=usage_type)
@@ -35,6 +40,9 @@ def test_stale_or_future_passthrough_cannot_bypass_policy(
 ])
 def test_catalog_exposes_native_hosting_only(provider: str, prefix: str) -> None:
     endpoints = [ep for ep in MODEL_ENDPOINTS.values() if ep.provider == provider]
+    if provider in PROVIDER_INCIDENT_HOLD_REASONS:
+        assert not endpoints
+        return
     assert endpoints
     assert all(ep.upstream_id.startswith(prefix) or
                (provider, ep.upstream_id) == ("cloudflare-workers-ai", "moonshotai/kimi-k3")
@@ -59,8 +67,9 @@ def test_direct_providers_are_untouched(provider: str, model_prefix: str) -> Non
     ("cloudflare-workers-ai", "moonshotai/kimi-k3", "moonshotai/kimi-k3"),
 ])
 def test_hosting_not_model_author_controls_eligibility(
-    provider: str, model_id: str, upstream_id: str,
+    monkeypatch: pytest.MonkeyPatch, provider: str, model_id: str, upstream_id: str,
 ) -> None:
+    monkeypatch.delitem(PROVIDER_INCIDENT_HOLD_REASONS, provider, raising=False)
     assert not provider_model_operator_held(provider, model_id, upstream_id)
     template = next(iter(MODEL_ENDPOINTS.values()))
     endpoint = replace(template, id="hosted", provider=provider, model_id=model_id,

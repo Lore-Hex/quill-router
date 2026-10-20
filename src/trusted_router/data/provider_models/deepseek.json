@@ -51,7 +51,8 @@
         "function-calling",
         "json-mode",
         "reasoning-effort"
-      ]
+      ],
+      "max_output_tokens": 393216
     },
     {
       "display_name": "DeepSeek V4.1 Flash (rolling)",
@@ -78,11 +79,12 @@
         "function-calling",
         "json-mode",
         "reasoning-effort"
-      ]
+      ],
+      "max_output_tokens": 393216
     }
   ],
   "source": "https://api.deepseek.com/models",
-  "generated_at": "2026-10-15T12:03:30Z",
+  "generated_at": "2026-10-18T17:34:11Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

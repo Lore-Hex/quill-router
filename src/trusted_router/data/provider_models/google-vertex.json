@@ -3,8 +3,8 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-10-15T12:03:30Z",
-  "model_count": 28,
+  "generated_at": "2026-10-18T17:34:11Z",
+  "model_count": 30,
   "models": [
     {
       "id": "google/gemini-3.6-flash",
@@ -643,6 +643,44 @@
       "status": 1,
       "id": "google/gemini-4-argon",
       "upstream_id": "gemini-4-argon",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-3.5-transcribe",
+      "title": "gemini-3.5-transcribe",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-transcribe",
+      "upstream_id": "gemini-3.5-transcribe",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-3.5-transcribe-live",
+      "title": "gemini-3.5-transcribe-live",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-transcribe-live",
+      "upstream_id": "gemini-3.5-transcribe-live",
       "routable": false,
       "routable_reason": "unsupported-vertex-api"
     }

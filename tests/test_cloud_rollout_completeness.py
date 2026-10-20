@@ -159,13 +159,9 @@ def test_the_cloud_list_is_the_fleet_module_s_and_not_a_second_copy() -> None:
 def test_the_gate_asks_the_front_end_that_holds_the_dsql_connection() -> None:
     """The AWS URL names one region, not the anycast hostname.
 
-    This is the concrete reason stage (a) reads the fleet registry instead of
-    anything else. The deployment that holds the Aurora DSQL connection — and
-    whose drain was missing for fifteen days — is the eu-west-3 control plane.
-    `aws.trustedrouter.com` is Global Accelerator anycast over eu-west-3 and
-    eu-west-1, and only eu-west-3 runs the operational-analytics outbox, so a
-    gate pointed at the vanity name reads a different deployment run to run
-    and calls a healthy drain unconfigured whenever GA picks Ireland.
+    Both ECS regions write the shared DSQL outbox, delivered by the Paris
+    drain. Pin the freshness read to the same control plane on every run;
+    freshness alone cannot prove that both producers have enabled writes.
 
     It was the tr-eu App Runner hostname until that service was retired on
     2026-09-03; the gate then failed DNS rather than reading anything at all.
@@ -173,8 +169,7 @@ def test_the_gate_asks_the_front_end_that_holds_the_dsql_connection() -> None:
     aws = crc.freshness_registry()["aws"]
     entry = fleet.fleet_endpoint("aws")
     assert entry is not None and entry.status_url == aws
-    # The bare vanity name is anycast across both EU regions and only one of
-    # them runs the outbox, so the URL must name its region.
+    # The bare vanity name is anycast across both EU regions.
     assert "aws.trustedrouter.com" not in aws
     assert "aws-euw3.trustedrouter.com" in aws
 
@@ -501,7 +496,7 @@ def test_azure_declares_the_runtime_computed_outbox() -> None:
 def test_gcp_and_aws_declare_the_outbox() -> None:
     assert crc.declared_outbox_value("gcp") == "true"
     assert crc.outbox_enabled_blockers("gcp") == []
-    # The image-only ECS release refuses to clone a disabled outbox.
+    # The ECS release enables the shared DSQL outbox in both regions.
     assert crc.declared_outbox_value("aws") == "true"
     assert crc.outbox_enabled_blockers("aws") == []
     note = crc.outbox_note("aws")
@@ -1196,6 +1191,8 @@ def test_a_passing_run_says_verified_and_says_what_it_did_not_show(tmp_path: Pat
     assert _verified(result.stderr) and "aws passed every stage" in result.stderr
     assert "publishes a live analytics pipeline" not in result.stderr
     assert "It does not mean rows were seen moving" in result.stderr
+    assert "AWS declares it enabled in both ECS regions sharing the DSQL" in result.stderr
+    assert "whether a ClickHouse secret exists" not in result.stderr
 
 
 def test_stage_notes_are_reprinted_verbatim_under_the_outcome(tmp_path: Path) -> None:

@@ -13,6 +13,14 @@ main whose checks all passed.
 
 ## For each node replaced
 
+A node replaced under its own name leaves its edge instance group
+(`infra/fastpath_edge_backend.tf`) empty until the next apply adds it back:
+the apply that replaces the node compares membership by the node's self
+link, which the replacement keeps. Once the new node serves, run the
+infrastructure apply again (workflow dispatch) and check the backend's
+health reports it; until then the balancer sends the enclave's calls to
+the other node only.
+
 1. Start the new node, at an address of its own, and check that the fleet
    can use it:
 
@@ -43,7 +51,8 @@ main whose checks all passed.
    Its owner retires: it asks for no lease, admits nothing more and closes
    its leases to admission, while it serves their holds; its row says
    leaving, and the front doors give it no new request, its heartbeats and
-   terminals still reaching it.
+   terminals still reaching it. The balancer stops sending to the node once
+   USR1 marks it leaving: its edge's `/internal/gateway/edge/health` answers 503.
 3. Wait until it owns no open lease:
 
    ```bash
@@ -151,13 +160,60 @@ lost. So a new field takes two releases, and no flag. The first has every
 auditor read the field and the owner state nothing new; it is deployed as
 any release is, beside auditors from before it. The second has the owner
 state the field. It is pinned only once every member runs the first or a
-later one: read `/opt/fastpath/release` on each node before the pin, and
-if a node runs an earlier release, bring it to the first before the
-second is pinned anywhere. Nodes replaced by one apply, or one at a time,
+later one: check the release each node runs, as "Taking a pinned release"
+below does, before the pin, and if a node runs an earlier release, bring
+it to the first before the second is pinned anywhere. Nodes replaced by one apply, or one at a time,
 then never mix an owner that states the field with an auditor that does
 not read it. The first such field was the hold's boot binding on its
 first heartbeat record: one release read it and stated none, and the one
 after it states it.
+
+## Taking a pinned release
+
+A node takes a release pinned in `infra/fastpath.tf` (`fastpath_release`)
+when it is reset: its startup script downloads the release and writes the
+unit. But the unit is enabled, so at boot systemd starts it from the
+binary already on disk, the release before, about forty seconds before the
+script installs the new one, and the script's `systemctl enable --now`
+leaves a running unit alone. Until 2026-10-17 every reset left each node
+running the release before its pin while `/opt/fastpath/release` and
+the instance's metadata named the pin and the service reported active
+(`docs/design/fast-admission-p1-results.md`). So the release a node runs
+is read from its process, and a reset is followed by a restart. For each
+node, one at a time, the other serving:
+
+1. Mark it leaving and wait for its leases, as "For each node replaced"
+   above: `sudo systemctl kill -s USR1 fastpath`, then `fastpathctl node
+   ADDRESS` exiting 0.
+2. Reset it:
+
+   ```bash
+   gcloud compute instances reset NODE --zone=ZONE --project=quill-cloud-proxy
+   ```
+
+   A reset is a hard reset: a change on the node's disk just before it,
+   such as `systemctl disable fastpath`, may not survive it.
+3. Wait for the startup script to finish (`systemctl show
+   google-startup-scripts -p ActiveState` inactive, `/opt/fastpath/release`
+   the pinned commit), then compare the running binary with the installed
+   one:
+
+   ```bash
+   sudo sha256sum /proc/$(systemctl show fastpath -p MainPID --value)/exe /opt/fastpath/fastpath
+   ```
+
+4. If the two differ, as they will while the unit starts at boot, mark it
+   leaving again, wait for `node` to exit 0, and restart it onto the
+   installed binary, then compare again:
+
+   ```bash
+   sudo systemctl kill -s USR1 fastpath
+   sudo systemctl restart fastpath
+   ```
+
+5. Check from the other node that it serves (`fastpathctl node ADDRESS`
+   says `"State": "serving"` and `"Live": true` at a new epoch) and that
+   its owner answers (`curl http://ADDRESS/owner/ping`, 204).
 
 ## A flag the unit passes
 

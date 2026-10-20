@@ -93,6 +93,7 @@ from trusted_router.gateway_boot import (
     GatewayBoot,
     parse_boot_auth_header,
     verify_boot_auth,
+    verify_boot_signature,
 )
 from trusted_router.gateway_timing import (
     gateway_phase,
@@ -156,11 +157,13 @@ from trusted_router.routing import (
     decide_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
     endpoint_supports_input_modalities,
+    fetch_route_endpoint_candidates,
     image_route_endpoint_candidates,
     normalize_routing_inputs,
     provider_route_preferences,
     resolved_route_preferences,
     speech_route_endpoint_candidates,
+    transcription_route_endpoint_candidates,
     video_route_endpoint_candidates,
 )
 from trusted_router.routing_state import ROUTING_STATE
@@ -210,7 +213,9 @@ from trusted_router.speech import SPEECH_MODELS
 from trusted_router.stage_d import (
     ESTIMATED_USAGE_SNAPSHOT_MODELS,
     ESTIMATED_USAGE_SNAPSHOT_REASON,
+    FETCH_SNAPSHOT_REASON,
     SPEECH_SNAPSHOT_REASON,
+    TRANSCRIPTION_SNAPSHOT_REASON,
     billing_pricing_snapshot,
     canonical_pricing_snapshot,
     endpoint_pricing_document,
@@ -234,6 +239,7 @@ from trusted_router.storage_custom_models import (
 )
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
+    LeasedOutcomeUnknown,
     StoreConflict,
     conflict_store_error_types,
     transient_store_error_types,
@@ -263,6 +269,13 @@ from trusted_router.storage_models import (
 )
 from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
+from trusted_router.transcription import (
+    MAX_INPUT_TOKENS as TRANSCRIPTION_MAX_INPUT_TOKENS,
+)
+from trusted_router.transcription import (
+    MAX_OUTPUT_TOKENS as TRANSCRIPTION_MAX_OUTPUT_TOKENS,
+)
+from trusted_router.transcription import TRANSCRIPTION_MODELS
 from trusted_router.types import ErrorType, UsageType
 from trusted_router.user_model_rules import (
     GATEWAY_RESERVATION_TTL_SECONDS,
@@ -274,6 +287,11 @@ from trusted_router.user_model_rules import (
 from trusted_router.video_billing import (
     video_cost_microdollars,
     video_pricing_snapshot,
+)
+from trusted_router.web_fetch import (
+    FETCH_MODEL_ID,
+    FETCH_ROUTE_TYPE,
+    FETCH_UPSTREAM_COST_MICRODOLLARS,
 )
 
 logger = logging.getLogger(__name__)
@@ -334,6 +352,7 @@ _ADDITIONAL_COST_ROUTE_TYPES = frozenset(
         "chat.completions.web_search.planner",
         "images",
         "audio.speech",
+        "audio.transcriptions",
         "videos",
     }
 )
@@ -402,6 +421,34 @@ _SETTLE_REPAIR_FIELDS = frozenset(
         "video_generate_audio",
     }
 )
+
+# The fast path's edge (fastpath/internal/edge; docs/design/
+# fast-admission-enclave-direct.md, E1) puts its verdict on the boot
+# signature in this header: the signature alone, which this route checks
+# the same way (verify_boot_signature) beside its own verification, and
+# compares. A verdict the edge could not reach (unread, unchecked) is no
+# disagreement.
+_EDGE_BOOT_VERDICT_HEADER = "x-tr-edge-boot"
+_EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid"})
+
+
+def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None:
+    """An observation: nothing it does reaches the response."""
+    try:
+        verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
+        if verdict is None or verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+            return
+        if (verdict == "verified") != signed:
+            logger.warning(
+                "fastpath edge boot verdict differs edge=%s python=%s kid=%s path=%s",
+                verdict,
+                "verified" if signed else "invalid",
+                kid,
+                request.url.path,
+            )
+    except Exception:  # noqa: BLE001 - an observation must not change the response
+        return
+
 
 def _stage_d_accepted_image_digests(
     request: Request,
@@ -861,6 +908,21 @@ def _authorize_gateway_sync_impl(
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
         )
+        # Over the path as the server decoded it, which is what the edge
+        # signs over too; request.url.path is that path after URL parsing
+        # (control characters removed, a '?' or '#' it contains ending it).
+        edge_signed = verify_boot_signature(
+            boot=boot,
+            auth=boot_auth,
+            method=request.method,
+            path=str(request.scope.get("path", request.url.path)),
+            exact_body_bytes=cast(bytes, boot_context["raw_body"]),
+        )
+    else:
+        edge_signed = False
+    # Compared whatever the header parsed to: a header the edge verified and
+    # this route could not read (repeated, malformed) is a disagreement too.
+    _compare_edge_boot_verdict(request, boot_auth.kid if boot_auth is not None else "", edge_signed)
     if settings.speculative_provider_shadow_enabled:
         with speculation_shadow.isolate("boot_verified"):
             speculation_shadow.boot_verified(boot_context["boot_verified"], boot_auth.kid if boot_auth is not None else "")
@@ -1061,6 +1123,34 @@ def _authorize_gateway_sync_impl(
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
     is_speech_request = body.route_type == "audio.speech"
+    is_transcription_request = body.route_type == "audio.transcriptions"
+    is_fetch_request = body.route_type == FETCH_ROUTE_TYPE
+    if is_fetch_request:
+        if (
+            body.model != FETCH_MODEL_ID or body.models or custom_model is not None
+            or body.estimated_input_tokens != 0 or body.output_estimate != 1
+            or body.service_tier or body.inference_receipt or not body.request_fingerprint
+            or body.additional_cost_reservation_microdollars
+        ):
+            raise api_error(400, "Invalid Fetch authorization metadata", ErrorType.BAD_REQUEST)
+    elif route_model_id == FETCH_MODEL_ID:
+        raise api_error(400, "Fetch requires POST /v1/tools/fetch", ErrorType.MODEL_NOT_SUPPORTED)
+    if is_transcription_request:
+        if (
+            body.model not in TRANSCRIPTION_MODELS or body.models
+            or body.transcription_duration_ms is None
+            or body.service_tier or body.inference_receipt or not body.request_fingerprint
+            or body.additional_cost_reservation_microdollars
+        ):
+            raise api_error(400, "Invalid transcription authorization metadata", ErrorType.BAD_REQUEST)
+        transcription_spec = TRANSCRIPTION_MODELS[body.model]
+        expected_input = TRANSCRIPTION_MAX_INPUT_TOKENS if transcription_spec.token_billed else 0
+        expected_output = TRANSCRIPTION_MAX_OUTPUT_TOKENS if transcription_spec.token_billed else 1
+        if body.estimated_input_tokens != expected_input or body.output_estimate != expected_output:
+            raise api_error(400, "Transcription requires its full usage limits reserved", ErrorType.BAD_REQUEST)
+        transcription_quote = transcription_spec.quote(body.transcription_duration_ms)
+    elif body.transcription_duration_ms is not None:
+        raise api_error(400, "Audio duration requires the transcription endpoint", ErrorType.BAD_REQUEST)
     if is_speech_request:
         if (
             body.model not in SPEECH_MODELS or body.models
@@ -1083,7 +1173,7 @@ def _authorize_gateway_sync_impl(
         raise api_error(400, "Speech usage requires the speech endpoint", ErrorType.BAD_REQUEST)
     def prepare_fingerprint() -> tuple[dict[str, Any], str]:
         fingerprint_body = dict(body_dict)
-        if is_video_request or is_image_request or is_speech_request:
+        if is_video_request or is_image_request or is_speech_request or is_transcription_request:
             # Provider quotes can change between retries. The enclave supplies a
             # keyed content fingerprint, so media idempotency binds to the logical
             # request without storing content or coupling replay to a fresh quote.
@@ -1333,6 +1423,12 @@ def _authorize_gateway_sync_impl(
             pricing_effective_at=pricing_effective_at,
             allowed_providers=video_allowed_providers,
         )
+    elif is_fetch_request:
+        endpoint_candidates = fetch_route_endpoint_candidates(normalized_routing)
+    elif is_transcription_request:
+        if custom_model is not None:
+            raise api_error(400, "Custom models do not support transcription", ErrorType.MODEL_NOT_SUPPORTED)
+        endpoint_candidates = transcription_route_endpoint_candidates(normalized_routing)
     elif is_speech_request:
         if custom_model is not None:
             raise api_error(400, "Custom models do not support speech", ErrorType.MODEL_NOT_SUPPORTED)
@@ -1379,7 +1475,10 @@ def _authorize_gateway_sync_impl(
         if provider_model_available_from_gateway_region(
             candidate_endpoint.provider,
             candidate_endpoint.model_id,
-            region,
+            # Bedrock needs an explicit, upgraded gateway origin; missing
+            # metadata must not inherit the receiving control plane's region.
+            # Preserve legacy region fallback for already-deployed providers.
+            body.region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region),
         )
     ]
     byok_configs = _byok_configs_for_candidates(
@@ -1460,6 +1559,8 @@ def _authorize_gateway_sync_impl(
         estimated_input_tokens=input_tokens,
     )
     additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
+    if is_transcription_request:
+        additional_cost_reservation = transcription_quote
     if additional_cost_reservation:
         if body.route_type not in _ADDITIONAL_COST_ROUTE_TYPES:
             raise api_error(
@@ -1529,8 +1630,8 @@ def _authorize_gateway_sync_impl(
         )
     )
     model_usage_type = UsageType.for_endpoint(endpoint)
-    if is_speech_request and not speech_spec.token_billed:
-        # Characters are not tokens. The complete frozen quote is held below.
+    if (is_transcription_request and not transcription_spec.token_billed) or (is_speech_request and not speech_spec.token_billed):
+        # Duration/characters are not tokens. The complete frozen quote is held below.
         model_estimate = 0
     has_credit_candidate = any(
         UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
@@ -1647,13 +1748,20 @@ def _authorize_gateway_sync_impl(
         if app_markup_basis_points:
             raise api_error(400, "Speech does not support app markups", ErrorType.BAD_REQUEST)
         stage_d_reason = SPEECH_SNAPSHOT_REASON
-    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON}:
-        pricing_snapshot = canonical_pricing_snapshot(
-            endpoint_pricing_document(
-                effective_endpoint(candidate_endpoint, at=pricing_effective_at)
-                for _candidate_model, candidate_endpoint in endpoint_candidates
-            )
+    if is_transcription_request and transcription_spec.token_billed:
+        if app_markup_basis_points:
+            raise api_error(400, "Transcription does not support app markups", ErrorType.BAD_REQUEST)
+        stage_d_reason = TRANSCRIPTION_SNAPSHOT_REASON
+    if is_fetch_request:
+        stage_d_reason = FETCH_SNAPSHOT_REASON
+    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON, FETCH_SNAPSHOT_REASON}:
+        pricing_document = endpoint_pricing_document(
+            effective_endpoint(candidate_endpoint, at=pricing_effective_at)
+            for _candidate_model, candidate_endpoint in endpoint_candidates
         )
+        if is_fetch_request:
+            pricing_document["fetch_upstream_cost_microdollars"] = FETCH_UPSTREAM_COST_MICRODOLLARS
+        pricing_snapshot = canonical_pricing_snapshot(pricing_document)
     user_model_slot_acquired = False
     if user_model is not None:
         user_model_slot_acquired = acquire_user_model_slot(
@@ -1725,7 +1833,6 @@ def _authorize_gateway_sync_impl(
             and all(UsageType.for_endpoint(e) == UsageType.CREDITS for _m, e in endpoint_candidates),
             boot_verified=bool(boot_context["boot_verified"]),
             boot_kid=boot_auth.kid if boot_auth is not None else None,
-            idempotency_key=presented_idempotency_key,
             service_tier=body.service_tier,
             key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
             budget_strict=bool(api_key.budget_strict),
@@ -1823,6 +1930,20 @@ def _authorize_gateway_sync_impl(
                         else None
                     ),
                 )
+        except LeasedOutcomeUnknown as exc:
+            # The leased insert's outcome is unknown and could not be read
+            # back: the hold stays, so a row that landed keeps it and a
+            # replay is served under it; a row that did not land leaves the
+            # hold to end uncharged at its end of life. Only the slot goes.
+            release_user_model_slot_after_error()
+            logger.error(
+                "fastpath pilot hold kept, insert outcome unknown authorization_id=%s workspace_id=%s",
+                authorization_id,
+                workspace.id,
+            )
+            raise api_error(
+                503, "Authorization unavailable; retry", ErrorType.SERVICE_UNAVAILABLE, headers={"Retry-After": "1"},
+            ) from exc
         except conflict_store_error_types() as exc:
             release_after_error()
             # The generic 503 request log cannot identify a tenant hot row.
@@ -1894,7 +2015,9 @@ def _authorize_gateway_sync_impl(
                 existing_authorization, workspace.id, api_key.hash,
                 fingerprint_body, request_idempotency_key,
             ):
-                release_user_model_slot_after_error()
+                # The slot, and the hold a lease granted this attempt, which
+                # the stored job does not use: given back, as every replay.
+                release_after_error()
                 return _replay_response(existing_authorization, endpoint_candidates)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
@@ -1920,7 +2043,8 @@ def _authorize_gateway_sync_impl(
             release_user_model_slot_after_error()
             raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED)
         if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
-            release_user_model_slot_after_error()
+            # The slot, and the hold a lease granted this attempt: given back.
+            release_after_error()
             raise api_error(
                 409,
                 "Idempotency key was already used for a different gateway request",
@@ -1932,8 +2056,9 @@ def _authorize_gateway_sync_impl(
         if outcome == AuthorizeOutcome.REPLAY:
             # concurrent-race replay: respond from the STORED authorization.
             # Our provisional slot belongs to the id that lost the race, not
-            # to the stored authorization — give it back.
-            release_user_model_slot_after_error()
+            # to the stored authorization — give it back; and the hold a
+            # lease granted this attempt, which the stored one does not use.
+            release_after_error()
             return _replay_response(authorization, endpoint_candidates)
         credit_reservation_id = authorization.credit_reservation_id
     else:
@@ -2076,7 +2201,7 @@ def _authorize_gateway_sync_impl(
             video_pricing_snapshot=video_snapshot,
             settlement=settlement,
             **({"pricing_snapshot": pricing_snapshot, "stage_d_reason": stage_d_reason}
-               if stage_d_reason == SPEECH_SNAPSHOT_REASON else {}),
+               if stage_d_reason in {SPEECH_SNAPSHOT_REASON, TRANSCRIPTION_SNAPSHOT_REASON, FETCH_SNAPSHOT_REASON} else {}),
             expires_at=authorization_expires_at,
             # The outstanding increment rides the SAME transaction that
             # inserts the authorization, so an idempotent replay (which
@@ -3955,6 +4080,49 @@ def _settle_gateway_authorization(
         )
         actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
+    fetch_operator_cost = (
+        billing_snapshot.get("fetch_upstream_cost_microdollars")
+        if authorization.model_id == FETCH_MODEL_ID and billing_snapshot is not None else None
+    )
+    if authorization.model_id == FETCH_MODEL_ID:
+        if additional_cost or (success and (
+            body.route_type != FETCH_ROUTE_TYPE or total_input or output_tokens
+            or cache_read or cache_creation or body.service_tier
+            or billing_snapshot is None
+            or type(fetch_operator_cost) is not int or fetch_operator_cost <= 0
+            or actual_cost <= 0
+            or actual_cost + app_markup_microdollars(
+                actual_cost, authorization.app_markup_basis_points,
+            ) != authorization.estimated_microdollars
+        )):
+            raise api_error(400, "Fetch settlement must match its frozen request fee", ErrorType.BAD_REQUEST)
+    elif body.route_type == FETCH_ROUTE_TYPE:
+        raise api_error(400, "Authorization is not for Fetch", ErrorType.BAD_REQUEST)
+    if authorization.model_id in TRANSCRIPTION_MODELS:
+        transcription_spec = TRANSCRIPTION_MODELS[authorization.model_id]
+        if success and transcription_spec.token_billed:
+            if (
+                body.route_type != "audio.transcriptions" or additional_cost != 0
+                or not 0 < total_input <= TRANSCRIPTION_MAX_INPUT_TOKENS
+                or not 0 <= output_tokens <= TRANSCRIPTION_MAX_OUTPUT_TOKENS
+                or cache_read or cache_creation or body.service_tier
+                or actual_cost > authorization.estimated_microdollars
+            ):
+                raise api_error(400, "Invalid transcription token settlement", ErrorType.BAD_REQUEST)
+        elif success and (
+            body.route_type != "audio.transcriptions"
+            or total_input or output_tokens or cache_read or cache_creation
+            or body.service_tier
+            or additional_cost != authorization.additional_cost_reservation_microdollars
+            or additional_cost <= 0
+        ):
+            raise api_error(400, "Transcription settlement must match its frozen audio quote", ErrorType.BAD_REQUEST)
+        if not success and additional_cost:
+            raise api_error(400, "Transcription refunds cannot charge for audio", ErrorType.BAD_REQUEST)
+        if not transcription_spec.token_billed:
+            actual_cost = 0
+    elif body.route_type == "audio.transcriptions":
+        raise api_error(400, "Authorization is not for transcription", ErrorType.BAD_REQUEST)
     if authorization.model_id in SPEECH_MODELS:
         # A generic refund must still work, but a success may not omit the
         # character charge, smuggle token usage, or replay under another route.
@@ -4061,6 +4229,8 @@ def _settle_gateway_authorization(
         if partner_mode == PartnerBillingMode.INTERNAL
         else None
     )
+    if authorization.model_id == FETCH_MODEL_ID:
+        operator_cost = fetch_operator_cost if success else 0
     if (
         success
         and selected_usage_type == UsageType.CREDITS
@@ -4925,7 +5095,6 @@ def _fastpath_admission(
     credit_funded: bool,
     boot_verified: bool,
     boot_kid: str | None,
-    idempotency_key: str | None,
     service_tier: str | None,
     key_capped: bool,
     budget_strict: bool,
@@ -4945,7 +5114,6 @@ def _fastpath_admission(
         standard_endpoint_pricing=standard_endpoint_pricing,
         credit_funded=credit_funded,
         boot_verified=boot_verified and bool(boot_kid),
-        idempotency_key=idempotency_key,
         service_tier=service_tier,
         key_capped=key_capped,
         budget_strict=budget_strict,
@@ -5044,13 +5212,23 @@ def _settle_leased_authorization(
     except Exception:
         logger.exception("fastpath pilot intent enqueue failed authorization_id=%s", authorization.id)
         raise unavailable from None
-    if enqueued == ENQ_EXISTS_TERMINAL:
-        refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
-        _release_user_model_slot_safely(refreshed)
-        return {"data": _already_settled_gateway_data(refreshed)}
     if enqueued == ENQ_LEASED:
         # A drain holds the row: it asks the front door itself.
         return {"data": _intent_durable_gateway_data(authorization, intent)}
+    # The pending intent fences the reaper (its transaction re-reads the
+    # outbox guard); this read sees a reap that committed before it. A
+    # terminal authorization answers its stored disposition and the front
+    # door is not asked: a reaped hold ends uncharged at its end of life.
+    try:
+        current = STORE.get_gateway_authorization(authorization.id)
+    except Exception:
+        logger.exception("fastpath pilot terminal read failed, left to the drain authorization_id=%s", authorization.id)
+        return {"data": _intent_durable_gateway_data(authorization, intent)}
+    if enqueued == ENQ_EXISTS_TERMINAL or current is None or current.settled:
+        refreshed = current or authorization
+        _release_user_model_slot_safely(refreshed)
+        return {"data": _already_settled_gateway_data(refreshed)}
+    authorization = current
     try:
         decision = fastpath_settle.forward_terminal(
             _fastpath_front_door(settings), authorization, success=success, charge=charge, generation=generation,

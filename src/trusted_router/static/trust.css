@@ -1,0 +1,533 @@
+/* /trust page body. The header and footer come from public/_base.html
+   (site-chrome.css). The page reuses the /security and /docs patterns from
+   charter.css (ruled hero, divided strips, one bordered band) and this sheet
+   only sets the trust-specific pieces: the agent prompt, key/value lists, the
+   checklist, the repo tiles and the printed release record. */
+
+.trust-page .public-wrap {
+  padding-top: 24px;
+  gap: 0;
+}
+
+.trust-page .public-wrap > section + section {
+  margin-top: var(--tr-space-stack-3xl);
+}
+
+/* Shared text sizes: the same reading size /docs uses. */
+.trust-page :is(.marketing-card, .quote-feature, .trust-hero-copy, .trust-notice) p {
+  margin: 0 0 var(--tr-space-stack-md);
+  color: var(--text-body);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.trust-page :is(.marketing-card, .quote-feature > div, .trust-hero-copy, .trust-notice) > :last-child {
+  margin-bottom: 0;
+}
+
+.trust-page .marketing-card h2,
+.trust-open h2,
+.trust-record h2 {
+  margin: 0 0 var(--tr-space-stack-md);
+  color: var(--text-display);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 550;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+/* Agent prompt, first in main: the page's one action, in the kit's mint panel. */
+.agent-verify {
+  padding: 24px 28px 20px;
+  border-radius: var(--r-panel);
+  background: var(--tr-color-panel-mint-bg);
+  color: var(--tr-color-panel-mint-ink);
+}
+
+.agent-verify-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  margin-bottom: 16px;
+}
+
+.agent-verify-head h2 {
+  margin: 0;
+  color: inherit;
+  font-size: 22px;
+  font-weight: 550;
+  letter-spacing: -0.025em;
+}
+
+.agent-prompt {
+  margin: 0;
+  padding: 6px 0 6px 20px;
+  border-left: 3px solid var(--tr-color-panel-mint-divider);
+  color: var(--tr-color-panel-mint-ink);
+}
+
+.agent-prompt p {
+  max-width: 78ch;
+  margin: 0;
+  color: inherit;
+  font-size: 17px;
+  font-style: italic;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.copy-prompt {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--tr-color-panel-mint-ink);
+  border-radius: var(--r-control);
+  background: var(--tr-color-panel-mint-ink);
+  color: var(--tr-color-panel-mint-bg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.copy-prompt[hidden] {
+  display: none;
+}
+
+.copy-prompt:hover {
+  border-color: var(--tr-color-panel-mint-ink-2);
+  background: var(--tr-color-panel-mint-ink-2);
+}
+
+.copy-prompt:disabled {
+  cursor: wait;
+}
+
+.copy-status {
+  display: block;
+  min-height: 24px;
+  margin-top: 8px;
+  color: var(--tr-color-panel-mint-ink-2);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Release warning, second in main when the live record is stale or missing. */
+.trust-page .trust-notice {
+  padding: 20px 24px;
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.trust-page .trust-notice h2 {
+  margin: 0 0 8px;
+  color: var(--amber);
+  font-size: 18px;
+  font-weight: 550;
+  letter-spacing: -0.025em;
+}
+
+.trust-page .trust-notice p {
+  color: var(--amber);
+}
+
+/* Title, lead copy and the links the page's own header used to carry. */
+.trust-page .trust-hero {
+  row-gap: 40px;
+  padding: 28px 0 48px;
+}
+
+/* The hero's own rule draws the line under it; the first strip adds none. */
+.trust-page .trust-hero + section {
+  margin-top: var(--tr-space-stack-2xl);
+  border-top: 0;
+}
+
+.trust-hero-copy code {
+  font-size: 0.9em;
+}
+
+.trust-hero h1 {
+  max-width: 640px;
+  margin: 20px 0;
+  font-size: 44px;
+  line-height: 1.08;
+}
+
+.trust-page .trust-hero-copy .lead {
+  max-width: 600px;
+  margin-bottom: var(--tr-space-stack-md);
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.trust-hero-copy p {
+  max-width: 600px;
+}
+
+.trust-page .trust-hero-copy .trust-hero-aside {
+  color: var(--text-muted);
+}
+
+.trust-page .trust-links {
+  grid-column: 1 / -1;
+  gap: 8px;
+  margin: 0;
+}
+
+.trust-workload {
+  min-width: 0;
+  padding-top: 6px;
+}
+
+.trust-workload h2 {
+  margin: 0 0 var(--tr-space-stack-sm);
+  letter-spacing: 0;
+}
+
+/* Key/value lists: one ruled row per fact, label above a mono value. */
+.trust-kv {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.trust-kv > div {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.trust-kv > div:last-child,
+.trust-checks li:last-child,
+.trust-files li:last-child {
+  border-bottom: 0;
+}
+
+.trust-kv dt {
+  margin: 0 0 4px;
+}
+
+.trust-workload h2,
+.trust-kv dt {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.trust-kv dd {
+  margin: 0;
+  color: var(--text-display);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.trust-page .marketing-card .trust-kv + p {
+  margin-top: var(--tr-space-stack-lg);
+}
+
+/* The three clouds are detail: headings one size down from the verification strip. */
+.trust-page .trust-planes h2 {
+  font-size: 18px;
+}
+
+/* Plane notes from trust.py: a quiet callout rather than a bold paragraph. */
+.trust-page .marketing-card .trust-plane-note {
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--gold);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.trust-plane-note strong {
+  color: var(--gold);
+  font-weight: 500;
+}
+
+/* Divided strips: cells share rules, so there is one box per strip at most. */
+.trust-page .trust-strip {
+  border-top: 1px solid var(--border-default);
+}
+
+.trust-page .trust-strip .marketing-card {
+  padding: 28px 28px 8px;
+  border-bottom: 0;
+}
+
+.trust-page .trust-strip .marketing-card:first-child {
+  padding-left: 0;
+}
+
+.trust-page .trust-strip .marketing-card:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.trust-page .trust-caution h2 {
+  color: var(--gold);
+}
+
+/* Checklist and file list: ruled rows, like the check-list on /docs. */
+.trust-checks,
+.trust-files {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border-default);
+  list-style: none;
+}
+
+.trust-checks li,
+.trust-files li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--text-body);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.trust-checks li {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.trust-check {
+  padding-top: 2px;
+  color: var(--tr-color-accent-base);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.trust-files a,
+.trust-repo-list a,
+.trust-kv a {
+  text-decoration: underline;
+  text-decoration-color: var(--tr-color-link-underline);
+}
+
+/* The one bordered band: heading beside the explanation. */
+.trust-page .trust-why {
+  gap: 32px 48px;
+  padding: 32px;
+}
+
+.trust-why h2 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+
+.trust-why strong {
+  color: var(--text-display);
+}
+
+/* Repository tiles, as on the /docs SDK block. */
+.trust-page .trust-repo-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.trust-page .trust-repo-list .repo-card {
+  padding: 22px 24px 24px;
+  border-right: 1px solid var(--border-hairline);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.trust-page .trust-repo-list .repo-card:nth-child(3n) {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.trust-page .trust-repo-list .repo-card:nth-child(3n + 1) {
+  padding-left: 0;
+}
+
+.trust-repo-list .repo-card a {
+  display: block;
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.trust-repo-list .repo-card p {
+  margin: 0;
+  color: var(--text-body);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+/* Printed release record: folded behind its heading, since the same record
+   is one click away as gcp-release.json and the text is long on a phone. */
+.trust-record {
+  --content-note-color: var(--text-display);
+
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.trust-record summary {
+  min-height: 64px;
+}
+
+.trust-record summary h2 {
+  margin: 0;
+}
+
+.trust-record summary::after {
+  color: var(--text-muted);
+}
+
+.trust-record pre {
+  margin: 0 0 24px;
+  padding: 20px 24px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-panel);
+  background: var(--tr-color-surface-panel-inset);
+  color: var(--code-ink);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1040px) {
+  .trust-page .public-wrap > section + section {
+    margin-top: var(--tr-space-stack-2xl);
+  }
+
+  .trust-page .trust-hero {
+    gap: 32px;
+    padding: 32px 0 36px;
+  }
+
+  .trust-hero h1 {
+    font-size: 34px;
+  }
+
+  .trust-page .trust-hero-copy .lead {
+    font-size: 17px;
+  }
+
+  /* One column: the link buttons follow the copy, the facts come after. */
+  .trust-workload {
+    order: 3;
+  }
+
+  /* One column: every cell becomes a ruled row across the page gutter. */
+  .trust-page .trust-strip.marketing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trust-page .trust-strip .marketing-card {
+    padding: 20px 0 24px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-hairline);
+  }
+
+  .trust-kv > div,
+  .trust-checks li,
+  .trust-files li {
+    padding: 10px 0;
+  }
+
+  .trust-page .trust-strip .marketing-card:last-child {
+    border-bottom: 0;
+  }
+
+  .trust-page .trust-why {
+    gap: 20px;
+    padding: 24px 20px;
+  }
+
+  .trust-why h2 {
+    font-size: 24px;
+  }
+
+  .trust-page .trust-repo-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trust-page .trust-repo-list .repo-card,
+  .trust-page .trust-repo-list .repo-card:nth-child(3n),
+  .trust-page .trust-repo-list .repo-card:nth-child(3n + 1) {
+    padding: 16px 0 18px;
+    border-right: 0;
+  }
+
+  .trust-record summary {
+    min-height: 56px;
+  }
+
+  .trust-record pre {
+    padding: 16px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 600px) {
+  .trust-page .public-wrap > section + section {
+    margin-top: var(--tr-space-stack-xl);
+  }
+
+  .agent-verify {
+    display: flex;
+    flex-direction: column;
+    padding: 20px 18px 16px;
+  }
+
+  .agent-verify-head {
+    display: contents;
+  }
+
+  .agent-verify-head h2 {
+    order: 1;
+    margin-bottom: 14px;
+    font-size: 20px;
+  }
+
+  .agent-prompt {
+    order: 2;
+  }
+
+  .copy-prompt {
+    order: 3;
+    align-self: flex-start;
+    margin-top: 16px;
+  }
+
+  .copy-status {
+    order: 4;
+  }
+
+  .trust-hero h1 {
+    font-size: 30px;
+  }
+
+  .trust-page .trust-hero-copy .lead {
+    font-size: 16px;
+  }
+
+  .agent-prompt p {
+    font-size: 16px;
+  }
+}

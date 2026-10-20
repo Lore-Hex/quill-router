@@ -721,7 +721,7 @@ table.content-reference,
     display: block;
     grid-column: 2;
     grid-row: 1;
-    top: 24px;
+    top: calc(var(--sticky-header-height, 0px) + 24px);
     border: 0;
     background: transparent;
   }
@@ -741,7 +741,7 @@ table.content-reference,
 
   .content-toc details > ol {
     display: block;
-    max-height: calc(100svh - 80px);
+    max-height: calc(100svh - 80px - var(--sticky-header-height, 0px));
     padding: 0;
   }
 

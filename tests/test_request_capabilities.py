@@ -445,6 +445,20 @@ def test_zdr_does_not_imply_confidential(monkeypatch):
     assert endpoint_capabilities(model, endpoint) == dict(reasoning_effort=["high", "max"], tools=False, seed=False, vision=False, confidential=False)
 
 
+@pytest.mark.parametrize("model_id,provider", [
+    ("openai/whisper-large-v3", "privatemode"),
+    ("mistralai/voxtral-mini-3b-2507", "privatemode"),
+    ("mistralai/voxtral-small-24b", "tinfoil"),
+    ("nomic-ai/nomic-embed-text", "tinfoil"),
+    ("qwen/qwen3-embedding-4b", "privatemode"),
+])
+def test_reviewed_confidential_media_capability_matches_routing(model_id, provider):
+    model = catalog.MODELS[model_id]
+    endpoints = [ep for ep in catalog.endpoints_for_model(model_id) if ep.provider == provider]
+    assert endpoints
+    assert all(endpoint_capabilities(model, ep)["confidential"] for ep in endpoints)
+
+
 def test_confidential_host_does_not_admit_non_chat_apis(monkeypatch):
     model = _model(monkeypatch, "fixture/embedding", "privatemode")
     model = replace(model, supports_chat=False, supports_embeddings=True)

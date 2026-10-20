@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from trusted_router import provider_lifecycle
+from trusted_router.catalog_aliases import consolidate_model_routes
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
@@ -137,6 +138,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
+    TIER_MODEL_ORDERS,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
@@ -154,7 +156,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     Provider,
     _EmbeddingSpec,
 )
-from trusted_router.catalog_deployment import unavailable_gateway_model_ids
+from trusted_router.catalog_deployment import apply_gateway_admission_holds
 from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time build below
     _AUTHOR_TO_PROVIDER_SLUG,
     _INGEST_PATH,
@@ -206,6 +208,8 @@ from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.request_capabilities import normalize_request_capabilities
 from trusted_router.speech import SPEECH_MODELS
+from trusted_router.transcription import TRANSCRIPTION_MODELS
+from trusted_router.web_fetch import FETCH_MODEL_ID, FETCH_PRICE_MICRODOLLARS, FETCH_PRICING_SOURCE
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1344,13 +1348,62 @@ for _speech in SPEECH_MODELS.values():
         published_prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.input_token_cost),
         published_completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.output_token_cost),
         documentation=ModelDocumentation(
-            description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per input character, not per token.",
+            description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per request over an attested connection." if _speech.request_cost_microdollars else "Text-to-speech, billed per input character, not per token.",
             input_format="POST /v1/audio/speech with model, input (text), voice, and response_format.",
             output_format="Raw audio bytes. Errors are JSON. See supported response_formats.",
             example_input='{"model":"' + _speech.id + '","input":"Hello!","voice":"' + _speech.voices[0] + '","response_format":"' + _speech.formats[0] + '"}',
             example_output="Binary audio, not a JSON envelope.",
         ),
     )
+
+for _transcription in TRANSCRIPTION_MODELS.values():
+    if _transcription.provider not in {"tinfoil", "privatemode"}:
+        # Text-provider agreements do not establish audio-specific retention.
+        _MODEL_PROVIDER_PRIVACY_OVERRIDES[(_transcription.id, _transcription.provider)] = ModelProviderPrivacyOverride(
+            privacy_tier=0, provider_zero_data_retention=False,
+            provider_confidential_compute=False, provider_e2ee=False,
+            provider_policy="Audio-specific retention commitments have not been verified.",
+            provider_policy_url=_transcription.pricing_source,
+        )
+    MODELS[_transcription.id] = Model(
+        id=_transcription.id, name=_transcription.name, provider=_transcription.provider,
+        upstream_id=_transcription.upstream_id, context_length=32768 if _transcription.token_billed else 0,
+        supports_chat=False, supports_messages=False,
+        input_modalities=("audio",), output_modalities=("transcription",),
+        prepaid_available=True, byok_available=False,
+        prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.input_token_cost),
+        completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.output_token_cost),
+        published_prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.input_token_cost),
+        published_completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_transcription.output_token_cost),
+        supported_parameters=("language", "response_format") + (("timestamp_granularities",) if "verbose_json" in _transcription.response_formats else ()),
+        documentation=ModelDocumentation(
+            description="File transcription, billed from reported audio input and text output tokens." if _transcription.token_billed else "File transcription, billed per request or audio duration, not text tokens.",
+            input_format="POST /v1/audio/transcriptions with multipart file or base64 input_audio, and model. PCM WAV or MP3, at most 7 MiB and ten minutes.",
+            output_format="JSON text and usage; verbose_json adds supported timestamps." if "verbose_json" in _transcription.response_formats else "JSON text and usage. Timestamps are not supported.",
+            example_input='{"model":"' + _transcription.id + '","input_audio":{"data":"<base64>","format":"wav"}}',
+            example_output='{"text":"Hello","usage":{"seconds":1,"cost":0.01}}',
+        ),
+    )
+
+MODELS[FETCH_MODEL_ID] = Model(
+    id=FETCH_MODEL_ID, name="DeepSeek Fetch", provider="deepseek", upstream_id="fetch",
+    context_length=0, supports_chat=False, supports_messages=False,
+    prepaid_available=True, byok_available=False,
+    request_price_microdollars=FETCH_PRICE_MICRODOLLARS,
+    documentation=ModelDocumentation(
+        description="Fetch a public web page as Markdown. Billed per successful nonempty response, not tokens.",
+        input_format='POST /v1/tools/fetch with {"url":"https://example.com"}.',
+        output_format='JSON {"title":"...","content":"..."}. Billing is reported in response headers.',
+        example_input='{"url":"https://example.com"}',
+        example_output='{"title":"Example Domain","content":"# Example Domain"}',
+    ),
+)
+_MODEL_PROVIDER_PRIVACY_OVERRIDES[(FETCH_MODEL_ID, "deepseek")] = ModelProviderPrivacyOverride(
+    privacy_tier=0, provider_zero_data_retention=False,
+    provider_confidential_compute=False, provider_e2ee=False,
+    provider_policy="Standalone web fetching; no ZDR or confidential-inference commitment verified.",
+    provider_policy_url=FETCH_PRICING_SOURCE,
+)
 
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODELS[POLYPHEMUS_MODEL_ID] = Model(
@@ -1684,10 +1737,16 @@ HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
 HELD_PREPAID_SETTLEMENT_ENDPOINTS.update(_HELD_DECISION_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
-    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS),
+    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS) | frozenset(TRANSCRIPTION_MODELS) | {FETCH_MODEL_ID},
     at=CATALOG_RESOLVED_AT,
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
+
+consolidate_model_routes(MODELS, MODEL_ENDPOINTS)
+
+# Apply gateway rollout holds after every catalog source has merged and before
+# capabilities are derived. An hourly refresh must not reintroduce held routes.
+apply_gateway_admission_holds(MODELS, MODEL_ENDPOINTS)
 
 # Normalize the completed route inventory before any routing or public reader
 # sees it. Reviewed contracts update the declarations those readers share.
@@ -1719,6 +1778,25 @@ for _proxy_id, _backing_id in PRIVATE_PROXY_MODEL_TARGETS.items():
                 value for value in _proxy.input_modalities if value not in _dropped
             ),
         )
+
+
+# Build tier aliases after ingestion and normalization so their context window
+# follows their members. A provider delisting must not prevent startup; tests
+# check the complete configured membership against the as-built catalog.
+for _tier_model_id, _tier_model_order in TIER_MODEL_ORDERS.items():
+    MODELS[_tier_model_id] = Model(
+        id=_tier_model_id,
+        name=f"TrustedRouter {_tier_model_id.split('/', 1)[1].title()}",
+        provider="trustedrouter",
+        context_length=min(
+            (MODELS[member].context_length for member in _tier_model_order if member in MODELS),
+            default=0,
+        ),
+        supports_messages=False,
+        prepaid_available=True,
+        # Like Fast, the alias permits BYOK; routing selects eligible endpoints.
+        byok_available=True,
+    )
 
 
 def _named_decision_model_with_chain_prices(model_id: str) -> Model:
@@ -1767,16 +1845,6 @@ for _named_decision_model_id in NAMED_DECISION_MODEL_PROVIDERS:
         MODELS[_named_decision_model_id] = _named_decision_model_with_chain_prices(
             _named_decision_model_id
         )
-
-# Apply gateway rollout holds after EVERY catalog source has merged. A future
-# snapshot or provider refresh must not reintroduce an unsupported protocol.
-_unavailable_gateway_models = unavailable_gateway_model_ids()
-for _model_id in _unavailable_gateway_models:
-    MODELS.pop(_model_id, None)
-MODEL_ENDPOINTS = {
-    identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
-    if endpoint.model_id not in _unavailable_gateway_models
-}
 
 # Operator-only POC tariff, approved 2026-10-13: Z.ai GLM-5.3-Flash's
 # $0.15/$0.50 per million reference rate, NOT a verified Fortanix quote.

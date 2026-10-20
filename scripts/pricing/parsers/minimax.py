@@ -69,7 +69,7 @@ def parse(html: str) -> dict[str, dict[str, object]]:
         prices["minimax/minimax-m3"] = {"tiers": tiers}
 
     markdown_row_re = re.compile(
-        r"^\|\s*\**(?P<native>MiniMax-[A-Za-z0-9._-]+)\**\s*\|"
+        r"^[ \t]*\|\s*\**(?P<native>MiniMax-[A-Za-z0-9._-]+)\**\s*\|"
         r"(?P<input>[^|]+)\|(?P<output>[^|]+)\|(?P<cached>[^|]+)\|",
         re.IGNORECASE | re.MULTILINE,
     )
