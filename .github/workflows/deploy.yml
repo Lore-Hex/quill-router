@@ -87,6 +87,7 @@ jobs:
           started=$(date +%s)
           find_deadline=$(( started + 2700 ))
           run_deadline=$(( started + 19800 ))
+          seen=0
           while true; do
             run_json=$(gh run list \
               --repo "${GITHUB_REPOSITORY}" \
@@ -95,6 +96,7 @@ jobs:
               --json databaseId,status,conclusion \
               --jq '.[0]' || true)
             if [ -n "${run_json}" ] && [ "${run_json}" != "null" ]; then
+              seen=1
               status=$(jq -r '.status' <<<"${run_json}")
               conclusion=$(jq -r '.conclusion' <<<"${run_json}")
               echo "  ci run $(jq -r '.databaseId' <<<"${run_json}"): status=${status} conclusion=${conclusion:-<pending>}"
@@ -107,6 +109,9 @@ jobs:
                 echo "Fix main, or use workflow_dispatch hotfix=true for emergencies."
                 exit 1
               fi
+            elif [ "${seen}" = 1 ]; then
+              # The run exists; an empty or failed lookup is a transient API error.
+              echo "  CI run lookup failed for ${GITHUB_SHA}; retrying"
             else
               echo "  no CI run found yet for ${GITHUB_SHA} (queueing?)"
               if [ "$(date +%s)" -ge "${find_deadline}" ]; then

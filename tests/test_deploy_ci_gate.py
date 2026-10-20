@@ -47,7 +47,8 @@ def _executable(path: Path, body: str) -> None:
 def _run(tmp_path: Path, responses: list[object], *, hotfix: str = "false") -> tuple[subprocess.CompletedProcess[str], int, int]:
     """Run the gate; `responses` are the successive `gh run list --jq '.[0]'` answers (last one repeats).
 
-    None prints `null` (no run listed yet); "" prints nothing (a failed API call, swallowed by `|| true`).
+    None prints `null` (jq's empty-list answer); "" prints nothing (gh's own formatter for an empty list);
+    "ERROR" exits 1 with an HTTP error on stderr, as a failed API call does.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -64,6 +65,9 @@ assert "--workflow" in sys.argv and sys.argv[sys.argv.index("--workflow") + 1] =
 assert sys.argv[sys.argv.index("--commit") + 1] == "abc123"
 responses = json.load(open(state + "/responses.json"))
 answer = responses[min(calls, len(responses) - 1)]
+if answer == "ERROR":
+    print("HTTP 503: Service Unavailable", file=sys.stderr)
+    sys.exit(1)
 print("null" if answer is None else "" if answer == "" else json.dumps(answer))
 """)
     _executable(bin_dir / "date", f"""#!/usr/bin/env python3
@@ -135,6 +139,20 @@ def test_a_late_appearing_ci_run_is_then_waited_for(tmp_path: Path) -> None:
     result, _, _ = _run(tmp_path, [None, ""] * 2 + [QUEUED] * 20 + [GREEN])
     assert result.returncode == 0, result.stdout
     assert "CI is green" in result.stdout
+
+
+def test_a_lookup_error_after_the_run_was_seen_is_retried(tmp_path: Path) -> None:
+    # Ten running answers pass the 45-minute mark; failed or empty lookups then must not read as "no run".
+    result, _, _ = _run(tmp_path, [RUNNING] * 10 + ["ERROR", "", None, "ERROR"] + [GREEN])
+    assert result.returncode == 0, result.stdout
+    assert "CI run lookup failed for abc123; retrying" in result.stdout
+    assert "CI is green" in result.stdout
+
+
+def test_an_api_error_before_the_run_appears_is_retried(tmp_path: Path) -> None:
+    result, _, _ = _run(tmp_path, ["ERROR", "ERROR", QUEUED, GREEN])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no CI run found yet for abc123" in result.stdout
 
 
 def test_hotfix_skips_the_gate(tmp_path: Path) -> None:
