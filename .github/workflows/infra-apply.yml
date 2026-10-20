@@ -48,7 +48,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: hashicorp/setup-terraform@v4
 
@@ -70,7 +70,7 @@ jobs:
     steps:
       # Keep the repository below the workspace root. The GCP auth action
       # writes gha-creds-* into that root, so src/ remains a clean work tree.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: src
 
