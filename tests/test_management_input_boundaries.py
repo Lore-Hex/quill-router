@@ -44,6 +44,7 @@ def test_valid_activity_dates_still_work(
 
 @pytest.mark.parametrize("field", ["success_url", "cancel_url"])
 @pytest.mark.parametrize("url", ["not a URL", "/billing", "//evil.example", "javascript:alert(1)",
+                                      "https:example.com", "https:///example.com", "https:////example.com",
                                       "https://", "https://example.com:bad", "https://user:pass@example.com",
                                       "https://example.com/\r\nheader", "https://bad host.example/"])
 def test_invalid_checkout_urls_rejected_before_provider(

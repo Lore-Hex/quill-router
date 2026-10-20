@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -69,6 +70,9 @@ def validate_billing_return_url(value: str) -> str:
     """Validate without rewriting Stripe's {CHECKOUT_SESSION_ID} placeholder."""
     if len(value) > 2048 or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
         raise ValueError("must be an absolute HTTP(S) URL without whitespace")
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("must be an absolute HTTP(S) URL")
     parsed = HttpUrl(value)
     if parsed.username is not None or parsed.password is not None or "\\" in value:
         raise ValueError("must be an absolute HTTP(S) URL without credentials")
