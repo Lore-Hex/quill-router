@@ -426,7 +426,8 @@ _SETTLE_REPAIR_FIELDS = frozenset(
 # fast-admission-enclave-direct.md, E1) puts its verdict on the boot
 # signature in this header: the signature alone, which this route checks
 # the same way (verify_boot_signature) beside its own verification, and
-# compares. A verdict the edge could not reach (unread, unchecked) is no
+# compares. A verdict with nothing to compare (unread, unchecked: the edge
+# could not reach one; absent: the request carried no signature) is no
 # disagreement.
 _EDGE_BOOT_VERDICT_HEADER = "x-tr-edge-boot"
 _EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid"})
@@ -438,7 +439,8 @@ def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None
 
     Each authorize that came through the edge (it carries the verdict
     header) and reaches this comparison is counted, as agree, differ or
-    skipped (a verdict the edge could not reach), so the absence of
+    skipped (nothing to compare: unread, unchecked or absent; split it by
+    the edge= label), so the absence of
     disagreements can be told from the absence of comparisons; a
     disagreement is also a warning. A call rejected before it (internal
     token, key, admission limits) is not counted, and neither is one the
