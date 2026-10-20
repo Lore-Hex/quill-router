@@ -193,7 +193,7 @@ def test_proof_oracle_ci_split(request, tmp_path):
                        'tests/test_async_settle_shadow_v2_gate_window.py',
                        '--splits', '6', '--group', '${{', 'matrix.shard', '}}',
                        '--splitting-algorithm', 'least_duration']
-    assert job['runs-on'] == 'ubuntu-latest'
+    assert job['runs-on'] == 'ubuntu-24.04'
     assert job['timeout-minutes'] == 45
     assert job['strategy']['matrix'] == {'clock': ['default', 'post-cutover'], 'shard': [1, 2, 3, 4, 5, 6]}
     assert job['strategy']['fail-fast'] is False
@@ -229,3 +229,11 @@ def test_ci_and_production_use_the_same_python() -> None:
     assert f"uv:python{pinned}-" in dockerfile
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     assert f'python-version: "{pinned}"' in refresh
+
+def test_every_ci_job_pins_the_ubuntu_24_04_runner_image():
+    # ubuntu-latest moved to ubuntu-26.04 on 2026-10-20. On that image the bundle package's
+    # tracemalloc guards measured ~7.95 MB against their 2 MB bound and the fastpath TLC model checks
+    # failed, on main and on every PR; on 24.04 (system CPython 3.12.3, the interpreter the suite and
+    # the local gates are calibrated on) they pass. Move the pin deliberately, re-measuring those guards.
+    jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+    assert {name: job['runs-on'] for name, job in jobs.items()} == dict.fromkeys(jobs, 'ubuntu-24.04')
