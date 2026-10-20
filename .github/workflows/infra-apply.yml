@@ -36,8 +36,14 @@ on:
         type: string
         default: ""
 
+# Applies and journal operations on main serialize in one group. A pull
+# request's validation touches no state, so it runs in a group of its own:
+# GitHub cancels a group's older pending run when a newer one joins, and
+# with one shared group a pull request pushed while an apply waited for a
+# runner cancelled the apply (2026-10-20: #1902's and #1903's applies were
+# both cancelled that way, so neither change reached the cloud).
 concurrency:
-  group: infra-apply
+  group: ${{ github.event_name == 'pull_request' && format('infra-validate-{0}', github.event.pull_request.number) || 'infra-apply' }}
   cancel-in-progress: false
 
 permissions:

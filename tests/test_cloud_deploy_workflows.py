@@ -81,3 +81,18 @@ def test_aws_release_selection_executes_only_merged_full_shas(tmp_path: Path, se
     assert (result.returncode == 0) == (selection in {"baked", "default"})
     assert git("rev-parse", "HEAD") == (baked if selection == "baked" else head)
     assert not (tmp_path / "injected").exists()
+
+
+def test_pull_request_validation_cannot_cancel_a_pending_infra_apply() -> None:
+    """GitHub cancels a concurrency group's older pending run when a newer
+    one joins. Validation of a pull request must therefore not share the
+    apply's group, or a pull request pushed while an apply waits for a
+    runner cancels it (2026-10-20: #1902's and #1903's applies)."""
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/infra-apply.yml").read_text())
+    group = workflow["concurrency"]["group"]
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    assert "github.event_name == 'pull_request'" in group
+    assert "infra-validate-" in group and "github.event.pull_request.number" in group
+    assert group.rstrip(" }").endswith("|| 'infra-apply'")
