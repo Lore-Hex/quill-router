@@ -17,9 +17,16 @@
 #     script changes lives (the Container App, the ACR build, the Postgres
 #     firewall rule, the ClickHouse identity it assigns). Contributor cannot
 #     create role assignments;
-#   * Key Vault Secrets User on the single secret tr-azure-clickhouse-password
-#     in vault trquillkv (resource group TR-TEE-DUBAI), which the deploy reads
-#     to wire the app's Key Vault reference. No other secret in that vault;
+#   * Key Vault Secrets User on the single secret the deploy reads to wire
+#     the app's Key Vault reference, tr-azure-clickhouse-read-password (the
+#     control plane's read-only ClickHouse user, scripts/deploy/
+#     azure_control_plane.sh), in vault trquillkv (resource group
+#     TR-TEE-DUBAI). No other secret in that vault: the writer's,
+#     tr-azure-clickhouse-password, is the node's and the drain's, read with
+#     the node's identity, never the deploy's. Until 2026-10-20 this granted
+#     the writer's, and every deploy after the control plane moved to the
+#     reader refused for want of access ("analytics discovery was
+#     incomplete");
 #   * the repository variable AZURE_DEPLOY_CLIENT_ID, which the workflow reads.
 set -euo pipefail
 
@@ -31,7 +38,7 @@ REPO="${REPO:-Lore-Hex/quill-router}"
 SUBJECT="repo:${REPO}:ref:refs/heads/main"
 CREDENTIAL_NAME="${CREDENTIAL_NAME:-quill-router-main}"
 VAULT="${VAULT:-trquillkv}"
-VAULT_SECRET="${VAULT_SECRET:-tr-azure-clickhouse-password}"
+VAULT_SECRET="${VAULT_SECRET:-tr-azure-clickhouse-read-password}"
 
 log() { printf '%s\n' "$*" >&2; }
 
