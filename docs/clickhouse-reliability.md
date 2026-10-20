@@ -80,6 +80,17 @@ Monitor workspace activity p50/p99, drain lag, the delivery verifier and
 to restore today's behaviour; record and outbox writes continue in either
 mode, and Postgres activity repair remains unimplemented until R4.
 
+For AWS ECS, `EXPECTED_RECORD_READ_BACKEND` in `aws_ecs_control_plane.sh`
+is the switch: Paris defaults to `clickhouse`, Ireland to `postgres`, overridable
+with `TR_RECORD_READ_BACKEND_EU_WEST_3` and `TR_RECORD_READ_BACKEND_EU_WEST_1`.
+Paris goes first with `tr_control_read` and the reader secret ARN resolved by
+`describe-secret`; `infra/aws_ecs_control_reader.tf` grants the execution role
+access to that exact ARN. Apply that grant before releasing. To revert Paris,
+run the release with `TR_RECORD_READ_BACKEND_EU_WEST_3=postgres` and
+`TR_ECS_ALLOW_RECORD_READ_ROLLBACK=true`; without the explicit rollback flag,
+a live `clickhouse` to `postgres` transition is refused. Keep the regional
+expectation at `postgres` for subsequent releases until ready to enable it again.
+
 Control-plane operational reads use `tr_control_read`. On GCP,
 `scripts/deploy/clickhouse_control_reader.sh` installs the account with
 table-scoped SELECT grants in `tr`; its password lives in Secret Manager as
@@ -110,9 +121,9 @@ scripts select the reader secret by reference, without retrieving its value.
 
 The Postgres outbox drains retain `default` and the writer secrets. Stockholm
 is a second drain target, not a configured control-plane read endpoint; its
-regional writer credential is unchanged. The AWS ECS release script clones
-the running task's configuration, so these provisioner defaults alone do not
-migrate an existing ECS task definition.
+regional writer credential is unchanged. The AWS ECS release script migrates
+reader credentials only where the regional record-read expectation is `clickhouse`;
+all other ClickHouse settings are cloned from the running task.
 
 ## Activity generation lookup schema
 

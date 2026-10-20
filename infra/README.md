@@ -8,7 +8,8 @@ under `scripts/deploy/`; Terraform must not absorb those procedures.
 ## Scope boundary
 
 Terraform manages only the resources declared in this directory: the GitHub
-AWS deploy role and policies, the AWS EU synthetic-monitoring rule/target,
+AWS deploy role and policies, the ECS execution role's exact-ARN ClickHouse
+reader secret grant (`aws_ecs_control_reader.tf`), the AWS EU synthetic-monitoring rule/target,
 DLQ/policies/alarms/topic, the existing GCP GitHub workload identity pool
 provider allowlist, and the control load balancer's Certificate Manager
 certificates with their DNS authorizations and `_acme-challenge` records
