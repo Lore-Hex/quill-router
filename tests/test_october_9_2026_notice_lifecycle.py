@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing.providers import deepinfra, scaleway, xiaomi
+from scripts.pricing.providers import alibaba, deepinfra, scaleway, xiaomi
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -21,6 +21,14 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "nousresearch/hermes-3-llama-3.1-405b", "NousResearch/Hermes-3-Llama-3.1-405B",
+         datetime(2026, 11, 2, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
+    Case("alibaba", "qwen/qwen3.5-plus", "qwen3.5-plus",
+         datetime(2027, 1, 19, 2, tzinfo=UTC), "qwen/qwen3.8-flash"),
+    Case("alibaba", "qwen/qwen3.5-plus-2026-02-15", "qwen3.5-plus-2026-02-15",
+         datetime(2027, 1, 19, 2, tzinfo=UTC), "qwen/qwen3.8-flash"),
+    Case("alibaba", "qwen/qwen3.5-397b-a17b", "qwen3.5-397b-a17b",
+         datetime(2027, 1, 19, 2, tzinfo=UTC), "qwen/qwen3.8-flash"),
     Case("deepinfra", "openai/gpt-oss-120b-turbo", "openai/gpt-oss-120b-Turbo",
          datetime(2026, 10, 20, tzinfo=UTC), "openai/gpt-oss-120b"),
     Case("scaleway", "z-ai/glm-5.2", "glm-5.2",
@@ -41,6 +49,7 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "alibaba": alibaba.MANIFEST_PATH,
     "deepinfra": deepinfra.MANIFEST_PATH,
     "scaleway": scaleway.MANIFEST_PATH,
     "xiaomi": xiaomi.MANIFEST_PATH,

@@ -117,6 +117,9 @@ type Config struct {
 	BootWait  time.Duration
 	Clock     func() time.Time
 	Transport http.RoundTripper
+	// Serving is the node's state for the balancer's health check; nil
+	// means serving.
+	Serving func() bool
 }
 
 // Edge serves the enclave's control-plane paths.
@@ -238,11 +241,22 @@ func answer(w http.ResponseWriter, code int, message, kind string) {
 	_, _ = w.Write(body)
 }
 
-// ServeHTTP passes the request to Python with the edge's verdict in
-// VerdictHeader. A request without the internal token is passed as it is,
+// ServeHTTP answers the balancer's health check from the node's state and
+// passes other requests to Python with the edge's verdict in VerdictHeader.
+// A request without the internal token is passed as it is,
 // for Python's own 401, and reads nothing here. The enclave's requests
 // are JSON bodies with no trailers; the edge carries none.
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/internal/gateway/edge/health" {
+		code, body := http.StatusOK, `{"status":"serving"}`
+		if e.cfg.Serving != nil && !e.cfg.Serving() {
+			code, body = http.StatusServiceUnavailable, `{"status":"leaving"}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = io.WriteString(w, body)
+		return
+	}
 	if r.Host == "" {
 		// Every caller names a host (the load balancer's); a redirect for
 		// one that did not has no form that keeps its authority.

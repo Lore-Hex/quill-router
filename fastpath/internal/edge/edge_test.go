@@ -143,6 +143,60 @@ func (h *harness) signed(t *testing.T, kid, method, path, body string, extra map
 	return h.send(t, method, path, body, headers)
 }
 
+func TestTheEdgesHealthIsItsOwnState(t *testing.T) {
+	h := newHarness(t)
+	var leaving atomic.Bool
+	for _, state := range []struct {
+		name    string
+		serving func() bool
+		code    int
+		body    string
+	}{
+		{"default", nil, http.StatusOK, `{"status":"serving"}`},
+		{"serving", func() bool { return !leaving.Load() }, http.StatusOK, `{"status":"serving"}`},
+		{"leaving", func() bool { return !leaving.Load() }, http.StatusServiceUnavailable, `{"status":"leaving"}`},
+	} {
+		h.edge.cfg.Serving = state.serving
+		leaving.Store(state.name == "leaving")
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodOptions} {
+			for _, tok := range []string{"", "wrong", token} {
+				resp := h.signed(t, "boot-1", method, "/internal/gateway/edge/health", "", map[string]string{TokenHeader: tok})
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode != state.code || string(body) != state.body || resp.Header.Get("Content-Type") != "application/json" {
+					t.Fatalf("%s, %s: health %d %q, headers %v", state.name, method, resp.StatusCode, body, resp.Header)
+				}
+			}
+		}
+	}
+	if h.last != nil || h.boots.reads.Load() != 0 {
+		t.Fatal("health reached Python or read a boot")
+	}
+	h.upstream.Close()
+	leaving.Store(false)
+	resp := h.send(t, http.MethodGet, "/internal/gateway/edge/health", "", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health depends on Python: %d", resp.StatusCode)
+	}
+}
+
+func TestOnlyTheExactHealthPathIsAnsweredHere(t *testing.T) {
+	h := newHarness(t)
+	h.edge.cfg.Serving = func() bool { return false }
+	for _, path := range []string{"/internal/gateway/edge/healthz", "/internal/gateway/edge/health/"} {
+		resp := h.signed(t, "boot-1", http.MethodGet, path, "", nil)
+		if resp.StatusCode != http.StatusPaymentRequired || h.last == nil || h.last.path != path || h.last.verdict != string(Verified) {
+			t.Fatalf("%s was not passed with its verdict: %d %+v", path, resp.StatusCode, h.last)
+		}
+		resp.Body.Close()
+		resp = h.send(t, http.MethodGet, path, "", nil)
+		if resp.StatusCode != http.StatusPaymentRequired || h.last.path != path || h.last.verdict != "" {
+			t.Fatalf("%s without a token was not passed unchanged: %d %+v", path, resp.StatusCode, h.last)
+		}
+		resp.Body.Close()
+	}
+}
+
 func TestAVerifiedBootsRequestPassesWithItsVerdictAndPythonsAnswer(t *testing.T) {
 	h := newHarness(t)
 	resp := h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, map[string]string{"Content-Type": "application/json"})
