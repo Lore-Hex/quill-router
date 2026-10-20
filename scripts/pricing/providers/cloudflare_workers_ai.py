@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
@@ -17,7 +18,7 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
-from scripts.pricing.manifest import write_discovered_chat_manifest
+from scripts.pricing.manifest import apply_canary_results, write_discovered_chat_manifest
 from scripts.pricing.model_ids import remember_upstream_id
 from trusted_router.provider_contracts import (
     THIRD_PARTY_PASSTHROUGH_HOLD_REASON,
@@ -35,6 +36,65 @@ MANIFEST_PATH = (
     / "cloudflare-workers-ai.json"
 )
 EXPECTED_MODELS = ["moonshotai/kimi-k2.7-code"]
+CLAIRIC_MODEL = "cloudflare/clairic"
+CLAIRIC_UPSTREAM = "@cf/cloudflare/clairic"
+CLAIRIC_PROBE = {
+    "model": "clairic",
+    "state": "Invoice INV-2291: total USD 1080.",
+    "fields": {"invoice_number": {"type": "text"}, "total": {"type": "number"}},
+}
+
+
+def _clairic_row() -> dict[str, Any]:
+    return {
+        "display_name": "Cloudflare Clairic",
+        "model_type": "chat",
+        "endpoints": ["chat/completions"],
+        # The adapter accepts images inside native task JSON, not OpenAI image
+        # blocks. Do not advertise generic multimodal chat or token streaming.
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "supported_features": ["chat", "completion"],
+        "supported_sampling_parameters": [],
+        "documentation": {
+            "description": "Preview typed extraction model: extract, compute, estimate or forecast values. Input-only billing, with confidence scores and distributions. Not a conversational model. Weights are not yet public.",
+            "input_format": "POST /v1/chat/completions with cloudflare/clairic. Put native task JSON in exactly one user message: state, fields, and optionally reference_date, options and embedded images (PNG/JPEG/WebP, up to 4). Field types: text, number, date, time, datetime, duration, list, estimate, forecast. No tools, response_format or chat history. Native schema: https://developers.cloudflare.com/workers-ai/models/clairic/",
+            "output_format": "JSON in choices[0].message.content: answers, confidence/probability metadata, truncated and native usage. Streaming delivers the completed extraction as one result. prompt_tokens is the provider's billable input_tokens across all passes; completion_tokens is zero. A null value means insufficient evidence. Check truncated before relying on the result.",
+            "example_input": json.dumps({key: value for key, value in CLAIRIC_PROBE.items() if key != "model"}),
+            "example_output": json.dumps({"answers": {"invoice_number": {"type": "text", "value": "INV-2291", "confidence": 0.99}, "total": {"type": "number", "value": 1080, "confidence": 0.99}}, "truncated": False}),
+        },
+    }
+
+
+def _clairic_canary(client: httpx.Client, base_url: str) -> bool:
+    try:
+        response = client.post(
+            base_url + "/ai/run/" + CLAIRIC_UPSTREAM,
+            headers={
+                "cf-aig-gateway-id": "default",
+                "cf-aig-collect-log": "false",
+                "cf-aig-collect-log-payload": "false",
+                "cf-aig-skip-cache": "true",
+            },
+            json=CLAIRIC_PROBE,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = payload["result"]
+        usage = result["usage"]
+        return (
+            payload.get("success") is True
+            and result.get("truncated") is False
+            and result.get("model") in {"clairic", CLAIRIC_UPSTREAM}
+            and result["answers"]["invoice_number"]["value"] == "INV-2291"
+            and result["answers"]["total"]["value"] == 1080
+            and type(usage.get("input_tokens")) is int
+            and 0 < usage["input_tokens"] <= 1 << 31
+            and type(usage.get("output_tokens")) is int
+            and usage["output_tokens"] == 0
+        )
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 # Kimi K3 was published in the Workers AI dashboard before it appeared in the
 # account model-search feed. Keep this narrow bridge until discovery returns it.
@@ -107,7 +167,7 @@ def _micro_per_m(value: object) -> int | None:
         amount = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
-    if amount < 0:
+    if not amount.is_finite() or amount < 0:
         return None
     return int((amount * Decimal("1000000")).to_integral_value(ROUND_HALF_UP))
 
@@ -119,7 +179,7 @@ def _price_amount(item: dict[str, Any]) -> int | None:
     return None
 
 
-def _model_price(properties: dict[str, Any]) -> ModelPrice | None:
+def _model_price(properties: dict[str, Any], *, input_only: bool = False) -> ModelPrice | None:
     raw = properties.get("price") or properties.get("pricing")
     if isinstance(raw, dict):
         raw = raw.get("items") or raw.get("prices") or raw.get("value")
@@ -132,15 +192,29 @@ def _model_price(properties: dict[str, Any]) -> ModelPrice | None:
         if not isinstance(item, dict):
             continue
         unit = str(item.get("unit") or item.get("name") or "").lower()
+        if input_only and unit not in {"per m input tokens", "per m output tokens"}:
+            return None
+        if item.get("currency", "USD") != "USD":
+            return None
         amount = _price_amount(item)
         if amount is None:
             continue
         if "cached" in unit and "input" in unit:
             cached = amount
         elif "input" in unit:
+            if input_only and prompt is not None:
+                return None
             prompt = amount
         elif "output" in unit:
+            if input_only and completion is not None:
+                return None
             completion = amount
+    if input_only:
+        # Only the reviewed Clairic adapter has this contract. Omission for an
+        # ordinary chat model is NOT evidence that output is free.
+        if completion not in (None, 0) or cached is not None or not prompt:
+            return None
+        completion = 0
     if prompt is None or completion is None:
         return None
     return ModelPrice(
@@ -160,11 +234,12 @@ def fetch() -> ProviderPricingResult:
             "CLOUDFLARE_WORKERS_AI_API_TOKEN and "
             "CLOUDFLARE_WORKERS_AI_ACCOUNT_ID are required"
         )
-    url = f"{ACCOUNT_API.format(account_id=account_id)}/ai/models/search?per_page=100"
+    base_url = ACCOUNT_API.format(account_id=account_id)
+    url = f"{base_url}/ai/models/search?per_page=100"
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
     with httpx.Client(
         timeout=PROVIDER_FETCH_TIMEOUT,
-        follow_redirects=True,
+        follow_redirects=False,
         transport=transport,
         headers={
             "Authorization": f"Bearer {token}",
@@ -175,6 +250,16 @@ def fetch() -> ProviderPricingResult:
         response = client.get(url)
         response.raise_for_status()
         payload = response.json()
+        # A native extraction canary, never a chat PONG request. Price refresh
+        # also catches loss of entitlement or a changed usage contract.
+        rows = payload.get("result", []) if isinstance(payload, dict) else []
+        clairic_present = isinstance(rows, list) and any(
+            isinstance(row, dict) and row.get("name") == CLAIRIC_UPSTREAM for row in rows
+        )
+        clairic_healthy = (
+            os.environ.get("TR_CLOUDFLARE_WORKERS_AI_ROUTABLE") == "1"
+            and clairic_present and _clairic_canary(client, base_url)
+        )
 
     source_rows = payload.get("result") if isinstance(payload, dict) else None
     if not isinstance(source_rows, list):
@@ -209,8 +294,10 @@ def fetch() -> ProviderPricingResult:
         )
         if context is not None:
             row["context_length"] = context
+        if model_id == CLAIRIC_MODEL:
+            row.update(_clairic_row())
         discovered[model_id] = row
-        price = _model_price(properties)
+        price = _model_price(properties, input_only=model_id == CLAIRIC_MODEL)
         if price is not None:
             prices[model_id] = price
 
@@ -223,6 +310,12 @@ def fetch() -> ProviderPricingResult:
             row["routable_reason"] = (
                 "awaiting-price" if account_enabled else "account-unfunded"
             )
+
+    if account_enabled and CLAIRIC_MODEL in prices:
+        apply_canary_results(
+            discovered, checked_model_ids={CLAIRIC_MODEL},
+            healthy_model_ids={CLAIRIC_MODEL} if clairic_healthy else set(),
+        )
 
     for model_id, row in _EARLY_ACCESS_MODELS.items():
         remember_upstream_id(UPSTREAM_ID_MAP, model_id, str(row["upstream_id"]))

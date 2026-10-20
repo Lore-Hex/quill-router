@@ -1475,10 +1475,12 @@ def _authorize_gateway_sync_impl(
         if provider_model_available_from_gateway_region(
             candidate_endpoint.provider,
             candidate_endpoint.model_id,
-            # Bedrock needs an explicit, upgraded gateway origin; missing
+            # New native adapters need an explicit, upgraded gateway origin; missing
             # metadata must not inherit the receiving control plane's region.
             # Preserve legacy region fallback for already-deployed providers.
-            body.region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region),
+            body.region or ("" if candidate_endpoint.provider == "amazon-bedrock"
+                            or (candidate_endpoint.provider, candidate_endpoint.model_id)
+                            == ("cloudflare-workers-ai", "cloudflare/clairic") else region),
         )
     ]
     byok_configs = _byok_configs_for_candidates(
