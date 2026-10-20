@@ -168,6 +168,64 @@ not read it. The first such field was the hold's boot binding on its
 first heartbeat record: one release read it and stated none, and the one
 after it states it.
 
+## Turning the edge on
+
+The edge (`docs/design/fast-admission-enclave-direct.md`, E1) runs on a
+node whose instance metadata names `fastpath-edge-upstream` and
+`fastpath-edge-token-secret` (`infra/fastpath.tf`); the startup script
+reads both when it runs and passes `-edge-address`, `-edge-upstream` and
+`-edge-token-secret` to the unit. The pinned release must know those
+flags (the edge role, #1859, and its health answer, #1875); an earlier
+release refuses them and the node stays stopped, which
+`tests/test_fastpath_p1.py` holds the pin to. A read of the metadata that
+fails, or one attribute without the other, stops the startup script with
+the reason in the journal: a new node stays stopped; a rebooted node
+keeps the unit it had, since systemd starts it from disk before the
+script runs. The token is a secret version pinned by its number, the
+only form the node reads. It is the enclaves' credential, held in their
+running clients, and the control plane reads its latest version: a
+rotation is the control plane's procedure, and the enclaves carry the
+new token before anything requires it. The pin in `infra/fastpath.tf`
+moves to the new version only then, and each node takes it in turn, the
+other serving: mark it leaving, wait for its leases and for the balancer
+to turn away (below), reset it, and restart the unit as "Taking a pinned
+release" does, since a reset alone leaves the unit systemd started from
+disk running with the old argument; the running argument is read from
+the process
+(`tr -d '\0' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`)
+and must name the new version before the next node is touched.
+
+Once a route sends the enclave's calls to the edge, a node marked
+leaving still answers them until the balancer sees its health answer
+turn 503 and its last proxied request ends: `fastpathctl node` exiting 0
+says the node owns no lease, not that its edge is quiet. Before a reset
+or a stop, wait for `gcloud compute backend-services get-health
+tr-fastpath-edge-backend --global` to report the node `UNHEALTHY` and
+then the backend's request timeout (30 s) more.
+
+A node keeps the startup script it was created with (`ignore_changes` in
+`infra/fastpath.tf`; a script change is not drift, so which script a
+node runs is read from the instance, `gcloud compute instances describe
+NODE --format='value(metadata.startup-script)'`, against the template),
+so the script that reads the attributes reaches the fleet as every
+change does: a node added under a new name, which starts
+first, then the old one marked leaving, drained and removed, as "For
+each node replaced" says, one at a time, the other serving throughout. A
+same-name replacement of both nodes in one apply would leave admitted
+requests no serving front door to settle through. The pilot's watches
+and its audit loop live on a node's disk (`fastpath-p1.md`,
+`fastpath-watch.md`); start them on the new node before the old one is
+drained.
+
+After a node with the edge serves: run the infrastructure apply once more
+so its edge instance group lists it, then check the balancer's view
+(`gcloud compute backend-services get-health tr-fastpath-edge-backend
+--global`) says `HEALTHY` for it before any route sends traffic to it.
+The way back is the route (`infra/control_lb_url_map.tf`), never the
+attributes: a reset leaves the unit systemd started from disk running
+with its old arguments, as "Taking a pinned release" explains for the
+binary.
+
 ## Taking a pinned release
 
 A node takes a release pinned in `infra/fastpath.tf` (`fastpath_release`)

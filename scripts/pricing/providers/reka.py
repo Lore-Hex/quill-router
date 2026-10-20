@@ -111,9 +111,11 @@ CATALOG = DirectOpenAIProvider(
         base_url=BASE_URL,
         api_key_env=("REKA_API_KEY", "REKA_PERSONALAPI_KEY"),
         explicit_model_map=EXPLICIT_MODEL_MAP,
-        price_loader=_load_prices,
+        # Reka moved authoritative per-token prices to GET /v1/models.
+        # Only already-reviewed native identities are admitted here.
+        include=lambda row: row.get("id") in EXPLICIT_MODEL_MAP,
         expected_models=("reka/reka-edge-2603",),
-        pricing_source_url=PRICING_URL,
+        pricing_source_url=URL,
     ),
     manifest_path=MANIFEST_PATH,
 )

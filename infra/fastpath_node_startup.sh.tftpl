@@ -46,6 +46,35 @@ if [ -z "$release" ]; then
   exit 0
 fi
 address="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip'):8080"
+# The edge (docs/design/fast-admission-enclave-direct.md, E1) runs when the
+# instance's metadata names its upstream and the internal token's secret
+# version; a node without them runs as before. An attribute that is not
+# there is the edge off; a read that fails is not, so the script stops
+# here rather than write a unit without the edge the node was given: a
+# new node stays stopped, a rebooted one keeps the unit it had.
+attribute() {
+  local url="http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1" body code try
+  for try in 1 2 3 4 5; do
+    body="$(curl -s --max-time 10 -H 'Metadata-Flavor: Google' -w '\n%%{http_code}' "$url")" || body=""
+    code="$${body##*$'\n'}"
+    case "$code" in
+      200) printf '%s' "$${body%$'\n'*}"; return 0 ;;
+      404) return 0 ;;
+    esac
+    sleep 2
+  done
+  echo "fastpath: reading the instance's $1 failed ($${code:-no answer}); the startup script stops here" | systemd-cat -t fastpath -p err
+  exit 1
+}
+edge_upstream="$(attribute fastpath-edge-upstream)" || exit 1
+edge_token_secret="$(attribute fastpath-edge-token-secret)" || exit 1
+edge_flags=""
+if [ -n "$edge_upstream" ] && [ -n "$edge_token_secret" ]; then
+  edge_flags="-edge-address $${address%:*}:${edge_port} -edge-upstream $edge_upstream -edge-token-secret $edge_token_secret"
+elif [ -n "$edge_upstream$edge_token_secret" ]; then
+  echo "fastpath: the edge needs both its upstream and its token secret; the startup script stops here" | systemd-cat -t fastpath -p err
+  exit 1
+fi
 install -d /opt/fastpath
 for binary in fastpath fastpathctl; do
   gcloud storage cp "gs://${release_bucket}/fastpath/$release/$binary" "/opt/fastpath/$binary.new"
@@ -78,7 +107,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager
+  -subscriptions auditor,stager $edge_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30

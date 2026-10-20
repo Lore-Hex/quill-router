@@ -16,10 +16,26 @@ locals {
   # uploaded; a node picks a new one up when reset or replaced
   # (docs/runbooks/fastpath-p0.md). bfa94e22e: the merge of #1728, P1's run,
   # the first release carrying loadgen, fastpathwatch and load-mix.json.
-  fastpath_release        = "d99cdc04936a0257fc71c3b64eda12c01c7c8812"
+  # 6709d268e: main after the edge's health answer (#1875); the first
+  # release a node with the edge attributes may run.
+  fastpath_release        = "6709d268ef44dd5090d737a6d61903ff707d550c"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  # The edge (E1): its port, the control plane's internal surface in the
+  # nodes' region (the Cloud Run service behind /internal; its internal
+  # ingress admits a VM of this project's VPC, Cloud NAT egress included)
+  # and the internal token Python holds, a version pinned by its number
+  # (the node reads secrets that way only; Python reads the latest). The
+  # token is the enclaves' credential, held in their running clients, so
+  # its rotation is the control plane's procedure, not this file's: this
+  # pin moves to a new version only once the callers carry it, and each
+  # node is then drained and restarted in turn with its running argument
+  # checked (docs/runbooks/fastpath-deploy.md). Set on the nodes'
+  # metadata, read when a node's startup script runs.
+  fastpath_edge_port         = 8081
+  fastpath_edge_upstream     = "https://trusted-router-vsjf6qu4la-uc.a.run.app"
+  fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/1"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -157,6 +173,15 @@ resource "google_secret_manager_secret" "fastpath_envelope_key" {
   }
 }
 
+# The internal token the edge checks, the same secret the control plane
+# holds (scripts/deploy/secrets.sh creates it; it is not managed here).
+resource "google_secret_manager_secret_iam_member" "fastpath_node_gateway_token" {
+  project   = local.gcp_project_id
+  secret_id = "trustedrouter-internal-gateway-token"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.fastpath_node.member
+}
+
 resource "google_secret_manager_secret_iam_member" "fastpath_node_key" {
   project   = local.gcp_project_id
   secret_id = google_secret_manager_secret.fastpath_envelope_key.secret_id
@@ -261,8 +286,10 @@ resource "google_compute_instance" "fastpath_node" {
   }
 
   metadata = {
-    enable-oslogin   = "TRUE"
-    fastpath-release = local.fastpath_release
+    enable-oslogin             = "TRUE"
+    fastpath-release           = local.fastpath_release
+    fastpath-edge-upstream     = local.fastpath_edge_upstream
+    fastpath-edge-token-secret = local.fastpath_edge_token_secret
   }
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
@@ -271,6 +298,7 @@ resource "google_compute_instance" "fastpath_node" {
     database       = local.fastpath_database
     project        = local.gcp_project_id
     key_secret     = "projects/${local.gcp_project_id}/secrets/${google_secret_manager_secret.fastpath_envelope_key.secret_id}/versions/1"
+    edge_port      = local.fastpath_edge_port
   })
 
   labels = {
@@ -279,6 +307,20 @@ resource "google_compute_instance" "fastpath_node" {
   }
 
   allow_stopping_for_update = true
+
+  lifecycle {
+    # A node is replaced, never restarted in place, and the new one starts
+    # first (docs/runbooks/fastpath-deploy.md): a startup-script change
+    # reaches the fleet through nodes added under new names and the old
+    # ones drained and removed, not through a same-name replacement that
+    # takes both down at once. A node keeps the script it was created
+    # with; the pin and the edge attributes are metadata, applied in place.
+    # The cost: a script change is not drift here, so a node created
+    # before it runs the old script while the plan is clean and its
+    # binary matches the pin; which script a node runs is read from the
+    # instance (docs/runbooks/fastpath-deploy.md, "Turning the edge on").
+    ignore_changes = [metadata_startup_script]
+  }
 
   depends_on = [
     google_spanner_database_iam_member.fastpath_node_database,

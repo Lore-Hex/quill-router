@@ -22,7 +22,7 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
@@ -527,7 +527,12 @@ def _safe_next_path(value: str | None) -> str | None:
         return None
     if not value.startswith("/") or value.startswith("//"):
         return None
-    return value
+    if "\\" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    # Cookies are ASCII headers. Preserve existing escapes and local URL syntax,
+    # but encode Unicode before it reaches Starlette's Latin-1 header encoder.
+    encoded = quote(value, safe=":/%#?=@[]!$&'()*+,;")
+    return encoded if len(encoded) <= 2048 else None
 
 
 def _set_state_cookie(response: Response, state: str, settings: Settings) -> None:

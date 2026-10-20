@@ -29,7 +29,7 @@ on:
     - cron: "37 * * * *"
   workflow_dispatch: {}
 
-# One run at a time: a successful run takes about 30-45 minutes, and a run
+# One run at a time: queueing plus the complete CI matrix can exceed an hour, and a run
 # re-dispatches this workflow when main advances. GitHub keeps one pending
 # run per group; a newer run replaces an older pending one, never the one
 # in progress.
@@ -399,7 +399,9 @@ jobs:
 
           ci_passed=""
           ci_run_id=""
-          for _ in $(seq 1 180); do
+          # Keep exact-SHA completion mandatory, but allow the full test matrix
+          # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
+          for _ in $(seq 1 480); do
             run_json=$(gh run list \
               --repo "${GITHUB_REPOSITORY}" \
               --workflow ci.yml \
@@ -424,7 +426,7 @@ jobs:
             sleep 15
           done
           if [ -z "${ci_passed}" ]; then
-            echo "generated snapshot CI did not pass within 45 minutes"
+            echo "generated snapshot CI did not pass within 120 minutes"
             exit 1
           fi
 
