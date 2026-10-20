@@ -648,18 +648,14 @@ ENV_VARS=(
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  # Shadow v2 opt-in (design section 15.8 step 5, 2026-10-14): the v2 policy,
-  # the one dedicated probe workspace, the primary health region and the
-  # attachments bucket. The v1 observer stays off because the policy is set
-  # (main.py installs v1 only with an EMPTY policy). Money, protection and
-  # fast drain stay off. Opt-out (docs/design/async-settle-shadow-v2-activation.md,
-  # exact phase pins): empty the policy, workspaces and health-region lines and
-  # KEEP the attachment bucket pin until the retained export and retention work
-  # completes; never clear the attachment destination before that.
+  # Shadow v2 opted out after the 2026-10-20 session leak. Empty BOTH the
+  # policy and cohort so v1 is not selected either. Preserve the attachment
+  # destination for retained close/export evidence; re-enable only after a
+  # bounded session-lifecycle canary passes. Money and fast drain stay off.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
-  "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
-  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
+  "TR_ASYNC_SETTLE_SHADOW_POLICY="
+  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
