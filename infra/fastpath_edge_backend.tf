@@ -17,6 +17,9 @@
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
   fastpath_edge_retiring = ["tr-fastpath-1", "tr-fastpath-2"]
+  # The share, in percent, of the enclave's /internal/gateway/* calls the
+  # control load balancer sends through the edge (infra/control_lb_url_map.tf).
+  fastpath_edge_route_weight = 1
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.

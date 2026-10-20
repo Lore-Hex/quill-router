@@ -110,6 +110,25 @@ resource "google_compute_url_map" "control" {
       paths   = ["/internal", "/internal/*", "/v1/internal", "/v1/internal/*"]
       service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
     }
+    # The enclave's control-plane calls (docs/design/fast-admission-enclave-
+    # direct.md, E1): a share of them through the fast path's edge, which
+    # checks the boot signature and passes each call to Python unchanged
+    # with its verdict; Python still decides. The edge runs in us-central1
+    # only while the control backend serves every region, so the share
+    # starts small and bounded; the way back is its weight at 0.
+    path_rule {
+      paths = ["/internal/gateway/*"]
+      route_action {
+        weighted_backend_services {
+          backend_service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
+          weight          = 100 - local.fastpath_edge_route_weight
+        }
+        weighted_backend_services {
+          backend_service = google_compute_backend_service.fastpath_edge.id
+          weight          = local.fastpath_edge_route_weight
+        }
+      }
+    }
   }
 
   dynamic "path_matcher" {
