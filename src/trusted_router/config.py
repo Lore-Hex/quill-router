@@ -729,6 +729,9 @@ class Settings(BaseSettings):
     stripe_ach_fee_basis_points: int = 80
     stripe_ach_fee_fixed_cents: int = 0
     stripe_ach_fee_max_cents: int = 500
+    # Customer surcharge is 1.5x the grossed-up fee, including its floor/cap.
+    # Keep processor schedules unchanged; Adyen does not use this multiplier.
+    stripe_paypal_fee_multiplier_basis_points: int = 15_000
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
@@ -1548,6 +1551,8 @@ class Settings(BaseSettings):
             raise ValueError("TR_RATE_LIMIT_CLIENT_IP_MODE must be 'untrusted' or 'edge_header'")
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
+        if self.stripe_paypal_fee_multiplier_basis_points < 10_000:
+            raise ValueError("TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS must be at least 10000")
         for name, value in (
             ("TR_STRIPE_CARD_FEE_BASIS_POINTS", self.stripe_card_fee_basis_points),
             (

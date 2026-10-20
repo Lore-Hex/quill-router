@@ -1,0 +1,15 @@
+@font-face{font-family:Archivo;src:url("/assets/archivo.woff2") format("woff2");font-display:swap}
+:root{--font-display:Georgia,serif;--font-mono:ui-monospace,SFMono-Regular,Consolas,monospace;--page-max:1200px;--text-display:#f0f1e8;--text-body:#ccd3ce;--text-muted:#a8b9ae;--text-accent:#cce8d7;--border-hairline:#ffffff1a;--border-default:#ffffff2e;--surface-card:#101c15;--surface-raised:#21352a;--sage:#cce8d7;--clay:#e7ad94;--gold:#e1ce96}
+body{margin:0;background:#08110d;color:var(--text-body);font:17px/1.65 Archivo,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--text-accent);text-underline-offset:4px}a:hover{color:#fff}a:focus-visible{outline:2px solid var(--gold);outline-offset:5px}
+.index-header{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:100px;border-bottom:1px solid var(--border-hairline)}
+.index-brand{display:flex;align-items:center;gap:12px;text-decoration:none;font-size:18px;color:var(--text-display)}
+.index-header nav,.index-footer nav{display:flex;gap:24px;flex-wrap:wrap}.index-header nav a,.index-footer a{display:inline-flex;align-items:center;min-height:44px;font-size:15px}
+.index-skip{position:absolute;left:16px;top:-100px;padding:12px;background:var(--sage);color:#08110d;z-index:5}.index-skip:focus{top:8px}
+.index-supply{padding-block:52px 60px;border-block:1px solid var(--border-hairline)}.index-supply h2{font-size:40px}
+.index-actions{display:flex;align-items:center;gap:28px;flex-wrap:wrap;margin:28px 0}.index-actions a{min-height:44px;display:inline-flex;align-items:center}
+.index-button{padding:12px 22px;border-radius:4px;background:var(--sage);color:#08110d;text-decoration:none;font-weight:600}.index-button:hover{background:#e0f1e7;color:#08110d}
+.token-index .index-small{font-size:14px;max-width:760px;color:var(--text-muted)}
+.index-footer{display:flex;justify-content:space-between;align-items:center;gap:24px;padding-block:32px;font-size:14px}
+.token-index *{letter-spacing:0}.ti-button,.ti-chip{min-height:40px}.ti-chart .ti-svg{overflow:visible}
+@media(max-width:700px){.index-header{align-items:start;flex-direction:column;padding-block:22px;gap:12px}.index-header nav{gap:20px}.index-footer{align-items:start;flex-direction:column}.index-brand{font-size:17px}.index-supply h2{font-size:32px}}

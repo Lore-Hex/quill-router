@@ -23,6 +23,7 @@ from trusted_router.billing_policy import (
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.money import (
+    MICRODOLLARS_PER_CENT,
     MIN_PAYPAL_CHECKOUT_DOLLARS,
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
     money_pair,
@@ -47,6 +48,7 @@ from trusted_router.services.stripe_billing import (
     list_workspace_payments,
     remove_saved_payment_method,
 )
+from trusted_router.services.stripe_fees import scale_processing_fee_cents
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.views import render_template
@@ -129,6 +131,18 @@ def register(app: FastAPI) -> None:
                 paypal_enabled=settings.paypal_enabled
                 or settings.environment.lower() in {"local", "test"},
                 paypal_minimum_dollars=MIN_PAYPAL_CHECKOUT_DOLLARS,
+                stripe_paypal_minimum_fee_display=money(
+                    scale_processing_fee_cents(
+                        settings.checkout_card_fee_minimum_cents,
+                        settings.stripe_paypal_fee_multiplier_basis_points,
+                    ) * MICRODOLLARS_PER_CENT
+                ),
+                stripe_ach_maximum_fee_display=money(
+                    scale_processing_fee_cents(
+                        settings.stripe_ach_fee_max_cents,
+                        settings.stripe_paypal_fee_multiplier_basis_points,
+                    ) * MICRODOLLARS_PER_CENT
+                ),
                 adyen_enabled=settings.adyen_checkout_ready,
                 wallet_only_billing=wallet_only_billing,
                 saved_payment_method=saved_payment_method,

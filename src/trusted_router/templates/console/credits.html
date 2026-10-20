@@ -61,12 +61,13 @@
       <p class="form-help">
         {% if wallet_only_billing %}
         Stablecoin checkout adds prepaid credits without attaching a card or bank account.
+        Processing fees are shown separately before you pay.
         {% else %}
-        Card and PayPal checkouts show your credits and the same payment
-        processing fee as separate line items before you pay, with an $0.80
-        minimum fee. ACH and
-        stablecoin keep their lower rail-specific fees. ACH is 0.8%, capped
-        at $5, and can take up to four business days. Bank-funded credits
+        Stripe card and PayPal checkouts show your credits and the same payment
+        processing fee as separate line items before you pay, with a
+        {{ stripe_paypal_minimum_fee_display }} minimum fee. ACH and
+        stablecoin have lower rail-specific fees. The ACH fee is capped at
+        {{ stripe_ach_maximum_fee_display }}. ACH can take up to four business days. Bank-funded credits
         appear only after settlement.
         {% endif %}
       </p>
