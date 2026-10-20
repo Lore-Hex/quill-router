@@ -703,7 +703,8 @@ and `gh auth login` are done. It creates the managed identity
 `tr-github-deploy`, trusts GitHub's OIDC token for
 `repo:Lore-Hex/quill-router:ref:refs/heads/main`, grants Contributor on
 `tr-azure` and Key Vault Secrets User on the one secret the deploy reads
-(`tr-azure-clickhouse-password`), and sets the repository variable
+(`tr-azure-clickhouse-read-password`, the control plane's read-only
+ClickHouse user), and sets the repository variable
 `AZURE_DEPLOY_CLIENT_ID`. Until it has run, the workflow's first step fails
 and names the script.
 

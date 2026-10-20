@@ -178,6 +178,10 @@ from trusted_router.storage_models import (
     utcnow,
 )
 from trusted_router.storage_oauth_apps import apply_oauth_app_patch
+from trusted_router.storage_operational_analytics_reads import (
+    OperationalAnalyticsReads,
+    create_operational_analytics_client,
+)
 from trusted_router.storage_postgres_group_buy import PostgresBedrockGroupBuy
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
@@ -539,7 +543,7 @@ def _video_due_id(job: VideoJob) -> str:
     return f"{job.next_poll_at}#{job.id}"
 
 
-class PostgresStore:
+class PostgresStore(OperationalAnalyticsReads):
     """Psycopg-backed Store implementation for the first portability increment."""
 
     entity_table = "tr_entities"
@@ -554,6 +558,11 @@ class PostgresStore:
         postgres_iam_auth: str = "",
         postgres_iam_region: str = "",
         operational_analytics_outbox_enabled: bool = False,
+        record_read_backend: str = "postgres",
+        operational_analytics_clickhouse_url: str = "",
+        operational_analytics_clickhouse_user: str = "tr_control_read",
+        operational_analytics_clickhouse_password: str = "",
+        operational_analytics_clickhouse_database: str = "tr",
         trust_settings: Any = None,
         max_workspaces_per_owner: int = 25,
         trust_qualifying_providers: frozenset[str] = frozenset({"stripe", "x402"}),
@@ -565,6 +574,17 @@ class PostgresStore:
         if transaction_attempts < 1:
             raise ValueError("transaction_attempts must be positive")
         self._transaction_attempts = transaction_attempts
+        self._record_read_backend = record_read_backend
+        self._operational_analytics = (
+            create_operational_analytics_client(
+                url=operational_analytics_clickhouse_url,
+                user=operational_analytics_clickhouse_user,
+                password=operational_analytics_clickhouse_password,
+                database=operational_analytics_clickhouse_database,
+            )
+            if record_read_backend == "clickhouse"
+            else None
+        )
         self.trust_settings = trust_settings
         self.max_workspaces_per_owner = int(max_workspaces_per_owner)
         self.trust_qualifying_providers = trust_qualifying_providers
@@ -7700,7 +7720,16 @@ class PostgresStore:
         tag_value: str | None = None,
         group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
-        self._not_implemented("activity")
+        if self._record_read_backend != "clickhouse":
+            self._not_implemented("activity")
+        return super().activity(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            group_by_tag=group_by_tag,
+        )
 
     def activity_events(
         self,
@@ -7712,7 +7741,16 @@ class PostgresStore:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
-        self._not_implemented("activity_events")
+        if self._record_read_backend != "clickhouse":
+            self._not_implemented("activity_events")
+        return super().activity_events(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            limit=limit,
+        )
 
     def activity_result(
         self,
@@ -7724,7 +7762,16 @@ class PostgresStore:
         tag_value: str | None = None,
         group_by_tag: str | None = None,
     ) -> Any:
-        self._not_implemented("activity_result")
+        if self._record_read_backend != "clickhouse":
+            self._not_implemented("activity_result")
+        return super().activity_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            group_by_tag=group_by_tag,
+        )
 
     def activity_events_result(
         self,
@@ -7736,7 +7783,16 @@ class PostgresStore:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> Any:
-        self._not_implemented("activity_events_result")
+        if self._record_read_backend != "clickhouse":
+            self._not_implemented("activity_events_result")
+        return super().activity_events_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            limit=limit,
+        )
 
     def usage_series(
         self,
@@ -7747,7 +7803,15 @@ class PostgresStore:
         api_key_hash: str | None = None,
         by_model: bool = False,
     ) -> dict[str, Any]:
-        self._not_implemented("usage_series")
+        if self._record_read_backend != "clickhouse":
+            self._not_implemented("usage_series")
+        return super().usage_series(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            window_minutes=window_minutes,
+            granularity=granularity,
+            by_model=by_model,
+        )
 
     def reconcile_generation_activity(
         self,
