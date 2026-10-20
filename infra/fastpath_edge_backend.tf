@@ -15,6 +15,8 @@
 
 # local.fastpath_edge_port is infra/fastpath.tf's; the nodes' unit reads it too.
 locals {
+  # Nodes on their way out: drained, out of the backend, removed next.
+  fastpath_edge_retiring = ["tr-fastpath-1", "tr-fastpath-2"]
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
@@ -94,8 +96,14 @@ resource "google_compute_backend_service" "fastpath_edge" {
   # requests within the unit's stop timeout, which this does not extend.
   connection_draining_timeout_sec = 30
 
+  # Groups leave the backend one apply before their nodes are removed:
+  # GCP refuses to delete a group a backend service still names, and
+  # Terraform would delete the group before updating the backend.
   dynamic "backend" {
-    for_each = google_compute_instance_group.fastpath_edge
+    for_each = {
+      for name, group in google_compute_instance_group.fastpath_edge : name => group
+      if !contains(local.fastpath_edge_retiring, name)
+    }
     content {
       group          = backend.value.self_link
       balancing_mode = "UTILIZATION"
