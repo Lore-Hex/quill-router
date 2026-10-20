@@ -110,14 +110,20 @@ resource "google_compute_url_map" "control" {
       paths   = ["/internal", "/internal/*", "/v1/internal", "/v1/internal/*"]
       service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
     }
-    # The enclave's control-plane calls (docs/design/fast-admission-enclave-
-    # direct.md, E1): a share of them through the fast path's edge, which
-    # checks the boot signature and passes each call to Python unchanged
-    # with its verdict; Python still decides. The edge runs in us-central1
-    # only while the control backend serves every region, so the share
-    # starts small and bounded; the way back is its weight at 0.
+    # The enclave's authorize (docs/design/fast-admission-enclave-direct.md,
+    # E1): a share of it through the fast path's edge, which checks the boot
+    # signature and passes the call to Python unchanged with its verdict;
+    # Python still decides, and compares the verdict on this route only.
+    # Authorize alone: the enclave retries it (three attempts within 28 s),
+    # so a 503 from an unhealthy edge, which the weighted split does not
+    # fail over, is retried and lands on the control backend almost surely;
+    # the terminals (settle, refund, heartbeat, disposition) are not all
+    # retried, and the maintenance drains run longer than the edge
+    # backend's 30 s. The edge runs in us-central1 only while the control
+    # backend serves every region, so the share is small; its weight at 0
+    # is the way back.
     path_rule {
-      paths = ["/internal/gateway/*"]
+      paths = ["/internal/gateway/authorize"]
       route_action {
         weighted_backend_services {
           backend_service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
