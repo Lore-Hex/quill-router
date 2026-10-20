@@ -59,7 +59,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         published_date="2026-10-15",
         source_label="Joseph Perla",
         source_url="https://jperla.com/",
-        og_image="/static/og/blog/intelligence-gets-an-exchange.png",
+        og_image="/static/og/blog/intelligence-gets-an-exchange-funding-20261020.png",
         body_html="""
 <figure class="blog-hero-image">
   <img src="/static/og/blog/intelligence-gets-an-exchange.png" width="1200" height="630" alt="Intelligence is becoming a commodity. Commodities trade on exchanges." />
