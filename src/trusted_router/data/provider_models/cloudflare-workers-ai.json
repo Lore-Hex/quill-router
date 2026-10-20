@@ -1,9 +1,9 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-20T12:05:14Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 38,
+  "model_count": 40,
   "models": [
     {
       "display_name": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
@@ -815,6 +815,49 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-10-17"
+    },
+    {
+      "display_name": "@cf/cloudflare/clairic",
+      "title": "@cf/cloudflare/clairic",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "cloudflare/clairic",
+      "upstream_id": "@cf/cloudflare/clairic",
+      "context_length": 65536,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-20"
+    },
+    {
+      "display_name": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "title": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000
     }
   ]
 }

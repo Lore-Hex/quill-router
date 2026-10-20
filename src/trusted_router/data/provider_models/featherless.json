@@ -843,11 +843,58 @@
       "routable": true,
       "input_token_price_per_m": 225000,
       "output_token_price_per_m": 900000
+    },
+    {
+      "display_name": "stepfun-ai/Step-3.7-Flash",
+      "title": "stepfun-ai/Step-3.7-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/step-3.7-flash",
+      "upstream_id": "stepfun-ai/Step-3.7-Flash",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1150000
+    },
+    {
+      "display_name": "stepfun-ai/Step-5-Preview",
+      "title": "stepfun-ai/Step-5-Preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/step-5-preview",
+      "upstream_id": "stepfun-ai/Step-5-Preview",
+      "context_length": 262144,
+      "supported_features": [],
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 2700000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-20T12:05:14Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 34
+  "model_count": 36
 }

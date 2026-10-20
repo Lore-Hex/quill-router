@@ -189,11 +189,42 @@
       "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-10-14",
       "missing_since": "2026-10-18"
+    },
+    {
+      "display_name": "Dolly 2 Security",
+      "title": "dolly2-security",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "zro/dolly2-security",
+      "upstream_id": "dolly2-security",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2100000,
+      "output_token_price_per_m": 6600000,
+      "cached_input_token_price_per_m": 390000
     }
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-20T12:05:14Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 7
+  "model_count": 8
 }
