@@ -496,8 +496,11 @@ n=$(( $(find "$d" -maxdepth 1 -name 'call.*.stdin' | wc -l) + 1 ))
 printf '%s\0' "$@" > "$d/call.$n.argv"
 cat > "$d/call.$n.stdin"
 case " $* " in *" projects describe "*) echo 44325983244; exit 0 ;; esac
-case "$(cat "$d/call.$n.stdin")" in
+statement="$(cat "$d/call.$n.stdin")"
+if [ -f "$d/fail_on" ] && [[ "$statement" == *"$(cat "$d/fail_on")"* ]]; then exit 46; fi
+case "$statement" in
   *"system.one"*) cat "$d/replicas" ;;
+  *"name = 'second_table'"*) cat "$d/present_second" 2>/dev/null || cat "$d/present" ;;
   *"system.tables"*) cat "$d/present" ;;
   *) cat "$d/statuses" ;;
 esac
@@ -511,6 +514,8 @@ def _run_replicated_migrate(
     apply: bool,
     statuses: str = APPLIED,
     migration: str = MIGRATION_017,
+    present_second: str | None = None,
+    fail_on: str | None = None,
 ) -> SimpleNamespace:
     stub = tmp_path / "stub"
     stub.mkdir()
@@ -520,6 +525,10 @@ def _run_replicated_migrate(
     (stub / "replicas").write_text(ALL_REPLICAS + "\n")
     (stub / "present").write_text(present_on + "\n")
     (stub / "statuses").write_text(statuses + "\n")
+    if present_second is not None:
+        (stub / "present_second").write_text(present_second + "\n")
+    if fail_on is not None:
+        (stub / "fail_on").write_text(fail_on)
     args = ["--apply", migration] if apply else [migration]
     run = subprocess.run(  # noqa: S603 - the script under test, from the checkout
         ["bash", str(ROOT / "scripts/deploy/clickhouse_replicated_migrate.sh"), *args],  # noqa: S607
@@ -585,6 +594,39 @@ def test_replicated_migrate_dry_run_checks_without_applying(tmp_path: Path) -> N
     assert "dry-run" in run.stdout
     assert REPLICAS_QUERY in run.stdins and TABLES_QUERY in run.stdins
     assert not _applied(run)
+
+
+def _two_table_migration(tmp_path: Path) -> Path:
+    migration = tmp_path / "901_two_tables_replicated.sql"
+    migration.write_text(
+        "ALTER TABLE tr.spend_lease_shadow ON CLUSTER trustedrouter ADD COLUMN IF NOT EXISTS a Int64 DEFAULT 0;\n"
+        "ALTER TABLE tr.second_table ON CLUSTER trustedrouter ADD COLUMN IF NOT EXISTS b Int64 DEFAULT 0;\n"
+    )
+    return migration
+
+
+def test_replicated_migrate_checks_every_table_of_a_migration(tmp_path: Path) -> None:
+    """The presence checks run inside a `while read` over the migration's
+    targets; ssh reads its own piped statement, never the loop's input, so the
+    second table is checked too and its absence refuses the apply."""
+    migration = _two_table_migration(tmp_path)
+    run = _run_replicated_migrate(
+        tmp_path, present_on=ALL_REPLICAS, present_second="tr-clickhouse-1",
+        apply=True, migration=str(migration),
+    )
+    assert run.returncode != 0
+    assert "tr.second_table is missing on tr-clickhouse-2 tr-clickhouse-3" in run.stderr
+    assert sum("system.tables" in statement for statement in run.stdins) == 2
+    assert not _applied(run, migration.read_text().rstrip("\n"))
+
+
+@pytest.mark.parametrize("fail_on", ["system.one", "name = 'spend_lease_shadow'", "ADD COLUMN"])
+def test_replicated_migrate_stops_on_a_failed_remote_command(tmp_path: Path, fail_on: str) -> None:
+    """A remote failure at any step (replica listing, presence check, apply)
+    stops the script with that status and never reports the migration applied."""
+    run = _run_replicated_migrate(tmp_path, present_on=ALL_REPLICAS, apply=True, fail_on=fail_on)
+    assert run.returncode == 46, run.stderr
+    assert "applied" not in run.stdout
 
 
 def test_replicated_migrate_statement_survives_both_remote_shells(tmp_path: Path) -> None:
