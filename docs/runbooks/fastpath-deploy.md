@@ -13,6 +13,14 @@ main whose checks all passed.
 
 ## For each node replaced
 
+A node replaced under its own name leaves its edge instance group
+(`infra/fastpath_edge_backend.tf`) empty until the next apply adds it back:
+the apply that replaces the node compares membership by the node's self
+link, which the replacement keeps. Once the new node serves, run the
+infrastructure apply again (workflow dispatch) and check the backend's
+health reports it; until then the balancer sends the enclave's calls to
+the other node only.
+
 1. Start the new node, at an address of its own, and check that the fleet
    can use it:
 

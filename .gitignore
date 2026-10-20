@@ -22,3 +22,4 @@ proofs/states/
 
 # Terraform working directories (provider binaries, state cache)
 .terraform/
+infra/.terraform.lock.hcl
