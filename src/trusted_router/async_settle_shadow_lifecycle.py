@@ -101,6 +101,14 @@ class SlotOutcome:
 
 
 @dataclass(frozen=True)
+class PublisherFailed:
+    stamp: int
+    slot: int
+    generation: int
+    reason: str
+
+
+@dataclass(frozen=True)
 class TraceLost:
     stamp: int
     day: str
@@ -172,7 +180,7 @@ class ShutdownRequested:
     stamp: int
 
 
-Event: TypeAlias = (Tick | TraceLost | PolicyChanged | SlotOutcome | ObserverEnqueued | ObserverFolded | AttachmentAdmitted
+Event: TypeAlias = (Tick | TraceLost | PolicyChanged | SlotOutcome | PublisherFailed | ObserverEnqueued | ObserverFolded | AttachmentAdmitted
                     | AttachmentSettled | FlushReply | FinalReply | CloseResultReply | ShutdownRequested)
 
 
@@ -197,6 +205,7 @@ class StartPublisherCycle:
 class EmitTrace:
     slot: int
     outcome: str
+    unknown_outcome: bool = False
 
 
 @dataclass(frozen=True)
@@ -315,6 +324,37 @@ def lifetime_coverage(state: State) -> bool:
     return through == state.accepted_stamp//SLOT_US+1
 
 
+def _release_failed(state: State, slot: int, generation: int, reason: str) -> tuple[State, tuple[Effect, ...]]:
+    """A fault completes only the matching outstanding job, exactly once."""
+    job = state.job
+    fault = Fault(reason)
+    if (job is None or type(slot) is not int or type(generation) is not int
+            or (slot, generation) != (job.slot, job.generation)):
+        return state, (fault,)
+    identity = day_name(slot*SLOT_US)
+    d = next((d for d in state.days if d.day == identity), None)
+    if d is None:
+        # Normally an outstanding owner prevents day retirement. Retain its
+        # lifetime interval even if a caller has lost that day.
+        first = max(slot//(DAY_US//SLOT_US)*(DAY_US//SLOT_US),
+                    (state.first_slot if state.first_slot is not None else slot)+state.retired_slots)
+        last = (slot//(DAY_US//SLOT_US)+1)*(DAY_US//SLOT_US)-1
+        end = min(last, (state.accepted_stamp or slot*SLOT_US)//SLOT_US)
+        missed = end-first
+        d = Day(identity, first, end, last, scheduled=missed, missed=missed,
+                publishers=frozenset({slot}))
+    effects: list[Effect] = [fault]
+    d = replace(d, publishers=d.publishers-{slot}, scheduled=d.scheduled+1,
+                attempted=d.attempted+1, failed=d.failed+1, ready=False)
+    d = _emit(d, effects, SlotOutcome(slot*SLOT_US, slot, "failed"))
+    effects = [replace(e, unknown_outcome=True) if isinstance(e, EmitTrace) and e.slot == slot else e
+               for e in effects]
+    # The actual start is unavailable; keep the latest permitted start as the
+    # conservative cadence bound for the following cycle.
+    state = replace(state, job=None, last_actual_start=max(state.last_actual_start, job.latest_start_mono))
+    return _progress(_put(state, d), effects)
+
+
 def _tick(state: State, stamp: int, *, shutdown: bool = False,
           mono: float | None = None, admit: bool = True) -> tuple[State, list[Effect]]:
     today, slot = day_name(stamp), stamp // SLOT_US
@@ -339,12 +379,12 @@ def _tick(state: State, stamp: int, *, shutdown: bool = False,
                     first_slot=state.first_slot if state.first_slot is not None else state.days[0].first_slot)
     at = stamp/1_000_000 if mono is None else mono
     for d in state.days:
-        if d.final or d.closed or d.veto or d.day > today:
+        if d.final or d.closed or d.day > today:
             continue
         through = min(slot, d.last_slot)
         if through > d.cursor:
             count = through-d.cursor if state.publisher_enabled else 0
-            start = bool(count and admit and d.day == today and not shutdown and stamp % SLOT_US <= 250_000
+            start = bool(count and admit and not d.veto and d.day == today and not shutdown and stamp % SLOT_US <= 250_000
                          and state.job is None)
             missed = count-int(start)
             owners = d.publishers | {slot} if start else d.publishers
@@ -368,16 +408,20 @@ def _tick(state: State, stamp: int, *, shutdown: bool = False,
 def step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
     """Total over the closed event algebra, including invalid/stale replies.
 
-    Rejected events return the identical input state. A reply cannot manufacture
-    an owner, replay a completed owner, retry a final transaction, or reopen a day.
+    Rejected current publisher replies release their owner as failed. Other
+    rejected replies leave State unchanged and cannot replay a completed owner.
     """
     try:
         return _step(state, event)
     except (ValueError, TypeError, OverflowError, AttributeError):
+        if isinstance(event, SlotOutcome):
+            return _release_failed(state, event.slot, event.generation, "invalid_event")
         return state, (Fault("invalid_event"),)
 
 
 def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
+    if isinstance(event, PublisherFailed):
+        return _release_failed(state, event.slot, event.generation, event.reason)
     stamp_day = day_name(event.stamp)
     if isinstance(event, PolicyChanged):
         return replace(state, generation=max(state.generation, event.generation)), ()
@@ -398,8 +442,12 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
                 else (event.day or stamp_day) if isinstance(event, ObserverEnqueued) else event.day)
     d = next((d for d in state.days if d.day == identity), None)
     if d is None:
+        if isinstance(event, SlotOutcome):
+            return _release_failed(state, event.slot, event.generation, "gone_day")
         return state, (Fault("gone_day"),)
     if d.closed or d.veto:
+        if isinstance(event, SlotOutcome):
+            return _release_failed(state, event.slot, event.generation, "frozen_day")
         return state, (Fault("frozen_day"),)
     effects = []
     if isinstance(event, FinalReply):
@@ -416,15 +464,17 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
         d = replace(d, closed=event.success, veto=not event.success,
                     result_reply="acknowledged" if event.success else "error")
     elif d.final:
+        if isinstance(event, SlotOutcome):
+            return _release_failed(state, event.slot, event.generation, "frozen_day")
         return state, (Fault("frozen_day"),)
     elif isinstance(event, SlotOutcome):
         if (type(event.slot) is not int or type(event.generation) is not int
                 or state.job is None or event.slot != state.job.slot or event.generation != state.job.generation
                 or event.slot not in d.publishers or event.outcome not in ("missed", "lost_claim", "published", "failed")):
-            return state, (Fault("unknown_slot"),)
+            return _release_failed(state, event.slot, event.generation, "unknown_slot")
         if event.outcome != "missed":
             if event.actual_start_mono is None or not state.job.earliest_start_mono <= event.actual_start_mono <= state.job.latest_start_mono:
-                return state, (Fault("invalid_start"),)
+                return _release_failed(state, event.slot, event.generation, "invalid_start")
             state = replace(state, last_actual_start=event.actual_start_mono)
         state = replace(state, job=None)
         d = replace(d, publishers=d.publishers-{event.slot}, scheduled=d.scheduled+1,

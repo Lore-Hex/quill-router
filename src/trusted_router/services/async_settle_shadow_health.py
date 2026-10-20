@@ -8,7 +8,7 @@ import math
 import signal
 import threading
 from collections.abc import Callable, Generator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, TypeVar, cast
@@ -65,6 +65,8 @@ from trusted_router.storage_gcp_shadow_observation import (
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+# One slot lets a delayed owner callback arrive without extending any RPC budget.
+PUBLISHER_WATCHDOG_GRACE = SLOT_US / 1_000_000
 
 
 class _ObserverQuiesced(Exception):
@@ -423,6 +425,16 @@ class PublisherReply:
     originals: dict[str, Any] | None = None
 
 
+def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherReply:
+    """Unknown completion; no claim, RPC timing, or publication is inferred."""
+    trace = dict(v=2, policy_version=POLICY, contract_revision="a1",
+        day=day_at(job.slot*SLOT_US), boot=boot, slot=job.slot,
+        claim_start_us=job.slot*SLOT_US, claim_at_ns=None, observed_at_ns=None,
+        publisher_heartbeat_ns=None, body_sha256=None, ack_at_us=None, cycle_us=0,
+        outcome="failed", unknown_outcome=True, late_cycle=False, rpc_count=0, rpc_elapsed_us=0)
+    return PublisherReply(trace, (), False, job.generation, job.latest_start_mono)
+
+
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
                   job: lifecycle.PublisherJob, claim_us: int, admission: Service) -> PublisherReply:
     """Worker I/O only. All inputs are captured by the owner before submission."""
@@ -549,6 +561,7 @@ class Service:
         self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
         self.task: asyncio.Task[None] | None = None
         self.publisher_job: asyncio.Future[Any] | None = None
+        self.publisher_worker: Future[None] | None = None
         self.flush_job: asyncio.Future[Any] | None = None
         self.counters: dict[str, dict[str, Any]] = {}
         self.unknown_batches: set[Reservation] = set()
@@ -633,6 +646,10 @@ class Service:
     def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
         self.enabled()  # Publish any changed admission generation before dispatch.
+        effects: tuple[lifecycle.Effect, ...] = ()
+        job = self.state.job
+        if job is not None and self.store.clock() > job.latest_start_mono+CYCLE_SECONDS+PUBLISHER_WATCHDOG_GRACE:
+            effects = self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_watchdog"))
         if not self.state.days:
             enabled = self.contender() if publisher is None else publisher
             days = []
@@ -641,8 +658,8 @@ class Service:
                 slot = start//SLOT_US
                 days.append(lifecycle.Day(day, slot, slot-1, (start//lifecycle.DAY_US+1)*lifecycle.DAY_US//SLOT_US-1))
             self._state = lifecycle.State(days=tuple(days), publisher_enabled=enabled, generation=self.generation)
-        return self.accept(lifecycle.Tick(stamp, self.store.clock(), self.enabled() and not self.stopped.is_set()
-                                           and (publisher is True or self.contender())))
+        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock(), self.enabled() and not self.stopped.is_set()
+                                                     and (publisher is True or self.contender())))
 
     def schedule_cycle(self, slot: int, claim_us: int) -> None:
         self.assert_owner()
@@ -661,32 +678,46 @@ class Service:
             self.settings.source_revision, job, claim_us, self)
         self.publisher_reply(reply)
 
-    def publisher_reply(self, reply: PublisherReply) -> tuple[lifecycle.Effect, ...]:
+    def publisher_reply(self, reply: PublisherReply, *,
+                        job: lifecycle.PublisherJob | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
+        current = self.state.job
+        # The dispatch identity survives even a completely malformed result.
+        # A late callback must never complete the replacement job.
+        if job is not None and job != current:
+            self.publisher_faults += 1
+            return (lifecycle.Fault("invalid_publisher_reply"),)
+        job = current
+        if (isinstance(reply, PublisherReply) and isinstance(reply.trace, dict)
+                and type(reply.trace.get("slot")) is int and type(reply.generation) is int
+                and (job is None or (reply.trace["slot"], reply.generation) != (job.slot, job.generation))):
+            self.publisher_faults += 1
+            return (lifecycle.Fault("invalid_publisher_reply"),)
+        def invalid() -> tuple[lifecycle.Effect, ...]:
+            if job is not None:
+                return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
+                    job.slot, job.generation, "invalid_publisher_reply"))
+            self.publisher_faults += 1
+            return (lifecycle.Fault("invalid_publisher_reply"),)
         if (not isinstance(reply, PublisherReply) or not isinstance(reply.trace, dict)
                 or type(reply.generation) is not int or type(reply.claimed) is not bool
                 or not isinstance(reply.rpc_durations, tuple)
                 or any(type(value) is not int or value < 0 for value in reply.rpc_durations)):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return invalid()
         trace = reply.trace
-        job = self.state.job
         # Validate the entire immutable identity before counters or ownership.
         if (job is None or trace.get("slot") != job.slot or reply.generation != job.generation
                 or trace.get("day") != day_at(job.slot*SLOT_US)):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return invalid()
         day, slot = day_at(job.slot*SLOT_US), job.slot
         try:
             PUBLISHER_SLOT_TRACE(trace)
         except (ValueError, TypeError, KeyError):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return invalid()
         effects = self.accept(lifecycle.SlotOutcome(int(self.store.wall()*1_000_000), slot,
             trace["outcome"], generation=reply.generation, actual_start_mono=reply.actual_start_mono), trace=trace)
         if any(isinstance(e, lifecycle.Fault) for e in effects):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return effects
         if reply.originals is not None and trace["outcome"] == "published":
             self.startup_publication = reply.originals
         if trace["outcome"] != "missed" and reply.actual_start_mono is not None:
@@ -892,6 +923,18 @@ class Service:
         with self.lock:
             before = self.state
             self._state, effects = lifecycle.step(before, event)
+            if isinstance(event, (lifecycle.SlotOutcome, lifecycle.PublisherFailed)):
+                self.publisher_faults += sum(isinstance(e, lifecycle.Fault) for e in effects)
+            if before.job is not None and self.state.job is None:
+                for effect in effects:
+                    if isinstance(effect, lifecycle.Fault):
+                        logger.warning("shadow_v2_publisher_released slot=%s generation=%s reason=%s",
+                                       before.job.slot, before.job.generation, effect.reason)
+                self.publishing.discard(day_at(before.job.slot*SLOT_US))
+                if self.publisher_job is not None and not self.publisher_job.done():
+                    self.publisher_job.set_result(None)
+                if isinstance(event, lifecycle.PublisherFailed) and self.publisher_worker is not None:
+                    self.publisher_worker.cancel()  # Only queued work can be cancelled.
             with self.admission_lock:
                 self.generation = self.state.generation
             for effect in effects:
@@ -906,10 +949,17 @@ class Service:
                     claim_attempts=d.attempted, lost_claims=d.lost, publications=d.published, failures=d.failed))
             for effect in effects:
                 if isinstance(effect, lifecycle.EmitTrace):
-                    if trace is not None and effect.slot == trace["slot"]:
+                    emitted = trace if trace is not None and effect.slot == trace["slot"] else None
+                    if effect.unknown_outcome:
+                        assert before.job is not None
+                        emitted = failed_publisher_reply(self.journal.boot, before.job).trace
+                        day = day_at(effect.slot*SLOT_US)
+                        self.operation(day, "unknown_outcomes")
+                        self.histogram(day, "cycle_us", 0)
+                    if emitted is not None:
                         day = day_at(effect.slot*SLOT_US)
                         try:
-                            self.traces.append(day, trace)
+                            self.traces.append(day, emitted)
                         except ValueError:
                             self.journal.loss(day)
                             self.accept(lifecycle.TraceLost(event.stamp, day, effect.slot))
@@ -1241,22 +1291,43 @@ class Service:
             return
         args = (self.store, self.journal.boot, self.settings.effective_serving_region,
                 self.settings.source_revision, job, stamp, self)
+        if self.publisher_worker is not None and not self.publisher_worker.done():
+            # A watchdog cannot stop a running thread. Keep the one-worker
+            # executor bounded while its old call remains outstanding.
+            self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_worker_busy"))
+            return
+        fallback = failed_publisher_reply(self.journal.boot, job)
         if self.loop is None:
-            self.publisher_reply(publish_cycle(*args))
+            try:
+                result = publish_cycle(*args)
+            except BaseException:
+                self.publisher_reply(fallback, job=job)
+                raise
+            self.publisher_reply(result, job=job)
             return
         loop = self.loop
         reply = loop.create_future()
         self.publisher_job = reply
         def deliver(result: PublisherReply) -> None:
             try:
-                self.publisher_reply(result)
+                self.publisher_reply(result, job=job)
             finally:
                 if not reply.done():
                     reply.set_result(None)
         def execute() -> None:
-            result = publish_cycle(*args)
-            loop.call_soon_threadsafe(deliver, result)
-        self.publisher_executor.submit(execute)
+            result = fallback
+            try:
+                result = publish_cycle(*args)
+            except BaseException:
+                logger.exception("shadow_v2_publisher_failed slot=%s generation=%s", job.slot, job.generation)
+                raise
+            finally:
+                loop.call_soon_threadsafe(deliver, result)
+        try:
+            self.publisher_worker = self.publisher_executor.submit(execute)
+        except Exception:
+            deliver(fallback)
+            raise
 
     async def run(self) -> None:
         self.assert_owner()

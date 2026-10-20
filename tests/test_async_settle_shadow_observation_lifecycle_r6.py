@@ -48,8 +48,14 @@ def checked(state, event):
     after, effects = m.step(state, event)
     invariants(after)
     if any(isinstance(e, m.Fault) for e in effects):
+        current_reply = (isinstance(event, m.SlotOutcome) and state.job is not None
+                         and (event.slot, event.generation) == (state.job.slot, state.job.generation))
         # Capacity refusal during a forward tick can still account the old day.
-        if effects != (m.Fault("day_limit"),) and not any(isinstance(e, m.Fault) and e.reason == "day_limit" for e in effects):
+        if current_reply:
+            assert after.job is None
+            assert sum(d.failed for d in after.days) == sum(d.failed for d in state.days)+1
+            assert m.EmitTrace(event.slot, "failed", unknown_outcome=True) in effects
+        elif effects != (m.Fault("day_limit"),) and not any(isinstance(e, m.Fault) and e.reason == "day_limit" for e in effects):
             assert after == state
     for old in state.days:
         if old.final:
