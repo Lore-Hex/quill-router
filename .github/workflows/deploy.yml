@@ -57,6 +57,10 @@ jobs:
   gate-on-ci:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
+    # The poll below waits up to 330 min for a CI run that exists; GitHub
+    # caps a hosted job at 360. Only one deploy run is in progress at a time
+    # (the concurrency group), so at most one runner sits in this poll.
+    timeout-minutes: 350
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -75,7 +79,15 @@ jobs:
             exit 0
           fi
           echo "waiting for CI (ci.yml) on ${GITHUB_SHA}"
-          deadline=$(( $(date +%s) + 2700 ))   # 45 min, far above CI's normal ~15
+          # CI normally takes ~15 min, but a saturated runner queue has held it
+          # for hours (2026-10-19: four deploys in a row timed out here while
+          # their CI was still queued or running, then went green). So: 45 min
+          # to find the CI run at all, then wait as long as it is queued or
+          # running, up to 330 min. A red or cancelled CI still refuses at once.
+          started=$(date +%s)
+          find_deadline=$(( started + 2700 ))
+          run_deadline=$(( started + 19800 ))
+          seen=0
           while true; do
             run_json=$(gh run list \
               --repo "${GITHUB_REPOSITORY}" \
@@ -84,6 +96,7 @@ jobs:
               --json databaseId,status,conclusion \
               --jq '.[0]' || true)
             if [ -n "${run_json}" ] && [ "${run_json}" != "null" ]; then
+              seen=1
               status=$(jq -r '.status' <<<"${run_json}")
               conclusion=$(jq -r '.conclusion' <<<"${run_json}")
               echo "  ci run $(jq -r '.databaseId' <<<"${run_json}"): status=${status} conclusion=${conclusion:-<pending>}"
@@ -96,14 +109,21 @@ jobs:
                 echo "Fix main, or use workflow_dispatch hotfix=true for emergencies."
                 exit 1
               fi
+            elif [ "${seen}" = 1 ]; then
+              # The run exists; an empty or failed lookup is a transient API error.
+              echo "  CI run lookup failed for ${GITHUB_SHA}; retrying"
             else
               echo "  no CI run found yet for ${GITHUB_SHA} (queueing?)"
+              if [ "$(date +%s)" -ge "${find_deadline}" ]; then
+                echo "timed out after 45 min: no CI run found for ${GITHUB_SHA}"
+                exit 1
+              fi
             fi
-            if [ "$(date +%s)" -ge "${deadline}" ]; then
-              echo "timed out after 45 min waiting for CI on ${GITHUB_SHA}"
+            if [ "$(date +%s)" -ge "${run_deadline}" ]; then
+              echo "timed out after 330 min waiting for CI on ${GITHUB_SHA}"
               exit 1
             fi
-            sleep 20
+            sleep 30
           done
 
   build-image:

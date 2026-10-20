@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from google.api_core.exceptions import NotFound
+
 
 def elapsed_clock() -> float:
     if hasattr(time, "CLOCK_BOOTTIME"):
@@ -69,6 +71,14 @@ class Sessions:
         self.database = database
         self.lock = threading.Lock()
         self.session: Any = None
+        self.retired: Any = None
+        self.creation_unknown = False
+
+    def retire(self) -> None:
+        # Keep the server identity until deletion succeeds. Dropping it here
+        # leaks one server-side session on every failed scheduled operation.
+        if self.session is not None:
+            self.retired, self.session = self.session, None
 
     def get_session(self, transaction_type: Any) -> Any:
         scope = scope_now()
@@ -76,14 +86,26 @@ class Sessions:
             raise TimeoutError("shadow_checkout")
         try:
             scope.remaining()
+            if self.creation_unknown:
+                # CreateSession is not idempotent. A lost reply may have
+                # allocated a session whose identity we cannot clean up.
+                # Quarantine this observer rather than allocate indefinitely.
+                raise RuntimeError("shadow_session_creation_unknown")
+            if self.retired is not None:
+                self.retired.delete()
+                self.retired = None
+                scope.remaining()
             if self.session is None:
                 from google.cloud.spanner_v1.session import Session
-                session = Session(self.database)
+                session = Session(self.database, labels={"tr_component": "shadow-v2"})
+                self.creation_unknown = True
                 session.create()
                 self.session = session
+                self.creation_unknown = False
             scope.remaining()
             return self.session
         except Exception:
+            self.retire()
             self.lock.release()
             raise
 
@@ -161,17 +183,25 @@ def configure(database: Any) -> None:
                         except Exception:
                             manager = getattr(database, "_sessions_manager", None)
                             if isinstance(manager, Sessions):
-                                manager.session = None
+                                manager.retire()
                             raise RuntimeError("shadow_stream_failed") from None
                         finally:
                             measured()
                     return consume()
-                scope.remaining()
+                # Let the SDK record a successful creation's server identity
+                # before checkout enforces the deadline. Otherwise a late
+                # reply becomes an orphan we can neither reuse nor delete.
+                if _name != "create_session":
+                    scope.remaining()
                 return result
-            except Exception:
+            except Exception as error:
+                # Deletion is idempotent, but NotFound from a query is not:
+                # the missing resource might be a table rather than a session.
+                if _name == "delete_session" and isinstance(error, NotFound):
+                    return None
                 manager = getattr(database, "_sessions_manager", None)
                 if isinstance(manager, Sessions):
-                    manager.session = None  # Reacquire only on a later scheduled operation.
+                    manager.retire()  # Delete before any later replacement.
                 # Non-SDK exceptions stop Session/Transaction/stream retry loops.
                 raise RuntimeError("shadow_rpc_failed") from None
             finally:
