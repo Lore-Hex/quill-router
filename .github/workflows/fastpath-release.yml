@@ -23,7 +23,7 @@ jobs:
       COMMIT: ${{ github.event.workflow_run.head_sha }}
       BUCKET: tr-fastpath-releases-quill-cloud-proxy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-go@v5

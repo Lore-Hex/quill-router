@@ -62,7 +62,7 @@ jobs:
 
       # Release policy comes from the reviewed workflow revision, not the
       # historical application artifact selected below.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: ops
 

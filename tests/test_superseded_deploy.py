@@ -152,7 +152,7 @@ def test_main_skips_when_the_comparison_fails(
 def test_the_workflow_asks_the_script_before_skipping() -> None:
     job = _workflow()["jobs"]["confirm-current-main"]
     checkout = job["steps"][0]
-    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["uses"] == "actions/checkout@v7"
     assert checkout["with"]["sparse-checkout"] == "scripts/deploy/superseded_deploy.py"
     run = job["steps"][1]["run"]
     current = run.index('if [ "${latest_sha}" = "${GITHUB_SHA}" ]')
