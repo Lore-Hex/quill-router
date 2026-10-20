@@ -74,6 +74,22 @@ def test_docs_render_minimum_charge_and_rounding_rules(client: TestClient, path:
     assert len(sections[0].select("#billing-examples tbody tr")) == 2
 
 
+def test_nyte_docs_distinguish_aliases_from_privacy_policy(client: TestClient) -> None:
+    page = BeautifulSoup(client.get("/docs").text, "html.parser")
+    section = page.select_one("#nyte-api")
+    assert section is not None
+    text = section.get_text(" ", strip=True)
+    for expected in (
+        "https://api.nytokenexchange.com/v1",
+        "https://api.confidential.nytokenexchange.com/v1",
+        "nyte/auto", "nyte/confidential", "identical routing and billing",
+        "provider.min_privacy", "fails closed", "ordinary endpoint",
+        "existing balance and key limits", "https://trustedrouter.com/v1",
+    ):
+        assert expected in text
+    assert '"min_privacy":"confidential"' in section.select_one("pre").get_text()
+
+
 @pytest.mark.parametrize("path", ["/docs", "/pricing"])
 @pytest.mark.parametrize(
     ("row_index", "input_tokens", "output_tokens", "input_price", "output_price", "expected_raw", "expected_components", "expected_bill", "expected_multiple", "rounding_note"),

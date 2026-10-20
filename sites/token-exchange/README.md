@@ -45,6 +45,27 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ## Build and Test
 
+### Spot exchange API
+
+New York's homepage includes `spot-api.html`, a streaming quickstart using
+`api.confidential.nytokenexchange.com/v1` with explicit confidential routing.
+`api.nytokenexchange.com/v1` is the general catalog endpoint. Both use the
+existing TrustedRouter key, balance and request semantics; `nyte/*` aliases
+canonicalize to `trustedrouter/*`. Account management stays on trustedrouter.com.
+The documentation is at https://trustedrouter.com/docs#nyte-api.
+
+These API names terminate inside quill-cloud-proxy's attested gateway. Its DNS
+reconciler publishes each name only after TLS and attestation qualification,
+including the confidential policy probe where required. Website deployment
+does not create API records or terminate prompt traffic. Preserve the website's
+apex/www routing and Certificate Manager authorization records. Publish the
+quickstart only after both API origins pass production tests. For a narrow
+release, back up and update only New York's index and the isolated
+`assets/spot-api.css`, preserving concurrent asset versions and unrelated market
+pages. If the live homepage differs from the build, insert only the new
+stylesheet link, navigation link, hero action and spot API section into fresh
+live HTML. Verify reversing those four changes reproduces the original bytes.
+
 ### Public New York media kit
 
 `https://nytokenexchange.com/media-kit` (also `/media-kit.html`) is the public

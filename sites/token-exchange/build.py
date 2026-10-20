@@ -105,6 +105,18 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
+            "spot_api_styles": (
+                '<link rel="stylesheet" href="/assets/spot-api.css?v='
+                + hashlib.sha256((HERE / "spot-api.css").read_bytes()).hexdigest()[:12] + '">'
+                if market["slug"] == "new-york" else ""
+            ),
+            "spot_api_link": '<a href="#spot-api">Spot API</a>' if market["slug"] == "new-york" else "",
+            "hero_secondary": (
+                '<a class="button secondary" href="#spot-api">Use the spot exchange</a>'
+                if market["slug"] == "new-york" else
+                '<a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a>'
+            ),
+            "spot_api": (HERE / "spot-api.html").read_text() if market["slug"] == "new-york" else "",
             "media_kit_url": "https://nytokenexchange.com/media-kit" if market["slug"] == "new-york" else "https://trustedrouter.com/media-kit",
             "hero_headline": headline,
             "provider_ticker": provider_ticker(),
@@ -148,7 +160,7 @@ def build(output: Path) -> None:
         (HERE / "exchange.css").read_bytes() + (HERE / "exchange.js").read_bytes()
         + (HERE / "live-evidence.js").read_bytes() + (HERE / "analytics.js").read_bytes()
     ).hexdigest()[:12]
-    for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js"):
+    for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js", "spot-api.css"):
         shutil.copyfile(HERE / name, assets / name)
     # Shared public pages. The provider deck itself remains private.
     for page in ("providers", "badge"):

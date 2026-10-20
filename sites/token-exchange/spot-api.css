@@ -1,0 +1,7 @@
+.spot-api{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:40px;border-bottom:1px solid var(--line)}
+.spot-api h2{font-size:38px}.spot-api h3{margin-top:0}.spot-api p{color:var(--muted)}.spot-api .section-intro h2+p{margin-top:24px}
+.spot-api-actions{margin-top:28px}.spot-api-example{min-width:0}
+.spot-api pre{max-width:100%;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:22px;background:#101814;border:1px solid var(--line);border-radius:6px;font:13px/1.8 monospace;tab-size:2}
+.spot-api-note{font-size:15px}.spot-api-note code,.spot-api-aliases code{overflow-wrap:anywhere}
+.spot-api-aliases{grid-column:1/-1;font-size:15px;margin:0}
+@media(max-width:800px){.spot-api{grid-template-columns:1fr;gap:28px}.spot-api h2{font-size:32px}.spot-api pre{padding:16px}}
