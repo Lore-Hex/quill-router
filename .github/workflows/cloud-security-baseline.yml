@@ -51,6 +51,8 @@ on:
     branches: [main]
     paths:
       - "scripts/deploy/gcp_security_baseline_check.sh"
+      - "scripts/deploy/public_surface_edge.sh"
+      - "scripts/deploy/_active_revision.sh"
       - "scripts/deploy/azure_security_baseline_check.sh"
       - ".github/workflows/cloud-security-baseline.yml"
   workflow_dispatch:
