@@ -436,10 +436,13 @@ _EDGE_BOOT_VERDICTS = _EDGE_BOOT_VERDICTS_DECIDED | {"unread", "unchecked", "abs
 def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None:
     """An observation: nothing it does reaches the response.
 
-    Every call that came through the edge (it carries the verdict header)
-    is counted, as agree, differ or skipped (a verdict the edge could not
-    reach), so the absence of disagreements can be told from the absence
-    of comparisons; a disagreement is also a warning."""
+    Each authorize that came through the edge (it carries the verdict
+    header) and reaches this comparison is counted, as agree, differ or
+    skipped (a verdict the edge could not reach), so the absence of
+    disagreements can be told from the absence of comparisons; a
+    disagreement is also a warning. A call rejected before it (internal
+    token, key, admission limits) is not counted: its share is the edge
+    backend's requests less these lines."""
     try:
         verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
         if verdict is None:
