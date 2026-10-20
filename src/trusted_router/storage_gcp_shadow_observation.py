@@ -206,6 +206,10 @@ class ObservationStore:
         tx.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
             values=[(r.kind, r.key, r.body.decode("utf-8"), (COMMIT_TIMESTAMP if r.kind == HEALTH_KIND else dt.datetime.fromtimestamp(self.wall(), dt.UTC))) for r in rows])
 
+    def read_shadow_claim(self, budget: Budget) -> dict[str, Any] | None:
+        row = self.read(CLAIM_KIND, "local/publish", budget.child(CYCLE_SECONDS))
+        return row.value() if row is not None else None
+
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
         original = None

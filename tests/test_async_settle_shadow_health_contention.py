@@ -23,6 +23,8 @@ def native_owner(native):
     clock.now = job.earliest_start_mono
     svc.store = ObservationStore(db, clock=clock.monotonic, wall=lambda: wall[0]/1e6)
     db.commit_duration = .02
+    # These tests isolate the incumbent read-write transaction outcome.
+    svc.incumbent_slot = job.slot-1
     return svc, job, db, clock, sleeps
 
 
@@ -156,6 +158,7 @@ def test_aborted_claim_then_commit_deadline_stays_unknown(sdk_database):  # noqa
     svc.tick(stamp)
     next_job = svc.state.job
     assert next_job is not None
+    svc.incumbent_slot = next_job.slot-1
     svc.submit_publisher(next_job.slot, stamp)
     outcome(svc, next_job, "failed", unknown=True)
     counts = svc.counters[m.day_name(NOW_US)]["publisher"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import logging
 import math
 import signal
@@ -11,6 +12,7 @@ from collections.abc import Callable, Generator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
+from time import sleep
 from typing import Any, TypeVar, cast
 
 from trusted_router import async_settle_shadow_lifecycle as lifecycle
@@ -438,8 +440,14 @@ def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherR
     return PublisherReply(trace, (), False, job.generation, job.latest_start_mono)
 
 
+def follower_stagger(boot: str, slot: int) -> float:
+    bucket = int.from_bytes(hashlib.sha256(f"{boot}:{slot}".encode()).digest()[:8], "big") % 3
+    return (60 + 30 * bucket) / 1000
+
+
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
-                  job: lifecycle.PublisherJob, claim_us: int, admission: Service) -> PublisherReply:
+                  job: lifecycle.PublisherJob, claim_us: int, admission: Service,
+                  incumbent: bool = False) -> PublisherReply:
     """Worker I/O only. All inputs are captured by the owner before submission."""
     started = store.clock()
     slot = job.slot
@@ -467,15 +475,38 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 generation = admission.generation
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
-                reason = ("revoked" if generation != job.generation or admission.revocation_epoch else
+                reason = ("revoked" if generation != job.generation or admission.revocation_epoch
+                    or admission.admission_job != job else
                     "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
                         and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
                 if reason is not None:
                     return
                 budget = Budget(started + CYCLE_SECONDS, store.clock)
-                attempted, outcome = True, "failures"
             finally:
                 admission.admission_lock.release()
+            if not incumbent:
+                sleep(follower_stagger(boot, slot))
+                # The admitted start and budget include the stagger. Recheck the
+                # owner before any I/O; a retired job remains a missed slot.
+                if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
+                    raise TimeoutError("publisher_admission")
+                try:
+                    if (admission.generation != job.generation or admission.revocation_epoch
+                            or admission.admission_job != job):
+                        reason = "revoked"
+                        return
+                    if (store.clock() > job.latest_start_mono
+                            or int(store.wall()*1_000_000) // SLOT_US != slot):
+                        reason = "outside_window"
+                        return
+                finally:
+                    admission.admission_lock.release()
+            attempted, outcome = True, "failures"
+            if not incumbent:
+                current = store.read_shadow_claim(budget)
+                if current is not None and current["slot"] == slot and current["owner_boot_id"] != boot:
+                    outcome = "lost_claims"
+                    return
             if not store.claim(boot, slot, actual_us, budget):
                 outcome = "lost_claims"
                 return
@@ -548,6 +579,8 @@ class Service:
         # Workers linearize ordinary generation admission under this lock.
         self.admission_lock = threading.RLock()
         self.generation = 0
+        self.admission_job: lifecycle.PublisherJob | None = None
+        self.incumbent_slot: int | None = None
         # Terminal epoch: every publisher job is issued in epoch zero. Once a
         # signal revokes it, no later owner transition can reopen admission.
         self.revocation_epoch = 0
@@ -684,8 +717,12 @@ class Service:
         if job is None or job.slot != slot:
             return
         reply = publish_cycle(self.store, self.journal.boot, self.settings.effective_serving_region,
-            self.settings.source_revision, job, claim_us, self)
+            self.settings.source_revision, job, claim_us, self, self.is_incumbent(slot))
         self.publisher_reply(reply)
+
+    def is_incumbent(self, slot: int) -> bool:
+        self.assert_owner()
+        return self.incumbent_slot in (slot-1, slot-2)
 
     def publisher_reply(self, reply: PublisherReply, *,
                         job: lifecycle.PublisherJob | None = None) -> tuple[lifecycle.Effect, ...]:
@@ -727,6 +764,7 @@ class Service:
             trace["outcome"], generation=reply.generation, actual_start_mono=reply.actual_start_mono), trace=trace)
         if any(isinstance(e, lifecycle.Fault) for e in effects):
             return effects
+        self.incumbent_slot = slot if trace["outcome"] == "published" else None
         if reply.originals is not None and trace["outcome"] == "published":
             self.startup_publication = reply.originals
         if trace["outcome"] != "missed" and reply.actual_start_mono is not None:
@@ -946,6 +984,9 @@ class Service:
                     self.publisher_worker.cancel()  # Only queued work can be cancelled.
             with self.admission_lock:
                 self.generation = self.state.generation
+                self.admission_job = self.state.job
+            if isinstance(event, lifecycle.PublisherFailed) and before.job is not None and self.state.job is None:
+                self.incumbent_slot = None
             for effect in effects:
                 if isinstance(effect, lifecycle.StartFinalClose):
                     self.journal.days[effect.day].sealing = True
@@ -1299,7 +1340,7 @@ class Service:
         if job is None or job.slot != slot:
             return
         args = (self.store, self.journal.boot, self.settings.effective_serving_region,
-                self.settings.source_revision, job, stamp, self)
+                self.settings.source_revision, job, stamp, self, self.is_incumbent(slot))
         if self.publisher_worker is not None and not self.publisher_worker.done():
             # A watchdog cannot stop a running thread. Keep the one-worker
             # executor bounded while its old call remains outstanding.

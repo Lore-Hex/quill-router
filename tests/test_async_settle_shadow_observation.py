@@ -78,6 +78,8 @@ def install_scheduler(monkeypatch):
     # No wall timer is allowed to race CPU-only fake-store work.
     scheduler.timeout = lambda seconds: nullcontext()
     monkeypatch.setattr(module, "asyncio", scheduler)
+    # Timing witnesses supply an advancing wait; other offline clocks stay fixed.
+    monkeypatch.setattr(module, "sleep", lambda seconds: None, raising=False)
     return scheduler
 
 
