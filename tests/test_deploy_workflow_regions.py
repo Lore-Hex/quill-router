@@ -321,7 +321,7 @@ def test_secondaries_ramp_serially() -> None:
     _assert_rollout_secondaries_requires_successful_deploy(workflow)
     assert "timeout-minutes: 55" in rollout
     first_step = rollout.index("- name: Import production deployment mutex fence")
-    checkout = rollout.index("- uses: actions/checkout@v4")
+    checkout = rollout.index("- uses: actions/checkout@v7")
     assert first_step < checkout
     assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_OPERATION" in rollout
     assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_GENERATION" in rollout

@@ -61,7 +61,7 @@ def test_schema_audit_workflow_pins_schedule_identity_permissions_and_emulator()
         "workload_identity_provider": WIF_PROVIDER,
         "service_account": "tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com",
     }
-    assert steps[0]["uses"] == "actions/checkout@v4"
+    assert steps[0]["uses"] == "actions/checkout@v7"
     assert any(step.get("uses") == "google-github-actions/setup-gcloud@v3" for step in steps)
     assert any(step.get("uses") == "astral-sh/setup-uv@v7" and step.get("with") == {"version": "latest"} for step in steps)
     assert any(step.get("run") == "uv sync --frozen" for step in steps)
@@ -431,7 +431,7 @@ def test_wif_environment_file_references_are_unresolved(wif_repository_copy: Pat
     script = f'echo "WIF={WIF_PROVIDER}" >> "{reference}"'
     write = {'run': script, 'shell': 'bash'}
     if field == 'with':
-        write = {'uses': 'actions/checkout@v4', 'with': {'path': script}}
+        write = {'uses': 'actions/checkout@v7', 'with': {'path': script}}
     elif field == 'env':
         write = {'run': f'echo "WIF={WIF_PROVIDER}" >> "$ENV_FILE"', 'shell': 'bash', 'env': {'ENV_FILE': reference}}
     if writer != 'direct':
