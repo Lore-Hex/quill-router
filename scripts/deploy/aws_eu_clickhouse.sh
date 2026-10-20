@@ -416,12 +416,16 @@ NEXT_STEPS=$(cat <<NEXT
 The node is up WITH ITS SCHEMA APPLIED, but the AWS cloud is NOT complete. Run
 these, in order, and this script will exit 0 the next time it is run:
 
-  1. redeploy the control plane so settle enqueues and the outbox is readable:
-     the AWS deploy (.github/workflows/deploy-aws-control-plane.yml, which runs
-     scripts/deploy/aws_ecs_control_plane.sh) clones the running ECS task
-     definition of each region, whose TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL
-     must be
+  1. redeploy the control plane with the AWS deploy
+     (.github/workflows/deploy-aws-control-plane.yml, which runs
+     scripts/deploy/aws_ecs_control_plane.sh): it carries each service task
+     definition forward and pins TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true,
+     which is what makes settle enqueue. Only tr-cp-euw3 (Paris) reads this
+     node: there TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL must be
        http://${PRIVATE_IP}:8123
+     with user tr_control_read and the password in
+     quill/tr-eu-clickhouse-read-password. eu-west-1 needs no ClickHouse
+     setting; it cannot reach this address.
 
   2. install the process that actually MOVES rows — the step that was missed:
        bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
