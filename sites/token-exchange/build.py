@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from evidence import render_evidence, sector_art
 from member_badges import build_badges
 from press import build_press
+from token_index_page import build_token_index
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -110,13 +111,14 @@ def render(market: dict, markets: list[dict], version: str) -> str:
                 + hashlib.sha256((HERE / "spot-api.css").read_bytes()).hexdigest()[:12] + '">'
                 if market["slug"] == "new-york" else ""
             ),
-            "spot_api_link": '<a href="#spot-api">Spot API</a>' if market["slug"] == "new-york" else "",
+            "spot_api_link": '<a href="#spot-api">API quick start</a><a href="/index">Index</a>' if market["slug"] == "new-york" else "",
             "hero_secondary": (
                 '<a class="button secondary" href="#spot-api">Use the spot exchange</a>'
                 if market["slug"] == "new-york" else
                 '<a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a>'
             ),
             "spot_api": (HERE / "spot-api.html").read_text() if market["slug"] == "new-york" else "",
+            "open_stack": (HERE / "open-stack.html").read_text() if market["slug"] == "new-york" else "",
             "media_kit_url": "https://nytokenexchange.com/media-kit" if market["slug"] == "new-york" else "https://trustedrouter.com/media-kit",
             "hero_headline": headline,
             "provider_ticker": provider_ticker(),
@@ -170,6 +172,7 @@ def build(output: Path) -> None:
         shutil.copyfile(HERE / name, assets / name)
     build_badges(assets / "badges")
     build_press(output)
+    build_token_index(output)
     for name in ("nyte-routing-demo.mp4", "nyte-routing-demo-poster.jpg"):
         shutil.copyfile(HERE / "media" / name, assets / name)
     for art in sorted((HERE / "art").glob("*.webp")):
@@ -196,6 +199,7 @@ def build(output: Path) -> None:
             '<url><loc>https://nytokenexchange.com/providers</loc></url>'
             '<url><loc>https://nytokenexchange.com/badge</loc></url>'
             '<url><loc>https://nytokenexchange.com/media-kit</loc></url>'
+            '<url><loc>https://nytokenexchange.com/index</loc></url>'
             if market["slug"] == "new-york" else ""
         )
         (folder / "sitemap.xml").write_text(
