@@ -53,10 +53,6 @@
       }
     },
     "infra/fastpath_deploy_roles.tf": {
-      "# compute.firewalls.create, which only this role carries among the": {
-        "count": 1,
-        "reason": "Comment naming a Compute Engine firewall IAM permission; it neither contains nor dispatches a Spanner schema statement."
-      },
       "# What the deploy identity needs to create the fast path's install": {
         "count": 1,
         "reason": "Human-readable comment describing IAM permissions, not a Spanner DDL statement; the Terraform file only imports and declares project IAM members."
