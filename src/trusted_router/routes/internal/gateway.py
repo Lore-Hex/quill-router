@@ -441,8 +441,8 @@ def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None
     skipped (a verdict the edge could not reach), so the absence of
     disagreements can be told from the absence of comparisons; a
     disagreement is also a warning. A call rejected before it (internal
-    token, key, admission limits) is not counted: its share is the edge
-    backend's requests less these lines."""
+    token, key, admission limits) is not counted, and neither is one the
+    edge forwarded without a verdict (its own token check failed)."""
     try:
         verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
         if verdict is None:

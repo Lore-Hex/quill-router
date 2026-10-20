@@ -110,13 +110,13 @@ def test_the_edges_verdict_is_compared_with_the_routes(
         (None, True, None, None),
     ],
 )
-def test_every_call_through_the_edge_is_counted(
+def test_every_comparison_of_an_edge_verdict_is_counted(
     caplog: pytest.LogCaptureFixture, verdict: str | None, signed: bool, result: str | None, logged_edge: str | None,
 ) -> None:
     """Agreement, disagreement and a skip are each one counted line, so a
     run with no disagreements can be told from a run with no comparisons;
-    a call that did not come through the edge is not counted, and a header
-    value outside the edge's verdicts is never logged as given."""
+    a call without the verdict header is not counted, and a header value
+    outside the edge's verdicts is never logged as given."""
     with caplog.at_level(logging.INFO, logger=gateway.logger.name):
         gateway._compare_edge_boot_verdict(_request(verdict), "boot-1", signed)
     lines = [r.getMessage() for r in caplog.records if "edge boot verdict compared" in r.getMessage()]
