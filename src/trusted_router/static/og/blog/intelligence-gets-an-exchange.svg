@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Intelligence is becoming a commodity. Today it gets an exchange.</title>
+  <desc id="desc">New York Token Exchange, powered by TrustedRouter. Commodities trade on exchanges.</desc>
+  <rect width="1200" height="630" fill="#08110d"/>
+  <g transform="translate(62 58) scale(2.1)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1.4 7.5 H6.5 L11 12 M1.4 16.5 H4 L8.5 12 M1.4 12 H15.5" stroke="#f0f1e8" stroke-width="2"/>
+    <circle cx="15.5" cy="12" r="1.9" fill="#cce8d7"/>
+    <path d="M17.4 12 H22.6" stroke="#cce8d7" stroke-width="2"/>
+  </g>
+  <g font-family="Archivo,Arial,sans-serif" letter-spacing="0">
+    <text x="130" y="93" fill="#f0f1e8" font-size="29" font-weight="600">New York Token Exchange</text>
+    <text x="64" y="230" fill="#f0f1e8" font-size="64" font-weight="700">Intelligence is becoming</text>
+    <text x="64" y="307" fill="#f0f1e8" font-size="64" font-weight="700">a commodity.</text>
+    <text x="64" y="406" fill="#cce8d7" font-size="48" font-weight="500">Today it gets an exchange.</text>
+    <path d="M64 484 H1136" stroke="#426151" stroke-width="1"/>
+    <text x="64" y="548" fill="#cce8d7" font-size="24">nytokenexchange.com</text>
+    <text x="1136" y="548" text-anchor="end" fill="#f0f1e8" font-size="22">Powered by TrustedRouter</text>
+  </g>
+</svg>

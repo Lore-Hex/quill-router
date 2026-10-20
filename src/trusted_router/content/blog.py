@@ -42,12 +42,83 @@ class BlogPost:
 #: or a rename would otherwise empty this section in silence, and an empty
 #: featured section looks exactly like a design choice.
 FEATURED_SLUGS: tuple[str, ...] = (
+    "intelligence-gets-an-exchange",
     "we-raised-1-25m-seed",
     "prometheus-2-new-draco-state-of-the-art",
     "they-are-still-training-on-your-data",
 )
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
+    BlogPost(
+        slug="intelligence-gets-an-exchange",
+        title="Intelligence is becoming a commodity. Today it gets an exchange.",
+        description=(
+            "Introducing the New York Token Exchange: one endpoint with a whole market "
+            "of models and GPUs behind it, so every token you buy is safer, smarter and cheaper."
+        ),
+        published_date="2026-10-15",
+        source_label="Joseph Perla",
+        source_url="https://jperla.com/",
+        og_image="/static/og/blog/intelligence-gets-an-exchange.png",
+        body_html="""
+<figure class="blog-hero-image">
+  <img src="/static/og/blog/intelligence-gets-an-exchange.png" width="1200" height="630" alt="Intelligence is becoming a commodity. Commodities trade on exchanges." />
+</figure>
+<p><em>Introducing the New York Token Exchange: one endpoint with a whole market of models and GPUs behind it, so every token you buy is safer, smarter and cheaper.</em></p>
+
+<p>At the start of this year, plenty of smart people expected a monotheistic world: one lab, one true model, running every part of the economy and learning from every prompt anyone ever sent it.</p>
+<p>By the third quarter that world had already cracked into a handful of serious providers.</p>
+<p>And it's going to keep cracking.</p>
+<p>Within a couple of years I expect thousands of models and tens of thousands of suppliers, from frontier labs and neoclouds to enterprise racks that sit idle every night.</p>
+<p>We bet on that polytheistic future when we started <a href="https://trustedrouter.com">TrustedRouter</a>, and it's arriving faster than we planned. Since May, we've grown to thousands of customers and are on track for more than a trillion tokens a year, across 600+ models from 100+ providers.</p>
+<p>Electricity is a commodity. GPU hours are becoming one. AI tokens are next.</p>
+<p>And commodities trade on exchanges.</p>
+<p><strong>So today we're opening the <a href="https://nytokenexchange.com/">New York Token Exchange</a> (NYTE)</strong>, named for the city where the world's markets already live. To state the obvious: it's a market for AI inference, not a securities or crypto exchange.</p>
+
+<h2>A commodity is as good as its grade</h2>
+<p>Every commodity market runs on a standard. Oil trades because a barrel of West Texas Intermediate means the same thing in every contract. Beef has its USDA stamp.</p>
+<p>AI has no standard yet. Every provider is a separate deal, with its own contract and a list price you can't benchmark. And the grade that matters most is one nobody can check at all: what happens to your prompt.</p>
+<p>AI is the most intimate technology humans have ever invented, and enterprises now send it their privileged litigation files, patient records and deal models. Ask who can read those prompts and the answer is a policy agreement: a hyperscaler contract, a router's account setting, a lab's promise not to train on your data that, <a href="https://trustedrouter.com/blog/they-are-still-training-on-your-data">read closely</a>, still allows training on a so-called synthetic copy.</p>
+<p>Well, you can't test a policy. As one of our legal customers put it: "'<em>Trust us, we won't peek</em>' was never an acceptable answer to give a client."</p>
+
+<h2>The new standard for confidential compute</h2>
+<p>On the New York Token Exchange, privacy is part of the spec, as verifiable as price. You price any route side by side, set your own terms (approved suppliers, a privacy floor, fallbacks, spend limits), and verify every prompt. Requests pass through our <a href="https://github.com/Lore-Hex">source-available gateway</a>, which runs inside confidential hardware, keeps no prompt or output logs, and publishes an attestation your systems can check before a single prompt leaves the building.</p>
+<p>Exchange routes require confidential compute at the supplier too, so the prompt stays encrypted until it reaches hardware that has been checked first.</p>
+<p>Nobody gets in. Not an eavesdropper, not our own team, not the cloud operator, not a subpoena, not a swapped software image, not an unverified supplier.</p>
+<p>If no route meets your terms, the request is refused, never quietly rerouted.</p>
+<p>Don't take my word for it. Point your security team or agent at <a href="https://trust.trustedrouter.com/">trust.trustedrouter.com</a> and the source, and have them check.</p>
+<p>Plugging NYTE into any app is one OpenAI-compatible endpoint away, and you keep your code, your keys and the gateway you already run.</p>
+<p>In this demo, a company moves its marketing team to an open model on the exchange, and the same request drops from five and a half cents to under half a cent.</p>
+<video class="blog-video-embed" src="/static/blog/nyte-routing-demo.mp4" poster="/static/blog/nyte-routing-demo-poster.jpg" controls playsinline preload="none" width="720" height="405" style="display:block;width:100%;height:auto;aspect-ratio:16/9" title="Demo: a company's agent gateway routes its marketing team to GLM 5.2 on the New York Token Exchange">
+  <a href="/static/blog/nyte-routing-demo.mp4">Watch the New York Token Exchange routing demo</a>.
+</video>
+<p><em>Illustrative demo, actual savings vary.</em></p>
+
+<h2>From one lab to thousands of suppliers</h2>
+<p>An exchange only works if it's neutral. We don't own GPUs and we don't pretrain models. We use the ones our suppliers bring, so every supplier competes in the open on every request, from the big clouds to a GPU cluster that came online last week.</p>
+<p>That matters because most of what you pay for an AI token today is margin, not compute, and competition is what takes margin out.</p>
+<p>It also changes the contracts you already have. With a live market price next to your current quote, switching is a policy change instead of a migration, and traffic you never move still gets cheaper.</p>
+<p>A market can also build things no single provider can.</p>
+<p>Fusion is one of them: many open models from different suppliers answering together. On a 100-task agentic research benchmark, the best fusion <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">beats every frontier model</a> running alone, at a fraction of the cost.</p>
+<p>By next year we want a CFO to be able to lock in what intelligence will cost, the way an airline locks in the price of fuel.</p>
+<p>Buy intelligence or sell it. Use it today or lock in next year's price. It all trades in one place.</p>
+<p>There's a bigger reason to build this. Every prompt sent in the clear to a handful of labs feeds a loop that makes them stronger with every question we ask, until there's little room left for anyone else's model, company or job. Encrypt the prompts and that loop slows, and open models, including a new wave of American and European ones, get room to catch up.</p>
+<p>Today, the only inference you can verify end to end runs on open-weight models, because the closed labs don't offer confidential routes yet. We intend to make verifiable privacy the price of winning enterprise business, and they'll follow.</p>
+
+<h2>A better way to finance the future of compute</h2>
+<p>Today the AI buildout is financed as if the data center, the GPUs inside it and the tokens it produces were one asset, owned by a handful of companies with public-company balance sheets.</p>
+<p>They aren't one asset. They're three, each with its own risk and its own natural owner. At NYTE, we're building a market structure that matches each one to the right capital.</p>
+<p>The data center is real estate. A powered shell is a game of land, permits and power, with a life measured in decades. That's exactly what sovereign wealth funds, REITs, infrastructure funds and family offices already know how to own, so they should own it.</p>
+<p>The GPUs are different. They're valuable, they depreciate fast, and they're worth exactly what their output sells for. That makes them a natural fit for futures. When an operator can sell next year's tokens today at a fixed price on NYTE, its GPUs come with contracted revenue that lenders can underwrite, instead of a bet on future demand.</p>
+<p>The tokens trade on NYTE, and the software that makes them is the part we give away. <a href="https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box">Neocloud-in-a-box</a>, our open-source stack on GitHub, is built to run the full inference stack on verified confidential hardware, so anyone with power and GPUs can operate a secure neocloud. Once a node passes hardware validation and independent attestation, every token it produces sells at the global market price.</p>
+<p>Put together, each asset is financed by the capital that fits it. GPUs stay busy, and public-company dollars aren't tied up in assets that belong somewhere else.</p>
+<p>Instead of three giant clouds, we get tens of thousands of secure neoclouds around the world, each earning a market price for what it produces.</p>
+<p>That's a future of compute whose prosperity is shared.</p>
+<p><strong>One lab winning was never the future. A market is, and it's here today.</strong></p>
+<p>If you're putting AI into production on data that matters, whether it's legal, financial, health, or the customer data you resell AI on top of, come trade with us. We'll run a 30-day pilot on one workload: your security team verifies the attestation in week one, and in week four you compare cost, quality and latency against today's route. You see each route's price before you choose it. Our fee is 5.5% at most and falls with volume, with no subscription.</p>
+<p><a href="https://nytokenexchange.com/">Plan an enterprise pilot at nytokenexchange.com</a>, or email <a href="mailto:enterprise@trustedrouter.com">enterprise@trustedrouter.com</a>. Most routes ask you to trust a contract. Ours you can verify.</p>
+""",
+    ),
     BlogPost(
         slug="trev-zev-lev-private-decisions",
         title="Good decisions with zero data retention",
