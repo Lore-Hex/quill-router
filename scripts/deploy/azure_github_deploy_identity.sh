@@ -21,12 +21,14 @@
 #     the app's Key Vault reference, tr-azure-clickhouse-read-password (the
 #     control plane's read-only ClickHouse user, scripts/deploy/
 #     azure_control_plane.sh), in vault trquillkv (resource group
-#     TR-TEE-DUBAI). No other secret in that vault: the writer's,
-#     tr-azure-clickhouse-password, is the node's and the drain's, read with
-#     the node's identity, never the deploy's. Until 2026-10-20 this granted
-#     the writer's, and every deploy after the control plane moved to the
-#     reader refused for want of access ("analytics discovery was
-#     incomplete");
+#     TR-TEE-DUBAI). The control-plane deploy reads no other secret in that
+#     vault; the writer's, tr-azure-clickhouse-password, is the node's and the
+#     drain's (scripts/deploy/azure_clickhouse_drain_install.sh reads it as
+#     its operator, not as this identity). Until 2026-10-20 this granted the
+#     writer's, and deploys after the control plane moved to the reader
+#     refused for want of access ("analytics discovery was incomplete"). A
+#     re-run adds this grant and removes none: an identity set up before
+#     keeps its writer grant until it is deleted by hand;
 #   * the repository variable AZURE_DEPLOY_CLIENT_ID, which the workflow reads.
 set -euo pipefail
 
