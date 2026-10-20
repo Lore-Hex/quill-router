@@ -57,7 +57,7 @@ def task_definition(region: str = "eu-west-3") -> dict:
         container["environment"].extend([
             {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL", "value": "http://fixture-clickhouse:8123"},
             {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER", "value": "default"},
-            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": "fixture-database"},
+            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": "default"},
         ])
         container["secrets"].append({
             "name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
@@ -863,3 +863,16 @@ def test_paris_ships_on_postgres_until_the_grant() -> None:
         'EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" '
         '"${TR_RECORD_READ_BACKEND_EU_WEST_3:-postgres}")'
     ) in script
+
+
+@pytest.mark.parametrize("database", [None, "tr", "fixture-database"])
+def test_clickhouse_record_reads_refuse_a_database_the_reader_cannot_read(database: str | None) -> None:
+    """The reader is granted SELECT on default.* only: a cloned task that reads
+    any other database would answer every record read with an access error."""
+    payload = task_definition("eu-west-3")
+    env = payload["taskDefinition"]["containerDefinitions"][0]["environment"]
+    env[:] = [entry for entry in env if entry["name"] != "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE"]
+    if database is not None:
+        env.append({"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": database})
+    with pytest.raises(ValueError, match="TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=default"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)

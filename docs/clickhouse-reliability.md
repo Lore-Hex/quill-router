@@ -81,15 +81,22 @@ to restore today's behaviour; record and outbox writes continue in either
 mode, and Postgres activity repair remains unimplemented until R4.
 
 For AWS ECS, `EXPECTED_RECORD_READ_BACKEND` in `aws_ecs_control_plane.sh`
-is the switch: Paris defaults to `clickhouse`, Ireland to `postgres`, overridable
-with `TR_RECORD_READ_BACKEND_EU_WEST_3` and `TR_RECORD_READ_BACKEND_EU_WEST_1`.
-Paris goes first with `tr_control_read` and the reader secret ARN resolved by
-`describe-secret`; `infra/aws_ecs_control_reader.tf` grants the execution role
-access to that exact ARN. Apply that grant before releasing. To revert Paris,
+is the switch, overridable with `TR_RECORD_READ_BACKEND_EU_WEST_3` and
+`TR_RECORD_READ_BACKEND_EU_WEST_1`. Both regions default to `postgres` today:
+Paris does not read from ClickHouse yet. Enabling Paris is its own change,
+setting its default to `clickhouse`, made only after infra-apply has created
+`tr-cp-clickhouse-control-reader` (`infra/aws_ecs_control_reader.tf`, the
+execution role's grant on the reader secret's exact ARN): a task referencing
+the secret before that fails to start. With `clickhouse`, the release sets
+`tr_control_read` and the reader secret ARN resolved by `describe-secret`, and
+refuses unless the cloned task reads database `default` (the reader is granted
+`default.*` only). Ireland stays on `postgres`. To revert Paris,
 run the release with `TR_RECORD_READ_BACKEND_EU_WEST_3=postgres` and
 `TR_ECS_ALLOW_RECORD_READ_ROLLBACK=true`; without the explicit rollback flag,
 a live `clickhouse` to `postgres` transition is refused. Keep the regional
 expectation at `postgres` for subsequent releases until ready to enable it again.
+A reverted Paris keeps `tr_control_read` and the reader secret, so the grant
+stays in place.
 
 Control-plane operational reads use `tr_control_read`. On GCP,
 `scripts/deploy/clickhouse_control_reader.sh` installs the account with

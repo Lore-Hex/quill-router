@@ -82,6 +82,11 @@ def prepare(
     if required_record_read_backend == "clickhouse":
         if not values.get("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL", "").strip():
             raise ValueError("clickhouse record reads require a cloned TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
+        # The standalone nodes keep their tables in `default`, and the reader
+        # is granted `default.*` only; any other database answers every read
+        # with an access error.
+        if values.get("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE") != "default":
+            raise ValueError("clickhouse record reads require a cloned TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=default")
         if not re.fullmatch(r"arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+", reader_secret_arn):
             raise ValueError("clickhouse record reads require a reader secret ARN")
         credential_name = "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
