@@ -17,6 +17,12 @@
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
   fastpath_edge_retiring = []
+  # The share, in percent, of the enclave's authorize calls the control load
+  # balancer sends through the edge (infra/control_lb_url_map.tf). 0 until
+  # Python counts every comparison of the edge's verdict (#1904) on the
+  # serving revision: before that, a share through the edge has no parity
+  # evidence (an edge whose boot reads fail looks like perfect agreement).
+  fastpath_edge_route_weight = 0
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
@@ -87,9 +93,14 @@ resource "google_compute_backend_service" "fastpath_edge" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = "HTTP"
   port_name             = "edge"
-  timeout_sec           = 30
-  health_checks         = [google_compute_health_check.fastpath_edge.id]
-  security_policy       = google_compute_security_policy.legacy_edge.id
+  # Under the enclave's authorize budget (a 25 s response-header timeout,
+  # 28 s in all, three attempts): a stalled upstream answers 504 at 8 s,
+  # which the enclave retries, rather than outliving the budget as a
+  # transport error it does not. Authorize through the balancer over a day
+  # of 2026-10-20: p99 2.85 s, max 5.8 s of 3,000.
+  timeout_sec     = 8
+  health_checks   = [google_compute_health_check.fastpath_edge.id]
+  security_policy = google_compute_security_policy.legacy_edge.id
   # The unit's own stop timeout. Draining runs only when a node is removed
   # from its group, not when its health check fails or a whole group is
   # detached: a node marked leaving answers 503 and finishes its own
