@@ -260,7 +260,7 @@ def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -
     for arch in ("arm64", "x64"):
         assert (
             "https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/"
-            f"v0.3.0-alpha.1/Trusted-Cowork-0.3.0-alpha.1-mac-{arch}.dmg"
+            f"v0.4.0-alpha.2/Trusted-Cowork-0.4.0-alpha.2-mac-{arch}.dmg"
         ) in response.text
     assert "TRPi" not in response.text
     assert "terminal coding agent" not in response.text
