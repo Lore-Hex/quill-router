@@ -67,6 +67,19 @@ explicitly reviewed cleanup.
 
 ## Credentials
 
+On Postgres control planes, `TR_RECORD_READ_BACKEND` defaults to `postgres`,
+preserving the existing unimplemented activity and usage reads. Deploy AWS
+and Azure with that default, then flip to `clickhouse` per plane, AWS Paris
+first, after verifying delivery and drain lag. The shared GCP readers use
+that plane's `TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL`, `_USER`, `_PASSWORD`
+and `_DATABASE` settings (`tr_control_read` and `default` on the standalone
+nodes). Settings validation refuses `clickhouse` without the operational
+ClickHouse URL and password, so standby regions without a reader stay on `postgres`.
+Monitor workspace activity p50/p99, drain lag, the delivery verifier and
+`/activity` 5xx before advancing to Azure. Set the backend back to `postgres`
+to restore today's behaviour; record and outbox writes continue in either
+mode, and Postgres activity repair remains unimplemented until R4.
+
 Control-plane operational reads use `tr_control_read`. On GCP,
 `scripts/deploy/clickhouse_control_reader.sh` installs the account with
 table-scoped SELECT grants in `tr`; its password lives in Secret Manager as

@@ -50,7 +50,7 @@ on `main`.
 From a node, over IAP:
 
 ```bash
-gcloud compute ssh tr-fastpath-1 --zone=us-central1-a --project=quill-cloud-proxy --tunnel-through-iap
+gcloud compute ssh tr-fastpath-3 --zone=us-central1-a --project=quill-cloud-proxy --tunnel-through-iap
 ```
 
 with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`,
