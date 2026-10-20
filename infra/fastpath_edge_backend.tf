@@ -44,8 +44,8 @@ resource "google_compute_firewall" "fastpath_edge" {
 # empty and adds it back. A replacement therefore ends with a second apply
 # (docs/runbooks/fastpath-deploy.md), and the health check shows the gap
 # meanwhile. The lifecycle tricks that avoid the second apply (a group named
-# for the instance id, created before destroy) propagate create-before-
-# destroy to the fixed-name nodes, whose replacement they then break.
+# for the instance id, brought up before the old one goes) propagate that
+# ordering to the fixed-name nodes, whose replacement they then break.
 resource "google_compute_instance_group" "fastpath_edge" {
   for_each = google_compute_instance.fastpath_node
 
