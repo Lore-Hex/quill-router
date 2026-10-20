@@ -5,6 +5,7 @@ locals {
     "${local.github_owner}/quill-router/.github/workflows/check-archive-freshness.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/daily-embeddings-probe.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/deploy.yml@refs/heads/main",
+    "${local.github_owner}/quill-router/.github/workflows/deploy-growth-sync.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/gateway-reliability.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/mirror-repo.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/refresh-prices.yml@refs/heads/main",
