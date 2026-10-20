@@ -421,6 +421,10 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
         return SessionPB(name=db.name+"/sessions/new")
     db.database_role = None
     db.spanner_api.create_session = create
+    def delete(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["retry"] is None
+    db.spanner_api.delete_session = delete
     def query(**kwargs):
         calls.append(kwargs)
         if checkout == "expired_session" and len(calls) == 1:
@@ -462,7 +466,7 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
                 read()
             assert len(calls) == 1 and db.sessions_manager.session is None
             read()
-            assert len(calls) == 3  # A later operation gets a fresh session; no hidden retry.
+            assert len(calls) == 4  # Cleanup precedes replacement on the later operation.
         elif checkout == "expired" and consumer != "health" or checkout == "contended":
             with pytest.raises((TimeoutError, RuntimeError)):
                 read()
