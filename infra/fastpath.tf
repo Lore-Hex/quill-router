@@ -257,13 +257,10 @@ resource "google_storage_bucket_iam_member" "fastpath_releases_reader" {
 # node is replaced, never restarted in place, once it holds leases
 # (docs/runbooks/fastpath-deploy.md); at P0 it holds none.
 resource "google_compute_instance" "fastpath_node" {
-  # 1 and 2 run the script from before the edge (ignore_changes below);
-  # 3 and 4 are created with the current one, the edge on, and take their
-  # places (docs/runbooks/fastpath-deploy.md, "Turning the edge on"), after
-  # which 1 and 2 are drained and removed.
+  # 3 and 4 took the places of 1 and 2 on 2026-10-20, with the edge on
+  # (docs/runbooks/fastpath-deploy.md, "Turning the edge on"); 1 and 2 were
+  # drained, left the edge backend, then were removed.
   for_each = {
-    "tr-fastpath-1" = "us-central1-a"
-    "tr-fastpath-2" = "us-central1-b"
     "tr-fastpath-3" = "us-central1-a"
     "tr-fastpath-4" = "us-central1-b"
   }
