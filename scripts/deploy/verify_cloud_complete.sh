@@ -324,10 +324,10 @@ printf 'That means: this cloud has an endpoint in the fleet registry, publishes\
 printf 'its analytics section, could read its own outbox, has a drain lag under\n' >&2
 printf 'the bound the drain itself alarms on, and its control-plane script in\n' >&2
 printf 'THIS CHECKOUT does not switch the outbox off. That last one is a static\n' >&2
-printf 'read: where the script computes the value at deploy time — AWS sets it\n' >&2
-printf 'from whether a ClickHouse secret exists in the region, and can set it\n' >&2
-printf 'FALSE — the stage proves only that the script can enable it. The note\n' >&2
-printf 'below says so whenever that is what happened.\n\n' >&2
+printf 'read: AWS declares it enabled in both ECS regions sharing the DSQL\n' >&2
+printf 'outbox. Where a script computes the value at deploy time, the stage\n' >&2
+printf 'proves only that the script can enable it. The note below says so\n' >&2
+printf 'whenever that is what happened.\n\n' >&2
 printf 'It does not mean rows were seen moving. No public status page can show\n' >&2
 printf 'that. The remaining evidence is in-cloud and it is two numbers ten\n' >&2
 printf 'minutes apart: SELECT count() FROM activity_generations.\n' >&2

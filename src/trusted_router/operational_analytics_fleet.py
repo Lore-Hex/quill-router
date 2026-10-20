@@ -158,15 +158,11 @@ ANALYTICS_FRESHNESS_FLEET: tuple[FleetAnalyticsEndpoint, ...] = (
             "deployment whose drain was missing for fifteen days. This was the "
             "tr-eu App Runner hostname until that service was retired on "
             "2026-09-03, at which point the check simply failed DNS. "
-            "Deliberately NOT aws.trustedrouter.com, and the reason is now "
-            "sharper than 'wrong front end': that vanity name is Global "
-            "Accelerator anycast across BOTH EU regions, and the two are not "
-            "interchangeable for this question. eu-west-3 runs the outbox; "
-            "eu-west-1 has TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=false and "
-            "correctly publishes not_configured. Pointed at the anycast name, "
-            "the check reads whichever region GA happens to pick, so a healthy "
-            "drain reports 'not configured' on roughly half of all runs -- an "
-            "alert that fires on routing rather than on the drain."
+            "Both ECS regions must enqueue into the shared DSQL outbox, which "
+            "the Paris drain delivers. Keep this endpoint pinned so checks "
+            "observe the same control plane rather than whichever region "
+            "Global Accelerator selects. Shared outbox freshness does not "
+            "prove that every producer has enabled its writes."
         ),
     ),
     FleetAnalyticsEndpoint(

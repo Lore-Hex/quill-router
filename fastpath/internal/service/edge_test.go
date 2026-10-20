@@ -5,16 +5,23 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/spanner"
+	"cloud.google.com/go/spanner/apiv1/spannerpb"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc"
+
 	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
 
@@ -126,6 +133,107 @@ func TestTheEdgePassesTheEnclavesCallsToPythonWithItsVerdict(t *testing.T) {
 	}
 }
 
+// TestTheEdgesHealthLeavesBeforeTheProcessStops: both Run's context and
+// Leave turn the balancer away while the node's leaving write is under way.
+func TestTheEdgesHealthLeavesBeforeTheProcessStops(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	for _, signal := range []string{"context", "Leave"} {
+		t.Run(signal, func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			var once sync.Once
+			unary := func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker,
+				opts ...grpc.CallOption) error {
+				if q, ok := req.(*spannerpb.ExecuteSqlRequest); ok && tagOf(q) == "fastpath-heartbeat" &&
+					q.GetParams().GetFields()["state"].GetStringValue() == store.Leaving {
+					once.Do(func() { close(entered) })
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				return invoker(ctx, method, req, reply, cc, opts...)
+			}
+			db, err := emulator.Client(context.Background(), "spike",
+				option.WithGRPCDialOption(grpc.WithChainUnaryInterceptor(unary)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(db.Close)
+			ln, edgeLn := listen(t), listen(t)
+			leave := make(chan struct{})
+			cfg := config(ln)
+			cfg.Auditor, cfg.Leave, cfg.Store.LiveFor = false, leave, 10*time.Second
+			cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn,
+				Upstream: "http://python.invalid", Token: "token-1"}
+			clients := Clients{Spanner: db, PubSub: pubSub(t)}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			var runErr error
+			go func() {
+				runErr = Run(ctx, cfg, clients)
+				close(done)
+			}()
+			t.Cleanup(func() {
+				unblock()
+				cancel()
+				select {
+				case <-done:
+					if runErr != nil {
+						t.Errorf("the process ended: %v", runErr)
+					}
+				case <-time.After(20 * time.Second):
+					t.Error("the process did not stop")
+				}
+			})
+			client := &http.Client{Timeout: 5 * time.Second}
+			eventually(t, 20*time.Second, "the node serving", func() (bool, error) {
+				resp, err := client.Get("http://" + ln.Addr().String() + "/owner/ping")
+				if err != nil {
+					return false, nil
+				}
+				resp.Body.Close()
+				return resp.StatusCode == http.StatusNoContent, nil
+			})
+			health := func(code int, body string) {
+				t.Helper()
+				resp, err := client.Get("http://" + edgeLn.Addr().String() + "/internal/gateway/edge/health")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				answer, _ := io.ReadAll(resp.Body)
+				if resp.StatusCode != code || string(answer) != body {
+					t.Fatalf("health: %d %q", resp.StatusCode, answer)
+				}
+			}
+			health(http.StatusOK, `{"status":"serving"}`)
+			if signal == "context" {
+				cancel()
+			} else {
+				close(leave)
+			}
+			select {
+			case <-entered:
+			case <-done:
+				t.Fatalf("the process stopped before leaving: %v", runErr)
+			case <-time.After(10 * time.Second):
+				t.Fatal("the node did not begin leaving")
+			}
+			health(http.StatusServiceUnavailable, `{"status":"leaving"}`)
+			select {
+			case <-done:
+				t.Fatalf("the process stopped before its leaving write ended: %v", runErr)
+			default:
+			}
+			unblock()
+		})
+	}
+}
+
 func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 	cfg := Defaults()
 	cfg.Admission, cfg.Address, cfg.Region, cfg.Key = true, "127.0.0.1:1", "us-central1", key
@@ -137,6 +245,35 @@ func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 	cfg.Edge.Upstream, cfg.Edge.Token = "http://python.internal", "t"
 	if err := cfg.valid(); err != nil {
 		t.Fatalf("a whole edge: %v", err)
+	}
+	// An edge leaves with the admission node; a member without one would
+	// answer the balancer serving for ever.
+	cfg.Admission, cfg.Auditor = false, true
+	cfg.SettleSubscription, cfg.RecordSubscription = "projects/spike/subscriptions/auditor", "projects/spike/subscriptions/stager"
+	if err := cfg.valid(); err == nil || !strings.Contains(err.Error(), "admission node") {
+		t.Fatalf("an edge without an admission node: %v", err)
+	}
+}
+
+// TestAFailedProcessIsNotServing: a part's failure ends the parts without
+// their leaving, so the edge's answer follows the parts' context too.
+func TestAFailedProcessIsNotServing(t *testing.T) {
+	p := &parts{caller: context.Background(), armed: make(chan struct{})}
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+	defer p.cancel()
+	if !p.serving() {
+		t.Fatal("a running process is serving")
+	}
+	p.fail(errors.New("a part failed"))
+	if p.serving() {
+		t.Fatal("a failed process still serving")
+	}
+	q := &parts{caller: context.Background(), armed: make(chan struct{})}
+	q.ctx, q.cancel = context.WithCancel(context.Background())
+	defer q.cancel()
+	q.retiring.Store(true)
+	if q.serving() {
+		t.Fatal("a retiring process still serving")
 	}
 }
 

@@ -5,6 +5,27 @@ from pydantic import ValidationError
 from trusted_router.config import Settings
 
 
+@pytest.mark.parametrize('environment', ['canary', 'production'])
+def test_postgres_outbox_needs_no_local_clickhouse(environment):
+    config = Settings(
+        _env_file=None,
+        environment=environment,
+        service_surface='observer',
+        storage_backend='postgres',
+        postgres_dsn='postgresql://localhost/test',
+        observer_internal_token='test-observer-token',  # noqa: S106 - test credential
+        sentry_dsn='https://example@example.ingest.sentry.io/1',
+        operational_analytics_sink='outbox',
+        operational_analytics_outbox_enabled=True,
+        operational_analytics_clickhouse_url='',
+        operational_analytics_clickhouse_password='',
+        operational_analytics_clickhouse_write_password='',
+    )
+    assert config.operational_analytics_outbox_enabled
+    assert not config.operational_analytics_clickhouse_url
+    assert not config.operational_analytics_clickhouse_password
+
+
 @pytest.mark.parametrize('serving', [None, '', 'europe-west4'])
 @pytest.mark.parametrize('source', ['fields', 'environment'])
 def test_serving_region_falls_back_without_changing_primary(monkeypatch, serving, source):
