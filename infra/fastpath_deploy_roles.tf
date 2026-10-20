@@ -15,6 +15,12 @@ locals {
     "roles/storage.admin",            # the archive and release buckets and their IAM
     "roles/compute.instanceAdmin.v1", # the nodes
     "roles/spanner.databaseAdmin",    # the nodes' database role binding
+    # The edge's firewall rule (infra/fastpath_edge_backend.tf): the first
+    # apply of #1872 made the health check, the instance groups and the
+    # backend service and stopped at the firewall for want of
+    # compute.firewalls.create, which only this role carries among the
+    # predefined ones. Granted by hand on 2026-10-20 and imported here.
+    "roles/compute.securityAdmin",
   ])
   tr_deploy_member = "serviceAccount:tr-deploy@${local.gcp_project_id}.iam.gserviceaccount.com"
 }
