@@ -84,6 +84,10 @@ class UnknownCommit(RuntimeError):
     pass
 
 
+class ContentionLoss(RuntimeError):
+    """The transaction was aborted and definitively did not commit."""
+
+
 def shadow_health_claim_read() -> Statement:
     _, params, types = entity_point_statement(CLAIM_KIND, "local/publish")
     return CLAIM_SQL, params, types
@@ -143,11 +147,15 @@ class ObservationStore:
                 return self.point(snapshot, entity_point_statement(kind, key), budget, READ_SECONDS)
 
     def transaction(self, callback: Callable[[Any], T], budget: Budget, cap: float) -> T:
+        from google.api_core.exceptions import Aborted
+
         attempted = False
         committing = False
         def once(tx: Any) -> T:
             nonlocal attempted, committing
-            require(not attempted, "transaction_retry")
+            if attempted:
+                # Session re-enters only after ABORTED. Do not run a second attempt.
+                raise ContentionLoss("transaction_aborted")
             attempted = True
             budget.remaining(cap)
             result = callback(tx)
@@ -160,7 +168,13 @@ class ObservationStore:
                     commit_request_options={"priority": "PRIORITY_LOW"}, transaction_tag="tr_shadow_v2")
             budget.remaining(cap)
             return result
-        except Exception:
+        except ContentionLoss:
+            raise
+        except Exception as error:
+            # The bounded transport keeps SDK retry loops stopped with a plain
+            # exception, retaining ABORTED as its cause for this classification.
+            if isinstance(error, Aborted) or isinstance(error.__cause__, Aborted):
+                raise ContentionLoss("transaction_aborted") from None
             if committing:
                 raise UnknownCommit("shadow_commit_unknown") from None
             raise

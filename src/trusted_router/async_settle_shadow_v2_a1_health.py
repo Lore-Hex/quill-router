@@ -116,8 +116,10 @@ def _trace(v: Any) -> None:
     if v["ack_at_us"] is not None:
         require(v["body_sha256"] is not None and not v["unknown_outcome"])
     if v["outcome"] in ("lost_claim", "published"):
-        require(v["claim_at_ns"] is not None)
-        d.apply_deltas("claim", v)
+        # An aborted claim read can lose contention before returning a server
+        # timestamp. Validate the timestamp when one was actually received.
+        if v["claim_at_ns"] is not None:
+            d.apply_deltas("claim", v)
     if v["outcome"] == "lost_claim":
         require(all(v[k] is None for k in ("observed_at_ns", "publisher_heartbeat_ns", "body_sha256", "ack_at_us")))
     if v["outcome"] == "published":

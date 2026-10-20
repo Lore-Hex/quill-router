@@ -59,6 +59,7 @@ from trusted_router.storage_gcp_shadow_io import observe_spanner_rpcs, rpc_scope
 from trusted_router.storage_gcp_shadow_observation import (
     FLUSH_SECONDS,
     Budget,
+    ContentionLoss,
     ObservationStore,
     UnknownCommit,
 )
@@ -427,6 +428,8 @@ class PublisherReply:
 
 def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherReply:
     """Unknown completion; no claim, RPC timing, or publication is inferred."""
+    # Durable released-job signature, even when Python logs are unavailable:
+    # cycle_us=0, rpc_count=0, unknown_outcome=true, claim_at_ns=null.
     trace = dict(v=2, policy_version=POLICY, contract_revision="a1",
         day=day_at(job.slot*SLOT_US), boot=boot, slot=job.slot,
         claim_start_us=job.slot*SLOT_US, claim_at_ns=None, observed_at_ns=None,
@@ -458,7 +461,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason
         # Scope setup may sample time or be delayed. Admission happens AFTER it.
         with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
-            with admission.admission_lock:
+            if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
+                raise TimeoutError("publisher_admission")
+            try:
                 generation = admission.generation
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
@@ -469,6 +474,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                     return
                 budget = Budget(started + CYCLE_SECONDS, store.clock)
                 attempted, outcome = True, "failures"
+            finally:
+                admission.admission_lock.release()
             if not store.claim(boot, slot, actual_us, budget):
                 outcome = "lost_claims"
                 return
@@ -484,6 +491,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         attempt()
     except Exception as error:
         unknown = isinstance(error, UnknownCommit)
+        if isinstance(error, ContentionLoss) and not claimed:
+            outcome = "lost_claims"
     elapsed = max(0, round((store.clock()-started)*1_000_000))
     late = attempted and elapsed > round(CYCLE_SECONDS*1_000_000)
     if late:

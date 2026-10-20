@@ -143,6 +143,8 @@ def configure(database: Any) -> None:
     api = getattr(database, "spanner_api", None)
     if api is None:
         return
+    from google.api_core.exceptions import Aborted
+
     for name, original in (
             ("begin_transaction", api.begin_transaction if hasattr(api, "begin_transaction") else None),
             ("commit", api.commit if hasattr(api, "commit") else None),
@@ -180,11 +182,11 @@ def configure(database: Any) -> None:
                             for response in result:
                                 scope.remaining()
                                 yield response
-                        except Exception:
+                        except Exception as error:
                             manager = getattr(database, "_sessions_manager", None)
                             if isinstance(manager, Sessions):
                                 manager.retire()
-                            raise RuntimeError("shadow_stream_failed") from None
+                            raise RuntimeError("shadow_stream_failed") from (error if isinstance(error, Aborted) else None)
                         finally:
                             measured()
                     return consume()
@@ -203,7 +205,8 @@ def configure(database: Any) -> None:
                 if isinstance(manager, Sessions):
                     manager.retire()  # Delete before any later replacement.
                 # Non-SDK exceptions stop Session/Transaction/stream retry loops.
-                raise RuntimeError("shadow_rpc_failed") from None
+                # Only ABORTED needs to reach the transaction outcome classifier.
+                raise RuntimeError("shadow_rpc_failed") from (error if isinstance(error, Aborted) else None)
             finally:
                 if not streaming:
                     measured()
