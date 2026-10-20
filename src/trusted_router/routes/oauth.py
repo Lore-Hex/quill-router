@@ -531,7 +531,8 @@ def _safe_next_path(value: str | None) -> str | None:
         return None
     # Cookies are ASCII headers. Preserve existing escapes and local URL syntax,
     # but encode Unicode before it reaches Starlette's Latin-1 header encoder.
-    return quote(value, safe=":/%#?=@[]!$&'()*+,;")
+    encoded = quote(value, safe=":/%#?=@[]!$&'()*+,;")
+    return encoded if len(encoded) <= 2048 else None
 
 
 def _set_state_cookie(response: Response, state: str, settings: Settings) -> None:

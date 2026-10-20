@@ -100,3 +100,8 @@ def test_oauth_path_cookies_are_ascii_and_remain_local(path: str, kind: str) -> 
 @pytest.mark.parametrize("path", ["//evil.example", "/\\evil.example", "/\nevil.example", "/\tevil.example"])
 def test_oauth_rejects_ambiguous_redirects(path: str) -> None:
     assert oauth._safe_next_path(path) is None
+
+
+def test_oauth_cookie_limit_applies_after_unicode_encoding() -> None:
+    assert oauth._safe_next_path("/" + "\u4e2d" * 228) is None
+    assert oauth._safe_next_path("/" + "\u4e2d" * 227) is not None
