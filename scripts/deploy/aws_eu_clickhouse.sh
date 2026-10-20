@@ -19,10 +19,12 @@
 # and is deliberately not attempted here — a single node that demonstrably
 # ingests beats three that are half-wired.
 #
-# Private on purpose. App Runner egress is DEFAULT (AWS-managed NAT with
-# dynamic addresses), so a public ClickHouse could not be restricted by
-# source IP and would be protected by a password alone. Instead the service
-# gets a VPC connector and ClickHouse listens only inside the VPC.
+# Private on purpose: ClickHouse listens only inside the VPC. The control
+# plane's ECS tasks (tr-cp-euw3, scripts/deploy/aws_ecs_control_plane.sh)
+# run in this VPC's subnets, and the node's security group admits 8123 from
+# the VPC, so they reach it directly. (The App Runner service this used to
+# serve needed a VPC connector, which this script created; App Runner is
+# retired and the step went with it on 2026-10-20.)
 set -euo pipefail
 
 REGION="${REGION:-eu-west-3}"                  # Paris: same region as tr-eu.
@@ -380,24 +382,8 @@ REMOTE
 fi
 unset READER_SETUP
 
-# ---------------------------------------------------------------------------
-# 5. App Runner VPC connector, so tr-eu can reach a PRIVATE ClickHouse.
-# ---------------------------------------------------------------------------
-CONNECTOR_ARN="$(aws apprunner list-vpc-connectors --region "$REGION" \
-  --query "VpcConnectors[?VpcConnectorName=='tr-eu-vpc' && Status=='ACTIVE'].VpcConnectorArn | [0]" \
-  --output text 2>/dev/null || true)"
-if [ -z "$CONNECTOR_ARN" ] || [ "$CONNECTOR_ARN" = "None" ]; then
-  log "creating App Runner VPC connector"
-  CONNECTOR_ARN="$(aws apprunner create-vpc-connector --region "$REGION" \
-    --vpc-connector-name tr-eu-vpc \
-    --subnets "$SUBNET_ID" --security-groups "$SG_ID" \
-    --query 'VpcConnector.VpcConnectorArn' --output text)"
-fi
-log "vpc connector: $CONNECTOR_ARN"
-
 echo
 echo "CLICKHOUSE_PRIVATE_URL=http://${PRIVATE_IP}:8123"
-echo "VPC_CONNECTOR_ARN=${CONNECTOR_ARN}"
 echo "INSTANCE_ID=${INSTANCE_ID}"
 
 # ---------------------------------------------------------------------------
@@ -430,12 +416,12 @@ NEXT_STEPS=$(cat <<NEXT
 The node is up WITH ITS SCHEMA APPLIED, but the AWS cloud is NOT complete. Run
 these, in order, and this script will exit 0 the next time it is run:
 
-  1. redeploy the control plane so settle enqueues and the outbox is readable.
-     Its own knobs, not the TR_* names — it builds those:
-       CLICKHOUSE_URL=http://${PRIVATE_IP}:8123 \\
-       VPC_CONNECTOR_ARN=${CONNECTOR_ARN} \\
-       bash scripts/deploy/aws_eu_control_plane.sh
-     (EgressConfiguration=VPC follows from a non-empty VPC_CONNECTOR_ARN.)
+  1. redeploy the control plane so settle enqueues and the outbox is readable:
+     the AWS deploy (.github/workflows/deploy-aws-control-plane.yml, which runs
+     scripts/deploy/aws_ecs_control_plane.sh) clones the running ECS task
+     definition of each region, whose TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL
+     must be
+       http://${PRIVATE_IP}:8123
 
   2. install the process that actually MOVES rows — the step that was missed:
        bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
