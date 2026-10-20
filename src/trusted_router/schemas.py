@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     EmailStr,
     Field,
+    HttpUrl,
     StrictBool,
     field_validator,
     model_validator,
@@ -64,6 +66,19 @@ class CreatorUsernameRequest(_Strict):
     username: str = Field(min_length=3, max_length=32)
 
 
+def validate_billing_return_url(value: str) -> str:
+    """Validate without rewriting Stripe's {CHECKOUT_SESSION_ID} placeholder."""
+    if len(value) > 2048 or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("must be an absolute HTTP(S) URL without whitespace")
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("must be an absolute HTTP(S) URL")
+    parsed = HttpUrl(value)
+    if parsed.username is not None or parsed.password is not None or "\\" in value:
+        raise ValueError("must be an absolute HTTP(S) URL without credentials")
+    return value
+
+
 class CheckoutRequest(_Lenient):
     amount: Decimal | str | int | float = Decimal("20")
     workspace_id: str | None = None
@@ -82,6 +97,11 @@ class CheckoutRequest(_Lenient):
         "paypal",
         "adyen",
     ] = "auto"
+
+    @field_validator("success_url", "cancel_url")
+    @classmethod
+    def valid_return_url(cls, value: str | None) -> str | None:
+        return validate_billing_return_url(value) if value else None
 
     @field_validator("amount")
     @classmethod

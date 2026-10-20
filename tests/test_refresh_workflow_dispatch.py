@@ -180,7 +180,7 @@ class PublicationRepo:
         (self.root / "scenario.json").write_text(json.dumps(scenario))
         script = remove_publication_guard(self.script, mutation) if mutation else self.script
         # Relocate only the workflow's fixed scratch paths. Gate logic and all
-        # 180 polling iterations run verbatim; fake sleep removes the delay.
+        # polling iterations run verbatim; fake sleep removes the delay.
         for name in ("spike-summary.txt", "refresh-summary.txt", "commit-msg.txt"):
             script = script.replace(
                 f"/tmp/{name}", shlex.quote(str(self.root / name)),  # noqa: S108 -- relocate workflow paths
@@ -359,6 +359,13 @@ def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.Completed
     assert repo.dispatches == expected
 
 
+def test_snapshot_waits_for_ci_beyond_45_minutes(publication_repo: PublicationRepo) -> None:
+    states = [("in_progress", None)] * 181 + [("completed", "success")]
+    result = publication_repo.run(run_states=states)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_ci_completed_before_publication(publication_repo, states)
+
+
 def test_publication_promotes_only_the_successful_generated_sha(publication_repo: PublicationRepo) -> None:
     assert_snapshot_published(publication_repo, publication_repo.run())
 
@@ -397,7 +404,7 @@ def test_publication_times_out_when_only_another_sha_passed(publication_repo: Pu
     result = publication_repo.run(wrong_sha=True)
     assert_snapshot_withheld(publication_repo, result)
     assert "CI did not pass within" in result.stdout
-    assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 180
+    assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 480
 
 
 @pytest.mark.parametrize("direction", ["forward", "backward"])

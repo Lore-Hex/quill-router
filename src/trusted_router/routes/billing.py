@@ -24,7 +24,12 @@ from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, deprecated
 from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS, money_pair
 from trusted_router.routes.helpers import json_body
-from trusted_router.schemas import CheckoutRequest, X402FundingRequest, X402SettleRequest
+from trusted_router.schemas import (
+    CheckoutRequest,
+    X402FundingRequest,
+    X402SettleRequest,
+    validate_billing_return_url,
+)
 from trusted_router.scopes import SCOPE_BALANCE_READ
 from trusted_router.services.adyen_billing import create_adyen_checkout_session
 from trusted_router.services.paypal_billing import (
@@ -253,7 +258,12 @@ def register_billing_routes(router: APIRouter) -> None:
     ) -> dict[str, dict[str, str]]:
         _reject_wallet_only_traditional_billing(principal)
         body = await json_body(request)
-        return_url = str(body.get("return_url") or f"{request_control_origin(request, settings)}/billing")
+        try:
+            return_url = validate_billing_return_url(
+                str(body.get("return_url") or f"{request_control_origin(request, settings)}/billing")
+            )
+        except ValueError as exc:
+            raise api_error(400, "return_url must be a valid absolute HTTP(S) URL", ErrorType.BAD_REQUEST) from exc
         account = STORE.get_credit_account(principal.workspace.id)
         customer_id = account.stripe_customer_id if account else None
         return {"data": create_billing_portal_session(customer_id=customer_id, return_url=return_url, settings=settings)}

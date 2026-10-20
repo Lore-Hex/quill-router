@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -25,6 +26,14 @@ def register_activity_routes(router: APIRouter) -> None:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> dict[str, Any]:
+        if date is not None:
+            try:
+                if dt.date.fromisoformat(date).isoformat() != date:
+                    raise ValueError("non-canonical date")
+            except ValueError as exc:
+                raise api_error(
+                    400, "date must be a valid calendar date in YYYY-MM-DD format", ErrorType.BAD_REQUEST,
+                ) from exc
         if tag_value is not None and tag_key is None:
             raise api_error(400, "tag_value requires tag_key", ErrorType.INVALID_TAGS)
         try:

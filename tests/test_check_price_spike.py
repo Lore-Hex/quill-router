@@ -24,6 +24,16 @@ AZURE_OPENROUTER_ABSENT_IDS = frozenset(
 AZURE_SPIKE_TARGET = "x-ai/grok-4.20-reasoning"
 
 
+def test_akashml_kimi_cache_price_review_is_exact():
+    route = "moonshotai/kimi-k3 [akashml:akashml:moonshotai/Kimi-K3] cached-input"
+    before = {route: {"prompt": "0.0000003", "completion": "0"}}
+    after = {route: {"prompt": "0.0000012", "completion": "0"}}
+    assert check(before, after)[0] == []
+    assert check(before, {route: {"prompt": "0.0000013", "completion": "0"}})[0]
+    for other in (route.replace("akashml:akashml:", "other:other:"), route.removesuffix(" cached-input")):
+        assert check({other: before[route]}, {other: after[route]})[0]
+
+
 def test_tencent_step5_verified_output_correction_is_exact():
     route = "stepfun/step-5-preview [tencent:tencent:step-5-preview]"
     before = {route: {"prompt": "0.000001", "completion": "0.00000027"}}
