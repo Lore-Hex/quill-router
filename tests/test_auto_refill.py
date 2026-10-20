@@ -147,8 +147,8 @@ def test_auto_refill_fires_below_threshold(
     create.assert_called_once()
     kwargs = create.call_args.kwargs
     # The user receives $20.00 in credits. The card charge separately
-    # includes the grossed-up 2.9% + 30c payment processing fee.
-    assert kwargs["amount"] == 2091
+    # includes 1.5x the grossed-up fee, rounded up to cents.
+    assert kwargs["amount"] == 2137
     assert kwargs["currency"] == "usd"
     assert kwargs["customer"] == "cus_test_123"
     assert kwargs["payment_method"] == "pm_test_456"
@@ -160,8 +160,9 @@ def test_auto_refill_fires_below_threshold(
     assert kwargs["metadata"]["initiating_user_id"] == workspace.owner_user_id
     assert kwargs["metadata"]["auto_refill"] == "true"
     assert kwargs["metadata"]["amount_microdollars"] == "20000000"
-    assert kwargs["metadata"]["processing_fee_cents"] == "91"
-    assert kwargs["metadata"]["charge_amount_cents"] == "2091"
+    assert kwargs["metadata"]["processing_fee_cents"] == "137"
+    assert kwargs["metadata"]["charge_amount_cents"] == "2137"
+    assert kwargs["metadata"]["fee_multiplier_basis_points"] == "15000"
     assert kwargs["amount_details"]["line_items"] == [
         {
             "product_name": "TrustedRouter credits",
@@ -171,7 +172,7 @@ def test_auto_refill_fires_below_threshold(
         {
             "product_name": "Payment processing fee",
             "quantity": 1,
-            "unit_cost": 91,
+            "unit_cost": 137,
         },
     ]
     assert "auto-refill" in kwargs.get("idempotency_key", "")
@@ -204,8 +205,8 @@ def test_small_auto_refill_applies_card_fee_floor(stripe_settings: Settings) -> 
 
     assert outcome.fired is True
     kwargs = create.call_args.kwargs
-    assert kwargs["amount"] == 380
-    assert kwargs["metadata"]["processing_fee_cents"] == "80"
+    assert kwargs["amount"] == 420
+    assert kwargs["metadata"]["processing_fee_cents"] == "120"
     assert kwargs["metadata"]["fee_minimum_cents"] == "80"
 
 
