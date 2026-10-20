@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from google.api_core.exceptions import Aborted, DeadlineExceeded
+from google.api_core.exceptions import Aborted, DeadlineExceeded, ServiceUnavailable
 
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_health_watchdog import accounting, failed, owner
@@ -66,6 +66,45 @@ def test_aborted_claim_read_is_lost_without_timestamp(sdk_database, monkeypatch,
     assert trace["claim_at_ns"] is None
     assert not any(name == "commit" for name, _ in db.calls)
     assert not sleeps
+
+
+@pytest.mark.parametrize("rollback_error", [DeadlineExceeded, ServiceUnavailable])
+def test_aborted_claim_stream_survives_rollback_failure(sdk_database, monkeypatch, rollback_error):  # noqa: F811
+    db, _, _ = sdk_database
+    original = db.spanner_api.execute_streaming_sql
+    def aborted(**kwargs):
+        def consume():
+            yield from original(**kwargs)  # Give the SDK the transaction ID for rollback.
+            raise Aborted("claim stream aborted")
+        return consume()
+    monkeypatch.setattr(db.spanner_api, "execute_streaming_sql", aborted)
+    db.rollback_errors = [rollback_error("rollback failed")]
+    svc, job, db, _, sleeps = native_owner(sdk_database)
+    svc.submit_publisher(job.slot, NOW_US)
+    trace = outcome(svc, job, "lost_claim")
+    assert trace["claim_at_ns"] is None
+    assert trace["cycle_us"] == 210_000
+    assert trace["rpc_count"] == 2
+    assert [name for name, _ in db.calls] == ["read", "rollback"]
+    assert not db.rollback_errors and not sleeps
+    counts = svc.counters[m.day_name(NOW_US)]["publisher"]
+    assert counts["claim_attempts"] == counts["lost_claims"] == 1
+    assert counts["failures"] == counts["unknown_outcomes"] == counts["publications"] == 0
+
+
+def test_claim_commit_deadline_without_abort_stays_unknown(sdk_database):  # noqa: F811
+    svc, job, db, _, sleeps = native_owner(sdk_database)
+    db.errors = [DeadlineExceeded("claim commit reply deadline")]
+    svc.submit_publisher(job.slot, NOW_US)
+    trace = outcome(svc, job, "failed", unknown=True)
+    assert trace["claim_at_ns"] is not None
+    assert trace["cycle_us"] == 30_000
+    assert trace["rpc_count"] == 2
+    assert [name for name, _ in db.calls] == ["read", "commit"]
+    assert not db.errors and not sleeps
+    counts = svc.counters[m.day_name(NOW_US)]["publisher"]
+    assert counts["claim_attempts"] == counts["failures"] == counts["unknown_outcomes"] == 1
+    assert counts["lost_claims"] == counts["publications"] == 0
 
 
 @pytest.mark.parametrize("stage", ["commit", "read"])
