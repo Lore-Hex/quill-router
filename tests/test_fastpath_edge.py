@@ -96,6 +96,37 @@ def test_the_edges_verdict_is_compared_with_the_routes(
         assert f"edge={verdict}" in lines[0] and "kid=boot-1" in lines[0]
 
 
+@pytest.mark.parametrize(
+    ("verdict", "signed", "result", "logged_edge"),
+    [
+        ("verified", True, "agree", "verified"),
+        ("invalid", False, "agree", "invalid"),
+        ("verified", False, "differ", "verified"),
+        ("invalid", True, "differ", "invalid"),
+        ("unread", True, "skipped", "unread"),
+        ("unchecked", False, "skipped", "unchecked"),
+        ("absent", False, "skipped", "absent"),
+        ("forged\nvalue", True, "skipped", "other"),
+        (None, True, None, None),
+    ],
+)
+def test_every_call_through_the_edge_is_counted(
+    caplog: pytest.LogCaptureFixture, verdict: str | None, signed: bool, result: str | None, logged_edge: str | None,
+) -> None:
+    """Agreement, disagreement and a skip are each one counted line, so a
+    run with no disagreements can be told from a run with no comparisons;
+    a call that did not come through the edge is not counted, and a header
+    value outside the edge's verdicts is never logged as given."""
+    with caplog.at_level(logging.INFO, logger=gateway.logger.name):
+        gateway._compare_edge_boot_verdict(_request(verdict), "boot-1", signed)
+    lines = [r.getMessage() for r in caplog.records if "edge boot verdict compared" in r.getMessage()]
+    if result is None:
+        assert lines == []
+        return
+    python = "verified" if signed else "invalid"
+    assert lines == [f"fastpath edge boot verdict compared result={result} edge={logged_edge} python={python}"]
+
+
 def test_a_header_the_route_cannot_read_is_compared_as_invalid(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
     """Two boot headers parse to none here, and the route's signature
     verdict is then `invalid`: the edge's `verified` on them is a

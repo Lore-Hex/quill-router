@@ -430,19 +430,38 @@ _SETTLE_REPAIR_FIELDS = frozenset(
 # disagreement.
 _EDGE_BOOT_VERDICT_HEADER = "x-tr-edge-boot"
 _EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid"})
+_EDGE_BOOT_VERDICTS = _EDGE_BOOT_VERDICTS_DECIDED | {"unread", "unchecked", "absent"}
 
 
 def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None:
-    """An observation: nothing it does reaches the response."""
+    """An observation: nothing it does reaches the response.
+
+    Every call that came through the edge (it carries the verdict header)
+    is counted, as agree, differ or skipped (a verdict the edge could not
+    reach), so the absence of disagreements can be told from the absence
+    of comparisons; a disagreement is also a warning."""
     try:
         verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
-        if verdict is None or verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+        if verdict is None:
             return
-        if (verdict == "verified") != signed:
+        python = "verified" if signed else "invalid"
+        if verdict not in _EDGE_BOOT_VERDICTS:
+            verdict, result = "other", "skipped"
+        elif verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+            result = "skipped"
+        else:
+            result = "agree" if (verdict == "verified") == signed else "differ"
+        logger.info(
+            "fastpath edge boot verdict compared result=%s edge=%s python=%s",
+            result,
+            verdict,
+            python,
+        )
+        if result == "differ":
             logger.warning(
                 "fastpath edge boot verdict differs edge=%s python=%s kid=%s path=%s",
                 verdict,
-                "verified" if signed else "invalid",
+                python,
                 kid,
                 request.url.path,
             )
