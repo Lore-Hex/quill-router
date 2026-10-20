@@ -96,6 +96,37 @@ def test_the_edges_verdict_is_compared_with_the_routes(
         assert f"edge={verdict}" in lines[0] and "kid=boot-1" in lines[0]
 
 
+@pytest.mark.parametrize(
+    ("verdict", "signed", "result", "logged_edge"),
+    [
+        ("verified", True, "agree", "verified"),
+        ("invalid", False, "agree", "invalid"),
+        ("verified", False, "differ", "verified"),
+        ("invalid", True, "differ", "invalid"),
+        ("unread", True, "skipped", "unread"),
+        ("unchecked", False, "skipped", "unchecked"),
+        ("absent", False, "skipped", "absent"),
+        ("forged\nvalue", True, "skipped", "other"),
+        (None, True, None, None),
+    ],
+)
+def test_every_comparison_of_an_edge_verdict_is_counted(
+    caplog: pytest.LogCaptureFixture, verdict: str | None, signed: bool, result: str | None, logged_edge: str | None,
+) -> None:
+    """Agreement, disagreement and a skip are each one counted line, so a
+    run with no disagreements can be told from a run with no comparisons;
+    a call without the verdict header is not counted, and a header value
+    outside the edge's verdicts is never logged as given."""
+    with caplog.at_level(logging.INFO, logger=gateway.logger.name):
+        gateway._compare_edge_boot_verdict(_request(verdict), "boot-1", signed)
+    lines = [r.getMessage() for r in caplog.records if "edge boot verdict compared" in r.getMessage()]
+    if result is None:
+        assert lines == []
+        return
+    python = "verified" if signed else "invalid"
+    assert lines == [f"fastpath edge boot verdict compared result={result} edge={logged_edge} python={python}"]
+
+
 def test_a_header_the_route_cannot_read_is_compared_as_invalid(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
     """Two boot headers parse to none here, and the route's signature
     verdict is then `invalid`: the edge's `verified` on them is a
@@ -133,9 +164,11 @@ def test_the_route_compares_the_signature_not_its_whole_verification(
         (b"x-tr-edge-boot", b"verified"),
     ]
     request = Request({"type": "http", "method": "POST", "path": PATH, "headers": headers})
-    with caplog.at_level(logging.WARNING, logger=gateway.logger.name):
+    with caplog.at_level(logging.INFO, logger=gateway.logger.name):
         gateway._authorize_gateway_sync(request, body, _pilot(fastpath_pilot_enabled=False), raw_body=raw)
     assert not [r for r in caplog.records if "edge boot verdict differs" in r.getMessage()]
+    compared = [r.getMessage() for r in caplog.records if "edge boot verdict compared" in r.getMessage()]
+    assert compared == ["fastpath edge boot verdict compared result=agree edge=verified python=verified"]
 
 
 def test_the_comparison_reads_the_path_as_the_server_decoded_it(
@@ -160,6 +193,8 @@ def test_the_comparison_reads_the_path_as_the_server_decoded_it(
     ]
     request = Request({"type": "http", "method": "POST", "path": decoded, "headers": headers})
     assert request.url.path == PATH
-    with caplog.at_level(logging.WARNING, logger=gateway.logger.name):
+    with caplog.at_level(logging.INFO, logger=gateway.logger.name):
         gateway._authorize_gateway_sync(request, body, _pilot(fastpath_pilot_enabled=False), raw_body=raw)
     assert not [r for r in caplog.records if "edge boot verdict differs" in r.getMessage()]
+    compared = [r.getMessage() for r in caplog.records if "edge boot verdict compared" in r.getMessage()]
+    assert compared == ["fastpath edge boot verdict compared result=agree edge=verified python=verified"]
