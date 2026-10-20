@@ -2272,3 +2272,17 @@ CPython 3.12.3 full runs (default and post-cutover): **330 modules, 1,630
 qualified names, 1,665 execution entries**. Sources are `/tmp/pr-g-inv-default`
 and `/tmp/pr-g-inv-post` (four JSON files each); both clocks independently
 contain the same 1,665 entries. See the round-1 report for execution results.
+
+### R0 columns re-freeze
+
+#1871 adds `app_id` and the two markup amounts to the activity projection, so
+the outbox payload the oracle compares changed by design. The reference was
+re-frozen from the same BASE plus PR G's three files and
+`src/trusted_router/storage_operational_analytics.py` from the #1871 worktree
+(`worktree-pins.json`), without Git writes. Archive SHA-256:
+`b9a751f24e21c7841f988f3d8c1e83ce31aebf9207bcead44fd06d1daed08d52`. The whole
+proof_oracle module passed on both clocks against it (338 comparisons each,
+CPython 3.12.13); the regenerated inventory is unchanged (330 modules, 1,630
+qualified names, 1,665 execution entries). BASE cannot move to current main
+yet: the frozen harness raises `ValueError("startup_record")` from main's
+newer `async_settle_shadow_startup_records`.

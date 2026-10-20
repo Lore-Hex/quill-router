@@ -26,10 +26,15 @@ import pytest
 
 from trusted_router.config import operational_analytics_sink_problems
 from trusted_router.operational_analytics_direct import (
+    ACTIVITY_COLUMNS,
+    ACTIVITY_OPTIONAL_DEFAULTS,
     DirectOperationalAnalyticsSink,
     OperationalOutboxRow,
     normalise_operational_event,
 )
+from trusted_router.storage_models import Generation
+from trusted_router.storage_operational_analytics import activity_payload
+from trusted_router.types import UsageType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -92,6 +97,62 @@ class TestCanonicalParityWithTheFrozenDrainer:
     """The extraction and the drainer must emit identical rows until the
     drainer is deleted. If this fails, one copy was edited without the
     other -- fix the drift, do not relax the comparison."""
+
+    @pytest.mark.parametrize("legacy", ["missing", "null", "current"])
+    def test_activity_rows_identical(self, legacy: str) -> None:
+        from clickhouse import ingest_operational_outbox_postgres as postgres
+
+        drainer = _load_drainer()
+        assert ACTIVITY_COLUMNS == drainer.ACTIVITY_COLUMNS
+        assert ACTIVITY_OPTIONAL_DEFAULTS == drainer.ACTIVITY_OPTIONAL_DEFAULTS
+        generation = Generation(
+            id="gen-activity",
+            request_id="req-activity",
+            workspace_id="ws-activity",
+            key_hash="test-key-hash",
+            model="test-model",
+            provider_name="test-provider",
+            app="Test app",
+            app_id="test-app",
+            app_markup_microdollars=2,
+            custom_model_markup_microdollars=3,
+            tokens_prompt=12,
+            tokens_completion=3,
+            total_cost_microdollars=9,
+            usage_type=UsageType.CREDITS,
+            speed_tokens_per_second=7.5,
+            finish_reason="stop",
+            status="success",
+            streamed=True,
+            operator_cost_microdollars=7,
+        )
+        payload = activity_payload(generation)
+        app_fields = ("app_id", "app_markup_microdollars", "custom_model_markup_microdollars")
+        for field in app_fields:
+            if legacy == "missing":
+                del payload[field]
+            elif legacy == "null":
+                payload[field] = None
+        payload["operator_cost_microdollars"] = 7
+        row = _row("activity", payload)
+        [ours] = normalise_operational_event(row)
+        [theirs] = drainer.normalise_operational_event(row)
+        [pg] = postgres.normalise_operational_event(row)
+        assert ours.row == theirs.row == pg.row
+        assert [ours.row[field] for field in app_fields] == (
+            ["test-app", 2, 3] if legacy == "current" else [None, 0, 0]
+        )
+        assert "operator_cost_microdollars" not in ours.row
+
+        post = _CapturingPost()
+        sink = _sink(post)
+        sink.enqueue_activity(generation)
+        assert sink.flush() == 1
+        [(url, body)] = post.calls
+        assert "activity_generations" in url
+        sent = json.loads(body)
+        assert [sent[field] for field in app_fields] == ["test-app", 2, 3]
+        assert "operator_cost_microdollars" not in sent
 
     def test_synthetic_rows_identical(self) -> None:
         drainer = _load_drainer()

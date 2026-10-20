@@ -33,6 +33,7 @@ from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
 )
+from trusted_router.storage_activity import generation_events
 from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     SpannerOperationalAnalyticsOutbox,
@@ -114,6 +115,9 @@ def _generation() -> Generation:
         provider="anthropic",
         provider_name="Anthropic",
         app="Test app",
+        app_id="test-app",
+        app_markup_microdollars=2,
+        custom_model_markup_microdollars=3,
         tokens_prompt=12,
         tokens_completion=3,
         total_cost_microdollars=9,
@@ -177,6 +181,9 @@ def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> Non
     assert payload["tenant_id"] == analytics_surrogate("workspace", generation.workspace_id)
     assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
+    assert payload["app_id"] == "test-app"
+    assert payload["app_markup_microdollars"] == 2
+    assert payload["custom_model_markup_microdollars"] == 3
     assert generation.key_hash not in encoded
     assert "private model output" not in encoded
     assert "tool_calls" not in payload
@@ -737,6 +744,9 @@ def test_operational_normalizer_adds_commit_version_and_rejects_unknown_kind() -
     [event] = normalise_operational_event(_outbox_row())
     assert event.event_kind == "activity"
     assert event.row["generation_id"] == _generation().id
+    assert event.row["app_id"] == "test-app"
+    assert event.row["app_markup_microdollars"] == 2
+    assert event.row["custom_model_markup_microdollars"] == 3
     assert event.row["ingest_version"].startswith("2026-07-31T12:35:00")
 
     with pytest.raises(ValueError, match="unsupported operational event kind"):
@@ -924,7 +934,19 @@ def test_operational_cursor_advances_only_after_clickhouse_ack() -> None:
     assert len(writer.batches) == 2
 
 
-def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_ids() -> None:
+@pytest.mark.parametrize(
+    "app_fields",
+    [
+        {},
+        {"app_id": None, "app_markup_microdollars": None, "custom_model_markup_microdollars": None},
+        {"app_id": None, "app_markup_microdollars": 0, "custom_model_markup_microdollars": 0},
+        {"app_id": "test-app", "app_markup_microdollars": "2", "custom_model_markup_microdollars": "3"},
+    ],
+    ids=["missing", "null", "defaults", "attributed"],
+)
+def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_ids(
+    app_fields: dict[str, Any],
+) -> None:
     tenant_id = analytics_surrogate("workspace", "ws-private-123")
     key_id = analytics_surrogate("api-key", "key-hash")
 
@@ -938,6 +960,11 @@ def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_id
         assert "key-hash" not in body
         assert "{tenant_id:String}" in body
         assert "mapContains(tags, {tag_key:String})" in body
+        selected = body.split("FROM", 1)[0]
+        assert "app_id" in selected
+        assert "app_markup_microdollars" in selected
+        assert "custom_model_markup_microdollars" in selected
+        assert "operator_cost_microdollars" not in selected
         return httpx.Response(
             200,
             json={
@@ -950,6 +977,7 @@ def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_id
                         "provider": "anthropic",
                         "provider_name": "Anthropic",
                         "app": "Test",
+                        **app_fields,
                         "tokens_prompt": 2,
                         "tokens_completion": 1,
                         "cached_input_tokens": 0,
@@ -992,6 +1020,13 @@ def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_id
     assert generation.workspace_id == tenant_id
     assert generation.tags == {"team": "legal"}
     assert generation.created_at == "2026-07-31T12:34:56.789Z"
+    public = generation.to_openrouter_generation()
+    [event] = generation_events([generation])
+    assert public["app_id"] == event.get("app_id") == (app_fields.get("app_id") or None)
+    for field in ("app_markup_microdollars", "custom_model_markup_microdollars"):
+        assert public[field] == event[field] == int(app_fields.get(field) or 0)
+    assert "operator_cost_microdollars" not in public
+    assert "operator_cost_microdollars" not in event
 
 
 def test_client_reliability_reader_binds_tenant_and_uses_final_rollups() -> None:

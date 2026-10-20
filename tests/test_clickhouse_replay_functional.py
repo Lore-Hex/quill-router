@@ -14,6 +14,8 @@ import pytest
 
 from clickhouse.benchmark_rows import normalise
 from clickhouse.rollup_analytics import RollupPartition, recompute_partition
+from trusted_router.operational_analytics import _generation
+from trusted_router.storage_activity import generation_events
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("TR_RUN_CLICKHOUSE_FUNCTIONAL") != "1",
@@ -151,7 +153,8 @@ def test_single_node_generation_projection_materializes_and_survives_merges() ->
         _docker(docker, "rm", "-f", name, check=False)
 
 
-def test_replayed_batch_collapses_under_final() -> None:
+@pytest.mark.parametrize("standalone", [False, True], ids=["replicated", "single-node"])
+def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("docker executable is unavailable")
@@ -172,6 +175,9 @@ def test_replayed_batch_collapses_under_final() -> None:
   </keeper_server>
   <zookeeper><node><host>127.0.0.1</host><port>9181</port></node></zookeeper>
   <macros><shard>01</shard><replica>functional-1</replica></macros>
+  <remote_servers>
+    <trustedrouter><shard><replica><host>127.0.0.1</host><port>9000</port></replica></shard></trustedrouter>
+  </remote_servers>
 </clickhouse>
 """
         )
@@ -380,7 +386,10 @@ def test_replayed_batch_collapses_under_final() -> None:
             operational_schema = (
                 Path(__file__).parents[1]
                 / "clickhouse"
-                / "004_operational_analytics_replicated.sql"
+                / (
+                    "006_operational_analytics_single_node.sql" if standalone
+                    else "004_operational_analytics_replicated.sql"
+                )
             ).read_bytes()
             _docker(
                 docker,
@@ -450,6 +459,55 @@ def test_replayed_batch_collapses_under_final() -> None:
                 "SELECT count() FROM activity_generations FINAL",
             )
             assert activity_count.stdout.decode().strip() == "1"
+
+            app_migration = (
+                Path(__file__).parents[1] / "clickhouse" / (
+                    "026_activity_generation_app_fields_single_node.sql" if standalone
+                    else "025_activity_generation_app_fields_replicated.sql"
+                )
+            ).read_text().replace("tr.activity_generations", f"{database}.activity_generations")
+            for _ in range(2):
+                _docker(
+                    docker, "exec", "-i", name, "clickhouse-client",
+                    "--database", database, "--multiquery",
+                    input_bytes=app_migration.encode(),
+                )
+
+            def read_activity() -> dict:
+                result = _docker(
+                    docker, "exec", name, "clickhouse-client", "--database", database,
+                    "--query", "SELECT * FROM activity_generations FINAL FORMAT JSONEachRow",
+                )
+                [row] = [json.loads(line) for line in result.stdout.splitlines()]
+                return row
+
+            legacy = read_activity()
+            assert legacy["app_id"] is None
+            assert int(legacy["app_markup_microdollars"]) == 0
+            assert int(legacy["custom_model_markup_microdollars"]) == 0
+            public = _generation(legacy, tenant_id=activity["tenant_id"]).to_openrouter_generation()
+            assert public["app_id"] is None
+            assert public["app_markup_microdollars"] == 0
+            assert public["custom_model_markup_microdollars"] == 0
+
+            activity.update(
+                app_id="test-app", app_markup_microdollars=2, custom_model_markup_microdollars=3,
+                ingest_version="2026-07-28T12:35:01.000001Z",
+            )
+            for _ in range(2):
+                _docker(
+                    docker, "exec", "-i", name, "clickhouse-client",
+                    "--database", database, "--query",
+                    "INSERT INTO activity_generations FORMAT JSONEachRow",
+                    input_bytes=(json.dumps(activity) + "\n").encode(),
+                )
+            stored = read_activity()
+            assert "operator_cost_microdollars" not in stored
+            generation = _generation(stored, tenant_id=activity["tenant_id"])
+            public = generation.to_openrouter_generation()
+            [event] = generation_events([generation])
+            for field in ("app_id", "app_markup_microdollars", "custom_model_markup_microdollars"):
+                assert public[field] == event[field] == activity[field]
             sampled_activity = _docker(
                 docker,
                 "exec",
@@ -504,7 +562,7 @@ def test_replayed_batch_collapses_under_final() -> None:
                 "source_commit": None,
                 "cost_microdollars": 0,
                 "output_match": 1,
-                "created_at": "2026-07-28T12:34:56.789Z",
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
                 "ingest_version": "2026-07-28T12:35:00.000001Z",
             }
             synthetic_payload = (json.dumps(synthetic) + "\n").encode()

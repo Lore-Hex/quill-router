@@ -1,8 +1,9 @@
 {
   "baseline": "8d781cf096c43cdc29aa54c37f8d3820b80cf587",
   "archive": "tests/fakes/frozen_main/package.tar.gz",
-  "archive_sha256": "886540b447d9d779855d2d1f3843c288e722e981b65619a80b2b2687be77e345",
-  "scope": "Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 full proof_oracle runs, default and post-cutover clocks (union of eight worker JSON files); negative controls excluded",
+  "archive_sha256": "b9a751f24e21c7841f988f3d8c1e83ce31aebf9207bcead44fd06d1daed08d52",
+  "scope": "Guarded frozen setup and HTTP/drain/state-capture executions in full proof_oracle runs, default and post-cutover clocks (union of the workers' JSON files); negative controls excluded",
+  "python": "3.12.13",
   "modules": 330,
   "execution_entries": 1665,
   "callables": 1630,
@@ -12509,7 +12510,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.storage_operational_analytics",
       "frozen_member": "src/trusted_router/storage_operational_analytics.py",
-      "sha256": "195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2"
+      "sha256": "d2bf1e1e805bf3fc7680cd6c2ad20ee5ae932bd22a5f18e5c146898b44e245f7"
     },
     {
       "module": "trusted_router.storage_operational_analytics",
@@ -12517,7 +12518,7 @@
       "code_firstlineno": 34,
       "frozen_module": "frozen_main.storage_operational_analytics",
       "frozen_member": "src/trusted_router/storage_operational_analytics.py",
-      "sha256": "195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2"
+      "sha256": "d2bf1e1e805bf3fc7680cd6c2ad20ee5ae932bd22a5f18e5c146898b44e245f7"
     },
     {
       "module": "trusted_router.storage_operational_analytics",
@@ -12525,7 +12526,7 @@
       "code_firstlineno": 185,
       "frozen_module": "frozen_main.storage_operational_analytics",
       "frozen_member": "src/trusted_router/storage_operational_analytics.py",
-      "sha256": "195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2"
+      "sha256": "d2bf1e1e805bf3fc7680cd6c2ad20ee5ae932bd22a5f18e5c146898b44e245f7"
     },
     {
       "module": "trusted_router.storage_operational_analytics",
@@ -12533,7 +12534,7 @@
       "code_firstlineno": 67,
       "frozen_module": "frozen_main.storage_operational_analytics",
       "frozen_member": "src/trusted_router/storage_operational_analytics.py",
-      "sha256": "195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2"
+      "sha256": "d2bf1e1e805bf3fc7680cd6c2ad20ee5ae932bd22a5f18e5c146898b44e245f7"
     },
     {
       "module": "trusted_router.storage_operational_analytics",
@@ -12541,7 +12542,7 @@
       "code_firstlineno": 56,
       "frozen_module": "frozen_main.storage_operational_analytics",
       "frozen_member": "src/trusted_router/storage_operational_analytics.py",
-      "sha256": "195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2"
+      "sha256": "d2bf1e1e805bf3fc7680cd6c2ad20ee5ae932bd22a5f18e5c146898b44e245f7"
     },
     {
       "module": "trusted_router.storage_rate_limits",

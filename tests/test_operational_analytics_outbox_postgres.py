@@ -73,6 +73,9 @@ def _generation(generation_id: str = "gen-pg-activity-1") -> Generation:
         provider="anthropic",
         provider_name="Anthropic",
         app="Test app",
+        app_id="test-app",
+        app_markup_microdollars=2,
+        custom_model_markup_microdollars=3,
         tokens_prompt=12,
         tokens_completion=3,
         total_cost_microdollars=9,
@@ -172,6 +175,9 @@ def test_enqueued_activity_payload_names_its_workspace_but_never_keys() -> None:
     assert payload["tenant_id"] == analytics_surrogate("workspace", generation.workspace_id)
     assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
+    assert payload["app_id"] == "test-app"
+    assert payload["app_markup_microdollars"] == 2
+    assert payload["custom_model_markup_microdollars"] == 3
     # Assert on the encoded bytes: a raw key hash could otherwise hide in a
     # nested structure the key assertions above never look at.
     assert generation.key_hash not in encoded
@@ -387,6 +393,12 @@ def test_drain_never_deletes_a_row_clickhouse_did_not_accept() -> None:
     result = drain_shard_once(source, writer, shard=row.shard, batch_size=10)
     assert result == ShardDrainResult(shard=row.shard, fetched=1, inserted=1, deleted=1)
     assert source.rows == []
+    [batch] = writer.batches
+    [event] = batch
+    assert event.row["app_id"] == "test-app"
+    assert event.row["app_markup_microdollars"] == 2
+    assert event.row["custom_model_markup_microdollars"] == 3
+    assert "operator_cost_microdollars" not in event.row
 
 
 def test_failure_after_the_clickhouse_write_redelivers_rather_than_losing() -> None:
