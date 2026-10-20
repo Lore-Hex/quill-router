@@ -151,15 +151,32 @@ class ObservationStore:
 
         attempted = False
         committing = False
+        aborted = False
+        def record_abort(error: BaseException) -> None:
+            nonlocal aborted
+            seen: set[int] = set()
+            cause: BaseException | None = error
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                if isinstance(cause, Aborted):
+                    aborted = True
+                    break
+                cause = cause.__cause__
         def once(tx: Any) -> T:
-            nonlocal attempted, committing
+            nonlocal attempted, committing, aborted
             if attempted:
                 # Session re-enters only after ABORTED. Do not run a second attempt.
+                aborted = True
                 raise ContentionLoss("transaction_aborted")
             attempted = True
-            budget.remaining(cap)
-            result = callback(tx)
-            budget.remaining(cap)
+            try:
+                budget.remaining(cap)
+                result = callback(tx)
+                budget.remaining(cap)
+            except Exception as error:
+                # SDK rollback can replace this exception. Retain the abort now.
+                record_abort(error)
+                raise
             committing = True
             return result
         try:
@@ -173,7 +190,8 @@ class ObservationStore:
         except Exception as error:
             # The bounded transport keeps SDK retry loops stopped with a plain
             # exception, retaining ABORTED as its cause for this classification.
-            if isinstance(error, Aborted) or isinstance(error.__cause__, Aborted):
+            record_abort(error)
+            if aborted:
                 raise ContentionLoss("transaction_aborted") from None
             if committing:
                 raise UnknownCommit("shadow_commit_unknown") from None
