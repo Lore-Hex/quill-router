@@ -225,6 +225,7 @@ jobs:
           repository: Lore-Hex/quill-cloud-proxy
           ref: main
           path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
           persist-credentials: false
       - name: Require and inspect enclave source
         run: |
@@ -398,6 +399,7 @@ jobs:
           repository: Lore-Hex/quill-cloud-proxy
           ref: main
           path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
           persist-credentials: false
       - name: Require and inspect enclave source
         run: |
