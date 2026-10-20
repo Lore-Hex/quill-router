@@ -59,12 +59,39 @@ reconciler publishes each name only after TLS and attestation qualification,
 including the confidential policy probe where required. Website deployment
 does not create API records or terminate prompt traffic. Preserve the website's
 apex/www routing and Certificate Manager authorization records. Publish the
-quickstart only after both API origins pass production tests. For a narrow
+quickstart as live only after both API origins pass production tests. Until then,
+retain the activation notice and explicit working TrustedRouter confidential
+alternative. Never publish DNS records to bypass qualification. For a narrow
 release, back up and update only New York's index and the isolated
 `assets/spot-api.css`, preserving concurrent asset versions and unrelated market
 pages. If the live homepage differs from the build, insert only the new
 stylesheet link, navigation link, hero action and spot API section into fresh
-live HTML. Verify reversing those four changes reproduces the original bytes.
+live HTML. Verify reversing these changes reproduces the original bytes.
+
+### NYTE Token Index and open-source supplier stack
+
+`https://nytokenexchange.com/index` uses the same published data and chart assets
+as `https://trustedrouter.com/index`. The build reads the public literal-data
+module `src/trusted_router/content/token_index.py` and copies its public chart
+assets unchanged. It makes no database or network calls. Keep its snapshot date
+visible; the index is provisional and is not an executable supplier quote.
+`/index.html` remains the homepage; do not publish the index page at that path.
+
+New York's navigation links `/index`. Its `open-stack.html` section invites
+operators to list spare inference capacity under their provider identity and
+links the Apache-2.0 neocloud stack and existing supplier onboarding.
+The stack is pre-alpha; confidential serving requires independent hardware
+and software qualification, not merely installing the software.
+
+Run `node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089`
+alongside the existing browser checks. For a narrow publish, back up live objects
+and publish only `index` (as `text/html`), `assets/index-page.css`,
+`assets/token-index.css`, `assets/token-index.js`, the five public files in
+`assets/token-index/`, `assets/spot-api.css` and New York's sitemap.
+Insert the new sections, navigation links and stylesheet into fresh live New
+York homepage HTML, preserving concurrent content, CSS/JS versions and other
+markets. Use generation preconditions on every upload and verify the reverse
+patch restores the original homepage bytes before publishing it.
 
 ### Public New York media kit
 
