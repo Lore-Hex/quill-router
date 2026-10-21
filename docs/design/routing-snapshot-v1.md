@@ -310,12 +310,51 @@ pinned).
   golden fixture's catalog is synthetic; the compiler still reads the
   module-level rules listed under "What the compiler reads".
 
+## The candidate pipeline and the routing cases
+
+`trusted_router.authorize_candidates` is authorize's candidate pipeline,
+lifted out of `_authorize_gateway_sync_impl` without changing a byte of its
+answers (`tests/test_authorize_candidates_differential.py` runs a generated
+matrix through main's route and the new one). Its three steps take explicit
+inputs:
+
+- `plan_route(request, settings, region)`: routing normalization, the route
+  kind, and the refusals the request makes on its own.
+- `resolve_candidates(plan, request, region, at, user_model_candidate)`: the
+  route type's catalog candidates, narrowed by the gateway-region rule above.
+- `finish_candidates(plan, resolved, byok_providers, estimated_input_tokens,
+  output_tokens, service_tier, additional_cost_reservation, video_resolution,
+  at, user_model_prices, partner_mode, rerank)`: BYOK presence (the provider
+  slugs whose credentials the workspace holds), the named decision chain, the
+  service tier, operator-funded costs, `allow_fallbacks`, and the model
+  estimate, the largest candidate's price at `at`.
+
+The gateway keeps what has I/O or process state: the key, workspace and boot
+reads, custom and user models, idempotent replays, the BYOK row read, the
+clock reading, and `ROUTING_STATE`, which it passes as `rerank` (applied to
+live-routing requests before `allow_fallbacks` keeps the first candidate).
+The routing functions the pipeline calls still read the process clocks
+(lifecycle, catalog freshness, rank-evidence age), as before.
+
+`fastpath/testdata/routing_cases_v1.json`
+(`scripts/fastpath/routing_cases_vectors.py`,
+`tests/test_fastpath_routing_cases_vectors.py`) maps requests over this
+document's golden fixture catalog to the candidate ids in order, the model
+estimate, the normalized service tier and the Stage D reason (with the E2
+cohort's fixed inputs in its header), or to the refusal's status, type and
+message, with `rerank` absent. It names the snapshot body by sha256, every
+instant lies in the snapshot's window, and the test checks that the snapshot
+alone admits every candidate and prices every estimate. The fixture's clocks
+are pinned, so the hourly price refresh cannot make it stale.
+
 ## Not yet
 
-- The candidate pipeline as a pure function with a differential test, and
-  `routing_cases_v1.json` (next PR); request parsing (`provider` fields,
-  `max_price`, privacy-tier spellings, `require_parameters` aliases) belongs
-  there, with its own vectors.
+- Request parsing as data (`provider` fields, `max_price`, privacy-tier
+  spellings, `require_parameters` aliases): the routing cases exercise it
+  through Python, but the snapshot does not carry its tables yet.
+- In the routing cases: meta models, decision chains and the full fee
+  stack (receipt fee, custom-model markup, additional cost, app markup), and
+  `candidate_cost_reporting`, which authorize derives from the stored row.
 - The Go reader beyond the golden checks: parsing, freshness, evaluation.
 - Publishing: hourly compile, key custody (pinned Secret Manager versions,
   rotation), the internal endpoint, the edge's poll and last-good copy.

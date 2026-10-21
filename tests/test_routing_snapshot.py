@@ -214,15 +214,19 @@ def _gateway_region(settings: Any, rule: Any, body_region: str | None) -> str:
 def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> None:
     import inspect
 
+    from trusted_router import authorize_candidates
     from trusted_router.catalog_data import ModelEndpoint
     from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
     from trusted_router.routes.internal import gateway
     from trusted_router.routing_snapshot import _gateway_regions
 
-    # The rule this test models, as gateway.py writes it today.
+    # The rule this test models, as authorize writes it today: the gateway
+    # chooses the region, and the candidate pipeline checks the request's own.
     source = inspect.getsource(gateway._authorize_gateway_sync_impl)
     assert "region = choose_region(settings, body.region or None)" in source
-    assert 'body.region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region)' in source
+    assert "body_region=body.region," in source
+    pipeline = inspect.getsource(authorize_candidates.resolve_candidates)
+    assert 'request.body_region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region)' in pipeline
     us_only = Settings(environment="test", regions="us-central1,us-east4",
                        primary_region="us-central1")
     settings = snapshot_settings_from(us_only)
