@@ -40,6 +40,9 @@ Example shape (illustrative dates and availability):
 ```json
 {
   "usage": {
+    "provider_usage": {
+      "gateway_region": "europe-west4"
+    },
     "inference_location": {
       "advertised_regions": ["United States"],
       "advertised_region_scope": "model_default_tier",
@@ -68,7 +71,17 @@ DeepInfra also have public or provider-submitted declarations.
 `serving_region` stays null: no integrated adapter currently verifies an
 actual-serving-region response field. Live Telnyx probes did not report one.
 Never infer it from HQ, a regional hostname, Cloudflare POP, ZDR/E2EE flags, or
-the existing gateway `region` field.
+the gateway region.
+
+`usage.provider_usage.gateway_region` identifies the TrustedRouter gateway
+that handled the request, not the provider's inference location. For example,
+`gateway_region: "europe-west4"` together with `serving_region: null` means the
+gateway ran in that region and the provider's serving location was not reported.
+It is not evidence that inference ran in Europe. This replaces the ambiguous
+`usage.provider_usage.region` field; the optional `openrouter_metadata` object
+uses `gateway_region` too. Batch result attribution uses the same name. Private
+route metadata remains hidden. During rollout, older gateways may still return
+the legacy name with the same gateway-only meaning.
 
 Fallback uses the winner's metadata. Private aliases and custom models omit
 it to avoid revealing backing configuration. Orchestration may execute in
