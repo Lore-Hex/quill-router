@@ -1,13 +1,28 @@
 const { expect, test } = require("@playwright/test");
 
-for (const width of [1440, 880, 390, 320]) {
-  test(`header controls remain reachable after scrolling at ${width}px`, async ({ page }) => {
+for (const width of [1440, 1280, 880, 390, 320]) {
+  test(`header controls remain reachable after scrolling at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
     for (const path of ["/", "/models", "/providers", "/pricing"]) {
       await page.goto(path);
       await page.evaluate(() => window.scrollTo(0, 900));
       await expect.poll(() => page.locator(".trnav").evaluate(el => el.getBoundingClientRect().top)).toBe(0);
+      await page.evaluate(() => document.fonts.ready);
+      const brandLink = page.locator(".trnav .brand");
+      await expect(brandLink).toHaveCSS("font-weight", "600");
+      await expect(brandLink).toHaveCSS("gap", "12px");
+      const header = await page.locator(".trnav .tbar").boundingBox();
+      const brand = await brandLink.boundingBox();
+      const mark = page.locator(".trnav .brand-mark");
+      await expect(mark).toHaveCSS("width", "27px");
+      await expect(mark).toHaveCSS("height", "27px");
+      const search = await page.locator(".trnav [data-open-search]").boundingBox();
+      expect(brand.y).toBeGreaterThanOrEqual(header.y);
+      expect(brand.y + brand.height).toBeLessThanOrEqual(header.y + header.height);
+      expect(search.x).toBeGreaterThan(brand.x + brand.width);
+      expect(Math.abs(brand.y + brand.height / 2 - search.y - search.height / 2)).toBeLessThan(1);
+      await page.screenshot({ path: testInfo.outputPath(`${path.slice(1) || "homepage"}.png`) });
       // A real click also checks that other positioned controls do not intercept the CTA.
       await page.locator(".trnav .signin").click();
       await expect(page.locator("#signinModal")).toBeVisible();
