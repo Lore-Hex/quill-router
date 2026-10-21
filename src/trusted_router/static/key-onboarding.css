@@ -61,7 +61,7 @@ body.console:has(.key-console){background:var(--tr-color-surface-bg-alt)}.consol
   .ux-tiles { flex-direction: column; gap: 24px; padding-top: 24px; }
 }
 
-/* While a new key is on screen the list stays, but quiet: smaller heading, no create control. */
+/* While a new key is on screen the list stays, but quiet: smaller heading. */
 .key-list-quiet { margin-top: 24px; }
 .key-list-quiet > .panel-head { padding: 0 0 6px; }
 .key-list-quiet > .panel-head h2 { font-size: 15px; font-weight: 500; color: var(--tr-color-text-secondary); }

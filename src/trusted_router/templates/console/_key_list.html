@@ -35,7 +35,7 @@
       <h2>Your keys ({{ keys|length }})</h2>
     </div>
     <div class="panel-head-actions">
-      {% if keys and not created_key %}
+      {% if keys %}
       <button class="ux-link" type="button" data-action="open-new-key" aria-controls="new-api-key">Create key</button>
       {% endif %}
     </div>
