@@ -492,7 +492,8 @@ def test_expired_snapshot_sync_fallback_without_pending_acceptance(env):
 
 
 @pytest.mark.parametrize('winner', ['reaper', 'sync'])
-def test_concurrent_enqueue_vs_terminal(env, winner, monkeypatch):
+@pytest.mark.parametrize('first_commit', ['enqueue', 'terminal'])
+def test_concurrent_enqueue_vs_terminal(env, winner, first_commit, monkeypatch):
     monkeypatch.setattr(time, 'monotonic', lambda: 10.0)
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -501,8 +502,25 @@ def test_concurrent_enqueue_vs_terminal(env, winner, monkeypatch):
     body, auth, _ = prepare(env)
     row = row_for(env, body)
     env[1]._ready_barrier = threading.Barrier(2)
+    role = threading.local()
+    committed = threading.Event()
+    original_commit = env[1]._try_commit
+
+    # Both transactions stage their writes before the barrier releases. Exercise
+    # both serializations instead of letting thread scheduling choose coverage.
+    def commit(tx):
+        if role.name != first_commit:
+            assert committed.wait(timeout=10), 'competing transaction did not commit'
+        result = original_commit(tx)
+        if role.name == first_commit:
+            assert result, 'the first staged transaction must win its commit'
+            committed.set()
+        return result
+
+    monkeypatch.setattr(env[1], '_try_commit', commit)
 
     def accept():
+        role.name = 'enqueue'
         try:
             enqueue(_outbox(env[0]), row, handler.time.monotonic()+.5)
             return True
@@ -510,16 +528,21 @@ def test_concurrent_enqueue_vs_terminal(env, winner, monkeypatch):
             return False
 
     def compete():
+        role.name = 'terminal'
         return settle_atomic(env[1], env[0]._param_types, reservation_id=auth.credit_reservation_id,
                              actual_micro=9, settled_usage_type='Credits', success=winner == 'sync',
-                             guard_outbox=winner == 'reaper', outbox_available=True)
+                             guard_outbox=winner == 'reaper', outbox_available=True,
+                             async_fence=env[3].async_settle_protection)
 
     with ThreadPoolExecutor(2) as pool:
         accepting, terminal = pool.submit(accept), pool.submit(compete)
         accepted, result = accepting.result(), terminal.result()
+    assert accepted == (first_commit == 'enqueue')
     assert accepted == bool(env[1].settle_outbox)
     assert accepted == (result['outcome'] != 'settled')
     assert not accepted or not env[1].reservations[auth.credit_reservation_id]['settled']
+    assert _typed_credit(env[1], 'ws-v1')['reserved'] == (3 if accepted else 0)
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == (9 if not accepted and winner == 'sync' else 0)
     env[1]._ready_barrier = None
 
 
