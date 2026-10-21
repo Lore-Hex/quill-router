@@ -231,6 +231,19 @@ jobs:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
+      - name: Check out enclave source for the mandatory Sentry guard
+        uses: actions/checkout@v4
+        with:
+          repository: Lore-Hex/quill-cloud-proxy
+          ref: main
+          path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
+          persist-credentials: false
+      - name: Require and inspect enclave source
+        run: |
+          echo "TR_ENCLAVE_SOURCE_ROOT=$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" >> "$GITHUB_ENV"
+          git -C .security/quill-cloud-proxy rev-parse HEAD
+          TR_ENCLAVE_SOURCE_ROOT="$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" uv run python -m scripts.check_enclave_sentry
       # The coverage invocation executes the ordinary suite; the frozen-main
       # differential runs in proof-oracle without coverage tracing. Running a
       # separate plain pytest pass doubled CI time and delayed every guarded
@@ -307,8 +320,10 @@ jobs:
     # tests and the coverage number rather than hiding one behind the other --
     # but it still fails if any shard did, because coverage computed from a
     # partial run is not a measurement of this commit.
+    # Cancelled runs must release their concurrency slot. always() kept this
+    # job queued after superseding PR runs, blocking the replacement's CI.
     needs: test
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -392,6 +407,19 @@ jobs:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
+      - name: Check out enclave source for the mandatory Sentry guard
+        uses: actions/checkout@v4
+        with:
+          repository: Lore-Hex/quill-cloud-proxy
+          ref: main
+          path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
+          persist-credentials: false
+      - name: Require and inspect enclave source
+        run: |
+          echo "TR_ENCLAVE_SOURCE_ROOT=$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" >> "$GITHUB_ENV"
+          git -C .security/quill-cloud-proxy rev-parse HEAD
+          TR_ENCLAVE_SOURCE_ROOT="$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" uv run python -m scripts.check_enclave_sentry
       # Computed from _RETIREMENTS rather than hard-coded, so adding a
       # retirement moves this clock with it and no one has to remember. The
       # max() with now() keeps the clock in the future once every announced

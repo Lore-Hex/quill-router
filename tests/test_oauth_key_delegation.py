@@ -45,6 +45,7 @@ def _create_code(
 
 
 def _consent_form(client: TestClient, params: dict[str, str]) -> dict[str, str]:
+    params = {"code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256", **params}
     page = client.get("/auth", params=params)
     assert page.status_code == 200, page.text
     def value(name: str) -> str:
@@ -186,36 +187,30 @@ def test_oauth_code_exchange_rejects_wrong_pkce_verifier(
     assert not STORE.list_keys(STORE.find_user_by_email("alice@example.com").id)
 
 
-def test_oauth_plain_pkce_exchange(
+def test_oauth_plain_pkce_creation_rejected(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
     verifier = "plain-verifier-" + "e" * 43
-    code, _ = _create_code(client, user_headers, verifier=verifier, method="plain")
-
     exchange = client.post(
-        "/v1/auth/keys",
-        json={"code": code, "code_verifier": verifier, "code_challenge_method": "plain"},
+        "/v1/auth/keys/code", headers=user_headers,
+        json={"callback_url": "https://app.example.com/callback", "code_challenge": verifier, "code_challenge_method": "plain"},
     )
 
-    assert exchange.status_code == 200, exchange.text
-    assert STORE.get_key_by_raw(exchange.json()["key"]) is not None
+    assert exchange.status_code == 400, exchange.text
+    assert not STORE.oauth_code_store.codes
 
 
-def test_oauth_code_without_pkce_allows_exchange(
+def test_oauth_code_without_pkce_rejected(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
-    code, _ = _create_code(
-        client,
-        user_headers,
-        code_challenge=None,
-        code_challenge_method=None,
+    exchange = client.post(
+        "/v1/auth/keys/code", headers=user_headers,
+        json={"callback_url": "https://app.example.com/callback"},
     )
 
-    exchange = client.post("/v1/auth/keys", json={"code": code})
-
-    assert exchange.status_code == 200, exchange.text
+    assert exchange.status_code == 400, exchange.text
 
 
 def test_oauth_code_exchange_rejects_method_mismatch(
@@ -223,11 +218,11 @@ def test_oauth_code_exchange_rejects_method_mismatch(
     user_headers: dict[str, str],
 ) -> None:
     verifier = "method-verifier-" + "f" * 43
-    code, _ = _create_code(client, user_headers, verifier=verifier, method="plain")
+    code, _ = _create_code(client, user_headers, verifier=verifier)
 
     response = client.post(
         "/v1/auth/keys",
-        json={"code": code, "code_verifier": verifier, "code_challenge_method": "S256"},
+        json={"code": code, "code_verifier": verifier, "code_challenge_method": "plain"},
     )
 
     assert response.status_code == 400
@@ -280,11 +275,11 @@ def test_oauth_code_exchange_rejects_expired_code(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
-    code, _ = _create_code(client, user_headers, code_challenge=None, code_challenge_method=None)
+    code, _ = _create_code(client, user_headers)
     stored = next(iter(STORE.oauth_code_store.codes.values()))
     stored.code_expires_at = "2000-01-01T00:00:00Z"
 
-    response = client.post("/v1/auth/keys", json={"code": code})
+    response = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert response.status_code == 403
     assert response.json()["error"]["message"] == "Invalid or expired authorization code"
@@ -305,7 +300,7 @@ def test_oauth_code_exchange_rejects_non_ascii_verifier(
 def test_oauth_code_creation_requires_management_auth(client: TestClient) -> None:
     response = client.post(
         "/v1/auth/keys/code",
-        json={"callback_url": "https://app.example.com/callback"},
+        json={"callback_url": "https://app.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
 
     assert response.status_code == 401
@@ -318,7 +313,7 @@ def test_oauth_code_creation_rejects_inference_key(
     response = client.post(
         "/v1/auth/keys/code",
         headers=inference_headers,
-        json={"callback_url": "https://app.example.com/callback"},
+        json={"callback_url": "https://app.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
 
     assert response.status_code == 403
@@ -333,11 +328,9 @@ def test_oauth_code_creation_defaults_label_from_callback_host(
         user_headers,
         callback_url="https://my-coding-app.example/cb",
         key_label=None,
-        code_challenge=None,
-        code_challenge_method=None,
     )
 
-    exchange = client.post("/v1/auth/keys", json={"code": code})
+    exchange = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert exchange.status_code == 200
     assert STORE.get_key_by_raw(exchange.json()["key"]).name == "my-coding-app.example delegated key"
@@ -353,6 +346,8 @@ def test_oauth_code_creation_stores_spawn_telemetry_without_returning_it(
         json={
             "callback_url": "https://app.example.com/callback",
             "spawn_agent": "coding-assistant",
+            "code_challenge": _pkce_challenge("a" * 48),
+            "code_challenge_method": "S256",
             "spawn_cloud": "aws-us-east-1",
         },
     )
@@ -388,8 +383,8 @@ def test_oauth_code_creation_with_management_key_keeps_creator_user(
     created = client.post("/v1/keys", headers=user_headers, json={"name": "mgmt", "management": True}).json()
     management_headers = {"authorization": f"Bearer {created['key']}"}
 
-    code, _ = _create_code(client, management_headers, code_challenge=None, code_challenge_method=None)
-    exchange = client.post("/v1/auth/keys", json={"code": code})
+    code, _ = _create_code(client, management_headers)
+    exchange = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert exchange.status_code == 200
     assert exchange.json()["user_id"] == STORE.find_user_by_email("alice@example.com").id
@@ -402,7 +397,7 @@ def test_oauth_code_creation_unprefixed_openrouter_compat_path(
     response = client.post(
         "/auth/keys/code",
         headers=user_headers,
-        json={"callback_url": "https://app.example.com/callback"},
+        json={"callback_url": "https://app.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
 
     assert response.status_code == 200
@@ -413,9 +408,9 @@ def test_oauth_key_exchange_unprefixed_openrouter_compat_path(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
-    code, _ = _create_code(client, user_headers, code_challenge=None, code_challenge_method=None)
+    code, _ = _create_code(client, user_headers)
 
-    response = client.post("/auth/keys", json={"code": code})
+    response = client.post("/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert response.status_code == 200
     assert response.json()["key"].startswith("sk-tr-v1-")
@@ -428,17 +423,17 @@ def test_oauth_app_id_is_stable_for_callback_url(
     first = client.post(
         "/v1/auth/keys/code",
         headers=user_headers,
-        json={"callback_url": "https://app.example.com/callback"},
+        json={"callback_url": "https://app.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     ).json()["data"]["app_id"]
     second = client.post(
         "/v1/auth/keys/code",
         headers=user_headers,
-        json={"callback_url": "https://app.example.com/callback"},
+        json={"callback_url": "https://app.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     ).json()["data"]["app_id"]
     third = client.post(
         "/v1/auth/keys/code",
         headers=user_headers,
-        json={"callback_url": "https://other.example.com/callback"},
+        json={"callback_url": "https://other.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     ).json()["data"]["app_id"]
 
     assert first == second
@@ -460,7 +455,7 @@ def test_oauth_code_creation_accepts_openrouter_allowed_callback_ports(
     user_headers: dict[str, str],
     callback_url: str,
 ) -> None:
-    response = client.post("/v1/auth/keys/code", headers=user_headers, json={"callback_url": callback_url})
+    response = client.post("/v1/auth/keys/code", headers=user_headers, json={"callback_url": callback_url, "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"})
 
     assert response.status_code == 200, response.text
 
@@ -501,7 +496,7 @@ def test_oauth_code_creation_requires_s256_for_native_callback(
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["message"] == "native callback_url requires PKCE S256"
+    assert "S256" in response.json()["error"]["message"]
 
 
 @pytest.mark.parametrize(
@@ -523,7 +518,7 @@ def test_oauth_code_creation_rejects_bad_callback_urls(
     callback_url: str,
     message: str,
 ) -> None:
-    response = client.post("/v1/auth/keys/code", headers=user_headers, json={"callback_url": callback_url})
+    response = client.post("/v1/auth/keys/code", headers=user_headers, json={"callback_url": callback_url, "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"})
 
     assert response.status_code == 400
     assert response.json()["error"]["message"] == message
@@ -532,8 +527,8 @@ def test_oauth_code_creation_rejects_bad_callback_urls(
 @pytest.mark.parametrize(
     "patch,message",
     [
-        ({"code_challenge_method": "S512", "code_challenge": "abc"}, "code_challenge_method must be S256 or plain"),
-        ({"code_challenge_method": "S256"}, "code_challenge is required when code_challenge_method is set"),
+        ({"code_challenge_method": "S512", "code_challenge": "abc"}, "code_challenge_method must be S256"),
+        ({"code_challenge_method": "S256", "code_challenge": ""}, "code_challenge is required for PKCE S256"),
         ({"limit": "-1"}, "limit must be non-negative"),
         ({"limit": "nan"}, "limit must be a dollar amount"),
         ({"usage_limit_type": "yearly"}, "usage_limit_type must be daily, weekly, or monthly"),
@@ -548,7 +543,7 @@ def test_oauth_code_creation_rejects_bad_request_fields(
     patch: dict[str, str],
     message: str,
 ) -> None:
-    body = {"callback_url": "https://app.example.com/callback", **patch}
+    body = {"callback_url": "https://app.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), **patch}
 
     response = client.post("/v1/auth/keys/code", headers=user_headers, json=body)
 
@@ -562,9 +557,9 @@ def test_oauth_code_exchange_preserves_allowed_limit_reset(
     user_headers: dict[str, str],
     reset: str,
 ) -> None:
-    code, _ = _create_code(client, user_headers, usage_limit_type=reset, code_challenge=None, code_challenge_method=None)
+    code, _ = _create_code(client, user_headers, usage_limit_type=reset)
 
-    exchange = client.post("/v1/auth/keys", json={"code": code})
+    exchange = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert exchange.status_code == 200
     assert STORE.get_key_by_raw(exchange.json()["key"]).limit_reset == reset
@@ -584,7 +579,7 @@ def test_oauth_browser_auth_page_requires_signin_and_preserves_next() -> None:
     local_client = TestClient(app)
 
     response = local_client.get(
-        "/auth?callback_url=https://app.example.com/callback&key_label=Example",
+        "/auth?callback_url=https://app.example.com/callback&key_label=Example&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
     )
 
     assert response.status_code == 401
@@ -594,7 +589,7 @@ def test_oauth_browser_auth_page_requires_signin_and_preserves_next() -> None:
 
 
 def test_oauth_browser_auth_page_rejects_invalid_callback_before_signin(client: TestClient) -> None:
-    response = client.get("/auth?callback_url=http://app.example.com/callback")
+    response = client.get("/auth?callback_url=http://app.example.com/callback&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256")
 
     assert response.status_code == 400
     assert response.json()["error"]["message"] == "callback_url must be an https URL"
@@ -605,7 +600,7 @@ def test_oauth_browser_auth_page_rejects_non_management_bearer(
     inference_headers: dict[str, str],
 ) -> None:
     response = client.get(
-        "/auth?callback_url=https://app.example.com/callback",
+        "/auth?callback_url=https://app.example.com/callback&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
         headers=inference_headers,
     )
 
@@ -624,7 +619,7 @@ def test_oauth_browser_consent_page_for_active_session(client: TestClient) -> No
     )
     client.cookies.set("tr_session", raw_session)
 
-    response = client.get("/auth?callback_url=https://app.example.com/callback&key_label=Example")
+    response = client.get("/auth?callback_url=https://app.example.com/callback&key_label=Example&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256")
 
     assert response.status_code == 200
     assert "Authorize Example" in response.text
@@ -646,7 +641,7 @@ def test_oauth_browser_consent_defaults_funding_and_key_limit(client: TestClient
     client.cookies.set("tr_session", raw_session)
 
     response = client.get(
-        "/auth?callback_url=https://app.example.com/callback&key_label=Example",
+        "/auth?callback_url=https://app.example.com/callback&key_label=Example&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
     )
 
     assert response.status_code == 200
@@ -672,7 +667,7 @@ def test_oauth_browser_cancel_preserves_app_state(client: TestClient) -> None:
     client.cookies.set("tr_session", raw_session)
 
     response = client.get(
-        "/auth?callback_url=https%3A%2F%2Fapp.example.com%2Fcallback%3Fstate%3Dcsrf",
+        "/auth?callback_url=https%3A%2F%2Fapp.example.com%2Fcallback%3Fstate%3Dcsrf&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
     )
 
     assert response.status_code == 200
@@ -766,7 +761,7 @@ def test_oauth_browser_user_selected_limit_is_issued_to_app(client: TestClient) 
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert exchanged.status_code == 200
     key = STORE.get_key_by_raw(exchanged.json()["key"])
@@ -800,7 +795,7 @@ def test_oauth_browser_approve_honors_the_limit_the_user_chose(client: TestClien
     approved = client.post("/auth/approve", data=form, follow_redirects=False)
 
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert exchanged.status_code == 200
     key = STORE.get_key_by_raw(exchanged.json()["key"])
@@ -834,7 +829,7 @@ def test_oauth_browser_approve_lets_the_user_edit_a_suggested_limit(client: Test
     approved = client.post("/auth/approve", data=form, follow_redirects=False)
 
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
 
     assert exchanged.status_code == 200
     key = STORE.get_key_by_raw(exchanged.json()["key"])
@@ -889,6 +884,8 @@ def test_consent_page_clamps_an_oversized_suggestion_to_what_it_can_approve(
             "callback_url": "https://app.example.com/callback",
             "key_label": "Example app",
             "limit": "20000",
+            "code_challenge": _pkce_challenge("a" * 48),
+            "code_challenge_method": "S256",
         },
     )
     assert page.status_code == 200
@@ -911,7 +908,7 @@ def test_consent_page_clamps_an_oversized_suggestion_to_what_it_can_approve(
     )
     assert approved.status_code == 302
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     assert exchanged.status_code == 200
     key = STORE.get_key_by_raw(exchanged.json()["key"])
     assert key is not None
@@ -944,7 +941,7 @@ def test_programmatic_limits_above_the_consent_ceiling_still_work(client: TestCl
     approved = client.post("/auth/approve", data=form, follow_redirects=False)
     assert approved.status_code == 302
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     assert exchanged.status_code == 200
     key = STORE.get_key_by_raw(exchanged.json()["key"])
     assert key is not None
@@ -995,7 +992,7 @@ def test_oauth_browser_approve_validation_failure_keeps_the_consent_usable(
     )
     assert retried.status_code == 302
     code = parse_qs(urlsplit(retried.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     assert exchanged.status_code == 200
     key = STORE.get_key_by_raw(exchanged.json()["key"])
     assert key is not None
@@ -1048,7 +1045,7 @@ def test_oauth_browser_approve_redirects_with_code_and_user_id(client: TestClien
     assert parsed.netloc == "app.example.com"
     assert query["state"] == ["abc"]
     assert query["user_id"] == [user.id]
-    exchange = client.post("/v1/auth/keys", json={"code": query["code"][0]})
+    exchange = client.post("/v1/auth/keys", json={"code": query["code"][0], "code_verifier": "a" * 48})
     assert exchange.status_code == 200
     assert STORE.get_key_by_raw(exchange.json()["key"]).name == "Browser app"
 
@@ -1244,10 +1241,8 @@ def test_exchange_mints_delegated_key_with_default_scopes(
     code, _ = _create_code(
         client,
         user_headers,
-        code_challenge=None,
-        code_challenge_method=None,
     )
-    exchange = client.post("/v1/auth/keys", json={"code": code})
+    exchange = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     assert exchange.status_code == 200, exchange.text
 
     data = exchange.json()["data"]

@@ -145,13 +145,13 @@ consent, billing, and code exchange stay on the control plane. Prompt traffic
 uses the attested API plane.
 
 ### `GET /auth` — authorize + consent (browser)
-Query params (only `callback_url` is required):
+Query params (`callback_url` and `code_challenge` are required):
 
 | param | meaning |
 |---|---|
 | `callback_url` | where TR redirects after approval. Use `https://`, a native custom scheme with PKCE S256, or `http://localhost:3000` / `127.0.0.1:3000` for a loopback client. Web ports are limited to 443 or 3000. Carry your CSRF `state` *inside* this URL's query. |
-| `code_challenge` | base64url(SHA-256(`code_verifier`)), padding stripped |
-| `code_challenge_method` | `S256` (default) or `plain` |
+| `code_challenge` | required: base64url(SHA-256(`code_verifier`)), padding stripped |
+| `code_challenge_method` | `S256` only (the default when a challenge is supplied) |
 | `key_label` | label shown on the issued key (defaults to the callback host) |
 | `limit` | optional spend cap in dollars for the issued key |
 | `usage_limit_type` | `daily` \| `weekly` \| `monthly` (resets the cap) |
@@ -301,9 +301,9 @@ backend for exactly this.)
 - **Lore games (macOS, QuillUI)** uses the Swift SDK loopback flow.
 
 ## Security notes
-- PKCE `S256` is required for native custom-scheme callbacks and recommended
-  for every public client. The `plain` method exists only for wire
-  compatibility with older clients. Never send the `code_verifier` in the
+- PKCE `S256` is required for every callback, including the legacy exchange.
+  Plain or missing PKCE is rejected, including previously issued codes. Use a
+  fresh 43-128 character RFC 7636 verifier. Never send the `code_verifier` in the
   authorize URL, only in the exchange.
 - Always generate a random `state`, embed it in `callback_url`, and verify it on
   the callback (the SDK flow helpers do this).

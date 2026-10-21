@@ -11,8 +11,8 @@ that computes the row:
 
 - a parameter is listed exactly when a request naming the pool with
   provider.require_parameters: true and that parameter keeps every model the
-  pool routes to without it. Default routing does not filter by parameters, so
-  the pool claims no more than its weakest model;
+  pool routes to without it, so the pool claims no more than its weakest
+  model;
 - an input modality is listed exactly when routing has a pool route for a
   request carrying it, and such a request reaches only routes that take it.
 """
@@ -183,10 +183,9 @@ def test_pool_lists_tools_when_every_model_has_a_tool_route(client, monkeypatch)
     assert row["architecture"]["input_modalities"] == ["text", "image"]
     assert row["architecture"]["modality"] == "text+image->text"
 
-    # Default routing does not filter by parameters: A's tool-less route is
-    # still a candidate for a tool request. This is what makes the next
-    # assertion more than vacuous.
-    unfiltered = _routes({"model": AUTO_MODEL_ID, "requested_parameters": ["tools"]}, settings)
+    # A's tool-less route is a candidate for a request without tools. This is
+    # what makes the next assertion more than vacuous.
+    unfiltered = _routes({"model": AUTO_MODEL_ID}, settings)
     assert any("tools" not in endpoint.supported_parameters for _model, endpoint in unfiltered)
     kept = _routes(_requiring(AUTO_MODEL_ID, "tools"), settings)
     assert _models(kept) == {FIXTURE_A, FIXTURE_B}

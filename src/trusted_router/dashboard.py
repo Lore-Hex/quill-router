@@ -62,6 +62,7 @@ from trusted_router.catalog import (
     provider_confidential_inference,
     provider_is_routable,
     providers_for_display,
+    published_context_length,
 )
 from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
@@ -254,38 +255,16 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/gemini-flash-alternative",
     "/llm-provider-latency-benchmarks",
     "/pricing",
-    "/docs",
-    "/docs/x402",
-    "/docs/user-models",
-    "/docs/custom-models",
     "/api/reference",
     "/apps",
     "/resources",
     "/customers/robot-robot-human",
     "/careers",
     "/blog",
-    "/docs/agent-setup",
-    "/docs/evals",
-    "/docs/provider-conformance",
-    "/docs/synth",
-    "/docs/mcp",
-    "/docs/migrate-from-openrouter",
-    "/docs/tagging",
-    "/docs/telemetry",
-    "/docs/receipts",
-    "/docs/provider-routing",
     "/performance-routing",
     "/spend-controls",
     "/prompt-caching",
     "/model-precision",
-    "/docs/performance-routing",
-    "/docs/spend-controls",
-    "/docs/model-precision",
-    "/docs/prompt-caching",
-    "/docs/batch",
-    "/docs/decide",
-    "/docs/web-search",
-    "/docs/video",
     "/vibe-coders",
     "/for-developers",
     "/llms.txt",
@@ -4607,7 +4586,10 @@ def sitemap_xml(settings: Settings) -> str:
 def sitemap_core_xml(settings: Settings) -> str:
     domain = settings.trusted_domain
     paths: list[tuple[str, str, str]] = []
-    for path in SEO_CORE_PATHS:
+    # Published docs are registered with their page metadata. Derive their
+    # sitemap entries here so a new guide cannot be lost in a second manual list.
+    doc_paths = (f"/{slug}" for slug in PUBLIC_PAGES if slug == "docs" or slug.startswith("docs/"))
+    for path in dict.fromkeys((*SEO_CORE_PATHS, *doc_paths)):
         paths.append((path, "daily" if path in {"/models", "/providers"} else "weekly", "0.9"))
     for post in BLOG_POSTS:
         paths.append((post.href, "monthly", "0.7"))
@@ -5150,6 +5132,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     publisher = _model_publisher(model)
     is_meta = model.id in META_MODEL_IDS
+    context_length = published_context_length(model) if is_meta else model.context_length
     endpoints = _credits_endpoints(endpoints_for_model(model.id)) if not is_meta else []
     route_endpoints = _credits_endpoints(_model_route_endpoints(model))
     ai_iq = (
@@ -5232,9 +5215,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "name": model.name,
         "provider": publisher.name,
         "publisher_slug": publisher.slug,
-        "context_length": f"{model.context_length:,}",
-        "context_length_compact": _compact_token_count(model.context_length),
-        "context_length_int": model.context_length,
+        "context_length": f"{context_length:,}",
+        "context_length_compact": _compact_token_count(context_length),
+        "context_length_int": context_length,
         "prompt_price": prompt,
         "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else cached_prompt,
         "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
@@ -5602,6 +5585,7 @@ def _model_detail_view(
     speech = SPEECH_MODELS.get(model.id)
     transcription = TRANSCRIPTION_MODELS.get(model.id)
     is_meta = model.id in META_MODEL_IDS
+    context_length = published_context_length(model) if is_meta else model.context_length
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
         or model.completion_price_microdollars_per_million_tokens > 0
@@ -5668,8 +5652,8 @@ def _model_detail_view(
         "name": model.name,
         "provider": publisher.name,
         "publisher_slug": publisher.slug,
-        "context_length": f"{model.context_length:,}",
-        "context_length_int": model.context_length,
+        "context_length": f"{context_length:,}",
+        "context_length_int": context_length,
         "fixed_price": fixed_price,
         "speech": speech_metadata(model.id) if speech else None,
         "transcription": transcription_metadata(model.id) if transcription else None,

@@ -171,6 +171,21 @@ TR_PUBLIC_EDGE_STATE_DIR="$PWD/.operator-state/public-surface" \
 
 ## Verification
 
+The client-IP trust boundary has a read-only audit, also run by the scheduled
+GCP security baseline:
+
+```bash
+bash scripts/deploy/public_surface_edge.sh check
+```
+
+It checks LB-only ingress in every public region, the serving revision's
+`edge_header` mode (not the possibly stale service template), and exactly one
+backend overwrite of `X-TrustedRouter-Client-IP` from `{client_ip_address}`.
+An open origin invalidates this trust boundary even when the parser is correct.
+Never restore `ingress=all` on a serving `edge_header` revision after a manual
+deploy. Ordinary XFF chains, including GCLB-shaped chains with caller-chosen
+prefixes, are never a fallback identity source.
+
 Probe every route category after import:
 
 ```bash

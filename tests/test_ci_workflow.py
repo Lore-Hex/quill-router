@@ -248,3 +248,17 @@ def test_ci_cancels_the_run_it_supersedes_on_a_branch_but_never_on_main():
     assert workflow['concurrency'] == {
         'group': "ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}",
         'cancel-in-progress': "${{ github.ref != 'refs/heads/main' }}"}
+
+
+def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    coverage = jobs["coverage"]
+    assert coverage["if"] == "${{ !cancelled() }}"
+    assert coverage["needs"] == "test"
+    assert "continue-on-error" not in coverage
+    command = next(step["run"] for step in coverage["steps"]
+                   if step.get("name") == "Combine and enforce the floor")
+    assert '${{ needs.test.result }}' in command
+    assert '!= "success"' in command
+    assert "exit 1" in command
+    assert "--fail-under=70" in command
