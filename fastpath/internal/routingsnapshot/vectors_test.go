@@ -204,3 +204,33 @@ func TestTamperingIsRefused(t *testing.T) {
 		t.Error("a manifest verified under another kid")
 	}
 }
+
+// TestTheCasesNameTheGoldenSnapshot holds routing_cases_v1.json, the golden
+// routing answers the Go evaluator will reproduce, to the snapshot body they
+// were computed over.
+func TestTheCasesNameTheGoldenSnapshot(t *testing.T) {
+	_, raw := golden(t)
+	text, err := os.ReadFile(filepath.Join("..", "..", "testdata", "routing_cases_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases struct {
+		Snapshot       string `json:"snapshot"`
+		SnapshotSHA256 string `json:"snapshot_sha256"`
+		Cases          []struct {
+			Name   string          `json:"name"`
+			At     string          `json:"at"`
+			Expect json.RawMessage `json:"expect"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(text, &cases); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	if cases.SnapshotSHA256 != hex.EncodeToString(sum[:]) || cases.Snapshot != "fastpath/testdata/routing_snapshot_v1.body.json" {
+		t.Fatalf("the cases name %s %s, not the golden body", cases.Snapshot, cases.SnapshotSHA256)
+	}
+	if len(cases.Cases) < 100 {
+		t.Fatalf("%d cases", len(cases.Cases))
+	}
+}
