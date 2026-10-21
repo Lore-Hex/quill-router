@@ -3,7 +3,7 @@
   if (!explorer) return;
 
   const results = explorer.querySelector("[data-model-results]");
-  const search = explorer.querySelector("[data-model-search]");
+  const search = document.querySelector("[data-model-search]");
   const sort = explorer.querySelector("[data-model-sort]");
   const count = explorer.querySelector("[data-model-result-count]");
   const detail = explorer.querySelector("[data-model-result-detail]");

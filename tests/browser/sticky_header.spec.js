@@ -17,20 +17,34 @@ for (const width of [1440, 1280, 880, 390, 320]) {
       const mark = page.locator(".trnav .brand-mark");
       await expect(mark).toHaveCSS("width", "27px");
       await expect(mark).toHaveCSS("height", "27px");
-      const search = await page.locator(".trnav [data-open-search]").boundingBox();
+      const search = await page.locator(".trnav .search").boundingBox();
       expect(brand.y).toBeGreaterThanOrEqual(header.y);
       expect(brand.y + brand.height).toBeLessThanOrEqual(header.y + header.height);
-      expect(search.x).toBeGreaterThan(brand.x + brand.width);
-      expect(Math.abs(brand.y + brand.height / 2 - search.y - search.height / 2)).toBeLessThan(1);
+      if (path === "/models" && width <= 600) {
+        expect(search.y).toBeGreaterThanOrEqual(brand.y + brand.height);
+        expect(search.width).toBeGreaterThanOrEqual(width - 40);
+        expect(search.y + search.height).toBeLessThanOrEqual(header.y + header.height);
+      } else {
+        expect(search.x).toBeGreaterThan(brand.x + brand.width);
+        expect(Math.abs(brand.y + brand.height / 2 - search.y - search.height / 2)).toBeLessThan(1);
+      }
       await page.screenshot({ path: testInfo.outputPath(`${path.slice(1) || "homepage"}.png`) });
       // A real click also checks that other positioned controls do not intercept the CTA.
       await page.locator(".trnav .signin").click();
       await expect(page.locator("#signinModal")).toBeVisible();
       await page.keyboard.press("Escape");
-      await page.locator(".trnav [data-open-search]").click();
-      await page.locator("#model-query").fill("test model");
-      await expect(page.locator("#model-query")).toBeFocused();
-      await page.keyboard.press("Escape");
+      if (path === "/models") {
+        const input = page.getByRole("searchbox", { name: "Search models" });
+        await input.fill("kimi");
+        await expect(input).toBeFocused();
+        await expect(page.locator("#model-search")).toHaveCount(0);
+        await expect(page.locator("[data-model-result-count]")).not.toHaveText("0 results");
+      } else {
+        await page.locator(".trnav [data-open-search]").click();
+        await page.locator("#model-query").fill("test model");
+        await expect(page.locator("#model-query")).toBeFocused();
+        await page.keyboard.press("Escape");
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     }
   });

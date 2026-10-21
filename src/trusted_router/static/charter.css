@@ -1686,9 +1686,9 @@ body.auth.auth-shell {
 }
 
 .model-explorer-toolbar {
-  /* Scrolls with the page, like the site header does. */
+  /* Catalog sorting stays with the page; model search lives in the sticky header. */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
+  grid-template-columns: minmax(190px, 240px);
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--border-default);
