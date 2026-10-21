@@ -770,7 +770,7 @@ def test_ecs_ireland_clickhouse_override_requires_its_own_url(tmp_path: Path) ->
     ("REGIONS=(eu-west-1 eu-west-3)", "REGIONS=(eu-west-1)"),
     ("SERVICES=(tr-cp-euw1 tr-cp-euw3)", "SERVICES=(tr-cp-euw1)"),
     ('EXPECTED_OUTBOX=("$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")', "EXPECTED_OUTBOX=(true)"),
-    ('EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" "${TR_RECORD_READ_BACKEND_EU_WEST_3:-postgres}")', "EXPECTED_RECORD_READ_BACKEND=(postgres)"),
+    ('EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" "${TR_RECORD_READ_BACKEND_EU_WEST_3:-clickhouse}")', "EXPECTED_RECORD_READ_BACKEND=(postgres)"),
 ])
 def test_ecs_rollout_refuses_misaligned_tables_before_registration(
     tmp_path: Path, full_table: str, short_table: str,
