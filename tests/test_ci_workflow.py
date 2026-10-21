@@ -226,7 +226,7 @@ def test_ci_and_production_use_the_same_python() -> None:
     pinned = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
     assert pinned == "3.12"
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert f"uv:python{pinned}-" in dockerfile
+    assert dockerfile.splitlines()[0] == f"FROM python:{pinned}-slim-bookworm"
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     assert f'python-version: "{pinned}"' in refresh
 
