@@ -30,6 +30,20 @@ _FLASH = {
 }
 
 
+def key_list_context(workspace_id: str) -> dict[str, Any]:
+    """Keys with usage plus the suggested (not applied) window budgets, for
+    every page that shows the key list."""
+    return {
+        "keys": [_key_view(snapshot) for snapshot in STORE.list_api_keys_with_usage(workspace_id)],
+        # Suggested window budgets become input placeholders so users who opt
+        # in start from coherent values ($20/$100/$200); empty still means no limit.
+        "suggested": {
+            window: microdollars_to_decimal(micro)
+            for window, micro in suggested_window_limits().items()
+        },
+    }
+
+
 def register(app: FastAPI) -> None:
     def _render_page(
         ctx: Any,
@@ -39,19 +53,11 @@ def register(app: FastAPI) -> None:
         saved: str | None = None,
         error: str | None = None,
     ) -> Response:
-        keys = [_key_view(snapshot) for snapshot in STORE.list_api_keys_with_usage(ctx.workspace.id)]
         flash = None
         if saved:
             flash = _FLASH.get(f"saved:{saved}")
         elif error:
             flash = _FLASH.get(f"error:{error}")
-        # Suggested (not applied) window budgets, shown as input placeholders so
-        # users who opt in start from coherent values ($20/$100/$200); empty
-        # inputs still mean "no limit".
-        suggested = {
-            window: microdollars_to_decimal(micro)
-            for window, micro in suggested_window_limits().items()
-        }
         return HTMLResponse(render(
             "console/api_keys.html",
             settings=settings,
@@ -59,10 +65,9 @@ def register(app: FastAPI) -> None:
             active="api-keys",
             page_title="API Keys",
             page_subtitle="Long-lived keys for your applications.",
-            keys=keys,
             created_key=created_key,
             flash=flash,
-            suggested=suggested,
+            **key_list_context(ctx.workspace.id),
         ))
 
     @app.get("/console/api-keys")

@@ -6,9 +6,10 @@
 <div class="key-console">
 {% if revealed_key %}
 {% set raw_key = revealed_key %}
+{% set created_key = revealed_key %}
 {% include "console/_key_onboarding.html" %}
 {% include "console/_key_next_steps.html" %}
-<a class="btn ux-flow-exit" href="/console/api-keys">Go to API keys {{ icon('arrow') }}</a>
+{% include "console/_key_list.html" %}
 {% else %}
 <section class="panel activation-expired-panel">
   <div class="panel-head"><h2>This key has already been displayed</h2></div>

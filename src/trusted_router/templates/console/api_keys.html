@@ -4,26 +4,6 @@
 {% block scripts %}<script defer src="/static/key-onboarding.js?v={{ static_version|default('local') }}"></script>{% endblock %}
 {% block body %}
 <div class="key-console">
-{% macro create_key_form() %}
-<form class="form" method="post" action="/console/api-keys">
-  <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
-  <details class="key-spending-options">
-    <summary>Spending limits</summary>
-    <p class="key-window-note">USD · Blank means unlimited. A balanced starting point: ${{ suggested.daily }} / day, ${{ suggested.weekly }} / week, ${{ suggested.monthly }} / month.</p>
-    <div class="key-budget-grid">
-      <label>Total<input name="limit" type="text" inputmode="decimal" placeholder="Unlimited"></label>
-      <label>Daily<input name="limit_daily" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.daily }}"></label>
-      <label>Weekly<input name="limit_weekly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.weekly }}"></label>
-      <label>Monthly<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
-    </div>
-    <label class="budget-action-check"><input type="checkbox" name="budget_alert_only"> <span>Email alerts instead of blocking requests</span></label>
-    <label class="budget-action-check"><input type="checkbox" name="budget_strict" aria-describedby="strict-budget-note"> <span>Include in-flight requests</span></label>
-    <p class="key-window-note" id="strict-budget-note">Cannot be changed later. May slow concurrent requests or require retries. Final charges can exceed estimates.</p>
-    <p class="key-window-note">Limits block requests (429) unless alerts-only is selected. In-flight requests are excluded unless selected above. Daily limits reset at midnight UTC; weekly on Monday; monthly on the 1st.</p>
-  </details>
-  <button class="btn primary" type="submit">Create key</button>
-</form>
-{% endmacro %}
 {% if flash %}
 <div class="console-flash {{ flash[0] }}" role="status">{{ flash[1] }}</div>
 {% endif %}
@@ -32,87 +12,7 @@
 {% include "console/_key_onboarding.html" %}
 {% include "console/_key_next_steps.html" %}
 {% endif %}
-{% if not keys %}
-<section class="panel">
-  <div class="panel-head"><h2>Create API key</h2></div>
-  <div class="panel-body">
-    {{ create_key_form() }}
-  </div>
-</section>
-{% endif %}
-{% if keys %}
-{% if created_key %}
-<details class="key-list-collapsed">
-  <summary class="ux-step">{{ icon('key') }}<span class="ux-step-text">Your keys <span class="ux-count">({{ keys|length }})</span></span><span class="ux-step-action">Manage {{ icon('chevron') }}</span></summary>
-{% endif %}
-<section class="panel key-list-panel">
-  <div class="panel-head">
-    <div>
-      <h2>Your keys ({{ keys|length }})</h2>
-    </div>
-    <div class="panel-head-actions">
-      {% if keys %}
-      <button class="ux-link" type="button" data-action="open-new-key" aria-controls="new-api-key">Create key</button>
-      {% endif %}
-    </div>
-  </div>
-  <div class="panel-body">
-        {% for k in keys %}
-        <details class="key-management{% if k.disabled %} key-row-disabled{% endif %}">
-          <summary class="ux-key-entry" aria-label="Manage {{ k.name }}">
-            {{ icon('key') }}<span><strong>{{ k.name }}</strong><code class="ux-extra-label">{{ k.label }}</code></span>
-            <span class="ux-active">{% if k.disabled %}Disabled{% else %}<i></i>Active{% endif %}</span><span class="ux-menu-dots" aria-hidden="true">•••</span>
-          </summary>
-          <div class="key-management-body">
-            <div class="key-budget-current">
-              {{ k.usage_display }} used{% if k.limit_display != 'none' %} · {{ k.limit_display }} total limit{% else %} · No total limit{% endif %}
-              {%- for w in k.windows if w.limit_display %}<br>{{ w.name|capitalize }} {{ w.used_display }} / {{ w.limit_display }}{% endfor %}
-              {% if k.budget_alert_only %}<br>Email alerts only{% endif %}
-              {% if k.budget_strict %}<br>Includes in-flight requests{% endif %}
-            </div>
-            <details class="key-limit-editor"><summary aria-label="Edit limits for {{ k.name }}">Edit limits</summary>
-            <form class="key-budget-form" method="post" action="/console/api-keys/{{ k.hash }}/limit">
-              <div class="key-budget-grid">
-                <label>Total<input name="limit" type="text" inputmode="decimal" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Total budget for {{ k.name }}"></label>
-                {% for w in k.windows %}
-                <label>{{ w.name|capitalize }}<input name="limit_{{ w.name }}" type="text" inputmode="decimal" placeholder="off" value="{{ w.input }}" aria-label="{{ w.name|capitalize }} limit for {{ k.name }}"></label>
-                {% endfor %}
-              </div>
-              <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" {% if k.budget_alert_only %}checked{% endif %} aria-label="Email alert only for {{ k.name }}"> <span>Email alerts instead of blocking requests</span></label>
-              <button class="btn" type="submit">Save</button>
-            </form>
-            </details>
-
-            <div class="key-actions">
-              {% if k.disabled %}
-              <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/enable">
-                <button class="btn" type="submit">Enable key</button>
-              </form>
-              <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/delete">
-                <button class="btn danger" type="submit" title="Permanently delete this key">Delete</button>
-              </form>
-              {% else %}
-              <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/disable">
-                <button class="btn" type="submit" title="Stop this key from authorizing requests. Disable first to delete.">Disable key</button>
-              </form>
-              {% endif %}
-            </div>
-          </div>
-        </details>
-        {% endfor %}
-
-  </div>
-</section>
-<details class="panel key-create-panel" id="new-api-key" hidden>
-  <summary class="panel-head">Create API key</summary>
-  <div class="panel-body">
-    {{ create_key_form() }}
-  </div>
-</details>
-{% if created_key %}
-</details>
-{% endif %}
-{% endif %}
+{% include "console/_key_list.html" %}
 {% if not created_key %}
 {% include "console/_key_next_steps.html" %}
 {% endif %}
