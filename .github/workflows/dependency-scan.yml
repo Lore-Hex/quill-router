@@ -26,11 +26,12 @@ on:
 permissions:
   contents: read
 
-# One scan per ref; a newer push cancels the scan of the commit it supersedes
-# (same reason as ci.yml: superseded runs starved the 2026-10-20 queue).
+# One scan per branch or pull request; a newer push cancels the scan of the
+# commit it supersedes (same reason as ci.yml: superseded runs starved the
+# 2026-10-20 queue). Main keeps one scan per commit, as ci.yml does.
 concurrency:
-  group: dependency-scan-${{ github.ref }}
-  cancel-in-progress: true
+  group: dependency-scan-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   scan-full:

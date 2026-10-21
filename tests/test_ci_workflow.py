@@ -239,9 +239,12 @@ def test_every_ci_job_pins_the_ubuntu_24_04_runner_image():
     assert {name: job['runs-on'] for name, job in jobs.items()} == dict.fromkeys(jobs, 'ubuntu-24.04')
 
 
-def test_ci_cancels_the_run_it_supersedes_on_the_same_ref():
+def test_ci_cancels_the_run_it_supersedes_on_a_branch_but_never_on_main():
     # 2026-10-20: 60 queued runs starved every main run's coverage job for hours; the deploy gate
-    # needs its commit's run to conclude, so nothing shipped. One run per ref, newest wins.
+    # needs its commit's run to conclude, so nothing shipped. One run per branch, newest wins.
+    # Main is exempt: a later docs-only push starts no deploy, and cancelling the earlier commit's
+    # run would make that commit's deploy gate refuse a valid rollout (review of #1921).
     workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
-    assert workflow['concurrency'] == {'group': 'ci-${{ github.workflow }}-${{ github.ref }}',
-                                       'cancel-in-progress': True}
+    assert workflow['concurrency'] == {
+        'group': "ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}",
+        'cancel-in-progress': "${{ github.ref != 'refs/heads/main' }}"}
