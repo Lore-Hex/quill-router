@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from clickhouse.delivery_history import write_history
 from clickhouse.ingest_operational_outbox_postgres import (
     CLICKHOUSE_ENV_PREFIX,
     PostgresOperationalOutboxSource,
 )
 from clickhouse.operational_fingerprint import SAFE_ID
-from clickhouse.verify_spanner_delivery import _write_history
 from trusted_router.operational_analytics import OperationalAnalyticsClient
 
 FIELDS = (
@@ -35,15 +35,32 @@ QUERY_BOUNDS = (
     " SETTINGS max_rows_to_read = 1000000, read_overflow_mode = 'throw', "
     "max_execution_time = 30 FORMAT JSON"
 )
+# The verifier's Postgres role reads ONE view, tr_verifier_generations, never
+# tr_entities itself, which holds every entity kind. The view is defined in
+# scripts/deploy/aws_eu_tr_verifier_role.sql as tr_entities filtered to
+# kind = 'generation' and projected to exactly these columns; Postgres inlines
+# it, so these statements still read through the (kind, id) primary key.
 # Generation writes do not populate indexed_at. Filter only after this bounded
-# primary-key read; a WHERE predicate on body.created_at would scan all history.
+# primary-key read; a WHERE predicate on created_at would scan all history.
 SELECT_PAGE_SQL = (
-    "SELECT id, body ->> 'total_cost_microdollars', "
-    "body ->> 'tokens_prompt', body ->> 'tokens_completion', "
-    "body ->> 'cached_input_tokens', body ->> 'reasoning_tokens', "
-    "body ->> 'model', body ->> 'provider', body ->> 'status', "
-    "body ->> 'created_at', updated_at "
-    "FROM tr_entities WHERE kind = 'generation' AND id > %s ORDER BY id LIMIT %s"
+    "SELECT id, total_cost_microdollars, tokens_prompt, tokens_completion, "
+    "cached_input_tokens, reasoning_tokens, model, provider, status, "
+    "created_at, updated_at "
+    "FROM tr_verifier_generations WHERE id > %s ORDER BY id LIMIT %s"
+)
+CONTINUATION_SQL = "SELECT id FROM tr_verifier_generations WHERE id > %s ORDER BY id LIMIT 1"
+EXISTING_SQL = "SELECT id FROM tr_verifier_generations WHERE id = ANY(%s)"
+# What the connected role can read, for the installer's least-privilege check:
+# (role, can read the view, count of OTHER public relations it can read). A
+# correctly provisioned tr_verifier answers (tr_verifier, true, 0).
+READ_SCOPE_SQL = (
+    "SELECT current_user, "
+    "has_table_privilege('public.tr_verifier_generations', 'SELECT'), "
+    "(SELECT count(*) FROM pg_catalog.pg_class c "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'm', 'p', 'f') "
+    "AND c.relname <> 'tr_verifier_generations' "
+    "AND has_table_privilege(c.oid, 'SELECT'))"
 )
 
 
@@ -110,11 +127,7 @@ class PostgresGenerationSource(PostgresOperationalOutboxSource):
                 return result
         # One key-only probe distinguishes an exact fit from a truncated scan.
         result.complete = not self._run(
-            lambda conn: conn.execute(
-                "SELECT id FROM tr_entities WHERE kind = 'generation' AND id > %s "
-                "ORDER BY id LIMIT 1",
-                (after,),
-            ).fetchall()
+            lambda conn: conn.execute(CONTINUATION_SQL, (after,)).fetchall()
         )
         return result
 
@@ -126,13 +139,15 @@ class PostgresGenerationSource(PostgresOperationalOutboxSource):
         for offset in range(0, len(ids), PAGE_SIZE):
             chunk = ids[offset : offset + PAGE_SIZE]
             rows = self._run(
-                lambda conn, chunk=chunk: conn.execute(
-                    "SELECT id FROM tr_entities WHERE kind = 'generation' AND id = ANY(%s)",
-                    (chunk,),
-                ).fetchall()
+                lambda conn, chunk=chunk: conn.execute(EXISTING_SQL, (chunk,)).fetchall()
             )
             found.update(str(row[0]) for row in rows)
         return found
+
+    def read_scope(self) -> tuple[str, bool, int]:
+        """(role, can read the view, other public relations it can read)."""
+        role, view, others = self._run(lambda conn: conn.execute(READ_SCOPE_SQL).fetchone())
+        return str(role), bool(view), int(others)
 
 
 class ClickHouseGenerationSource(OperationalAnalyticsClient):
@@ -331,7 +346,7 @@ def main() -> int:
         result["window_start"] = start.isoformat().replace("+00:00", "Z")
         result["window_end"] = end.isoformat().replace("+00:00", "Z")
         result["grace_seconds"] = args.grace_seconds
-        _write_history(args.history_file, result)
+        write_history(args.history_file, result)
     except Exception as exc:
         # Driver/HTTP exceptions can contain credentials or entity contents.
         print(json.dumps({"ok": False, "error": type(exc).__name__}, sort_keys=True))

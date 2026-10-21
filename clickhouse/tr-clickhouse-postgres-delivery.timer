@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify TrustedRouter Postgres to ClickHouse delivery every hour (AWS-EU)
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=1h
+RandomizedDelaySec=60s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

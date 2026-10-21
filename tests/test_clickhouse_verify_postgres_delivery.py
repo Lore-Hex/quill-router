@@ -4,6 +4,7 @@ import contextlib
 import datetime as dt
 import json
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ import pytest
 
 from clickhouse import verify_postgres_delivery as verifier
 
+ROLE_SQL = Path(__file__).resolve().parents[1] / "scripts/deploy/aws_eu_tr_verifier_role.sql"
 START = dt.datetime(2026, 10, 18, tzinfo=dt.UTC)
 END = START + dt.timedelta(days=1)
 
@@ -48,12 +50,13 @@ class FakeConnection:
 
     def execute(self, sql: str, params: tuple[Any, ...]) -> Any:
         self.calls.append((sql, params))
-        if "AND id = ANY(%s)" in sql:
-            assert sql == "SELECT id FROM tr_entities WHERE kind = 'generation' AND id = ANY(%s)"
+        assert "tr_entities" not in sql
+        if "id = ANY(%s)" in sql:
+            assert sql == "SELECT id FROM tr_verifier_generations WHERE id = ANY(%s)"
             (ids,) = params
             present = {row["generation_id"] for row in self.rows} | set(self.late)
             return SimpleNamespace(fetchall=lambda: [(gid,) for gid in ids if gid in present])
-        assert "WHERE kind = 'generation' AND id > %s ORDER BY id LIMIT" in sql
+        assert "FROM tr_verifier_generations WHERE id > %s ORDER BY id LIMIT" in sql
         after = params[0]
         limit = params[1] if len(params) == 2 else 1
         selected = [row for row in self.rows if row["generation_id"] > after][:limit]
@@ -340,43 +343,109 @@ def test_exact_scan_cap_can_still_be_complete() -> None:
     assert _verify([_row()], [_row()], scan_limit=1)["complete"] is True
 
 
-def test_source_sql_projects_only_comparison_fields_through_the_primary_key() -> None:
+def _role_sql_view() -> str:
+    """The CREATE VIEW statement from the reviewed operator SQL, for SQLite.
+
+    SQLite has CREATE VIEW but not OR REPLACE; the body is otherwise the
+    statement the operator runs, so the verifier is tested against it.
+    """
+    text = ROLE_SQL.read_text()
+    start = text.index("CREATE OR REPLACE VIEW")
+    return text[start : text.index(";", start)].replace("CREATE OR REPLACE VIEW", "CREATE VIEW")
+
+
+def test_source_sql_reads_only_the_view_and_through_the_primary_key() -> None:
     database = sqlite3.connect(":memory:")
     database.execute(
         "CREATE TABLE tr_entities (kind TEXT, id TEXT, body TEXT, updated_at TEXT, "
         "PRIMARY KEY (kind, id))"
     )
+    database.execute(_role_sql_view())
     row = _row()
-    database.execute(
-        "INSERT INTO tr_entities VALUES (?, ?, ?, ?)",
-        (
-            "generation",
-            "gen-1",
-            json.dumps(row | {"unrelated": "not projected"}),
-            row["created_at"],
-        ),
-    )
+    for kind, gid in (("generation", "gen-1"), ("api_key", "gen-2")):
+        database.execute(
+            "INSERT INTO tr_entities VALUES (?, ?, ?, ?)",
+            (kind, gid, json.dumps(row | {"unrelated": "not projected"}), row["created_at"]),
+        )
 
     class Connection:
         def transaction(self) -> Any:
             return contextlib.nullcontext()
 
         def execute(self, sql: str, params: tuple[Any, ...]) -> Any:
+            assert "tr_entities" not in sql
             return database.execute(sql.replace("%s", "?"), params)
 
     source = verifier.PostgresGenerationSource(dsn="host=localhost")
     source._connection = Connection()
     window = source.fetch(start=START, end=END, limit=10, scan_limit=10)
 
+    # The other kind's row exists with an id the scan would pass; the view
+    # alone keeps it out.
     assert window.complete
+    assert window.known_ids == {"gen-1"}
     assert window.rows == {"gen-1": {field: row[field] for field in verifier.FIELDS}}
-    plan = database.execute(
-        "EXPLAIN QUERY PLAN " + verifier.SELECT_PAGE_SQL.replace("%s", "?"),
-        ("", 500),
-    ).fetchall()
-    assert any("SEARCH tr_entities USING INDEX" in detail for _, _, _, detail in plan)
-    assert all("SCAN tr_entities" not in detail for _, _, _, detail in plan)
+    view_columns = [
+        column[1] for column in database.execute("PRAGMA table_info(tr_verifier_generations)")
+    ]
+    assert view_columns == ["id", *verifier.FIELDS, "updated_at"]
+    for sql, params in (
+        (verifier.SELECT_PAGE_SQL, ("", 500)),
+        (verifier.CONTINUATION_SQL, ("",)),
+    ):
+        plan = database.execute("EXPLAIN QUERY PLAN " + sql.replace("%s", "?"), params).fetchall()
+        # The view inlines: the planner seeks the (kind, id) key for both.
+        assert any(
+            detail.startswith("SEARCH tr_entities USING")
+            and detail.endswith("(kind=? AND id>?)")
+            for _, _, _, detail in plan
+        ), plan
+        assert all("SCAN tr_entities" not in detail for _, _, _, detail in plan)
     database.close()
+
+
+def test_role_sql_grants_the_view_only_and_is_rerunnable() -> None:
+    text = ROLE_SQL.read_text()
+    statements = [line for line in text.splitlines() if line and not line.startswith("--")]
+    grants = [line for line in statements if line.startswith("GRANT")]
+
+    assert grants == ["GRANT SELECT ON tr_verifier_generations TO tr_verifier;"]
+    assert "WHERE kind = 'generation';" in text
+    assert "body ->> 'created_at' AS created_at" in text
+    # Re-runnable: the view is replaced, the role and the IAM mapping are
+    # created only when absent, and psql stops at the first error.
+    assert "CREATE OR REPLACE VIEW tr_verifier_generations AS" in text
+    assert "WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_verifier') \\gexec" in text
+    assert "FROM sys.iam_pg_role_mappings" in text
+    assert "format('AWS IAM GRANT tr_verifier TO %L', :'node_role_arn')" in text
+    assert "\\set ON_ERROR_STOP on" in text
+    assert "tr_entities TO" not in text and "ALL PRIVILEGES" not in text
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [("tr_verifier", True, 0), ("tr_verifier", True, 3), ("admin", True, 40)],
+)
+def test_read_scope_reports_role_view_grant_and_other_readable_relations(
+    answer: tuple[str, bool, int],
+) -> None:
+    calls: list[str] = []
+
+    class Connection:
+        def transaction(self) -> Any:
+            return contextlib.nullcontext()
+
+        def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
+            calls.append(sql)
+            return SimpleNamespace(fetchone=lambda: answer)
+
+    source = verifier.PostgresGenerationSource(dsn="host=localhost")
+    source._connection = Connection()
+
+    assert source.read_scope() == answer
+    assert calls == [verifier.READ_SCOPE_SQL]
+    assert "has_table_privilege('public.tr_verifier_generations', 'SELECT')" in calls[0]
+    assert "c.relname <> 'tr_verifier_generations'" in calls[0]
 
 
 def test_source_result_limit_reports_incomplete_without_inventing_extra_ids() -> None:
@@ -530,3 +599,34 @@ def test_cli_rejects_invalid_limits_before_connecting(
     with pytest.raises(SystemExit) as exc:
         verifier.main()
     assert exc.value.code == 2
+
+
+def test_imports_without_google_libraries_as_on_the_aws_node() -> None:
+    """The AWS node's venv has no Google client libraries. The verifier used to
+    import its history writer from verify_spanner_delivery, which pulls in
+    google.api_core transitively, so it could not even start there."""
+    blocker = (
+        "import sys\n"
+        "class Block:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'google' or name.startswith('google.'):\n"
+        "            raise ImportError(name)\n"
+        "sys.meta_path.insert(0, Block())\n"
+        "import clickhouse.verify_postgres_delivery\n"
+        "print('postgres verifier imported', flush=True)\n"
+        "import clickhouse.verify_spanner_delivery\n"
+    )
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(  # noqa: S603 - fixed interpreter and inline program
+        [sys.executable, "-c", blocker],
+        cwd=root,
+        env={"PYTHONPATH": f"{root}:{root / 'src'}", "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.stdout == "postgres verifier imported\n", result.stderr
+    # Positive control: the Spanner verifier really does need google, so the
+    # blocker is live; only the Postgres import must survive it.
+    assert "ImportError: google" in result.stderr

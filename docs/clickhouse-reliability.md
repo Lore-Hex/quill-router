@@ -357,31 +357,101 @@ time window with `LIMIT limit + 1`. Every ClickHouse query also has a one-millio
 row read ceiling and a 30-second execution ceiling; exceeding either fails
 the check rather than allowing unbounded work.
 
-Run from a host with private access to both databases. Use a verifier Postgres
-role permitted to SELECT generation entities; the drain's outbox-only role
-does not have that permission. Connection handling is reused from the Postgres
-drain: DSQL mints an IAM token for the configured role, and Azure uses libpq's
-`PGPASSWORD` or password file. Keep passwords in the protected environment or
-password file, never in the DSN or command arguments. The checkout's drain
-uses `clickhouse-client`; this verifier reuses the operational analytics HTTP
-reader with the drain's `CH_PASSWORD`, `_USER`, and `_DATABASE` settings.
-`TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD` takes precedence for a separate
-read credential. Set `_URL` to one node's HTTP endpoint (default localhost:8123),
-and check each durable copy separately with its own credentials and history file.
+Run from a host with private access to both databases, as the `tr_verifier`
+Postgres role. That role reads one view, `tr_verifier_generations`:
+`tr_entities` filtered to `kind = 'generation'` and projected to the compared
+fields. It has no privilege on `tr_entities` itself, which holds every entity
+kind, and none on any other table. The drain's outbox-only role cannot read
+the view. The view and the role are defined in
+`scripts/deploy/aws_eu_tr_verifier_role.sql`. Connection handling is reused
+from the Postgres drain: DSQL mints an IAM token for the configured role, and
+Azure uses libpq's `PGPASSWORD` or password file. Keep passwords in the
+protected environment or password file, never in the DSN or command arguments.
+The checkout's drain uses `clickhouse-client`; this verifier reuses the
+operational analytics HTTP reader with the drain's `CH_PASSWORD`, `_USER`, and
+`_DATABASE` settings. `TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD` takes
+precedence for a separate read credential. Set `_URL` to one node's HTTP
+endpoint (default localhost:8123), and check each durable copy separately with
+its own credentials and history file.
 
-On AWS, with the existing AWS role and ClickHouse environment loaded:
+#### AWS: installed on tr-eu-clickhouse-1
 
-```bash
-export TR_POSTGRES_DSN='host=<dsql-endpoint> port=5432 user=tr_verifier dbname=postgres sslmode=require'
-export TR_POSTGRES_IAM_AUTH=aws-dsql
-export TR_POSTGRES_IAM_REGION=eu-west-3
-PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
-  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 50000 \
-  --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl
-```
+`scripts/deploy/aws_eu_clickhouse_drain_install.sh` installs the verifier with
+the drain, in its step 10, from the same payload and virtualenv:
 
-On Azure, with the verifier's Postgres password and the node's ClickHouse
-environment already injected:
+| What | Where |
+| --- | --- |
+| Service (oneshot, user `tr-clickhouse-ingest`) | `tr-clickhouse-postgres-delivery.service` |
+| Timer (hourly, 24 h lookback) | `tr-clickhouse-postgres-delivery.timer` |
+| DSN override, `user=tr_verifier`, no secret | `/etc/tr-clickhouse-postgres-delivery.env` |
+| IAM auth, region, ClickHouse credentials | the drain's `/etc/tr-clickhouse-ingest-postgres.env` |
+| History, one JSON line per completed check, 16 days kept | `/var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl` |
+
+The unit's arguments are `--lookback-hours 24 --history-file <history>` and
+nothing secret. Every other limit is the default above. Because the source
+scan walks all generation history (see above), a plane holding more generation
+entities than `--scan-limit` reports `complete: false` and fails every run.
+Raise the limit in the unit, or populate a timestamp index, rather than read
+that failure as a delivery gap.
+
+Where to read results:
+
+- `tail -1 /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl` shows the
+  last check. `"ok": true` is clean.
+- `systemctl show tr-clickhouse-postgres-delivery.service -p Result,ExecMainStatus`
+  shows the last run's exit status. `0` is clean and `1` is a discrepancy,
+  incomplete coverage, or a query failure. A failed run leaves the unit
+  `failed` until the next one.
+- `journalctl -u tr-clickhouse-postgres-delivery.service -o cat` holds the same
+  summary line per run. A query failure writes no history line. It prints only
+  `{"ok": false, "error": "<exception class>"}` here.
+
+Operator order, first install:
+
+1. The node role needs `dsql:DbConnect` on the cluster (not `DbConnectAdmin`).
+   It already has that grant for `tr_drain`: statement `DsqlOutboxDrain` in
+   the inline policy that `scripts/deploy/aws_eu_clickhouse.sh` puts. The node
+   role is managed by that script, not by Terraform. IAM cannot narrow
+   `DbConnect` to one Postgres role. The `AWS IAM GRANT` mapping in the SQL is
+   the per-role boundary. The installer refuses to continue if the grant is
+   missing.
+2. As the DSQL admin, run the reviewed SQL once. It can be re-run safely:
+
+   ```bash
+   PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token \
+       --region eu-west-3 --hostname <cluster>.dsql.eu-west-3.on.aws)" \
+   psql "host=<cluster>.dsql.eu-west-3.on.aws port=5432 dbname=postgres user=admin sslmode=require" \
+     -v node_role_arn=arn:aws:iam::<account>:role/<node role> \
+     -f scripts/deploy/aws_eu_tr_verifier_role.sql
+   ```
+
+   The installer prints this command with the real values filled in, followed
+   by the SQL, when it finds the role missing.
+3. Run `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh`, or the
+   `drain-install` mode of `deploy-aws-control-plane.yml`. After the drain is
+   proven, the installer does four things in order:
+   1. It writes the DSN override.
+   2. It connects from the node as `tr_verifier` and requires exactly
+      `(tr_verifier, can read the view, 0 other readable relations)`.
+   3. It installs the timer.
+   4. It runs the verifier once. It then requires exit 0, `Result=success`,
+      and a history line from this install with `"ok": true`.
+
+   Any failure exits non-zero before the cloud-completeness gate. A failure
+   after the drain step leaves the drain installed. The timer stays enabled
+   after a failed first run, so a real discrepancy keeps being recorded every
+   hour.
+
+Until step 2 is done, every drain install fails at the verifier step. The
+drain itself is still installed and running in that case.
+
+#### Azure: not installed yet (follow-up)
+
+Nothing deploys the verifier on Azure. That follow-up needs the
+`tr_verifier_generations` view and a password-authenticated `tr_verifier`
+role on Azure Postgres, a password file or protected environment for it, and
+a unit with its own history file. A manual run, with the verifier's Postgres
+password and the node's ClickHouse environment already injected:
 
 ```bash
 export TR_POSTGRES_DSN='host=<postgres-host> port=5432 user=tr_verifier dbname=trustedrouter sslmode=require'

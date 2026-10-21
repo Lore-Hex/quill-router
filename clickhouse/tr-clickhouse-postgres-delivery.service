@@ -1,0 +1,29 @@
+[Unit]
+Description=TrustedRouter Postgres to ClickHouse delivery verification (AWS-EU)
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+# The flat layout the drain installer ships: no PYTHONPATH, `python -m` sees
+# WorkingDirectory only. HOME inside ReadWritePaths for the same libpq
+# client-certificate reason the drain unit documents.
+WorkingDirectory=/opt/tr-clickhouse
+Environment=HOME=/var/lib/tr-clickhouse-ingest
+# The drain's file supplies TR_POSTGRES_IAM_AUTH/_REGION, CH_PASSWORD and the
+# ClickHouse user and database. The second file, written after it, carries only
+# TR_POSTGRES_DSN with user=tr_verifier and overrides the drain's DSN; it holds
+# no secret, because DSQL mints the token per connection.
+EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env
+EnvironmentFile=/etc/tr-clickhouse-postgres-delivery.env
+# Exit 0 only for a complete, clean check. Each run appends its summary to the
+# history file (16 days kept) and prints the same JSON line to the journal.
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_postgres_delivery --lookback-hours 24 --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl
+TimeoutStartSec=10m
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tr-clickhouse-ingest
