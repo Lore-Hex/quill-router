@@ -35,6 +35,26 @@ from trusted_router.storage_models import ReceiptKey
 from trusted_router.storage_postgres import PostgresStore
 
 
+@pytest.fixture(autouse=True)
+def _page_reads_spend_no_wall_clock(monkeypatch):
+    """The route bounds each page read by 3 s of wall clock (asyncio.wait_for).
+    These tests check paging, not that bound, and a page takes about 10 ms;
+    on a starved CI shard the 5,001-key walk still timed out and a cursor read
+    answered 503 (CI run 39489912697). Degraded paths here are driven by store
+    errors, never by the timeout."""
+    import asyncio
+
+    class _Asyncio:
+        @staticmethod
+        async def wait_for(awaitable, timeout):
+            return await awaitable
+
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+    monkeypatch.setattr(public_routes, "asyncio", _Asyncio())
+
+
 @pytest.mark.parametrize("error_class", [
     collector.httpx.ReadTimeout, collector.httpx.ConnectTimeout,
     collector.httpx.ReadError, collector.httpx.RemoteProtocolError,
@@ -1670,3 +1690,58 @@ def test_postgres_pagination_avoids_row_value_comparisons() -> None:
     source = pathlib.Path("src/trusted_router/storage_postgres.py").read_text(encoding="utf-8")
     assert "(kid, att_sha256) >" not in source
     assert source.count("(kid > %s OR (kid = %s AND att_sha256 > %s))") == 3
+
+
+def test_a_page_read_past_its_time_bound_degrades_like_a_store_error(monkeypatch) -> None:
+    """The route's 3 s bound itself, on the unfiltered and the kid-filtered
+    read: a first page that times out is served from the cache as degraded,
+    and a cursor page that times out answers 503."""
+    import asyncio
+
+    jwk = _jwk(b"one-key-many-versions")
+    kid = _kid(jwk)
+    store = InMemoryStore()
+    store.receipt_keys = {
+        f"raw-{index}": ReceiptKey(
+            kid=kid,
+            jwk=jwk,
+            att=f"att-{index}",
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            last_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            verified=True,
+        )
+        for index in range(300)
+    }
+    configure_store(store)
+    client = TestClient(
+        create_app(Settings(environment="test"), configure_store_arg=False, init_observability=False)
+    )
+    route = "/.well-known/inference-receipt-keys"
+    first = {"all": client.get(route), "kid": client.get(route, params={"kid": kid})}
+    for response in first.values():
+        assert response.status_code == 200 and response.json()["degraded"] is False
+        assert response.json()["next_cursor"]
+    bounds: list[float] = []
+
+    class _TimedOut:
+        @staticmethod
+        async def wait_for(awaitable, timeout):
+            bounds.append(timeout)
+            awaitable.close()  # never scheduled: no "never awaited" warning
+            raise TimeoutError
+
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+    monkeypatch.setattr(public_routes, "asyncio", _TimedOut())
+    for scope, params in (("all", {}), ("kid", {"kid": kid})):
+        cached = client.get(route, params=params)
+        assert cached.status_code == 200
+        assert cached.json()["degraded"] is True
+        assert cached.json()["keys"] == first[scope].json()["keys"]
+        paged = client.get(route, params={**params, "cursor": first[scope].json()["next_cursor"]})
+        assert paged.status_code == 503
+        assert paged.headers["x-trustedrouter-key-log-status"] == "degraded"
+    assert bounds == [3.0] * 4

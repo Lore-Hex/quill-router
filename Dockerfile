@@ -1,4 +1,5 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM python:3.12-slim-bookworm
+COPY --from=ghcr.io/astral-sh/uv:0.13.4 /uv /uvx /bin/
 
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -9,6 +10,9 @@ WORKDIR /app
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!&|' \
+           -e 's|^mozilla/Comodo_AAA_Services_root.crt$|!&|' /etc/ca-certificates.conf \
+ && update-ca-certificates --fresh \
  && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./

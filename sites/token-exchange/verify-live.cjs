@@ -17,8 +17,8 @@ function evidence() {
   const checked = dateMode === 'missing' ? null : dateMode === 'future' ? new Date(Date.now()+86400000).toISOString() : mode === 'stale' ? new Date(Date.now() - 5 * 86400000).toISOString() : stamp();
   const component = (id, name, percent, status) => ({id, name, status, last_checked_at: checked, uptime_24h_percent: percent, sample_count_24h: 1000, history: [{bucket_start: checked, status:historyState, sample_count: 1000}]});
   return {generated_at: stamp(), prices: [
+    {model:'deepseek/deepseek-v4.1-flash', label:'DeepSeek V4.1 Flash 1017', provider:'tinfoil', input:'0.68575', output:'1.52975'},
     {model:'z-ai/glm-5.3-flash', label:'GLM 5.3 Flash', provider:'tinfoil', input:'0.07385', output:'0.2532'},
-    {model:'deepseek/deepseek-v4.1-flash', label:'DeepSeek V4.1 Flash', provider:'tinfoil', input:'0.68575', output:'1.52975'},
     {model:'openai/gpt-oss-120b', label:'GPT OSS 120B', provider:'tinfoil', input:'0.15825', output:'0.633'}],
     components: omitComponents ? [] : [component('canonical_api','Canonical API',99.9485,states[0]), component('us_east4_regional_api','US East Regional API',99.6910,states[1])],
     attestation_check: component('attestation','Attestation',100,attestationState), release: {platform:'gcp-confidential-space', image_digest:'sha256:'+'a'.repeat(64),source_commit:'12345678'}};
@@ -55,6 +55,14 @@ const site = http.createServer((req,res) => {
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));
       assert.match(await page.locator('[data-live-services]').textContent(),/99.69%/);
       assert.match(await page.locator('[data-live-prices]').textContent(),/\$0.07385 \/ \$0.2532/);
+      assert.equal(await page.locator('[data-live-prices] h3').first().textContent(),'DeepSeek V4.1 Flash 1017');
+      if (domain==='nytokenexchange.com') {
+        assert(await page.evaluate(()=>{
+          const sections=['#demo','#buyers','#brochure','#sellers','#open-stack','#spot-api','.questions','.closing'];
+          const tops=sections.map(selector=>document.querySelector(selector).getBoundingClientRect().top);
+          return tops.every((top,i)=>i===0 || top>tops[i-1]);
+        }),'API quick start must follow supplier content near the bottom');
+      }
       assert(!((await page.locator('[data-live-services]').textContent()).includes('Model Inference')));
       for (const width of [320,390,1440]) {
         await page.setViewportSize({width,height:1000});

@@ -54,6 +54,12 @@ class SqlitePostgresConn:
         # against. Every guarantee under test here therefore has to hold
         # WITHOUT the lock — which is the point, since row-lock behaviour is
         # what differs most between plain Postgres and Aurora DSQL.
+        if sql.endswith("= ANY(%s)"):
+            # psycopg adapts a list to an array; SQLite has neither, so the
+            # trailing array parameter becomes an IN list of its elements.
+            *scalars, values = params
+            sql = sql[: -len("= ANY(%s)")] + "IN (" + ", ".join(["%s"] * len(values)) + ")"
+            params = (*scalars, *values)
         translated = (
             sql.replace("%s", "?")
             .replace("::jsonb", "")
@@ -137,6 +143,8 @@ SCHEMA_TABLES = (
     # is exactly the class this harness exists to run rather than re-implement.
     "CREATE TABLE IF NOT EXISTS tr_deferred_outstanding",
     "CREATE TABLE IF NOT EXISTS tr_home_settlement_outbox",
+    # The settle-time ClickHouse delivery intent, keyed so a replay is a no-op.
+    "CREATE TABLE IF NOT EXISTS tr_operational_analytics_outbox",
 )
 
 

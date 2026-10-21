@@ -35,6 +35,17 @@ class SpotAPITests(unittest.TestCase):
                 self.assertNotIn('/assets/spot-api.css', page)
                 self.assertIn('href="https://trustedrouter.com/trust">Verify a live route', page)
 
+    def test_quick_start_follows_supplier_sections_near_bottom(self):
+        markets = load_markets()
+        market = next(m for m in markets if m["slug"] == "new-york")
+        page = render(market, markets, "test")
+        sections = ('id="demo"', 'id="buyers"', 'id="brochure"',
+                    'id="sellers"', 'id="open-stack"', 'id="spot-api"',
+                    'class="shell section questions"', 'id="closing-title"')
+        positions = [page.index(section) for section in sections]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(page.count('id="spot-api"'), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

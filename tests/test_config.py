@@ -5,6 +5,52 @@ from pydantic import ValidationError
 from trusted_router.config import Settings
 
 
+def test_record_read_backend_defaults_to_postgres():
+    config = Settings(environment='test', _env_file=None)
+    assert config.record_read_backend == 'postgres'
+
+
+@pytest.mark.parametrize(
+    ('url', 'password', 'accepted'),
+    [
+        ('', 'pw', False),
+        (' ', 'pw', False),
+        ('http://clickhouse.test:8123', '', False),
+        ('http://clickhouse.test:8123', 'pw', True),
+    ],
+    ids=['no-url', 'blank-url', 'no-password', 'url-and-password'],
+)
+@pytest.mark.parametrize('source', ['fields', 'environment'])
+def test_clickhouse_record_reads_require_plane_url_and_password(monkeypatch, url, password, accepted, source):
+    """A plane reading records from ClickHouse needs the reader's URL and
+    password; without either the store has no reader and every read fails,
+    so the plane is refused at startup."""
+    options = dict(
+        record_read_backend='clickhouse',
+        operational_analytics_clickhouse_url=url,
+        operational_analytics_clickhouse_password=password,
+    )
+    if source == 'environment':
+        for name, value in options.items():
+            monkeypatch.setenv('TR_' + name.upper(), value)
+        options = {}
+    if accepted:
+        config = Settings(environment='test', _env_file=None, **options)
+        assert config.record_read_backend == 'clickhouse'
+    else:
+        with pytest.raises(
+            ValidationError,
+            match='TR_RECORD_READ_BACKEND=clickhouse requires TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL '
+            'and TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD',
+        ):
+            Settings(environment='test', _env_file=None, **options)
+
+
+def test_record_read_backend_rejects_unknown_value():
+    with pytest.raises(ValidationError, match='TR_RECORD_READ_BACKEND'):
+        Settings(environment='test', _env_file=None, record_read_backend='unknown')
+
+
 @pytest.mark.parametrize('environment', ['canary', 'production'])
 def test_postgres_outbox_needs_no_local_clickhouse(environment):
     config = Settings(

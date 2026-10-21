@@ -9,14 +9,14 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
+from clickhouse.delivery_history import write_history
 from clickhouse.ingest_operational_outbox_postgres import (
     CLICKHOUSE_ENV_PREFIX,
     PostgresOperationalOutboxSource,
 )
 from clickhouse.operational_fingerprint import SAFE_ID
-from clickhouse.verify_spanner_delivery import _write_history
 from trusted_router.operational_analytics import OperationalAnalyticsClient
 
 FIELDS = (
@@ -35,16 +35,121 @@ QUERY_BOUNDS = (
     " SETTINGS max_rows_to_read = 1000000, read_overflow_mode = 'throw', "
     "max_execution_time = 30 FORMAT JSON"
 )
+# The verifier's Postgres role reads ONE view, tr_verifier_generations, never
+# tr_entities itself, which holds every entity kind. The view is defined in
+# scripts/deploy/aws_eu_tr_verifier_role.sql as tr_entities filtered to
+# kind = 'generation' and projected to exactly these columns; Postgres inlines
+# it, so these statements still read through the (kind, id) primary key.
 # Generation writes do not populate indexed_at. Filter only after this bounded
-# primary-key read; a WHERE predicate on body.created_at would scan all history.
+# primary-key read; a WHERE predicate on created_at would scan all history.
 SELECT_PAGE_SQL = (
-    "SELECT id, body ->> 'total_cost_microdollars', "
-    "body ->> 'tokens_prompt', body ->> 'tokens_completion', "
-    "body ->> 'cached_input_tokens', body ->> 'reasoning_tokens', "
-    "body ->> 'model', body ->> 'provider', body ->> 'status', "
-    "body ->> 'created_at', updated_at "
-    "FROM tr_entities WHERE kind = 'generation' AND id > %s ORDER BY id LIMIT %s"
+    "SELECT id, total_cost_microdollars, tokens_prompt, tokens_completion, "
+    "cached_input_tokens, reasoning_tokens, model, provider, status, "
+    "created_at, updated_at "
+    "FROM tr_verifier_generations WHERE id > %s ORDER BY id LIMIT %s"
 )
+CONTINUATION_SQL = "SELECT id FROM tr_verifier_generations WHERE id > %s ORDER BY id LIMIT 1"
+EXISTING_SQL = "SELECT id FROM tr_verifier_generations WHERE id = ANY(%s)"
+# Everything the connected role can reach, for the verifier installer's
+# least-privilege proof. One row: the role; whether it can SELECT the view;
+# whether it holds anything on the view beyond SELECT; the view's columns and
+# definition; every other relation outside the system catalogs on which it
+# holds ANY table or column privilege; and how many roles it is a member of.
+# The view's oid comes from a ::regclass cast, so a missing view is an error,
+# and the installer refuses on any error.
+READ_SCOPE_SQL = (
+    "SELECT current_user, "
+    "has_table_privilege(v.oid, 'SELECT'), "
+    "has_table_privilege(v.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+    "OR has_any_column_privilege(v.oid, 'INSERT,UPDATE,REFERENCES'), "
+    "ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a "
+    "WHERE a.attrelid = v.oid AND a.attnum > 0 AND NOT a.attisdropped "
+    "ORDER BY a.attnum), "
+    "pg_catalog.pg_get_viewdef(v.oid), "
+    "ARRAY(SELECT n.nspname || '.' || c.relname FROM pg_catalog.pg_class c "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "AND c.relkind IN ('r', 'v', 'm', 'p', 'f') AND c.oid <> v.oid "
+    "AND (has_table_privilege(c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+    "OR has_any_column_privilege(c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')) "
+    "ORDER BY 1), "
+    "(SELECT count(*) FROM pg_catalog.pg_auth_members m "
+    "JOIN pg_catalog.pg_roles r ON r.oid = m.member WHERE r.rolname = current_user) "
+    "FROM (SELECT 'public.tr_verifier_generations'::regclass::oid AS oid) v"
+)
+VERIFIER_ROLE = "tr_verifier"
+VIEW_COLUMNS = ("id", *FIELDS, "updated_at")
+
+
+def _normalised_sql(text: str) -> str:
+    """Comparable form of a view definition: case, spacing, parentheses,
+    identifier quotes, ::text casts, schema/table qualifiers and the trailing ;
+    removed, so Postgres's deparsed form and the SQL as written both match."""
+    flat = "".join(text.lower().split())
+    for noise in ("(", ")", '"', "::text", "public.", "tr_entities."):
+        flat = flat.replace(noise, "")
+    return flat.rstrip(";")
+
+
+#: The reviewed view, in that comparable form. Pinning the whole definition
+#: (not only the WHERE) also catches a column that keeps its name but reads a
+#: different body field.
+VIEW_DEFINITION = _normalised_sql(  # compared, never executed
+    "SELECT id, "  # noqa: S608
+    + "".join(f"(body ->> '{field}'::text) AS {field}, " for field in FIELDS)
+    + "updated_at FROM tr_entities WHERE (kind = 'generation'::text)"
+)
+
+
+#: Schemas that hold AWS or system metadata, not tr data. DSQL ships
+#: AWS-managed views in `sys` (sys.jobs, sys.iam_pg_role_mappings) that PUBLIC
+#: can read; pg_toast and the per-session pg_temp*/pg_toast_temp* schemas are
+#: Postgres internals. A privilege there is not a widening of tr_verifier.
+SYSTEM_SCHEMAS = ("sys", "pg_toast")
+SYSTEM_SCHEMA_PREFIXES = ("pg_temp", "pg_toast_temp")
+
+
+def _is_system_relation(qualified_name: str) -> bool:
+    schema = qualified_name.split(".", 1)[0]
+    return schema in SYSTEM_SCHEMAS or schema.startswith(SYSTEM_SCHEMA_PREFIXES)
+
+
+class ReadScope(NamedTuple):
+    role: str
+    view_select: bool
+    view_beyond_select: bool
+    view_columns: tuple[str, ...]
+    view_definition: str
+    other_relations: tuple[str, ...]
+    memberships: int
+
+
+def scope_problems(scope: ReadScope) -> list[str]:
+    """Why `scope` is not the reviewed tr_verifier, or [] when it is.
+
+    Messages carry role and relation NAMES only, never row values.
+    """
+    problems = []
+    if scope.role != VERIFIER_ROLE:
+        problems.append(f"connected as {scope.role!r}, not {VERIFIER_ROLE}")
+    if not scope.view_select:
+        problems.append("cannot SELECT tr_verifier_generations")
+    if scope.view_beyond_select:
+        problems.append("holds a privilege on tr_verifier_generations beyond SELECT")
+    if scope.view_columns != VIEW_COLUMNS:
+        problems.append("tr_verifier_generations columns differ from the reviewed view")
+    if _normalised_sql(scope.view_definition) != VIEW_DEFINITION:
+        problems.append(
+            "tr_verifier_generations definition differs from the reviewed view "
+            "(tr_entities filtered to kind = 'generation')"
+        )
+    others = [name for name in scope.other_relations if not _is_system_relation(name)]
+    if others:
+        shown = ", ".join(others[:10])
+        problems.append(f"holds privileges on {len(others)} other relation(s): {shown}")
+    if scope.memberships:
+        problems.append(f"is a member of {scope.memberships} role(s)")
+    return problems
 
 
 def _timestamp(value: Any) -> dt.datetime:
@@ -110,11 +215,7 @@ class PostgresGenerationSource(PostgresOperationalOutboxSource):
                 return result
         # One key-only probe distinguishes an exact fit from a truncated scan.
         result.complete = not self._run(
-            lambda conn: conn.execute(
-                "SELECT id FROM tr_entities WHERE kind = 'generation' AND id > %s "
-                "ORDER BY id LIMIT 1",
-                (after,),
-            ).fetchall()
+            lambda conn: conn.execute(CONTINUATION_SQL, (after,)).fetchall()
         )
         return result
 
@@ -126,13 +227,23 @@ class PostgresGenerationSource(PostgresOperationalOutboxSource):
         for offset in range(0, len(ids), PAGE_SIZE):
             chunk = ids[offset : offset + PAGE_SIZE]
             rows = self._run(
-                lambda conn, chunk=chunk: conn.execute(
-                    "SELECT id FROM tr_entities WHERE kind = 'generation' AND id = ANY(%s)",
-                    (chunk,),
-                ).fetchall()
+                lambda conn, chunk=chunk: conn.execute(EXISTING_SQL, (chunk,)).fetchall()
             )
             found.update(str(row[0]) for row in rows)
         return found
+
+    def read_scope(self) -> ReadScope:
+        row = self._run(lambda conn: conn.execute(READ_SCOPE_SQL).fetchone())
+        role, select, beyond, columns, definition, others, memberships = row
+        return ReadScope(
+            role=str(role),
+            view_select=bool(select),
+            view_beyond_select=bool(beyond),
+            view_columns=tuple(str(column) for column in columns),
+            view_definition=str(definition),
+            other_relations=tuple(str(name) for name in others),
+            memberships=int(memberships),
+        )
 
 
 class ClickHouseGenerationSource(OperationalAnalyticsClient):
@@ -178,6 +289,16 @@ class ClickHouseGenerationSource(OperationalAnalyticsClient):
             params={"start": start.isoformat(), "end": end.isoformat(), "limit": limit},
             timeout_seconds=40,
         )
+
+
+def clickhouse_from_env(password: str) -> ClickHouseGenerationSource:
+    """The ClickHouse reader for the drain's environment (or a read override)."""
+    return ClickHouseGenerationSource(
+        base_url=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_URL", "http://127.0.0.1:8123"),
+        user=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_USER", "tr"),
+        password=password,
+        database=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_DATABASE", "tr"),
+    )
 
 
 def verify_delivery(
@@ -314,12 +435,7 @@ def main() -> int:
     try:
         result = verify_delivery(
             source,
-            ClickHouseGenerationSource(
-                base_url=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_URL", "http://127.0.0.1:8123"),
-                user=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_USER", "tr"),
-                password=password,
-                database=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_DATABASE", "tr"),
-            ),
+            clickhouse_from_env(password),
             start=start,
             end=end,
             limit=args.limit,
@@ -331,7 +447,7 @@ def main() -> int:
         result["window_start"] = start.isoformat().replace("+00:00", "Z")
         result["window_end"] = end.isoformat().replace("+00:00", "Z")
         result["grace_seconds"] = args.grace_seconds
-        _write_history(args.history_file, result)
+        write_history(args.history_file, result)
     except Exception as exc:
         # Driver/HTTP exceptions can contain credentials or entity contents.
         print(json.dumps({"ok": False, "error": type(exc).__name__}, sort_keys=True))

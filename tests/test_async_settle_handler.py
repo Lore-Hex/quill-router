@@ -52,7 +52,8 @@ def env(monkeypatch):
     cfg = settings(settle_outbox_enabled=True)
     store.trust_settings = cfg
     store.settle_outbox._async_fence = True
-    monkeypatch.setattr(handler.time, 'time', lambda: NOW)
+    # The process-wide wall clock: ticket expiry reads it through every module.
+    monkeypatch.setattr(time, 'time', lambda: NOW)
     try:
         yield store, db, rt, cfg
     finally:
@@ -94,7 +95,7 @@ def prepare(env, case=None, kind='settle'):
 
 def call(env, body, **kwargs):
     return handler.handle(json.dumps(body).encode(), kind=body['terminal']['terminal_kind'],
-                          runtime=env[2], settings=env[3], started=time.monotonic(), **kwargs)
+                          runtime=env[2], settings=env[3], started=handler.time.monotonic(), **kwargs)
 
 
 def row_for(env, body):
@@ -368,7 +369,7 @@ def test_admission_miss_rolls_back(env):
     env[1].reservations[auth.credit_reservation_id]['settled'] = True
     before = copy.deepcopy(env[1].gateway_authorizations)
     with pytest.raises(ReservationNotOpen):
-        enqueue(_outbox(env[0]), row, time.monotonic()+.5)
+        enqueue(_outbox(env[0]), row, handler.time.monotonic()+.5)
     assert not env[1].settle_outbox
     assert before == env[1].gateway_authorizations
 
@@ -420,7 +421,7 @@ def test_interleaving_sweep(env, monkeypatch, winner, boundary):
     if boundary == 0:
         compete()
     with pytest.raises(ReservationNotOpen):
-        enqueue(_outbox(env[0]), row, time.monotonic()+.5)
+        enqueue(_outbox(env[0]), row, handler.time.monotonic()+.5)
     assert fired and not db.settle_outbox
     assert db.reservations[auth.credit_reservation_id]['actual_micro'] == (7 if winner == 'sync' else 0)
     assert _typed_credit(db, 'ws-v1')['total_usage'] == (7 if winner == 'sync' else 0)
@@ -503,7 +504,7 @@ def test_concurrent_enqueue_vs_terminal(env, winner, monkeypatch):
 
     def accept():
         try:
-            enqueue(_outbox(env[0]), row, time.monotonic()+.5)
+            enqueue(_outbox(env[0]), row, handler.time.monotonic()+.5)
             return True
         except ReservationNotOpen:
             return False
