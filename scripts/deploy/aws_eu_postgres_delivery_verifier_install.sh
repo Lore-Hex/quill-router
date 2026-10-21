@@ -53,6 +53,13 @@ VERIFIER_SERVICE="tr-clickhouse-postgres-delivery.service"
 VERIFIER_TIMER="tr-clickhouse-postgres-delivery.timer"
 VERIFIER_HISTORY="/var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl"
 VERIFIER_ROLE_SQL="scripts/deploy/aws_eu_tr_verifier_role.sql"
+# No password: DSQL mints the token per connection.
+VERIFIER_DSN="host=${DSQL_HOST} port=5432 user=tr_verifier dbname=postgres sslmode=require"
+# How long one SSM step may take. The run-once step can wait out an hourly run
+# already in progress and then run its own, each bounded by the unit's
+# TimeoutStartSec=20m, so this must exceed twice that.
+SSM_DEADLINE_SECONDS="${SSM_DEADLINE_SECONDS:-2700}"
+SSM_POLL_SECONDS="${SSM_POLL_SECONDS:-5}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
@@ -61,8 +68,12 @@ trap 'rm -rf "$WORK"' EXIT
 log(){ printf '\n=== %s\n' "$*" >&2; }
 die(){ printf '\nFATAL: %s\n' "$*" >&2; exit 1; }
 
-# The drain installer's SSM runner, unchanged: JSON parameters from a file, and
-# an explicit status check because send-command exits 0 for a failed command.
+# The drain installer's SSM runner: JSON parameters from a file, and an
+# explicit status check because send-command exits 0 for a failed command.
+# One difference: it polls the invocation until a terminal status instead of
+# `aws ssm wait command-executed`, which gives up after about 100 s. Swallowing
+# that waiter's timeout read a slow but healthy verifier run as InProgress and
+# failed the install.
 ssm(){
   local comment="$1"; shift
   local cid params
@@ -73,11 +84,21 @@ ssm(){
     --document-name AWS-RunShellScript --comment "$comment" \
     --parameters "file://$params" \
     --query 'Command.CommandId' --output text)"
-  aws ssm wait command-executed --region "$REGION" --command-id "$cid" \
-    --instance-id "$INSTANCE_ID" 2>/dev/null || true
-  local status
-  status="$(aws ssm get-command-invocation --region "$REGION" --command-id "$cid" \
-    --instance-id "$INSTANCE_ID" --query 'Status' --output text)"
+  local status deadline
+  deadline=$(( $(date +%s) + SSM_DEADLINE_SECONDS ))
+  while :; do
+    # Right after send-command the invocation may not exist yet; that error
+    # reads as Pending and is retried until the deadline like any other.
+    status="$(aws ssm get-command-invocation --region "$REGION" --command-id "$cid" \
+      --instance-id "$INSTANCE_ID" --query 'Status' --output text 2>/dev/null)" || status=Pending
+    case "$status" in
+      Pending|InProgress|Delayed|Cancelling) ;;
+      *) break ;;
+    esac
+    [ "$(date +%s)" -lt "$deadline" ] \
+      || die "SSM step still $status after ${SSM_DEADLINE_SECONDS}s ($comment): command-id=$cid"
+    sleep "$SSM_POLL_SECONDS"
+  done
   aws ssm get-command-invocation --region "$REGION" --command-id "$cid" \
     --instance-id "$INSTANCE_ID" --query 'StandardOutputContent' --output text
   if [ "$status" != "Success" ]; then
@@ -159,23 +180,13 @@ case "$INSTALL_STARTED_AT" in
 esac
 
 # ---------------------------------------------------------------------------
-# 4. The DSN override. No secret: DSQL mints the token per connection.
-# ---------------------------------------------------------------------------
-ssm "verifier: environment file" "
-set -eu
-umask 077
-cat > '$VERIFIER_ENV_FILE' <<'ENVEOF'
-TR_POSTGRES_DSN=host=${DSQL_HOST} port=5432 user=tr_verifier dbname=postgres sslmode=require
-ENVEOF
-chmod 600 '$VERIFIER_ENV_FILE'
-cut -d= -f1 '$VERIFIER_ENV_FILE'
-"
-
-# ---------------------------------------------------------------------------
-# 5. The operator step, proven from the node rather than trusted: connect as
-#    tr_verifier and require (tr_verifier, can read the view, reads nothing
-#    else). Only the role name, a boolean, a count, or an exception class are
-#    printed.
+# 4. The operator step, proven from the node rather than trusted. Connected as
+#    tr_verifier (the DSN is passed here, so nothing is written first), it must
+#    hold SELECT on the reviewed view and nothing else: no other privilege on
+#    the view, the view's exact columns and definition, no privilege of any
+#    kind on any other relation outside the system catalogs, and no role
+#    membership (clickhouse.verify_postgres_delivery.scope_problems). Only role
+#    and relation names, or an exception class, are printed.
 # ---------------------------------------------------------------------------
 if ! SCOPE="$(ssm "verifier: tr_verifier read scope" "
 set -eu
@@ -183,33 +194,44 @@ cd '$REMOTE_ROOT'
 HOME='$STATE_DIR' ./venv/bin/python - <<'PYEOF'
 import sys
 env = {}
-for path in ('$DRAIN_ENV_FILE', '$VERIFIER_ENV_FILE'):
-    with open(path) as handle:
-        for line in handle:
-            key, sep, value = line.rstrip('\n').partition('=')
-            if sep:
-                env[key] = value
-from clickhouse.verify_postgres_delivery import PostgresGenerationSource
+with open('$DRAIN_ENV_FILE') as handle:
+    for line in handle:
+        key, sep, value = line.rstrip('\n').partition('=')
+        if sep:
+            env[key] = value
+from clickhouse.verify_postgres_delivery import PostgresGenerationSource, scope_problems
 source = PostgresGenerationSource(
-    dsn=env['TR_POSTGRES_DSN'],
+    dsn='$VERIFIER_DSN',
     iam_auth=env.get('TR_POSTGRES_IAM_AUTH', ''),
     iam_region=env.get('TR_POSTGRES_IAM_REGION', ''),
 )
 try:
-    role, view, others = source.read_scope()
+    problems = scope_problems(source.read_scope())
 except Exception as exc:
     sys.exit('tr_verifier could not connect or read its scope: ' + type(exc).__name__)
 finally:
     source.close()
-print('role=%s view_select=%s other_readable_relations=%d' % (role, view, others))
-if (role, view, others) != ('tr_verifier', True, 0):
-    sys.exit('tr_verifier is missing its grant or can read more than the view')
+# stderr, so a refusal shows them: ssm() echoes a failed step's stderr.
+for problem in problems:
+    print('scope problem: ' + problem, file=sys.stderr)
+if problems:
+    sys.exit('tr_verifier is not the reviewed least-privilege role')
+print('scope=reviewed')
 PYEOF
 ")"; then
+  # A refresh must stop using a role that is now over-broad or broken, so an
+  # installed timer is disabled; on a first install there is nothing to stop.
+  ssm "verifier: disable after refused scope" "
+set -eux
+if [ -f /etc/systemd/system/$VERIFIER_TIMER ]; then
+  systemctl disable --now $VERIFIER_TIMER
+fi
+"
   cat >&2 <<EOF
 
-FATAL: the delivery verifier's Postgres role is not provisioned as reviewed.
-No unit was installed.
+FATAL: the delivery verifier's Postgres role is not provisioned as reviewed
+(the scope problems are listed above). No unit or file was written, and an
+existing verifier timer has been disabled.
 
 OPERATOR STEP (once, as the DSQL admin, from a host with psql). The SQL is
 idempotent and is printed below from ${VERIFIER_ROLE_SQL}:
@@ -226,7 +248,22 @@ EOF
   sed 's/^/    /' "$ROOT/$VERIFIER_ROLE_SQL" >&2
   exit 1
 fi
-log "tr_verifier scope: $(printf '%s\n' "$SCOPE" | grep '^role=' | tail -1)"
+log "tr_verifier scope: $(printf '%s\n' "$SCOPE" | grep '^scope=' | tail -1)"
+
+# ---------------------------------------------------------------------------
+# 5. The DSN override, written only once the role is proven. The unit reads it
+#    after the drain's file, so it overrides the DSN and inherits the rest.
+# ---------------------------------------------------------------------------
+ssm "verifier: environment file" "
+set -eu
+umask 077
+cat > '$VERIFIER_ENV_FILE' <<'ENVEOF'
+TR_POSTGRES_DSN=${VERIFIER_DSN}
+ENVEOF
+chmod 600 '$VERIFIER_ENV_FILE'
+cut -d= -f1 '$VERIFIER_ENV_FILE'
+"
+
 
 # ---------------------------------------------------------------------------
 # 6. The units.
@@ -250,6 +287,11 @@ systemctl start $VERIFIER_TIMER
 # ---------------------------------------------------------------------------
 ssm "verifier: run once" "
 set -eu
+# A run already in progress would be JOINED by systemctl start, and it began
+# before this install's epoch; let it finish so the run checked is our own.
+while [ \"\$(systemctl show $VERIFIER_SERVICE --property=ActiveState --value)\" = activating ]; do
+  sleep 5
+done
 rc=0
 systemctl start $VERIFIER_SERVICE || rc=\$?
 echo '--- verifier summary (this install) ---'

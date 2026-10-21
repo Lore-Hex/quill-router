@@ -2,8 +2,10 @@
 Description=Verify TrustedRouter Postgres to ClickHouse delivery every hour (AWS-EU)
 
 [Timer]
-OnBootSec=10m
-OnUnitActiveSec=1h
+# Wall-clock hours, not OnBootSec/OnUnitActiveSec: those make every timer start
+# run the verifier at once, so an install's own run could join one that began
+# before it. Persistent catches up a single missed hour after downtime.
+OnCalendar=hourly
 RandomizedDelaySec=60s
 Persistent=true
 

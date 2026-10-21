@@ -9,7 +9,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from clickhouse.delivery_history import write_history
 from clickhouse.ingest_operational_outbox_postgres import (
@@ -50,18 +50,93 @@ SELECT_PAGE_SQL = (
 )
 CONTINUATION_SQL = "SELECT id FROM tr_verifier_generations WHERE id > %s ORDER BY id LIMIT 1"
 EXISTING_SQL = "SELECT id FROM tr_verifier_generations WHERE id = ANY(%s)"
-# What the connected role can read, for the installer's least-privilege check:
-# (role, can read the view, count of OTHER public relations it can read). A
-# correctly provisioned tr_verifier answers (tr_verifier, true, 0).
+# Everything the connected role can reach, for the verifier installer's
+# least-privilege proof. One row: the role; whether it can SELECT the view;
+# whether it holds anything on the view beyond SELECT; the view's columns and
+# definition; every other relation outside the system catalogs on which it
+# holds ANY table or column privilege; and how many roles it is a member of.
+# The view's oid comes from a ::regclass cast, so a missing view is an error,
+# and the installer refuses on any error.
 READ_SCOPE_SQL = (
     "SELECT current_user, "
-    "has_table_privilege('public.tr_verifier_generations', 'SELECT'), "
-    "(SELECT count(*) FROM pg_catalog.pg_class c "
+    "has_table_privilege(v.oid, 'SELECT'), "
+    "has_table_privilege(v.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+    "OR has_any_column_privilege(v.oid, 'INSERT,UPDATE,REFERENCES'), "
+    "ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a "
+    "WHERE a.attrelid = v.oid AND a.attnum > 0 AND NOT a.attisdropped "
+    "ORDER BY a.attnum), "
+    "pg_catalog.pg_get_viewdef(v.oid), "
+    "ARRAY(SELECT n.nspname || '.' || c.relname FROM pg_catalog.pg_class c "
     "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
-    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'm', 'p', 'f') "
-    "AND c.relname <> 'tr_verifier_generations' "
-    "AND has_table_privilege(c.oid, 'SELECT'))"
+    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "AND c.relkind IN ('r', 'v', 'm', 'p', 'f') AND c.oid <> v.oid "
+    "AND (has_table_privilege(c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+    "OR has_any_column_privilege(c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')) "
+    "ORDER BY 1), "
+    "(SELECT count(*) FROM pg_catalog.pg_auth_members m "
+    "JOIN pg_catalog.pg_roles r ON r.oid = m.member WHERE r.rolname = current_user) "
+    "FROM (SELECT 'public.tr_verifier_generations'::regclass::oid AS oid) v"
 )
+VERIFIER_ROLE = "tr_verifier"
+VIEW_COLUMNS = ("id", *FIELDS, "updated_at")
+
+
+def _normalised_sql(text: str) -> str:
+    """Comparable form of a view definition: case, spacing, parentheses,
+    identifier quotes, schema/table qualifiers and the trailing ; removed."""
+    flat = "".join(text.lower().split())
+    for noise in ("(", ")", '"', "public.", "tr_entities."):
+        flat = flat.replace(noise, "")
+    return flat.rstrip(";")
+
+
+#: The reviewed view, in that comparable form. Pinning the whole definition
+#: (not only the WHERE) also catches a column that keeps its name but reads a
+#: different body field.
+VIEW_DEFINITION = _normalised_sql(  # compared, never executed
+    "SELECT id, "  # noqa: S608
+    + "".join(f"(body ->> '{field}'::text) AS {field}, " for field in FIELDS)
+    + "updated_at FROM tr_entities WHERE (kind = 'generation'::text)"
+)
+
+
+class ReadScope(NamedTuple):
+    role: str
+    view_select: bool
+    view_beyond_select: bool
+    view_columns: tuple[str, ...]
+    view_definition: str
+    other_relations: tuple[str, ...]
+    memberships: int
+
+
+def scope_problems(scope: ReadScope) -> list[str]:
+    """Why `scope` is not the reviewed tr_verifier, or [] when it is.
+
+    Messages carry role and relation NAMES only, never row values.
+    """
+    problems = []
+    if scope.role != VERIFIER_ROLE:
+        problems.append(f"connected as {scope.role!r}, not {VERIFIER_ROLE}")
+    if not scope.view_select:
+        problems.append("cannot SELECT tr_verifier_generations")
+    if scope.view_beyond_select:
+        problems.append("holds a privilege on tr_verifier_generations beyond SELECT")
+    if scope.view_columns != VIEW_COLUMNS:
+        problems.append("tr_verifier_generations columns differ from the reviewed view")
+    if _normalised_sql(scope.view_definition) != VIEW_DEFINITION:
+        problems.append(
+            "tr_verifier_generations definition differs from the reviewed view "
+            "(tr_entities filtered to kind = 'generation')"
+        )
+    if scope.other_relations:
+        shown = ", ".join(scope.other_relations[:10])
+        problems.append(
+            f"holds privileges on {len(scope.other_relations)} other relation(s): {shown}"
+        )
+    if scope.memberships:
+        problems.append(f"is a member of {scope.memberships} role(s)")
+    return problems
 
 
 def _timestamp(value: Any) -> dt.datetime:
@@ -144,10 +219,18 @@ class PostgresGenerationSource(PostgresOperationalOutboxSource):
             found.update(str(row[0]) for row in rows)
         return found
 
-    def read_scope(self) -> tuple[str, bool, int]:
-        """(role, can read the view, other public relations it can read)."""
-        role, view, others = self._run(lambda conn: conn.execute(READ_SCOPE_SQL).fetchone())
-        return str(role), bool(view), int(others)
+    def read_scope(self) -> ReadScope:
+        row = self._run(lambda conn: conn.execute(READ_SCOPE_SQL).fetchone())
+        role, select, beyond, columns, definition, others, memberships = row
+        return ReadScope(
+            role=str(role),
+            view_select=bool(select),
+            view_beyond_select=bool(beyond),
+            view_columns=tuple(str(column) for column in columns),
+            view_definition=str(definition),
+            other_relations=tuple(str(name) for name in others),
+            memberships=int(memberships),
+        )
 
 
 class ClickHouseGenerationSource(OperationalAnalyticsClient):

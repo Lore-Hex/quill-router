@@ -3,9 +3,11 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import json
+import os
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -346,12 +348,12 @@ def test_exact_scan_cap_can_still_be_complete() -> None:
 def _role_sql_view() -> str:
     """The CREATE VIEW statement from the reviewed operator SQL, for SQLite.
 
-    SQLite has CREATE VIEW but not OR REPLACE; the body is otherwise the
-    statement the operator runs, so the verifier is tested against it.
+    The statement is the one the operator runs, so the verifier's SQL is
+    tested against it.
     """
     text = ROLE_SQL.read_text()
-    start = text.index("CREATE OR REPLACE VIEW")
-    return text[start : text.index(";", start)].replace("CREATE OR REPLACE VIEW", "CREATE VIEW")
+    start = text.index("CREATE VIEW")
+    return text[start : text.index(";", start)]
 
 
 def test_source_sql_reads_only_the_view_and_through_the_primary_key() -> None:
@@ -404,31 +406,103 @@ def test_source_sql_reads_only_the_view_and_through_the_primary_key() -> None:
     database.close()
 
 
-def test_role_sql_grants_the_view_only_and_is_rerunnable() -> None:
+def test_role_sql_grants_the_view_only_and_repairs_a_drifted_view() -> None:
     text = ROLE_SQL.read_text()
     statements = [line for line in text.splitlines() if line and not line.startswith("--")]
     grants = [line for line in statements if line.startswith("GRANT")]
 
     assert grants == ["GRANT SELECT ON tr_verifier_generations TO tr_verifier;"]
     assert "WHERE kind = 'generation';" in text
-    assert "body ->> 'created_at' AS created_at" in text
-    # Re-runnable: the view is replaced, the role and the IAM mapping are
-    # created only when absent, and psql stops at the first error.
-    assert "CREATE OR REPLACE VIEW tr_verifier_generations AS" in text
+    # CREATE OR REPLACE cannot narrow a widened view, so every pass drops and
+    # recreates it, then reapplies the grant the drop removed.
+    assert not [line for line in statements if "CREATE OR REPLACE" in line]
+    drop = text.index("DROP VIEW IF EXISTS tr_verifier_generations;")
+    create = text.index("CREATE VIEW tr_verifier_generations AS")
+    assert drop < create < text.index(grants[0])
+    # The role and the IAM mapping are created only when absent; psql stops at
+    # the first error.
     assert "WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_verifier') \\gexec" in text
     assert "FROM sys.iam_pg_role_mappings" in text
     assert "format('AWS IAM GRANT tr_verifier TO %L', :'node_role_arn')" in text
     assert "\\set ON_ERROR_STOP on" in text
     assert "tr_entities TO" not in text and "ALL PRIVILEGES" not in text
+    assert "aws_eu_postgres_delivery_verifier_install.sh" in text.splitlines()[2]
+
+
+# --- The installer's least-privilege proof -----------------------------------
+
+_REVIEWED_DEFINITION = (  # compared, never executed
+    " SELECT id,\n"  # noqa: S608
+    + "".join(f"    (body ->> '{field}'::text) AS {field},\n" for field in verifier.FIELDS)
+    + "    updated_at\n   FROM tr_entities\n  WHERE (kind = 'generation'::text);"
+)
+_REVIEWED = verifier.ReadScope(
+    role="tr_verifier",
+    view_select=True,
+    view_beyond_select=False,
+    view_columns=verifier.VIEW_COLUMNS,
+    view_definition=_REVIEWED_DEFINITION,
+    other_relations=(),
+    memberships=0,
+)
+
+
+def test_the_reviewed_scope_has_no_problems() -> None:
+    # Postgres 17's pg_get_viewdef of the reviewed SQL, verbatim.
+    assert verifier.scope_problems(_REVIEWED) == []
 
 
 @pytest.mark.parametrize(
-    "answer",
-    [("tr_verifier", True, 0), ("tr_verifier", True, 3), ("admin", True, 40)],
+    "change,expected",
+    [
+        ({"role": "admin"}, "connected as 'admin', not tr_verifier"),
+        ({"view_select": False}, "cannot SELECT tr_verifier_generations"),
+        ({"view_beyond_select": True}, "beyond SELECT"),
+        (
+            {"view_columns": (*verifier.VIEW_COLUMNS, "body")},
+            "columns differ from the reviewed view",
+        ),
+        (
+            {"view_definition": _REVIEWED_DEFINITION.replace("  WHERE (kind = 'generation'::text)", "")},
+            "definition differs",
+        ),
+        (
+            {
+                "view_definition": _REVIEWED_DEFINITION.replace(
+                    "(kind = 'generation'::text)", "((kind = 'generation'::text) OR true)"
+                )
+            },
+            "definition differs",
+        ),
+        (
+            # Same column name, different body field.
+            {"view_definition": _REVIEWED_DEFINITION.replace("'model'::text", "'prompt'::text")},
+            "definition differs",
+        ),
+        (
+            {"other_relations": ("public.tr_operational_analytics_outbox",)},
+            "1 other relation(s): public.tr_operational_analytics_outbox",
+        ),
+        ({"memberships": 1}, "member of 1 role(s)"),
+    ],
 )
-def test_read_scope_reports_role_view_grant_and_other_readable_relations(
-    answer: tuple[str, bool, int],
-) -> None:
+def test_each_refusal_shape_is_reported(change: dict[str, Any], expected: str) -> None:
+    problems = verifier.scope_problems(_REVIEWED._replace(**change))
+
+    assert len(problems) == 1, problems
+    assert expected in problems[0]
+
+
+def test_read_scope_maps_the_catalog_row() -> None:
+    row = (
+        "tr_verifier",
+        True,
+        False,
+        list(verifier.VIEW_COLUMNS),
+        _REVIEWED_DEFINITION,
+        [],
+        0,
+    )
     calls: list[str] = []
 
     class Connection:
@@ -437,36 +511,115 @@ def test_read_scope_reports_role_view_grant_and_other_readable_relations(
 
         def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
             calls.append(sql)
-            return SimpleNamespace(fetchone=lambda: answer)
+            return SimpleNamespace(fetchone=lambda: row)
 
     source = verifier.PostgresGenerationSource(dsn="host=localhost")
     source._connection = Connection()
 
-    assert source.read_scope() == answer
+    assert source.read_scope() == _REVIEWED
     assert calls == [verifier.READ_SCOPE_SQL]
-    assert "has_table_privilege('public.tr_verifier_generations', 'SELECT')" in calls[0]
-    assert "c.relname <> 'tr_verifier_generations'" in calls[0]
 
 
-def test_source_result_limit_reports_incomplete_without_inventing_extra_ids() -> None:
-    rows = [_row("gen-1"), _row("gen-2")]
-    result = _verify(rows, rows, limit=1)
-    assert result["sampled"] == 1
-    assert result["complete"] is result["ok"] is result["extra_checked"] is False
-    assert result["extra_ids"] == []
+# Real Postgres, when a throwaway superuser DSN is provided. Roles are
+# cluster-wide, so never point this at a shared server.
+_PG_SUPERUSER_DSN = os.environ.get("TR_TEST_POSTGRES_SUPERUSER_DSN", "")
 
 
-def test_clickhouse_window_limit_cannot_claim_complete_coverage() -> None:
-    result = _verify([], [_row("gen-1"), _row("gen-2")], limit=1)
-    assert result["complete"] is result["ok"] is False
-    assert result["extra_checked"] is True
-    assert result["extra_ids"] == ["gen-1"]
+@pytest.fixture
+def scoped_database() -> Any:
+    if not _PG_SUPERUSER_DSN:
+        pytest.skip("set TR_TEST_POSTGRES_SUPERUSER_DSN to a throwaway Postgres superuser")
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+
+    name = f"tr_scope_{os.getpid()}_{time.monotonic_ns()}"
+    # Roles are cluster-wide and these tests create and grant them, so parallel
+    # workers take turns: one session-level advisory lock held for the test.
+    admin = psycopg.connect(_PG_SUPERUSER_DSN, autocommit=True)
+    admin.execute("SELECT pg_advisory_lock(7274)")
+    admin.execute(f'CREATE DATABASE "{name}"')
+    admin.execute(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_verifier') "
+        "THEN CREATE ROLE tr_verifier LOGIN; END IF; END $$"
+    )
+    admin.execute("DROP ROLE IF EXISTS tr_scope_other")
+    admin.execute("CREATE ROLE tr_scope_other")
+    connection = psycopg.connect(make_conninfo(_PG_SUPERUSER_DSN, dbname=name), autocommit=True)
+    schema = Path(__file__).resolve().parents[1] / "src/trusted_router/storage_postgres_schema.sql"
+    try:
+        connection.execute(schema.read_text())
+        yield connection
+    finally:
+        connection.close()
+        admin.execute(f'DROP DATABASE "{name}"')
+        admin.execute("DROP ROLE tr_scope_other")
+        admin.close()
 
 
-def test_report_id_lists_are_capped_but_counts_are_not() -> None:
-    result = _verify([_row(f"gen-{index:03}") for index in range(25)], [])
-    assert result["missing"] == 25
-    assert len(result["missing_ids"]) == 20
+def _apply_role_sql(connection: Any) -> None:
+    """The reviewed SQL minus psql meta-commands and the DSQL IAM mapping."""
+    text = ROLE_SQL.read_text()
+    view = text[text.index("DROP VIEW") : text.index("SELECT 'CREATE ROLE")]
+    for statement in view.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+    connection.execute("GRANT SELECT ON tr_verifier_generations TO tr_verifier")
+
+
+def _scope_as_verifier(connection: Any) -> list[str]:
+    connection.execute("SET ROLE tr_verifier")
+    try:
+        source = verifier.PostgresGenerationSource(dsn="host=unused")
+        source._connection = connection
+        return verifier.scope_problems(source.read_scope())
+    finally:
+        connection.execute("RESET ROLE")
+
+
+@pytest.mark.parametrize(
+    "drift,expected",
+    [
+        ("", []),
+        (
+            "GRANT DELETE ON tr_operational_analytics_outbox TO tr_verifier",
+            ["public.tr_operational_analytics_outbox"],
+        ),
+        ("GRANT SELECT (body, kind) ON tr_entities TO tr_verifier", ["public.tr_entities"]),
+        (
+            "DROP VIEW tr_verifier_generations; "
+            "CREATE VIEW tr_verifier_generations AS SELECT id, body, kind, updated_at "
+            "FROM tr_entities; GRANT SELECT ON tr_verifier_generations TO tr_verifier",
+            ["columns differ", "definition differs"],
+        ),
+        ("GRANT INSERT ON tr_verifier_generations TO tr_verifier", ["beyond SELECT"]),
+        ("GRANT tr_scope_other TO tr_verifier", ["member of 1 role(s)"]),
+    ],
+)
+def test_scope_proof_on_real_postgres(
+    scoped_database: Any, drift: str, expected: list[str]
+) -> None:
+    _apply_role_sql(scoped_database)
+    for statement in filter(str.strip, drift.split(";")):
+        scoped_database.execute(statement)
+
+    problems = _scope_as_verifier(scoped_database)
+
+    assert len(problems) == len(expected), problems
+    for problem, fragment in zip(problems, expected, strict=True):
+        assert fragment in problem
+
+
+def test_rerunning_the_role_sql_repairs_a_widened_view(scoped_database: Any) -> None:
+    _apply_role_sql(scoped_database)
+    scoped_database.execute("DROP VIEW tr_verifier_generations")
+    scoped_database.execute(
+        "CREATE VIEW tr_verifier_generations AS SELECT id, body, updated_at FROM tr_entities"
+    )
+    assert _scope_as_verifier(scoped_database)
+
+    _apply_role_sql(scoped_database)
+
+    assert _scope_as_verifier(scoped_database) == []
 
 
 @pytest.mark.parametrize("iam_auth", ["", "aws-dsql"])

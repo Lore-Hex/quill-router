@@ -1,19 +1,25 @@
 -- tr_verifier: the Postgres role clickhouse.verify_postgres_delivery connects
 -- as on the AWS-EU ClickHouse node. Reviewed operator step, run by hand as the
--- DSQL admin; scripts/deploy/aws_eu_clickhouse_drain_install.sh prints the
--- exact command and then proves the result from the node.
+-- DSQL admin; scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh
+-- prints the exact command and then proves the result from the node.
 --
 -- Least privilege: tr_entities holds every entity kind (keys, wallets, users),
 -- so the role gets SELECT on a view of generation rows only, projected to the
 -- fields the verifier compares, and nothing on any table. Every statement is
--- safe to re-run. Needs psql (\gexec) and the node role ARN:
+-- safe to re-run, and a re-run repairs a drifted view: it is dropped and
+-- created again (CREATE OR REPLACE cannot remove columns), and the GRANT that
+-- the drop removed is reapplied. psql's default autocommit gives each schema
+-- change its own transaction, as DSQL requires. Needs psql (\gexec) and the
+-- node role ARN:
 --
 --   psql "host=... dbname=postgres user=admin sslmode=require" \
 --     -v node_role_arn=arn:aws:iam::<account>:role/<node role> \
 --     -f scripts/deploy/aws_eu_tr_verifier_role.sql
 \set ON_ERROR_STOP on
 
-CREATE OR REPLACE VIEW tr_verifier_generations AS
+DROP VIEW IF EXISTS tr_verifier_generations;
+
+CREATE VIEW tr_verifier_generations AS
 SELECT id,
        body ->> 'total_cost_microdollars' AS total_cost_microdollars,
        body ->> 'tokens_prompt' AS tokens_prompt,

@@ -42,8 +42,8 @@ HISTORY = "/var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl"
 NODE_ROLE = "tr-eu-clickhouse-role"
 VERIFIER_STEPS = [
     "verifier: drain tree present",
-    "verifier: environment file",
     "verifier: tr_verifier read scope",
+    "verifier: environment file",
     "verifier: install units",
     "verifier: run once",
 ]
@@ -99,9 +99,14 @@ def test_unit_reads_the_drain_env_first_so_only_the_dsn_is_overridden() -> None:
     assert "EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env" in DRAIN_UNIT
 
 
-def test_timer_runs_hourly() -> None:
-    assert "OnUnitActiveSec=1h" in TIMER
-    assert "Persistent=true" in TIMER
+def test_timer_runs_on_wall_clock_hours_not_on_every_start() -> None:
+    """OnBootSec/OnUnitActiveSec run the verifier whenever the timer starts,
+    so an install's run-once could join a run that began before it."""
+    settings = [line for line in TIMER.splitlines() if line and not line.startswith(("#", "["))]
+
+    assert "OnCalendar=hourly" in settings
+    assert "Persistent=true" in settings
+    assert not [line for line in settings if line.startswith(("OnBootSec", "OnUnitActiveSec"))]
     assert "WantedBy=timers.target" in TIMER
 
 
@@ -110,10 +115,12 @@ def test_timer_runs_hourly() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_drain_venv_carries_the_verifier_and_it_imports_before_the_swap() -> None:
+def test_drain_venv_carries_the_verifier_dependency_but_never_imports_it() -> None:
+    """A verifier defect must not fail a drain install; the verifier installer
+    checks the import itself."""
     assert "'httpx>=0.27.0'" in DRAIN
-    smoke = DRAIN.index("./venv/bin/python -c 'import clickhouse.verify_postgres_delivery'")
-    assert DRAIN.index("import smoke test (staging)") < smoke < DRAIN.index("drain: activate")
+    assert "import clickhouse.verify_postgres_delivery" not in DRAIN
+    assert "import clickhouse.verify_postgres_delivery" in VERIFIER
 
 
 def test_drain_stops_the_verifier_before_the_swap_and_restarts_it_only_if_enabled() -> None:
@@ -147,10 +154,11 @@ def test_verifier_env_file_carries_only_a_passwordless_tr_verifier_dsn() -> None
     body = VERIFIER[start : VERIFIER.index('"\n', VERIFIER.index("ENVEOF\n", start) + 7)]
     lines = body[body.index("<<'ENVEOF'\n") + 11 : body.index("\nENVEOF")].splitlines()
 
-    assert lines == [
-        "TR_POSTGRES_DSN=host=${DSQL_HOST} port=5432 user=tr_verifier "
-        "dbname=postgres sslmode=require"
-    ]
+    assert lines == ["TR_POSTGRES_DSN=${VERIFIER_DSN}"]
+    assert (
+        'VERIFIER_DSN="host=${DSQL_HOST} port=5432 user=tr_verifier '
+        'dbname=postgres sslmode=require"'
+    ) in VERIFIER
     assert "chmod 600 '$VERIFIER_ENV_FILE'" in body
     assert "cut -d= -f1 '$VERIFIER_ENV_FILE'" in body
 
@@ -168,11 +176,31 @@ def test_scope_check_prints_only_names_counts_and_exception_classes() -> None:
     start = VERIFIER.index('ssm "verifier: tr_verifier read scope"')
     snippet = VERIFIER[start : VERIFIER.index("PYEOF\n\")", start)]
 
-    assert "source.read_scope()" in snippet
+    assert "problems = scope_problems(source.read_scope())" in snippet
+    # On stderr, which ssm() echoes for a failed step; stdout is captured.
+    assert "print('scope problem: ' + problem, file=sys.stderr)" in snippet
     assert "type(exc).__name__" in snippet
     assert "str(exc)" not in snippet and "repr(" not in snippet
-    assert "('tr_verifier', True, 0)" in snippet
     assert "print(env" not in snippet and "print(value" not in snippet
+    # The DSN is passed in, so the check needs nothing written before it.
+    assert "dsn='$VERIFIER_DSN'" in snippet
+    assert "VERIFIER_ENV_FILE" not in snippet
+
+
+def test_a_refused_scope_disables_an_installed_timer() -> None:
+    start = VERIFIER.index('ssm "verifier: tr_verifier read scope"')
+    refusal = VERIFIER[start : VERIFIER.index("OPERATOR STEP", start)]
+
+    assert 'ssm "verifier: disable after refused scope"' in refusal
+    assert "systemctl disable --now $VERIFIER_TIMER" in refusal
+
+
+def test_ssm_steps_are_polled_to_a_terminal_status_not_waited_for() -> None:
+    """`aws ssm wait command-executed` gives up after about 100 s."""
+    code = [line for line in VERIFIER.splitlines() if not line.lstrip().startswith("#")]
+    assert not [line for line in code if "aws ssm wait" in line]
+    assert "Pending|InProgress|Delayed|Cancelling) ;;" in VERIFIER
+    assert 'SSM_DEADLINE_SECONDS="${SSM_DEADLINE_SECONDS:-2700}"' in VERIFIER
 
 
 def test_verifier_steps_run_in_fail_closed_order() -> None:
@@ -188,6 +216,8 @@ def test_run_once_refuses_on_a_failed_or_unrecorded_check() -> None:
     start = VERIFIER.index('ssm "verifier: run once"')
     snippet = VERIFIER[start : VERIFIER.index("PYEOF\n\"", start)]
 
+    assert "--property=ActiveState --value)\\\" = activating ]; do" in snippet
+    assert snippet.index("= activating ]") < snippet.index("systemctl start $VERIFIER_SERVICE")
     assert "systemctl start $VERIFIER_SERVICE || rc=\\$?" in snippet
     assert "refusing" in snippet and "exit 1" in snippet
     assert "--property=Result --value)\\\" = success" in snippet
@@ -225,6 +255,7 @@ def _fixture(*, decision: str = "dsql:DbConnect", failing_step: str = "") -> Scr
             (r"ssm send-command .*--comment drain: capture running process ", "cid-capture"),
             (r"ssm send-command .*--comment verifier: drain tree present ", "cid-tree"),
             (r"ssm send-command .*--comment verifier: tr_verifier read scope ", "cid-scope"),
+            (r"ssm send-command .*--comment verifier: run once ", "cid-run"),
             (r"ssm send-command ", "cid-ok"),
             *failing,
             (r"get-command-invocation .*--query Status", "Success"),
@@ -238,7 +269,7 @@ def _fixture(*, decision: str = "dsql:DbConnect", failing_step: str = "") -> Scr
             ),
             (
                 r"get-command-invocation .*--command-id cid-scope .*StandardOutputContent",
-                "role=tr_verifier view_select=True other_readable_relations=0",
+                "scope=reviewed",
             ),
             (r"get-command-invocation ", ""),
             (
@@ -261,9 +292,14 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
 
 @pytest.fixture
 def run_with(harness: DeployScriptHarness, monkeypatch: pytest.MonkeyPatch) -> Iterator[Runner]:
-    def run(script: str, fixture: ScriptFixture, verifier_rc: int = 0) -> HarnessRun:
+    def run(
+        script: str,
+        fixture: ScriptFixture,
+        verifier_rc: int = 0,
+        extra_env: dict[str, str] | None = None,
+    ) -> HarnessRun:
         monkeypatch.setitem(SCRIPT_FIXTURES, script, fixture)
-        return harness.run(script, verifier_rc=verifier_rc, timeout=300)
+        return harness.run(script, verifier_rc=verifier_rc, timeout=300, extra_env=extra_env)
 
     yield run
 
@@ -282,7 +318,7 @@ def test_a_clean_verifier_install_runs_every_step_and_exits_zero(run_with: Runne
 
     assert run.returncode == 0, summarise(run)
     assert _ssm_steps(run) == VERIFIER_STEPS
-    assert "tr_verifier scope: role=tr_verifier view_select=True" in run.stderr
+    assert "tr_verifier scope: scope=reviewed" in run.stderr
     assert "Delivery verifier installed and its first run was clean." in run.stdout
     assert not run.verifier_calls
 
@@ -302,7 +338,8 @@ def test_an_unprovisioned_role_prints_the_operator_step_and_installs_nothing(
     run = run_with(VERIFIER_SCRIPT, _fixture(failing_step="verifier: tr_verifier read scope"))
 
     assert run.returncode != 0, summarise(run)
-    assert _ssm_steps(run) == VERIFIER_STEPS[:3]
+    # Nothing written before or after the check; an installed timer disabled.
+    assert _ssm_steps(run) == [*VERIFIER_STEPS[:2], "verifier: disable after refused scope"]
     assert "OPERATOR STEP" in run.stderr
     assert f"-v node_role_arn=arn:aws:iam::330422590279:role/{NODE_ROLE}" in run.stderr
     assert "-f scripts/deploy/aws_eu_tr_verifier_role.sql" in run.stderr
@@ -343,3 +380,68 @@ def test_drain_install_succeeds_when_the_tr_verifier_role_is_missing(run_with: R
     assert "bash scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh" in run.stdout
     # And the gate, not the verifier, still decides the drain installer's exit.
     assert run_with(DRAIN_SCRIPT, fixture, verifier_rc=2).returncode == 2
+
+
+# A stateful `aws` in front of the harness stub: the run-once invocation reports
+# InProgress for the first POLL_IN_PROGRESS status polls, then Success. Every
+# call is still passed to the recording stub.
+_POLLING_AWS = r"""#!/usr/bin/env bash
+if [ "$2" = get-command-invocation ] && [[ " $* " == *" --command-id cid-run "* ]] \
+    && [[ " $* " == *" --query Status "* ]]; then
+  "$HARNESS_STUB_BIN/aws" "$@" >/dev/null
+  n=$(( $(cat "$POLL_STATE" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$POLL_STATE"
+  if [ "$n" -le "$POLL_IN_PROGRESS" ]; then echo InProgress; else echo Success; fi
+  exit 0
+fi
+exec "$HARNESS_STUB_BIN/aws" "$@"
+"""
+
+
+def _polling_env(
+    harness: DeployScriptHarness, tmp_path: Path, in_progress: int, **extra: str
+) -> dict[str, str]:
+    wrapper = tmp_path / "bin"
+    wrapper.mkdir()
+    (wrapper / "aws").write_text(_POLLING_AWS)
+    (wrapper / "aws").chmod(0o755)
+    return {
+        "PATH": f"{wrapper}:{harness.bin}",
+        "HARNESS_STUB_BIN": str(harness.bin),
+        "POLL_STATE": str(tmp_path / "polls"),
+        "POLL_IN_PROGRESS": str(in_progress),
+        **extra,
+    }
+
+
+def _run_once_status_polls(run: HarnessRun) -> int:
+    return sum(
+        1
+        for call in run.calls
+        if call[:3] == ["aws", "ssm", "get-command-invocation"]
+        and "cid-run" in call
+        and call[call.index("--query") + 1] == "Status"
+    )
+
+
+def test_a_slow_run_once_is_polled_until_it_finishes(
+    run_with: Runner, harness: DeployScriptHarness, tmp_path: Path
+) -> None:
+    run = run_with(
+        VERIFIER_SCRIPT, _fixture(), extra_env=_polling_env(harness, tmp_path, in_progress=5)
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert _run_once_status_polls(run) == 6
+    assert ["sleep", "5"] in run.calls
+    assert "first run was clean" in run.stdout
+
+
+def test_a_run_once_past_the_deadline_is_a_failure_that_says_so(
+    run_with: Runner, harness: DeployScriptHarness, tmp_path: Path
+) -> None:
+    env = _polling_env(harness, tmp_path, in_progress=10_000, SSM_DEADLINE_SECONDS="0")
+    run = run_with(VERIFIER_SCRIPT, _fixture(), extra_env=env)
+
+    assert run.returncode != 0, summarise(run)
+    assert "SSM step still InProgress after 0s (verifier: run once)" in run.stderr

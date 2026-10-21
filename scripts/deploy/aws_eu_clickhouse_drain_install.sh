@@ -76,8 +76,9 @@
 # runs from this tree. Its units, Postgres role and first run belong to
 # scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh, which this
 # script names as the next step and never runs. This install never fails on
-# the verifier. It only keeps the verifier's dependency (httpx) in the venv,
-# smoke-imports it, and stops and restarts its timer around the tree swap.
+# the verifier, and does not even import it: that script checks the import.
+# It only keeps the verifier's dependency (httpx) in the venv, and stops and
+# restarts its timer around the tree swap.
 set -euo pipefail
 
 REGION="${REGION:-eu-west-3}"                       # Paris.
@@ -361,7 +362,6 @@ ssm "drain: import smoke test (staging)" "
 set -eux
 cd '$STAGE_DIR'
 ./venv/bin/python -c 'import clickhouse.ingest_operational_outbox_postgres as m; print(\"CONFIG_EXIT_CODE\", m.CONFIG_EXIT_CODE)'
-./venv/bin/python -c 'import clickhouse.verify_postgres_delivery'
 "
 
 # ---------------------------------------------------------------------------

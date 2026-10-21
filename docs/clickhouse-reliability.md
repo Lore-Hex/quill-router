@@ -381,15 +381,16 @@ verifier. It is separate from the drain installer on purpose: the verifier is
 optional, so its prerequisites must never make a drain install fail. It runs
 from the drain's `/opt/tr-clickhouse` tree, virtualenv and environment file.
 It ships no code and refuses if that tree is missing or cannot import the
-verifier. The drain installer keeps the verifier's `httpx` dependency, smoke
-imports it, stops its timer before swapping the tree, and starts the timer
-again if it was enabled. Its summary names the verifier script as the next
-step, and it never runs it.
+verifier. The drain installer keeps the verifier's `httpx` dependency, stops
+the verifier's timer before swapping the tree, and starts the timer again if
+it was enabled. It does not import the verifier, so a verifier defect cannot
+fail a drain install. Its summary names the verifier script as the next step,
+and it never runs it.
 
 | What | Where |
 | --- | --- |
 | Service (oneshot, user `tr-clickhouse-ingest`) | `tr-clickhouse-postgres-delivery.service` |
-| Timer (hourly, 24 h lookback) | `tr-clickhouse-postgres-delivery.timer` |
+| Timer (`OnCalendar=hourly`, `Persistent=true`, 24 h lookback) | `tr-clickhouse-postgres-delivery.timer` |
 | DSN override, `user=tr_verifier`, no secret | `/etc/tr-clickhouse-postgres-delivery.env` |
 | IAM auth, region, ClickHouse credentials | the drain's `/etc/tr-clickhouse-ingest-postgres.env` |
 | History, one JSON line per completed check, 16 days kept | `/var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl` |
@@ -406,6 +407,12 @@ delivery gap.
   not just one day's. Until a generation timestamp index exists, the source
   scan walks all generation history through the primary key (see above).
 - `--limit` must exceed the number of generations created in one 24 h window.
+
+ClickHouse adds a third ceiling. Every verifier query may read at most
+1,000,000 rows. The window query (`fetch_window`) reads `activity_generations
+FINAL` for the 24 h window, and that read is pruned only by the table's
+monthly partition. So once one month of `activity_generations` holds more than
+1,000,000 rows, every run fails loudly with a query error, not silently.
 
 To check them, read the coverage fields of the last history line:
 
@@ -446,7 +453,9 @@ Operator order, first install:
    role is managed by that script, not by Terraform. IAM cannot narrow
    `DbConnect` to one Postgres role. The `AWS IAM GRANT` mapping in the SQL is
    the per-role boundary.
-3. As the DSQL admin, run the reviewed SQL once. It can be re-run safely:
+3. As the DSQL admin, run the reviewed SQL once. It can be re-run safely.
+   A re-run also repairs a drifted view: the view is dropped and created again,
+   because `CREATE OR REPLACE` cannot narrow it, and the grant is reapplied.
 
    ```bash
    PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token \
@@ -462,16 +471,34 @@ Operator order, first install:
    does these things in order:
    1. It checks `dsql:DbConnect`.
    2. It checks that the drain tree is present and imports the verifier.
-   3. It writes the DSN override.
-   4. It connects from the node as `tr_verifier` and requires exactly
-      `(tr_verifier, can read the view, 0 other readable relations)`.
-   5. It installs and enables the timer.
-   6. It runs the verifier once. It then requires exit 0, `Result=success`,
-      and a history line from this run with `"ok": true`.
+   3. It connects from the node as `tr_verifier`, passing the DSN directly, so
+      nothing is written before this check. The role must satisfy all of:
+      - it is `tr_verifier` and is a member of no role;
+      - it holds SELECT on `tr_verifier_generations` and no other privilege
+        on it;
+      - the view's columns and its `pg_get_viewdef` definition match the
+        reviewed SQL, which reads `tr_entities` filtered to
+        `kind = 'generation'`;
+      - it holds no table or column privilege of any kind on any other
+        relation outside `pg_catalog` and `information_schema`.
 
-   The script exits non-zero at the first failure. A failure in steps 1 to 4
-   leaves no unit installed. The timer stays enabled after a failed first
-   run, so a real discrepancy keeps being recorded every hour.
+      Any problem is listed by role or relation name, and so is any error in
+      running the check.
+   4. It writes the DSN override.
+   5. It installs and enables the timer.
+   6. It runs the verifier once. If an hourly run is already in progress, it
+      waits for that run to finish first. It then requires exit 0,
+      `Result=success`, and a history line from this run with `"ok": true`.
+
+   Each SSM step is polled until it finishes, with a 45-minute deadline.
+   The script exits non-zero at the first failure.
+
+   - On a first install, a failure in steps 1 to 3 writes nothing on the node.
+   - On a refresh, files and units from the earlier install stay where they
+     are. A refused scope check also runs `systemctl disable --now` on the
+     timer, so an over-broad or broken role stops being used.
+   - The timer stays enabled after a failed first run, so a real discrepancy
+     keeps being recorded every hour.
 
 #### Azure: not installed yet (follow-up)
 
