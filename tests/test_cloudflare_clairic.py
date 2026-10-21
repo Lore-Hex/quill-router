@@ -132,6 +132,23 @@ def test_older_gateway_fleets_do_not_receive_native_tasks(region, allowed):
     assert provider_model_available_from_gateway_region(cf.SLUG, cf.CLAIRIC_MODEL, region) is allowed
 
 
+@pytest.mark.parametrize("region", [None, "", "eu-west-1", "eu-west-3", "uaenorth", "australiaeast", "unknown-region"])
+def test_authorize_requires_an_upgraded_explicit_gateway(client, monkeypatch, tmp_path, region):
+    _, row, _ = discover(monkeypatch, tmp_path)
+    serve_manifest_rows(monkeypatch, tmp_path, cf.SLUG, [row])
+    key = client.post("/v1/keys", headers={"x-trustedrouter-user": "clairic-region@example.com"}, json={"name": "Clairic region"})
+    assert key.status_code == 201
+    payload = {
+        "api_key_hash": key.json()["data"]["hash"], "model": cf.CLAIRIC_MODEL,
+        "estimated_input_tokens": 10, "max_output_tokens": 64,
+    }
+    if region is not None:
+        payload["region"] = region
+    response = client.post("/v1/internal/gateway/authorize", json=payload)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "provider_not_supported"
+
+
 def test_settles_multi_pass_meter_exactly_once(client, monkeypatch, tmp_path):
     _, row, _ = discover(monkeypatch, tmp_path)
     serve_manifest_rows(monkeypatch, tmp_path, cf.SLUG, [row])
