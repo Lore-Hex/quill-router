@@ -301,6 +301,12 @@ def shadow_deadline_clock(monkeypatch):
     return clock
 
 
+# Files that drive the settle handler and route through the 0.5 s handoff.
+_SETTLE_HANDLER_BUDGET_FILES = frozenset({
+    'test_async_settle_handler.py', 'test_async_settle_proof.py', 'test_async_settle_proof_faults.py',
+})
+
+
 def _pin_settle_handler_budgets(monkeypatch):
     """The settle handler's handoff budget (0.5 s async, 2 s sync) is spent
     only by time a test injects, never by runner load: CI run 39489912697 spent
@@ -343,7 +349,7 @@ def deterministic_shadow_budgets(request, monkeypatch):
     """
     name = request.node.path.name
     if request.node.path.parent.name != 'tests' or not (
-            name.startswith('test_async_settle_shadow') or name == 'test_async_settle_handler.py'):
+            name.startswith('test_async_settle_shadow') or name in _SETTLE_HANDLER_BUDGET_FILES):
         return
     from types import SimpleNamespace
 
@@ -351,7 +357,7 @@ def deterministic_shadow_budgets(request, monkeypatch):
 
     if name.startswith('test_async_settle_shadow'):
         request.getfixturevalue('shadow_deadline_clock')
-    if name == 'test_async_settle_handler.py':
+    if name in _SETTLE_HANDLER_BUDGET_FILES:
         _pin_settle_handler_budgets(monkeypatch)
     async def receive_without_elapsed_budget(awaitable, timeout):
         return await awaitable
