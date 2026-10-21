@@ -86,15 +86,23 @@ ssm(){
     --query 'Command.CommandId' --output text)"
   local status deadline
   deadline=$(( $(date +%s) + SSM_DEADLINE_SECONDS ))
+  local error_class
   while :; do
-    # Right after send-command the invocation may not exist yet; that error
-    # reads as Pending and is retried until the deadline like any other.
-    status="$(aws ssm get-command-invocation --region "$REGION" --command-id "$cid" \
-      --instance-id "$INSTANCE_ID" --query 'Status' --output text 2>/dev/null)" || status=Pending
-    case "$status" in
-      Pending|InProgress|Delayed|Cancelling) ;;
-      *) break ;;
-    esac
+    if status="$(aws ssm get-command-invocation --region "$REGION" --command-id "$cid" \
+        --instance-id "$INSTANCE_ID" --query 'Status' --output text 2>"$WORK/poll.err")"; then
+      case "$status" in
+        Pending|InProgress|Delayed|Cancelling) ;;
+        *) break ;;
+      esac
+    elif grep -q 'InvocationDoesNotExist' "$WORK/poll.err"; then
+      # Right after send-command the invocation is not registered yet.
+      status=Pending
+    else
+      # Anything else (AccessDenied, expired credentials, throttling) will not
+      # fix itself by waiting out the deadline. Name its class and stop.
+      error_class="$(sed -n 's/.*An error occurred (\([^)]*\)).*/\1/p' "$WORK/poll.err" | head -1)"
+      die "could not poll SSM step ($comment): ${error_class:-unrecognised aws error} command-id=$cid"
+    fi
     [ "$(date +%s)" -lt "$deadline" ] \
       || die "SSM step still $status after ${SSM_DEADLINE_SECONDS}s ($comment): command-id=$cid"
     sleep "$SSM_POLL_SECONDS"
@@ -205,33 +213,27 @@ source = PostgresGenerationSource(
     iam_auth=env.get('TR_POSTGRES_IAM_AUTH', ''),
     iam_region=env.get('TR_POSTGRES_IAM_REGION', ''),
 )
+# The step itself always succeeds and ends with one verdict line, so the
+# installer can tell "checked, and wrong" from "could not check".
+problems = None
 try:
     problems = scope_problems(source.read_scope())
 except Exception as exc:
-    sys.exit('tr_verifier could not connect or read its scope: ' + type(exc).__name__)
+    print('scope=error:' + type(exc).__name__)
 finally:
     source.close()
-# stderr, so a refusal shows them: ssm() echoes a failed step's stderr.
-for problem in problems:
-    print('scope problem: ' + problem, file=sys.stderr)
-if problems:
-    sys.exit('tr_verifier is not the reviewed least-privilege role')
-print('scope=reviewed')
+if problems is not None:
+    for problem in problems:
+        print('scope problem: ' + problem)
+    print('scope=problems' if problems else 'scope=reviewed')
 PYEOF
 ")"; then
-  # A refresh must stop using a role that is now over-broad or broken, so an
-  # installed timer is disabled; on a first install there is nothing to stop.
-  ssm "verifier: disable after refused scope" "
-set -eux
-if [ -f /etc/systemd/system/$VERIFIER_TIMER ]; then
-  systemctl disable --now $VERIFIER_TIMER
+  SCOPE="scope=error:SSMStepFailed"
 fi
-"
-  cat >&2 <<EOF
+SCOPE_VERDICT="$(printf '%s\n' "$SCOPE" | sed -n 's/^scope=//p' | tail -1)"
 
-FATAL: the delivery verifier's Postgres role is not provisioned as reviewed
-(the scope problems are listed above). No unit or file was written, and an
-existing verifier timer has been disabled.
+print_operator_step(){
+  cat >&2 <<EOF
 
 OPERATOR STEP (once, as the DSQL admin, from a host with psql). The SQL is
 idempotent and is printed below from ${VERIFIER_ROLE_SQL}:
@@ -246,9 +248,53 @@ Then re-run this script; it re-checks the role's scope from the node.
 
 EOF
   sed 's/^/    /' "$ROOT/$VERIFIER_ROLE_SQL" >&2
-  exit 1
+}
+
+case "$SCOPE_VERDICT" in
+  reviewed)
+    log "tr_verifier scope: reviewed"
+    ;;
+  problems)
+    printf '%s\n' "$SCOPE" | grep '^scope problem: ' >&2 || :
+    # Checked, and wrong: a refresh must stop using an over-broad or broken
+    # role, so an installed timer is disabled. On a first install there is
+    # nothing to stop. A failure here must not hide the operator step.
+    DISABLED=1
+    ( ssm "verifier: disable after refused scope" "
+set -eux
+if [ -f /etc/systemd/system/$VERIFIER_TIMER ]; then
+  systemctl disable --now $VERIFIER_TIMER
 fi
-log "tr_verifier scope: $(printf '%s\n' "$SCOPE" | grep '^scope=' | tail -1)"
+" ) >/dev/null || DISABLED=0
+    cat >&2 <<EOF
+
+FATAL: the delivery verifier's Postgres role is not provisioned as reviewed
+(the scope problems are listed above). No unit or file was written.
+EOF
+    if [ "$DISABLED" -eq 1 ]; then
+      printf 'Any installed verifier timer has been disabled.\n' >&2
+    else
+      printf 'WARNING: disabling the verifier timer FAILED; run on the node:\n  systemctl disable --now %s\n' \
+        "$VERIFIER_TIMER" >&2
+    fi
+    print_operator_step
+    exit 1
+    ;;
+  *)
+    # Could not check (connection, token, throttling, or a missing role or
+    # view, which also fail to connect or to resolve). Nothing was changed and
+    # an installed timer keeps running: a transient error is not evidence that
+    # the role is wrong.
+    cat >&2 <<EOF
+
+FATAL: could not check tr_verifier's scope: ${SCOPE_VERDICT#error:}.
+Nothing was changed. Retry if this was transient. If the role or its view
+has never been provisioned, that is the expected cause; run the step below.
+EOF
+    print_operator_step
+    exit 1
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 5. The DSN override, written only once the role is proven. The unit reads it

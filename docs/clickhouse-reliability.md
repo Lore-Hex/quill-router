@@ -478,25 +478,41 @@ Operator order, first install:
         on it;
       - the view's columns and its `pg_get_viewdef` definition match the
         reviewed SQL, which reads `tr_entities` filtered to
-        `kind = 'generation'`;
+        `kind = 'generation'`. The comparison ignores the `::text` casts that
+        Postgres adds when it stores a definition;
       - it holds no table or column privilege of any kind on any other
-        relation outside `pg_catalog` and `information_schema`.
+        relation. This check ignores `pg_catalog`, `information_schema`, and
+        the schemas that hold AWS or system metadata rather than tr data:
+        DSQL's `sys`, `pg_toast`, and the per-session `pg_temp*` schemas.
 
-      Any problem is listed by role or relation name, and so is any error in
-      running the check.
+      The check ends with one of three results:
+      - **Reviewed:** the install continues.
+      - **Problems found:** each problem is listed by role or relation name.
+      - **Could not check:** a connection, token or throttling error, or a
+        role or view that does not exist yet. Only the exception class is
+        reported.
    4. It writes the DSN override.
    5. It installs and enables the timer.
    6. It runs the verifier once. If an hourly run is already in progress, it
       waits for that run to finish first. It then requires exit 0,
       `Result=success`, and a history line from this run with `"ok": true`.
 
-   Each SSM step is polled until it finishes, with a 45-minute deadline.
+   Each SSM step is polled until it finishes, with a 45-minute deadline. A
+   poll that fails with `InvocationDoesNotExist` is retried, because the
+   command is not registered yet. Any other poll error, such as AccessDenied
+   or expired credentials, stops the script at once and names the error class.
    The script exits non-zero at the first failure.
 
    - On a first install, a failure in steps 1 to 3 writes nothing on the node.
    - On a refresh, files and units from the earlier install stay where they
-     are. A refused scope check also runs `systemctl disable --now` on the
-     timer, so an over-broad or broken role stops being used.
+     are.
+   - If the scope check finds problems, it also runs `systemctl disable --now`
+     on the timer, so an over-broad role stops being used. If disabling fails,
+     the script says so, still prints the operator step, and exits non-zero.
+   - If the check could not run, nothing changes and an installed timer keeps
+     running, because a transient error is not evidence that the role is
+     wrong. The script still prints the operator step, since a missing role or
+     view looks like this on a first install.
    - The timer stays enabled after a failed first run, so a real discrepancy
      keeps being recorded every hour.
 

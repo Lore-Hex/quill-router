@@ -83,9 +83,10 @@ VIEW_COLUMNS = ("id", *FIELDS, "updated_at")
 
 def _normalised_sql(text: str) -> str:
     """Comparable form of a view definition: case, spacing, parentheses,
-    identifier quotes, schema/table qualifiers and the trailing ; removed."""
+    identifier quotes, ::text casts, schema/table qualifiers and the trailing ;
+    removed, so Postgres's deparsed form and the SQL as written both match."""
     flat = "".join(text.lower().split())
-    for noise in ("(", ")", '"', "public.", "tr_entities."):
+    for noise in ("(", ")", '"', "::text", "public.", "tr_entities."):
         flat = flat.replace(noise, "")
     return flat.rstrip(";")
 
@@ -98,6 +99,19 @@ VIEW_DEFINITION = _normalised_sql(  # compared, never executed
     + "".join(f"(body ->> '{field}'::text) AS {field}, " for field in FIELDS)
     + "updated_at FROM tr_entities WHERE (kind = 'generation'::text)"
 )
+
+
+#: Schemas that hold AWS or system metadata, not tr data. DSQL ships
+#: AWS-managed views in `sys` (sys.jobs, sys.iam_pg_role_mappings) that PUBLIC
+#: can read; pg_toast and the per-session pg_temp*/pg_toast_temp* schemas are
+#: Postgres internals. A privilege there is not a widening of tr_verifier.
+SYSTEM_SCHEMAS = ("sys", "pg_toast")
+SYSTEM_SCHEMA_PREFIXES = ("pg_temp", "pg_toast_temp")
+
+
+def _is_system_relation(qualified_name: str) -> bool:
+    schema = qualified_name.split(".", 1)[0]
+    return schema in SYSTEM_SCHEMAS or schema.startswith(SYSTEM_SCHEMA_PREFIXES)
 
 
 class ReadScope(NamedTuple):
@@ -129,11 +143,10 @@ def scope_problems(scope: ReadScope) -> list[str]:
             "tr_verifier_generations definition differs from the reviewed view "
             "(tr_entities filtered to kind = 'generation')"
         )
-    if scope.other_relations:
-        shown = ", ".join(scope.other_relations[:10])
-        problems.append(
-            f"holds privileges on {len(scope.other_relations)} other relation(s): {shown}"
-        )
+    others = [name for name in scope.other_relations if not _is_system_relation(name)]
+    if others:
+        shown = ", ".join(others[:10])
+        problems.append(f"holds privileges on {len(others)} other relation(s): {shown}")
     if scope.memberships:
         problems.append(f"is a member of {scope.memberships} role(s)")
     return problems

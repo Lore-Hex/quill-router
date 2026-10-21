@@ -493,6 +493,25 @@ def test_each_refusal_shape_is_reported(change: dict[str, Any], expected: str) -
     assert expected in problems[0]
 
 
+def test_the_as_written_view_definition_matches_too() -> None:
+    """A definition stored as written, without the ::text casts Postgres adds
+    when it deparses, is the same view."""
+    as_written = _role_sql_view().split(" AS\n", 1)[1]
+    assert "::text" not in as_written
+
+    assert verifier.scope_problems(_REVIEWED._replace(view_definition=as_written)) == []
+
+
+def test_system_schemas_are_not_tr_data_but_public_relations_are() -> None:
+    system = ("sys.jobs", "sys.iam_pg_role_mappings", "pg_toast.pg_toast_1", "pg_temp_3.t")
+
+    assert verifier.scope_problems(_REVIEWED._replace(other_relations=system)) == []
+    problems = verifier.scope_problems(
+        _REVIEWED._replace(other_relations=(*system, "public.tr_entities"))
+    )
+    assert problems == ["holds privileges on 1 other relation(s): public.tr_entities"]
+
+
 def test_read_scope_maps_the_catalog_row() -> None:
     row = (
         "tr_verifier",
@@ -593,6 +612,13 @@ def _scope_as_verifier(connection: Any) -> list[str]:
         ),
         ("GRANT INSERT ON tr_verifier_generations TO tr_verifier", ["beyond SELECT"]),
         ("GRANT tr_scope_other TO tr_verifier", ["member of 1 role(s)"]),
+        (
+            # DSQL ships AWS-managed views in sys that PUBLIC can read.
+            "CREATE SCHEMA sys; CREATE TABLE sys.jobs (id int); "
+            "GRANT USAGE ON SCHEMA sys TO PUBLIC; GRANT SELECT ON sys.jobs TO PUBLIC",
+            [],
+        ),
+        ("GRANT SELECT ON tr_entities TO PUBLIC", ["public.tr_entities"]),
     ],
 )
 def test_scope_proof_on_real_postgres(
@@ -620,6 +646,27 @@ def test_rerunning_the_role_sql_repairs_a_widened_view(scoped_database: Any) -> 
     _apply_role_sql(scoped_database)
 
     assert _scope_as_verifier(scoped_database) == []
+
+
+def test_source_result_limit_reports_incomplete_without_inventing_extra_ids() -> None:
+    rows = [_row("gen-1"), _row("gen-2")]
+    result = _verify(rows, rows, limit=1)
+    assert result["sampled"] == 1
+    assert result["complete"] is result["ok"] is result["extra_checked"] is False
+    assert result["extra_ids"] == []
+
+
+def test_clickhouse_window_limit_cannot_claim_complete_coverage() -> None:
+    result = _verify([], [_row("gen-1"), _row("gen-2")], limit=1)
+    assert result["complete"] is result["ok"] is False
+    assert result["extra_checked"] is True
+    assert result["extra_ids"] == ["gen-1"]
+
+
+def test_report_id_lists_are_capped_but_counts_are_not() -> None:
+    result = _verify([_row(f"gen-{index:03}") for index in range(25)], [])
+    assert result["missing"] == 25
+    assert len(result["missing_ids"]) == 20
 
 
 @pytest.mark.parametrize("iam_auth", ["", "aws-dsql"])

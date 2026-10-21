@@ -177,9 +177,9 @@ def test_scope_check_prints_only_names_counts_and_exception_classes() -> None:
     snippet = VERIFIER[start : VERIFIER.index("PYEOF\n\")", start)]
 
     assert "problems = scope_problems(source.read_scope())" in snippet
-    # On stderr, which ssm() echoes for a failed step; stdout is captured.
-    assert "print('scope problem: ' + problem, file=sys.stderr)" in snippet
-    assert "type(exc).__name__" in snippet
+    # One verdict line: checked-and-wrong is distinct from could-not-check.
+    assert "print('scope=error:' + type(exc).__name__)" in snippet
+    assert "print('scope=problems' if problems else 'scope=reviewed')" in snippet
     assert "str(exc)" not in snippet and "repr(" not in snippet
     assert "print(env" not in snippet and "print(value" not in snippet
     # The DSN is passed in, so the check needs nothing written before it.
@@ -187,12 +187,16 @@ def test_scope_check_prints_only_names_counts_and_exception_classes() -> None:
     assert "VERIFIER_ENV_FILE" not in snippet
 
 
-def test_a_refused_scope_disables_an_installed_timer() -> None:
-    start = VERIFIER.index('ssm "verifier: tr_verifier read scope"')
-    refusal = VERIFIER[start : VERIFIER.index("OPERATOR STEP", start)]
+def test_only_real_scope_problems_disable_an_installed_timer() -> None:
+    cases = VERIFIER[VERIFIER.index('case "$SCOPE_VERDICT" in') :]
+    problems = cases[cases.index("  problems)") : cases.index("    ;;", cases.index("  problems)"))]
+    other = cases[cases.index("  *)") : cases.index("esac")]
 
-    assert 'ssm "verifier: disable after refused scope"' in refusal
-    assert "systemctl disable --now $VERIFIER_TIMER" in refusal
+    assert 'ssm "verifier: disable after refused scope"' in problems
+    assert "systemctl disable --now $VERIFIER_TIMER" in problems
+    assert "print_operator_step" in problems and "exit 1" in problems
+    assert "disable" not in other.replace("disabled", "")
+    assert "could not check tr_verifier's scope" in other
 
 
 def test_ssm_steps_are_polled_to_a_terminal_status_not_waited_for() -> None:
@@ -239,8 +243,14 @@ def test_verifier_installer_is_not_a_completeness_gate_script() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _fixture(*, decision: str = "dsql:DbConnect", failing_step: str = "") -> ScriptFixture:
-    """`failing_step` is a regex over the SSM comment whose command fails."""
+def _fixture(
+    *,
+    decision: str = "dsql:DbConnect",
+    failing_step: str = "",
+    scope_output: str = "scope=reviewed",
+) -> ScriptFixture:
+    """`failing_step` is a regex over the SSM comment whose command fails;
+    `scope_output` is what the node-side scope check prints."""
     failing: tuple[tuple[str, str], ...] = ()
     if failing_step:
         failing = ((r"get-command-invocation .*--command-id cid-failing .*--query Status", "Failed"),)
@@ -269,7 +279,7 @@ def _fixture(*, decision: str = "dsql:DbConnect", failing_step: str = "") -> Scr
             ),
             (
                 r"get-command-invocation .*--command-id cid-scope .*StandardOutputContent",
-                "scope=reviewed",
+                scope_output,
             ),
             (r"get-command-invocation ", ""),
             (
@@ -318,7 +328,7 @@ def test_a_clean_verifier_install_runs_every_step_and_exits_zero(run_with: Runne
 
     assert run.returncode == 0, summarise(run)
     assert _ssm_steps(run) == VERIFIER_STEPS
-    assert "tr_verifier scope: scope=reviewed" in run.stderr
+    assert "tr_verifier scope: reviewed" in run.stderr
     assert "Delivery verifier installed and its first run was clean." in run.stdout
     assert not run.verifier_calls
 
@@ -332,14 +342,13 @@ def test_a_failed_verifier_run_refuses(run_with: Runner) -> None:
     assert "first run was clean" not in run.stdout
 
 
-def test_an_unprovisioned_role_prints_the_operator_step_and_installs_nothing(
-    run_with: Runner,
-) -> None:
-    run = run_with(VERIFIER_SCRIPT, _fixture(failing_step="verifier: tr_verifier read scope"))
+_PROBLEMS = (
+    "scope problem: holds privileges on 1 other relation(s): public.tr_entities\n"
+    "scope=problems"
+)
 
-    assert run.returncode != 0, summarise(run)
-    # Nothing written before or after the check; an installed timer disabled.
-    assert _ssm_steps(run) == [*VERIFIER_STEPS[:2], "verifier: disable after refused scope"]
+
+def _assert_operator_step(run: HarnessRun) -> None:
     assert "OPERATOR STEP" in run.stderr
     assert f"-v node_role_arn=arn:aws:iam::330422590279:role/{NODE_ROLE}" in run.stderr
     assert "-f scripts/deploy/aws_eu_tr_verifier_role.sql" in run.stderr
@@ -347,6 +356,53 @@ def test_an_unprovisioned_role_prints_the_operator_step_and_installs_nothing(
     assert "GRANT SELECT ON tr_verifier_generations TO tr_verifier;" in run.stderr
     assert "AWS IAM GRANT tr_verifier TO %L" in run.stderr
     assert 'PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token' in run.stderr
+
+
+def test_a_wrong_scope_disables_the_timer_and_prints_the_operator_step(run_with: Runner) -> None:
+    run = run_with(VERIFIER_SCRIPT, _fixture(scope_output=_PROBLEMS))
+
+    assert run.returncode != 0, summarise(run)
+    # Nothing written; an installed timer disabled.
+    assert _ssm_steps(run) == [*VERIFIER_STEPS[:2], "verifier: disable after refused scope"]
+    assert "not provisioned as reviewed" in run.stderr
+    assert "scope problem: holds privileges on 1 other relation(s): public.tr_entities" in run.stderr
+    assert "Any installed verifier timer has been disabled." in run.stderr
+    _assert_operator_step(run)
+
+
+def test_a_failed_disable_still_prints_the_operator_step(run_with: Runner) -> None:
+    run = run_with(
+        VERIFIER_SCRIPT,
+        _fixture(scope_output=_PROBLEMS, failing_step="verifier: disable after refused scope"),
+    )
+
+    assert run.returncode != 0, summarise(run)
+    assert _ssm_steps(run)[-1] == "verifier: disable after refused scope"
+    assert "WARNING: disabling the verifier timer FAILED" in run.stderr
+    assert "systemctl disable --now tr-clickhouse-postgres-delivery.timer" in run.stderr
+    _assert_operator_step(run)
+
+
+@pytest.mark.parametrize(
+    "fixture_kwargs,cause",
+    [
+        # A missing role or IAM mapping fails to connect; so does a transient
+        # network or token error. Either way the check did not happen.
+        ({"scope_output": "scope=error:OperationalError"}, "OperationalError"),
+        ({"scope_output": "scope=error:ClientError"}, "ClientError"),
+        ({"failing_step": "verifier: tr_verifier read scope"}, "SSMStepFailed"),
+    ],
+)
+def test_a_scope_check_that_could_not_run_changes_nothing(
+    run_with: Runner, fixture_kwargs: dict[str, str], cause: str
+) -> None:
+    run = run_with(VERIFIER_SCRIPT, _fixture(**fixture_kwargs))
+
+    assert run.returncode != 0, summarise(run)
+    assert _ssm_steps(run) == VERIFIER_STEPS[:2]  # no disable, nothing written
+    assert f"could not check tr_verifier's scope: {cause}." in run.stderr
+    assert "not provisioned as reviewed" not in run.stderr
+    _assert_operator_step(run)
 
 
 def test_a_missing_drain_tree_is_refused_before_anything_is_written(run_with: Runner) -> None:
@@ -382,17 +438,20 @@ def test_drain_install_succeeds_when_the_tr_verifier_role_is_missing(run_with: R
     assert run_with(DRAIN_SCRIPT, fixture, verifier_rc=2).returncode == 2
 
 
-# A stateful `aws` in front of the harness stub: the run-once invocation reports
-# InProgress for the first POLL_IN_PROGRESS status polls, then Success. Every
-# call is still passed to the recording stub.
+# A stateful `aws` in front of the harness stub: the run-once invocation answers
+# the first POLL_IN_PROGRESS status polls with InProgress, or, when POLL_ERROR
+# is set, fails them with that AWS error class; then Success. Every call is
+# still passed to the recording stub.
 _POLLING_AWS = r"""#!/usr/bin/env bash
 if [ "$2" = get-command-invocation ] && [[ " $* " == *" --command-id cid-run "* ]] \
     && [[ " $* " == *" --query Status "* ]]; then
   "$HARNESS_STUB_BIN/aws" "$@" >/dev/null
   n=$(( $(cat "$POLL_STATE" 2>/dev/null || echo 0) + 1 ))
   echo "$n" > "$POLL_STATE"
-  if [ "$n" -le "$POLL_IN_PROGRESS" ]; then echo InProgress; else echo Success; fi
-  exit 0
+  if [ "$n" -gt "$POLL_IN_PROGRESS" ]; then echo Success; exit 0; fi
+  if [ -z "${POLL_ERROR:-}" ]; then echo InProgress; exit 0; fi
+  echo "An error occurred ($POLL_ERROR) when calling the GetCommandInvocation operation: fixture" >&2
+  exit 254
 fi
 exec "$HARNESS_STUB_BIN/aws" "$@"
 """
@@ -445,3 +504,27 @@ def test_a_run_once_past_the_deadline_is_a_failure_that_says_so(
 
     assert run.returncode != 0, summarise(run)
     assert "SSM step still InProgress after 0s (verifier: run once)" in run.stderr
+
+
+def test_an_unregistered_invocation_is_polled_again(
+    run_with: Runner, harness: DeployScriptHarness, tmp_path: Path
+) -> None:
+    env = _polling_env(harness, tmp_path, in_progress=3, POLL_ERROR="InvocationDoesNotExist")
+    run = run_with(VERIFIER_SCRIPT, _fixture(), extra_env=env)
+
+    assert run.returncode == 0, summarise(run)
+    assert _run_once_status_polls(run) == 4
+    assert "first run was clean" in run.stdout
+
+
+@pytest.mark.parametrize("error_class", ["AccessDeniedException", "ExpiredTokenException"])
+def test_any_other_poll_error_stops_at_once_and_names_its_class(
+    run_with: Runner, harness: DeployScriptHarness, tmp_path: Path, error_class: str
+) -> None:
+    env = _polling_env(harness, tmp_path, in_progress=3, POLL_ERROR=error_class)
+    run = run_with(VERIFIER_SCRIPT, _fixture(), extra_env=env)
+
+    assert run.returncode != 0, summarise(run)
+    assert _run_once_status_polls(run) == 1
+    assert f"could not poll SSM step (verifier: run once): {error_class}" in run.stderr
+    assert "fixture" not in run.stderr  # the class, not the message
