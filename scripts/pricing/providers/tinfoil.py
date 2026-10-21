@@ -84,6 +84,11 @@ _NATIVE_TO_OR_ID = {
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
+# Tinfoil upgraded this stable native ID in place. Publish the dated model
+# only while its authoritative catalog explicitly identifies the revision.
+_DEEPSEEK_1017_ID = "deepseek/deepseek-v4.1-flash-1017"
+_DEEPSEEK_1017_DESCRIPTION = re.compile(r"^DeepSeek V4\.1 Flash \(1017\)(?:,|$)")
+
 # Only variants whose canonical spelling is stable may bypass manual review.
 # Quantization/build suffixes (for example ``-fp8`` or a date) can describe a
 # deployment rather than a distinct public model and must stay review-gated.
@@ -382,6 +387,20 @@ def fetch() -> ProviderPricingResult:
             or _GLM_NATIVE_ID_RE.fullmatch(native_id.strip().casefold()) is not None
         ):
             discovered[or_id] = manifest_row
+            description = row.get("description")
+            if (
+                native_id == "deepseek-v4-1-flash"
+                and isinstance(description, str)
+                and _DEEPSEEK_1017_DESCRIPTION.match(description) is not None
+            ):
+                prices[_DEEPSEEK_1017_ID] = prices[or_id]
+                discovered[_DEEPSEEK_1017_ID] = {
+                    **manifest_row,
+                    "id": _DEEPSEEK_1017_ID,
+                    "title": _DEEPSEEK_1017_ID,
+                    "display_name": "DeepSeek V4.1 Flash 1017",
+                }
+                remember_upstream_id(UPSTREAM_ID_MAP, _DEEPSEEK_1017_ID, native_id)
 
     _preserve_announced_feed_removals(prices, discovered, notes)
     _DISCOVERED_MANIFEST_ROWS = discovered
@@ -409,4 +428,8 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
+        # Do not let tombstone grace periods keep a dated route callable after
+        # its stable upstream ID stops identifying the promised revision.
+        operator_hold_reasons={_DEEPSEEK_1017_ID: "upstream-revision-unconfirmed"}
+        if _DEEPSEEK_1017_ID not in _DISCOVERED_MANIFEST_ROWS else None,
     )

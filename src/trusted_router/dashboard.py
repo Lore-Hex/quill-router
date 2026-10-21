@@ -62,6 +62,7 @@ from trusted_router.catalog import (
     provider_confidential_inference,
     provider_is_routable,
     providers_for_display,
+    published_context_length,
 )
 from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
@@ -5026,6 +5027,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     publisher = _model_publisher(model)
     is_meta = model.id in META_MODEL_IDS
+    context_length = published_context_length(model) if is_meta else model.context_length
     endpoints = _credits_endpoints(endpoints_for_model(model.id)) if not is_meta else []
     route_endpoints = _credits_endpoints(_model_route_endpoints(model))
     ai_iq = (
@@ -5108,9 +5110,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "name": model.name,
         "provider": publisher.name,
         "publisher_slug": publisher.slug,
-        "context_length": f"{model.context_length:,}",
-        "context_length_compact": _compact_token_count(model.context_length),
-        "context_length_int": model.context_length,
+        "context_length": f"{context_length:,}",
+        "context_length_compact": _compact_token_count(context_length),
+        "context_length_int": context_length,
         "prompt_price": prompt,
         "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else cached_prompt,
         "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
@@ -5478,6 +5480,7 @@ def _model_detail_view(
     speech = SPEECH_MODELS.get(model.id)
     transcription = TRANSCRIPTION_MODELS.get(model.id)
     is_meta = model.id in META_MODEL_IDS
+    context_length = published_context_length(model) if is_meta else model.context_length
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
         or model.completion_price_microdollars_per_million_tokens > 0
@@ -5544,8 +5547,8 @@ def _model_detail_view(
         "name": model.name,
         "provider": publisher.name,
         "publisher_slug": publisher.slug,
-        "context_length": f"{model.context_length:,}",
-        "context_length_int": model.context_length,
+        "context_length": f"{context_length:,}",
+        "context_length_int": context_length,
         "fixed_price": fixed_price,
         "speech": speech_metadata(model.id) if speech else None,
         "transcription": transcription_metadata(model.id) if transcription else None,

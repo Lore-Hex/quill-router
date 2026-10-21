@@ -64,7 +64,7 @@
   "by": "price",
   "partition": "model|none"
 }</code></td></tr>
-        <tr data-purpose="Require parameter support"><td><code>require_parameters</code></td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request.</td><td><code>true</code> / <code>false</code> (default)</td></tr>
+        <tr data-purpose="Require parameter support"><td><code>require_parameters</code></td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request. Without it, only <code>tools</code>, <code>tool_choice</code> and <code>response_format</code> filter routes, by what the catalog declares for the route and its model.</td><td><code>true</code> / <code>false</code> (default)</td></tr>
         <tr data-purpose="Set a price ceiling"><td><code>max_price</code></td><td>Hard maximum USD price per million prompt or completion tokens. Compared as integer microdollars.</td><td><code class="content-value-code">{
   "prompt": "0.15",
   "completion": "0.40"

@@ -482,7 +482,7 @@ def _variant_suffix(suffix: str, preference: str, value: str) -> VariantSuffix:
 
 _OVERRIDE_KEYS = frozenset({
     "usage", "renewable_energy_only", "provider_jurisdiction",
-    "privacy_requirements", "order", "only",
+    "privacy_requirements", "order", "only", "pool_model_ids",
 })
 
 
@@ -539,6 +539,11 @@ def live_requested_models(settings: Settings) -> tuple[RequestedModel, ...]:
         unknown = set(overrides) - _OVERRIDE_KEYS
         if unknown or ids[-1:] != [companion]:
             raise SnapshotRefused(f"unexpected expansion of {model_id}: {sorted(unknown)}")
+        # Pool membership is derived from expands_to, not an independent
+        # schema field. Refuse an override that cannot be reconstructed.
+        expected_pool = set(ids[:-1]) - {companion} if ids[:-1] != [model_id] else set()
+        if set(overrides.get("pool_model_ids", ())) != expected_pool:
+            raise SnapshotRefused(f"unexpected pool membership for {model_id}")
         out.append(RequestedModel(
             id=model_id,
             expands_to=tuple(ids[:-1]),
