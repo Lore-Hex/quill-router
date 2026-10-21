@@ -1,10 +1,12 @@
 # The edge's load balancer backend (docs/design/fast-admission-enclave-direct.md,
 # E1): the fast path nodes on the edge's port, grouped per zone, health-checked
 # on the edge's own answer, behind the control load balancer's proxy with the
-# same Cloud Armor policy the control backend carries for /internal today. No
-# route sends traffic here yet; the path rule for /internal/gateway/* is the
-# switch, added to control_lb_url_map.tf on its own, and reverting it is the
-# way back.
+# same Cloud Armor policy the control backend carries for /internal today. The
+# control load balancer sends a weighted share of the exact path
+# /internal/gateway/authorize here (control_lb_url_map.tf,
+# local.fastpath_edge_route_weight below); a weight of 0 is the way back.
+# Traffic flows, so wait for a node to turn UNHEALTHY before stopping it
+# (docs/runbooks/fastpath-deploy.md).
 #
 # The health check is the edge's /internal/gateway/edge/health, 200 while the
 # node serves and 503 once SIGUSR1 marks it leaving, so the backend follows
