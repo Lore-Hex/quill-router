@@ -17,6 +17,11 @@ from trusted_router import provider_lifecycle
 MODEL = "google/gemini-3.8-flash"
 
 
+@pytest.fixture(autouse=True)
+def no_live_claude_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(vertex, "_live_claude_rows", lambda headers: {})
+
+
 def _table(rows: list[list[str]], *, tier: str = "", region: bool = True) -> str:
     headers = (
         ["Model", "Type"]
