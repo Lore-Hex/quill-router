@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from scripts.pricing.providers import tinfoil
 from tests.pinned_manifests import build_manifest_rows
+from trusted_router import catalog_ingest
 from trusted_router.catalog import endpoint_confidential_compute, endpoint_e2ee
 
 BASE = "deepseek/deepseek-v4.1-flash"
@@ -78,6 +80,10 @@ def test_missing_or_changed_revision_immediately_holds_existing_dated_route(
     monkeypatch.setattr(tinfoil, "MANIFEST_PATH", path)
     monkeypatch.setattr(tinfoil, "fetch_json", lambda _: {"data": [catalog_row]})
     tinfoil.write_provider_manifest(tinfoil.fetch())
+    initial_rows = json.loads(path.read_text())["models"]
+    _, initial_endpoints = build_manifest_rows(
+        monkeypatch, tmp_path / "initial", "tinfoil", initial_rows,
+    )
     catalog_row["description"] = description
     result = tinfoil.fetch()
     assert BASE in result.prices
@@ -91,6 +97,15 @@ def test_missing_or_changed_revision_immediately_holds_existing_dated_route(
     _, endpoints = build_manifest_rows(monkeypatch, tmp_path / "catalog", "tinfoil", rows)
     assert f"{DATED}@tinfoil/prepaid" not in endpoints
     assert f"{BASE}@tinfoil/prepaid" in endpoints
+    monkeypatch.setattr(
+        catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path / "catalog" / "served_provider_models",
+    )
+    # A stale shared snapshot cannot revive the revision through either rail.
+    stale = initial_endpoints[f"{DATED}@tinfoil/prepaid"]
+    byok = replace(stale, id=f"{DATED}@tinfoil/byok", usage_type="BYOK")
+    assert not catalog_ingest._filter_unserved_provider_endpoints(
+        {stale.id: stale, byok.id: byok},
+    )
 
 
 @pytest.mark.parametrize("change", [
