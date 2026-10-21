@@ -55,7 +55,7 @@ for (const width of [320, 390, 1280]) test(`key copy, setup and deliberate first
   await expect.poll(() => analytics.length).toBe(2);
   expect(analytics[1].event).toBe('onboarding_call_succeeded');
   expect(JSON.stringify(analytics)).not.toContain(key);
-  expect(JSON.stringify(analytics)).not.toContain('weather app');
+  expect(JSON.stringify(analytics)).not.toContain('capital of France');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });
 test('payment failure offers recovery without reporting success', async ({page}) => {
