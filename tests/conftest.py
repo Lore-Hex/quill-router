@@ -301,6 +301,44 @@ def shadow_deadline_clock(monkeypatch):
     return clock
 
 
+# Files that drive the settle handler and route through the 0.5 s handoff.
+_SETTLE_HANDLER_BUDGET_FILES = frozenset({
+    'test_async_settle_handler.py', 'test_async_settle_proof.py', 'test_async_settle_proof_faults.py',
+})
+
+
+def _pin_settle_handler_budgets(monkeypatch):
+    """The settle handler's handoff budget (0.5 s async, 2 s sync) is spent
+    only by time a test injects, never by runner load: CI run 39489912697 spent
+    840 ms of a slow shard in one async handoff and answered 503.
+
+    The handler, the route and the outbox enqueue read one fixed instant. A
+    test that sets time.monotonic itself still drives all three, because the
+    patched function wins over the fixed instant.
+    """
+    import time
+
+    from trusted_router import storage_gcp_async_settle, storage_gcp_io
+    from trusted_router.routes import settlements
+    from trusted_router.services import async_settle_handler
+
+    real_monotonic = time.monotonic
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            current = time.monotonic
+            return self.now if current is real_monotonic else current()
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+    clock = Clock()
+    for module in (async_settle_handler, settlements, storage_gcp_async_settle, storage_gcp_io):
+        monkeypatch.setattr(module, 'time', clock)
+
+
 @pytest.fixture(autouse=True)
 def deterministic_shadow_budgets(request, monkeypatch):
     """Fake shadow I/O and TestClient bodies consume only injected time.
@@ -311,7 +349,7 @@ def deterministic_shadow_budgets(request, monkeypatch):
     """
     name = request.node.path.name
     if request.node.path.parent.name != 'tests' or not (
-            name.startswith('test_async_settle_shadow') or name == 'test_async_settle_handler.py'):
+            name.startswith('test_async_settle_shadow') or name in _SETTLE_HANDLER_BUDGET_FILES):
         return
     from types import SimpleNamespace
 
@@ -319,6 +357,8 @@ def deterministic_shadow_budgets(request, monkeypatch):
 
     if name.startswith('test_async_settle_shadow'):
         request.getfixturevalue('shadow_deadline_clock')
+    if name in _SETTLE_HANDLER_BUDGET_FILES:
+        _pin_settle_handler_budgets(monkeypatch)
     async def receive_without_elapsed_budget(awaitable, timeout):
         return await awaitable
     monkeypatch.setattr(request_body_limit, 'asyncio', SimpleNamespace(
