@@ -1,20 +1,12 @@
 {% from "console/_key_icons.html" import icon %}
 <div class="ux-tiles">
-  <a class="ux-tile ux-tile-credit{% if credits_empty %} is-empty{% endif %}" href="/console/credits">
-    <span class="ux-tile-icon">{{ icon('wallet') }}</span>
-    <span class="ux-tile-body">
-      <strong class="ux-tile-value">{{ credits_available|default('API', true) }}</strong>
-      <span class="ux-tile-caption">API credit</span>
-      <span class="ux-tile-action">Add credits {{ icon('arrow') }}</span>
-    </span>
-  </a>
   <span class="ux-tile-slot" data-rewards-key-card hidden>
     <span data-rewards-key-title hidden></span><span data-rewards-key-description hidden></span>
     <button class="ux-tile ux-tile-rewards" type="button" data-rewards-open data-rewards-api-keys data-rewards-compact hidden>
       <span class="ux-tile-icon">{{ icon('gift') }}</span>
       <span class="ux-tile-body">
         <strong class="ux-tile-value">Social rewards</strong>
-        <span class="ux-tile-caption">Optional</span>
+        <span class="ux-tile-caption">Earn API credit for a follow</span>
         <span class="ux-tile-action"><span data-rewards-label>Earn credit</span> {{ icon('arrow') }}</span>
       </span>
     </button>

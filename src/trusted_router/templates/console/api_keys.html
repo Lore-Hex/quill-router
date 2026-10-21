@@ -30,8 +30,8 @@
 {% if created_key %}
 {% set raw_key = created_key %}
 {% include "console/_key_onboarding.html" %}
-{% endif %}
 {% include "console/_key_next_steps.html" %}
+{% endif %}
 {% if not keys %}
 <section class="panel">
   <div class="panel-head"><h2>Create API key</h2></div>
@@ -112,6 +112,9 @@
 {% if created_key %}
 </details>
 {% endif %}
+{% endif %}
+{% if not created_key %}
+{% include "console/_key_next_steps.html" %}
 {% endif %}
 </div>
 {% endblock %}

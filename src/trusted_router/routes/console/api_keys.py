@@ -19,7 +19,6 @@ from trusted_router.money import dollars_to_microdollars, microdollars_to_decima
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.spend_windows import WINDOWS, suggested_window_limits
 from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot
-from trusted_router.typed_balance import live_credit_summary
 
 _FLASH = {
     "saved:limit": ("success", "Budgets saved."),
@@ -53,10 +52,6 @@ def register(app: FastAPI) -> None:
             window: microdollars_to_decimal(micro)
             for window, micro in suggested_window_limits().items()
         }
-        # Available credit feeds the one-line next-steps nudge under the
-        # onboarding flow (same typed counter read the Credits page uses).
-        summary = live_credit_summary(ctx.workspace.id)
-        available = summary["available"] if summary else 0
         return HTMLResponse(render(
             "console/api_keys.html",
             settings=settings,
@@ -68,8 +63,6 @@ def register(app: FastAPI) -> None:
             created_key=created_key,
             flash=flash,
             suggested=suggested,
-            credits_available=money(available),
-            credits_empty=available <= 0,
         ))
 
     @app.get("/console/api-keys")

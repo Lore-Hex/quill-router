@@ -21,6 +21,7 @@ from trusted_router.auth import SESSION_COOKIE_NAME, SettingsDep
 from trusted_router.config import Settings
 from trusted_router.dashboard import _static_version
 from trusted_router.domains import request_api_base_url
+from trusted_router.typed_balance import live_credit_summary
 from trusted_router.money import format_money_display
 from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import (
@@ -97,6 +98,12 @@ def render(
     shared selector.
     """
     active = str(context.get("active") or "")
+    if "credits_available" not in context:
+        # The header balance chip: the same typed counter read the Credits page uses.
+        summary = live_credit_summary(ctx.workspace.id)
+        available = summary["available"] if summary else 0
+        context["credits_available"] = format_money_display(available)
+        context["credits_empty"] = available <= 0
     return render_template(
         template,
         # Every console stylesheet and script must change URL with the release.
