@@ -84,7 +84,6 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/gpt-oss-120b-api": "gpt-oss-120b, served fast on Cerebras and attested down to the image digest.",
         "/eu-ai-act-llm-compliance": "Your EU AI Act compliance file depends on facts from your LLM API vendor, and attestation makes those facts checkable.",
         "/x402-llm-api": "Your agent gets a 402, signs a payment, retries the call, and reads the completion.",
-        "/confidential-cowork": "Confidential inference by default",
     }
 
     for path, marker in markers.items():
@@ -250,30 +249,12 @@ def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> N
         assert "public" in badge.headers["cache-control"]
 
 
-def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -> None:
-    response = client.get("/confidential-cowork")
-
-    assert response.status_code == 200
-    assert "Trusted Cowork by TrustedRouter" in response.text
-    assert "Built on OpenCode" in response.text
-    assert "trustedrouter/confidential" in response.text
-    for arch in ("arm64", "x64"):
-        assert (
-            "https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/"
-            f"v0.4.0-alpha.2/Trusted-Cowork-0.4.0-alpha.2-mac-{arch}.dmg"
-        ) in response.text
-    assert "TRPi" not in response.text
-    assert "terminal coding agent" not in response.text
-    assert "Other providers can be explicitly configured" not in response.text
-    assert "Lore-Hex/QuillCode/releases" not in response.text
-    assert "Opens in Terminal" not in response.text
-    assert "Choose an eligible confidential model by name" in response.text
-    assert "Default route</span><strong>trustedrouter/confidential" in response.text
-    assert "Data collection</span><strong>deny" in response.text
-    assert "Sign in with TrustedRouter and authorize in your browser" in response.text
-    assert "No eligible confidential provider means no model request" in response.text
-    assert "Plan an enterprise deployment" in response.text
-    assert "/static/confidential-cowork-desktop.png" not in response.text
+def test_confidential_cowork_moves_to_nyte(client: TestClient) -> None:
+    for path in ("/confidential-cowork", "/confidential-cowork/"):
+        for method in ("GET", "HEAD"):
+            response = client.request(method, path, follow_redirects=False)
+            assert response.status_code == 301
+            assert response.headers["location"] == "https://nytokenexchange.com/trusted-cowork"
     screenshot = client.get("/static/trusted-cowork-icon.png")
     assert screenshot.status_code == 200
     assert screenshot.headers["content-type"] == "image/png"

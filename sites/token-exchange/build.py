@@ -166,7 +166,7 @@ def build(output: Path) -> None:
     for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js", "spot-api.css"):
         shutil.copyfile(HERE / name, assets / name)
     # Shared public pages. The provider deck itself remains private.
-    for page in ("providers", "badge"):
+    for page in ("providers", "badge", "trusted-cowork"):
         for name in (page, f"{page}.html"):
             shutil.copyfile(HERE / f"{page}.html", output / name)
     for name in ("badge.css", "badge.js"):
@@ -179,6 +179,8 @@ def build(output: Path) -> None:
     for art in sorted((HERE / "art").glob("*.webp")):
         shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"
+    shutil.copyfile(static / "trusted-cowork-icon.png", assets / "trusted-cowork-icon.png")
+    shutil.copyfile(HERE / "trusted-cowork.css", assets / "trusted-cowork.css")
     for source, target in {
         "fonts/archivo-latin.woff2": "archivo.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
@@ -201,6 +203,7 @@ def build(output: Path) -> None:
             '<url><loc>https://nytokenexchange.com/badge</loc></url>'
             '<url><loc>https://nytokenexchange.com/media-kit</loc></url>'
             '<url><loc>https://nytokenexchange.com/index</loc></url>'
+            '<url><loc>https://nytokenexchange.com/trusted-cowork</loc></url>'
             if market["slug"] == "new-york" else ""
         )
         (folder / "sitemap.xml").write_text(
