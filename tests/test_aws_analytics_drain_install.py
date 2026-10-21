@@ -104,7 +104,8 @@ def test_install_refuses_to_proceed_without_dsql_permission() -> None:
     script = INSTALL.read_text()
 
     assert "simulate-principal-policy" in script
-    assert "dsql:DbConnectAdmin dsql:DbConnect" in script
+    assert "--action-names dsql:DbConnect \\\n" in script
+    assert "dsql:DbConnectAdmin dsql:DbConnect" not in script
     assert "FATAL:" in script
     # It must document the scoped alternative rather than normalising admin on a
     # cluster that also holds wallets, keys and the ledger.
@@ -522,3 +523,33 @@ def test_aws_alias_fails_when_aws_publishes_nothing(monkeypatch) -> None:
     monkeypatch.setattr(fleet_check, "fetch_status", lambda _url: {})
 
     assert aws_check.main([]) == 1
+
+
+def test_the_drain_connects_as_tr_drain_and_refuses_admin(tmp_path) -> None:
+    """The ClickHouse host never holds superuser-equivalent credentials for a
+    database that also holds wallets, keys and the ledger: the default is the
+    scoped tr_drain, and admin is refused before any cloud call."""
+    import os
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash") or "/bin/bash"
+    script = INSTALL.read_text()
+    assert 'DSQL_USER="${DSQL_USER:-tr_drain}"' in script
+    calls = tmp_path / "calls"
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "aws").write_text(f'#!/bin/sh\necho "$*" >> {calls}\nexit 1\n')
+    (stub / "aws").chmod(0o755)
+    env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}", "INSTANCE_ID": "i-0123456789abcdef0"}
+
+    refused = subprocess.run([bash, str(INSTALL)], env={**env, "DSQL_USER": "admin"},  # noqa: S603
+                             capture_output=True, text=True, timeout=60)
+    assert refused.returncode != 0
+    assert "DSQL_USER=admin refused" in refused.stderr
+    assert not calls.exists()
+
+    # Positive control: the default user reaches the first cloud call.
+    env.pop("DSQL_USER", None)
+    subprocess.run([bash, str(INSTALL)], env=env, capture_output=True, text=True, timeout=60)  # noqa: S603
+    assert calls.exists() and calls.read_text().strip()
