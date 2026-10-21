@@ -70,6 +70,10 @@ class SessionUnavailable(RuntimeError):
     """No owned session is ready; a cycle must not attempt storage."""
 
 
+class SessionCheckoutTimeout(TimeoutError):
+    """The session lane remained occupied through the checkout deadline."""
+
+
 class Sessions:
     """One bounded checkout lane; no SDK pool/maintenance-thread wait escapes."""
     def __init__(self, database: Any, *, managed: bool = False) -> None:
@@ -122,15 +126,17 @@ class Sessions:
     def _checkout(self, *, create: bool) -> Any:
         scope = scope_now()
         if not self.lock.acquire(timeout=scope.remaining()):
-            raise TimeoutError("shadow_checkout")
+            raise SessionCheckoutTimeout("shadow_checkout")
         try:
+            # Read readiness while owning the lane, including after recovery
+            # held it until the deadline. No RPC has started at this point.
+            if not create and not self.ready:
+                raise SessionUnavailable("shadow_session_unavailable")
             scope.remaining()
             if create and self.managed and not self.ready:
                 if scope.clock() < self.next_recovery:
                     raise SessionUnavailable("shadow_session_recovery_wait")
                 self.next_recovery = scope.clock()+60
-            if not create and not self.ready:
-                raise SessionUnavailable("shadow_session_unavailable")
             if self.creation_unknown:
                 if not create or not self.managed:
                     raise SessionUnavailable("shadow_session_creation_unknown")

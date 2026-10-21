@@ -1,4 +1,6 @@
 """Server-side session inventory must stay bounded across native SDK faults."""
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -490,3 +492,97 @@ async def test_recovery_worker_waits_for_first_window_after_unknown_startup(inve
         assert installed.session_job.result() and manager.ready
         assert len(state.listings) == 1 and state.deletes == 1 and state.creates == 2
         assert len(state.live) == 1
+
+
+def test_quarantine_between_readiness_and_checkout(inventory, monkeypatch):
+    """A recovery owning the lane must still produce a zero-RPC missed cycle."""
+    from tests.test_async_settle_shadow_health_contention import outcome
+    from tests.test_async_settle_shadow_health_stagger import timed_owner
+    from trusted_router.async_settle_shadow_v2_a1_health import PUBLISHER_SLOT_TRACE
+    from trusted_router.services import async_settle_shadow_health as shell
+    from trusted_router.storage_gcp_shadow_observation import ObservationStore
+    db, clock, server = inventory
+    svc, wall, mono, job, _ = timed_owner(monkeypatch)
+    clock.now = mono[0]-60
+    manager = db._sessions_manager
+    assert manager.prepare(clock.monotonic)
+    clock.now = mono[0]
+    svc.store = ObservationStore(db, clock=clock.monotonic, wall=lambda: wall[0]/1e6)
+    svc.incumbent_slot = job.slot-1
+    # Mirror the production owned Database transaction checkout around the real SDK Session.
+    def transaction(callback, **kwargs):
+        session = manager.get_session(None)
+        try:
+            return session.run_in_transaction(callback, **kwargs)
+        finally:
+            manager.put_session(session)
+    db.run_in_transaction = transaction
+    recovery_entered, release = threading.Event(), threading.Event()
+    real_create = db.spanner_api.create_session
+    def held_create(**kwargs):
+        recovery_entered.set()
+        assert release.wait(3)
+        return real_create(**kwargs)
+    db.spanner_api.create_session = held_create
+    checks = 0
+    real_ready = svc.store.session_ready
+    with ThreadPoolExecutor(max_workers=1) as background:
+        def readiness():
+            nonlocal checks
+            checks += 1
+            sampled = real_ready()
+            if checks == 2:
+                # The evidence lane fails after readiness was sampled; recovery
+                # acquires the checkout lane before the publisher does.
+                background.submit(failed_read, db, clock).result(timeout=2)
+                background.submit(manager.prepare, clock.monotonic)
+                assert recovery_entered.wait(2)
+            return sampled
+        monkeypatch.setattr(svc.store, 'session_ready', readiness)
+        try:
+            reply = shell.publish_cycle(svc.store, svc.journal.boot,
+                svc.settings.effective_serving_region, svc.settings.source_revision,
+                job, wall[0], svc, True, True)
+            PUBLISHER_SLOT_TRACE(reply.trace)
+            assert reply.trace['rpc_count'] == 0
+            assert reply.trace['outcome'] == 'missed'
+            assert reply.trace['claim_start_us'] is None
+            assert reply.trace['claim_at_ns'] is None
+            assert reply.trace['cycle_us'] is None
+            svc.publisher_reply(reply)
+            outcome(svc, job, 'missed')
+        finally:
+            release.set()
+
+
+
+@pytest.mark.parametrize('after_rpc', [False, True])
+def test_checkout_timeout_is_missed_only_before_first_rpc(inventory, monkeypatch, after_rpc):
+    from tests.test_async_settle_shadow_health_contention import outcome
+    from tests.test_async_settle_shadow_health_stagger import timed_owner
+    from trusted_router.async_settle_shadow_v2_a1_health import PUBLISHER_SLOT_TRACE
+    from trusted_router.storage_gcp_shadow_observation import ObservationStore
+
+    db, clock, _ = inventory
+    svc, wall, mono, job, _ = timed_owner(monkeypatch)
+    clock.now = mono[0]
+    manager = db._sessions_manager
+    assert manager.prepare(clock.monotonic)
+    svc.store = ObservationStore(db, clock=clock.monotonic, wall=lambda: wall[0]/1e6)
+    svc.incumbent_slot = job.slot-1
+    def blocked_claim(*args):
+        if after_rpc:
+            # A completed read is recorded even when its elapsed time is zero.
+            db.read_duration = 0
+            list(db.spanner_api.execute_streaming_sql(request=SimpleNamespace(sql='SELECT 1')))
+        with manager.lock:
+            manager.get_session(None)
+    monkeypatch.setattr(svc.store, 'claim', blocked_claim)
+    svc.submit_publisher(job.slot, wall[0])
+    trace = outcome(svc, job, 'failed' if after_rpc else 'missed')
+    PUBLISHER_SLOT_TRACE(trace)
+    assert trace['rpc_count'] == int(after_rpc)
+    assert (trace['claim_start_us'] is not None) is after_rpc
+    assert (trace['cycle_us'] is not None) is after_rpc
+    assert trace['claim_at_ns'] is None
+    assert manager.ready and not manager.lock.locked()

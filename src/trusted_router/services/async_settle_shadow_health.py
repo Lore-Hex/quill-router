@@ -57,7 +57,12 @@ from trusted_router.detached_jws import canonical
 from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.storage_gcp_async_admission import read_admission
 from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
-from trusted_router.storage_gcp_shadow_io import SessionUnavailable, observe_spanner_rpcs, rpc_scope
+from trusted_router.storage_gcp_shadow_io import (
+    SessionCheckoutTimeout,
+    SessionUnavailable,
+    observe_spanner_rpcs,
+    rpc_scope,
+)
 from trusted_router.storage_gcp_shadow_observation import (
     FLUSH_SECONDS,
     Budget,
@@ -437,7 +442,7 @@ def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherR
         claim_start_us=job.slot*SLOT_US, claim_at_ns=None, observed_at_ns=None,
         publisher_heartbeat_ns=None, body_sha256=None, ack_at_us=None, cycle_us=0,
         outcome="failed", unknown_outcome=True, late_cycle=False, rpc_count=0, rpc_elapsed_us=0)
-    return PublisherReply(trace, (), False, job.generation, job.latest_start_mono)
+    return PublisherReply(trace, (), False, job.generation)
 
 
 def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> float:
@@ -532,7 +537,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     try:
         attempt()
     except Exception as error:
-        if isinstance(error, SessionUnavailable) and not rpc_durations:
+        if isinstance(error, (SessionUnavailable, SessionCheckoutTimeout)) and not rpc_durations:
             attempted, outcome, reason = False, "missed_slots", "session_unavailable"
         unknown = isinstance(error, UnknownCommit)
         if isinstance(error, ContentionLoss) and not claimed:
@@ -783,6 +788,11 @@ class Service:
             PUBLISHER_SLOT_TRACE(trace)
         except (ValueError, TypeError, KeyError):
             return invalid()
+        if trace["outcome"] == "failed" and reply.actual_start_mono is None:
+            # Unknown worker/submission failures have no observed start. The
+            # release transition owns their trace and accounting exactly once.
+            return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
+                slot, reply.generation, "publisher_unknown_completion"))
         effects = self.accept(lifecycle.SlotOutcome(int(self.store.wall()*1_000_000), slot,
             trace["outcome"], generation=reply.generation, actual_start_mono=reply.actual_start_mono), trace=trace)
         if any(isinstance(e, lifecycle.Fault) for e in effects):

@@ -1,4 +1,5 @@
 """Cold-start and cadence regressions through the production publisher owner."""
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -8,7 +9,9 @@ from tests.test_async_settle_shadow_health_contention import outcome
 from tests.test_async_settle_shadow_health_stagger import advance, timed_owner
 from tests.test_async_settle_shadow_health_watchdog import accounting
 from tests.test_async_settle_shadow_observation import deterministic_scheduler  # noqa: F401
+from tests.test_async_settle_shadow_observation_r7 import entries
 from trusted_router import async_settle_shadow_lifecycle as lifecycle
+from trusted_router.async_settle_shadow_v2_a1_health import PUBLISHER_SLOT_TRACE
 from trusted_router.services import async_settle_shadow_health as shell
 
 
@@ -85,3 +88,53 @@ def test_cold_fleet_establishes_incumbent(contenders):
     assert result['rate'] >= .99
     assert result['first_published_slot_offset'] <= 1
     assert result['first_incumbent_ms'] <= 2500
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['worker', 'submit'])
+@pytest.mark.parametrize('previous_publication', [False, True])
+async def test_unknown_fallback_preserves_start_and_next_slot(monkeypatch, failure, previous_publication):
+    svc, wall, mono, job, _ = timed_owner(monkeypatch)
+    if previous_publication:
+        svc.submit_publisher(job.slot, wall[0])
+        outcome(svc, job, 'published')
+        job = advance(svc, wall, mono, job.slot+1)
+    svc.loop = asyncio.get_running_loop()
+    before = svc.state.last_actual_start
+    commits = svc.store.database.commits
+    def escaped(*args, **kwargs):
+        raise RuntimeError('no worker start evidence')
+    try:
+        with monkeypatch.context() as patch:
+            if failure == 'worker':
+                patch.setattr(shell, 'publish_cycle', escaped)
+                svc.submit_publisher(job.slot, wall[0])
+                with pytest.raises(RuntimeError, match='no worker start evidence'):
+                    await asyncio.wrap_future(svc.publisher_worker)
+                await svc.publisher_job
+            else:
+                patch.setattr(svc.publisher_executor, 'submit', escaped)
+                with pytest.raises(RuntimeError, match='no worker start evidence'):
+                    svc.submit_publisher(job.slot, wall[0])
+        trace = outcome(svc, job, 'failed', unknown=True)
+        PUBLISHER_SLOT_TRACE(trace)
+        assert trace['rpc_count'] == 0 and trace['claim_at_ns'] is None
+        assert svc.store.database.commits == commits
+        assert svc.state.last_actual_start == before
+        counts = dict(svc.counters[trace['day']]['publisher'])
+        assert counts['unknown_outcomes'] == counts['failures'] == 1
+        assert counts['claim_attempts'] == 1+previous_publication
+        assert svc.publisher_job.done() and not svc.publisher_worker_active.is_set()
+        fallback = shell.failed_publisher_reply(svc.journal.boot, job)
+        assert fallback.actual_start_mono is None
+        next_job = advance(svc, wall, mono, job.slot+1)
+        assert next_job.earliest_start_mono < next_job.latest_start_mono
+        state, traces = svc.state, entries(svc)
+        assert svc.publisher_reply(fallback, job=job) == (lifecycle.Fault('invalid_publisher_reply'),)
+        assert svc.state == state and entries(svc) == traces
+        svc.submit_publisher(next_job.slot, wall[0])
+        await svc.publisher_job
+        outcome(svc, next_job, 'published')
+        accounting(svc)
+    finally:
+        svc.publisher_executor.shutdown(wait=True)
