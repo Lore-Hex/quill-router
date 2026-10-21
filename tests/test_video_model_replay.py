@@ -19,6 +19,7 @@ from tests.fixtures.generate_gateway_authorizations import (
 from tests.test_service_surfaces import _app
 from tests.test_video_derived_routing import URL, no_reservation
 from tests.test_video_replay_regressions import LOOKUP
+from trusted_router import authorize_candidates
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX,
     PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
@@ -179,9 +180,10 @@ def test_creator_retry_preserves_main_replay_order(monkeypatch, kind, backend):
             late = "get_gateway_authorization_by_idempotency_key" if backend == "memory" else "authorize_gateway_typed"
             hooks = [
                 (type(store), "get_custom_model" if kind == "custom" else "get_user_model", "prepare"),
-                (gateway, "normalize_routing_inputs", "validate"),
+                (authorize_candidates, "normalize_routing_inputs", "validate"),
                 (gateway, "_gateway_authorize_fingerprint", "fingerprint"),
-                (gateway, "video_route_endpoint_candidates" if kind == "custom" else "_user_model_gateway_candidate", "route"),
+                (authorize_candidates if kind == "custom" else gateway,
+                 "video_route_endpoint_candidates" if kind == "custom" else "_user_model_gateway_candidate", "route"),
                 (type(store), lookup, "lookup"),
             ]
             if late != lookup:

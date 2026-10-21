@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_store
+from trusted_router import authorize_candidates
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -98,18 +99,18 @@ def observe_race(monkeypatch, backend, reverse=False):
     base = {**wrapper, "model": MODEL, "custom_model_id": model.id,
             "custom_model_revision": model.revision, "provider": {"usage": "credits"}}
     winner_body, loser_body = (base, wrapper) if reverse else (wrapper, base)
-    route = gateway.video_route_endpoint_candidates
+    route = authorize_candidates.video_route_endpoint_candidates
     winner = None
     before = None
 
     def interleave(*args, **kwargs):
         nonlocal winner, before
-        monkeypatch.setattr(gateway, "video_route_endpoint_candidates", route)
+        monkeypatch.setattr(authorize_candidates, "video_route_endpoint_candidates", route)
         winner = authorize(winner_body)
         before = money_snapshot(store, database, key)
         return route(*args, **kwargs)
 
-    monkeypatch.setattr(gateway, "video_route_endpoint_candidates", interleave)
+    monkeypatch.setattr(authorize_candidates, "video_route_endpoint_candidates", interleave)
     loser = authorize(loser_body)
     assert winner is not None and not winner["idempotent_replay"]
     assert loser["authorization_id"] == winner["authorization_id"]
@@ -134,13 +135,15 @@ def observe_creator_resolution_replay(monkeypatch, kind, backend):
     events = []
     for name in ("video_route_endpoint_candidates" if kind == "custom" else "_user_model_gateway_candidate",
                  "acquire_user_model_slot"):
-        original = getattr(gateway, name)
+        # Catalog video resolution moved into authorize_candidates; the rest stays in the route.
+        owner = authorize_candidates if name == "video_route_endpoint_candidates" else gateway
+        original = getattr(owner, name)
 
         def track(*args, _name=name, _original=original, **kwargs):
             events.append(_name)
             return _original(*args, **kwargs)
 
-        monkeypatch.setattr(gateway, name, track)
+        monkeypatch.setattr(owner, name, track)
     try:
         retry = authorize(body)
     except HTTPException as exc:
