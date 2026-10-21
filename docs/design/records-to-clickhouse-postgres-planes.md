@@ -50,11 +50,7 @@ It is about records and their readers. Money stays where it is.
   projection lacks three fields the public generation shape returns
   (`app_id` and the two markup amounts); the repair and delivery
   verifiers are Spanner-only; the control planes read ClickHouse as the
-  write user. (R0 closed these: the Postgres delivery verifier runs hourly
-  on Paris (#1914) and the Postgres repair exists (#1924); on 2026-10-21
-  it re-enqueued the generations lost in the August drain outage, after
-  which a wide-window check found every Postgres generation in Paris
-  ClickHouse.)
+  write user.
 
 So "ClickHouse-only" here means: give the Postgres planes the ClickHouse
 readers GCP already has, prove them, then stop writing the `generation`
@@ -102,12 +98,13 @@ schema set are plane-specific.
 - A setting, record reads from `postgres` (today) or `clickhouse`, per
   plane, refusing `clickhouse` where the plane sets no ClickHouse URL (the
   standby regions). `PostgresStore` gets the operational-analytics client
-  `SpannerStore` has and answers activity, activity events, usage series
-  and key usage by the code GCP uses. Nothing stops being written. Today's
-  500s become working reads.
+  `SpannerStore` has and answers activity, activity events and usage
+  series by the code GCP uses (key usage still raises not-implemented).
+  Nothing stops being written. The routes that call these readers are not
+  served on the Postgres planes; see **Traffic** below.
 - **Way back:** the setting, which restores today's behaviour.
-- **Measured:** the activity query's p50 and p99 per workspace; drain lag;
-  the verifier; the 5xx rate on `/activity`.
+- **Measured:** the activity query's p50 and p99 per workspace and its
+  error rate, once a reader has traffic; drain lag; the verifier.
 - **Traffic:** none yet. The readers serve only the control surface's
   activity and console routes, and no AWS or Azure service runs that
   surface, so a plane switched to `clickhouse` answers no more requests
