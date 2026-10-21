@@ -1,6 +1,9 @@
 {% extends "console/_layout.html" %}
-{% from "console/_api_key_reveal.html" import api_key_reveal %}
+{% from "console/_key_icons.html" import icon %}
+{% block head_extra %}<link rel="stylesheet" href="/static/key-onboarding.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block scripts %}<script defer src="/static/key-onboarding.js?v={{ static_version|default('local') }}"></script>{% endblock %}
 {% block body %}
+<div class="key-console">
 {% macro create_key_form() %}
 <form class="form" method="post" action="/console/api-keys">
   <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
@@ -25,13 +28,10 @@
 <div class="console-flash {{ flash[0] }}" role="status">{{ flash[1] }}</div>
 {% endif %}
 {% if created_key %}
-<section class="panel">
-  <div class="panel-head"><h2>Save this key. It will not be shown again</h2></div>
-  <div class="panel-body">
-    {{ api_key_reveal(created_key, "created") }}
-  </div>
-</section>
+{% set raw_key = created_key %}
+{% include "console/_key_onboarding.html" %}
 {% endif %}
+{% include "console/_key_next_steps.html" %}
 {% if not keys %}
 <section class="panel">
   <div class="panel-head"><h2>Create API key</h2></div>
@@ -41,6 +41,10 @@
 </section>
 {% endif %}
 {% if keys %}
+{% if created_key %}
+<details class="key-list-collapsed">
+  <summary>{{ icon('key') }}<span>Your keys <span class="ux-count">({{ keys|length }})</span></span><span class="ux-keys-manage">Manage {{ icon('chevron') }}</span></summary>
+{% endif %}
 <section class="panel key-list-panel">
   <div class="panel-head">
     <div>
@@ -48,19 +52,18 @@
     </div>
     <div class="panel-head-actions">
       {% if keys %}
-      <button class="btn primary" type="button" data-action="open-new-key" aria-controls="new-api-key">Create key</button>
+      <button class="ux-link" type="button" data-action="open-new-key" aria-controls="new-api-key">Create key</button>
       {% endif %}
     </div>
   </div>
   <div class="panel-body">
-    <div class="table-scroll">
-    <table class="keys-table">
-      <thead><tr><th>Key</th><th>Usage &amp; limits</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>
         {% for k in keys %}
-        <tr class="key-row{% if k.disabled %} key-row-disabled{% endif %}">
-          <td data-col="Key"><strong>{{ k.name }}</strong><code class="key-label">{{ k.label }}</code></td>
-          <td data-col="Usage &amp; limits">
+        <details class="key-management{% if k.disabled %} key-row-disabled{% endif %}">
+          <summary class="ux-key-entry" aria-label="Manage {{ k.name }}">
+            {{ icon('key') }}<span><strong>{{ k.name }}</strong><code class="ux-extra-label">{{ k.label }}</code></span>
+            <span class="ux-active">{% if k.disabled %}Disabled{% else %}<i></i>Active{% endif %}</span><span class="ux-menu-dots" aria-hidden="true">•••</span>
+          </summary>
+          <div class="key-management-body">
             <div class="key-budget-current">
               {{ k.usage_display }} used{% if k.limit_display != 'none' %} · {{ k.limit_display }} total limit{% else %} · No total limit{% endif %}
               {%- for w in k.windows if w.limit_display %}<br>{{ w.name|capitalize }} {{ w.used_display }} / {{ w.limit_display }}{% endfor %}
@@ -79,9 +82,7 @@
               <button class="btn" type="submit">Save</button>
             </form>
             </details>
-          </td>
-          <td data-col="Status">{% if k.disabled %}<span class="key-state key-state-disabled">Disabled</span>{% else %}<span class="key-state key-state-active">Active</span>{% endif %}</td>
-          <td data-col="Actions">
+
             <div class="key-actions">
               {% if k.disabled %}
               <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/enable">
@@ -96,12 +97,10 @@
               </form>
               {% endif %}
             </div>
-          </td>
-        </tr>
+          </div>
+        </details>
         {% endfor %}
-      </tbody>
-    </table>
-    </div>
+
   </div>
 </section>
 <details class="panel key-create-panel" id="new-api-key" hidden>
@@ -110,6 +109,9 @@
     {{ create_key_form() }}
   </div>
 </details>
+{% if created_key %}
+</details>
 {% endif %}
-{% include "console/_social_rewards_invitation.html" %}
+{% endif %}
+</div>
 {% endblock %}

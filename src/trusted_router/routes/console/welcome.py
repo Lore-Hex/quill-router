@@ -6,8 +6,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
+from trusted_router.typed_balance import live_credit_summary
 
 
 def register(app: FastAPI) -> None:
@@ -33,6 +34,8 @@ def register(app: FastAPI) -> None:
             if cookie_value:
                 revealed_key = cookie_value
                 clear_pending_reveal = True
+        summary = live_credit_summary(ctx.workspace.id)
+        available = summary["available"] if summary else 0
         response = HTMLResponse(render(
             "console/welcome.html",
             settings=settings,
@@ -42,6 +45,8 @@ def register(app: FastAPI) -> None:
             page_subtitle="",
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
+            credits_available=money(available),
+            credits_empty=available <= 0,
         ))
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise

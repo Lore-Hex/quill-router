@@ -1,82 +1,13 @@
 {% extends "console/_layout.html" %}
-{% from "console/_api_key_reveal.html" import agent_chat_prompt, api_key_reveal %}
+{% block head_extra %}<link rel="stylesheet" href="/static/key-onboarding.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block scripts %}<script defer src="/static/key-onboarding.js?v={{ static_version|default('local') }}"></script>{% endblock %}
 {% block body %}
+<div class="key-console">
 {% if revealed_key %}
-<div class="activation-flow key-first-onboarding">
-  <section class="panel activation-key-panel">
-    <div class="panel-head">
-      <h2>Save your key. It won’t be shown again.</h2>
-    </div>
-    <div class="panel-body">
-      {{ api_key_reveal(revealed_key, "welcome", None, False) }}
-
-    </div>
-  </section>
-
-  <details class="panel activation-setup-panel" id="connect-your-app">
-    <summary class="activation-setup-summary">Connect your app</summary>
-    <div class="panel-body">
-      <div class="activation-tabs" role="tablist" aria-label="Setup method">
-        <button class="activation-tab" id="setup-agent-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-agent" data-setup-tab="setup-agent">Coding agent</button>
-        <button class="activation-tab" id="setup-python-tab" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="setup-python" data-setup-tab="setup-python">Python</button>
-        <button class="activation-tab" id="setup-js-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-js" tabindex="-1" data-setup-tab="setup-js">JavaScript</button>
-        <button class="activation-tab" id="setup-curl-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-curl" tabindex="-1" data-setup-tab="setup-curl">curl</button>
-      </div>
-
-        <div class="activation-code-panel activation-onboarding-agent" id="setup-agent" role="tabpanel" aria-labelledby="setup-agent-tab" data-setup-panel>
-          <div class="activation-code-head"><strong>Paste this into your coding agent.</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy message</button></div>
-          <pre id="welcome-agent-message" data-copy-lines>{{ agent_chat_prompt(revealed_key) }}</pre>
-          <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
-        </div>
-
-      <div class="activation-code-panel" id="setup-python" role="tabpanel" aria-labelledby="setup-python-tab" data-setup-panel hidden>
-        <div class="activation-code-head"><strong>OpenAI Python SDK</strong><button class="btn" type="button" data-copy-template-target="welcome-python-code" data-secret-source="welcome-api-key" aria-describedby="welcome-python-copy-status">Copy code</button></div>
-        <pre id="welcome-python-code">from openai import OpenAI
-
-client = OpenAI(
-    api_key="YOUR_TRUSTEDROUTER_API_KEY",
-    base_url="{{ api_base_url }}",
-)
-
-response = client.chat.completions.create(
-    model="trustedrouter/cheap",
-    messages=[{"role": "user", "content": "Reply with exactly PONG."}],
-)
-print(response.choices[0].message.content)</pre>
-        <p class="copy-status" id="welcome-python-copy-status" role="status" aria-live="polite"></p>
-      </div>
-
-      <div class="activation-code-panel" id="setup-js" role="tabpanel" aria-labelledby="setup-js-tab" data-setup-panel hidden>
-        <div class="activation-code-head"><strong>OpenAI JavaScript SDK</strong><button class="btn" type="button" data-copy-template-target="welcome-js-code" data-secret-source="welcome-api-key" aria-describedby="welcome-js-copy-status">Copy code</button></div>
-        <pre id="welcome-js-code">import OpenAI from "openai";
-
-const client = new OpenAI({
-  apiKey: "YOUR_TRUSTEDROUTER_API_KEY",
-  baseURL: "{{ api_base_url }}",
-});
-
-const response = await client.chat.completions.create({
-  model: "trustedrouter/cheap",
-  messages: [{ role: "user", content: "Reply with exactly PONG." }],
-});
-console.log(response.choices[0].message.content);</pre>
-        <p class="copy-status" id="welcome-js-copy-status" role="status" aria-live="polite"></p>
-      </div>
-
-      <div class="activation-code-panel" id="setup-curl" role="tabpanel" aria-labelledby="setup-curl-tab" data-setup-panel hidden>
-        <div class="activation-code-head"><strong>curl</strong><button class="btn" type="button" data-copy-template-target="welcome-curl-code" data-secret-source="welcome-api-key" aria-describedby="welcome-curl-copy-status">Copy command</button></div>
-        <pre id="welcome-curl-code">curl {{ api_base_url }}/chat/completions \
-  -H "Authorization: Bearer YOUR_TRUSTEDROUTER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"trustedrouter/cheap","messages":[{"role":"user","content":"Reply with exactly PONG."}]}'</pre>
-        <p class="copy-status" id="welcome-curl-copy-status" role="status" aria-live="polite"></p>
-      </div>
-
-    </div>
-  </details>
-  <a class="btn activation-console-link" href="/console/api-keys">Continue to API keys</a>
-  {% include "console/_social_rewards_invitation.html" %}
-</div>
+{% set raw_key = revealed_key %}
+{% include "console/_key_onboarding.html" %}
+{% include "console/_key_next_steps.html" %}
+<a class="ux-link" href="/console/api-keys">Your keys →</a>
 {% else %}
 <section class="panel activation-expired-panel">
   <div class="panel-head"><h2>This key has already been displayed</h2></div>
@@ -86,4 +17,5 @@ console.log(response.choices[0].message.content);</pre>
   </div>
 </section>
 {% endif %}
+</div>
 {% endblock %}

@@ -120,8 +120,10 @@
         : !state.enabled ? "Your progress is saved. Check back to finish your rewards."
           : claimed ? `${total - claimed} rewards left to claim. Pick up where you left off.`
             : "Earn API credit by following us on social.";
-      keyCard.querySelector("[data-rewards-open]").textContent = total > 0 && claimed === total || !state.enabled
-        ? "View rewards" : "Earn extra tokens";
+      const opener = keyCard.querySelector("[data-rewards-open]");
+      const label = opener.querySelector("[data-rewards-label]") || opener;
+      label.textContent = total > 0 && claimed === total || !state.enabled
+        ? "View rewards" : opener.hasAttribute("data-rewards-compact") ? "Earn credit on social" : "Earn extra tokens";
     }
     openers.forEach((button) => { button.hidden = !(state.eligible && state.enabled); });
     if (!state.enabled && dialog.open) dialog.close();

@@ -288,7 +288,7 @@ def test_key_first_welcome_does_not_expose_removed_treatment(client, cell, label
     caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
     response = client.get('/console/welcome?first=1')
     assert response.status_code == 200 and label not in response.text
-    assert 'data-copy-template-target="welcome-agent-message"' in response.text
+    assert 'id="copy-setup"' in response.text
     assert not any(r.getMessage() == 'acquisition.experiment_exposed' for r in caplog.records)
     caplog.clear()
     client.cookies.delete('tr_pending_reveal')

@@ -1075,23 +1075,19 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
         "the raw API key must appear in the direct reveal and the optional "
         "Claude Code / Codex message"
     )
-    assert 'data-copy-secret="welcome-api-key"' in resp.text
-    assert 'data-copy-template-target="welcome-agent-message"' in resp.text
-    assert 'data-secret-source="welcome-api-key"' in resp.text
-    assert 'id="welcome-agent-message" data-copy-lines' in resp.text
-    agent_message = re.search(r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL)
+    assert 'id="onboarding-key"' in resp.text
+    assert 'aria-label="Copy API key"' in resp.text
+    agent_message = re.search(r'<pre id="setup-code".*?</pre>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert fake_raw_key in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert resp.text.index('id="welcome-api-key"') < resp.text.index('id="welcome-agent-message"')
-    assert 'data-action="run-first-call"' not in resp.text
-    assert 'class="activation-progress"' not in resp.text
-    assert 'id="setup-agent-tab"' in resp.text
-    assert 'aria-labelledby="setup-agent-tab" data-setup-panel' in resp.text
+    assert resp.text.index('id="onboarding-key"') < resp.text.index('id="setup-code"')
+    assert 'id="try-tab"' in resp.text
+    assert 'Uses your API credit' in resp.text
     assert "data-rewards-key-card" in resp.text
     assert "Python" in resp.text
     assert "JavaScript" in resp.text
-    assert "curl" in resp.text
+    assert "cURL" in resp.text
     assert "https://trust.trustedrouter.com" in resp.text
     assert "already been displayed" not in resp.text
     # One-shot: cookie must be cleared on the response so a refresh
@@ -1131,7 +1127,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     # The page renders the fallback message; the cookie is left for a
     # later legitimate `?first=1` request to consume.
     assert fake_raw_key not in resp.text
-    assert 'id="welcome-agent-message"' not in resp.text
+    assert 'data-key-onboarding' not in resp.text
     assert "already been displayed" in resp.text
     # Cookie not cleared — the response should NOT include a delete-cookie
     # header for tr_pending_reveal.
@@ -1155,22 +1151,13 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
     assert resp.text.count(match.group(0)) == 2
-    assert 'data-copy-secret="created-api-key"' in resp.text
-    assert 'data-copy-template-target="created-agent-message"' in resp.text
-    assert 'data-secret-source="created-api-key"' in resp.text
-    assert 'id="created-agent-message" data-copy-lines' in resp.text
-    assert '<pre id="created-agent-message"' not in resp.text
-    agent_message = re.search(
-        r'<div class="agent-message" id="created-agent-message".*?</div>\s*</div>',
-        resp.text,
-        re.DOTALL,
-    )
+    assert 'id="onboarding-key"' in resp.text
+    assert 'aria-label="Copy API key"' in resp.text
+    agent_message = re.search(r'<pre id="setup-code".*?</pre>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert "Paste this into your coding agent." in resp.text
-    assert "Paste this into your coding agent." not in agent_message.group(0)
-    assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
+    assert resp.text.index('id="onboarding-key"') < resp.text.index('id="setup-code"')
     assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
     assert "Use it in memory for this request" not in resp.text
