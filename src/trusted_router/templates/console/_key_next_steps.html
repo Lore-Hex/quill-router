@@ -1,12 +1,14 @@
 {% from "console/_key_icons.html" import icon %}
-<p class="ux-next">
-  <span class="ux-next-credit">
-    {% if credits_available %}<span class="ux-chip{% if credits_empty %} ux-chip-empty{% endif %}" title="Available API credit">{{ icon('wallet') }}<strong>{{ credits_available }}</strong><span>credit</span></span>{% else %}<span class="ux-next-icon">{{ icon('wallet') }}</span><span>Requests use your API credit.</span>{% endif %}
-    <a class="ux-link" href="/console/credits">Add credits {{ icon('arrow') }}</a>
-  </span>
-  <span class="ux-next-rewards" data-rewards-key-card hidden>
-    <span class="ux-next-sep" aria-hidden="true">·</span>
+<div class="ux-steps">
+  <div class="ux-step">
+    {{ icon('wallet') }}
+    <span class="ux-step-text">{% if credits_available %}<span class="ux-chip{% if credits_empty %} ux-chip-empty{% endif %}" title="Available API credit">{{ credits_available }}</span> credit{% else %}API credit{% endif %}</span>
+    <a class="ux-step-action" href="/console/credits">Add credits {{ icon('chevron-right') }}</a>
+  </div>
+  <div class="ux-step" data-rewards-key-card hidden>
+    {{ icon('gift') }}
+    <span class="ux-step-text">Social rewards <span class="ux-step-note">optional</span></span>
     <span data-rewards-key-title hidden></span><span data-rewards-key-description hidden></span>
-    <button class="ux-link" type="button" data-rewards-open data-rewards-api-keys data-rewards-compact hidden>{{ icon('gift') }}<span data-rewards-label>Earn credit on social</span> <span class="ux-next-optional">optional</span></button>
-  </span>
-</p>
+    <button class="ux-step-action" type="button" data-rewards-open data-rewards-api-keys data-rewards-compact hidden><span data-rewards-label>Earn credit</span> {{ icon('chevron-right') }}</button>
+  </div>
+</div>

@@ -30,41 +30,29 @@ body.console:has(.key-console){background:var(--tr-color-surface-bg-alt)}.consol
 
 @media (max-width: 600px) { .key-management-body { padding-left: 0; } }
 
-/* Next steps: one quiet line under the flow, never a second Credits page. */
-.ux-next { display: flex; flex-wrap: wrap; align-items: center; gap: 0 14px; margin: 0; padding: 6px 0; border-top: 1px solid var(--tr-color-line-rule); font-size: 13px; color: var(--tr-color-text-tertiary); }
-.ux-next-credit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 12px; }
-.ux-next-icon { display: inline-flex; color: var(--tr-color-text-tertiary); }
-.ux-next .ux-link { font-weight: 500; }
-.ux-next .ux-link .ux-icon { width: 18px; height: 18px; }
-.ux-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px 0 8px; border-radius: 999px; background: var(--tr-color-privacy-verified-bg); border: 1px solid var(--tr-color-privacy-verified-border); color: var(--tr-color-privacy-verified-text); font-size: 12px; }
-.ux-chip strong { font-weight: 600; font-size: 13px; color: inherit; }
-.ux-chip .ux-icon { width: 16px; height: 16px; }
+/* Next steps: a short list of identical rows under the flow, never a second Credits page. */
+.ux-steps { display: flex; flex-direction: column; }
+.ux-step { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 2px 0; border-top: 1px solid var(--tr-color-line-rule); font-size: 13px; color: var(--tr-color-text-secondary); text-decoration: none; }
+.ux-step[hidden] { display: none; }
+.ux-step > .ux-icon { width: 18px; height: 18px; color: var(--tr-color-text-tertiary); flex-shrink: 0; }
+.ux-step-text { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
+.ux-step-note { font-size: 12px; color: var(--tr-color-text-quaternary); }
+.ux-step-action { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; padding: 0; background: none; border: 0; font: inherit; font-size: 13px; font-weight: 500; color: var(--tr-color-accent-base); cursor: pointer; white-space: nowrap; }
+.ux-step-action .ux-icon { width: 16px; height: 16px; }
+.ux-step-action:focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 4px; }
+.ux-chip { display: inline-flex; align-items: center; min-height: 26px; padding: 0 9px; border-radius: 999px; background: var(--tr-color-privacy-verified-bg); border: 1px solid var(--tr-color-privacy-verified-border); color: var(--tr-color-privacy-verified-text); font-size: 13px; font-weight: 600; }
 .ux-chip-empty { background: var(--tr-color-privacy-zdr-bg); border-color: var(--tr-color-privacy-zdr-border); color: var(--tr-color-privacy-zdr-text); }
-.ux-next-rewards { display: inline-flex; align-items: center; gap: 0 14px; }
-.ux-next-rewards[hidden] { display: none; }
-.ux-next-sep { color: var(--tr-color-line-control); }
-.ux-next-rewards .ux-link { color: var(--tr-color-text-secondary); font-weight: 400; gap: 8px; }
-.ux-next-rewards .ux-link .ux-icon { width: 18px; height: 18px; color: var(--tr-color-accent-base); }
-.ux-next-optional { font-size: 12px; color: var(--tr-color-text-quaternary); }
 .ux-result a { color: var(--tr-color-accent-base); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
 
 /* Right after a key is created the list collapses to one line: the new key is already shown above. */
-.key-list-collapsed { border-top: 1px solid var(--tr-color-line-rule); }
-.key-list-collapsed > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 48px; font-size: 13px; color: var(--tr-color-text-tertiary); }
-.key-list-collapsed > summary > .ux-icon { width: 18px; height: 18px; }
-.key-list-collapsed > summary > span:not(.ux-keys-manage) { flex: 1; }
+.key-list-collapsed > summary { list-style: none; cursor: pointer; }
 .key-list-collapsed > summary::-webkit-details-marker { display: none; }
 .key-list-collapsed > summary:focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 2px; }
-.ux-keys-manage { display: inline-flex; align-items: center; gap: 6px; color: var(--tr-color-accent-base); }
-.ux-keys-manage .ux-icon { width: 16px; height: 16px; transition: transform var(--tr-duration-fast, 120ms); }
-.key-list-collapsed[open] .ux-keys-manage .ux-icon { transform: rotate(180deg); }
+.key-list-collapsed > summary .ux-step-action .ux-icon { transition: transform var(--tr-duration-fast, 120ms); }
+.key-list-collapsed[open] > summary .ux-step-action .ux-icon { transform: rotate(180deg); }
 .key-list-collapsed[open] > summary { border-bottom: 1px solid var(--tr-color-line-rule-soft); }
 .key-list-collapsed .key-list-panel { margin-top: 0; }
 .key-list-collapsed .key-list-panel > .panel-head { padding: 0; justify-content: flex-end; }
 .key-list-collapsed .key-list-panel > .panel-head > div:first-child { display: none; }
 .key-list-collapsed .key-management:first-of-type { border-top: 0; }
 
-@media (max-width: 800px) {
-  .ux-next { flex-direction: column; align-items: flex-start; gap: 0; }
-  .ux-next-sep { display: none; }
-}

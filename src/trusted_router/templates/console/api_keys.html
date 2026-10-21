@@ -43,7 +43,7 @@
 {% if keys %}
 {% if created_key %}
 <details class="key-list-collapsed">
-  <summary>{{ icon('key') }}<span>Your keys <span class="ux-count">({{ keys|length }})</span></span><span class="ux-keys-manage">Manage {{ icon('chevron') }}</span></summary>
+  <summary class="ux-step">{{ icon('key') }}<span class="ux-step-text">Your keys <span class="ux-count">({{ keys|length }})</span></span><span class="ux-step-action">Manage {{ icon('chevron') }}</span></summary>
 {% endif %}
 <section class="panel key-list-panel">
   <div class="panel-head">
