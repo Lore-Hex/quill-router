@@ -75,8 +75,8 @@ TEST_KEY = TrustedKey(
 )
 
 _PROVIDER_SLUGS = (
-    "amazon-bedrock", "deepinfra", "deepseek", "google-ai-studio", "minimax",
-    "sakana", "tencent", "thinkingmachines", "trustedrouter", "wafer", "zai",
+    "amazon-bedrock", "deepinfra", "deepseek", "fireworks", "google-ai-studio", "minimax",
+    "sakana", "tencent", "thinkingmachines", "together", "trustedrouter", "wafer", "zai",
 )
 
 
@@ -121,6 +121,11 @@ def fixture_inputs() -> CatalogInputs:
                   input_modalities=("text", "image")),
         # Wafer's catalog reports ZDR for GLM 5.3: wafer_zdr_required.
         _endpoint(glm, "wafer", "Credits", 1_000_000, 3_200_000, upstream_id="GLM-5.3"),
+        # More hosts for GLM 5.3 and V4.1 Flash, so the routing cases order
+        # several candidates: by rank evidence, preference, price and filters.
+        _endpoint(glm, "together", "Credits", 950_000, 3_300_000),
+        _endpoint(glm, "fireworks", "Credits", 1_100_000, 3_000_000),
+        _endpoint(tencent_flash, "together", "Credits", 160_000, 640_000),
         # Bedrock: only the upgraded gateway regions, and only an explicit origin.
         _endpoint(bedrock, "amazon-bedrock", "Credits", 316_500, 1_266_000),
         # Sakana's terms exclude the EEA: no europe-west4 gateway.

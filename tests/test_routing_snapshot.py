@@ -151,11 +151,11 @@ def test_every_epoch_price_is_the_effective_endpoint_price_at_that_instant(live)
 def test_availability_is_the_catalog_deadline_and_the_retirement(live) -> None:
     snapshot, inputs = live
     raw = {e.id: e for e in inputs.endpoints}
-    retiring = 0
+    edged = 0
     for entry in snapshot.endpoints:
         endpoint = raw[entry.id]
         edges = [v for v in (entry.catalog_valid_until, entry.retired_at) if v is not None]
-        retiring += entry.retired_at is not None
+        edged += bool(edges)
         times = {snapshot.compiled_at, snapshot.not_after - 1,
                  *(edge + d for edge in edges for d in (-1, 0, 1))}
         for t in sorted(t for t in times if t > 0):
@@ -168,7 +168,10 @@ def test_availability_is_the_catalog_deadline_and_the_retirement(live) -> None:
                 and (entry.retired_at is None or t < entry.retired_at)
             )
             assert available == expected, (entry.id, t)
-    assert retiring > 0
+    # Not vacuous: deadline edges were compared. (Whether any retirement is
+    # still ahead depends on the lifecycle clock; CI's post-cutover job pins it
+    # past every one. The subprocess retirement test covers retired_at.)
+    assert edged > 0
 
 
 def test_privacy_is_what_the_routing_filters_ask(live) -> None:
@@ -211,15 +214,19 @@ def _gateway_region(settings: Any, rule: Any, body_region: str | None) -> str:
 def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> None:
     import inspect
 
+    from trusted_router import authorize_candidates
     from trusted_router.catalog_data import ModelEndpoint
     from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
     from trusted_router.routes.internal import gateway
     from trusted_router.routing_snapshot import _gateway_regions
 
-    # The rule this test models, as gateway.py writes it today.
+    # The rule this test models, as authorize writes it today: the gateway
+    # chooses the region, and the candidate pipeline checks the request's own.
     source = inspect.getsource(gateway._authorize_gateway_sync_impl)
     assert "region = choose_region(settings, body.region or None)" in source
-    assert 'body.region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region)' in source
+    assert "body_region=body.region," in source
+    pipeline = inspect.getsource(authorize_candidates.resolve_candidates)
+    assert 'request.body_region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region)' in pipeline
     us_only = Settings(environment="test", regions="us-central1,us-east4",
                        primary_region="us-central1")
     settings = snapshot_settings_from(us_only)

@@ -848,7 +848,7 @@ async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
     # outage, so a retry cannot change the answer.
     # On 2026-09-25 one new workspace's eighteen such requests were answered
     # 503 and opened "TR Gateway: billing path 5xx".
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     # Routes outside the chain that DO match each filter keep the chat model
     # behind the name routable, so the refusal is the chain's: a zero-retention
@@ -862,7 +862,7 @@ async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
     backing = _serve_on_fixture_routes(monkeypatch, OEV_1_0_MODEL_ID, hosts=(*chain, zdr_outsider))
     serve_on_fixture_route(monkeypatch, backing, chain[0], author="openai", usage_type="BYOK")
     monkeypatch.setattr(
-        gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
+        authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
         response = await _authorize(
@@ -901,8 +901,7 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
     from dataclasses import replace
     from datetime import UTC, datetime
 
-    from trusted_router import catalog
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates, catalog
 
     chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
     # Two outsiders keep the backing model routable when SambaNova's manifest
@@ -958,7 +957,7 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
     with monkeypatch.context() as unavailable:
         if outage == "region":
             unavailable.setattr(
-                gateway, "provider_model_available_from_gateway_region",
+                authorize_candidates, "provider_model_available_from_gateway_region",
                 lambda provider, _model, region: not (
                     provider == "sambanova" and region == "europe-west4"
                 ),
@@ -985,7 +984,7 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
 async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     # Only the chain serves the backing model here, and its hosts store
     # content, so deny empties every route and the resolver relaxes it.
@@ -1008,7 +1007,7 @@ async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
         logging.INFO, logger="trusted_router.routes.internal.gateway"
     ):
         unavailable.setattr(
-            gateway, "provider_model_available_from_gateway_region", lambda *_: False
+            authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: False
         )
         response = await _authorize(body)
     assert response.status_code == 503, response.text
@@ -1028,7 +1027,7 @@ async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
 async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
     region_available: bool, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     # Gev's backing resolver can satisfy deny on a non-pinned host. Its pinned
     # host cannot; a diagnostic must not independently soften that policy.
@@ -1036,7 +1035,7 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
     outsider = _an_outsider(GEV_1_0_MODEL_ID, lambda route: not endpoint_stores_content(route))
     _serve_on_fixture_routes(monkeypatch, GEV_1_0_MODEL_ID, hosts=(*chain, outsider))
     monkeypatch.setattr(
-        gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
+        authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
         response = await _authorize({
@@ -1060,10 +1059,10 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     _serve_on_fixture_routes(monkeypatch, model_id)
-    monkeypatch.setattr(gateway, "provider_model_available_from_gateway_region", lambda *_: False)
+    monkeypatch.setattr(authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: False)
     response = await _authorize(
         {
             "model": model_id,
