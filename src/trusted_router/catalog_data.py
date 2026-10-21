@@ -2163,7 +2163,7 @@ PROVIDERS: dict[str, Provider] = {
             provider_policy_url="https://decisionmodels.io/legal/privacy",
             provider_headquarters_country="DE",
         )
-        for slug, tier in (("system1models", "Global"), ("system1models-eu", "EU"))
+        for slug, tier in (("decisionmodelsio", "Global"), ("decisionmodelsio-eu", "EU"))
     },
     "typesafe": Provider(
         slug="typesafe",
@@ -2338,8 +2338,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "fortanix",
         "byteplus",
         "abliterate",
-        "system1models",
-        "system1models-eu",
+        "decisionmodelsio",
+        "decisionmodelsio-eu",
         "lyceum",
         "amazon-bedrock",
         "greenference",
@@ -2983,7 +2983,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 )
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
-    "system1models-eu",
+    "decisionmodelsio-eu",
     "mistral",
     "regolo",
     "google-vertex",
@@ -4318,7 +4318,7 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
                 "does not establish the origin of the underlying weights."
             ),
         )
-        for slug in ("system1models", "system1models-eu")
+        for slug in ("decisionmodelsio", "decisionmodelsio-eu")
     },
 }
 

@@ -16,7 +16,7 @@ def served_system1(monkeypatch):
     from trusted_router.catalog_data import Model
 
     # Product rules must not block hourly discovery when a vendor delists a model.
-    for slug in ("system1models", "system1models-eu"):
+    for slug in ("decisionmodelsio", "decisionmodelsio-eu"):
         model_id = f"{slug}/s1-fixture"
         model = Model(
             id=model_id,
@@ -61,7 +61,7 @@ def catalog(*models: str) -> dict:
 
 
 @pytest.mark.parametrize(
-    "tier,slug,cost", [("global", "system1models", 25_000), ("eu", "system1models-eu", 34_000)]
+    "tier,slug,cost", [("global", "decisionmodelsio", 25_000), ("eu", "decisionmodelsio-eu", 34_000)]
 )
 def test_discovery_uses_exact_regional_usd_not_eur(tier, slug, cost):
     adapter = System1Catalog(tier)
@@ -141,18 +141,18 @@ def test_october_catalog_additions_do_not_freeze_supported_routes():
     by_id["s1-llm-auto-router"]["fixed_questions"] = {"category": "choice"}
     prices, rows = System1Catalog("eu").discover(payload)
     assert len(prices) == len(rows) == 6
-    assert rows["system1models-eu/s1-fast-2"]["context_length"] == 8192
+    assert rows["decisionmodelsio-eu/s1-fast-2"]["context_length"] == 8192
     for native in ("s1-fast", "s1-fast-2", "s1-pro-2"):
-        assert rows[f"system1models-eu/{native}"]["decision_contract_hold"] is None
+        assert rows[f"decisionmodelsio-eu/{native}"]["decision_contract_hold"] is None
     for native, reason in (
         ("quyet-1-large", "decision-model-namespace-unsupported"),
         ("s1-vision-2", "decision-image-pricing-unsupported"),
         ("s1-llm-auto-router", "decision-fixed-questions-unsupported"),
     ):
-        row = rows[f"system1models-eu/{native}"]
+        row = rows[f"decisionmodelsio-eu/{native}"]
         assert row["routable"] is False and row["routable_reason"] == reason
         assert "example_input" not in row["documentation"]
-    assert rows["system1models-eu/s1-vision-2"]["decision_image_input_price_per_m"] == 228_000
+    assert rows["decisionmodelsio-eu/s1-vision-2"]["decision_image_input_price_per_m"] == 228_000
 
 
 @pytest.mark.parametrize("change", ["unit", "output_tokens", "applies_to", "USD"])
@@ -202,7 +202,7 @@ def test_current_models_rechecked_and_recover_without_clearing_contract_holds(mo
     )
 
     adapter = System1Catalog("global")
-    adapter.manifest_path = tmp_path / "system1models.json"
+    adapter.manifest_path = tmp_path / "decisionmodelsio.json"
     payload = catalog("s1-fast", "s1-pro", "s1-vision")
     monkeypatch.setenv(adapter.key_env, "test")
     monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: payload)
@@ -243,7 +243,7 @@ def test_quarantine_keeps_only_previously_published_settlement_tariffs(monkeypat
     from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
 
     adapter = System1Catalog("eu")
-    adapter.manifest_path = tmp_path / "system1models-eu.json"
+    adapter.manifest_path = tmp_path / "decisionmodelsio-eu.json"
     payload = catalog("s1-old")
     monkeypatch.setenv(adapter.key_env, "test")
     monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: payload)
@@ -259,16 +259,16 @@ def test_quarantine_keeps_only_previously_published_settlement_tariffs(monkeypat
     models, active = catalog_ingest._supplemental_provider_models_and_endpoints()
     assert not models and not active
     held_models, held = catalog_ingest._supplemental_provider_models_and_endpoints(held_decisions_only=True)
-    identity = "system1models-eu/s1-old@system1models-eu/prepaid"
+    identity = "decisionmodelsio-eu/s1-old@decisionmodelsio-eu/prepaid"
     assert set(held) == {identity}
-    assert set(held_models) == {"system1models-eu/s1-old"}
+    assert set(held_models) == {"decisionmodelsio-eu/s1-old"}
     endpoint = held[identity]
     assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(34_000)
     assert endpoint.completion_price_microdollars_per_million_tokens == 0
     assert endpoint.usage_type == "Credits"
     monkeypatch.setattr(catalog_registry, "HELD_PREPAID_SETTLEMENT_ENDPOINTS", held)
     assert _endpoint_for_id_compat(identity) == endpoint
-    assert _endpoint_for_id_compat("system1models-eu/s1-new@system1models-eu/prepaid") is None
+    assert _endpoint_for_id_compat("decisionmodelsio-eu/s1-new@decisionmodelsio-eu/prepaid") is None
 
 
 @pytest.mark.parametrize("price", [None, True, -1, "34000"])
@@ -277,10 +277,10 @@ def test_malformed_settlement_history_cannot_create_endpoint(monkeypatch, tmp_pa
 
     adapter = System1Catalog("eu")
     _, rows = adapter.discover(catalog("s1-old"))
-    row = rows["system1models-eu/s1-old"]
+    row = rows["decisionmodelsio-eu/s1-old"]
     row.update(routable=False, input_token_price_per_m=34_000, output_token_price_per_m=0,
                settlement_prices={"input_token_price_per_m": price, "output_token_price_per_m": 0})
-    (tmp_path / "system1models-eu.json").write_text(json.dumps({"provider": adapter.slug, "models": [row]}))
+    (tmp_path / "decisionmodelsio-eu.json").write_text(json.dumps({"provider": adapter.slug, "models": [row]}))
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     assert catalog_ingest._supplemental_provider_models_and_endpoints(held_decisions_only=True) == ({}, {})
 
@@ -289,7 +289,7 @@ def test_unsupported_vision_remains_visible_but_not_routable():
     payload = catalog("s1-future-vision")
     payload["data"][0]["modalities"] = ["text", "image"]
     _, rows = System1Catalog("eu").discover(payload)
-    assert rows["system1models-eu/s1-future-vision"]["routable_reason"] == "decision-image-contract-unsupported"
+    assert rows["decisionmodelsio-eu/s1-future-vision"]["routable_reason"] == "decision-image-contract-unsupported"
 
 
 @pytest.mark.parametrize("hold", [[], {}, True, "unknown", "decision-image-pricing-unsupported"])
@@ -297,7 +297,7 @@ def test_contract_holds_cannot_be_made_routable(hold):
     from trusted_router.provider_manifest_policy import decision_manifest_price_is_valid
 
     _, rows = System1Catalog("eu").discover(catalog("s1-fast"))
-    row = rows["system1models-eu/s1-fast"]
+    row = rows["decisionmodelsio-eu/s1-fast"]
     row.update(input_token_price_per_m=34_000, output_token_price_per_m=0, routable=True, decision_contract_hold=hold)
     assert not decision_manifest_price_is_valid(row)
 
@@ -332,15 +332,15 @@ def test_tiers_and_availability_never_cross():
     payload["data"][2]["status"] = "unavailable"
     eu, _ = System1Catalog("eu").discover(payload)
     global_prices, _ = System1Catalog("global").discover(payload)
-    assert set(eu) == {"system1models-eu/s1-fast"}
-    assert set(global_prices) == {"system1models/s1-fast", "system1models/s1-pro"}
+    assert set(eu) == {"decisionmodelsio-eu/s1-fast"}
+    assert set(global_prices) == {"decisionmodelsio/s1-fast", "decisionmodelsio/s1-pro"}
 
 
 def test_canary_gates_new_routes_and_failed_fetch_cannot_publish(monkeypatch, tmp_path):
     from scripts.pricing.providers import _system1models
 
     adapter = System1Catalog("eu")
-    adapter.manifest_path = tmp_path / "system1models-eu.json"
+    adapter.manifest_path = tmp_path / "decisionmodelsio-eu.json"
     monkeypatch.setenv(adapter.key_env, "test-eu")
     monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: catalog("s1-fast", "s1-pro"))
     monkeypatch.setattr(
@@ -350,8 +350,8 @@ def test_canary_gates_new_routes_and_failed_fetch_cannot_publish(monkeypatch, tm
     assert result.include_in_price_index is False
     adapter.write_provider_manifest(result)
     rows = {r["id"]: r for r in json.loads(adapter.manifest_path.read_text())["models"]}
-    assert rows["system1models-eu/s1-fast"]["routable"] is True
-    assert rows["system1models-eu/s1-pro"]["routable"] is False
+    assert rows["decisionmodelsio-eu/s1-fast"]["routable"] is True
+    assert rows["decisionmodelsio-eu/s1-pro"]["routable"] is False
     monkeypatch.delenv(adapter.key_env)
     with pytest.raises(RuntimeError, match="required"):
         adapter.fetch()
@@ -426,7 +426,7 @@ def test_catalog_integration_no_chat_no_byok_no_cross_tier(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("served_system1")
-@pytest.mark.parametrize("slug", ["system1models", "system1models-eu"])
+@pytest.mark.parametrize("slug", ["decisionmodelsio", "decisionmodelsio-eu"])
 async def test_gateway_authorizes_only_the_requested_tier_and_rejects_chat(slug):
     from tests.test_decide_models import _authorize
 
@@ -448,7 +448,7 @@ async def test_gateway_authorizes_only_the_requested_tier_and_rejects_chat(slug)
 
 
 @pytest.mark.usefixtures("served_system1")
-@pytest.mark.parametrize("slug", ["system1models", "system1models-eu"])
+@pytest.mark.parametrize("slug", ["decisionmodelsio", "decisionmodelsio-eu"])
 def test_public_pages_identify_decision_api_and_provider(client, slug):
     model_id = f"{slug}/s1-fixture"
     page = client.get(f"/models/{model_id}/api")
@@ -463,14 +463,14 @@ def test_public_pages_identify_decision_api_and_provider(client, slug):
 
 
 @pytest.mark.parametrize("tier", ["global", "eu"])
-def test_rebrand_preserves_namespaces_keys_prices_and_residency(tier):
+def test_rebrand_preserves_keys_prices_and_residency(tier):
     from scripts.pricing.providers._system1models import URL
     from trusted_router.catalog_data import PROVIDERS
     from trusted_router.provider_branding import provider_homepage_url
     from trusted_router.provider_locations import PROVIDER_INFERENCE_LOCATIONS
 
     adapter = System1Catalog(tier)
-    slug = "system1models-eu" if tier == "eu" else "system1models"
+    slug = "decisionmodelsio-eu" if tier == "eu" else "decisionmodelsio"
     assert adapter.slug == slug
     assert adapter.key_env == f"SYSTEM1MODELS_{tier.upper()}_API_KEY"
     assert URL == "https://api.decisionmodels.io/v1/models"
@@ -489,14 +489,33 @@ def test_rebrand_preserves_namespaces_keys_prices_and_residency(tier):
 def test_hourly_refresh_and_native_cloud_secret_contract():
     from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
     from scripts.pricing.providers import system1models, system1models_eu
+    from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES
 
     root = Path(__file__).resolve().parents[1]
     for module in (system1models, system1models_eu):
+        assert _PRICING_RESULT_PROVIDER_ALIASES[module.__name__.rsplit(".", 1)[-1]] == (module.SLUG,)
         assert any(row[0] == module.SLUG for row in _DISCOVERABLE_MANIFEST_PROVIDERS)
         coord = (
             f"{module.CATALOG.key_env}:trustedrouter-system1models-{module.CATALOG.tier}-api-key"
         )
         assert coord in (root / ".github/workflows/refresh-prices.yml").read_text()
+
+
+@pytest.mark.usefixtures("served_system1")
+@pytest.mark.parametrize("suffix", ["", "-eu"])
+def test_legacy_public_links_and_api_ids_resolve_within_same_tier(client, suffix):
+    from trusted_router.model_aliases import canonical_router_model_id, router_model_aliases
+    from trusted_router.routing import _provider_slug
+
+    old, new = f"system1models{suffix}", f"decisionmodelsio{suffix}"
+    model_id = f"{new}/s1-fixture"
+    assert canonical_router_model_id(f"{old}/s1-fixture") == model_id
+    assert router_model_aliases(model_id) == [f"{old}/s1-fixture"]
+    assert _provider_slug(old) == new
+    for path in (f"/providers/{old}", f"/models/{old}/s1-fixture"):
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code in {301, 308}
+        assert response.headers["location"] == path.replace(old, new)
 
 
 @pytest.mark.parametrize("tier", ["eu", "global"])

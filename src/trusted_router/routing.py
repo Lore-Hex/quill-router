@@ -94,6 +94,8 @@ class NormalizedRoutingInputs:
     fallback_policy: bool
 
 _PROVIDER_ALIASES = {
+    "system1models": "decisionmodelsio",
+    "system1models-eu": "decisionmodelsio-eu",
     "google-ai": "google-ai-studio",
     "ai-studio": "google-ai-studio",
     "google-vertex-ai": "google-vertex",
