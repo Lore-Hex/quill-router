@@ -237,3 +237,11 @@ def test_every_ci_job_pins_the_ubuntu_24_04_runner_image():
     # the local gates are calibrated on) they pass. Move the pin deliberately, re-measuring those guards.
     jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
     assert {name: job['runs-on'] for name, job in jobs.items()} == dict.fromkeys(jobs, 'ubuntu-24.04')
+
+
+def test_ci_cancels_the_run_it_supersedes_on_the_same_ref():
+    # 2026-10-20: 60 queued runs starved every main run's coverage job for hours; the deploy gate
+    # needs its commit's run to conclude, so nothing shipped. One run per ref, newest wins.
+    workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+    assert workflow['concurrency'] == {'group': 'ci-${{ github.workflow }}-${{ github.ref }}',
+                                       'cancel-in-progress': True}

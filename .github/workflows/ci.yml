@@ -10,6 +10,16 @@ on:
   # generated branch before advancing protected main with the checked SHA.
   workflow_dispatch: {}
 
+# One CI run per ref: a newer push to the same branch (or to main) cancels the
+# run of the commit it supersedes. Without this, 2026-10-20's push cadence left
+# 60 queued runs and the coverage job of every main run starved for five hours,
+# so no run concluded and the deploy gate (which needs its commit's CI run to
+# conclude success) could ship nothing. A superseded main commit's deploy run
+# was being replaced by the newer push's run anyway.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
 # conclusion for the SHA, and a run only concludes success when every job

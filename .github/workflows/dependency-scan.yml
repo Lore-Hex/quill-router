@@ -26,6 +26,12 @@ on:
 permissions:
   contents: read
 
+# One scan per ref; a newer push cancels the scan of the commit it supersedes
+# (same reason as ci.yml: superseded runs starved the 2026-10-20 queue).
+concurrency:
+  group: dependency-scan-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan-full:
     if: ${{ github.event_name != 'pull_request' }}
