@@ -1,5 +1,5 @@
 {
-  "_about": "Vertex-native publisher discovery with independent standard global pricing. New chat routes require a successful generateContent probe in the TrustedRouter project. Specialized APIs and models without complete prices or model limits remain explicitly held. AI Studio metadata supplies model limits, never proof of Vertex availability or prices.",
+  "_about": "Vertex-native discovery from publishers/google/models and publishers/anthropic/models with independent standard global pricing. New chat routes require a successful generateContent (Gemini) or rawPredict (Claude) probe in the TrustedRouter project. Specialized APIs, incomplete prices or limits, and publisher-specific privacy exceptions remain held. First-party metadata supplies model limits, never proof of Vertex availability or prices.",
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
