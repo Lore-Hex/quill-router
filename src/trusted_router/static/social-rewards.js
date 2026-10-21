@@ -120,7 +120,7 @@
       const opener = keyCard.querySelector("[data-rewards-open]");
       const label = opener.querySelector("[data-rewards-label]") || opener;
       label.textContent = total > 0 && claimed === total || !state.enabled
-        ? "View rewards" : opener.hasAttribute("data-rewards-compact") ? "Earn credit" : "Earn extra tokens";
+        ? "View rewards" : opener.hasAttribute("data-rewards-compact") ? "Earn API credit for a follow" : "Earn extra tokens";
     }
     openers.forEach((button) => { button.hidden = !(state.eligible && state.enabled); });
     if (!state.enabled && dialog.open) dialog.close();

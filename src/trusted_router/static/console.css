@@ -1724,7 +1724,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 .social-rewards-icon[data-platform="youtube"] { color: #ff0033; }
 
 /* Header balance chip: the workspace's available credit on every console page. */
-.console-balance { margin-left: auto; margin-right: 28px; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px 0 10px; border-radius: 999px; background: color-mix(in srgb, var(--tr-color-accent-base) 16%, transparent); color: var(--tr-color-accent-base); font-size: 13px; font-weight: 600; letter-spacing: 0.1px; text-decoration: none; white-space: nowrap; }
+.console-balance { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px 0 10px; border-radius: 999px; background: color-mix(in srgb, var(--tr-color-accent-base) 16%, transparent); color: var(--tr-color-accent-base); font-size: 13px; font-weight: 600; letter-spacing: 0.1px; text-decoration: none; white-space: nowrap; }
 .console-balance svg { width: 16px; height: 16px; }
 .console-balance:hover { background: color-mix(in srgb, var(--tr-color-accent-base) 26%, transparent); color: var(--tr-color-accent-hover); }
 .console-balance.is-empty { background: color-mix(in srgb, var(--tr-color-status-degraded) 16%, transparent); color: var(--tr-color-status-degraded); }
@@ -1734,5 +1734,5 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   .console-topbar:has(.console-balance) > .console-utilities { margin-left: 0; }
 }
 @media (max-width: 800px) {
-  .console-topbar .console-balance { margin-left: auto; margin-right: 4px; }
+  .console-topbar .console-balance { margin-left: auto; margin-right: -2px; }
 }
