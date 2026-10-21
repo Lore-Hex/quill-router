@@ -1730,9 +1730,15 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 .console-balance.is-empty { background: color-mix(in srgb, var(--tr-color-status-degraded) 16%, transparent); color: var(--tr-color-status-degraded); }
 .console-balance.is-empty:hover { background: color-mix(in srgb, var(--tr-color-status-degraded) 26%, transparent); }
 .console-balance:focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 3px; }
+
 @media (min-width: 801px) {
   .console-topbar:has(.console-balance) > .console-utilities { margin-left: 0; }
 }
+
 @media (max-width: 800px) {
   .console-topbar .console-balance { margin-left: auto; margin-right: -2px; }
+}
+
+@media (max-width: 360px) {
+  .console-topbar:has(.console-balance) { padding-inline: 12px; column-gap: 8px; }
 }

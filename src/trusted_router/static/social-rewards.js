@@ -242,7 +242,7 @@
     dialog.querySelector("h2").focus();
   }
   function canAutoOpen() {
-    return !document.querySelector(".console-key-reveal") && !document.querySelector("dialog[open]");
+    return !document.querySelector(".console-key-reveal, [data-key-onboarding]") && !document.querySelector("dialog[open]");
   }
   async function refresh(auto = false) {
     if (refreshing) { refreshAgain = true; return; }

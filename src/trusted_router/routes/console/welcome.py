@@ -44,7 +44,7 @@ def register(app: FastAPI) -> None:
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
             **(key_list_context(ctx.workspace.id) if revealed_key else {}),
-        ))
+        ), headers={"Cache-Control": "private, no-store"})
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise
             # the browser keeps the original and the next refresh re-reveals

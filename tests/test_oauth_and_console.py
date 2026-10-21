@@ -1067,10 +1067,11 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     URL falls through to the static fallback (one-shot reveal semantics)."""
     client, _ = console_session
     fake_raw_key = "sk-tr-v1-test-reveal-secret-abc123"  # noqa: S105 - test fixture
-    client.cookies.set("tr_pending_reveal", fake_raw_key)
+    client.cookies.set("tr_pending_reveal", fake_raw_key, domain="testserver.local", path="/console/welcome")
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "private, no-store"
     assert resp.text.count(fake_raw_key) == 2, (
         "the raw API key must appear in the direct reveal and the optional "
         "Claude Code / Codex message"
@@ -1101,6 +1102,9 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
         or "Max-Age=0" in set_cookie
         or "max-age=0" in set_cookie
     ), f"expected tr_pending_reveal cookie to be cleared; got {set_cookie!r}"
+    refreshed = client.get("/console/welcome?first=1")
+    assert fake_raw_key not in refreshed.text
+    assert "already been displayed" in refreshed.text
 
 
 def test_console_specific_styles_load_after_shared_charter_styles() -> None:
@@ -1147,6 +1151,7 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     )
 
     assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "private, no-store"
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
@@ -1182,9 +1187,12 @@ def test_console_welcome_without_credits_keeps_key_and_funding_access(
 
     assert response.status_code == 200
     assert fake_raw_key in response.text
-    assert 'data-copy-secret="welcome-api-key"' in response.text
+    assert 'id="onboarding-key"' in response.text
+    assert 'aria-label="Copy API key"' in response.text
     assert 'href="/console/credits"' in response.text
     assert 'data-action="run-first-call"' not in response.text
+    credits = client.get("/console/credits")
+    assert 'class="console-balance is-empty"' in credits.text
 
 
 def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(

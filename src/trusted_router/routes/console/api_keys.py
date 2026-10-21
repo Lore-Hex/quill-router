@@ -68,7 +68,7 @@ def register(app: FastAPI) -> None:
             created_key=created_key,
             flash=flash,
             **key_list_context(ctx.workspace.id),
-        ))
+        ), headers={"Cache-Control": "private, no-store"})
 
     @app.get("/console/api-keys")
     def console_api_keys(

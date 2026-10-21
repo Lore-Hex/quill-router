@@ -1,7 +1,16 @@
 const { test, expect } = require("@playwright/test");
 const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 const root = path.resolve(__dirname, "../..");
+
+function keyInvitation() {
+  return execFileSync(process.env.TEST_PYTHON || "python3", ["-c", `
+from jinja2 import Environment, FileSystemLoader
+env = Environment(loader=FileSystemLoader('src/trusted_router/templates'))
+print(env.get_template('console/_key_next_steps.html').render())
+`], { cwd: root, encoding: "utf8" });
+}
 
 async function rewardsPage(page, options = {}) {
   const state = {
@@ -41,11 +50,11 @@ async function rewardsPage(page, options = {}) {
   await page.route("**/social-rewards-preview", (route) => route.fulfill({
     contentType: "text/html; charset=utf-8",
     body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-      <link rel="stylesheet" href="/static/tokens.css"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/console.css">
+      <link rel="stylesheet" href="/static/tokens.css"><link rel="stylesheet" href="/static/dashboard.css"><link rel="stylesheet" href="/static/console.css"><link rel="stylesheet" href="/static/key-onboarding.css">
       </head><body class="console"><main style="padding:32px"><h1>Credits</h1><p>Available $0.150000</p><button class="btn" data-rewards-open hidden>Social rewards</button>
-      ${options.keys ? fs.readFileSync(path.join(root, "src/trusted_router/templates/console/_social_rewards_invitation.html"), "utf8") : ""}
-      ${options.welcome ? fs.readFileSync(path.join(root, "src/trusted_router/templates/console/_social_rewards_invitation.html"), "utf8") : ""}
-      ${options.reveal ? '<div class="console-key-reveal">One-time API key reveal</div>' : ""}</main>
+      ${options.keys ? keyInvitation() : ""}
+      ${options.welcome ? keyInvitation() : ""}
+      ${options.reveal ? '<div data-key-onboarding>One-time API key reveal</div>' : ""}</main>
       ${fs.readFileSync(path.join(root, "src/trusted_router/templates/console/_social_rewards.html"), "utf8").replace(/\{\{.*?\}\}/g, "test")}</body></html>`,
   }));
   await page.goto("http://127.0.0.1:18083/social-rewards-preview");
@@ -67,7 +76,7 @@ for (const blocker of ["key reveal", "another dialog"]) {
     await page.evaluate((kind) => {
       const node = document.createElement(kind === "key reveal" ? "div" : "dialog");
       node.id = "late-blocker";
-      if (kind === "key reveal") node.className = "console-key-reveal";
+      if (kind === "key reveal") node.setAttribute("data-key-onboarding", "");
       document.body.append(node);
       if (kind === "another dialog") node.showModal();
     }, blocker);
@@ -223,7 +232,7 @@ test("ownership loss clears existing claims and disables the offer", async ({ pa
 
 test("disabled flag hides all invitations and closes an open panel", async ({ page }) => {
   const { state } = await rewardsPage(page, { keys: true, state: { first_call_complete: false } });
-  await page.getByRole("button", { name: "Earn extra tokens", exact: true }).click();
+  await page.locator("[data-rewards-key-card]").getByRole("button").click();
   state.enabled = false;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.getByRole("dialog")).not.toBeVisible();
@@ -263,7 +272,7 @@ for (const width of [1440, 390, 320]) {
     const { requests } = await rewardsPage(page, {
       welcome: true, reveal: true, state: { first_call_complete: false },
     });
-    const invitation = page.getByRole("button", { name: "Earn extra tokens", exact: true });
+    const invitation = page.locator("[data-rewards-key-card]").getByRole("button");
     await expect(invitation).toBeVisible();
     await expect(page.getByRole("dialog")).not.toBeVisible();
     expect(requests.some((r) => r.url.endsWith("/shown"))).toBe(false);
@@ -277,9 +286,9 @@ for (const width of [1440, 390, 320]) {
 
  test("early invitation allows claims before activation without interrupting key setup", async ({ page }) => {
   const { requests } = await rewardsPage(page, { welcome: true, reveal: true, state: { first_call_complete: false } });
-  await expect(page.getByRole("button", { name: "Earn extra tokens", exact: true })).toBeVisible();
+  await expect(page.locator("[data-rewards-key-card]").getByRole("button")).toBeVisible();
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "Earn extra tokens", exact: true }).click();
+  await page.locator("[data-rewards-key-card]").getByRole("button").click();
   const popup = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Star on GitHub: Star the repository" }).click();
   await (await popup).close();
@@ -293,7 +302,7 @@ test("analytics distinguish visible invitations, flow opens, and platform clicks
   const observations = () => requests.filter((r) => r.url.endsWith("/observe")).map((r) => r.body);
   await expect.poll(() => observations().some((r) => r.event === "social_rewards_invitation_viewed"
     && r.placement === "api_key_setup")).toBe(true);
-  await page.getByRole("button", { name: "Earn extra tokens", exact: true }).click();
+  await page.locator("[data-rewards-key-card]").getByRole("button").click();
   await expect.poll(() => observations().some((r) => r.event === "social_rewards_opened"
     && r.placement === "api_key_setup")).toBe(true);
   await page.locator('[data-reward-id="github"] button').click();
@@ -338,7 +347,8 @@ for (const width of [1440, 390, 320]) {
     const { requests } = await rewardsPage(page, { keys: true, state: { first_call_complete: false } });
     const card = page.locator('[data-rewards-key-card]');
     await expect(card).toBeVisible();
-    await expect(card).toContainText('Earn extra API credit.');
+    await expect(card.getByRole('button')).toContainText('Social rewards');
+    await expect(card.getByRole('button')).toContainText('Earn API credit for a follow');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await card.getByRole('button').click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -365,7 +375,7 @@ test('API Keys invitation reflects progress, pause, completion, and eligibility'
   state.actions.forEach((action) => { action.claimed = true; });
   await refresh();
   await expect(card).toContainText('All available rewards claimed.');
-  await expect(card.getByRole('button')).toHaveText('View rewards');
+  await expect(card.getByRole('button')).toContainText('View rewards');
   state.eligible = false;
   await refresh();
   await expect(card).not.toBeVisible();
