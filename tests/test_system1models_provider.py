@@ -427,11 +427,12 @@ def test_catalog_integration_no_chat_no_byok_no_cross_tier(monkeypatch, tmp_path
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("served_system1")
 @pytest.mark.parametrize("slug", ["decisionmodelsio", "decisionmodelsio-eu"])
-async def test_gateway_authorizes_only_the_requested_tier_and_rejects_chat(slug):
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_gateway_authorizes_only_the_requested_tier_and_rejects_chat(slug, legacy):
     from tests.test_decide_models import _authorize
 
     body = {
-        "model": f"{slug}/s1-fixture",
+        "model": f"{slug.replace('decisionmodelsio', 'system1models') if legacy else slug}/s1-fixture",
         "route_type": "decide",
         "estimated_input_tokens": 100,
         "max_output_tokens": 1,
