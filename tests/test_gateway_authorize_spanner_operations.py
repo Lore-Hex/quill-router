@@ -755,7 +755,7 @@ def test_authorize_reads_topup_after_insufficient_credits(fixed_operation_catalo
         gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)
     assert raised.value.status_code == 402
     assert raised.value.detail["error"]["type"] == "insufficient_credits"
-    assert raised.value.detail["error"]["message"] == "Insufficient credits"
+    assert "upfront reservation of $0.0006" in raised.value.detail["error"]["message"]
     assert store.credit_workspace_typed_direct(
         key.workspace_id, 1_000_000, "topup-rtt", provenance=CreditProvenance.system_grant(),
     )
