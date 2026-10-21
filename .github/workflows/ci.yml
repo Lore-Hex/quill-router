@@ -10,6 +10,18 @@ on:
   # generated branch before advancing protected main with the checked SHA.
   workflow_dispatch: {}
 
+# One CI run per branch or pull request: a newer push cancels the run of the
+# commit it supersedes. Without this, 2026-10-20's push cadence left 60 queued
+# runs and the coverage job of every main run starved for five hours, so no run
+# concluded and the deploy gate (which needs its commit's CI run to conclude
+# success) could ship nothing. Main is exempt: every main commit keeps its own
+# run, because a later push that touches no deploy path starts no deploy of its
+# own, and the earlier commit's deploy gate would read the cancelled run as a
+# refusal and strand a valid rollout.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
 # conclusion for the SHA, and a run only concludes success when every job
