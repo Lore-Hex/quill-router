@@ -37,6 +37,7 @@ _RECOVERABLE_HOLDS = frozenset(
         "price-unavailable",
         "awaiting-price",
         "vertex-metadata-unavailable",
+        "vertex-price-context-incomplete",
         "delisted-upstream",
         "unsupported-vertex-api",
     }
@@ -197,7 +198,8 @@ def fetch() -> ProviderPricingResult:
                 if row["context_length"] > tariff.context_limit:
                     # Context is currently a model-wide contract, not a hard
                     # per-provider limit. Never publish a partially priced route.
-                    row.update(routable=False, routable_reason="price-unavailable")
+                    if row.get("routable") is not False:
+                        row.update(routable=False, routable_reason="vertex-price-context-incomplete")
                     prices.pop(model_id, None)
         old = existing.get(model_id, {})
         if old.get("routable") is False and old.get("routable_reason") not in _RECOVERABLE_HOLDS:

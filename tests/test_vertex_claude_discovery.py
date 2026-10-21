@@ -8,9 +8,27 @@ import httpx
 import pytest
 
 from scripts.pricing import vertex_claude
+from scripts.pricing.base import reconcile_manifest_tombstones
 from scripts.pricing.providers import google_vertex as vertex
 
 FIXTURE = Path(__file__).parent / "fixtures/pricing/vertex_claude.html"
+
+
+@pytest.mark.parametrize("reason,priced", [
+    ("vertex-metadata-unavailable", True),
+    ("vertex-price-context-incomplete", False),
+    ("unsupported-vertex-api", True),
+])
+@pytest.mark.parametrize("old_reason", [None, "awaiting-price", "delisted-upstream"])
+def test_recovery_never_overrides_a_fresh_vertex_admission_failure(
+    reason: str, priced: bool, old_reason: str | None,
+) -> None:
+    model = "anthropic/claude-opus-5.5"
+    old = [{"id": model, "routable": False, "routable_reason": old_reason}] if old_reason else []
+    present = {model: {"id": model, "routable": False, "routable_reason": reason}}
+    rows = reconcile_manifest_tombstones(old, present, priced_ids={model} if priced else set(), source="api")
+    assert rows[0]["routable"] is False
+    assert rows[0]["routable_reason"] == reason
 
 
 def test_claude_native_ids_default_and_dated_are_order_independent() -> None:
@@ -118,7 +136,7 @@ def test_claude_admission_requires_own_access_price_and_metadata(
     assert rows[ids[0]]["canary_status_code"] == status
     assert rows[ids[0]]["cached_input_token_price_per_m"] == 100_000
     assert rows[ids[1]]["routable"] is False
-    assert rows[ids[1]]["routable_reason"] == "awaiting-price"
+    assert rows[ids[1]]["routable_reason"] == "vertex-price-context-incomplete"
     assert rows[ids[2]]["routable_reason"] == "vertex-metadata-unavailable"
     assert result.price_index_model_ids == (frozenset({ids[0]}) if ok else frozenset())
 

@@ -3,7 +3,7 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-10-21T14:59:12Z",
+  "generated_at": "2026-10-21T15:08:29Z",
   "model_count": 43,
   "models": [
     {
@@ -1003,8 +1003,7 @@
         "function-calling"
       ],
       "routable": false,
-      "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-21"
+      "routable_reason": "vertex-publisher-policy-review"
     },
     {
       "display_name": "Claude Sonnet 4.6",
