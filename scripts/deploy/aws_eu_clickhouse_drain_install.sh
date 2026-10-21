@@ -69,6 +69,16 @@
 # grants secretsmanager, kms, ecr and logs, and no dsql action whatsoever. The
 # drain would start, fail every connection, and deliver nothing. That grant is
 # an operator step and it is printed in full below.
+#
+# THE DELIVERY VERIFIER
+# ---------------------
+# This payload also carries clickhouse/verify_postgres_delivery.py, which
+# runs from this tree. Its units, Postgres role and first run belong to
+# scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh, which this
+# script names as the next step and never runs. This install never fails on
+# the verifier, and does not even import it: that script checks the import.
+# It only keeps the verifier's dependency (httpx) in the venv, and stops and
+# restarts its timer around the tree swap.
 set -euo pipefail
 
 REGION="${REGION:-eu-west-3}"                       # Paris.
@@ -89,6 +99,10 @@ REMOTE_ROOT="${REMOTE_ROOT:-/opt/tr-clickhouse}"
 STAGE_DIR="${STAGE_DIR:-/opt/tr-clickhouse.staging}"
 ENV_FILE="${ENV_FILE:-/etc/tr-clickhouse-ingest-postgres.env}"
 SERVICE="tr-clickhouse-operational-ingest-postgres.service"
+# Installed by aws_eu_postgres_delivery_verifier_install.sh. Named here only so
+# the tree swap can stop it and start it again.
+VERIFIER_SERVICE="tr-clickhouse-postgres-delivery.service"
+VERIFIER_TIMER="tr-clickhouse-postgres-delivery.timer"
 SERVICE_USER="${SERVICE_USER:-tr-clickhouse-ingest}"
 STATE_DIR="${STATE_DIR:-/var/lib/tr-clickhouse-ingest}"
 # Ubuntu 22.04's system python is 3.10; trusted_router.types uses StrEnum
@@ -330,12 +344,13 @@ install -d -o '$SERVICE_USER' -g '$SERVICE_USER' -m 0750 '$STATE_DIR'
 test -x '$PYTHON_BIN' || { echo 'missing $PYTHON_BIN; provision 3.12 (deadsnakes on 22.04)'; exit 1; }
 '$PYTHON_BIN' -m venv '$STAGE_DIR/venv'
 '$STAGE_DIR/venv/bin/pip' install --quiet --upgrade pip
-# The drain's own dependencies. clickhouse/requirements-live.txt also carries
+# The drain's own dependencies, plus httpx for the delivery verifier's
+# ClickHouse reader. clickhouse/requirements-live.txt also carries
 # the google-cloud-* trio for the Spanner-sourced siblings, which this node has
 # no use for and no credentials for.
 '$STAGE_DIR/venv/bin/pip' install --quiet \
   'psycopg[binary]>=3.2.0' 'boto3>=1.35.0' 'pydantic>=2' 'pydantic-settings>=2' \
-  'structlog>=24' 'python-dateutil>=2.9'
+  'structlog>=24' 'python-dateutil>=2.9' 'httpx>=0.27.0'
 '$STAGE_DIR/venv/bin/python' -V
 "
 
@@ -359,6 +374,11 @@ set -eux
 # Poco 'cannot get current directory', while the Python loop remains active.
 if systemctl show $SERVICE >/dev/null 2>&1; then
   systemctl stop $SERVICE
+fi
+# The delivery verifier runs from the same tree. Stopping it does not disable
+# it, so step 8 starts it again exactly when it was enabled.
+if [ -f /etc/systemd/system/$VERIFIER_TIMER ]; then
+  systemctl stop $VERIFIER_TIMER $VERIFIER_SERVICE
 fi
 rm -rf '${REMOTE_ROOT}.previous'
 if [ -d '$REMOTE_ROOT' ]; then mv '$REMOTE_ROOT' '${REMOTE_ROOT}.previous'; fi
@@ -425,6 +445,11 @@ systemctl enable $SERVICE
 # Explicit start, not enable --now: --now is a no-op for an already-active
 # service and was the mechanism that kept the old PID running old bytecode.
 systemctl start $SERVICE
+# Restart the verifier stopped in step 6, if it is installed and enabled. Its
+# results never affect this install.
+if systemctl is-enabled --quiet $VERIFIER_TIMER 2>/dev/null; then
+  systemctl start $VERIFIER_TIMER
+fi
 "
 
 # ---------------------------------------------------------------------------
@@ -488,6 +513,11 @@ Installed. What "working" looks like, and what to do when it is not:
 Rollback: systemctl disable --now $SERVICE, then
   mv ${REMOTE_ROOT}.previous $REMOTE_ROOT   (kept from this run)
 Nothing is lost by stopping the drain: undelivered rows stay in the outbox.
+
+Next step, optional and separate (it never affects the drain):
+  bash scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh
+      installs the hourly delivery verifier. Needs the tr_verifier role once
+      (scripts/deploy/aws_eu_tr_verifier_role.sql); it prints the command.
 EOF
 
 # ---------------------------------------------------------------------------
