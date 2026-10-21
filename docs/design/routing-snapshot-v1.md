@@ -324,8 +324,10 @@ pinned).
   speech, transcription and fetch routes, partner and custom-model pricing,
   held prepaid settlement endpoints, timeouts, the abliterate
   estimated-usage reason.
-- Live health re-ranking and session affinity (`ROUTING_STATE`); Go answers
-  as a freshly started Python instance would, and requests with
+- Live health re-ranking and session affinity (`ROUTING_STATE`); for the
+  order, Go answers as the compiling process would with an empty
+  `ROUTING_STATE` (the catalog itself is the compiling process's, imported at
+  `catalog_resolved_at`), and requests with
   `preferred_max_latency`/`preferred_min_throughput` stay on Python.
 - Non-ASCII model strings: Python's `\d` in the dated-suffix pattern matches
   Unicode digits and Go's does not, so Go passes them to Python.
