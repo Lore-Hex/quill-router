@@ -90,13 +90,16 @@ execution role's grant on the reader secret's exact ARN): a task referencing
 the secret before that fails to start. With `clickhouse`, the release sets
 `tr_control_read` and the reader secret ARN resolved by `describe-secret`, and
 refuses unless the cloned task reads database `default` (the reader is granted
-`default.*` only). Ireland stays on `postgres`. To revert Paris,
-run the release with `TR_RECORD_READ_BACKEND_EU_WEST_3=postgres` and
-`TR_ECS_ALLOW_RECORD_READ_ROLLBACK=true`; without the explicit rollback flag,
-a live `clickhouse` to `postgres` transition is refused. Keep the regional
-expectation at `postgres` for subsequent releases until ready to enable it again.
-A reverted Paris keeps `tr_control_read` and the reader secret, so the grant
-stays in place.
+`default.*` only). Ireland stays on `postgres`. Every release applies the
+default in code, in either direction, so the default is the only lasting
+switch: an environment override lasts until the next release, which the
+automatic catch-up may start at any time. To revert Paris, land a change
+setting its default back to `postgres`. That restores Postgres record reads
+only: a reverted Paris keeps `tr_control_read` and the reader secret, which
+the console's client reliability, retirement notices and the client watch
+also read through. A broken reader breaks those too, and the revert does
+not bring them back. So the enabling change first checks that
+`tr_control_read` can log in to the Paris node.
 
 Control-plane operational reads use `tr_control_read`. On GCP,
 `scripts/deploy/clickhouse_control_reader.sh` installs the account with

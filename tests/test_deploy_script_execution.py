@@ -75,16 +75,14 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
     return DeployScriptHarness(tmp_path_factory.mktemp("deploy-harness"))
 
 
-@pytest.mark.parametrize("backend", [None, "postgres"])
+@pytest.mark.parametrize("backend", ["clickhouse", "postgres"])
 def test_ecs_record_reads_resolve_only_paris_reader_metadata(
-    harness: DeployScriptHarness, backend: str | None,
+    harness: DeployScriptHarness, backend: str,
 ) -> None:
-    run = harness.run("scripts/deploy/aws_ecs_control_plane.sh", extra_env=(
-        {"TR_RECORD_READ_BACKEND_EU_WEST_3": backend} if backend else {}
-    ))
+    run = harness.run("scripts/deploy/aws_ecs_control_plane.sh", extra_env={"TR_RECORD_READ_BACKEND_EU_WEST_3": backend})
     assert run.returncode == 0, summarise(run)
     lookups = [call for call in run.calls if call[:2] == ["aws", "secretsmanager"]]
-    assert lookups == ([] if backend else [[
+    assert lookups == ([] if backend == "postgres" else [[
         "aws", "secretsmanager", "describe-secret", "--region", "eu-west-3",
         "--secret-id", "quill/tr-eu-clickhouse-read-password", "--query", "ARN", "--output", "text",
     ]])

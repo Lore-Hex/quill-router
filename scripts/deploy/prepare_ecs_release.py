@@ -29,7 +29,6 @@ RESPONSE_FIELDS = frozenset({
 def prepare(
     payload: dict, image: str, release: str, required_outbox: str = "true",
     required_record_read_backend: str = "postgres", reader_secret_arn: str = "",
-    allow_record_read_rollback: bool = False,
 ) -> dict:
     if required_outbox not in ("true", "false"):
         raise ValueError("invalid required TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
@@ -69,15 +68,11 @@ def prepare(
     in_process = values.get("TR_REMEDIATOR_IN_PROCESS_ENABLED")
     if in_process not in (None, "false"):
         raise ValueError("TR_REMEDIATOR_IN_PROCESS_ENABLED must be false on the AWS observer")
-    live_backend = values.get("TR_RECORD_READ_BACKEND")
-    if live_backend not in (None, required_record_read_backend) and (
-        (live_backend, required_record_read_backend) != ("postgres", "clickhouse")
-        and not (allow_record_read_rollback and (live_backend, required_record_read_backend) == ("clickhouse", "postgres"))
-    ):
-        raise ValueError(
-            "live TR_RECORD_READ_BACKEND differs from regional expectation; "
-            "clickhouse -> postgres requires TR_ECS_ALLOW_RECORD_READ_ROLLBACK=true"
-        )
+    # The regional expectation decides, in either direction: Postgres is
+    # written in both modes, so moving back to it loses nothing. Only a live
+    # value outside the two is refused.
+    if values.get("TR_RECORD_READ_BACKEND") not in (None, "postgres", "clickhouse"):
+        raise ValueError("invalid live TR_RECORD_READ_BACKEND")
     updates = {"TR_RECORD_READ_BACKEND": required_record_read_backend}
     if required_record_read_backend == "clickhouse":
         if not values.get("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL", "").strip():
@@ -120,11 +115,8 @@ def prepare(
 if __name__ == "__main__":
     try:
         with open(sys.argv[1], encoding="utf-8") as source:
-            if sys.argv[8] not in ("true", "false"):
-                raise ValueError("TR_ECS_ALLOW_RECORD_READ_ROLLBACK must be true or false")
             result = prepare(
-                json.load(source), sys.argv[2], sys.argv[3], sys.argv[5],
-                sys.argv[6], sys.argv[7], sys.argv[8] == "true",
+                json.load(source), sys.argv[2], sys.argv[3], sys.argv[5], sys.argv[6], sys.argv[7],
             )
         with open(sys.argv[4], "w", encoding="utf-8") as destination:
             json.dump(result, destination)

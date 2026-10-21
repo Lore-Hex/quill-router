@@ -180,7 +180,7 @@ PY
   fi
   python3 "${SCRIPT_DIR}/prepare_ecs_release.py" "${WORK}/previous.json" "$image" \
     "$RELEASE" "${WORK}/next.json" "${EXPECTED_OUTBOX[$index]}" \
-    "${EXPECTED_RECORD_READ_BACKEND[$index]}" "$reader_secret_arn" "${TR_ECS_ALLOW_RECORD_READ_ROLLBACK:-false}"
+    "${EXPECTED_RECORD_READ_BACKEND[$index]}" "$reader_secret_arn"
   next="$(aws ecs register-task-definition --cli-input-json "file://${WORK}/next.json" \
     --region "$region" --query taskDefinition.taskDefinitionArn --output text)"
   [[ "$next" = arn:aws:ecs:* ]] || die "no registered task definition"

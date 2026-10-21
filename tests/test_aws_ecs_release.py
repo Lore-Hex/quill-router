@@ -212,8 +212,7 @@ def test_task_builder_refuses_invalid_required_outbox(required_outbox: str) -> N
 
 @pytest.mark.parametrize("backend", ["postgres", "clickhouse"])
 @pytest.mark.parametrize("live_backend", [None, "postgres", "clickhouse"])
-@pytest.mark.parametrize("allow_rollback", [False, True])
-def test_record_read_transitions(backend: str, live_backend: str | None, allow_rollback: bool) -> None:
+def test_record_read_transitions(backend: str, live_backend: str | None) -> None:
     payload = task_definition()
     if live_backend is not None:
         payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
@@ -221,41 +220,35 @@ def test_record_read_transitions(backend: str, live_backend: str | None, allow_r
         )
     before = copy.deepcopy(payload)
     image = "registry@sha256:" + "b" * 64
-    args = (payload, image, "c" * 40, "true", backend, READER_ARN, allow_rollback)
-    if (live_backend, backend, allow_rollback) == ("clickhouse", "postgres", False):
-        with pytest.raises(ValueError, match="TR_ECS_ALLOW_RECORD_READ_ROLLBACK=true"):
-            load_builder()(*args)
+    args = (payload, image, "c" * 40, "true", backend, READER_ARN)
+    result = load_builder()(*args)
+    container = result["containerDefinitions"][0]
+    values = {e["name"]: e["value"] for e in container["environment"]}
+    assert values["TR_RECORD_READ_BACKEND"] == backend
+    assert sum(e["name"] == "TR_RECORD_READ_BACKEND" for e in container["environment"]) == 1
+    if backend == "clickhouse":
+        assert values["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER"] == "tr_control_read"
+        assert container["secrets"][-1]["valueFrom"] == READER_ARN
     else:
-        result = load_builder()(*args)
-        container = result["containerDefinitions"][0]
-        values = {e["name"]: e["value"] for e in container["environment"]}
-        assert values["TR_RECORD_READ_BACKEND"] == backend
-        assert sum(e["name"] == "TR_RECORD_READ_BACKEND" for e in container["environment"]) == 1
-        if backend == "clickhouse":
-            assert values["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER"] == "tr_control_read"
-            assert container["secrets"][-1]["valueFrom"] == READER_ARN
-        else:
-            assert values["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER"] == "default"
-            assert container["secrets"] == before["taskDefinition"]["containerDefinitions"][0]["secrets"]
-        # A subsequent clone with the same release and credentials is identical.
-        next_payload = {
-            "taskDefinition": {k: v for k, v in result.items() if k != "tags"},
-            "tags": result["tags"],
-        }
-        assert load_builder()(next_payload, *args[1:]) == result
+        assert values["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER"] == "default"
+        assert container["secrets"] == before["taskDefinition"]["containerDefinitions"][0]["secrets"]
+    # A subsequent clone with the same release and credentials is identical.
+    next_payload = {
+        "taskDefinition": {k: v for k, v in result.items() if k != "tags"},
+        "tags": result["tags"],
+    }
+    assert load_builder()(next_payload, *args[1:]) == result
     assert payload == before
 
 
 @pytest.mark.parametrize("value", ["", "invalid", "CLICKHOUSE"])
-@pytest.mark.parametrize("allow_rollback", [False, True])
-def test_record_reads_refuse_unknown_live_values(value: str, allow_rollback: bool) -> None:
+def test_record_reads_refuse_unknown_live_values(value: str) -> None:
     payload = task_definition()
     payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
         {"name": "TR_RECORD_READ_BACKEND", "value": value}
     )
-    with pytest.raises(ValueError, match="live TR_RECORD_READ_BACKEND differs"):
-        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse",
-                       READER_ARN, allow_rollback)
+    with pytest.raises(ValueError, match="invalid live TR_RECORD_READ_BACKEND"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
 
 
 @pytest.mark.parametrize("value", ["", "invalid", "CLICKHOUSE"])
@@ -681,8 +674,7 @@ def test_ecs_rollout_enables_the_legacy_ireland_outbox(tmp_path: Path) -> None:
     assert ["verify_cloud_complete.sh", "aws"] in recorded
 
 
-@pytest.mark.parametrize("allow_rollback", [False, True])
-def test_ecs_record_read_rollback_requires_explicit_override(tmp_path: Path, allow_rollback: bool) -> None:
+def test_ecs_record_reads_revert_paris_by_the_default_alone(tmp_path: Path) -> None:
     definitions = {region: task_definition(region) for region in ("eu-west-1", "eu-west-3")}
     paris = definitions["eu-west-3"]["taskDefinition"]["containerDefinitions"][0]
     paris["environment"].append({"name": "TR_RECORD_READ_BACKEND", "value": "clickhouse"})
@@ -692,25 +684,58 @@ def test_ecs_record_read_rollback_requires_explicit_override(tmp_path: Path, all
     paris["secrets"][-1]["valueFrom"] = READER_ARN
     result, calls = run_ecs_fixture(tmp_path, definitions=definitions, extra_env={
         "TR_RECORD_READ_BACKEND_EU_WEST_3": "postgres",
-        "TR_ECS_ALLOW_RECORD_READ_ROLLBACK": str(allow_rollback).lower(),
     })
-    assert (result.returncode == 0) == allow_rollback, result.stderr
+    assert result.returncode == 0, result.stderr
     registrations = dict(json.loads(line) for line in (tmp_path / "registrations").read_text().splitlines())
     assert not any(c[:2] == ["aws", "secretsmanager"] for c in calls)
-    if allow_rollback:
-        updated = registrations["eu-west-3"]["containerDefinitions"][0]
-        expected = copy.deepcopy(paris)
-        expected["image"] = updated["image"]
-        for entry in expected["environment"]:
-            if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
-                entry["value"] = "c" * 40
-            elif entry["name"] == "TR_RECORD_READ_BACKEND":
-                entry["value"] = "postgres"
-        expected["environment"].append({"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"})
-        assert updated == expected
+    updated = registrations["eu-west-3"]["containerDefinitions"][0]
+    expected = copy.deepcopy(paris)
+    expected["image"] = updated["image"]
+    for entry in expected["environment"]:
+        if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
+            entry["value"] = "c" * 40
+        elif entry["name"] == "TR_RECORD_READ_BACKEND":
+            entry["value"] = "postgres"
+    expected["environment"].append({"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"})
+    # Postgres reads, with the reader's credentials kept as they were.
+    assert updated == expected
+
+
+def _paris_clickhouse(payload: dict) -> dict:
+    return payload["taskDefinition"]["containerDefinitions"][0]
+
+
+@pytest.mark.parametrize("conflict", ["plain-password", "user-secret", "backend-secret", "duplicate-secret"])
+def test_clickhouse_record_reads_refuse_conflicting_credential_sources(conflict: str) -> None:
+    payload = task_definition("eu-west-3")
+    container = _paris_clickhouse(payload)
+    password = next(s for s in container["secrets"] if s["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
+    if conflict == "plain-password":
+        container["environment"].append({"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD", "value": "x"})
+        match = "conflicting ClickHouse record-read"
+    elif conflict == "user-secret":
+        container["secrets"].append({"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER", "valueFrom": READER_ARN})
+        match = "conflicting ClickHouse record-read"
+    elif conflict == "backend-secret":
+        container["secrets"].append({"name": "TR_RECORD_READ_BACKEND", "valueFrom": READER_ARN})
+        match = "conflicting ClickHouse record-read"
     else:
-        assert "TR_ECS_ALLOW_RECORD_READ_ROLLBACK=true" in result.stderr
-        assert list(registrations) == ["eu-west-1"]
+        container["secrets"].append(dict(password))
+        match = "duplicate secret references"
+    with pytest.raises(ValueError, match=match):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
+
+
+def test_clickhouse_record_reads_add_the_reader_secret_when_none_is_cloned() -> None:
+    payload = task_definition("eu-west-3")
+    container = _paris_clickhouse(payload)
+    container["secrets"] = [
+        s for s in container["secrets"] if s["name"] != "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
+    ]
+    others = copy.deepcopy(container["secrets"])
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
+    secrets = result["containerDefinitions"][0]["secrets"]
+    assert secrets == [*others, {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD", "valueFrom": READER_ARN}]
 
 
 @pytest.mark.parametrize("fault", ["no_url", "lookup_failed", "missing_arn"])
