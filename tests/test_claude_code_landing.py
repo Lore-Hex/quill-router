@@ -48,7 +48,7 @@ def test_vibe_coders_landing_is_indexed_and_claude_alias_redirects(
     assert alias.headers["location"] == "/vibe-coders"
 
 
-def test_api_key_reveal_leads_with_a_complete_agent_chat_message(
+def test_api_key_reveal_saves_key_before_request_and_app_setup(
     client: TestClient,
 ) -> None:
     user = STORE.ensure_user("claude-code-landing@example.com")
@@ -67,7 +67,7 @@ def test_api_key_reveal_leads_with_a_complete_agent_chat_message(
 
     assert response.status_code == 200
     assert (
-        "Paste this into your coding agent."
+        "Save your key"
         in response.text
     )
     assert (
@@ -75,8 +75,8 @@ def test_api_key_reveal_leads_with_a_complete_agent_chat_message(
         'of France?"'
         in response.text
     )
-    assert response.text.index("Paste this into your coding agent.") < response.text.index(
-        "Your TrustedRouter API key"
+    assert response.text.index("Save your key") < response.text.index(
+        "Try a request"
     )
     assert "Call https://api.trustedrouter.com/v1" not in response.text
     assert "stream the answer into this chat as it arrives" not in response.text

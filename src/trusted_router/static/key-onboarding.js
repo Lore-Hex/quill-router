@@ -7,26 +7,9 @@
   const key = find('onboarding-key').textContent.trim();
   const base = root.dataset.apiBase.replace(/\/$/, '');
   const agentPrompt = find('setup-code').textContent;
-  const activate = name => {
-    for (const tab of ['app', 'try']) {
-      find(`${tab}-tab`).setAttribute('aria-selected', String(tab === name));
-      find(`${tab}-tab`).tabIndex = tab === name ? 0 : -1;
-      find(`${tab}-pane`).hidden = tab !== name;
-    }
-  };
-  for (const name of ['app', 'try']) {
-    find(`${name}-tab`).addEventListener('click', () => activate(name));
-    find(`${name}-tab`).addEventListener('keydown', event => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault();
-      const next = event.key === 'Home' ? 'try' : event.key === 'End' ? 'app' : name === 'app' ? 'try' : 'app';
-      activate(next);
-      find(`${next}-tab`).focus();
-    });
-  }
   async function copy(button, text, status) {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       button.querySelector('span').textContent = 'Copied';
       status.textContent = 'Copied to clipboard';
       status.classList.remove('ux-error');

@@ -109,18 +109,10 @@
     if (keyCard) {
       keyCard.hidden = !state.eligible || !state.enabled;
       const claimed = (state.actions || []).filter((action) => action.claimed).length;
-      keyCard.querySelector("[data-rewards-key-title]").textContent = total > 0 && claimed === total
-        ? "All available rewards claimed." : !state.enabled ? "Rewards are paused."
-          : claimed ? "Keep earning extra tokens." : "Earn extra API credit.";
-      keyCard.querySelector("[data-rewards-key-description]").textContent = total > 0 && claimed === total
-        ? "All available rewards have been added to your signup workspace."
-        : !state.enabled ? "Your progress is saved. Check back to finish your rewards."
-          : claimed ? `${total - claimed} rewards left to claim. Pick up where you left off.`
-            : "Earn API credit by following us on social.";
       const opener = keyCard.querySelector("[data-rewards-open]");
       const label = opener.querySelector("[data-rewards-label]") || opener;
       label.textContent = total > 0 && claimed === total || !state.enabled
-        ? "View rewards" : opener.hasAttribute("data-rewards-compact") ? "Earn API credit for a follow" : "Earn extra tokens";
+        ? "View rewards" : "Earn API credit for a follow";
     }
     openers.forEach((button) => { button.hidden = !(state.eligible && state.enabled); });
     if (!state.enabled && dialog.open) dialog.close();
@@ -242,7 +234,7 @@
     dialog.querySelector("h2").focus();
   }
   function canAutoOpen() {
-    return !document.querySelector(".console-key-reveal, [data-key-onboarding]") && !document.querySelector("dialog[open]");
+    return !document.querySelector("[data-key-onboarding]") && !document.querySelector("dialog[open]");
   }
   async function refresh(auto = false) {
     if (refreshing) { refreshAgain = true; return; }

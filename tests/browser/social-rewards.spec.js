@@ -367,14 +367,14 @@ test('API Keys invitation reflects progress, pause, completion, and eligibility'
   }
   state.actions[0].claimed = true;
   await refresh();
-  await expect(card).toContainText('4 rewards left to claim');
+  await card.getByRole('button').click();
+  await expect(page.getByText('1 of 5 rewards claimed')).toBeVisible();
   state.enabled = false;
   await refresh();
   await expect(card).not.toBeVisible();
   state.enabled = true;
   state.actions.forEach((action) => { action.claimed = true; });
   await refresh();
-  await expect(card).toContainText('All available rewards claimed.');
   await expect(card.getByRole('button')).toContainText('View rewards');
   state.eligible = false;
   await refresh();
@@ -426,7 +426,7 @@ test('four available rewards complete and a later action returns without losing 
   }));
   const { state } = await rewardsPage(page, { keys: true, state: { actions, first_call_complete: false } });
   const card = page.locator('[data-rewards-key-card]');
-  await expect(card).toContainText('All available rewards claimed.');
+  await expect(card.getByRole('button')).toContainText('View rewards');
   await card.getByRole('button').click();
   await expect(page.getByText('4 of 4 rewards claimed')).toBeVisible();
   await expect(page.locator('[data-rewards-meter]')).toHaveAttribute('max', '4');

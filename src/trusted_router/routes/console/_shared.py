@@ -12,6 +12,7 @@ re-importing helpers.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -31,6 +32,8 @@ from trusted_router.storage import (
 )
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.views import render_template
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -101,10 +104,16 @@ def render(
     if "credits_available" not in context:
         # Reuse the Credits helper: on Spanner this reads credit metadata plus
         # bounded typed shards. Credits supplies its summary to avoid duplicate reads.
-        summary = live_credit_summary(ctx.workspace.id)
-        available = summary["available"] if summary else 0
-        context["credits_available"] = format_money_display(available)
-        context["credits_empty"] = available <= 0
+        try:
+            summary = live_credit_summary(ctx.workspace.id)
+        except Exception as exc:
+            # Optional display only: never substitute a zero balance on read failure.
+            logger.warning("Console header balance unavailable: %s", type(exc).__name__)
+            context["credits_available"] = None
+        else:
+            available = summary["available"] if summary else 0
+            context["credits_available"] = format_money_display(available)
+            context["credits_empty"] = available <= 0
     return render_template(
         template,
         # Every console stylesheet and script must change URL with the release.
