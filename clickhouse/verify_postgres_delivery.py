@@ -291,6 +291,16 @@ class ClickHouseGenerationSource(OperationalAnalyticsClient):
         )
 
 
+def clickhouse_from_env(password: str) -> ClickHouseGenerationSource:
+    """The ClickHouse reader for the drain's environment (or a read override)."""
+    return ClickHouseGenerationSource(
+        base_url=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_URL", "http://127.0.0.1:8123"),
+        user=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_USER", "tr"),
+        password=password,
+        database=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_DATABASE", "tr"),
+    )
+
+
 def verify_delivery(
     source: PostgresGenerationSource,
     clickhouse: ClickHouseGenerationSource,
@@ -425,12 +435,7 @@ def main() -> int:
     try:
         result = verify_delivery(
             source,
-            ClickHouseGenerationSource(
-                base_url=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_URL", "http://127.0.0.1:8123"),
-                user=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_USER", "tr"),
-                password=password,
-                database=os.environ.get(f"{CLICKHOUSE_ENV_PREFIX}_DATABASE", "tr"),
-            ),
+            clickhouse_from_env(password),
             start=start,
             end=end,
             limit=args.limit,

@@ -78,7 +78,9 @@ ClickHouse URL and password, so standby regions without a reader stay on `postgr
 Monitor workspace activity p50/p99, drain lag, the delivery verifier and
 `/activity` 5xx before advancing to Azure. Set the backend back to `postgres`
 to restore today's behaviour; record and outbox writes continue in either
-mode, and Postgres activity repair remains unimplemented until R4.
+mode. Generations that never reached ClickHouse are re-enqueued with
+`clickhouse.repair_postgres_activity` (see
+[Repairing missing Postgres activity](#repairing-missing-postgres-activity)).
 
 For AWS ECS, `EXPECTED_RECORD_READ_BACKEND` in `aws_ecs_control_plane.sh`
 is the switch, overridable with `TR_RECORD_READ_BACKEND_EU_WEST_3` and
@@ -535,6 +537,124 @@ PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
 Use `--start 2026-10-18T00:00:00Z --end 2026-10-19T00:00:00Z` for a fixed
 window. The verifier does not repair records, delete outbox rows, or change
 settlement writes.
+
+### Repairing missing Postgres activity
+
+`clickhouse.repair_postgres_activity` is the Postgres counterpart of the
+Spanner-only `trusted_router.activity_delivery_repair_cli`. It finds the
+generation entities that ClickHouse `activity_generations` does not hold and
+inserts each one's activity row into `tr_operational_analytics_outbox`. The
+drain then delivers them like any other row, to every configured node.
+
+- **What it repairs.** Either a `created_at` window (`--start`, inclusive, and
+  `--end`, exclusive), or the ids given with `--generation-id` (repeatable).
+  Discovery uses the delivery verifier's own readers, so "missing" means what
+  the verifier means, including `--grace-seconds` (default 300): a row still
+  inside the grace counts as `pending` and is left for the drain. `--scan-limit`
+  (default 1,000,000) bounds the primary-key scan, as in the verifier. If it is
+  hit, `complete` is false and the run exits 1.
+- **What it writes.** It calls the settle path's own
+  `PostgresOperationalAnalyticsOutbox.enqueue_activity_tx` on the stored
+  `Generation`. So the payload, shard and stable event id are the ones settle
+  writes, under the same `ON CONFLICT DO NOTHING`. Re-running it while a row is
+  still queued is a no-op. After the drain has taken a row, a re-run delivers it
+  again, and `ReplacingMergeTree` collapses the copy. The tool writes outbox
+  rows and nothing else. It never deletes anything, and it never touches
+  settlement, reservation or balance rows.
+- **Entities older than a field.** A stored body decodes exactly as
+  `PostgresStore` reads it, and a missing key takes the `Generation` default.
+  The August 2026 entities predate the client and `synthetic` fields
+  (2026-08-17), `app_id` (2026-08-26), and the markup amounts (2026-08-27 and
+  2026-09-02). They get `app_id` null, both markups 0, `synthetic` false and
+  null client fields. That is what those generations were: no registered app,
+  no markup charged, no client context recorded. Nothing is invented.
+- **Safety.** Dry run is the default and writes nothing. `--apply` writes.
+  `--limit` (default 500) bounds one run. When more remain, the output carries
+  `next_after_id` and `resume`; run the same command again with
+  `--after-id <next_after_id>`. Output is one JSON line of counts and at most 20
+  ids (`selected_ids`, `not_found_ids`). It never prints row values, payloads
+  or driver error text. A failure prints only `{"ok": false, "error": "<class>"}`.
+  It exits 0 only when coverage was complete and every selected id was found.
+
+**Privileges: operator-run, as the DSQL admin.** The repair must read whole
+generation entities from `tr_entities` and INSERT into the outbox. No scoped
+role has both: `tr_drain` holds SELECT and DELETE on the outbox, and
+`tr_verifier` holds SELECT on a narrow view. Creating a standing role that can
+read every generation body, for a one-off, would widen the plane for good. So
+an operator runs the repair as `admin`, the role the control plane already uses
+to write these rows at settle. The admin token is minted in the process from
+the operator's own AWS identity, which needs `dsql:DbConnectAdmin`. It is never
+printed and never stored on disk. The run happens on the operator's machine,
+not on the ClickHouse node: that node must not hold an admin-equivalent
+credential (see the drain module's docstring). ClickHouse is reached through an
+SSM port forward, using the drain's `default` credential. The read-only
+`tr_control_read` profile runs with `readonly=1`, which rejects the
+`max_rows_to_read` and `max_execution_time` bounds every verifier query sets.
+The repair sends ClickHouse only those bounded SELECTs. The Spanner tool is
+likewise operator-run with the application's credentials.
+
+AWS Paris, from a checkout of a commit that carries the tool, after
+`uv sync --frozen`. You need the AWS CLI with the Session Manager plugin.
+`<cluster>` is `CLUSTER_ID` in `scripts/deploy/aws_eu_clickhouse_drain_install.sh`.
+
+```bash
+# Terminal 1: forward the Paris node's ClickHouse HTTP port to localhost:18123.
+INSTANCE_ID="$(aws ec2 describe-instances --region eu-west-3 \
+  --filters Name=tag:Name,Values=tr-eu-clickhouse-1 Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].InstanceId' --output text)"
+aws ssm start-session --region eu-west-3 --target "$INSTANCE_ID" \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["8123"],"localPortNumber":["18123"]}'
+
+# Terminal 2: the environment. No secret is put in argv or on disk.
+export TR_POSTGRES_DSN='host=<cluster>.dsql.eu-west-3.on.aws port=5432 user=admin dbname=postgres sslmode=require'
+export TR_POSTGRES_IAM_AUTH=aws-dsql TR_POSTGRES_IAM_REGION=eu-west-3
+export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=http://127.0.0.1:18123
+export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=default TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=default
+export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD="$(aws secretsmanager get-secret-value \
+  --region eu-west-3 --secret-id quill/tr-eu-clickhouse-password --query SecretString --output text)"
+
+# Use the same window as the verifier run that counted the gap (here the
+# plane's whole history), so the dry run's "missing" equals that count before
+# anything is applied; a narrower window can leave ids outside it.
+# Dry run: counts and the first ids. Writes nothing.
+PYTHONPATH=src uv run python -m clickhouse.repair_postgres_activity \
+  --start 2026-06-01T00:00:00Z --end <the verifier run's end, UTC>
+
+# Apply, at most --limit per run. Repeat with --after-id <next_after_id> while
+# the output names one.
+PYTHONPATH=src uv run python -m clickhouse.repair_postgres_activity \
+  --start 2026-06-01T00:00:00Z --end <the verifier run's end, UTC> --apply
+
+unset TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD
+```
+
+Each run scans all generation history through the primary key, as the
+verifier does, and checks every in-window id against ClickHouse.
+
+**Confirm.** After the apply, wait until the drain has emptied the outbox
+(`analytics.drain_lag_seconds` back to its usual level), then run the dry run
+again: `missing` must be 0. The proof is a clean wide-window verifier run on
+the node, in the same environment as the timer, covering the whole repaired
+window:
+
+```bash
+sudo systemd-run --pipe --wait --quiet -p User=tr-clickhouse-ingest \
+  -p WorkingDirectory=/opt/tr-clickhouse \
+  -p EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env \
+  -p EnvironmentFile=/etc/tr-clickhouse-postgres-delivery.env \
+  /opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_postgres_delivery \
+  --start 2026-08-01T00:00:00Z --end <now, UTC> --limit 1000000 --scan-limit 1000000 \
+  --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-repair.jsonl
+```
+
+It must print `"ok": true` with `complete: true` and `missing`, `extra`,
+`mismatched` and `duplicated` all 0. `--limit` has to exceed the number of
+generations in the window, or the run reports `complete: false`. The
+ClickHouse read ceiling of 1,000,000 rows per query applies, as described
+above. The repair and the verifier each check one node. Check the Stockholm
+copy separately, as the verifier section says. If Stockholm lacks rows that
+Paris holds, run the repair with the port forward pointed at the Stockholm node.
 
 ## Restore procedures
 
