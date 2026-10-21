@@ -191,8 +191,16 @@ def test_expired_gets_its_own_copy() -> None:
     assert guidance.detail != _DECLINED_MESSAGE
 
 
-def test_console_page_shows_neutral_copy_for_a_declined_user() -> None:
+def test_console_page_shows_neutral_copy_for_a_declined_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Render the actual page: the reason must not be in the HTML."""
+    # Asset timestamps can contain 518 (as in local-1792565182 in CI).
+    # Keep the privacy assertion over the full HTML without a random version.
+    monkeypatch.setattr(
+        "trusted_router.routes.console._shared._static_version",
+        lambda _settings: "identity-guidance-test",
+    )
     client, user = _client_and_user("decline-console@example.com")
     raw = _payload(
         status="declined",
@@ -207,11 +215,10 @@ def test_console_page_shows_neutral_copy_for_a_declined_user() -> None:
     assert page.status_code == 200
     body = page.text
     assert "device screen" not in body.lower()
-    # The workspace selector contains an opaque UUID. Ignore that known ID so
-    # a random UUID segment such as ``a518...`` cannot masquerade as a leaked
-    # Veriff reason code while the rest of the rendered HTML stays covered.
+    # Workspace navigation and rewards contain opaque IDs, not reason codes.
+    # Ignore only these known IDs; all other rendered HTML stays covered.
     workspace_id = STORE.list_workspaces_for_user(user.id)[0].id
-    assert "518" not in body.replace(workspace_id, "")
+    assert "518" not in body.replace(workspace_id, "").replace(user.id, "")
     stored = STORE.get_user(user.id)
     assert stored is not None and stored.veriff_decision_reason is not None
     assert stored.veriff_decision_reason.lower() not in body.lower()
