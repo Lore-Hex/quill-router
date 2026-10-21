@@ -57,7 +57,7 @@ from trusted_router.detached_jws import canonical
 from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.storage_gcp_async_admission import read_admission
 from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
-from trusted_router.storage_gcp_shadow_io import observe_spanner_rpcs, rpc_scope
+from trusted_router.storage_gcp_shadow_io import SessionUnavailable, observe_spanner_rpcs, rpc_scope
 from trusted_router.storage_gcp_shadow_observation import (
     FLUSH_SECONDS,
     Budget,
@@ -440,14 +440,14 @@ def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherR
     return PublisherReply(trace, (), False, job.generation, job.latest_start_mono)
 
 
-def follower_stagger(boot: str, slot: int) -> float:
-    bucket = int.from_bytes(hashlib.sha256(f"{boot}:{slot}".encode()).digest()[:8], "big") % 3
-    return (60 + 30 * bucket) / 1000
+def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> float:
+    hashed = int.from_bytes(hashlib.sha256(f"{boot}:{slot}".encode()).digest()[:8], "big")
+    return (60 + 30 * (hashed % 3) if incumbent_present else 30 * (hashed % 8)) / 1000
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
                   job: lifecycle.PublisherJob, claim_us: int, admission: Service,
-                  incumbent: bool = False) -> PublisherReply:
+                  incumbent: bool = False, incumbent_present: bool = False) -> PublisherReply:
     """Worker I/O only. All inputs are captured by the owner before submission."""
     started = store.clock()
     slot = job.slot
@@ -467,6 +467,14 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         rpc_durations.append(elapsed)
     def attempt() -> None:
         nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason
+        if not store.session_ready():
+            reason = "session_unavailable"
+            return
+        # A timer can wake before the previous actual start plus two seconds.
+        # Wait within this slot instead of discarding an otherwise valid window.
+        delay = job.earliest_start_mono - store.clock()
+        if delay > 0 and job.earliest_start_mono <= job.latest_start_mono:
+            sleep(delay)
         # Scope setup may sample time or be delayed. Admission happens AFTER it.
         with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
             if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
@@ -485,7 +493,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             finally:
                 admission.admission_lock.release()
             if not incumbent:
-                sleep(follower_stagger(boot, slot))
+                sleep(follower_stagger(boot, slot, incumbent_present))
                 # The admitted start and budget include the stagger. Recheck the
                 # owner before any I/O; a retired job remains a missed slot.
                 if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
@@ -501,6 +509,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                         return
                 finally:
                     admission.admission_lock.release()
+            if not store.session_ready():
+                reason = "session_unavailable"
+                return
             attempted, outcome = True, "failures"
             if not incumbent:
                 current = store.read_shadow_claim(budget)
@@ -521,6 +532,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     try:
         attempt()
     except Exception as error:
+        if isinstance(error, SessionUnavailable) and not rpc_durations:
+            attempted, outcome, reason = False, "missed_slots", "session_unavailable"
         unknown = isinstance(error, UnknownCommit)
         if isinstance(error, ContentionLoss) and not claimed:
             outcome = "lost_claims"
@@ -600,6 +613,8 @@ class Service:
         self.last_claim_start = float("-inf")
         self.stopped = asyncio.Event()
         self.evidence_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-evidence")
+        self.session_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-session")
+        self.session_job: Future[bool] | None = None
         self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
         self.task: asyncio.Task[None] | None = None
         self.publisher_job: asyncio.Future[Any] | None = None
@@ -718,12 +733,19 @@ class Service:
         if job is None or job.slot != slot:
             return
         reply = publish_cycle(self.store, self.journal.boot, self.settings.effective_serving_region,
-            self.settings.source_revision, job, claim_us, self, self.is_incumbent(slot))
+            self.settings.source_revision, job, claim_us, self, self.is_incumbent(slot), self.has_incumbent(slot))
         self.publisher_reply(reply)
 
     def is_incumbent(self, slot: int) -> bool:
         self.assert_owner()
         return self.incumbent_slot in (slot-1, slot-2)
+
+    def has_incumbent(self, slot: int) -> bool:
+        """Recent installed health is a timing hint, never claim authority."""
+        self.assert_owner()
+        health = self.observer.health
+        return self.is_incumbent(slot) or bool(health is not None
+            and health["body"]["slot"] in (slot-1, slot-2))
 
     def publisher_reply(self, reply: PublisherReply, *,
                         job: lifecycle.PublisherJob | None = None) -> tuple[lifecycle.Effect, ...]:
@@ -1341,7 +1363,7 @@ class Service:
         if job is None or job.slot != slot:
             return
         args = (self.store, self.journal.boot, self.settings.effective_serving_region,
-                self.settings.source_revision, job, stamp, self, self.is_incumbent(slot))
+                self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot))
         if (self.publisher_worker is not None and not self.publisher_worker.cancelled()
                 and self.publisher_worker_active.is_set()):
             # A watchdog cannot stop a running thread. Keep the one-worker
@@ -1391,6 +1413,8 @@ class Service:
         self.assert_owner()
         self.loop = asyncio.get_running_loop()
         while not self.stopped.is_set() and self.enabled():
+            if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
+                self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
             now = self.store.clock()
             now_us = int(self.store.wall()*1_000_000)
             for effect in self.tick(now_us):
@@ -1516,6 +1540,7 @@ class Service:
             self.unclosed |= bool(self.journal.days)
             if self.signal_handler is not None and signal.getsignal(signal.SIGTERM) is self.signal_handler:
                 signal.signal(signal.SIGTERM, self.previous_signal_handler)
+            self.session_executor.shutdown(wait=False, cancel_futures=True)
             self.publisher_executor.shutdown(wait=False, cancel_futures=True)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
 
@@ -1524,7 +1549,9 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     if (settings.async_settle_shadow_policy != POLICY or not settings.async_settle_shadow_workspace_ids
             or settings.async_settle_enabled or backend is None or not hasattr(backend, "_database")):
         return
-    service = Service(settings, ObservationStore(backend._database))
+    store = ObservationStore(backend._database)
+    service = Service(settings, store)
+    store.prepare_session(service.journal.boot)
     app.state.async_settle_shadow_observation = service
     @app.on_event("startup")
     async def start() -> None:
