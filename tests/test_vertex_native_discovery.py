@@ -112,6 +112,63 @@ def test_vertex_future_model_names_need_no_release_mapping() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "day,expected",
+    [(date(2026, 10, 21), 2_000_000), (date(2026, 11, 30), 2_000_000),
+     (date(2026, 12, 1), 4_000_000)],
+)
+def test_vertex_argon_live_flat_tables_and_promotion(day: date, expected: int) -> None:
+    html = (Path(__file__).parent / "fixtures/pricing/vertex_argon.html").read_text()
+    price = vertex_prices.parse(html, as_of=day)["google/gemini-4-argon"]
+    assert len(price.tiers) == 1
+    assert price.prompt_micro_per_m == expected
+    assert price.completion_micro_per_m == expected * 5
+    assert price.tiers[0].prompt_cached_micro_per_m == expected // 20
+    assert "google/gemini-4-argon-cyber-permissive" not in vertex_prices.parse(html, as_of=day)
+
+
+def test_vertex_flat_prices_require_identified_standard_tab() -> None:
+    html = (Path(__file__).parent / "fixtures/pricing/vertex_argon.html").read_text()
+    # Reordering, selected tabs, and their numeric ids are not billing evidence.
+    html = html.replace("Standard Model", "Batch").replace("data-tab-panel-active=\"true\"", "")
+    with pytest.raises(ValueError, match="no standard global"):
+        vertex_prices.parse(html)
+
+
+def test_vertex_argon_recovers_unsupported_hold_only_after_canary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "google/gemini-4-argon"
+    manifest = tmp_path / "google-vertex.json"
+    manifest.write_text(json.dumps({"provider": "google-vertex", "models": [{
+        "id": model, "upstream_id": "gemini-4-argon", "routable": False,
+        "routable_reason": "unsupported-vertex-api",
+    }]}))
+    monkeypatch.setattr(vertex, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(vertex, "_authorization", lambda: ({}, "project"))
+    monkeypatch.setattr(vertex, "_live_model_ids", lambda headers: {"gemini-4-argon"})
+    monkeypatch.setattr(vertex, "_metadata", lambda: {
+        model: {"context_length": 1_048_576, "max_output_tokens": 32_768},
+    })
+    html = (Path(__file__).parent / "fixtures/pricing/vertex_argon.html").read_text()
+    monkeypatch.setattr(vertex, "fetch_html", lambda url: html)
+    monkeypatch.setattr(vertex, "parse", lambda html: vertex_prices.parse(html, as_of=date(2026, 10, 21)))
+    probes: list[str] = []
+
+    def probe(headers: dict[str, str], project: str, native_id: str) -> tuple[bool, int]:
+        probes.append(native_id)
+        return True, 200
+
+    monkeypatch.setattr(vertex, "_probe", probe)
+    result = vertex.fetch()
+    vertex.write_provider_manifest(result)
+    row = json.loads(manifest.read_text())["models"][0]
+    assert probes == ["gemini-4-argon"]
+    assert row["routable"] is True
+    assert "routable_reason" not in row
+    assert row["input_token_price_per_m"] == 2_000_000
+
+
 def test_vertex_discovery_paginates_and_rejects_incomplete_feed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
