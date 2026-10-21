@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
+from trusted_router import authorize_candidates
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -394,7 +395,7 @@ def test_concurrent_replay_returns_stored_response(
     race: Any, backend: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, *_ = backend
-    original_routes = gateway.chat_route_endpoint_candidates
+    original_routes = authorize_candidates.chat_route_endpoint_candidates
     original_create = type(store).create_gateway_authorization
     routes: list[Any] = []
     attempts: list[dict[str, Any]] = []
@@ -411,9 +412,9 @@ def test_concurrent_replay_returns_stored_response(
         attempts.append(kwargs)
         return original_create(self, **kwargs)
 
-    monkeypatch.setattr(gateway, "chat_route_endpoint_candidates", drifting_routes)
+    monkeypatch.setattr(authorize_candidates, "chat_route_endpoint_candidates", drifting_routes)
     monkeypatch.setattr(
-        gateway, "_endpoint_cost_microdollars",
+        authorize_candidates, "endpoint_cost_microdollars",
         lambda *args, **kwargs: 2_000 if len(routes) == 1 else 1_000,
     )
     monkeypatch.setattr(type(store), "create_gateway_authorization", record_create)
