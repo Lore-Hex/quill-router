@@ -18,8 +18,9 @@ from trusted_router.catalog import (
 )
 
 MODELS = (
+    # Tinfoil's live catalog identifies this stable route as the 1017 revision.
+    ("deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash 1017"),
     ("z-ai/glm-5.3-flash", "GLM 5.3 Flash"),
-    ("deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash"),
     ("openai/gpt-oss-120b", "GPT OSS 120B"),
 )
 PROFILES = {
