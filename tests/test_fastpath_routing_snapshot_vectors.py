@@ -28,6 +28,8 @@ from trusted_router.routing_snapshot import (
 )
 from trusted_router.routing_snapshot_signing import (
     PURPOSE,
+    TEST_KID,
+    TEST_PUBLIC_KEY_B64URL,
     RoutingSnapshotSigner,
     verify_manifest,
 )
@@ -46,6 +48,14 @@ def _generator() -> ModuleType:
 
 
 GENERATOR = _generator()
+GOLDEN_PLANE = Plane(cloud="gcp", region="us-central1")
+
+
+def _verify(token: str, keys: list[TrustedKey], body: bytes, *, now: int, **overrides):  # type: ignore[no-untyped-def]
+    """The golden verifier: this plane, the test audience, test mode on."""
+    arguments = {"expected_plane": GOLDEN_PLANE, "expected_aud": GENERATOR.TEST_KEY.aud,
+                 "allow_test_key": True, **overrides}
+    return verify_manifest(token, keys, body, now=now, **arguments)
 
 
 def _body() -> bytes:
@@ -76,7 +86,7 @@ def test_the_manifest_verifies_and_binds_the_body() -> None:
     key = TrustedKey(manifest["kid"], manifest["purpose"], manifest["public_key_b64url"],
                      manifest["iss"], manifest["aud"])
     snapshot = parse_routing_snapshot(body)
-    claims = verify_manifest(manifest["jws"], [key], body, now=snapshot.compiled_at)
+    claims = _verify(manifest["jws"], [key], body, now=snapshot.compiled_at)
     assert claims.sha256 == hashlib.sha256(body).hexdigest() and claims.size == len(body)
     assert (claims.compiled_at, claims.not_after) == (snapshot.compiled_at, snapshot.not_after)
     assert claims.plane == snapshot.plane and claims.source_revision == "golden-fixture"
@@ -88,6 +98,47 @@ def test_the_manifest_key_is_the_named_test_key() -> None:
     assert manifest["test_key"] is True and "test" in manifest["kid"]
     assert manifest["public_key_b64url"] == b64encode(derived.public_bytes_raw())
     assert manifest["purpose"] == PURPOSE == "routing-snapshot"
+    assert (manifest["kid"], manifest["public_key_b64url"]) == (TEST_KID, TEST_PUBLIC_KEY_B64URL)
+
+
+def test_verification_binds_the_verifiers_plane_and_audience() -> None:
+    body, manifest, key = _body(), _manifest(), GENERATOR.TEST_KEY
+    now = parse_routing_snapshot(body).compiled_at
+    # Positive control: this plane and this audience verify.
+    _verify(manifest["jws"], [key], body, now=now)
+    with pytest.raises(ValueError, match="manifest plane"):
+        _verify(manifest["jws"], [key], body, now=now,
+                expected_plane=Plane(cloud="gcp", region="europe-west4"))
+    with pytest.raises(ValueError, match="manifest plane"):
+        _verify(manifest["jws"], [key], body, now=now,
+                expected_plane=Plane(cloud="aws", region="us-central1"))
+    with pytest.raises(ValueError, match="manifest audience"):
+        _verify(manifest["jws"], [key], body, now=now, expected_aud="tr-other-consumer")
+
+
+def test_the_public_test_key_is_refused_outside_test_mode() -> None:
+    body, manifest, key = _body(), _manifest(), GENERATOR.TEST_KEY
+    now = parse_routing_snapshot(body).compiled_at
+    private = Ed25519PrivateKey.from_private_bytes(GENERATOR.TEST_KEY_SEED)
+    with pytest.raises(ValueError, match="test key"):
+        _verify(manifest["jws"], [key], body, now=now, allow_test_key=False)
+    with pytest.raises(ValueError, match="test key"):
+        RoutingSnapshotSigner(private, key)
+    # The public key under another kid, and the kid over another key, are refused too.
+    renamed = TrustedKey("routing-snapshot-prod-1", key.purpose, key.public_key_b64url,
+                         key.iss, key.aud)
+    with pytest.raises(ValueError, match="test key"):
+        RoutingSnapshotSigner(private, renamed)
+    other = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    reused_kid = TrustedKey(TEST_KID, key.purpose,
+                            b64encode(other.public_key().public_bytes_raw()), key.iss, key.aud)
+    with pytest.raises(ValueError, match="test key"):
+        RoutingSnapshotSigner(other, reused_kid)
+    # Positive control: a non-test key signs and verifies without test mode.
+    production = TrustedKey("routing-snapshot-prod-1", key.purpose,
+                            b64encode(other.public_key().public_bytes_raw()), key.iss, key.aud)
+    token = RoutingSnapshotSigner(other, production).sign(body)
+    _verify(token, [production], body, now=now, allow_test_key=False)
 
 
 def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
@@ -97,30 +148,30 @@ def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
     now = snapshot.compiled_at
     # Positive control: the untouched pair verifies at every instant of the window.
     for instant in (now, snapshot.not_after - 1):
-        verify_manifest(manifest["jws"], [key], body, now=instant)
+        _verify(manifest["jws"], [key], body, now=instant)
     altered = body.replace(b'"golden-fixture"', b'"golden-fixturf"')
     assert altered != body
     with pytest.raises(ValueError, match="manifest binding"):
-        verify_manifest(manifest["jws"], [key], altered, now=now)
+        _verify(manifest["jws"], [key], altered, now=now)
     with pytest.raises(ValueError, match="not canonical"):
-        verify_manifest(manifest["jws"], [key], body + b"\n", now=now)
+        _verify(manifest["jws"], [key], body + b"\n", now=now)
     with pytest.raises(ValueError, match="freshness"):
-        verify_manifest(manifest["jws"], [key], body, now=snapshot.not_after)
+        _verify(manifest["jws"], [key], body, now=snapshot.not_after)
     with pytest.raises(ValueError, match="freshness"):
-        verify_manifest(manifest["jws"], [key], body, now=now - 1)
+        _verify(manifest["jws"], [key], body, now=now - 1)
     other = Ed25519PrivateKey.from_private_bytes(bytes(32)).public_key().public_bytes_raw()
     impostor = TrustedKey(key.kid, key.purpose, b64encode(other), key.iss, key.aud)
     with pytest.raises(JWSError, match="signature"):
-        verify_manifest(manifest["jws"], [impostor], body, now=now)
+        _verify(manifest["jws"], [impostor], body, now=now)
     wrong_purpose = TrustedKey(key.kid, "async-settle-ticket", key.public_key_b64url,
                                key.iss, key.aud)
     with pytest.raises(JWSError, match="purpose"):
-        verify_manifest(manifest["jws"], [wrong_purpose], body, now=now)
+        _verify(manifest["jws"], [wrong_purpose], body, now=now)
     head, payload, signature = manifest["jws"].split(".")
     flipped = base64.urlsafe_b64decode(signature + "==")
     forged = head + "." + payload + "." + b64encode(bytes([flipped[0] ^ 1]) + flipped[1:])
     with pytest.raises(JWSError, match="signature"):
-        verify_manifest(forged, [key], body, now=now)
+        _verify(forged, [key], body, now=now)
 
 
 def test_the_signer_refuses_a_key_shared_with_another_purpose() -> None:
@@ -128,20 +179,21 @@ def test_the_signer_refuses_a_key_shared_with_another_purpose() -> None:
     key = GENERATOR.TEST_KEY
     # Positive control: an unrelated reserved key is accepted.
     unrelated = Ed25519PrivateKey.from_private_bytes(bytes(32)).public_key().public_bytes_raw()
-    RoutingSnapshotSigner(private, key, reserved=[
+    RoutingSnapshotSigner(private, key, allow_test_key=True, reserved=[
         TrustedKey("ticket-1", "async-settle-ticket", b64encode(unrelated), "a", "b"),
     ])
     with pytest.raises(ValueError, match="separate key"):
-        RoutingSnapshotSigner(private, key, reserved=[
+        RoutingSnapshotSigner(private, key, allow_test_key=True, reserved=[
             TrustedKey("ticket-1", "async-settle-ticket", key.public_key_b64url, "a", "b"),
         ])
     with pytest.raises(ValueError, match="separate kid"):
-        RoutingSnapshotSigner(private, key, reserved=[
+        RoutingSnapshotSigner(private, key, allow_test_key=True, reserved=[
             TrustedKey(key.kid, "async-settle-ticket", b64encode(unrelated), "a", "b"),
         ])
     with pytest.raises(ValueError, match="configuration"):
         RoutingSnapshotSigner(private, TrustedKey(key.kid, "async-settle-ticket",
-                                                  key.public_key_b64url, key.iss, key.aud))
+                                                  key.public_key_b64url, key.iss, key.aud),
+                              allow_test_key=True)
 
 
 def _endpoint(snapshot_json: dict, provider: str, usage: str = "Credits") -> dict:
@@ -223,3 +275,45 @@ def test_a_catalog_deadline_between_the_expansions_and_compiled_at_refuses() -> 
         compile_routing_snapshot(
             at=at, inputs=replace(inputs, expansions_clock=(at, deadline)), **arguments,
         )
+
+
+def test_a_retirement_between_compiled_at_and_the_import_refuses() -> None:
+    from dataclasses import replace
+
+    inputs = GENERATOR.fixture_inputs()
+    at = GENERATOR.COMPILED_AT
+    arguments = {
+        "at": at, "horizon": GENERATOR.HORIZON_SECONDS, "settings": GENERATOR.fixture_settings(),
+        "source_revision": "golden-fixture", "plane": GOLDEN_PLANE,
+    }
+    # A real retirement: DeepInfra's GPT-OSS-120B Turbo route, 2026-10-20 00:00 UTC.
+    retirement = at + 24 * HOUR
+    # Positive control: imported 12 h after compiled_at, with no retirement between.
+    compile_routing_snapshot(inputs=replace(inputs, catalog_resolved_at=at + 12 * HOUR), **arguments)
+    # Imported after the retirement, the registry no longer holds routes available at `at`.
+    with pytest.raises(SnapshotRefused, match="retirement"):
+        compile_routing_snapshot(inputs=replace(inputs, catalog_resolved_at=retirement + 1),
+                                 **arguments)
+    # A window that reaches the retirement ends there.
+    clamped = compile_routing_snapshot(**{
+        **arguments, "at": retirement - 2 * HOUR, "horizon": 6 * HOUR,
+        "inputs": replace(inputs, catalog_resolved_at=retirement - 2 * HOUR,
+                          expansions_clock=(retirement - 2 * HOUR,) * 2),
+    })
+    assert clamped.not_after == retirement
+
+
+def test_a_provider_other_than_the_catalogs_refuses() -> None:
+    from dataclasses import replace
+
+    inputs = GENERATOR.fixture_inputs()
+    arguments = {
+        "at": GENERATOR.COMPILED_AT, "horizon": GENERATOR.HORIZON_SECONDS,
+        "settings": GENERATOR.fixture_settings(), "source_revision": "golden-fixture",
+        "plane": GOLDEN_PLANE,
+    }
+    compile_routing_snapshot(inputs=inputs, **arguments)
+    providers = dict(inputs.providers)
+    providers["wafer"] = replace(providers["wafer"], provider_zero_data_retention=False)
+    with pytest.raises(SnapshotRefused, match="provider wafer"):
+        compile_routing_snapshot(inputs=replace(inputs, providers=providers), **arguments)

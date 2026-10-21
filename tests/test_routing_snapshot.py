@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import typing
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from trusted_router import catalog_data, provider_ranking, routing
+from trusted_router import catalog_data, catalog_registry, provider_ranking, routing
 from trusted_router.catalog import effective_endpoint
 from trusted_router.catalog_privacy import (
     endpoint_meets_privacy_requirement,
@@ -57,9 +58,13 @@ from trusted_router.routing_snapshot import (
 from trusted_router.stage_d import endpoint_pricing_candidate
 
 ROOT = Path(__file__).resolve().parents[1]
-AT = int(datetime(2026, 10, 19, tzinfo=UTC).timestamp())
+# Subprocess compiles pin both clocks here, so the window and the import agree.
+FIXED_AT = int(datetime(2026, 10, 19, tzinfo=UTC).timestamp())
 HORIZON = 6 * EPOCH_SECONDS
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+# The session's registry was built at the pinned lifecycle instant; compiling
+# at it is the window that instant's catalog is complete for.
+LIVE_AT = (catalog_registry.CATALOG_RESOLVED_AT.astimezone(UTC) - EPOCH) // timedelta(seconds=1)
 
 
 def _instant(seconds: int) -> datetime:
@@ -68,7 +73,7 @@ def _instant(seconds: int) -> datetime:
 
 def _compile(settings: Settings, inputs: CatalogInputs) -> RoutingSnapshotV1:
     return compile_routing_snapshot(
-        at=AT, horizon=HORIZON, settings=snapshot_settings_from(settings),
+        at=LIVE_AT, horizon=HORIZON, settings=snapshot_settings_from(settings),
         source_revision="test", plane=Plane(cloud="gcp", region="us-central1"), inputs=inputs,
     )
 
@@ -79,8 +84,24 @@ def settings() -> Settings:
 
 
 @pytest.fixture(scope="module")
-def live(settings: Settings) -> tuple[RoutingSnapshotV1, CatalogInputs]:
+def catalog_clock() -> Iterator[None]:
+    """Judge catalog freshness at LIVE_AT for this module, as production does at now.
+
+    tests/catalog_freshness_freeze.py pins the catalog clock to 2000 for the
+    session while the lifecycle clock is the session start (or, in CI's
+    post-cutover job, past every cutover). The compiler rightly refuses a
+    manifest deadline between the two, so this module puts both clocks at one
+    instant; the routing functions the tests compare against see it too.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(catalog_data, "_utc_now", lambda: _instant(LIVE_AT))
+        yield
+
+
+@pytest.fixture(scope="module")
+def live(settings: Settings, catalog_clock: None) -> tuple[RoutingSnapshotV1, CatalogInputs]:
     inputs = CatalogInputs.live(settings)
+    assert inputs.catalog_resolved_at == LIVE_AT
     return _compile(settings, inputs), inputs
 
 
@@ -106,10 +127,12 @@ def test_every_epoch_price_is_the_effective_endpoint_price_at_that_instant(live)
     hours = range(snapshot.compiled_at, snapshot.not_after, EPOCH_SECONDS)
     coarse = sorted({*hours, *(h + 1_800 for h in hours), snapshot.not_after - 1})
     fine = range(snapshot.compiled_at, snapshot.not_after, 900)
-    scheduled = 0
+    scheduled = changing = 0
     for entry in snapshot.endpoints:
         endpoint = raw[entry.id]
         scheduled += len(entry.epochs) > 1
+        start = effective_endpoint(endpoint, at=_instant(snapshot.compiled_at))
+        changing += any(effective_endpoint(endpoint, at=_instant(t)) != start for t in fine)
         for t in fine if len(entry.epochs) > 1 else coarse:
             epoch = _epoch_at(entry, t)
             effective = effective_endpoint(endpoint, at=_instant(t))
@@ -120,8 +143,9 @@ def test_every_epoch_price_is_the_effective_endpoint_price_at_that_instant(live)
                 effective.prompt_price_microdollars_per_million_tokens,
                 effective.completion_price_microdollars_per_million_tokens,
             ), (entry.id, t)
-    # Positive control: the window holds the real weekday peaks (Monday 01:00 UTC).
-    assert scheduled > 0
+    # An endpoint lists several epochs exactly when its price moves in the window.
+    # (tests/test_fastpath_routing_snapshot_vectors.py holds a window with real peaks.)
+    assert scheduled == changing
 
 
 def test_availability_is_the_catalog_deadline_and_the_retirement(live) -> None:
@@ -176,6 +200,54 @@ def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> Non
             assert available == provider_model_available_from_gateway_region(
                 endpoint.provider, endpoint.model_id, region,
             ), (entry.id, region)
+
+
+def _gateway_region(settings: Any, rule: Any, body_region: str | None) -> str:
+    """The region authorize checks: the request's own, even when unconfigured."""
+    chosen = body_region if body_region in settings.regions else settings.primary_region
+    return body_region or ("" if rule.requires_explicit_origin else chosen)
+
+
+def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> None:
+    import inspect
+
+    from trusted_router.catalog_data import ModelEndpoint
+    from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
+    from trusted_router.routes.internal import gateway
+    from trusted_router.routing_snapshot import _gateway_regions
+
+    # The rule this test models, as gateway.py writes it today.
+    source = inspect.getsource(gateway._authorize_gateway_sync_impl)
+    assert "region = choose_region(settings, body.region or None)" in source
+    assert 'body.region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region)' in source
+    us_only = Settings(environment="test", regions="us-central1,us-east4",
+                       primary_region="us-central1")
+    settings = snapshot_settings_from(us_only)
+    assert "europe-west4" not in settings.regions
+    assert choose_region(us_only, "europe-west4") == "us-central1"
+    # Sakana's europe-west4 exclusion holds for a request naming that region,
+    # though this plane would choose us-central1 for it.
+    fugu = ModelEndpoint(id=f"{SAKANA_FUGU_MODEL_ID}@sakana/prepaid",
+                         model_id=SAKANA_FUGU_MODEL_ID, provider="sakana", usage_type="Credits")
+    rule = _gateway_regions(fugu)
+    region = _gateway_region(settings, rule, "europe-west4")
+    assert region == "europe-west4" and region in rule.deny
+    assert not provider_model_available_from_gateway_region("sakana", SAKANA_FUGU_MODEL_ID, region)
+    assert provider_model_available_from_gateway_region("sakana", SAKANA_FUGU_MODEL_ID, "us-central1")
+    snapshot, inputs = live
+    raw = {e.id: e for e in inputs.endpoints}
+    for entry in snapshot.endpoints:
+        endpoint = raw[entry.id]
+        rule = entry.gateway_regions
+        for body_region in (None, "", "europe-west4", "us-east4", "unknown-region"):
+            checked = _gateway_region(settings, rule, body_region)
+            python = body_region or ("" if endpoint.provider == "amazon-bedrock"
+                                     else choose_region(us_only, body_region or None))
+            assert checked == python
+            available = (rule.only is None or checked in rule.only) and checked not in rule.deny
+            assert available == provider_model_available_from_gateway_region(
+                endpoint.provider, endpoint.model_id, python,
+            ), (entry.id, body_region)
 
 
 def test_endpoint_routing_and_response_fields(live) -> None:
@@ -461,40 +533,68 @@ def test_compiling_twice_gives_identical_bytes(live, settings) -> None:
     assert canonical_snapshot_bytes(_compile(settings, inputs)) == canonical_snapshot_bytes(snapshot)
 
 
+# Compiles the live catalog with the registry built at argv[3] and the catalog
+# clock at argv[3]; prints the digest and the retirement instants, or the refusal.
 _SUBPROCESS = """
-import hashlib, sys
+import hashlib, json, sys
 from datetime import UTC, datetime
+resolved = datetime.fromtimestamp(int(sys.argv[3]), UTC)
 from trusted_router import catalog_data
-catalog_data._utc_now = lambda: datetime(2000, 1, 1, tzinfo=UTC)
+catalog_data._utc_now = lambda: resolved
 from trusted_router.config import Settings
 from trusted_router import routing_snapshot as rs
 settings = Settings(environment="test")
-snapshot = rs.compile_routing_snapshot(
-    at=int(sys.argv[1]), horizon=int(sys.argv[2]), settings=rs.snapshot_settings_from(settings),
-    source_revision="test", plane=rs.Plane(cloud="gcp", region="us-central1"),
-    inputs=rs.CatalogInputs.live(settings))
-print(hashlib.sha256(rs.canonical_snapshot_bytes(snapshot)).hexdigest())
+try:
+    snapshot = rs.compile_routing_snapshot(
+        at=int(sys.argv[1]), horizon=int(sys.argv[2]), settings=rs.snapshot_settings_from(settings),
+        source_revision="test", plane=rs.Plane(cloud="gcp", region="us-central1"),
+        inputs=rs.CatalogInputs.live(settings))
+except rs.SnapshotRefused as exc:
+    print(json.dumps({"refused": str(exc)}))
+else:
+    print(json.dumps({
+        "digest": hashlib.sha256(rs.canonical_snapshot_bytes(snapshot)).hexdigest(),
+        "not_after": snapshot.not_after,
+        "retired_at": sorted({e.retired_at for e in snapshot.endpoints if e.retired_at}),
+    }))
 """
 
 
+def _compile_in_subprocess(at: int, horizon: int, resolved: int, seed: str = "0") -> dict[str, Any]:
+    env = {
+        **os.environ, "PYTHONHASHSEED": seed, "TR_ENVIRONMENT": "test",
+        "TR_LIFECYCLE_CLOCK_OVERRIDE": _instant(resolved).isoformat().replace("+00:00", "Z"),
+        "PYTHONPATH": str(ROOT / "src"),
+    }
+    result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or caller input
+        [sys.executable, "-c", _SUBPROCESS, str(at), str(horizon), str(resolved)], env=env,
+        cwd=ROOT, capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
 def test_identical_bytes_under_two_hash_seeds() -> None:
-    digests = []
-    for seed in ("0", "4242"):
-        env = {
-            **os.environ, "PYTHONHASHSEED": seed, "TR_ENVIRONMENT": "test",
-            "TR_LIFECYCLE_CLOCK_OVERRIDE": "2026-10-19T00:00:00Z",
-            "PYTHONPATH": str(ROOT / "src"),
-        }
-        result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or caller input
-            [sys.executable, "-c", _SUBPROCESS, str(AT), str(HORIZON)], env=env, cwd=ROOT,
-            capture_output=True, text=True, timeout=300, check=False,
-        )
-        assert result.returncode == 0, result.stderr
-        digests.append(result.stdout.strip())
-    assert re.fullmatch(r"[0-9a-f]{64}", digests[0]) and digests[0] == digests[1]
+    runs = [_compile_in_subprocess(FIXED_AT, HORIZON, FIXED_AT, seed) for seed in ("0", "4242")]
+    assert re.fullmatch(r"[0-9a-f]{64}", runs[0]["digest"]) and runs[0] == runs[1]
 
 
-def test_size_and_compile_time_bounds(settings) -> None:
+def test_a_catalog_imported_after_a_retirement_cannot_compile_before_it() -> None:
+    # DeepInfra retires its GPT-OSS-120B Turbo routes at 2026-10-20 00:00 UTC.
+    day = 24 * EPOCH_SECONDS
+    retirement = FIXED_AT + day
+    # Positive control: imported at noon, no retirement since compiled_at; the
+    # routes retiring at the window's end are present, with that instant.
+    noon = _compile_in_subprocess(FIXED_AT, day, FIXED_AT + 12 * EPOCH_SECONDS)
+    assert noon["not_after"] == retirement and retirement in noon["retired_at"]
+    # Imported after the retirement, the registry has dropped those routes.
+    late = _compile_in_subprocess(FIXED_AT, day, retirement + EPOCH_SECONDS)
+    assert "retirement" in late["refused"]
+    # The same late import compiles a window starting at the retirement.
+    assert "digest" in _compile_in_subprocess(retirement, HORIZON, retirement + EPOCH_SECONDS)
+
+
+def test_size_and_compile_time_bounds(settings, catalog_clock) -> None:
     start = time.monotonic()
     snapshot = _compile(settings, CatalogInputs.live(settings))
     elapsed = time.monotonic() - start

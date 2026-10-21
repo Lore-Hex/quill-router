@@ -27,6 +27,11 @@ from trusted_router.routing_snapshot import (
 
 PURPOSE = "routing-snapshot"
 TYP = "tr-routing-snapshot-v1"
+# The golden files' key, derived from a public seed in
+# scripts/fastpath/routing_snapshot_vectors.py. Anyone can sign with it, so
+# signing and verification refuse it unless the caller asks for test mode.
+TEST_KID = "routing-snapshot-test-key-1"
+TEST_PUBLIC_KEY_B64URL = "U1I1REk6JqeFqKq5ZGH0P8b1b_OEwbFG0lCOkYL-jjY"
 _KEY_FIELD = re.compile(r"[A-Za-z0-9_./:@+\-]{1,512}")
 
 
@@ -66,14 +71,29 @@ def manifest_claims(body: bytes, *, iss: str, aud: str) -> dict[str, Any]:
     return claims
 
 
+def _is_test_key(key: TrustedKey) -> bool:
+    return key.kid == TEST_KID or key.public_key_b64url == TEST_PUBLIC_KEY_B64URL
+
+
 def verify_manifest(
     token: str, keys: Sequence[TrustedKey], body: bytes, *, now: int,
+    expected_plane: Plane, expected_aud: str, allow_test_key: bool = False,
 ) -> ManifestClaims:
-    """Verify signature, purpose, issuer, the body binding and freshness."""
+    """Verify signature, purpose, issuer, audience, plane, the body binding and freshness.
+
+    The plane and audience are the verifier's own: a snapshot signed for
+    another plane or another consumer is refused even under a trusted key.
+    """
     claims, key, payload = verify(token, keys, TYP, PURPOSE)
+    if _is_test_key(key) and not allow_test_key:
+        raise ValueError("test key outside test mode")
     parsed = ManifestClaims.model_validate(claims)
     if payload != canonical(claims) or parsed.iss != key.iss or parsed.aud != key.aud:
         raise ValueError("manifest issuer or encoding")
+    if parsed.aud != expected_aud:
+        raise ValueError("manifest audience")
+    if parsed.plane != expected_plane:
+        raise ValueError("manifest plane")
     if canonical(manifest_claims(body, iss=key.iss, aud=key.aud)) != payload:
         raise ValueError("manifest binding")
     if not parsed.compiled_at <= now < parsed.not_after:
@@ -91,7 +111,7 @@ class RoutingSnapshotSigner:
 
     def __init__(
         self, private: Ed25519PrivateKey, trusted: TrustedKey,
-        *, reserved: Sequence[TrustedKey] = (),
+        *, reserved: Sequence[TrustedKey] = (), allow_test_key: bool = False,
     ) -> None:
         public = b64encode(private.public_key().public_bytes_raw())
         if (trusted.purpose != PURPOSE or not all((trusted.kid, trusted.iss, trusted.aud))
@@ -99,17 +119,23 @@ class RoutingSnapshotSigner:
                 or any(_KEY_FIELD.fullmatch(v) is None
                        for v in (trusted.kid, trusted.iss, trusted.aud))):
             raise ValueError("routing snapshot key configuration")
+        if _is_test_key(trusted) and not allow_test_key:
+            raise ValueError("test key outside test mode")
         for other in reserved:
             if other.kid == trusted.kid:
                 raise ValueError("separate kid required")
             if other.public_key_b64url == public:
                 raise ValueError("separate key required")
-        self.private, self.trusted = private, trusted
+        self.private, self.trusted, self.allow_test_key = private, trusted, allow_test_key
 
     def sign(self, body: bytes) -> str:
         claims = manifest_claims(body, iss=self.trusted.iss, aud=self.trusted.aud)
         header = {"alg": "EdDSA", "kid": self.trusted.kid, "typ": TYP}
         material = b64encode(canonical(header)) + "." + b64encode(canonical(claims))
         token = material + "." + b64encode(self.private.sign(material.encode("ascii")))
-        verify_manifest(token, [self.trusted], body, now=claims["compiled_at"])
+        verify_manifest(
+            token, [self.trusted], body, now=claims["compiled_at"],
+            expected_plane=Plane.model_validate(claims["plane"]),
+            expected_aud=self.trusted.aud, allow_test_key=self.allow_test_key,
+        )
         return token

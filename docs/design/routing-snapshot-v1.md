@@ -64,7 +64,9 @@ to Python.
 (`eligibility_enabled`, `heartbeat_enabled`, `require_heartbeat_declaration`,
 `pilot_workspaces` sorted), `request_record_write_mode`. Region choice is
 `choose_region`: the requested region when it is configured, else
-`primary_region`.
+`primary_region`. The chosen region is what the response reports; the region
+a candidate's availability is checked against is a different value (see
+`gateway_regions` below).
 
 **providers[]**, sorted by slug, every provider: `slug`, `name` (the
 response's `provider_name`), `headquarters_country` (`provider.jurisdiction`
@@ -76,8 +78,13 @@ looked up in).
 `supports_embeddings`, `supports_decide` (the three facts authorize branches
 on).
 
-**endpoints[]**, `MODEL_ENDPOINTS` order, every endpoint including expired and
-retired ones:
+**endpoints[]**, `MODEL_ENDPOINTS` order: every endpoint the registry built
+at its import instant (`catalog_registry.CATALOG_RESOLVED_AT`), including ones
+whose provider manifest has expired and ones retired after that instant. The
+import drops endpoints already retired then, so the compiler refuses unless no
+retirement falls in `(compiled_at, CATALOG_RESOLVED_AT]` (see below): every
+endpoint absent from the snapshot is therefore retired, or excluded for a
+reason that does not depend on time, at every instant of the window.
 
 - `id`, `model_id`, `provider`, `usage_type` (`"Credits"` or `"BYOK"`),
   `upstream_model` (`upstream_id or model_id`, the response's value).
@@ -89,15 +96,20 @@ retired ones:
   true. Any other requirement value matches nothing.
 - `gateway_regions`: available from gateway region `r` iff
   `(only is null or r in only) and r not in deny`
-  (`provider_model_available_from_gateway_region`). When
-  `requires_explicit_origin` (Bedrock), `r` is the request body's region, or
-  `""` when it has none, never the control plane's region (gateway.py).
+  (`provider_model_available_from_gateway_region`). `r` is the request body's
+  `region` exactly as sent, even when this plane does not configure it (a
+  request naming `europe-west4` to a plane without it still meets Sakana's
+  exclusion), and only when the body names none is it the chosen region.
+  When `requires_explicit_origin` (Bedrock), a body without a region gives
+  `""`, never the control plane's region (gateway.py: `body.region or ("" if
+  bedrock else region)`).
 - `catalog_valid_until` (signed seconds; the expired-manifest sentinel is year
   1, a negative value) and `retired_at`: the endpoint is available at `t` iff
   `(catalog_valid_until is null or t < catalog_valid_until) and (retired_at is
   null or t < retired_at)`. That is `catalog_is_current(at=t) and not
-  provider_model_retired(..., at=t)` exactly, at any instant, so availability
-  needs no epochs.
+  provider_model_retired(..., at=t)` exactly for each listed endpoint at every
+  instant; with the completeness above, the available set is exact for every
+  `t` in `[compiled_at, not_after)`, so availability needs no epochs.
 - `epochs[]`: `starts_at`, `headline` `{prompt, completion}` (the endpoint's
   effective headline rates, which `sort=price` and `max_price` compare), and
   `price`, exactly `stage_d.endpoint_pricing_candidate(effective_endpoint(e,
@@ -129,10 +141,15 @@ that status and Go passes it to Python), `private_proxy` (the response's
 `response_model` is the requested id), `overrides` (`usage`,
 `renewable_only` (the renewable provider slugs to intersect `only` with),
 `provider_jurisdiction`, `privacy_requirements`, `order`, `only`; null is
-"not assigned"). For a request's `model` and `models`, in order: resolve each;
-an unlisted id contributes itself; a listed one contributes `expands_to`,
-assigns its non-null overrides (later models win) and adds its
-`privacy_requirements` to the union. No model ids at all is a 400.
+"not assigned"). For a request's `model` and `models`, in order: strip and
+resolve each (a variant suffix assigns its preference); an unlisted id
+contributes itself; a listed one contributes `expands_to`, assigns its
+non-null overrides (later models win) and adds its `privacy_requirements` to
+the union. No model ids at all is a 400. Which strings enter that list is
+request parsing, which the next PR owns: with `allow_fallbacks` true it is
+`model` then every `models` entry; with `allow_fallbacks=false`
+(`routing._requested_model_ids(include_fallback_models=False)`) `models` is
+ignored when `model` is set, and only `models[0]` is taken when it is not.
 `tests/test_routing_snapshot.py` holds this rule to
 `routing._requested_model_ids` for every listed id, every catalog id and its
 spellings, and for model lists.
@@ -169,6 +186,25 @@ refuses (`SnapshotRefused`) rather than approximate:
   compiler compares the effective endpoint at each minute of each epoch with
   the epoch's start. Minute resolution is a guard on that assumption, not a
   proof about seconds.
+- **A retirement between `compiled_at` and the catalog's import.** The
+  registry is built once, at `CATALOG_RESOLVED_AT`, and drops what is retired
+  then; every import-time time dependence goes through
+  `provider_model_retired`. `CatalogInputs.catalog_resolved_at` carries that
+  instant (floored to the second, which is exact against whole-second
+  retirements). A retirement in `(compiled_at, catalog_resolved_at]` refuses:
+  the registry has already dropped endpoints still available at
+  `compiled_at`, and with them models and members of the privacy pools.
+  `not_after` is clamped to the first retirement after `max(compiled_at,
+  catalog_resolved_at)`, so catalogs imported at any two instants of the
+  window hold the same endpoints. Retirements between the import and
+  `compiled_at` do not refuse: the compiling process's registry still holds
+  those endpoints, the snapshot carries their exact `retired_at` (unavailable
+  throughout the window, as the process's own request-time filter has it),
+  and its models and privacy pools are that process's, which is what a shadow
+  comparison against that process sees. (Requiring
+  `compiled_at >= catalog_resolved_at` instead would also be correct, but
+  would refuse every hourly compile in the first partial hour of a process's
+  life even when nothing retired.)
 - **A catalog deadline the requested-model expansions straddle.** The
   privacy pools behind `trustedrouter/zdr`, `eu`, `e2e` and `green` read
   catalog currency on the catalog clock (`catalog_data._utc_now`), not on any
@@ -177,6 +213,10 @@ refuses (`SnapshotRefused`) rather than approximate:
   `not_after` is clamped to the next deadline after both, so the expansions
   hold on the whole window. With fresh provider manifests the next deadline
   is days away and the clamp does nothing.
+- **A provider other than the catalog's.** The privacy, BYOK-slug and
+  inference-location rules read the global `catalog_data.PROVIDERS` (see
+  "What the compiler reads"), so `inputs.providers` must hold exactly those
+  entries; otherwise `providers[]` and `endpoints[].privacy` could disagree.
 - **Sub-second catalog instants**, unknown requested-model overrides,
   inference-location or pricing fields the schema does not know, references
   to unknown models or providers, and a horizon over 24 hours.
@@ -187,9 +227,12 @@ The body (about 3 MB for the live catalog) exceeds `detached_jws`'s 64 KiB
 token bound, so the compact JWS signs a manifest: header `{"alg":"EdDSA",
 "kid", "typ":"tr-routing-snapshot-v1"}`, purpose `routing-snapshot`, claims
 `{v, sha256, size, compiled_at, not_after, source_revision, plane, iss, aud}`.
-`verify_manifest(token, keys, body, now=...)` checks the signature, type,
-purpose, issuer and audience, that the claims are exactly what the body
-implies (parsed, canonical, hashed), and freshness `compiled_at <= now <
+`verify_manifest(token, keys, body, now=..., expected_plane=...,
+expected_aud=...)` checks the signature, type, purpose and issuer; that the
+audience is the key's and the verifier's own (`expected_aud`) and the plane is
+the verifier's (`expected_plane`), so a snapshot signed for another plane or
+consumer is refused under a trusted key; that the claims are exactly what the
+body implies (parsed, canonical, hashed); and freshness `compiled_at <= now <
 not_after`. Ed25519, not HMAC: a shared key would let every verifier forge
 routing. `RoutingSnapshotSigner` refuses a key whose kid or public key any
 other signing purpose of the process uses (`reserved`), as the settle-ticket
@@ -199,6 +242,25 @@ The golden manifest is signed by a TEST key derived from a fixed seed in the
 generator (`sha256` of a sentence saying it is a test key); its kid, issuer
 and audience say `test`, and the manifest says `"test_key": true`. No
 private key is committed, and no production key may be derived this way.
+Because anyone can derive it, `RoutingSnapshotSigner` and `verify_manifest`
+refuse its kid (`TEST_KID`) and its public key (`TEST_PUBLIC_KEY_B64URL`)
+unless the caller passes `allow_test_key=True`, which only the generator and
+the golden-file tests do.
+
+## What the compiler reads
+
+`CatalogInputs` carries the catalog lists, the expansions, the alias tables,
+the rank evidence and constants, and the two clocks. The compiler also reads
+module-level rules that are code, not catalog data, and are the same for
+every input: `catalog_data.PROVIDERS` and the per-model privacy overrides
+(through `catalog_privacy`), the Wafer manifest's ZDR flags, the
+provider-contract region tables (Bedrock regions, per-model exclusions), the
+lifecycle module's price schedules and retirements, the pricing module's
+markup and cache multipliers (through `effective_endpoint` and
+`endpoint_pricing_candidate`), `provider_compat`'s BYOK slug rule, and the
+provider location declarations and Telnyx location file (through
+`inference_location_metadata`). The golden fixture puts its endpoints on real
+provider slugs with the real provider entries for exactly this reason.
 
 ## What stays out
 
@@ -243,9 +305,10 @@ pinned).
   added: Go cannot validate `provider.only`/`order`/`ignore` without them.
 - `requested_models[].private_proxy` added for `response_model`; the green
   model's override is the renewable slug list itself (`renewable_only`).
-- `CatalogInputs` is required, and also carries the expansions clock, the
-  alias tables and routing's rank constants, so the golden fixture is fully
-  synthetic and the compiler reads no global except the lifecycle rules.
+- `CatalogInputs` is required, and also carries the import instant, the
+  expansions clock, the alias tables and routing's rank constants, so the
+  golden fixture's catalog is synthetic; the compiler still reads the
+  module-level rules listed under "What the compiler reads".
 
 ## Not yet
 

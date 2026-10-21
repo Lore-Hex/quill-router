@@ -48,6 +48,7 @@ from trusted_router.routing_snapshot import (  # noqa: E402
 )
 from trusted_router.routing_snapshot_signing import (  # noqa: E402
     PURPOSE,
+    TEST_KID,
     RoutingSnapshotSigner,
 )
 
@@ -64,7 +65,7 @@ TEST_KEY_SEED = hashlib.sha256(
     b"trustedrouter routing snapshot v1 golden-file TEST key; not a secret"
 ).digest()
 TEST_KEY = TrustedKey(
-    kid="routing-snapshot-test-key-1",
+    kid=TEST_KID,
     purpose=PURPOSE,
     public_key_b64url=b64encode(
         Ed25519PrivateKey.from_private_bytes(TEST_KEY_SEED).public_key().public_bytes_raw()
@@ -187,6 +188,7 @@ def fixture_inputs() -> CatalogInputs:
         models=models,
         endpoints=endpoints,
         requested_models=requested,
+        catalog_resolved_at=COMPILED_AT,
         expansions_clock=(COMPILED_AT, COMPILED_AT),
         aliases=aliases,
         decision_chains={"trustedrouter/dev-1.0": ("wafer", "deepinfra")},
@@ -230,7 +232,9 @@ def snapshot() -> RoutingSnapshotV1:
 
 
 def golden_signer() -> RoutingSnapshotSigner:
-    return RoutingSnapshotSigner(Ed25519PrivateKey.from_private_bytes(TEST_KEY_SEED), TEST_KEY)
+    return RoutingSnapshotSigner(
+        Ed25519PrivateKey.from_private_bytes(TEST_KEY_SEED), TEST_KEY, allow_test_key=True,
+    )
 
 
 def render_body() -> bytes:

@@ -397,16 +397,23 @@ class RoutingSnapshotV1(Frozen):
 class CatalogInputs:
     """Everything the compiler reads. ``live`` gathers it from module globals.
 
-    ``expansions_clock`` is the catalog clock (``catalog_data._utc_now``)
-    before and after ``requested_models`` were computed: the privacy pools
-    behind trustedrouter/zdr, eu, e2e and green read catalog currency on that
-    clock, not on any ``at``.
+    ``catalog_resolved_at`` is the lifecycle instant the registry was built
+    at (``catalog_registry.CATALOG_RESOLVED_AT``): the import drops endpoints
+    and models already retired then. ``expansions_clock`` is the catalog clock
+    (``catalog_data._utc_now``) before and after ``requested_models`` were
+    computed: the privacy pools behind trustedrouter/zdr, eu, e2e and green
+    read catalog currency on that clock, not on any ``at``.
+
+    ``providers`` must be the global ``catalog_data.PROVIDERS`` entries: the
+    privacy, BYOK-slug and inference-location rules read the globals, so a
+    different provider would make ``providers[]`` disagree with ``endpoints[]``.
     """
 
     providers: Mapping[str, Provider]
     models: Sequence[Model]
     endpoints: Sequence[ModelEndpoint]
     requested_models: Sequence[RequestedModel]
+    catalog_resolved_at: int
     expansions_clock: tuple[int, int]
     aliases: Aliases
     decision_chains: Mapping[str, Sequence[str]]
@@ -417,7 +424,7 @@ class CatalogInputs:
     @classmethod
     def live(cls, settings: Settings) -> CatalogInputs:
         from trusted_router import catalog_data, provider_ranking, routing
-        from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS
+        from trusted_router.catalog_registry import CATALOG_RESOLVED_AT, MODEL_ENDPOINTS, MODELS
 
         before = _floor_seconds(catalog_data._utc_now())
         requested = live_requested_models(settings)
@@ -430,6 +437,7 @@ class CatalogInputs:
             models=tuple(MODELS.values()),
             endpoints=tuple(MODEL_ENDPOINTS.values()),
             requested_models=requested,
+            catalog_resolved_at=_floor_seconds(CATALOG_RESOLVED_AT),
             expansions_clock=(before, after),
             aliases=live_aliases(),
             decision_chains=dict(catalog_data.NAMED_DECISION_MODEL_PROVIDERS),
@@ -722,22 +730,41 @@ def _ranking(inputs: CatalogInputs) -> Ranking:
     )
 
 
-def _not_after(at: int, horizon: int, inputs: CatalogInputs) -> int:
-    """Clamp the window so the requested-model expansions hold throughout it.
+def _clamp(at: int, horizon: int, events: set[int], low: int, high: int, what: str) -> int:
+    """Refuse an event in (low, high]; end the window at the first event after high."""
+    if any(low < event <= high for event in events):
+        raise SnapshotRefused(f"a {what} falls between {low} and {high}")
+    return min([at + horizon, *(event for event in events if event > high)])
 
-    The privacy pools read each endpoint's catalog currency on the catalog
-    clock. They are constant on [at, not_after) only if no catalog deadline
-    falls between that clock and any instant of the window.
+
+def _not_after(at: int, horizon: int, inputs: CatalogInputs) -> int:
+    """Clamp the window so the imported catalog and the expansions hold on it.
+
+    The registry drops what is retired at its import instant, so a retirement
+    in (at, catalog_resolved_at] would remove endpoints still available at
+    `at`. Retirements before the import stay in the registry, carried with
+    their exact retired_at. The privacy pools read each endpoint's catalog
+    currency on the catalog clock, so they are constant on the window only if
+    no catalog deadline falls between that clock and any of its instants.
     """
-    low = min(inputs.expansions_clock[0], at)
-    high = max(inputs.expansions_clock[1], at)
+    retirements = {_exact_seconds(r.effective_at) for r in provider_retirements()}
+    resolved = inputs.catalog_resolved_at
+    not_after = _clamp(at, horizon, retirements, at, max(at, resolved), "retirement")
     deadlines = {
         deadline for endpoint in inputs.endpoints
         if (deadline := _seconds(endpoint.catalog_valid_until)) is not None
     }
-    if any(low < deadline <= high for deadline in deadlines):
-        raise SnapshotRefused("a catalog deadline falls between the expansions and compiled_at")
-    return min([at + horizon, *(deadline for deadline in deadlines if deadline > high)])
+    low = min(inputs.expansions_clock[0], at)
+    high = max(inputs.expansions_clock[1], at)
+    return min(not_after, _clamp(at, horizon, deadlines, low, high, "catalog deadline"))
+
+
+def _require_global_providers(inputs: CatalogInputs) -> None:
+    from trusted_router.catalog_data import PROVIDERS
+
+    for slug, provider in inputs.providers.items():
+        if PROVIDERS.get(slug) != provider:
+            raise SnapshotRefused(f"provider {slug} is not the catalog's provider")
 
 
 def compile_routing_snapshot(
@@ -754,6 +781,7 @@ def compile_routing_snapshot(
         raise SnapshotRefused("at and horizon must be integer seconds")
     if not 0 < horizon <= MAX_HORIZON_SECONDS:
         raise SnapshotRefused("horizon is out of range")
+    _require_global_providers(inputs)
     not_after = _not_after(at, horizon, inputs)
     starts = _epoch_starts(at, not_after)
     _refuse_off_hour_price_changes(inputs.endpoints, starts, not_after)
