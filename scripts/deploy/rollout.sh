@@ -649,19 +649,14 @@ ENV_VARS=(
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  # Shadow v2 bounded canary (2026-10-20, Joseph's go-ahead), the release gate of
-  # docs/incidents/2026-10-20-shadow-session-leak.md: the v2 policy, the one
-  # dedicated probe workspace, the primary health region and the attachments
-  # bucket, on code that carries the session-leak fix (#1881) and the publisher
-  # fixes (#1883). Keep only if session inventory, remote-region deadlines and
-  # observer contention stay healthy for the canary hour; otherwise opt out by
-  # emptying the policy, workspaces and health-region lines (keep the bucket).
-  # The v1 observer stays off because the policy is set. Money, protection and
-  # fast drain stay off.
+  # Shadow v2 opted out after the 2026-10-20 session leak. Empty BOTH the
+  # policy and cohort so v1 is not selected either. Preserve the attachment
+  # destination for retained close/export evidence; re-enable only after a
+  # bounded session-lifecycle canary passes. Money and fast drain stay off.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
-  "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
-  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
+  "TR_ASYNC_SETTLE_SHADOW_POLICY="
+  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
