@@ -80,6 +80,27 @@ Monitor workspace activity p50/p99, drain lag, the delivery verifier and
 to restore today's behaviour; record and outbox writes continue in either
 mode, and Postgres activity repair remains unimplemented until R4.
 
+For AWS ECS, `EXPECTED_RECORD_READ_BACKEND` in `aws_ecs_control_plane.sh`
+is the switch, overridable with `TR_RECORD_READ_BACKEND_EU_WEST_3` and
+`TR_RECORD_READ_BACKEND_EU_WEST_1`. Both regions default to `postgres` today:
+Paris does not read from ClickHouse yet. Enabling Paris is its own change,
+setting its default to `clickhouse`, made only after infra-apply has created
+`tr-cp-clickhouse-control-reader` (`infra/aws_ecs_control_reader.tf`, the
+execution role's grant on the reader secret's exact ARN): a task referencing
+the secret before that fails to start. With `clickhouse`, the release sets
+`tr_control_read` and the reader secret ARN resolved by `describe-secret`, and
+refuses unless the cloned task reads database `default` (the reader is granted
+`default.*` only). Ireland stays on `postgres`. Every release applies the
+default in code, in either direction, so the default is the only lasting
+switch: an environment override lasts until the next release, which the
+automatic catch-up may start at any time. To revert Paris, land a change
+setting its default back to `postgres`. That restores Postgres record reads
+only: a reverted Paris keeps `tr_control_read` and the reader secret, which
+the console's client reliability, retirement notices and the client watch
+also read through. A broken reader breaks those too, and the revert does
+not bring them back. So the enabling change first checks that
+`tr_control_read` can log in to the Paris node.
+
 Control-plane operational reads use `tr_control_read`. On GCP,
 `scripts/deploy/clickhouse_control_reader.sh` installs the account with
 table-scoped SELECT grants in `tr`; its password lives in Secret Manager as
@@ -110,9 +131,9 @@ scripts select the reader secret by reference, without retrieving its value.
 
 The Postgres outbox drains retain `default` and the writer secrets. Stockholm
 is a second drain target, not a configured control-plane read endpoint; its
-regional writer credential is unchanged. The AWS ECS release script clones
-the running task's configuration, so these provisioner defaults alone do not
-migrate an existing ECS task definition.
+regional writer credential is unchanged. The AWS ECS release script migrates
+reader credentials only where the regional record-read expectation is `clickhouse`;
+all other ClickHouse settings are cloned from the running task.
 
 ## Activity generation lookup schema
 
