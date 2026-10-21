@@ -18,11 +18,12 @@ locals {
   # Nodes on their way out: drained, out of the backend, removed next.
   fastpath_edge_retiring = []
   # The share, in percent, of the enclave's authorize calls the control load
-  # balancer sends through the edge (infra/control_lb_url_map.tf). 0 until
-  # Python counts every comparison of the edge's verdict (#1904) on the
-  # serving revision: before that, a share through the edge has no parity
-  # evidence (an edge whose boot reads fail looks like perfect agreement).
-  fastpath_edge_route_weight = 0
+  # balancer sends through the edge (infra/control_lb_url_map.tf). 1 once
+  # Python counted every comparison of the edge's verdict (#1904) on the
+  # serving revision, so the share has parity evidence: agree, differ and
+  # skipped lines, and no lines at all from an edge whose token is stale.
+  # 0 is the way back.
+  fastpath_edge_route_weight = 1
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
