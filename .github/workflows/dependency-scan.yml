@@ -117,7 +117,7 @@ jobs:
           [ -s new-results.json ] || { echo "::error::scan of this branch wrote no results"; status=1; }
           exit "$status"
       - name: Report new vulnerabilities
-        uses: google/osv-scanner-action/osv-reporter-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        uses: google/osv-scanner-action/osv-reporter-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
         with:
           scan-args: |-
             --output=results.sarif
