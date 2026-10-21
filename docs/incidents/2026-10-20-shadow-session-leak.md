@@ -58,8 +58,28 @@ late-reply case after correcting the test's outer deadline assertion.
 - Preserve a successful creation's ID before enforcing the checkout deadline.
 - Quarantine a client after an unknown creation result rather than repeatedly
   allocating sessions. This is deliberately fail-closed observer behavior, not
-  customer-billing behavior. A fresh reviewed launch is needed to recover it.
-- Label newly owned sessions `tr_component=shadow-v2` for attribution.
+  customer-billing behavior. The October 21 owner ruling below amends recovery.
+- Label newly owned sessions `tr_component=shadow-v2` and `tr_boot=<boot id>`
+  for attribution and boot-scoped reconciliation.
+
+October 21 owner ruling A′: create the owned session at install time under a
+separate five-second scope, using both labels above. Recovery runs outside
+publisher cycles, at most once per 60 seconds. After an unknown creation result,
+complete ListSessions with the server-side filter
+`labels.tr_component:shadow-v2 AND labels.tr_boot:<boot>`, delete every returned
+session except the one this client holds (NotFound is success), and only then
+create a replacement. Failed listing or deletion keeps the client quarantined
+until the next retry window. An unknown startup creation result waits for the
+first retry window. Known retired identities are deleted before replacement too.
+Success clears quarantine. Cycles without a ready session are missed with zero
+RPCs and no claim attempt. The exact inventory bound is one live session per
+client, plus retired or unknown identities removed by the next successful
+reconciliation. ListSessions runs at most once per minute per instance, including
+pagination: retain names and the page token between retry windows, and keep
+quarantine until the listing completes. Each recovery attempt shares one
+five-second deadline across its listing, deletes and creation. The pinned SDK
+exposes ListSessions on `database.spanner_api`, so the implementation passes the
+filter in its request and fetches each page through the bounded wrapper.
 
 No customer balance, cap, provider route, database capacity, alarm threshold or
 money-client transport is changed. Do not bulk-delete the unlabelled production
