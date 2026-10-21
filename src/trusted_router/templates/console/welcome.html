@@ -8,7 +8,7 @@
 {% set raw_key = revealed_key %}
 {% include "console/_key_onboarding.html" %}
 {% include "console/_key_next_steps.html" %}
-<a class="ux-step" style="margin-top:8px" href="/console/api-keys">{{ icon('key') }}<span class="ux-step-text">Your keys</span><span class="ux-step-action">Open {{ icon('chevron-right') }}</span></a>
+<a class="ux-step" href="/console/api-keys">{{ icon('key') }}<span class="ux-step-text">Your keys</span><span class="ux-step-action">Open {{ icon('chevron-right') }}</span></a>
 {% else %}
 <section class="panel activation-expired-panel">
   <div class="panel-head"><h2>This key has already been displayed</h2></div>

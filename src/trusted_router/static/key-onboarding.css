@@ -30,29 +30,28 @@ body.console:has(.key-console){background:var(--tr-color-surface-bg-alt)}.consol
 
 @media (max-width: 600px) { .key-management-body { padding-left: 0; } }
 
-/* Next steps: two flat cards, each one click, the action inside it. Never a second Credits page. */
-.ux-cards { display: flex; flex-wrap: wrap; gap: 12px; padding: 20px 0 8px; border-top: 1px solid var(--tr-color-line-rule); }
-.ux-card-slot { display: contents; }
-.ux-card-slot[hidden] { display: none; }
-.ux-card { display: inline-flex; align-items: center; gap: 12px; box-sizing: border-box; min-height: 48px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--tr-color-line-rule); background: var(--tr-color-surface-panel-raised); color: var(--tr-color-text-primary); font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
-.ux-card[hidden] { display: none; }
-.ux-card > .ux-icon { width: 20px; height: 20px; flex-shrink: 0; }
-.ux-card-text { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
-.ux-card-text strong { font-size: 14px; font-weight: 600; }
-.ux-card-note { font-size: 12px; color: var(--tr-color-text-quaternary); }
-.ux-card-action { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; padding-left: 14px; border-left: 1px solid var(--tr-color-line-rule); color: var(--tr-color-accent-base); font-weight: 500; white-space: nowrap; }
-.ux-card-action .ux-icon { width: 16px; height: 16px; }
-.ux-card-credit { background: var(--tr-color-privacy-verified-bg); border-color: var(--tr-color-privacy-verified-border); color: var(--tr-color-privacy-verified-text); }
-.ux-card-credit .ux-card-action { border-left-color: var(--tr-color-privacy-verified-border); }
-.ux-card-credit.is-empty { background: var(--tr-color-privacy-zdr-bg); border-color: var(--tr-color-privacy-zdr-border); color: var(--tr-color-privacy-zdr-text); }
-.ux-card-credit.is-empty .ux-card-action { border-left-color: var(--tr-color-privacy-zdr-border); }
-.ux-card-rewards > .ux-icon { color: var(--tr-color-accent-base); }
-.ux-card:hover { border-color: var(--tr-color-line-strong); }
-.ux-card:hover .ux-card-action { color: var(--tr-color-accent-hover); }
-.ux-card:focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 3px; }
+/* Next steps: two stat tiles, no boxes. A colored icon disc, the value, a caption, the action under it. */
+.ux-tiles { display: flex; flex-wrap: wrap; gap: 20px 64px; padding: 28px 0 4px; border-top: 1px solid var(--tr-color-line-rule); }
+.ux-tile-slot { display: contents; }
+.ux-tile-slot[hidden] { display: none; }
+.ux-tile { display: inline-flex; align-items: flex-start; gap: 14px; padding: 0; margin: 0; background: none; border: 0; font: inherit; color: var(--tr-color-text-primary); text-align: left; text-decoration: none; cursor: pointer; }
+.ux-tile[hidden] { display: none; }
+.ux-tile-icon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; background: color-mix(in srgb, var(--tr-color-accent-base) 16%, transparent); color: var(--tr-color-accent-base); }
+.ux-tile-icon .ux-icon { width: 20px; height: 20px; }
+.ux-tile-credit.is-empty .ux-tile-icon { background: color-mix(in srgb, var(--tr-color-status-degraded) 16%, transparent); color: var(--tr-color-status-degraded); }
+.ux-tile-rewards .ux-tile-icon { background: color-mix(in srgb, var(--tr-color-link-base) 16%, transparent); color: var(--tr-color-link-base); }
+.ux-tile-body { display: flex; flex-direction: column; gap: 2px; }
+.ux-tile-value { font-size: 18px; font-weight: 600; line-height: 1.2; letter-spacing: -0.2px; color: var(--tr-color-text-primary); }
+.ux-tile-credit.is-empty .ux-tile-value { color: var(--tr-color-status-degraded); }
+.ux-tile-caption { font-size: 12px; color: var(--tr-color-text-tertiary); }
+.ux-tile-action { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; min-height: 24px; font-size: 13px; font-weight: 500; color: var(--tr-color-accent-base); }
+.ux-tile-action .ux-icon { width: 16px; height: 16px; transition: transform var(--tr-duration-fast, 120ms); }
+.ux-tile:hover .ux-tile-action { color: var(--tr-color-accent-hover); }
+.ux-tile:hover .ux-tile-action .ux-icon { transform: translateX(2px); }
+.ux-tile:focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 6px; border-radius: 4px; }
 
 /* The keys row under the cards: a quiet list control, not another card. */
-.ux-step { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 2px 0; border-top: 1px solid var(--tr-color-line-rule); font-size: 13px; color: var(--tr-color-text-secondary); text-decoration: none; }
+.ux-step { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 2px 0; margin-top: 12px; font-size: 13px; color: var(--tr-color-text-secondary); text-decoration: none; }
 .ux-step > .ux-icon { width: 18px; height: 18px; color: var(--tr-color-text-tertiary); flex-shrink: 0; }
 .ux-step-text { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
 .ux-step-action { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; padding: 0; background: none; border: 0; font: inherit; font-size: 13px; font-weight: 500; color: var(--tr-color-accent-base); cursor: pointer; white-space: nowrap; }
@@ -60,9 +59,7 @@ body.console:has(.key-console){background:var(--tr-color-surface-bg-alt)}.consol
 .ux-result a { color: var(--tr-color-accent-base); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
 
 @media (max-width: 800px) {
-  .ux-cards { padding-top: 16px; }
-  .ux-card { width: 100%; min-height: 52px; }
-  .ux-card-action { margin-left: auto; }
+  .ux-tiles { flex-direction: column; gap: 24px; padding-top: 24px; }
 }
 
 /* Right after a key is created the list collapses to one line: the new key is already shown above. */
@@ -72,9 +69,8 @@ body.console:has(.key-console){background:var(--tr-color-surface-bg-alt)}.consol
 .key-list-collapsed > summary .ux-step-action .ux-icon { transition: transform var(--tr-duration-fast, 120ms); }
 .key-list-collapsed[open] > summary .ux-step-action .ux-icon { transform: rotate(180deg); }
 .key-list-collapsed[open] > summary { border-bottom: 1px solid var(--tr-color-line-rule-soft); }
-.key-list-collapsed { margin-top: 8px; }
+.key-list-collapsed { margin-top: 12px; }
 .key-list-collapsed .key-list-panel { margin-top: 0; }
-.key-list-collapsed .key-list-panel > .panel-head { padding: 0; justify-content: flex-end; }
-.key-list-collapsed .key-list-panel > .panel-head > div:first-child { display: none; }
+.key-list-collapsed .key-list-panel > .panel-head { display: none; }
 .key-list-collapsed .key-management:first-of-type { border-top: 0; }
 
