@@ -58,6 +58,7 @@
 <section class="provider-locations" id="inference-locations" aria-labelledby="inference-locations-heading">
   <h2 id="inference-locations-heading">Inference locations</h2>
   <p><a href="/v1/providers">Provider API</a> declarations are also available on each model's endpoint API. Direct chat and Responses replies separate advertised availability from serving location in <code>usage.inference_location</code>; the actual serving region remains unknown when not reported.</p>
+  <p><code>usage.provider_usage.gateway_region</code> identifies the TrustedRouter gateway, not the provider's inference location. A value such as <code>europe-west4</code> does not mean the model ran in Europe. <code>usage.inference_location.serving_region</code> remains <code>null</code> when the provider has not reported it. Older gateways may return the gateway-only field as <code>provider_usage.region</code>.</p>
   <p>Where the upstream GPUs execute the model, not the provider's headquarters, API ingress, or data storage. ZDR and confidential inference do not by themselves restrict geography.</p>
   <dl class="provider-location-facts">
     <dt>Declared countries or regions</dt>
