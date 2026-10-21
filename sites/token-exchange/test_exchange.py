@@ -518,9 +518,12 @@ class ExchangeTests(unittest.TestCase):
             for market in load_markets():
                 sitemap = ET.parse(output / market["slug"] / "sitemap.xml")  # noqa: S314 — trusted build output
                 namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+                paths = ["/"]
+                if market["slug"] == "new-york":
+                    paths += ["/providers", "/badge", "/media-kit", "/index"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
-                    [f'https://{market["domain"]}/'],
+                    [f'https://{market["domain"]}{path}' for path in paths],
                 )
                 self.assertIn(
                     f'Sitemap: https://{market["domain"]}/sitemap.xml',
