@@ -376,8 +376,15 @@ its own credentials and history file.
 
 #### AWS: installed on tr-eu-clickhouse-1
 
-`scripts/deploy/aws_eu_clickhouse_drain_install.sh` installs the verifier with
-the drain, in its step 10, from the same payload and virtualenv:
+`scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh` installs the
+verifier. It is separate from the drain installer on purpose: the verifier is
+optional, so its prerequisites must never make a drain install fail. It runs
+from the drain's `/opt/tr-clickhouse` tree, virtualenv and environment file.
+It ships no code and refuses if that tree is missing or cannot import the
+verifier. The drain installer keeps the verifier's `httpx` dependency, smoke
+imports it, stops its timer before swapping the tree, and starts the timer
+again if it was enabled. Its summary names the verifier script as the next
+step, and it never runs it.
 
 | What | Where |
 | --- | --- |
@@ -387,12 +394,33 @@ the drain, in its step 10, from the same payload and virtualenv:
 | IAM auth, region, ClickHouse credentials | the drain's `/etc/tr-clickhouse-ingest-postgres.env` |
 | History, one JSON line per completed check, 16 days kept | `/var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl` |
 
-The unit's arguments are `--lookback-hours 24 --history-file <history>` and
-nothing secret. Every other limit is the default above. Because the source
-scan walks all generation history (see above), a plane holding more generation
-entities than `--scan-limit` reports `complete: false` and fails every run.
-Raise the limit in the unit, or populate a timestamp index, rather than read
-that failure as a delivery gap.
+The unit's arguments are `--lookback-hours 24 --scan-limit 1000000
+--history-file <history>`. None of them is secret. `--limit` keeps its default
+of 5000.
+
+Both caps must stay above what they bound, or every run reports
+`complete: false` and exits 1. That failure is about coverage. It is not a
+delivery gap.
+
+- `--scan-limit` must exceed the plane's total number of generation entities,
+  not just one day's. Until a generation timestamp index exists, the source
+  scan walks all generation history through the primary key (see above).
+- `--limit` must exceed the number of generations created in one 24 h window.
+
+To check them, read the coverage fields of the last history line:
+
+```bash
+tail -1 /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl \
+  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["complete"], r["scanned"], r["sampled"])'
+```
+
+- With `complete: true`, `scanned` is the plane's total generation-entity
+  count and `sampled` is the window's. Raise `--scan-limit` in the unit well
+  before `scanned` approaches it.
+- With `complete: false` and `sampled` equal to `--limit`, the window cap was
+  hit.
+- With `complete: false` and `scanned` equal to `--scan-limit`, the scan cap
+  was hit.
 
 Where to read results:
 
@@ -408,14 +436,17 @@ Where to read results:
 
 Operator order, first install:
 
-1. The node role needs `dsql:DbConnect` on the cluster (not `DbConnectAdmin`).
+1. Install the drain from a commit that carries the verifier:
+   `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh`, or the
+   `drain-install` mode of `deploy-aws-control-plane.yml`. This step does not
+   depend on any of the steps below.
+2. The node role needs `dsql:DbConnect` on the cluster (not `DbConnectAdmin`).
    It already has that grant for `tr_drain`: statement `DsqlOutboxDrain` in
    the inline policy that `scripts/deploy/aws_eu_clickhouse.sh` puts. The node
    role is managed by that script, not by Terraform. IAM cannot narrow
    `DbConnect` to one Postgres role. The `AWS IAM GRANT` mapping in the SQL is
-   the per-role boundary. The installer refuses to continue if the grant is
-   missing.
-2. As the DSQL admin, run the reviewed SQL once. It can be re-run safely:
+   the per-role boundary.
+3. As the DSQL admin, run the reviewed SQL once. It can be re-run safely:
 
    ```bash
    PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token \
@@ -425,25 +456,22 @@ Operator order, first install:
      -f scripts/deploy/aws_eu_tr_verifier_role.sql
    ```
 
-   The installer prints this command with the real values filled in, followed
-   by the SQL, when it finds the role missing.
-3. Run `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh`, or the
-   `drain-install` mode of `deploy-aws-control-plane.yml`. After the drain is
-   proven, the installer does four things in order:
-   1. It writes the DSN override.
-   2. It connects from the node as `tr_verifier` and requires exactly
+   The verifier installer prints this command with the real values filled in,
+   followed by the SQL, when it finds the role missing.
+4. Run `bash scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh`. It
+   does these things in order:
+   1. It checks `dsql:DbConnect`.
+   2. It checks that the drain tree is present and imports the verifier.
+   3. It writes the DSN override.
+   4. It connects from the node as `tr_verifier` and requires exactly
       `(tr_verifier, can read the view, 0 other readable relations)`.
-   3. It installs the timer.
-   4. It runs the verifier once. It then requires exit 0, `Result=success`,
-      and a history line from this install with `"ok": true`.
+   5. It installs and enables the timer.
+   6. It runs the verifier once. It then requires exit 0, `Result=success`,
+      and a history line from this run with `"ok": true`.
 
-   Any failure exits non-zero before the cloud-completeness gate. A failure
-   after the drain step leaves the drain installed. The timer stays enabled
-   after a failed first run, so a real discrepancy keeps being recorded every
-   hour.
-
-Until step 2 is done, every drain install fails at the verifier step. The
-drain itself is still installed and running in that case.
+   The script exits non-zero at the first failure. A failure in steps 1 to 4
+   leaves no unit installed. The timer stays enabled after a failed first
+   run, so a real discrepancy keeps being recorded every hour.
 
 #### Azure: not installed yet (follow-up)
 
@@ -457,7 +485,7 @@ password and the node's ClickHouse environment already injected:
 export TR_POSTGRES_DSN='host=<postgres-host> port=5432 user=tr_verifier dbname=trustedrouter sslmode=require'
 export TR_POSTGRES_IAM_AUTH=''
 PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
-  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 50000 \
+  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 1000000 \
   --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-azure.jsonl
 ```
 

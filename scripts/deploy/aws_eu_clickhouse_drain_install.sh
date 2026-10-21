@@ -70,17 +70,14 @@
 # drain would start, fail every connection, and deliver nothing. That grant is
 # an operator step and it is printed in full below.
 #
-# THE DELIVERY VERIFIER (step 10)
-# -------------------------------
-# The same payload carries clickhouse/verify_postgres_delivery.py, and step 10
-# installs it as tr-clickhouse-postgres-delivery.timer: hourly, 24 h lookback,
-# history in /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl. It is
-# the AWS counterpart of GCP's tr-clickhouse-spanner-delivery, installed by
-# clickhouse_operational_analytics.sh. It connects as tr_verifier, a DSQL role
-# that can SELECT one view of generation rows and nothing else. That role is a
-# reviewed operator step (scripts/deploy/aws_eu_tr_verifier_role.sql, run as
-# admin); this script prints it, proves its scope from the node, runs the
-# verifier once, and exits non-zero unless that run is clean.
+# THE DELIVERY VERIFIER
+# ---------------------
+# This payload also carries clickhouse/verify_postgres_delivery.py, which
+# runs from this tree. Its units, Postgres role and first run belong to
+# scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh, which this
+# script names as the next step and never runs. This install never fails on
+# the verifier. It only keeps the verifier's dependency (httpx) in the venv,
+# smoke-imports it, and stops and restarts its timer around the tree swap.
 set -euo pipefail
 
 REGION="${REGION:-eu-west-3}"                       # Paris.
@@ -101,13 +98,10 @@ REMOTE_ROOT="${REMOTE_ROOT:-/opt/tr-clickhouse}"
 STAGE_DIR="${STAGE_DIR:-/opt/tr-clickhouse.staging}"
 ENV_FILE="${ENV_FILE:-/etc/tr-clickhouse-ingest-postgres.env}"
 SERVICE="tr-clickhouse-operational-ingest-postgres.service"
+# Installed by aws_eu_postgres_delivery_verifier_install.sh. Named here only so
+# the tree swap can stop it and start it again.
 VERIFIER_SERVICE="tr-clickhouse-postgres-delivery.service"
 VERIFIER_TIMER="tr-clickhouse-postgres-delivery.timer"
-# Carries only TR_POSTGRES_DSN with user=tr_verifier; the unit reads it after
-# ENV_FILE, so it overrides the drain's DSN and inherits everything else.
-VERIFIER_ENV_FILE="/etc/tr-clickhouse-postgres-delivery.env"
-VERIFIER_HISTORY="/var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl"
-VERIFIER_ROLE_SQL="scripts/deploy/aws_eu_tr_verifier_role.sql"
 SERVICE_USER="${SERVICE_USER:-tr-clickhouse-ingest}"
 STATE_DIR="${STATE_DIR:-/var/lib/tr-clickhouse-ingest}"
 # Ubuntu 22.04's system python is 3.10; trusted_router.types uses StrEnum
@@ -381,7 +375,8 @@ set -eux
 if systemctl show $SERVICE >/dev/null 2>&1; then
   systemctl stop $SERVICE
 fi
-# The delivery verifier runs from the same tree; step 10 starts it again.
+# The delivery verifier runs from the same tree. Stopping it does not disable
+# it, so step 8 starts it again exactly when it was enabled.
 if [ -f /etc/systemd/system/$VERIFIER_TIMER ]; then
   systemctl stop $VERIFIER_TIMER $VERIFIER_SERVICE
 fi
@@ -450,6 +445,11 @@ systemctl enable $SERVICE
 # Explicit start, not enable --now: --now is a no-op for an already-active
 # service and was the mechanism that kept the old PID running old bytecode.
 systemctl start $SERVICE
+# Restart the verifier stopped in step 6, if it is installed and enabled. Its
+# results never affect this install.
+if systemctl is-enabled --quiet $VERIFIER_TIMER 2>/dev/null; then
+  systemctl start $VERIFIER_TIMER
+fi
 "
 
 # ---------------------------------------------------------------------------
@@ -489,136 +489,6 @@ clickhouse-client --user '$CH_USER' --database '$CH_DATABASE' --query \\
   'SELECT (SELECT count() FROM activity_generations) AS activity, (SELECT count() FROM synthetic_probe_samples) AS synthetic, (SELECT count() FROM spend_lease_shadow) AS spend_lease_shadow FORMAT TSVWithNames'
 "
 
-# ---------------------------------------------------------------------------
-# 10. The delivery verifier.
-#
-# Runs after the drain is proven, so a verifier problem never leaves the drain
-# uninstalled; but it still fails this script, because an unchecked delivery
-# path is the state this installer exists to end.
-#
-# IAM. The verifier mints a NON-admin token for tr_verifier, so the node needs
-# dsql:DbConnect (DbConnectAdmin does not cover it). IAM cannot scope that
-# action to one Postgres role: the per-role boundary is the AWS IAM GRANT
-# mapping in the SQL below, and the node role already holds dsql:DbConnect for
-# tr_drain (statement DsqlOutboxDrain, put by aws_eu_clickhouse.sh). Nothing
-# new is granted here; its absence is refused.
-# ---------------------------------------------------------------------------
-if ! printf '%s\n' "$DSQL_DECISION" | tr -s '[:space:]' '\n' | grep -qx 'dsql:DbConnect'; then
-  cat >&2 <<EOF
-
-FATAL: ${NODE_ROLE} lacks dsql:DbConnect on ${CLUSTER_ARN}, so the delivery
-verifier cannot authenticate as tr_verifier. The drain above is installed.
-
-The node role's policy is owned by scripts/deploy/aws_eu_clickhouse.sh
-(statement DsqlOutboxDrain grants exactly dsql:DbConnect on this cluster).
-Re-run it to restore the policy, then re-run this installer.
-EOF
-  exit 1
-fi
-
-ssm "verifier: environment file" "
-set -eu
-umask 077
-cat > '$VERIFIER_ENV_FILE' <<'ENVEOF'
-TR_POSTGRES_DSN=host=${DSQL_HOST} port=5432 user=tr_verifier dbname=postgres sslmode=require
-ENVEOF
-chmod 600 '$VERIFIER_ENV_FILE'
-cut -d= -f1 '$VERIFIER_ENV_FILE'
-"
-
-# The operator step, proven from the node rather than trusted: connect as
-# tr_verifier and require (tr_verifier, can read the view, reads nothing else).
-# Only the role name, two booleans/counts, or an exception class are printed.
-if ! SCOPE="$(ssm "verifier: tr_verifier read scope" "
-set -eu
-cd '$REMOTE_ROOT'
-HOME='$STATE_DIR' ./venv/bin/python - <<'PYEOF'
-import sys
-env = {}
-for path in ('$ENV_FILE', '$VERIFIER_ENV_FILE'):
-    with open(path) as handle:
-        for line in handle:
-            key, sep, value = line.rstrip('\n').partition('=')
-            if sep:
-                env[key] = value
-from clickhouse.verify_postgres_delivery import PostgresGenerationSource
-source = PostgresGenerationSource(
-    dsn=env['TR_POSTGRES_DSN'],
-    iam_auth=env.get('TR_POSTGRES_IAM_AUTH', ''),
-    iam_region=env.get('TR_POSTGRES_IAM_REGION', ''),
-)
-try:
-    role, view, others = source.read_scope()
-except Exception as exc:
-    sys.exit('tr_verifier could not connect or read its scope: ' + type(exc).__name__)
-finally:
-    source.close()
-print('role=%s view_select=%s other_readable_relations=%d' % (role, view, others))
-if (role, view, others) != ('tr_verifier', True, 0):
-    sys.exit('tr_verifier is missing its grant or can read more than the view')
-PYEOF
-")"; then
-  cat >&2 <<EOF
-
-FATAL: the delivery verifier's Postgres role is not provisioned as reviewed.
-The drain above is installed; the verifier is not.
-
-OPERATOR STEP (once, as the DSQL admin, from a host with psql). The SQL is
-idempotent and is printed below from ${VERIFIER_ROLE_SQL}:
-
-  PGPASSWORD="\$(aws dsql generate-db-connect-admin-auth-token \\
-      --region ${DSQL_REGION} --hostname ${DSQL_HOST})" \\
-  psql "host=${DSQL_HOST} port=5432 dbname=postgres user=admin sslmode=require" \\
-    -v node_role_arn=arn:aws:iam::${ACCOUNT}:role/${NODE_ROLE} \\
-    -f ${VERIFIER_ROLE_SQL}
-
-Then re-run this installer; it re-checks the role's scope from the node.
-
-EOF
-  sed 's/^/    /' "$ROOT/$VERIFIER_ROLE_SQL" >&2
-  exit 1
-fi
-log "tr_verifier scope: $(printf '%s\n' "$SCOPE" | grep '^role=' | tail -1)"
-
-VERIFIER_UNIT_B64="$(base64 < "$ROOT/clickhouse/$VERIFIER_SERVICE" | tr -d '\n')"
-VERIFIER_TIMER_B64="$(base64 < "$ROOT/clickhouse/$VERIFIER_TIMER" | tr -d '\n')"
-ssm "verifier: install units" "
-set -eux
-printf '%s' '$VERIFIER_UNIT_B64' | base64 -d > /etc/systemd/system/$VERIFIER_SERVICE
-printf '%s' '$VERIFIER_TIMER_B64' | base64 -d > /etc/systemd/system/$VERIFIER_TIMER
-chmod 644 /etc/systemd/system/$VERIFIER_SERVICE /etc/systemd/system/$VERIFIER_TIMER
-systemctl daemon-reload
-systemctl enable $VERIFIER_TIMER
-systemctl start $VERIFIER_TIMER
-"
-
-# One run now, synchronously: `systemctl start` on a oneshot returns when the
-# run ends, non-zero when it failed. The timer stays enabled either way, so a
-# real delivery discrepancy keeps being recorded hourly after this refusal.
-ssm "verifier: run once" "
-set -eu
-rc=0
-systemctl start $VERIFIER_SERVICE || rc=\$?
-echo '--- verifier summary (this install) ---'
-journalctl -u $VERIFIER_SERVICE --since '@$INSTALL_STARTED_AT' --no-pager -o cat | grep '^{' | tail -1
-if [ \"\$rc\" -ne 0 ]; then
-  echo \"delivery verifier run failed (systemctl start exit \$rc); refusing\" >&2
-  exit 1
-fi
-test \"\$(systemctl show $VERIFIER_SERVICE --property=Result --value)\" = success
-test \"\$(systemctl show $VERIFIER_SERVICE --property=ExecMainStatus --value)\" = 0
-'$REMOTE_ROOT/venv/bin/python' - '$VERIFIER_HISTORY' '$INSTALL_STARTED_AT' <<'PYEOF'
-import datetime as dt
-import json
-import sys
-last = json.loads(open(sys.argv[1]).read().splitlines()[-1])
-checked = dt.datetime.fromisoformat(last['checked_at'].replace('Z', '+00:00')).timestamp()
-if last.get('ok') is not True or checked < int(sys.argv[2]):
-    sys.exit('history holds no clean check from this install')
-print('history: clean check at ' + last['checked_at'])
-PYEOF
-"
-
 cat <<EOF
 
 Installed. What "working" looks like, and what to do when it is not:
@@ -644,15 +514,14 @@ Rollback: systemctl disable --now $SERVICE, then
   mv ${REMOTE_ROOT}.previous $REMOTE_ROOT   (kept from this run)
 Nothing is lost by stopping the drain: undelivered rows stay in the outbox.
 
-Delivery verifier ($VERIFIER_TIMER, hourly, 24 h lookback):
-  tail -1 $VERIFIER_HISTORY             last check; "ok": true is clean
-  systemctl show $VERIFIER_SERVICE -p Result,ExecMainStatus
-                                     exit status of the last run (0 = clean)
-  journalctl -u $VERIFIER_SERVICE -o cat | grep '^{'
+Next step, optional and separate (it never affects the drain):
+  bash scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh
+      installs the hourly delivery verifier. Needs the tr_verifier role once
+      (scripts/deploy/aws_eu_tr_verifier_role.sql); it prints the command.
 EOF
 
 # ---------------------------------------------------------------------------
-# 11. The outside view.
+# 10. The outside view.
 #
 # Step 9 proves that systemd is active, replaced the pre-install PID with one
 # started during this run, and that the new PID completed a sweep without a
@@ -691,8 +560,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the local shell, so a repeat is caught wherever the old shell is.
 NEXT_STEPS='The drain install itself did not fail. Step 9 proved the new PID
 completed a clean sweep. Read copies=, drain_lag_seconds, and the ClickHouse
-counts there for current state; the counts are context, not a movement proof.
-Step 10 ran the delivery verifier once and its check was clean.'
+counts there for current state; the counts are context, not a movement proof.'
 
 VERIFY_RC=0
 require_cloud_complete aws "$NEXT_STEPS" || VERIFY_RC=$?
@@ -705,7 +573,6 @@ DRAIN INSTALLED; NOT YET OBSERVABLE FROM OUTSIDE.
 What this run did: shipped the code, installed and enabled the unit, and then
 proved the new PID completed a clean sweep, and printed a ClickHouse row count
 from the node (step 9). Read the count as context, not as a movement proof.
-Step 10 installed the hourly delivery verifier and its first run was clean.
 
 What it could not do at all: tell whether anyone WITHOUT a session on this node
 can see the drain. The tr-eu App Runner control plane -- the deployment holding
