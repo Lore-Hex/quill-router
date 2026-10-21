@@ -7,7 +7,8 @@ module over the same live dependencies, and every request of a generated
 matrix runs through both, each on a freshly seeded store with the same
 clock, the same ids and a fresh process-local routing state. The responses,
 the refusals (status, body and headers), the stored authorization and the
-log lines must be identical.
+log lines must be identical, except for the explicitly checked reservation
+guidance and diagnostic added in #1926. Reservation quotes are compared too.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import sys
 import types
 import uuid
 from dataclasses import asdict
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -193,19 +195,59 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
     monkeypatch.setattr(module, "ROUTING_STATE", RoutingState())
     body = GatewayAuthorizeRequest.model_validate({**_body_fields(case), "api_key_hash": key.hash})
     request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+    quotes: list[dict[str, int]] = []
+    method = "authorize_gateway_typed" if backend == "typed" else "reserve"
+    reserve = getattr(store, method)
+
+    def observe_reservation(_self: Any, *args: Any, **kwargs: Any) -> Any:
+        quotes.append({
+            "estimate": kwargs["estimate"] if backend == "typed" else args[2],
+            "input": kwargs["stage_d_prompt_tokens"] if backend == "typed" else body.estimated_input_tokens,
+            "output": body.output_estimate,
+        })
+        return reserve(*args, **kwargs)
+
     caplog.clear()
-    try:
-        data = module._authorize_gateway_sync(request, body, SETTINGS[case.get("settings", 0)])
-    except HTTPException as exc:
-        outcome: dict[str, Any] = {"status": exc.status_code, "detail": exc.detail, "headers": exc.headers}
-    else:
-        authorization = store.get_gateway_authorization(data["data"]["authorization_id"])
-        stored = asdict(authorization) if authorization is not None else None
-        outcome = {"status": 200, "data": data, "stored": stored}
+    with monkeypatch.context() as scope:
+        scope.setattr(type(store), method, observe_reservation)
+        try:
+            data = module._authorize_gateway_sync(request, body, SETTINGS[case.get("settings", 0)])
+        except HTTPException as exc:
+            outcome: dict[str, Any] = {"status": exc.status_code, "detail": exc.detail, "headers": exc.headers}
+        else:
+            authorization = store.get_gateway_authorization(data["data"]["authorization_id"])
+            stored = asdict(authorization) if authorization is not None else None
+            outcome = {"status": 200, "data": data, "stored": stored}
+    outcome["reservation_quotes"] = quotes
     outcome["logs"] = [
         (record.levelname, record.getMessage())
         for record in caplog.records if record.name in GATEWAY_LOGGERS
     ]
+    error = outcome.get("detail", {}).get("error", {})
+    if module is gateway and error.get("type") == "insufficient_credits":
+        assert outcome["status"] == 402 and len(quotes) == 1
+        quote = quotes[0]
+        # Validate the precise approved delta against the ACTUAL reserve call,
+        # not against the new message/log or the production error formatter.
+        amount = format(Decimal(quote["estimate"]) / 1_000_000, "f")
+        if "." in amount:
+            amount = amount.rstrip("0").rstrip(".")
+        if "." not in amount:
+            amount += ".00"
+        assert error["message"] == (
+            f"Insufficient credits for this request's upfront reservation of ${amount}. "
+            "The reservation covers the estimated input, output-token limit, and any additional usage costs; "
+            "it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, "
+            "or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits."
+        )
+        diagnostic = ("INFO", (
+            f"billing.insufficient_credits workspace_id={key.workspace_id} key_id={key.hash} request_id=None "
+            f"model={body.model} estimated_microdollars={quote['estimate']} "
+            f"estimated_input_tokens={quote['input']} output_token_budget={quote['output']}"
+        ))
+        assert outcome["logs"].count(diagnostic) == 1
+        outcome["logs"].remove(diagnostic)
+        error["message"] = "Insufficient credits"
     text = json.dumps(outcome, sort_keys=True, default=str)
     # The store's own clock and random key material differ per seeding.
     for volatile in (key.hash, key.lookup_hash, key.workspace_id):
@@ -304,3 +346,18 @@ def test_the_comparison_sees_a_difference(monkeypatch: pytest.MonkeyPatch,
     case = {"model": "anthropic/claude-haiku-4.5", "route_type": "chat.completions"}
     with pytest.raises(AssertionError, match="1 differences"):
         _compare([case], "memory", monkeypatch, caplog)
+
+
+def test_the_comparison_rejects_incorrect_reservation_guidance(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    original = gateway._insufficient_credits_error
+
+    def off_by_one(*args: Any, **kwargs: Any) -> Exception:
+        kwargs["estimate"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(gateway, "_insufficient_credits_error", off_by_one)
+    case = {"model": "anthropic/claude-haiku-4.5", "estimated_input_tokens": 2_000_000_000}
+    with pytest.raises(AssertionError):
+        _compare([case], "typed", monkeypatch, caplog)
