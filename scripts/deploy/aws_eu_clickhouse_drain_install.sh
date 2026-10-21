@@ -244,20 +244,11 @@ every connection, and deliver nothing.
 These are operator steps and this script will not make them. The drain
 connects as the scoped role tr_drain (SELECT and DELETE on the outbox table
 only), never as admin: the cluster also holds wallets, keys and the ledger.
-aws_eu_clickhouse.sh puts the grant below (statement DsqlOutboxDrain).
 
-1. Grant the node dsql:DbConnect (NOT DbConnectAdmin):
-
-  aws iam put-role-policy --role-name ${NODE_ROLE} \\
-    --policy-name dsql-connect-drain \\
-    --policy-document '{
-      "Version": "2012-10-17",
-      "Statement": [{
-        "Effect": "Allow",
-        "Action": ["dsql:DbConnect"],
-        "Resource": ["${CLUSTER_ARN}"]
-      }]
-    }'
+1. Grant the node dsql:DbConnect (NOT DbConnectAdmin) by re-running
+   scripts/deploy/aws_eu_clickhouse.sh, which owns that grant (statement
+   DsqlOutboxDrain in the node role's inline policy). A hand-made second
+   policy is one no script manages or removes.
 
 2. Once, connected to DSQL as admin, create and map the role:
 
