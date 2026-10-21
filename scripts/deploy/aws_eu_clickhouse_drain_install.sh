@@ -89,7 +89,11 @@ SECRET_ID="${SECRET_ID:-quill/tr-eu-clickhouse-password}"
 CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"
 DSQL_REGION="${DSQL_REGION:-$REGION}"
 DSQL_HOST="${DSQL_HOST:-${CLUSTER_ID}.dsql.${DSQL_REGION}.on.aws}"
-DSQL_USER="${DSQL_USER:-admin}"
+# The scoped role (LOGIN; SELECT and DELETE on the outbox table only). Never
+# admin: the ClickHouse host must not hold superuser-equivalent credentials
+# for a database that also holds wallets, keys and the ledger.
+DSQL_USER="${DSQL_USER:-tr_drain}"
+[ "$DSQL_USER" != admin ] || { printf '\nFATAL: DSQL_USER=admin refused: the drain connects as the scoped tr_drain role\n' >&2; exit 1; }
 # "default"/"default" and NOT the "tr"/"tr" default, because this node's schema
 # was applied unqualified. Getting this wrong fails authentication only AFTER a
 # batch has been read out of the outbox.
