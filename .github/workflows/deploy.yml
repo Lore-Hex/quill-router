@@ -138,7 +138,7 @@ jobs:
       REPO: trusted-router
       SERVICE: trusted-router
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set image ref from commit SHA
         id: set-vars
@@ -241,7 +241,7 @@ jobs:
       TR_DEPLOY_MUTEX_GENERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_GENERATION }}
       TR_DEPLOY_MUTEX_CREATED_AT: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
@@ -268,7 +268,7 @@ jobs:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -396,7 +396,7 @@ jobs:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -439,7 +439,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: scripts/deploy/superseded_deploy.py
           sparse-checkout-cone-mode: false
@@ -504,7 +504,7 @@ jobs:
       # with the six-service production cutover in #712.
       TR_ALLOW_DEPLOYED_COMBINED_SURFACE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -952,7 +952,7 @@ jobs:
           echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}" >> "$GITHUB_ENV"
           echo "TR_DEPLOY_MUTEX_CREATED_AT=${DEPLOY_MUTEX_CREATED_AT}" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -963,7 +963,7 @@ jobs:
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Compute watchdog args (hotfix vs normal)
         id: wd_args
@@ -1300,7 +1300,7 @@ jobs:
       REGION: us-central1
       SERVICE: trusted-router
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
@@ -1405,7 +1405,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -1424,7 +1424,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github

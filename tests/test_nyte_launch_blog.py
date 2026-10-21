@@ -21,6 +21,12 @@ def test_nyte_launch_post_and_discovery(client: TestClient) -> None:
     assert "Joseph Perla" in soup.select_one(".blog-meta").get_text()
     assert soup.select_one('link[rel="canonical"]')["href"].endswith(post.href)
     assert soup.select_one('meta[property="og:image"]')["content"].endswith(post.og_image)
+    assert post.og_image == f"/static/og/blog/{SLUG}-funding-20261020.png"
+    assert soup.select_one('meta[name="twitter:image"]')["content"].endswith(post.og_image)
+    index = BeautifulSoup(client.get("/blog").text, "html.parser")
+    assert index.select_one(f'a.blog-thumb[href="{post.href}"] img')["src"].endswith(
+        post.og_image
+    )
     assert soup.select_one('a[href="mailto:enterprise@trustedrouter.com"]')
     graphs = [json.loads(node.string) for node in soup.select('script[type="application/ld+json"]')]
     assert any("BlogPosting" in json.dumps(graph) for graph in graphs)

@@ -521,6 +521,9 @@ class Settings(BaseSettings):
     operational_analytics_clickhouse_user: str = "tr_control_read"
     operational_analytics_clickhouse_password: str = ""
     operational_analytics_clickhouse_database: str = "tr"
+    # Postgres-plane record reads. "postgres" keeps the existing behaviour;
+    # "clickhouse" enables the shared activity and usage readers per plane.
+    record_read_backend: str = "postgres"
     # Stage 1 live analytics outbox. This is intentionally off by default and
     # must remain off until the shadow ingester and reconciler are observed.
     analytics_outbox_enabled: bool = False
@@ -1440,6 +1443,22 @@ class Settings(BaseSettings):
     def async_settle_requires_protection(self) -> Settings:
         if self.async_settle_enabled and not self.async_settle_protection:
             raise ValueError("TR_ASYNC_SETTLE_ENABLED requires TR_ASYNC_SETTLE_PROTECTION")
+        return self
+
+    @model_validator(mode="after")
+    def record_reads_require_clickhouse(self) -> Settings:
+        if self.record_read_backend not in {"postgres", "clickhouse"}:
+            raise ValueError("TR_RECORD_READ_BACKEND must be 'postgres' or 'clickhouse'")
+        if self.record_read_backend == "clickhouse" and not (
+            self.operational_analytics_clickhouse_url.strip()
+            and self.operational_analytics_clickhouse_password
+        ):
+            # Without either, the store has no reader and every record read
+            # fails; refuse the plane at startup instead.
+            raise ValueError(
+                "TR_RECORD_READ_BACKEND=clickhouse requires TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL "
+                "and TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
+            )
         return self
 
     @model_validator(mode="after")
