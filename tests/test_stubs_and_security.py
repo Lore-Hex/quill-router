@@ -1179,15 +1179,9 @@ def test_sentry_scrubs_sensitive_fields() -> None:
 
 
 def test_no_sentry_in_enclave_code() -> None:
-    root = Path(__file__).resolve().parents[2]
-    enclave = root / "quill-cloud-proxy" / "enclave-go"
-    if not enclave.exists():
-        return
-    for path in enclave.rglob("*"):
-        if path.is_file() and (path.suffix == ".go" or path.name.startswith("Dockerfile")):
-            text = path.read_text(encoding="utf-8", errors="ignore").lower()
-            assert "sentry" not in text
-            assert "58539b11263132bcb70ea30f0b92e0f4" not in text
+    from scripts.check_enclave_sentry import check_enclave, configured_enclave
+
+    check_enclave(configured_enclave())
 
 
 def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(

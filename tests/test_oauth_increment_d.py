@@ -69,7 +69,7 @@ def test_conformant_redirect_omits_user_id_but_legacy_keeps_it(client: TestClien
 
     legacy_page = client.get(
         "/v1/auth",
-        params={"client_id": APP_ID, "callback_url": REDIRECT, "state": "legacy-state"},
+        params={"client_id": APP_ID, "callback_url": REDIRECT, "state": "legacy-state", "code_challenge": CHALLENGE, "code_challenge_method": "S256"},
     )
     legacy = _approve(client, legacy_page)
     assert set(parse_qs(urlsplit(legacy.headers["location"]).query)) == {
@@ -193,17 +193,16 @@ def test_token_rate_limit_has_retry_after(
     assert limited.json()["error"] == "temporarily_unavailable"
 
 
-def test_legacy_exchange_keeps_its_house_envelope_and_plain_pkce(
+def test_legacy_exchange_keeps_its_house_envelope_with_s256_pkce(
     client: TestClient, user_headers: dict[str, str]
 ) -> None:
-    """Item 7: the conformant surface is additive. Third-party integrations on
-    the legacy exchange must keep the house envelope (never the RFC one) and
-    must keep accepting `plain`, which the conformant endpoint rejects."""
+    """Legacy integrations retain their response envelope but must use S256."""
+    from tests.test_oauth_key_delegation import _pkce_challenge
     verifier = "legacy-verifier-" + "a" * 43
     body = {
         "callback_url": "https://legacy.example/callback",
-        "code_challenge": verifier,
-        "code_challenge_method": "plain",
+        "code_challenge": _pkce_challenge(verifier),
+        "code_challenge_method": "S256",
         "key_label": "Legacy app",
     }
     created = client.post("/v1/auth/keys/code", headers=user_headers, json=body)
@@ -214,7 +213,7 @@ def test_legacy_exchange_keeps_its_house_envelope_and_plain_pkce(
         json={
             "code": created.json()["data"]["id"],
             "code_verifier": verifier,
-            "code_challenge_method": "plain",
+            "code_challenge_method": "S256",
         },
     )
     assert exchange.status_code == 200, exchange.text
@@ -253,6 +252,8 @@ def test_app_supplied_budget_hint_is_normalised_to_dollars_or_dropped(
                 "client_id": APP_ID,
                 "callback_url": REDIRECT,
                 "suggested_monthly_budget": raw,
+                "code_challenge": CHALLENGE,
+                "code_challenge_method": "S256",
             },
         ),
     }

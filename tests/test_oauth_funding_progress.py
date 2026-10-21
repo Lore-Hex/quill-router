@@ -21,13 +21,13 @@ def consent_page(client: TestClient, request: pytest.FixtureRequest) -> tuple[Be
     )
     client.cookies.set("tr_session", raw)
     callback = "https://app.example.com/callback"
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(b"v" * 43).digest()).decode().rstrip("=")
     if request.param == "registered":
         STORE.set_user_identity_status(user.id, status="approved", verified_name="Example Developer")
         STORE.create_oauth_app(OAuthApp(
             id="funding-progress", owner_user_id=user.id, name="Pizza Ninjas wiki coach",
             redirect_uris=[callback], markup_basis_points=500,
         ))
-        challenge = base64.urlsafe_b64encode(hashlib.sha256(b"v" * 43).digest()).decode().rstrip("=")
         response = client.get("/oauth/authorize", params={
             "response_type": "code", "client_id": "funding-progress", "redirect_uri": callback,
             "scope": "inference profile", "state": "preserved-state",
@@ -37,6 +37,7 @@ def consent_page(client: TestClient, request: pytest.FixtureRequest) -> tuple[Be
         response = client.get("/auth", params={
             "callback_url": callback, "key_label": "Pizza Ninjas wiki coach",
             "limit": "5", "usage_limit_type": "monthly",
+            "code_challenge": challenge, "code_challenge_method": "S256",
         })
     assert response.status_code == 200, response.text
     return BeautifulSoup(response.text, "html.parser"), workspace.id

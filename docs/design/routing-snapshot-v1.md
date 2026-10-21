@@ -150,6 +150,10 @@ request parsing, which the next PR owns: with `allow_fallbacks` true it is
 `model` then every `models` entry; with `allow_fallbacks=false`
 (`routing._requested_model_ids(include_fallback_models=False)`) `models` is
 ignored when `model` is set, and only `models[0]` is taken when it is not.
+Capability filtering also derives the pool-selected set: collect expansions
+that differ from the canonical requested id, then subtract every model named
+directly anywhere in the request. This is Python's `pool_model_ids`; it is
+reconstructible from `expands_to` and is not an additional snapshot field.
 `tests/test_routing_snapshot.py` holds this rule to
 `routing._requested_model_ids` for every listed id, every catalog id and its
 spellings, and for model lists.

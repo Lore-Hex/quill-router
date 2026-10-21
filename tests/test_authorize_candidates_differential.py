@@ -8,7 +8,9 @@ matrix runs through both, each on a freshly seeded store with the same
 clock, the same ids and a fresh process-local routing state. The responses,
 the refusals (status, body and headers), the stored authorization and the
 log lines must be identical, except for the explicitly checked reservation
-guidance and diagnostic added in #1926. Reservation quotes are compared too.
+guidance and diagnostic added in #1926. The frozen leg's chat candidate hook
+applies an independent specification of the subsequently approved context
+limit, without changing the frozen file. Reservation quotes are compared too.
 """
 
 from __future__ import annotations
@@ -37,7 +39,9 @@ from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_
 from trusted_router.catalog import META_MODEL_IDS, MODELS, NAMED_DECISION_MODEL_PROVIDERS
 from trusted_router.catalog_data import PRIVATE_PROXY_MODEL_TARGETS
 from trusted_router.config import Settings
+from trusted_router.errors import api_error
 from trusted_router.routes.internal import gateway
+from trusted_router.routing import RoutingCandidates
 from trusted_router.routing_state import RoutingState
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import InMemoryStore, configure_store
@@ -188,6 +192,28 @@ def _body_fields(case: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in case.items() if k not in {"byok", "settings"} and v is not None}
 
 
+def _reference_context_candidates(candidates: Any, body: GatewayAuthorizeRequest) -> Any:
+    prompt = body.estimated_input_tokens
+    completion = body.max_tokens or body.max_completion_tokens or 0
+    kept = [(model, endpoint) for model, endpoint in candidates
+            if model.context_length == 0 or prompt + completion <= model.context_length]
+    if candidates and not kept:
+        window = max(model.context_length for model, _endpoint in candidates)
+        if completion:
+            message = (
+                f"This model's maximum context length is {window} tokens. However, you "
+                f"requested {prompt + completion} tokens ({prompt} in the messages, "
+                f"{completion} in the completion). Please reduce the length of the messages or completion."
+            )
+        else:
+            message = (
+                f"This model's maximum context length is {window} tokens. However, your "
+                f"messages resulted in {prompt} tokens. Please reduce the length of the messages."
+            )
+        raise api_error(400, message, "context_length_exceeded", extra={"param": "messages"})
+    return RoutingCandidates(kept, candidates.effective_preferences)
+
+
 def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
          monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> str:
     _deterministic_ids(monkeypatch)
@@ -210,6 +236,13 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
     caplog.clear()
     with monkeypatch.context() as scope:
         scope.setattr(type(store), method, observe_reservation)
+        if module is FROZEN_GATEWAY:
+            old_chat = module.chat_route_endpoint_candidates
+
+            def reference_chat(*args: Any, **kwargs: Any) -> Any:
+                return _reference_context_candidates(old_chat(*args, **kwargs), body)
+
+            scope.setattr(module, "chat_route_endpoint_candidates", reference_chat)
         try:
             data = module._authorize_gateway_sync(request, body, SETTINGS[case.get("settings", 0)])
         except HTTPException as exc:
@@ -316,7 +349,11 @@ def _without_durations(value: Any) -> Any:
 
 def test_the_memory_store_matrix_is_byte_identical(monkeypatch: pytest.MonkeyPatch,
                                                    caplog: pytest.LogCaptureFixture) -> None:
-    statuses = _compare(_cases(20_000, 1), "memory", monkeypatch, caplog)
+    cases = _cases(20_000, 1)
+    # Keep admission coverage high now that oversized prompts fail before billing.
+    cases.extend({"model": "anthropic/claude-haiku-4.5", "route_type": "chat.completions",
+                  "estimated_input_tokens": size, "max_tokens": 512} for size in range(500))
+    statuses = _compare(cases, "memory", monkeypatch, caplog)
     # Positive control: the matrix admits and refuses in volume, with several error classes.
     assert statuses.get(200, 0) > 3_000 and sum(v for k, v in statuses.items() if k != 200) > 10_000
     assert {400, 403, 501} <= set(statuses)
@@ -358,6 +395,17 @@ def test_the_comparison_rejects_incorrect_reservation_guidance(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(gateway, "_insufficient_credits_error", off_by_one)
-    case = {"model": "anthropic/claude-haiku-4.5", "estimated_input_tokens": 2_000_000_000}
+    case = {"model": "anthropic/claude-haiku-4.5", "estimated_input_tokens": 1_000,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": 100_000_000}
     with pytest.raises(AssertionError):
         _compare([case], "typed", monkeypatch, caplog)
+
+
+def test_the_comparison_rejects_missing_context_filter(monkeypatch, caplog) -> None:
+    from trusted_router import authorize_candidates
+
+    monkeypatch.setattr(authorize_candidates, "candidates_fitting_context", lambda rows, **kw: rows)
+    case = {"model": "anthropic/claude-haiku-4.5", "estimated_input_tokens": 2_000_000_000}
+    with pytest.raises(AssertionError, match="1 differences"):
+        _compare([case], "memory", monkeypatch, caplog)
