@@ -29,6 +29,7 @@ from trusted_router import authorize_candidates, catalog, routing
 from trusted_router.catalog_data import AUTO_MODEL_ID, Model
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.internal import gateway
 from trusted_router.routing import candidates_fitting_context, chat_route_endpoint_candidates
 from trusted_router.storage import STORE, InMemoryStore
 
