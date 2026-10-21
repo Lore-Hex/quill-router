@@ -198,10 +198,10 @@ log "install epoch $INSTALL_STARTED_AT; pre-install PID $PRE_INSTALL_PID"
 # while this one is missing and the result is a running unit that delivers
 # nothing -- the exact shape of the outage this script exists to end.
 #
-# The DSN names user=admin, so the token is generate_db_connect_admin_auth_token
-# and the action is dsql:DbConnectAdmin (see trusted_router/postgres_dsn.py,
-# dsql_token_is_admin). A scoped role uses dsql:DbConnect instead; either is
-# accepted here.
+# The DSN names user=tr_drain, so the token is the non-admin
+# generate_db_connect_auth_token and the action is dsql:DbConnect (see
+# trusted_router/postgres_dsn.py, dsql_token_is_admin). DbConnectAdmin alone
+# would pass a broader check and still fail at connect, after the tree swap.
 # ---------------------------------------------------------------------------
 NODE_ROLE="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text | sed 's#.*instance-profile/##')"
@@ -218,7 +218,7 @@ log "node role: $NODE_ROLE; checking DSQL connect permission on $CLUSTER_ARN"
 SIMULATE_ERROR=""
 if ! DSQL_DECISION="$(aws iam simulate-principal-policy \
   --policy-source-arn "arn:aws:iam::${ACCOUNT}:role/${NODE_ROLE}" \
-  --action-names dsql:DbConnectAdmin dsql:DbConnect \
+  --action-names dsql:DbConnect \
   --resource-arns "$CLUSTER_ARN" \
   --query 'EvaluationResults[?EvalDecision==`allowed`].EvalActionName' --output text 2>&1)"; then
   SIMULATE_ERROR="$DSQL_DECISION"
@@ -241,8 +241,12 @@ if [ -z "$DSQL_DECISION" ]; then
 FATAL: ${NODE_ROLE} cannot connect to DSQL, so the drain would start, fail
 every connection, and deliver nothing.
 
-This is an IAM change and this script will not make it. The control plane's
-role (tr-eu-app) already holds exactly this grant and is the model to copy:
+These are operator steps and this script will not make them. The drain
+connects as the scoped role tr_drain (SELECT and DELETE on the outbox table
+only), never as admin: the cluster also holds wallets, keys and the ledger.
+aws_eu_clickhouse.sh puts the grant below (statement DsqlOutboxDrain).
+
+1. Grant the node dsql:DbConnect (NOT DbConnectAdmin):
 
   aws iam put-role-policy --role-name ${NODE_ROLE} \\
     --policy-name dsql-connect-drain \\
@@ -250,24 +254,16 @@ role (tr-eu-app) already holds exactly this grant and is the model to copy:
       "Version": "2012-10-17",
       "Statement": [{
         "Effect": "Allow",
-        "Action": ["dsql:DbConnectAdmin"],
+        "Action": ["dsql:DbConnect"],
         "Resource": ["${CLUSTER_ARN}"]
       }]
     }'
 
-PREFER A SCOPED ROLE. The drain needs SELECT and DELETE on ONE table; admin is
-every table plus DDL, on a cluster that also holds wallets, keys and the
-ledger. To scope it, grant the node dsql:DbConnect (NOT DbConnectAdmin) above,
-then, connected to DSQL as admin, run:
+2. Once, connected to DSQL as admin, create and map the role:
 
   CREATE ROLE tr_drain WITH LOGIN;
   AWS IAM GRANT tr_drain TO 'arn:aws:iam::${ACCOUNT}:role/${NODE_ROLE}';
   GRANT SELECT, DELETE ON tr_operational_analytics_outbox TO tr_drain;
-
-and set user=tr_drain in TR_POSTGRES_DSN below. postgres_dsn.dsql_token_is_admin
-reads the role out of the DSN and mints the non-admin token automatically, so
-the DSN is the only thing that changes. The repo documents no scoped DSQL role
-today; this is the first one.
 EOF
   exit 1
 fi
