@@ -3,7 +3,7 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-21T14:39:45Z",
   "model_count": 30,
   "models": [
     {
@@ -73,7 +73,7 @@
       "max_output_tokens": 65536,
       "features": [],
       "canary_status_code": 200,
-      "canary_verified_at": "2026-09-20T03:14:17.183201+00:00",
+      "canary_verified_at": "2026-10-21T14:39:40.198802+00:00",
       "routable": true,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2500000,
@@ -99,7 +99,7 @@
       "max_output_tokens": 65536,
       "features": [],
       "canary_status_code": 200,
-      "canary_verified_at": "2026-09-20T03:14:17.717946+00:00",
+      "canary_verified_at": "2026-10-21T14:39:40.773083+00:00",
       "routable": true,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
@@ -163,7 +163,7 @@
       "max_output_tokens": 65536,
       "features": [],
       "canary_status_code": 200,
-      "canary_verified_at": "2026-09-20T03:14:19.926691+00:00",
+      "canary_verified_at": "2026-10-21T14:39:43.122481+00:00",
       "routable": true,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
@@ -628,7 +628,7 @@
       "routable_reason": "unsupported-vertex-api"
     },
     {
-      "display_name": "google/gemini-4-argon",
+      "display_name": "Gemini 4 Argon",
       "title": "gemini-4-argon",
       "model_type": "chat",
       "input_modalities": [
@@ -643,8 +643,15 @@
       "status": 1,
       "id": "google/gemini-4-argon",
       "upstream_id": "gemini-4-argon",
-      "routable": false,
-      "routable_reason": "unsupported-vertex-api"
+      "routable": true,
+      "context_length": 1048576,
+      "max_output_tokens": 32768,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-10-21T14:39:45.403721+00:00",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000
     },
     {
       "display_name": "google/gemini-3.5-transcribe",

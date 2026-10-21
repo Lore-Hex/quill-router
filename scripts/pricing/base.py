@@ -793,6 +793,9 @@ def reconcile_manifest_tombstones(
         "provider-canary-failed",
         # A later successful Vertex admission probe may recover missing limits.
         "vertex-metadata-unavailable",
+        # Vertex rechecks adapter support, complete pricing/limits and a live
+        # canary before recovering this machine-created classification.
+        "unsupported-vertex-api",
     }
     today = missing_date or datetime.now(UTC).date().isoformat()
     existing_ids = {

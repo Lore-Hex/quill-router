@@ -29,7 +29,7 @@ MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src/trusted_router/data/provider_models/google-vertex.json"
 )
-_CHAT_ID = re.compile(r"^gemini-\d+(?:\.\d+)?-(?:pro|flash(?:-lite)?)(?:-preview)?$")
+_CHAT_ID = re.compile(r"^gemini-\d+(?:\.\d+)?-(?:pro|flash(?:-lite)?|argon)(?:-preview)?$")
 _RECOVERABLE_HOLDS = frozenset(
     {
         "provider-canary-failed",
@@ -37,6 +37,7 @@ _RECOVERABLE_HOLDS = frozenset(
         "awaiting-price",
         "vertex-metadata-unavailable",
         "delisted-upstream",
+        "unsupported-vertex-api",
     }
 )
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
@@ -104,7 +105,7 @@ def _probe(headers: dict[str, str], project: str, native_id: str) -> tuple[bool,
     config: dict[str, Any] = {"maxOutputTokens": 128}
     if native_id.startswith("gemini-2.5-flash"):
         config["thinkingConfig"] = {"thinkingBudget": 0}
-    elif native_id.startswith("gemini-3"):
+    elif native_id.startswith(("gemini-3", "gemini-4")):
         config["thinkingConfig"] = {"thinkingLevel": "low"}
     try:
         response = httpx.post(
