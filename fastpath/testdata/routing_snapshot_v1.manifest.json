@@ -1,0 +1,10 @@
+{
+ "aud": "tr-fastpath-edge-test",
+ "generator": "scripts/fastpath/routing_snapshot_vectors.py",
+ "iss": "tr-control-plane-test",
+ "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InJvdXRpbmctc25hcHNob3QtdGVzdC1rZXktMSIsInR5cCI6InRyLXJvdXRpbmctc25hcHNob3QtdjEifQ.eyJhdWQiOiJ0ci1mYXN0cGF0aC1lZGdlLXRlc3QiLCJjb21waWxlZF9hdCI6MTc5MjM2ODAwMCwiaXNzIjoidHItY29udHJvbC1wbGFuZS10ZXN0Iiwibm90X2FmdGVyIjoxNzkyMzg3ODAwLCJwbGFuZSI6eyJjbG91ZCI6ImdjcCIsInJlZ2lvbiI6InVzLWNlbnRyYWwxIn0sInNoYTI1NiI6IjA5YTVjMzRiMmFjMzMwMGYyYTI2ZTI5ZmMwMmMyODQzMDQyZWFlZmQzYjI3ZWUwYjdjNmExNzZiZDBmNjUzZTQiLCJzaXplIjoxOTkxNiwic291cmNlX3JldmlzaW9uIjoiZ29sZGVuLWZpeHR1cmUiLCJ2IjoxfQ.38qaIT8ybAL0zwQ3mdL33IPKR6SwVdPME_qJ7yawEqOwIkG8DgcTJV74NfFDFodMBggz3ypj5sFoNDZPnKhZAg",
+ "kid": "routing-snapshot-test-key-1",
+ "public_key_b64url": "U1I1REk6JqeFqKq5ZGH0P8b1b_OEwbFG0lCOkYL-jjY",
+ "purpose": "routing-snapshot",
+ "test_key": true
+}
