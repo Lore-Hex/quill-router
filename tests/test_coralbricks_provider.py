@@ -101,7 +101,7 @@ def test_publication_privacy_prices_and_hourly_refresh(client):
     assert endpoint.usage_type == "Credits"
     assert "reasoning_effort" in endpoint.supported_parameters
     assert endpoint.input_modalities == ("text", "image")
-    assert MODEL_ENDPOINTS["z-ai/glm-5.3@coralbricks/prepaid"].input_modalities == ("text",)
+    assert "z-ai/glm-5.3@coralbricks/prepaid" not in MODEL_ENDPOINTS
     assert endpoint.prompt_price_microdollars_per_million_tokens == 10550
     assert endpoint.completion_price_microdollars_per_million_tokens == 1266000
     # Zero-cost upstream cache reads retain the platform's published $0.01/M floor.
@@ -121,8 +121,8 @@ def test_publication_privacy_prices_and_hourly_refresh(client):
     assert "CORALBRICKS_API_KEY:trustedrouter-coralbricks-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
 
 
-@pytest.mark.parametrize("model_id", ["z-ai/glm-5.3", "deepseek/deepseek-v4.1-flash"])
-def test_managed_zdr_scope_and_routing_do_not_imply_confidential_or_byok(model_id):
+def test_managed_zdr_scope_and_routing_do_not_imply_confidential_or_byok():
+    model_id = "deepseek/deepseek-v4.1-flash"
     from trusted_router.catalog import (
         MODEL_ENDPOINTS,
         MODELS,

@@ -1,5 +1,9 @@
 # Lightning AI operator credential rejection, October 6, 2026
 
+This is the October 6 incident record. Lightning's separate October 16 security
+incident now holds both managed and BYOK routes. This record does not authorize
+clearing that hold; recovery requires a separate review and fresh canaries.
+
 ## Confirmed Cause
 
 This incident affects the Lightning AI inference provider (`lightning`), not

@@ -6,7 +6,7 @@ import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
-from trusted_router import catalog_ingest, provider_lifecycle
+from trusted_router import catalog_ingest, provider_contracts, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 
@@ -67,6 +67,8 @@ def test_rejected_operator_credentials_block_only_prepaid(
     monkeypatch: pytest.MonkeyPatch, provider: str,
 ) -> None:
     # Simulate fresh discovery claiming availability after a key rejection.
+    # Isolate credential holds from the later provider-wide security incident.
+    monkeypatch.setattr(provider_contracts, "PROVIDER_INCIDENT_HOLD_REASONS", {})
     monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {
         provider: "operator-credential-rejected",
     })
@@ -77,7 +79,7 @@ def test_rejected_operator_credentials_block_only_prepaid(
     endpoints = {
         f"{slug}/{usage}": ModelEndpoint(
             id=f"{slug}/{usage}", model_id=model, provider=slug,
-            usage_type=usage, upstream_id=model,
+            usage_type=usage, upstream_id="lightning-ai/fixture" if slug == "lightning" else model,
         )
         for slug in (provider, "novita") for usage in ("Credits", "BYOK")
     }
@@ -93,6 +95,7 @@ def test_lightning_fresh_discovery_cannot_bypass_operator_hold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = "lightning-ai/future-model"
+    monkeypatch.setattr(provider_contracts, "PROVIDER_INCIDENT_HOLD_REASONS", {})
     monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {
         "lightning": "operator-credential-rejected",
     })
