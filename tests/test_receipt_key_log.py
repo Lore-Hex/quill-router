@@ -1693,21 +1693,36 @@ def test_postgres_pagination_avoids_row_value_comparisons() -> None:
 
 
 def test_a_page_read_past_its_time_bound_degrades_like_a_store_error(monkeypatch) -> None:
-    """The route's 3 s bound itself: a first page that times out is served from
-    the cache as degraded, and a cursor page that times out answers 503."""
+    """The route's 3 s bound itself, on the unfiltered and the kid-filtered
+    read: a first page that times out is served from the cache as degraded,
+    and a cursor page that times out answers 503."""
     import asyncio
 
-    records = _public_records(300)
+    jwk = _jwk(b"one-key-many-versions")
+    kid = _kid(jwk)
     store = InMemoryStore()
-    store.receipt_keys = {f"raw-{index}": record for index, record in enumerate(records)}
+    store.receipt_keys = {
+        f"raw-{index}": ReceiptKey(
+            kid=kid,
+            jwk=jwk,
+            att=f"att-{index}",
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            last_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            verified=True,
+        )
+        for index in range(300)
+    }
     configure_store(store)
     client = TestClient(
         create_app(Settings(environment="test"), configure_store_arg=False, init_observability=False)
     )
-    first = client.get("/.well-known/inference-receipt-keys")
-    assert first.status_code == 200 and first.json()["degraded"] is False
-    cursor = first.json()["next_cursor"]
-    assert cursor
+    route = "/.well-known/inference-receipt-keys"
+    first = {"all": client.get(route), "kid": client.get(route, params={"kid": kid})}
+    for response in first.values():
+        assert response.status_code == 200 and response.json()["degraded"] is False
+        assert response.json()["next_cursor"]
     bounds: list[float] = []
 
     class _TimedOut:
@@ -1721,11 +1736,12 @@ def test_a_page_read_past_its_time_bound_degrades_like_a_store_error(monkeypatch
             return getattr(asyncio, name)
 
     monkeypatch.setattr(public_routes, "asyncio", _TimedOut())
-    cached = client.get("/.well-known/inference-receipt-keys")
-    assert cached.status_code == 200
-    assert cached.json()["degraded"] is True
-    assert cached.json()["keys"] == first.json()["keys"]
-    paged = client.get("/.well-known/inference-receipt-keys", params={"cursor": cursor})
-    assert paged.status_code == 503
-    assert paged.headers["x-trustedrouter-key-log-status"] == "degraded"
-    assert bounds == [3.0, 3.0]
+    for scope, params in (("all", {}), ("kid", {"kid": kid})):
+        cached = client.get(route, params=params)
+        assert cached.status_code == 200
+        assert cached.json()["degraded"] is True
+        assert cached.json()["keys"] == first[scope].json()["keys"]
+        paged = client.get(route, params={**params, "cursor": first[scope].json()["next_cursor"]})
+        assert paged.status_code == 503
+        assert paged.headers["x-trustedrouter-key-log-status"] == "degraded"
+    assert bounds == [3.0] * 4
