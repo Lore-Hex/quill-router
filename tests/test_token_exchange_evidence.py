@@ -39,6 +39,16 @@ def test_catalog_parity():
         assert Decimal(row['output']) * 1_000_000 == endpoint.completion_price_microdollars_per_million_tokens
 
 
+def test_1017_is_first_using_the_existing_confidential_route(monkeypatch, confidential_endpoint):
+    assert exchange.MODELS[0] == ('deepseek/deepseek-v4.1-flash', 'DeepSeek V4.1 Flash 1017')
+    monkeypatch.setattr(exchange, 'endpoints_for_model', lambda _: [confidential_endpoint])
+    rows = exchange.confidential_prices()
+    assert rows[0]['model'] == 'deepseek/deepseek-v4.1-flash'
+    assert rows[0]['label'] == 'DeepSeek V4.1 Flash 1017'
+    assert rows[0]['provider'] == 'tinfoil'
+    assert rows[0]['source'].endswith('/deepseek/deepseek-v4.1-flash#provider-tinfoil')
+
+
 def test_missing_ambiguous_or_nonconfidential_route_has_no_fallback(monkeypatch, confidential_endpoint):
     source = confidential_endpoint
     for routes in ([], [source, source]):

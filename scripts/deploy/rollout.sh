@@ -530,6 +530,7 @@ ENV_VARS=(
   "TR_ROUTABLE_ENABLED=false"
   "TR_ROUTABLE_API_BASE_URL=https://api.routable.com"
   "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS=80"
+  "TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS=15000"
   "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which

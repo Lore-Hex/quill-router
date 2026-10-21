@@ -68,12 +68,6 @@
         "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
       }
     },
-    "scripts/deploy/aws_eu_clickhouse_drain_install.sh": {
-      "every table plus DDL, on a cluster that also holds wallets, keys and the": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      }
-    },
     "scripts/deploy/migrate_analytics_outbox.sh": {
       "# Apply the stage-1 live analytics outbox DDL.": {
         "count": 1,

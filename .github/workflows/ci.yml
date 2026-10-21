@@ -10,15 +10,27 @@ on:
   # generated branch before advancing protected main with the checked SHA.
   workflow_dispatch: {}
 
+# One CI run per branch or pull request: a newer push cancels the run of the
+# commit it supersedes. Without this, 2026-10-20's push cadence left 60 queued
+# runs and the coverage job of every main run starved for five hours, so no run
+# concluded and the deploy gate (which needs its commit's CI run to conclude
+# success) could ship nothing. Main is exempt: every main commit keeps its own
+# run, because a later push that touches no deploy path starts no deploy of its
+# own, and the earlier commit's deploy gate would read the cancelled run as a
+# refusal and strand a valid rollout.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
 # conclusion for the SHA, and a run only concludes success when every job
 # succeeds, so the gate semantics are unchanged by the split.
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -32,7 +44,7 @@ jobs:
         run: uv run python scripts/update_model_changes.py --check
 
   spanner-emulator:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       SPANNER_EMULATOR_HOST: 127.0.0.1:9010
@@ -45,7 +57,7 @@ jobs:
           - 9010:9010
           - 9020:9020
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -100,9 +112,9 @@ jobs:
           docker logs ${{ job.services.spanner.id }}
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
@@ -118,9 +130,9 @@ jobs:
         run: npx stylelint "src/trusted_router/static/*.css"
 
   production-import:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -178,7 +190,7 @@ jobs:
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/merged-durations.json
         # Review the output, copy it to .test_durations, and commit.
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "12"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
@@ -213,7 +225,7 @@ jobs:
         ports:
           - 5434:5432
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -297,9 +309,9 @@ jobs:
     # partial run is not a measurement of this commit.
     needs: test
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -370,11 +382,11 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "8"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -417,7 +429,7 @@ jobs:
   # Frozen reference tracing is intentionally separate from coverage tracing.
   # Both lifecycle clocks retain the complete matrix; no cloud identity needed.
   proof-oracle:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -430,7 +442,7 @@ jobs:
         # to about two thirds of the four-group work; keep the 45-minute cap.
         shard: [1, 2, 3, 4, 5, 6]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -457,9 +469,9 @@ jobs:
           --splitting-algorithm least_duration
 
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -503,9 +515,9 @@ jobs:
   # test_an_unchanged_write_side_is_silent_and_reads_no_network, which drives
   # the real main() with every network seam replaced by a function that raises.
   byok-format-ordering:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -542,9 +554,9 @@ jobs:
   # the pinned TLC from proofs/ on a small instance and compares every step,
   # so this job needs Java as well as Go.
   fastpath:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # The module stays on Go 1.24, the enclave's: a dependency that needs a
+    # The module stays on the patched Go 1.26 toolchain: a dependency that needs a
     # later Go fails the build rather than fetching a newer toolchain.
     env:
       GOTOOLCHAIN: local
@@ -552,10 +564,10 @@ jobs:
       run:
         working-directory: fastpath
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - uses: actions/setup-java@v4
         with:
@@ -586,7 +598,7 @@ jobs:
   # With FASTPATH_SPANNER_EMULATOR=1 an emulator that cannot be reached fails
   # the tests; the fastpath job, without it, skips them.
   fastpath-spanner:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GOTOOLCHAIN: local
@@ -602,10 +614,10 @@ jobs:
       run:
         working-directory: fastpath
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - name: Wait for the Spanner emulator (fail if unavailable)
         run: |
@@ -633,7 +645,7 @@ jobs:
   # so the store job leaves them out; each runs here in a job of its own,
   # without the race detector, against an emulator of its own.
   fastpath-walks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 260
     strategy:
       fail-fast: false
@@ -653,10 +665,10 @@ jobs:
       run:
         working-directory: fastpath
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - name: Wait for the Spanner emulator (fail if unavailable)
         run: |
@@ -670,10 +682,10 @@ jobs:
         run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
 
   proofs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

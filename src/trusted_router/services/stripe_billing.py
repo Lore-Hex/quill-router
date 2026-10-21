@@ -64,6 +64,7 @@ def create_checkout_session(
         fixed_fee_cents=fee_fixed_cents,
         minimum_fee_cents=fee_minimum_cents,
         max_fee_cents=fee_max_cents,
+        fee_multiplier_basis_points=settings.stripe_paypal_fee_multiplier_basis_points,
     )
     payment_metadata = fee.metadata(
         workspace_id=workspace_id,

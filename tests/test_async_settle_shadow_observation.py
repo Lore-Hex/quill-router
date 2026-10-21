@@ -78,6 +78,8 @@ def install_scheduler(monkeypatch):
     # No wall timer is allowed to race CPU-only fake-store work.
     scheduler.timeout = lambda seconds: nullcontext()
     monkeypatch.setattr(module, "asyncio", scheduler)
+    # Timing witnesses supply an advancing wait; other offline clocks stay fixed.
+    monkeypatch.setattr(module, "sleep", lambda seconds: None, raising=False)
     return scheduler
 
 
@@ -457,7 +459,8 @@ def test_native_sdk_no_retry_shared_deadline(sdk_database: Any, fault: str) -> N
         db.errors = [{"abort": Aborted("abort"), "reset": InternalServerError("RST_STREAM"),
                       "lost_reply": ServiceUnavailable("lost")}[fault]]
     started = clock.monotonic()
-    with pytest.raises(UnknownCommit):
+    from trusted_router.storage_gcp_shadow_observation import ContentionLoss
+    with pytest.raises(ContentionLoss if fault == "abort" else UnknownCommit):
         store.claim("issuer", NOW_US//2_000_000, NOW_US, Budget(started+.5, clock.monotonic))
     assert not sleeps
     assert clock.monotonic()-started <= .5

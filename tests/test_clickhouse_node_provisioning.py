@@ -701,3 +701,14 @@ def test_single_node_reader_installer_is_read_only_and_idempotent(tmp_path: Path
     assert ET.fromstring(config.read_text()).findtext(  # noqa: S314
         "users/tr_control_read/password_sha256_hex"
     ) == "b" * 64
+
+
+def test_paris_provisioner_makes_no_app_runner_call(tmp_path: Path) -> None:
+    """The control plane runs on ECS in the node's VPC; the App Runner VPC
+    connector this script used to create served a retired service and was
+    the one stale thing a 2026-10-20 run created. No apprunner call at all."""
+    run = DeployScriptHarness(tmp_path / "harness").run("scripts/deploy/aws_eu_clickhouse.sh")
+    assert run.returncode == 0, summarise(run)
+    assert any(call[:2] == ["aws", "ec2"] for call in run.calls), "the run reached the node steps"
+    assert not [call for call in run.calls if call[:2] == ["aws", "apprunner"]]
+    assert "VPC_CONNECTOR_ARN" not in run.stdout

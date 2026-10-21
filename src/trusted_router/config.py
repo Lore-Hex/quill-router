@@ -521,6 +521,9 @@ class Settings(BaseSettings):
     operational_analytics_clickhouse_user: str = "tr_control_read"
     operational_analytics_clickhouse_password: str = ""
     operational_analytics_clickhouse_database: str = "tr"
+    # Postgres-plane record reads. "postgres" keeps the existing behaviour;
+    # "clickhouse" enables the shared activity and usage readers per plane.
+    record_read_backend: str = "postgres"
     # Stage 1 live analytics outbox. This is intentionally off by default and
     # must remain off until the shadow ingester and reconciler are observed.
     analytics_outbox_enabled: bool = False
@@ -729,6 +732,9 @@ class Settings(BaseSettings):
     stripe_ach_fee_basis_points: int = 80
     stripe_ach_fee_fixed_cents: int = 0
     stripe_ach_fee_max_cents: int = 500
+    # Customer surcharge is 1.5x the grossed-up fee, including its floor/cap.
+    # Keep processor schedules unchanged; Adyen does not use this multiplier.
+    stripe_paypal_fee_multiplier_basis_points: int = 15_000
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
@@ -1440,6 +1446,22 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def record_reads_require_clickhouse(self) -> Settings:
+        if self.record_read_backend not in {"postgres", "clickhouse"}:
+            raise ValueError("TR_RECORD_READ_BACKEND must be 'postgres' or 'clickhouse'")
+        if self.record_read_backend == "clickhouse" and not (
+            self.operational_analytics_clickhouse_url.strip()
+            and self.operational_analytics_clickhouse_password
+        ):
+            # Without either, the store has no reader and every record read
+            # fails; refuse the plane at startup instead.
+            raise ValueError(
+                "TR_RECORD_READ_BACKEND=clickhouse requires TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL "
+                "and TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
+            )
+        return self
+
+    @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
         if 60 % self.async_settle_shadow_probe_cadence_minutes:
             raise ValueError("TR_ASYNC_SETTLE_SHADOW_PROBE_CADENCE_MINUTES must divide 60")
@@ -1548,6 +1570,8 @@ class Settings(BaseSettings):
             raise ValueError("TR_RATE_LIMIT_CLIENT_IP_MODE must be 'untrusted' or 'edge_header'")
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
+        if self.stripe_paypal_fee_multiplier_basis_points < 10_000:
+            raise ValueError("TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS must be at least 10000")
         for name, value in (
             ("TR_STRIPE_CARD_FEE_BASIS_POINTS", self.stripe_card_fee_basis_points),
             (

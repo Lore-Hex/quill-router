@@ -195,7 +195,7 @@ def test_checkout_defaults_follow_allowed_alias() -> None:
         settings,
     )
     paypal_body = _checkout_body_with_first_party_returns(
-        CheckoutRequest(amount="10", payment_method="paypal"),
+        CheckoutRequest(amount="20", payment_method="paypal"),
         _request("allyrouter.com"),
         settings,
     )
