@@ -320,8 +320,10 @@ jobs:
     # tests and the coverage number rather than hiding one behind the other --
     # but it still fails if any shard did, because coverage computed from a
     # partial run is not a measurement of this commit.
+    # Cancelled runs must release their concurrency slot. always() kept this
+    # job queued after superseding PR runs, blocking the replacement's CI.
     needs: test
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
