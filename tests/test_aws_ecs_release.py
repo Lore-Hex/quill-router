@@ -878,15 +878,13 @@ def test_ecs_rollout_accepts_legacy_and_future_breaker_fields(tmp_path: Path, fu
     assert_registrations_preserve_regional_configuration(tmp_path)
 
 
-def test_paris_ships_on_postgres_until_the_grant() -> None:
-    """A Paris task referencing the reader secret before tr-cp-exec may read
-    it fails to start, and the release updates Ireland first, so Paris's
-    default moves to clickhouse only in a change after that grant
-    (infra/aws_ecs_control_reader.tf) has applied."""
+def test_paris_reads_records_from_clickhouse_and_ireland_from_postgres() -> None:
+    """Paris has a reader and tr-cp-exec's grant on its secret
+    (infra/aws_ecs_control_reader.tf); Ireland has no reader yet."""
     script = (ROOT / "scripts/deploy/aws_ecs_control_plane.sh").read_text()
     assert (
         'EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" '
-        '"${TR_RECORD_READ_BACKEND_EU_WEST_3:-postgres}")'
+        '"${TR_RECORD_READ_BACKEND_EU_WEST_3:-clickhouse}")'
     ) in script
 
 
