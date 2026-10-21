@@ -232,15 +232,25 @@ class ExchangeTests(unittest.TestCase):
             self.assertNotIn("google-analytics", page)
             self.assertIn('<script src="/assets/analytics.js?v=test" defer></script>', page)
             self.assertNotIn("$headline", page)
-            # The hero photograph and the provider marquee: one visible group of six provider links,
+            # The hero photograph and the provider marquee: one visible provider group,
             # one hidden copy that stays out of the tab order, under the relationship label.
             self.assertIn('class="hero-photo"', page)
             self.assertIn("Providers on TrustedRouter", page)
             self.assertEqual(page.count('<div class="hero-provider-group">'), 1)
             self.assertEqual(page.count('<div class="hero-provider-group" aria-hidden="true">'), 1)
-            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), 6)
+            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), len(PROVIDERS))
             for _, label in PROVIDERS:
                 self.assertEqual(page.count(f'<span>{label}</span>'), 2)
+
+    def test_databricks_is_second_in_the_provider_strip(self):
+        self.assertEqual(PROVIDERS[:2], [("openai", "OpenAI"), ("databricks", "Databricks")])
+        markets = load_markets()
+        for market in markets:
+            page = render(market, markets, "test")
+            visible = page.split('<div class="hero-provider-group">', 1)[1].split('</div>', 1)[0]
+            self.assertLess(visible.index('<span>OpenAI</span>'), visible.index('<span>Databricks</span>'))
+            self.assertLess(visible.index('<span>Databricks</span>'), visible.index('<span>Anthropic</span>'))
+            self.assertIn('src="/assets/provider-databricks.png"', visible)
 
     def test_escape(self):
         market = copy.deepcopy(load_markets()[0])
