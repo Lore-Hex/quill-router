@@ -1,14 +1,16 @@
 {% from "console/_key_icons.html" import icon %}
 <div class="ux-cards">
-  <div class="ux-card ux-card-credit{% if credits_empty %} is-empty{% endif %}">
+  <a class="ux-card ux-card-credit{% if credits_empty %} is-empty{% endif %}" href="/console/credits">
     {{ icon('wallet') }}
     <span class="ux-card-text"><strong>{{ credits_available|default('API', true) }}</strong> credit</span>
-    <a class="ux-card-btn primary" href="/console/credits">Add credits {{ icon('arrow') }}</a>
-  </div>
-  <div class="ux-card ux-card-rewards" data-rewards-key-card hidden>
-    {{ icon('gift') }}
-    <span class="ux-card-text"><strong>Social rewards</strong><span class="ux-card-note">optional</span></span>
+    <span class="ux-card-action">Add credits {{ icon('arrow') }}</span>
+  </a>
+  <span class="ux-card-slot" data-rewards-key-card hidden>
     <span data-rewards-key-title hidden></span><span data-rewards-key-description hidden></span>
-    <button class="ux-card-btn" type="button" data-rewards-open data-rewards-api-keys data-rewards-compact hidden><span data-rewards-label>Earn credit</span> {{ icon('arrow') }}</button>
-  </div>
+    <button class="ux-card ux-card-rewards" type="button" data-rewards-open data-rewards-api-keys data-rewards-compact hidden>
+      {{ icon('gift') }}
+      <span class="ux-card-text"><strong>Social rewards</strong><span class="ux-card-note">optional</span></span>
+      <span class="ux-card-action"><span data-rewards-label>Earn credit</span> {{ icon('arrow') }}</span>
+    </button>
+  </span>
 </div>
