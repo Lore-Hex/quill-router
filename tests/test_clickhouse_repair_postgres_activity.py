@@ -242,6 +242,28 @@ def test_limit_bounds_each_run_and_after_id_resumes(harness: Harness) -> None:
     assert harness.outbox() == settled
 
 
+def test_apply_spans_several_write_chunks(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Production runs exceed one chunk (APPLY_CHUNK=100); every chunk lands."""
+    monkeypatch.setattr(repair_cli, "APPLY_CHUNK", 2)
+    ids = [f"gen-{index}" for index in range(5)]
+    settled = _settled(harness, ids)
+
+    result = harness.repair([], apply=True)
+
+    assert result["enqueued"] == 5 and result["ok"]
+    assert harness.outbox() == settled
+
+
+def test_a_truncated_scan_is_not_ok(harness: Harness) -> None:
+    """A scan that hit --scan-limit cannot claim the window is repaired."""
+    _settled(harness, [f"gen-{index}" for index in range(5)])
+
+    result = harness.repair([], scan_limit=2)
+
+    assert result["complete"] is False
+    assert result["ok"] is False
+
+
 def test_window_and_grace_match_the_verifier(harness: Harness) -> None:
     harness.settle(_generation("gen-in"))
     harness.settle(_generation("gen-before", created_at="2026-08-10T23:59:59Z"))

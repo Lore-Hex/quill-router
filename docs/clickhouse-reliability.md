@@ -614,14 +614,17 @@ export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=default TR_OPERATIONAL_ANALYTICS
 export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD="$(aws secretsmanager get-secret-value \
   --region eu-west-3 --secret-id quill/tr-eu-clickhouse-password --query SecretString --output text)"
 
+# Use the same window as the verifier run that counted the gap (here the
+# plane's whole history), so the dry run's "missing" equals that count before
+# anything is applied; a narrower window can leave ids outside it.
 # Dry run: counts and the first ids. Writes nothing.
 PYTHONPATH=src uv run python -m clickhouse.repair_postgres_activity \
-  --start 2026-08-01T00:00:00Z --end 2026-09-01T00:00:00Z
+  --start 2026-06-01T00:00:00Z --end <the verifier run's end, UTC>
 
 # Apply, at most --limit per run. Repeat with --after-id <next_after_id> while
 # the output names one.
 PYTHONPATH=src uv run python -m clickhouse.repair_postgres_activity \
-  --start 2026-08-01T00:00:00Z --end 2026-09-01T00:00:00Z --apply
+  --start 2026-06-01T00:00:00Z --end <the verifier run's end, UTC> --apply
 
 unset TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD
 ```
