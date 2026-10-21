@@ -120,7 +120,7 @@ from trusted_router.gateway_timing import (
     timed_gateway_sync,
     worker_continuation,
 )
-from trusted_router.money import money_pair
+from trusted_router.money import format_money_precise, money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MODEL_ID,
@@ -1883,7 +1883,10 @@ def _authorize_gateway_sync_impl(
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
             record_free_credit_exhausted_safely(workspace.id)
-            raise _insufficient_credits_error(workspace)
+            raise _insufficient_credits_error(
+                workspace, estimate=estimate, body=body, input_tokens=input_tokens,
+                key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
+            )
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             release_user_model_slot_after_error()
             if window_decision is None:
@@ -2006,7 +2009,10 @@ def _authorize_gateway_sync_impl(
                         key_limit_reservation.reserved_microdollars,
                         usage_type=reservation_usage_type,
                     )
-                    raise _insufficient_credits_error(workspace) from exc
+                    raise _insufficient_credits_error(
+                        workspace, estimate=estimate, body=body, input_tokens=input_tokens,
+                        key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
+                    ) from exc
                 settlement = _DEFERRED_HOME_SETTLEMENT
                 authorization_expires_at = _deferred_expires_at(settings)
 
@@ -3106,7 +3112,10 @@ def _deferred_expires_at(settings: Settings) -> str:
     return expires.isoformat().replace("+00:00", "Z")
 
 
-def _insufficient_credits_error(workspace: Any) -> Exception:
+def _insufficient_credits_error(
+    workspace: Any, *, estimate: int, body: GatewayAuthorizeRequest,
+    input_tokens: int, key_id: str, request_id: str | None,
+) -> Exception:
     """402, but say WHICH plane the money is on when that is the real answer.
 
     A federated workspace is a SHADOW of one on the home plane, and credits
@@ -3133,6 +3142,14 @@ def _insufficient_credits_error(workspace: Any) -> Exception:
     The message stays true whether the customer never transferred or
     transferred and then spent it, because both have the same fix.
     """
+    # Do not read balances again here: a later snapshot would race other holds
+    # and add database work to every denial. Log only known, content-free facts.
+    logger.info(
+        "billing.insufficient_credits workspace_id=%s key_id=%s request_id=%s "
+        "model=%s estimated_microdollars=%d estimated_input_tokens=%d output_token_budget=%d",
+        _log_value(workspace.id), _log_value(key_id), _log_value(request_id),
+        _log_value(body.model), estimate, input_tokens, body.output_estimate,
+    )
     if getattr(workspace, "federated_home", ""):
         return api_error(
             402,
@@ -3142,7 +3159,14 @@ def _insufficient_credits_error(workspace: Any) -> Exception:
             "spendable here.",
             ErrorType.CREDITS_NOT_ON_THIS_PLANE,
         )
-    return api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+    return api_error(
+        402,
+        f"Insufficient credits for this request's upfront reservation of {format_money_precise(estimate)}. "
+        "The reservation covers the estimated input, output-token limit, and any additional usage costs; "
+        "it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, "
+        "or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits.",
+        ErrorType.INSUFFICIENT_CREDITS,
+    )
 
 
 def _api_key_for_gateway_lookup(
