@@ -695,6 +695,7 @@ def exchange_site_touch(page_url: str, campaign: dict[str, str]) -> dict[str, st
 
 def log_exchange_site_funnel_event(
     request: Request, event: str, touch: dict[str, str], *, visitor_id: str | None = None,
+    properties: dict[str, str] | None = None,
 ) -> None:
     if _privacy_signal_enabled(request) or acquisition_request_is_automated(request):
         return
@@ -707,6 +708,7 @@ def log_exchange_site_funnel_event(
             ),
             "site_domain": touch.get("referer_host", ""),
             "page_path": touch.get("page_path", "/"),
+            **(properties or {}),
             **_safe_touch_log_fields(touch),
         },
     )

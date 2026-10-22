@@ -13,10 +13,10 @@ const assert=require('node:assert/strict');
     const renderedPrices=page=>page.locator('.privacy-column').evaluateAll(columns=>columns.map(col=>({
       href:col.href,
       label:col.querySelector('h3').textContent,
-      price:col.querySelector('.privacy-price').textContent,
+      price:[...col.querySelectorAll('.privacy-price')].map(el=>el.textContent).join(' / '),
     })));
     for(const market of ['new-york','london']) {
-      const page=await context.newPage();await page.goto('http://127.0.0.1:8089/'+market+'/');
+      const page=await context.newPage();await page.goto('http://127.0.0.1:8089/'+(market==='new-york'?'confidential.html':market+'/'));
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));
       assert.equal(await page.locator('.service-history').count(),market==='new-york'?2:1);
       const profile=await page.locator('[data-evidence-profile]').getAttribute('data-evidence-profile');
