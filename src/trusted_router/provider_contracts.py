@@ -95,6 +95,12 @@ BEDROCK_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", 
 # Clairic needs the native /ai/run adapter. Publish only after the GCP fleet
 # rolls; older AWS/Azure gateways must not send extraction tasks to chat.
 CLAIRIC_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
+# Regolo's decision adapter also requires a cloud-local credential. The Azure
+# bundle has no Regolo entry; only the GCP fleet is verified for this route.
+EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
+    ("cloudflare-workers-ai", "cloudflare/clairic"): CLAIRIC_GATEWAY_REGIONS,
+    ("regolo", "cloudflare/clef-flash"): frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"}),
+}
 
 # Fugu reports additive provider-side orchestration tokens only after a call.
 # They are included in exact settlement, but may exceed the caller-derived
@@ -143,8 +149,9 @@ def provider_model_available_from_gateway_region(
 ) -> bool:
     if provider_slug == "amazon-bedrock":
         return gateway_region in BEDROCK_GATEWAY_REGIONS
-    if (provider_slug, model_id) == ("cloudflare-workers-ai", "cloudflare/clairic"):
-        return gateway_region in CLAIRIC_GATEWAY_REGIONS
+    required_regions = EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get((provider_slug, model_id))
+    if required_regions is not None:
+        return gateway_region in required_regions
     unsupported = UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get(
         (provider_slug, model_id),
         frozenset(),

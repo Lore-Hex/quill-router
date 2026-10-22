@@ -130,14 +130,41 @@ def test_regolo_decision_catalog_routes_and_markup(served_clef):
 
 
 @pytest.mark.asyncio
-async def test_decide_authorizes_regolo_and_chat_is_rejected(served_clef):
-    request = {"model": regolo.DECISION_MODEL_ID, "route_type": "decide", "estimated_input_tokens": 140, "max_output_tokens": 1}
+@pytest.mark.parametrize("region", ["us-central1", "us-east4", "us-west1", "europe-west4"])
+async def test_decide_authorizes_regolo_and_chat_is_rejected(served_clef, region):
+    request = {"model": regolo.DECISION_MODEL_ID, "route_type": "decide", "estimated_input_tokens": 140, "max_output_tokens": 1, "region": region}
     response = await _authorize(request)
     assert response.status_code == 200, response.text
     routes = response.json()["data"]["route_candidates"]
     assert routes and {(row["provider"], row["upstream_model"]) for row in routes} == {("regolo", "clef-flash")}
     response = await _authorize({**request, "route_type": "chat"})
     assert response.status_code == 400, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region", [None, "", "eu-west-1", "eu-west-3", "uaenorth", "australiaeast", "unknown-region"])
+async def test_decision_requires_a_configured_explicit_gateway(served_clef, region):
+    request = {"model": regolo.DECISION_MODEL_ID, "route_type": "decide", "estimated_input_tokens": 140, "max_output_tokens": 1}
+    if region is not None:
+        request["region"] = region
+    response = await _authorize(request)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "provider_not_supported"
+
+
+def test_snapshot_preserves_decision_gateway_admission(served_clef):
+    from trusted_router.provider_contracts import provider_model_available_from_gateway_region
+    from trusted_router.routing_snapshot import _gateway_regions
+
+    _, endpoints = served_clef
+    for endpoint in endpoints.values():
+        rule = _gateway_regions(endpoint)
+        assert rule.requires_explicit_origin
+        assert rule.only == ("europe-west4", "us-central1", "us-east4", "us-west1")
+        assert not rule.deny
+        for region in ["", "unknown-region", "uaenorth", "australiaeast", "eu-west-1", "eu-west-3", *rule.only]:
+            assert provider_model_available_from_gateway_region(endpoint.provider, endpoint.model_id, region) == (region in rule.only)
+    assert provider_model_available_from_gateway_region("regolo", "qwen/qwen3.5-9b", "uaenorth")
 
 
 @pytest.mark.catalog_as_built

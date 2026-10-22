@@ -53,7 +53,10 @@ from trusted_router.openai_service_tiers import (
     openai_priority_pricing,
 )
 from trusted_router.partner_billing import PartnerBillingMode, partner_cost_microdollars
-from trusted_router.provider_contracts import provider_model_available_from_gateway_region
+from trusted_router.provider_contracts import (
+    EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL,
+    provider_model_available_from_gateway_region,
+)
 from trusted_router.routing import (
     NormalizedRoutingInputs,
     RoutePreferences,
@@ -335,7 +338,7 @@ def resolve_candidates(
             request.body_region or (
                 "" if candidate_endpoint.provider == "amazon-bedrock"
                 or (candidate_endpoint.provider, candidate_endpoint.model_id)
-                == ("cloudflare-workers-ai", "cloudflare/clairic") else region
+                in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL else region
             ),
         )
     ]
