@@ -43,6 +43,7 @@ from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_res
 from trusted_router.async_settle_shadow_v2_a1_health import (
     PUBLISHER_OPERATIONS,
     PUBLISHER_SLOT_TRACE,
+    TRACE_RULES,
 )
 from trusted_router.async_settle_shadow_v2_evidence import (
     CHECKPOINT_FIELDS,
@@ -73,6 +74,13 @@ from trusted_router.storage_gcp_shadow_observation import (
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+# Only code-produced release reasons may appear in logs. The evidence schema
+# still accepts bounded free text, which is retained unchanged in the trace.
+PUBLISHER_RELEASE_REASONS = frozenset({
+    "invalid_event", "gone_day", "frozen_day", "unknown_slot", "invalid_start",
+    "invalid_publisher_reply", "publisher_unknown_completion", "publisher_watchdog",
+    "publisher_worker_busy", "publisher_worker_exception", "publisher_submit_failed",
+})
 # One slot lets a delayed owner callback arrive without extending any RPC budget.
 PUBLISHER_WATCHDOG_GRACE = SLOT_US / 1_000_000
 
@@ -781,14 +789,14 @@ class Service:
         self.assert_owner()
         current = self.state.job
         def invalid(group: str, error: Exception | None = None, *, release: bool = True) -> tuple[lifecycle.Effect, ...]:
-            # Never interpolate a reply, arbitrary key, identity, timestamp or
-            # exception containing input data. Schema require() messages are
-            # fixed rule names; unexpected Python messages are redacted.
+            # This diagnostic includes only field/type labels, a fixed group
+            # and rule, and an allowlisted outcome. No reply measurements or
+            # arbitrary field names/messages are interpolated.
             fields = PUBLISHER_SLOT_TRACE.fields.keys() | PUBLISHER_SLOT_TRACE.optional_fields.keys()
             value = reply.trace if isinstance(reply, PublisherReply) and isinstance(reply.trace, dict) else {}
             message = str(error) if error is not None else group + "_checks"
             safe_messages = {"evidence_schema_gap", "native-json-domain", "a1-server-slot",
-                "evidence_size", "integer", "json_encoding", "json_shape", "json_depth", "duplicate_key"}
+                "evidence_size", "integer", "json_encoding", "json_shape", "json_depth", "duplicate_key"} | TRACE_RULES
             if error is not None and message not in safe_messages:
                 message = (repr(error.args[0]) if isinstance(error, KeyError) and error.args
                     and type(error.args[0]) is str and error.args[0] in fields else "redacted_non_schema_message")
@@ -802,24 +810,17 @@ class Service:
             outcome = outcome if type(outcome) is str and outcome in (
                 "missed", "lost_claim", "published", "failed") else "invalid_or_missing"
             durations = reply.rpc_durations if isinstance(reply, PublisherReply) else None
-            measurements = {key: item if item is not None and type(item) in (int, float) and 0 <= item <= INT64
-                            else "unavailable" for key in ("rpc_count", "rpc_elapsed_us", "cycle_us")
-                            for item in (value.get(key),)}
-            # release_reason traces require zero measurements by contract. Keep
-            # the rejected measurements here, without treating them as accepted
-            # evidence or adding unreconciled RPC histogram samples.
             logger.warning("shadow_v2_publisher_reply_rejected group=%s exception_type=%s "
                 "exception_message=%s outcome=%s trace_types=%s extra_field_types=%s "
                 "reply_type=%s trace_type=%s claimed_type=%s generation_type=%s "
-                "rpc_durations_type=%s rpc_duration_element_types=%s measurements=%s",
+                "rpc_durations_type=%s rpc_duration_element_types=%s",
                 group, type(error).__name__ if error is not None else "none", message,
                 outcome, field_types, extras, type(reply).__name__,
                 type(reply.trace).__name__ if isinstance(reply, PublisherReply) else "missing",
                 type(reply.claimed).__name__ if isinstance(reply, PublisherReply) else "missing",
                 type(reply.generation).__name__ if isinstance(reply, PublisherReply) else "missing",
                 type(durations).__name__,
-                [type(item).__name__ for item in durations] if isinstance(durations, (tuple, list)) else [],
-                measurements)
+                [type(item).__name__ for item in durations] if isinstance(durations, (tuple, list)) else [])
             if release and current is not None:
                 return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
                     current.slot, current.generation, "invalid_publisher_reply"))
@@ -1075,7 +1076,8 @@ class Service:
                 for effect in effects:
                     if isinstance(effect, lifecycle.Fault):
                         logger.warning("shadow_v2_publisher_released slot=%s generation=%s reason=%s",
-                                       before.job.slot, before.job.generation, effect.reason)
+                                       before.job.slot, before.job.generation,
+                                       effect.reason if effect.reason in PUBLISHER_RELEASE_REASONS else "other")
                 self.publishing.discard(day_at(before.job.slot*SLOT_US))
                 if self.publisher_job is not None and not self.publisher_job.done():
                     self.publisher_job.set_result(None)

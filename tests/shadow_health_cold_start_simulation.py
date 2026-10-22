@@ -45,14 +45,35 @@ from trusted_router.storage_gcp_shadow_io import _RECORDER
 
 ROOT = Path(__file__).resolve().parents[1]
 START = 896313600
+MODULE_SOURCES = (("observation", "storage_gcp_shadow_observation.py"),
+                  ("publisher", "services/async_settle_shadow_health.py"))
+
+
+def baseline_ref():
+    """Use local baseline objects only; source archives need no Git metadata."""
+    candidates = ["origin/main"]
+    base = os.environ.get("GITHUB_BASE_REF")
+    if base:
+        candidates.extend((base, f"origin/{base}"))
+    for ref in dict.fromkeys(candidates):
+        try:
+            for _, source in MODULE_SOURCES:
+                subprocess.run(["git", "cat-file", "-e", f"{ref}:src/trusted_router/{source}"],  # noqa: S603, S607 - local git objects, no shell
+                    cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        return ref
+    pytest.skip("baseline unavailable: neither origin/main nor GITHUB_BASE_REF has local source objects "
+                "(Git metadata/refs may be absent); worktree cases run independently")
 
 
 def modules(ref=None):
     """Import copies, never stash or change the working tree to run a baseline."""
+    if ref == "baseline":
+        ref = baseline_ref()
     result = []
     with tempfile.TemporaryDirectory() as directory:
-        for name, source in (("observation", "storage_gcp_shadow_observation.py"),
-                             ("publisher", "services/async_settle_shadow_health.py")):
+        for name, source in MODULE_SOURCES:
             path = "src/trusted_router/" + source
             raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT)  # noqa: S603, S607 - local git revision, no shell
                    if ref else (ROOT/path).read_bytes())
@@ -69,6 +90,47 @@ def modules(ref=None):
     for name in ("Budget", "ContentionLoss", "UnknownCommit", "ObservationStore"):
         setattr(publisher, name, getattr(storage, name))
     return storage, publisher
+
+
+@pytest.mark.parametrize("available,expected", [
+    ({"origin/main", "release", "origin/release"}, "origin/main"),
+    ({"release", "origin/release"}, "release"),
+    ({"origin/release"}, "origin/release"),
+    (set(), None),
+])
+def test_baseline_resolution_order_and_missing_metadata(monkeypatch, available, expected):
+    monkeypatch.setenv("GITHUB_BASE_REF", "release")
+    checked = []
+
+    def check(command, **kwargs):
+        ref, path = command[-1].split(":", 1)
+        checked.append(ref)
+        assert path in {"src/trusted_router/" + source for _, source in MODULE_SOURCES}
+        if ref not in available:
+            raise subprocess.CalledProcessError(128, command)
+
+    monkeypatch.setattr(subprocess, "run", check)
+    if expected is None:
+        with pytest.raises(pytest.skip.Exception, match="baseline unavailable.*worktree cases run independently"):
+            baseline_ref()
+        # A missing baseline must never prevent loading the worktree copies.
+        storage, publisher = modules()
+        assert publisher.ObservationStore is storage.ObservationStore
+    else:
+        assert baseline_ref() == expected
+    order = ["origin/main", "release", "origin/release"]
+    assert list(dict.fromkeys(checked)) == (order if expected is None else order[:order.index(expected)+1])
+
+
+def test_baseline_requires_both_source_blobs(monkeypatch):
+    monkeypatch.setenv("GITHUB_BASE_REF", "release")
+
+    def check(command, **kwargs):
+        if command[-1] == "origin/main:src/trusted_router/services/async_settle_shadow_health.py":
+            raise subprocess.CalledProcessError(128, command)
+
+    monkeypatch.setattr(subprocess, "run", check)
+    assert baseline_ref() == "release"
 
 
 class Clock:
@@ -748,7 +810,7 @@ def test_rollback_holds_shared_until_its_final_rpc_completes():
     assert db.transactions[0].final_rpc == "rollback"
 
 
-@pytest.mark.parametrize("ref", ["origin/main", None])
+@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
 def test_upgrade_deadlock_aborts_younger_and_real_wrapper_reentry_does_not_read(ref):
     storage, _ = modules(ref)
     clock = Clock()
@@ -801,31 +863,42 @@ def test_fake_sdk_retries_callable_with_exponential_backoff_until_deadline():
     assert calls == pytest.approx([0, .010, .030, .070, .150, .250, .350])
 
 
-def test_production_calibration(capsys):
+@pytest.fixture(scope="module")
+def calibration_elapsed():
+    return []
+
+
+@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
+def test_production_calibration(capsys, ref, calibration_elapsed):
     """Record the mismatch with production; keep all mechanism invariants."""
     import time
 
+    if ref:
+        ref = baseline_ref()
     started = time.monotonic()
     baseline = []
     with capsys.disabled():
         for post_ack_probability in (0., .4):
-            for ref in ("origin/main", None):
-                for warm in (False, True):
-                    result = simulate_lifecycle(ref=ref, warm=warm,
-                                                post_ack_probability=post_ack_probability)
-                    print(json.dumps(dict(ref=ref or "worktree", warm=warm,
-                        post_ack_probability=post_ack_probability, **result)), flush=True)
-                    if ref and post_ack_probability:
-                        baseline.append(result)
+            for warm in (False, True):
+                result = simulate_lifecycle(ref=ref, warm=warm,
+                                            post_ack_probability=post_ack_probability)
+                print(json.dumps(dict(ref=ref or "worktree", warm=warm,
+                    post_ack_probability=post_ack_probability, **result)), flush=True)
+                if ref and post_ack_probability:
+                    baseline.append(result)
     elapsed = time.monotonic() - started
     with capsys.disabled():
-        print(f"Eight 130-slot lifecycle scenarios: {elapsed:.3f} seconds", flush=True)
-    assert elapsed < 120
-    with capsys.disabled():
-        record_calibration(baseline)
+        print(f"Four 130-slot lifecycle scenarios: {elapsed:.3f} seconds", flush=True)
+    # Preserve the original combined eight-scenario runtime bound even though
+    # baseline and worktree now have independent skip/reporting outcomes.
+    calibration_elapsed.append(elapsed)
+    assert sum(calibration_elapsed) < 120
+    if ref:
+        with capsys.disabled():
+            record_calibration(baseline)
 
 
-@pytest.mark.parametrize("ref", ["origin/main", None])
+@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
 def test_post_ack_stall_crosses_boundary_as_missed_not_released(ref):
     result = simulate_lifecycle(ref=ref, slots=70, warm=True, post_ack_probability=1.)
     assert result["post_ack_stalls"] > 0
@@ -836,7 +909,7 @@ def test_post_ack_stall_crosses_boundary_as_missed_not_released(ref):
 
 if __name__ == "__main__":
     baseline = []
-    for ref in ("origin/main", None):
+    for ref in (None, "baseline"):
         for warm in (False, True):
             result = simulate_lifecycle(ref=ref, warm=warm, post_ack_probability=.4)
             print(json.dumps(dict(ref=ref or "worktree", warm=warm, **result)), flush=True)
@@ -845,7 +918,7 @@ if __name__ == "__main__":
     record_calibration(baseline)
 
 
-@pytest.mark.parametrize("ref", ["origin/main", None])
+@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
 def test_pre_boundary_server_claim_rolls_back_before_owner_validation(ref):
     """A -5ms server stamp cannot become a published reply in these sources."""
     storage, publisher = modules(ref)
@@ -882,14 +955,15 @@ def test_clock_skew_production_calibration(capsys):
     """Record that clock skew does not explain owner rejection."""
     import time
 
+    ref = baseline_ref()
     started = time.monotonic()
     baseline = []
     with capsys.disabled():
         for offsets in ((-4, -3, -2, -1, 0, 1, 2, 3), (-3,)*8):
             for warm in (False, True):
-                result = simulate_lifecycle(ref="origin/main", warm=warm, clock_offsets_ms=offsets)
+                result = simulate_lifecycle(ref=ref, warm=warm, clock_offsets_ms=offsets)
                 baseline.append(result)
-                print(json.dumps(dict(ref="origin/main", warm=warm, **result)), flush=True)
+                print(json.dumps(dict(ref=ref, warm=warm, **result)), flush=True)
         print(f"Four skew scenarios: {time.monotonic()-started:.3f} seconds", flush=True)
     assert time.monotonic()-started < 20
     with capsys.disabled():

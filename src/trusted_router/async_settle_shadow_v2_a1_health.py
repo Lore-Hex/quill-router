@@ -100,43 +100,58 @@ def validate_publisher_final(value: Any) -> None:
     d.apply_deltas("publisher-final", value)
 
 
+# Closed vocabulary shared with the reply diagnostic; never log arbitrary errors.
+TRACE_RULES = frozenset({
+    "trace_missed_shape", "trace_cycle_shape", "trace_failed_only_flags",
+    "trace_release_signature", "trace_missed_nulls", "trace_missed_rpcs",
+    "trace_observed_heartbeat_pair", "trace_claim_before_start",
+    "trace_claim_observed_order", "trace_heartbeat_equal", "trace_digest_needs_observation",
+    "trace_ack_needs_digest", "trace_lost_nulls", "trace_published_fields",
+    "trace_published_cycle_bound", "trace_published_window", "trace_late_flag", "trace_late_cycle",
+})
+
+
 def _trace(v: Any) -> None:
     missed = v["outcome"] == "missed"
-    require((v["claim_start_us"] is None) == missed)
-    require((v["cycle_us"] is None) == missed)
-    require(not (v["unknown_outcome"] or v["late_cycle"]) or v["outcome"] == "failed")
+    require((v["claim_start_us"] is None) == missed, "trace_missed_shape")
+    require((v["cycle_us"] is None) == missed, "trace_cycle_shape")
+    require(not (v["unknown_outcome"] or v["late_cycle"]) or v["outcome"] == "failed", "trace_failed_only_flags")
     if "release_reason" in v:
         require(v["outcome"] == "failed" and v["unknown_outcome"]
                 and v["cycle_us"] == v["rpc_count"] == v["rpc_elapsed_us"] == 0
                 and all(v[k] is None for k in ("claim_at_ns", "observed_at_ns",
-                    "publisher_heartbeat_ns", "body_sha256", "ack_at_us")))
+                    "publisher_heartbeat_ns", "body_sha256", "ack_at_us")), "trace_release_signature")
     if missed:
-        require(all(v[k] is None for k in ("claim_at_ns", "observed_at_ns", "publisher_heartbeat_ns", "body_sha256", "ack_at_us")))
-        require(v["rpc_count"] == v["rpc_elapsed_us"] == 0)
-    require((v["observed_at_ns"] is None) == (v["publisher_heartbeat_ns"] is None))
+        require(all(v[k] is None for k in ("claim_at_ns", "observed_at_ns", "publisher_heartbeat_ns", "body_sha256", "ack_at_us")), "trace_missed_nulls")
+        require(v["rpc_count"] == v["rpc_elapsed_us"] == 0, "trace_missed_rpcs")
+    require((v["observed_at_ns"] is None) == (v["publisher_heartbeat_ns"] is None), "trace_observed_heartbeat_pair")
     if v["claim_at_ns"] is not None:
-        require(v["claim_start_us"] is not None)
+        require(v["claim_start_us"] is not None, "trace_claim_before_start")
     if v["observed_at_ns"] is not None:
-        require(v["claim_at_ns"] is not None and v["claim_at_ns"] <= v["observed_at_ns"] == v["publisher_heartbeat_ns"])
+        # Check the unchanged publication window before heartbeat equality so
+        # a single late-observation probe identifies the window it violates.
+        if v["outcome"] == "published":
+            require(v["observed_at_ns"] <= v["slot"] * 2000000000 + 250000000, "trace_published_window")
+        require(v["claim_at_ns"] is not None and v["claim_at_ns"] <= v["observed_at_ns"], "trace_claim_observed_order")
+        require(v["observed_at_ns"] == v["publisher_heartbeat_ns"], "trace_heartbeat_equal")
     if v["body_sha256"] is not None:
-        require(v["observed_at_ns"] is not None)
+        require(v["observed_at_ns"] is not None, "trace_digest_needs_observation")
     if v["ack_at_us"] is not None:
-        require(v["body_sha256"] is not None and not v["unknown_outcome"])
+        require(v["body_sha256"] is not None and not v["unknown_outcome"], "trace_ack_needs_digest")
     if v["outcome"] in ("lost_claim", "published"):
         # An aborted claim read can lose contention before returning a server
         # timestamp. Validate the timestamp when one was actually received.
         if v["claim_at_ns"] is not None:
             d.apply_deltas("claim", v)
     if v["outcome"] == "lost_claim":
-        require(all(v[k] is None for k in ("observed_at_ns", "publisher_heartbeat_ns", "body_sha256", "ack_at_us")))
+        require(all(v[k] is None for k in ("observed_at_ns", "publisher_heartbeat_ns", "body_sha256", "ack_at_us")), "trace_lost_nulls")
     if v["outcome"] == "published":
-        require(all(v[k] is not None for k in ("claim_at_ns", "observed_at_ns", "body_sha256", "ack_at_us", "cycle_us")))
-        require(v["cycle_us"] <= 500000)
-        require(v["observed_at_ns"] <= v["slot"] * 2000000000 + 250000000)
+        require(all(v[k] is not None for k in ("claim_at_ns", "observed_at_ns", "body_sha256", "ack_at_us", "cycle_us")), "trace_published_fields")
+        require(v["cycle_us"] <= 500000, "trace_published_cycle_bound")
     if v["cycle_us"] is not None and v["cycle_us"] > 500000:
-        require(v["late_cycle"])
+        require(v["late_cycle"], "trace_late_flag")
     if v["late_cycle"]:
-        require(v["cycle_us"] is not None and v["cycle_us"] > 500000)
+        require(v["cycle_us"] is not None and v["cycle_us"] > 500000, "trace_late_cycle")
 
 
 PUBLISHER_SLOT_TRACE = versioned({"contract_revision": literal("a1"), "day": day, "boot": identity,
