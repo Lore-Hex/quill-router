@@ -74,6 +74,7 @@ GOOGLE_VERTEX_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2027, 1, 28, 0, 0, tzinfo
 NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
+NOVITA_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
@@ -980,6 +981,23 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"NousResearch/Hermes-3-Llama-3.1-405B"}),
         effective_at=DEEPINFRA_HERMES_3_405B_RETIREMENT_AT,
         replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    # Novita's October 22 notice retires MiMo V2.5 and V2.5 Pro at
+    # 2026-10-23 00:00 UTC and recommends the V2.6 Flash and Pro models.
+    # Retire only Novita's routes; other providers' V2.5 routes stay.
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"xiaomimimo/mimo-v2.5"}),
+        upstream_ids=frozenset({"xiaomimimo/mimo-v2.5"}),
+        effective_at=NOVITA_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-flash",),
+    ),
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"xiaomimimo/mimo-v2.5-pro"}),
+        upstream_ids=frozenset({"xiaomimimo/mimo-v2.5-pro"}),
+        effective_at=NOVITA_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-pro",),
     ),
     # Alibaba Model Studio's October 19 notice decommissions legacy Qwen3.5
     # Plus snapshots and Qwen3.5 397B-A17B at 2027-01-19 10:00 UTC+8 and
