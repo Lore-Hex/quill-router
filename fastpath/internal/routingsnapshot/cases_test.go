@@ -23,7 +23,7 @@ type routingCase struct {
 		RequestedParameters  []string        `json:"requested_parameters"`
 		InputModalities      []string        `json:"input_modalities"`
 		Stream               *bool           `json:"stream"`
-		EstimatedInputTokens int64           `json:"estimated_input_tokens"`
+		EstimatedInputTokens *int64          `json:"estimated_input_tokens"`
 		MaxTokens            *int64          `json:"max_tokens"`
 		MaxCompletionTokens  *int64          `json:"max_completion_tokens"`
 		MaxOutputTokens      *int64          `json:"max_output_tokens"`

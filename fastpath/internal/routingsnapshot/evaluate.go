@@ -47,11 +47,12 @@ type Request struct {
 	// BYOKProviders are the provider slugs whose BYOK credentials the
 	// workspace holds.
 	BYOKProviders []string
-	// EstimatedInputTokens is the body's estimated_input_tokens (the
-	// schema's default, 1, when the body omits it): the enclave's prompt
+	// EstimatedInputTokens is the body's estimated_input_tokens, nil when the
+	// body omits it; Evaluate then applies the schema's default, 1
+	// (schemas.py GatewayAuthorizeRequest). It is the enclave's prompt
 	// estimate, a number Go receives, not one it derives from the messages.
 	// It prices the estimate and is the prompt the context window must hold.
-	EstimatedInputTokens int64
+	EstimatedInputTokens *int64
 	// MaxTokens, MaxCompletionTokens and MaxOutputTokens are the body's
 	// fields (nil when absent). The window must also hold max_tokens, else
 	// max_completion_tokens (max_output_tokens does not count); the estimate
@@ -165,8 +166,13 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	if at < s.CompiledAt || at >= s.NotAfter {
 		return pass("the instant is outside the snapshot's window")
 	}
-	// The authorize schema: estimated_input_tokens >= 0, each max_* >= 1.
-	if req.EstimatedInputTokens < 0 {
+	// The authorize schema: estimated_input_tokens >= 0 (default 1), each
+	// max_* >= 1.
+	prompt := int64(1)
+	if req.EstimatedInputTokens != nil {
+		prompt = *req.EstimatedInputTokens
+	}
+	if prompt < 0 {
 		return pass("negative estimated_input_tokens")
 	}
 	for _, v := range []*int64{req.MaxTokens, req.MaxCompletionTokens, req.MaxOutputTokens} {
@@ -186,7 +192,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 			completionTokens = *v
 		}
 	}
-	if req.EstimatedInputTokens > math.MaxInt64-completionTokens {
+	if prompt > math.MaxInt64-completionTokens {
 		return pass("prompt and completion tokens beyond int64")
 	}
 	// The authorize schema (str_strip_whitespace) strips every string field
@@ -272,7 +278,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	// candidates_fitting_context: the models whose window holds the prompt
 	// and the completion; an unknown window (0) holds anything. When none
 	// does, OpenAI's context-length error names the largest window.
-	needed := req.EstimatedInputTokens + completionTokens
+	needed := prompt + completionTokens
 	fitting := candidates[:0:0]
 	window := int64(0)
 	for _, i := range candidates {
@@ -283,7 +289,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		}
 	}
 	if len(fitting) == 0 {
-		return contextLengthError(window, req.EstimatedInputTokens, completionTokens)
+		return contextLengthError(window, prompt, completionTokens)
 	}
 	candidates = fitting
 
@@ -324,7 +330,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		if tier != "default" && len(openai) > 0 {
 			return pass("OpenAI %s processing: its prices are not in the snapshot", tier)
 		}
-		if tier == "priority" && req.EstimatedInputTokens > 272_000 {
+		if tier == "priority" && prompt > 272_000 {
 			// openai_service_tiers.OPENAI_PRIORITY_MAX_PROMPT_TOKENS is not
 			// in the snapshot.
 			return pass("OpenAI priority prompt bound")
@@ -342,7 +348,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		return refused(400, "provider_not_supported", "No authorized route candidates are available for this workspace")
 	}
 
-	usage := Usage{InputTokens: req.EstimatedInputTokens, OutputTokens: outputTokens}
+	usage := Usage{InputTokens: prompt, OutputTokens: outputTokens}
 	estimate := new(big.Int)
 	out := Result{Outcome: Answered, ServiceTier: tier}
 	for _, i := range admitted {
