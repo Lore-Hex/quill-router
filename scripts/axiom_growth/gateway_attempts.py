@@ -15,6 +15,13 @@ ROUTES = ('/v1/chat/completions', '/v1/responses', '/v1/messages',
           '/v1/embeddings', '/v1/images/generations', '/v1/audio/speech')
 MAX_AUDITS = 20_000
 RETENTION_DAYS = 3
+OVERLAP = dt.timedelta(minutes=10)
+RECOVERY_STEP = dt.timedelta(minutes=5)
+SOURCE_RETENTION_DAYS = 90
+
+
+class AuditBudgetExceeded(ValueError):
+    """The current window is incomplete; retry it on the next execution."""
 
 
 def source_filter():
@@ -110,14 +117,20 @@ def snapshots(audits, journeys, observed_through):
 
 def collect(state, io, now, end):
     """Short overlap, separate bounded checkpoint. Never fabricate a lost start."""
-    start = m.date(state.get('gateway_watermark', end.isoformat())) - dt.timedelta(minutes=10)
-    if end - start > dt.timedelta(hours=1):
-        raise ValueError('Gateway audit backlog exceeds one hour; explicit recovery required')
+    previous = m.date(state.get('gateway_watermark', end.isoformat()))
+    if previous > end:
+        raise ValueError('Gateway audit watermark is ahead of the export target')
+    end = min(end, previous + RECOVERY_STEP)
+    start = previous - OVERLAP
+    if start < now - dt.timedelta(days=SOURCE_RETENTION_DAYS - 1):
+        raise ValueError('Gateway audit backlog exceeds source retention; explicit recovery required')
     incoming = io.gateway_audits(start, end)
-    cutoff = now - dt.timedelta(days=RETENTION_DAYS)
+    # Buffer expiry follows the replay cursor, not wall time: historical starts
+    # must remain available to pair with ends in the following recovery window.
+    cutoff = end - dt.timedelta(days=RETENTION_DAYS)
     recent = state.get('gateway_audits', [])
     completed = {r['attempt_id'] for r in recent if r['stage'] == 'end'
-                 and m.date(r['_time']) < now - dt.timedelta(minutes=30)}
+                 and m.date(r['_time']) < start}
     rows = {r['event_id']: r for r in recent if m.date(r['_time']) >= cutoff
             and r['attempt_id'] not in completed}
     for row in incoming:
@@ -130,8 +143,15 @@ def collect(state, io, now, end):
         rows[row['event_id']] = row
     if len(rows) > MAX_AUDITS:
         raise ValueError('Gateway audit state bound reached; partition before continuing')
-    state.update(gateway_audits=list(rows.values()), gateway_watermark=end.isoformat())
-    return list(rows.values())
+    audits = list(rows.values())
+    completed = {r['attempt_id'] for r in audits if r['stage'] == 'end'
+                 and m.date(r['_time']) < end - OVERLAP}
+    # Return the entire window for projection before compacting its checkpoint.
+    # Completed snapshots/milestones survive in Axiom; unmatched starts keep the
+    # existing three-day pairing horizon, and late deliveries get the overlap.
+    retained = [r for r in audits if r['attempt_id'] not in completed]
+    state.update(gateway_audits=retained, gateway_watermark=end.isoformat())
+    return audits
 
 
 def pre_activation_attempts(attempts, daily, journeys):
