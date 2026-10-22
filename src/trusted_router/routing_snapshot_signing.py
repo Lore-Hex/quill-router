@@ -76,15 +76,10 @@ def _is_test_key(key: TrustedKey) -> bool:
     return key.kid == TEST_KID or key.public_key_b64url == TEST_PUBLIC_KEY_B64URL
 
 
-def verify_manifest(
-    token: str, keys: Sequence[TrustedKey], body: bytes, *, now: int,
-    expected_plane: Plane, expected_aud: str, allow_test_key: bool = False,
-) -> ManifestClaims:
-    """Verify signature, purpose, issuer, audience, plane, the body binding and freshness.
-
-    The plane and audience are the verifier's own: a snapshot signed for
-    another plane or another consumer is refused even under a trusted key.
-    """
+def _verified_claims(
+    token: str, keys: Sequence[TrustedKey], *, expected_plane: Plane, expected_aud: str,
+    allow_test_key: bool,
+) -> tuple[ManifestClaims, TrustedKey, bytes]:
     claims, key, payload = verify(token, keys, TYP, PURPOSE)
     if _is_test_key(key) and not allow_test_key:
         raise ValueError("test key outside test mode")
@@ -95,10 +90,47 @@ def verify_manifest(
         raise ValueError("manifest audience")
     if parsed.plane != expected_plane:
         raise ValueError("manifest plane")
+    return parsed, key, payload
+
+
+def verify_manifest(
+    token: str, keys: Sequence[TrustedKey], body: bytes, *, now: int,
+    expected_plane: Plane, expected_aud: str, allow_test_key: bool = False,
+) -> ManifestClaims:
+    """Verify signature, purpose, issuer, audience, plane, the body binding and freshness.
+
+    The plane and audience are the verifier's own: a snapshot signed for
+    another plane or another consumer is refused even under a trusted key.
+    """
+    parsed, key, payload = _verified_claims(
+        token, keys, expected_plane=expected_plane, expected_aud=expected_aud,
+        allow_test_key=allow_test_key,
+    )
     if canonical(manifest_claims(body, iss=key.iss, aud=key.aud)) != payload:
         raise ValueError("manifest binding")
     if not parsed.compiled_at <= now < parsed.not_after:
         raise ValueError("snapshot freshness")
+    return parsed
+
+
+def verify_manifest_digest(
+    token: str, keys: Sequence[TrustedKey], body: bytes, *,
+    expected_plane: Plane, expected_aud: str, allow_test_key: bool = False,
+) -> ManifestClaims:
+    """``verify_manifest``'s signature, key and claim checks, and the body's
+    sha256 and size, without parsing the body or checking freshness.
+
+    For a body whose signer already checked it in full (the publisher's
+    worker, whose ``RoutingSnapshotSigner.sign`` verifies what it signs): the
+    process that serves it checks the bytes it holds are the ones signed under
+    its own key, plane and audience, at a fraction of a full parse's cost.
+    """
+    parsed, _key, _payload = _verified_claims(
+        token, keys, expected_plane=expected_plane, expected_aud=expected_aud,
+        allow_test_key=allow_test_key,
+    )
+    if parsed.sha256 != hashlib.sha256(body).hexdigest() or parsed.size != len(body):
+        raise ValueError("manifest binding")
     return parsed
 
 

@@ -12,6 +12,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import resource
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -27,7 +28,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from trusted_router import catalog_data, catalog_registry
+from trusted_router import catalog_registry
 from trusted_router.config import Settings
 from trusted_router.detached_jws import TrustedKey, b64encode
 from trusted_router.main import create_app
@@ -44,6 +45,7 @@ from trusted_router.services import routing_snapshot_publisher as publisher_modu
 from trusted_router.services.routing_snapshot_publisher import (
     AUDIENCE,
     ISSUER,
+    AsOfSource,
     RoutingSnapshotPublisher,
     SnapshotUnavailable,
     build_publisher,
@@ -472,28 +474,32 @@ def test_no_secret_appears_in_responses_or_logs(key, caplog: pytest.LogCaptureFi
 # --- the compile's cost ------------------------------------------------------------------------
 
 
-def test_the_live_compile_is_off_the_event_loop_and_within_budget(
-    key, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """1.5 to 4.5 s of CPU per window: compiled lazily under the publisher's lock,
-    in the threadpool worker of a sync route, never on the event loop, once a window."""
+def test_the_live_compile_runs_in_a_worker_within_budget(key) -> None:
+    """The live catalog compiles as of the window's start in a worker process:
+    lazily under the publisher's lock, in the threadpool worker of a sync route,
+    never on the event loop, once a window, with its CPU outside this process."""
     router = APIRouter()
     fastpath_snapshot.register(router)
     route = next(r for r in router.routes if isinstance(r, APIRoute) and r.path == PATH)
     assert not inspect.iscoroutinefunction(route.endpoint)
 
-    resolved = int(catalog_registry.CATALOG_RESOLVED_AT.timestamp())
-    monkeypatch.setattr(catalog_data, "_utc_now", lambda: datetime.fromtimestamp(resolved, UTC))
-    clock = Clock(resolved)
+    clock = Clock(int(catalog_registry.CATALOG_RESOLVED_AT.timestamp()))
     publisher = build_publisher(_settings(key), clock=clock)
-    started = time.monotonic()
-    # The window starts at the latest catalog event before the clock, so the
-    # live catalog does not refuse it.
+    assert isinstance(publisher._source, AsOfSource)
+    def children_cpu() -> float:
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        return usage.ru_utime + usage.ru_stime
+
+    started, cpu, worker_cpu = time.monotonic(), time.process_time(), children_cpu()
     publication = publisher.current()
     elapsed = time.monotonic() - started
+    own_cpu, worker_cpu = time.process_time() - cpu, children_cpu() - worker_cpu
     assert len(publication.body) > 1_000_000
-    # 1.5 to 4.5 s on development machines; the bound catches a runaway.
-    assert elapsed < 60
+    # About 3 to 6 s end to end on development machines (the worker's import
+    # and compile); the bound catches a runaway, not a slow host.
+    assert elapsed < 120
+    # The compile's CPU is the worker's; this process parses, checks and signs.
+    assert own_cpu < worker_cpu, (own_cpu, worker_cpu)
     started = time.monotonic()
     assert publisher.current() is publication and publisher.compiles == 1
     assert time.monotonic() - started < 1.0

@@ -69,26 +69,21 @@ then answers 503 `{"status": "signer-unavailable"}`.
    before anything depends on it.
 
 5. Turn it on: set `ROUTING_SNAPSHOT_PUBLISH_ENABLED=true`, merge, deploy.
-   Two conditions come first.
-
-   The catalog must be rebuilt as of `at`, both endpoints and models
-   (`docs/design/routing-snapshot-v1.md`, "Not yet"). Until then, at every
-   retirement (00:00 UTC) each published copy expires and every instance
-   imported before the retirement refuses until a deploy replaces it, hours
-   with no snapshot. Replacing every instance at each retirement is a weaker
-   substitute (it depends on a restart timed to every retirement, and leaves
-   minutes of gap while revisions roll); do not enable on it alone.
-
-   And the compile must be measured where it will run. It is 1.5 to 4.5 s of
-   CPU-bound Python on development machines (4.3 s measured in review), and
-   on the combined service it holds the GIL against that instance's authorize
-   requests for as long, once a window on each instance the edge polls.
-   Before this step, time `compile_routing_snapshot` with
-   `CatalogInputs.live` on the release image and the service's CPU shape
-   (for example a one-off Cloud Run job of that image), and decide the
-   authorize latency it implies is acceptable. After it, watch the
-   `routing snapshot compiled` log line's `elapsed_ms` and authorize latency
-   on the polled instances; if it hurts authorize, turn publishing off.
+   Measure first, where it will run. The publisher compiles each window in a
+   worker process (`python -m trusted_router.routing_snapshot_worker`) as of
+   the window's start, so warm and cold instances publish the same bytes
+   across retirements; the worker also signs, with the mounted key file. On
+   development machines it takes about 3 s of CPU and peaks between 150 and
+   300 MB, beside the serving process in the instance's 1 GiB; the serving
+   process itself spends about 0.03 s checking the manifest.
+   Before this step, run the worker on the release image and the service's
+   CPU and memory shape (for example a one-off Cloud Run job of that image
+   with the service's environment, feeding it one request on stdin), and
+   check its time and peak memory leave the serving process room; raise
+   `TR_CLOUD_RUN_MEMORY` first if they do not. After this step, watch the
+   `routing snapshot compiled` log line's `elapsed_ms`, the instances'
+   memory, and authorize latency on the polled instances; if any suffers,
+   turn publishing off.
 
 6. Check it where the edge will poll it: the us-central1 service's run.app
    address, whose ingress admits only the project's network and the load
@@ -133,11 +128,9 @@ then answers 503 `{"status": "signer-unavailable"}`.
    `signer-unavailable` (step 3's public key is not the mounted version's),
    `snapshot-refused` (the catalog refused the window; the log line
    `routing snapshot compile refused` names the reason, and the next window
-   retries; an instance started before a retirement refuses every later
-   window until it is replaced, and the edge's copy expires at that
-   retirement, so nothing is published meanwhile), or `snapshot-error` (any other failure,
-   logged by its class as `routing snapshot compile failed`, retried after
-   5 s).
+   retries), or `snapshot-error` (any other failure, the worker's exit or
+   timeout included, logged by its class as `routing snapshot compile
+   failed`, retried after 5 s).
 
 ## Turning it off
 
