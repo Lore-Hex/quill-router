@@ -4295,6 +4295,17 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "those labs' rows instead."
         ),
     ),
+    "tinfoil": ModelOrigin(
+        country=None,
+        lab_name="Tinfoil (serving namespace)",
+        source_url="https://docs.tinfoil.sh/models/decisions",
+        note=(
+            "Tinfoil's decision-small, decision-medium and decision-large aliases "
+            "currently serve the vllm-sr d3 family. The documented checkpoints "
+            "can change; Tinfoil's US provider headquarters do not establish "
+            "the origin country of the underlying model weights."
+        ),
+    ),
     "cerebras": ModelOrigin(
         country=None,
         lab_name="Cerebras (serving namespace)",

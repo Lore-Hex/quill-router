@@ -11,6 +11,7 @@ from scripts.pricing.providers import tinfoil
 from tests.pinned_manifests import build_manifest_rows
 from tests.test_decide_models import _assert_no_financial_side_effects, _authorize
 from trusted_router.catalog import endpoint_e2ee
+from trusted_router.catalog_data import model_origin_for_model_id
 from trusted_router.catalog_privacy import served_by_model_vendor
 from trusted_router.provider_manifest_policy import decision_manifest_price_is_valid
 
@@ -81,7 +82,11 @@ def test_unknown_decision_models_require_protocol_review(monkeypatch) -> None:
 
 def test_tinfoil_hosted_aliases_are_not_mistaken_for_the_model_author() -> None:
     for size in ("small", "medium", "large"):
-        assert not served_by_model_vendor(f"tinfoil/decision-{size}", "tinfoil")
+        model_id = f"tinfoil/decision-{size}"
+        assert not served_by_model_vendor(model_id, "tinfoil")
+        origin = model_origin_for_model_id(model_id)
+        assert origin is not None and origin.country is None
+        assert origin.source_url == "https://docs.tinfoil.sh/models/decisions"
     assert served_by_model_vendor("tinfoil/decision-future", "tinfoil")
 
 
