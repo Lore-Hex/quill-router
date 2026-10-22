@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
+from tests.test_oauth_key_delegation import _pkce_challenge
 from trusted_router.catalog_data import Model
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -391,7 +392,7 @@ def test_scoped_key_cannot_mint_oauth_codes(client: TestClient) -> None:
     headers = _headers(raw_key)
     callback = "https://app.example.com/callback"
     responses = [
-        client.get(f"/auth?callback_url={callback}", headers=headers),
+        client.get("/auth", params={"callback_url": callback, "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"}, headers=headers),
         client.post("/auth/approve", headers=headers, data={"callback_url": callback}),
         client.post(
             "/auth/fund",
@@ -555,13 +556,13 @@ def test_wallet_only_identity_matches_userinfo_and_exchange(client: TestClient) 
     client.cookies.set("tr_session", raw_session)
     code_response = client.post(
         "/v1/auth/keys/code",
-        json={"callback_url": "https://wallet-app.example.com/callback"},
+        json={"callback_url": "https://wallet-app.example.com/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
     assert code_response.status_code == 200, code_response.text
 
     exchange = client.post(
         "/v1/auth/keys",
-        json={"code": code_response.json()["data"]["id"]},
+        json={"code": code_response.json()["data"]["id"], "code_verifier": "a" * 48},
     )
     assert exchange.status_code == 200, exchange.text
     userinfo = client.get(

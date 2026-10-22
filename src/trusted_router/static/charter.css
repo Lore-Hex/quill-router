@@ -210,53 +210,6 @@ textarea {
   border-bottom: 1px solid var(--border-hairline);
 }
 
-/* Brand lockup (_brand.html): one size, weight and colour set for the public
- * header and footer, the console header and the auth card. Only room-driven
- * tweaks live elsewhere (site-chrome.css). */
-.brand {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-display);
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.04em;
-  white-space: nowrap;
-  text-decoration: none;
-}
-
-.brand:hover {
-  color: var(--text-display);
-}
-
-.brand-mark {
-  display: block;
-  flex: 0 0 27px;
-  width: 27px;
-  height: 27px;
-}
-
-.brand-mark svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.brand-mark-route {
-  stroke: var(--text-display);
-  stroke-width: 2;
-}
-
-.brand-mark-node {
-  fill: var(--sage);
-}
-
-.brand-mark-exit {
-  stroke: var(--sage);
-  stroke-width: 2;
-}
-
 .btn,
 .signin-btn {
   min-height: 40px;
@@ -580,6 +533,11 @@ tbody tr:hover {
   color: var(--text-body);
   font-size: 16px;
   line-height: 1.7;
+}
+
+/* Catalog pages (model, comparison, provider): one column, one sentence, one button. */
+.public-hero.catalog-hero {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .public-hero-metrics {
@@ -1733,9 +1691,9 @@ body.auth.auth-shell {
 }
 
 .model-explorer-toolbar {
-  /* Scrolls with the page, like the site header does. */
+  /* Catalog sorting stays with the page; model search lives in the sticky header. */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
+  grid-template-columns: minmax(190px, 240px);
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--border-default);

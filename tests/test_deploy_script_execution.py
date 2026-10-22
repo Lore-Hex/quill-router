@@ -75,6 +75,21 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
     return DeployScriptHarness(tmp_path_factory.mktemp("deploy-harness"))
 
 
+@pytest.mark.parametrize("backend", ["clickhouse", "postgres"])
+def test_ecs_record_reads_resolve_only_paris_reader_metadata(
+    harness: DeployScriptHarness, backend: str,
+) -> None:
+    run = harness.run("scripts/deploy/aws_ecs_control_plane.sh", extra_env={"TR_RECORD_READ_BACKEND_EU_WEST_3": backend})
+    assert run.returncode == 0, summarise(run)
+    lookups = [call for call in run.calls if call[:2] == ["aws", "secretsmanager"]]
+    assert lookups == ([] if backend == "postgres" else [[
+        "aws", "secretsmanager", "describe-secret", "--region", "eu-west-3",
+        "--secret-id", "quill/tr-eu-clickhouse-read-password", "--query", "ARN", "--output", "text",
+    ]])
+    assert not any(call[:3] == ["aws", "secretsmanager", "get-secret-value"] for call in run.calls)
+    assert run.gate_ran_for("aws")
+
+
 def _settings_from_containerapp_mutation(call: list[str]) -> Settings:
     if "--set-env-vars" in call:
         start = call.index("--set-env-vars") + 1
@@ -657,7 +672,7 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
-def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabling_money_paths(
+def test_rollout_opts_the_probe_workspace_into_shadow_v2_without_enabling_money_paths(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from unittest.mock import Mock
@@ -680,9 +695,9 @@ def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabli
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     assert rendered["TR_SERVING_REGION"] == region
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == "162e441a-5d13-414f-92bd-7c6cd805faa3"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == "shadow-v2"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == "us-central1"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
     assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
     assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"
@@ -716,15 +731,15 @@ def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabli
 
     app = main.create_app(config, configure_store_arg=False, init_observability=False)
     v1_install.assert_not_called()
-    health_install.assert_not_called()
-    cohort_install.assert_not_called()
+    health_install.assert_called_once_with(app, config, backend)
+    cohort_install.assert_called_once_with(app, config, backend)
     assert not hasattr(app.state, "async_settle_shadow")
     assert not config.async_settle_enabled
     assert not config.async_settle_protection
     assert not config.settle_outbox_fast_drain_enabled
-    assert config.async_settle_shadow_workspace_ids == set()
-    assert not in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
-                           config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
+    assert config.async_settle_shadow_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
+                       config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
     assert not in_v2_cohort(config.async_settle_shadow_policy, "stale-opt-in",
                            config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
 

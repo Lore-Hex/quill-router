@@ -66,6 +66,7 @@ def market_links(markets: list[dict], current: dict) -> str:
 
 PROVIDERS = [
     ("openai", "OpenAI"),
+    ("databricks", "Databricks"),
     ("anthropic", "Anthropic"),
     ("mistral", "Mistral"),
     ("google-vertex", "Google Vertex AI"),

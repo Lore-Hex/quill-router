@@ -78,7 +78,30 @@ ClickHouse URL and password, so standby regions without a reader stay on `postgr
 Monitor workspace activity p50/p99, drain lag, the delivery verifier and
 `/activity` 5xx before advancing to Azure. Set the backend back to `postgres`
 to restore today's behaviour; record and outbox writes continue in either
-mode, and Postgres activity repair remains unimplemented until R4.
+mode. Generations that never reached ClickHouse are re-enqueued with
+`clickhouse.repair_postgres_activity` (see
+[Repairing missing Postgres activity](#repairing-missing-postgres-activity)).
+
+For AWS ECS, `EXPECTED_RECORD_READ_BACKEND` in `aws_ecs_control_plane.sh`
+is the switch, overridable with `TR_RECORD_READ_BACKEND_EU_WEST_3` and
+`TR_RECORD_READ_BACKEND_EU_WEST_1`. Both regions default to `postgres` today:
+Paris does not read from ClickHouse yet. Enabling Paris is its own change,
+setting its default to `clickhouse`, made only after infra-apply has created
+`tr-cp-clickhouse-control-reader` (`infra/aws_ecs_control_reader.tf`, the
+execution role's grant on the reader secret's exact ARN): a task referencing
+the secret before that fails to start. With `clickhouse`, the release sets
+`tr_control_read` and the reader secret ARN resolved by `describe-secret`, and
+refuses unless the cloned task reads database `default` (the reader is granted
+`default.*` only). Ireland stays on `postgres`. Every release applies the
+default in code, in either direction, so the default is the only lasting
+switch: an environment override lasts until the next release, which the
+automatic catch-up may start at any time. To revert Paris, land a change
+setting its default back to `postgres`. That restores Postgres record reads
+only: a reverted Paris keeps `tr_control_read` and the reader secret, which
+the console's client reliability, retirement notices and the client watch
+also read through. A broken reader breaks those too, and the revert does
+not bring them back. So the enabling change first checks that
+`tr_control_read` can log in to the Paris node.
 
 Control-plane operational reads use `tr_control_read`. On GCP,
 `scripts/deploy/clickhouse_control_reader.sh` installs the account with
@@ -110,9 +133,9 @@ scripts select the reader secret by reference, without retrieving its value.
 
 The Postgres outbox drains retain `default` and the writer secrets. Stockholm
 is a second drain target, not a configured control-plane read endpoint; its
-regional writer credential is unchanged. The AWS ECS release script clones
-the running task's configuration, so these provisioner defaults alone do not
-migrate an existing ECS task definition.
+regional writer credential is unchanged. The AWS ECS release script migrates
+reader credentials only where the regional record-read expectation is `clickhouse`;
+all other ClickHouse settings are cloned from the running task.
 
 ## Activity generation lookup schema
 
@@ -336,43 +359,302 @@ time window with `LIMIT limit + 1`. Every ClickHouse query also has a one-millio
 row read ceiling and a 30-second execution ceiling; exceeding either fails
 the check rather than allowing unbounded work.
 
-Run from a host with private access to both databases. Use a verifier Postgres
-role permitted to SELECT generation entities; the drain's outbox-only role
-does not have that permission. Connection handling is reused from the Postgres
-drain: DSQL mints an IAM token for the configured role, and Azure uses libpq's
-`PGPASSWORD` or password file. Keep passwords in the protected environment or
-password file, never in the DSN or command arguments. The checkout's drain
-uses `clickhouse-client`; this verifier reuses the operational analytics HTTP
-reader with the drain's `CH_PASSWORD`, `_USER`, and `_DATABASE` settings.
-`TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD` takes precedence for a separate
-read credential. Set `_URL` to one node's HTTP endpoint (default localhost:8123),
-and check each durable copy separately with its own credentials and history file.
+Run from a host with private access to both databases, as the `tr_verifier`
+Postgres role. That role reads one view, `tr_verifier_generations`:
+`tr_entities` filtered to `kind = 'generation'` and projected to the compared
+fields. It has no privilege on `tr_entities` itself, which holds every entity
+kind, and none on any other table. The drain's outbox-only role cannot read
+the view. The view and the role are defined in
+`scripts/deploy/aws_eu_tr_verifier_role.sql`. Connection handling is reused
+from the Postgres drain: DSQL mints an IAM token for the configured role, and
+Azure uses libpq's `PGPASSWORD` or password file. Keep passwords in the
+protected environment or password file, never in the DSN or command arguments.
+The checkout's drain uses `clickhouse-client`; this verifier reuses the
+operational analytics HTTP reader with the drain's `CH_PASSWORD`, `_USER`, and
+`_DATABASE` settings. `TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD` takes
+precedence for a separate read credential. Set `_URL` to one node's HTTP
+endpoint (default localhost:8123), and check each durable copy separately with
+its own credentials and history file.
 
-On AWS, with the existing AWS role and ClickHouse environment loaded:
+#### AWS: installed on tr-eu-clickhouse-1
+
+`scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh` installs the
+verifier. It is separate from the drain installer on purpose: the verifier is
+optional, so its prerequisites must never make a drain install fail. It runs
+from the drain's `/opt/tr-clickhouse` tree, virtualenv and environment file.
+It ships no code and refuses if that tree is missing or cannot import the
+verifier. The drain installer keeps the verifier's `httpx` dependency, stops
+the verifier's timer before swapping the tree, and starts the timer again if
+it was enabled. It does not import the verifier, so a verifier defect cannot
+fail a drain install. Its summary names the verifier script as the next step,
+and it never runs it.
+
+| What | Where |
+| --- | --- |
+| Service (oneshot, user `tr-clickhouse-ingest`) | `tr-clickhouse-postgres-delivery.service` |
+| Timer (`OnCalendar=hourly`, `Persistent=true`, 24 h lookback) | `tr-clickhouse-postgres-delivery.timer` |
+| DSN override, `user=tr_verifier`, no secret | `/etc/tr-clickhouse-postgres-delivery.env` |
+| IAM auth, region, ClickHouse credentials | the drain's `/etc/tr-clickhouse-ingest-postgres.env` |
+| History, one JSON line per completed check, 16 days kept | `/var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl` |
+
+The unit's arguments are `--lookback-hours 24 --scan-limit 1000000
+--history-file <history>`. None of them is secret. `--limit` keeps its default
+of 5000.
+
+Both caps must stay above what they bound, or every run reports
+`complete: false` and exits 1. That failure is about coverage. It is not a
+delivery gap.
+
+- `--scan-limit` must exceed the plane's total number of generation entities,
+  not just one day's. Until a generation timestamp index exists, the source
+  scan walks all generation history through the primary key (see above).
+- `--limit` must exceed the number of generations created in one 24 h window.
+
+ClickHouse adds a third ceiling. Every verifier query may read at most
+1,000,000 rows. The window query (`fetch_window`) reads `activity_generations
+FINAL` for the 24 h window, and that read is pruned only by the table's
+monthly partition. So once one month of `activity_generations` holds more than
+1,000,000 rows, every run fails loudly with a query error, not silently.
+
+To check them, read the coverage fields of the last history line:
 
 ```bash
-export TR_POSTGRES_DSN='host=<dsql-endpoint> port=5432 user=tr_verifier dbname=postgres sslmode=require'
-export TR_POSTGRES_IAM_AUTH=aws-dsql
-export TR_POSTGRES_IAM_REGION=eu-west-3
-PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
-  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 50000 \
-  --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl
+tail -1 /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl \
+  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["complete"], r["scanned"], r["sampled"])'
 ```
 
-On Azure, with the verifier's Postgres password and the node's ClickHouse
-environment already injected:
+- With `complete: true`, `scanned` is the plane's total generation-entity
+  count and `sampled` is the window's. Raise `--scan-limit` in the unit well
+  before `scanned` approaches it.
+- With `complete: false` and `sampled` equal to `--limit`, the window cap was
+  hit.
+- With `complete: false` and `scanned` equal to `--scan-limit`, the scan cap
+  was hit.
+
+Where to read results:
+
+- `tail -1 /var/lib/tr-clickhouse-ingest/postgres-delivery-aws.jsonl` shows the
+  last check. `"ok": true` is clean.
+- `systemctl show tr-clickhouse-postgres-delivery.service -p Result,ExecMainStatus`
+  shows the last run's exit status. `0` is clean and `1` is a discrepancy,
+  incomplete coverage, or a query failure. A failed run leaves the unit
+  `failed` until the next one.
+- `journalctl -u tr-clickhouse-postgres-delivery.service -o cat` holds the same
+  summary line per run. A query failure writes no history line. It prints only
+  `{"ok": false, "error": "<exception class>"}` here.
+
+Operator order, first install:
+
+1. Install the drain from a commit that carries the verifier:
+   `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh`, or the
+   `drain-install` mode of `deploy-aws-control-plane.yml`. This step does not
+   depend on any of the steps below.
+2. The node role needs `dsql:DbConnect` on the cluster (not `DbConnectAdmin`).
+   It already has that grant for `tr_drain`: statement `DsqlOutboxDrain` in
+   the inline policy that `scripts/deploy/aws_eu_clickhouse.sh` puts. The node
+   role is managed by that script, not by Terraform. IAM cannot narrow
+   `DbConnect` to one Postgres role. The `AWS IAM GRANT` mapping in the SQL is
+   the per-role boundary.
+3. As the DSQL admin, run the reviewed SQL once. It can be re-run safely.
+   A re-run also repairs a drifted view: the view is dropped and created again,
+   because `CREATE OR REPLACE` cannot narrow it, and the grant is reapplied.
+
+   ```bash
+   PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token \
+       --region eu-west-3 --hostname <cluster>.dsql.eu-west-3.on.aws)" \
+   psql "host=<cluster>.dsql.eu-west-3.on.aws port=5432 dbname=postgres user=admin sslmode=require" \
+     -v node_role_arn=arn:aws:iam::<account>:role/<node role> \
+     -f scripts/deploy/aws_eu_tr_verifier_role.sql
+   ```
+
+   The verifier installer prints this command with the real values filled in,
+   followed by the SQL, when it finds the role missing.
+4. Run `bash scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh`. It
+   does these things in order:
+   1. It checks `dsql:DbConnect`.
+   2. It checks that the drain tree is present and imports the verifier.
+   3. It connects from the node as `tr_verifier`, passing the DSN directly, so
+      nothing is written before this check. The role must satisfy all of:
+      - it is `tr_verifier` and is a member of no role;
+      - it holds SELECT on `tr_verifier_generations` and no other privilege
+        on it;
+      - the view's columns and its `pg_get_viewdef` definition match the
+        reviewed SQL, which reads `tr_entities` filtered to
+        `kind = 'generation'`. The comparison ignores the `::text` casts that
+        Postgres adds when it stores a definition;
+      - it holds no table or column privilege of any kind on any other
+        relation. This check ignores `pg_catalog`, `information_schema`, and
+        the schemas that hold AWS or system metadata rather than tr data:
+        DSQL's `sys`, `pg_toast`, and the per-session `pg_temp*` schemas.
+
+      The check ends with one of three results:
+      - **Reviewed:** the install continues.
+      - **Problems found:** each problem is listed by role or relation name.
+      - **Could not check:** a connection, token or throttling error, or a
+        role or view that does not exist yet. Only the exception class is
+        reported.
+   4. It writes the DSN override.
+   5. It installs and enables the timer.
+   6. It runs the verifier once. If an hourly run is already in progress, it
+      waits for that run to finish first. It then requires exit 0,
+      `Result=success`, and a history line from this run with `"ok": true`.
+
+   Each SSM step is polled until it finishes, with a 45-minute deadline. A
+   poll that fails with `InvocationDoesNotExist` is retried, because the
+   command is not registered yet. Any other poll error, such as AccessDenied
+   or expired credentials, stops the script at once and names the error class.
+   The script exits non-zero at the first failure.
+
+   - On a first install, a failure in steps 1 to 3 writes nothing on the node.
+   - On a refresh, files and units from the earlier install stay where they
+     are.
+   - If the scope check finds problems, it also runs `systemctl disable --now`
+     on the timer, so an over-broad role stops being used. If disabling fails,
+     the script says so, still prints the operator step, and exits non-zero.
+   - If the check could not run, nothing changes and an installed timer keeps
+     running, because a transient error is not evidence that the role is
+     wrong. The script still prints the operator step, since a missing role or
+     view looks like this on a first install.
+   - The timer stays enabled after a failed first run, so a real discrepancy
+     keeps being recorded every hour.
+
+#### Azure: not installed yet (follow-up)
+
+Nothing deploys the verifier on Azure. That follow-up needs the
+`tr_verifier_generations` view and a password-authenticated `tr_verifier`
+role on Azure Postgres, a password file or protected environment for it, and
+a unit with its own history file. A manual run, with the verifier's Postgres
+password and the node's ClickHouse environment already injected:
 
 ```bash
 export TR_POSTGRES_DSN='host=<postgres-host> port=5432 user=tr_verifier dbname=trustedrouter sslmode=require'
 export TR_POSTGRES_IAM_AUTH=''
 PYTHONPATH=src python3 -m clickhouse.verify_postgres_delivery \
-  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 50000 \
+  --lookback-hours 24 --grace-seconds 300 --limit 5000 --scan-limit 1000000 \
   --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-azure.jsonl
 ```
 
 Use `--start 2026-10-18T00:00:00Z --end 2026-10-19T00:00:00Z` for a fixed
 window. The verifier does not repair records, delete outbox rows, or change
 settlement writes.
+
+### Repairing missing Postgres activity
+
+`clickhouse.repair_postgres_activity` is the Postgres counterpart of the
+Spanner-only `trusted_router.activity_delivery_repair_cli`. It finds the
+generation entities that ClickHouse `activity_generations` does not hold and
+inserts each one's activity row into `tr_operational_analytics_outbox`. The
+drain then delivers them like any other row, to every configured node.
+
+- **What it repairs.** Either a `created_at` window (`--start`, inclusive, and
+  `--end`, exclusive), or the ids given with `--generation-id` (repeatable).
+  Discovery uses the delivery verifier's own readers, so "missing" means what
+  the verifier means, including `--grace-seconds` (default 300): a row still
+  inside the grace counts as `pending` and is left for the drain. `--scan-limit`
+  (default 1,000,000) bounds the primary-key scan, as in the verifier. If it is
+  hit, `complete` is false and the run exits 1.
+- **What it writes.** It calls the settle path's own
+  `PostgresOperationalAnalyticsOutbox.enqueue_activity_tx` on the stored
+  `Generation`. So the payload, shard and stable event id are the ones settle
+  writes, under the same `ON CONFLICT DO NOTHING`. Re-running it while a row is
+  still queued is a no-op. After the drain has taken a row, a re-run delivers it
+  again, and `ReplacingMergeTree` collapses the copy. The tool writes outbox
+  rows and nothing else. It never deletes anything, and it never touches
+  settlement, reservation or balance rows.
+- **Entities older than a field.** A stored body decodes exactly as
+  `PostgresStore` reads it, and a missing key takes the `Generation` default.
+  The August 2026 entities predate the client and `synthetic` fields
+  (2026-08-17), `app_id` (2026-08-26), and the markup amounts (2026-08-27 and
+  2026-09-02). They get `app_id` null, both markups 0, `synthetic` false and
+  null client fields. That is what those generations were: no registered app,
+  no markup charged, no client context recorded. Nothing is invented.
+- **Safety.** Dry run is the default and writes nothing. `--apply` writes.
+  `--limit` (default 500) bounds one run. When more remain, the output carries
+  `next_after_id` and `resume`; run the same command again with
+  `--after-id <next_after_id>`. Output is one JSON line of counts and at most 20
+  ids (`selected_ids`, `not_found_ids`). It never prints row values, payloads
+  or driver error text. A failure prints only `{"ok": false, "error": "<class>"}`.
+  It exits 0 only when coverage was complete and every selected id was found.
+
+**Privileges: operator-run, as the DSQL admin.** The repair must read whole
+generation entities from `tr_entities` and INSERT into the outbox. No scoped
+role has both: `tr_drain` holds SELECT and DELETE on the outbox, and
+`tr_verifier` holds SELECT on a narrow view. Creating a standing role that can
+read every generation body, for a one-off, would widen the plane for good. So
+an operator runs the repair as `admin`, the role the control plane already uses
+to write these rows at settle. The admin token is minted in the process from
+the operator's own AWS identity, which needs `dsql:DbConnectAdmin`. It is never
+printed and never stored on disk. The run happens on the operator's machine,
+not on the ClickHouse node: that node must not hold an admin-equivalent
+credential (see the drain module's docstring). ClickHouse is reached through an
+SSM port forward, using the drain's `default` credential. The read-only
+`tr_control_read` profile runs with `readonly=1`, which rejects the
+`max_rows_to_read` and `max_execution_time` bounds every verifier query sets.
+The repair sends ClickHouse only those bounded SELECTs. The Spanner tool is
+likewise operator-run with the application's credentials.
+
+AWS Paris, from a checkout of a commit that carries the tool, after
+`uv sync --frozen`. You need the AWS CLI with the Session Manager plugin.
+`<cluster>` is `CLUSTER_ID` in `scripts/deploy/aws_eu_clickhouse_drain_install.sh`.
+
+```bash
+# Terminal 1: forward the Paris node's ClickHouse HTTP port to localhost:18123.
+INSTANCE_ID="$(aws ec2 describe-instances --region eu-west-3 \
+  --filters Name=tag:Name,Values=tr-eu-clickhouse-1 Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].InstanceId' --output text)"
+aws ssm start-session --region eu-west-3 --target "$INSTANCE_ID" \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["8123"],"localPortNumber":["18123"]}'
+
+# Terminal 2: the environment. No secret is put in argv or on disk.
+export TR_POSTGRES_DSN='host=<cluster>.dsql.eu-west-3.on.aws port=5432 user=admin dbname=postgres sslmode=require'
+export TR_POSTGRES_IAM_AUTH=aws-dsql TR_POSTGRES_IAM_REGION=eu-west-3
+export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=http://127.0.0.1:18123
+export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=default TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=default
+export TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD="$(aws secretsmanager get-secret-value \
+  --region eu-west-3 --secret-id quill/tr-eu-clickhouse-password --query SecretString --output text)"
+
+# Use the same window as the verifier run that counted the gap (here the
+# plane's whole history), so the dry run's "missing" equals that count before
+# anything is applied; a narrower window can leave ids outside it.
+# Dry run: counts and the first ids. Writes nothing.
+PYTHONPATH=src uv run python -m clickhouse.repair_postgres_activity \
+  --start 2026-06-01T00:00:00Z --end <the verifier run's end, UTC>
+
+# Apply, at most --limit per run. Repeat with --after-id <next_after_id> while
+# the output names one.
+PYTHONPATH=src uv run python -m clickhouse.repair_postgres_activity \
+  --start 2026-06-01T00:00:00Z --end <the verifier run's end, UTC> --apply
+
+unset TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD
+```
+
+Each run scans all generation history through the primary key, as the
+verifier does, and checks every in-window id against ClickHouse.
+
+**Confirm.** After the apply, wait until the drain has emptied the outbox
+(`analytics.drain_lag_seconds` back to its usual level), then run the dry run
+again: `missing` must be 0. The proof is a clean wide-window verifier run on
+the node, in the same environment as the timer, covering the whole repaired
+window:
+
+```bash
+sudo systemd-run --pipe --wait --quiet -p User=tr-clickhouse-ingest \
+  -p WorkingDirectory=/opt/tr-clickhouse \
+  -p EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env \
+  -p EnvironmentFile=/etc/tr-clickhouse-postgres-delivery.env \
+  /opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_postgres_delivery \
+  --start 2026-08-01T00:00:00Z --end <now, UTC> --limit 1000000 --scan-limit 1000000 \
+  --history-file /var/lib/tr-clickhouse-ingest/postgres-delivery-repair.jsonl
+```
+
+It must print `"ok": true` with `complete: true` and `missing`, `extra`,
+`mismatched` and `duplicated` all 0. `--limit` has to exceed the number of
+generations in the window, or the run reports `complete: false`. The
+ClickHouse read ceiling of 1,000,000 rows per query applies, as described
+above. The repair and the verifier each check one node. Check the Stockholm
+copy separately, as the verifier section says. If Stockholm lacks rows that
+Paris holds, run the repair with the port forward pointed at the Stockholm node.
 
 ## Restore procedures
 

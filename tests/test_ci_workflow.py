@@ -226,7 +226,7 @@ def test_ci_and_production_use_the_same_python() -> None:
     pinned = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
     assert pinned == "3.12"
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert f"uv:python{pinned}-" in dockerfile
+    assert dockerfile.splitlines()[0] == f"FROM python:{pinned}-slim-bookworm"
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     assert f'python-version: "{pinned}"' in refresh
 
@@ -237,3 +237,28 @@ def test_every_ci_job_pins_the_ubuntu_24_04_runner_image():
     # the local gates are calibrated on) they pass. Move the pin deliberately, re-measuring those guards.
     jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
     assert {name: job['runs-on'] for name, job in jobs.items()} == dict.fromkeys(jobs, 'ubuntu-24.04')
+
+
+def test_ci_cancels_the_run_it_supersedes_on_a_branch_but_never_on_main():
+    # 2026-10-20: 60 queued runs starved every main run's coverage job for hours; the deploy gate
+    # needs its commit's run to conclude, so nothing shipped. One run per branch, newest wins.
+    # Main is exempt: a later docs-only push starts no deploy, and cancelling the earlier commit's
+    # run would make that commit's deploy gate refuse a valid rollout (review of #1921).
+    workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+    assert workflow['concurrency'] == {
+        'group': "ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}",
+        'cancel-in-progress': "${{ github.ref != 'refs/heads/main' }}"}
+
+
+def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    coverage = jobs["coverage"]
+    assert coverage["if"] == "${{ !cancelled() }}"
+    assert coverage["needs"] == "test"
+    assert "continue-on-error" not in coverage
+    command = next(step["run"] for step in coverage["steps"]
+                   if step.get("name") == "Combine and enforce the floor")
+    assert '${{ needs.test.result }}' in command
+    assert '!= "success"' in command
+    assert "exit 1" in command
+    assert "--fail-under=70" in command

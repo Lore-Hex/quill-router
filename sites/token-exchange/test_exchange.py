@@ -4,6 +4,7 @@ import re
 import tempfile
 import unittest
 import urllib.error
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
@@ -232,15 +233,25 @@ class ExchangeTests(unittest.TestCase):
             self.assertNotIn("google-analytics", page)
             self.assertIn('<script src="/assets/analytics.js?v=test" defer></script>', page)
             self.assertNotIn("$headline", page)
-            # The hero photograph and the provider marquee: one visible group of six provider links,
+            # The hero photograph and the provider marquee: one visible provider group,
             # one hidden copy that stays out of the tab order, under the relationship label.
             self.assertIn('class="hero-photo"', page)
             self.assertIn("Providers on TrustedRouter", page)
             self.assertEqual(page.count('<div class="hero-provider-group">'), 1)
             self.assertEqual(page.count('<div class="hero-provider-group" aria-hidden="true">'), 1)
-            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), 6)
+            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), len(PROVIDERS))
             for _, label in PROVIDERS:
                 self.assertEqual(page.count(f'<span>{label}</span>'), 2)
+
+    def test_databricks_is_second_in_the_provider_strip(self):
+        self.assertEqual(PROVIDERS[:2], [("openai", "OpenAI"), ("databricks", "Databricks")])
+        markets = load_markets()
+        for market in markets:
+            page = render(market, markets, "test")
+            visible = page.split('<div class="hero-provider-group">', 1)[1].split('</div>', 1)[0]
+            self.assertLess(visible.index('<span>OpenAI</span>'), visible.index('<span>Databricks</span>'))
+            self.assertLess(visible.index('<span>Databricks</span>'), visible.index('<span>Anthropic</span>'))
+            self.assertIn('src="/assets/provider-databricks.png"', visible)
 
     def test_escape(self):
         market = copy.deepcopy(load_markets()[0])
@@ -505,8 +516,18 @@ class ExchangeTests(unittest.TestCase):
             build(output)
             self.assertEqual(len(list(output.glob("*/index.html"))), 13)
             for market in load_markets():
+                sitemap = ET.parse(output / market["slug"] / "sitemap.xml")  # noqa: S314 — trusted build output
+                namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+                paths = ["/"]
+                if market["slug"] == "new-york":
+                    paths += ["/providers", "/badge", "/media-kit", "/index"]
+                self.assertEqual(
+                    [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
+                    [f'https://{market["domain"]}{path}' for path in paths],
+                )
                 self.assertIn(
-                    market["domain"], (output / market["slug"] / "sitemap.xml").read_text()
+                    f'Sitemap: https://{market["domain"]}/sitemap.xml',
+                    (output / market["slug"] / "robots.txt").read_text(),
                 )
             # Every copied asset is referenced by the built pages, styles or scripts, and nothing
             # referenced is missing.

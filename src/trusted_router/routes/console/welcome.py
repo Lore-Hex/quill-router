@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.auth import SettingsDep
 from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.console.api_keys import key_list_context
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
 
 
@@ -42,7 +43,8 @@ def register(app: FastAPI) -> None:
             page_subtitle="",
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
-        ))
+            **(key_list_context(ctx.workspace.id) if revealed_key else {}),
+        ), headers={"Cache-Control": "private, no-store"})
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise
             # the browser keeps the original and the next refresh re-reveals

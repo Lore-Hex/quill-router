@@ -36,6 +36,7 @@ from trusted_router.async_settle_shadow_v2_schema import POLICY, require
 from trusted_router.detached_jws import canonical
 from trusted_router.storage_gcp_async_admission import HEALTH_ROW_LIMIT, unresolved_statement
 from trusted_router.storage_gcp_shadow_io import (
+    Sessions,
     configure,
     elapsed_clock,
     owned_database,
@@ -84,6 +85,10 @@ class UnknownCommit(RuntimeError):
     pass
 
 
+class ContentionLoss(RuntimeError):
+    """The transaction was aborted and definitively did not commit."""
+
+
 def shadow_health_claim_read() -> Statement:
     _, params, types = entity_point_statement(CLAIM_KIND, "local/publish")
     return CLAIM_SQL, params, types
@@ -115,6 +120,18 @@ class ObservationStore:
         self.used_reconciliations: dict[str, int] = {}
         configure(self.database)
 
+    def session_ready(self) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return not isinstance(manager, Sessions) or manager.ready
+
+    def session_recovery_due(self) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+
+    def prepare_session(self, boot: str | None = None) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement
         require(sql in (POINT_SQL, CLAIM_SQL), "unregistered_statement")
@@ -143,15 +160,36 @@ class ObservationStore:
                 return self.point(snapshot, entity_point_statement(kind, key), budget, READ_SECONDS)
 
     def transaction(self, callback: Callable[[Any], T], budget: Budget, cap: float) -> T:
+        from google.api_core.exceptions import Aborted
+
         attempted = False
         committing = False
+        aborted = False
+        def record_abort(error: BaseException) -> None:
+            nonlocal aborted
+            seen: set[int] = set()
+            cause: BaseException | None = error
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                if isinstance(cause, Aborted):
+                    aborted = True
+                    break
+                cause = cause.__cause__
         def once(tx: Any) -> T:
-            nonlocal attempted, committing
-            require(not attempted, "transaction_retry")
+            nonlocal attempted, committing, aborted
+            if attempted:
+                # Session re-enters only after ABORTED. Do not run a second attempt.
+                aborted = True
+                raise ContentionLoss("transaction_aborted")
             attempted = True
-            budget.remaining(cap)
-            result = callback(tx)
-            budget.remaining(cap)
+            try:
+                budget.remaining(cap)
+                result = callback(tx)
+                budget.remaining(cap)
+            except Exception as error:
+                # SDK rollback can replace this exception. Retain the abort now.
+                record_abort(error)
+                raise
             committing = True
             return result
         try:
@@ -160,7 +198,14 @@ class ObservationStore:
                     commit_request_options={"priority": "PRIORITY_LOW"}, transaction_tag="tr_shadow_v2")
             budget.remaining(cap)
             return result
-        except Exception:
+        except ContentionLoss:
+            raise
+        except Exception as error:
+            # The bounded transport keeps SDK retry loops stopped with a plain
+            # exception, retaining ABORTED as its cause for this classification.
+            record_abort(error)
+            if aborted:
+                raise ContentionLoss("transaction_aborted") from None
             if committing:
                 raise UnknownCommit("shadow_commit_unknown") from None
             raise
@@ -173,6 +218,10 @@ class ObservationStore:
         from google.cloud.spanner_v1 import COMMIT_TIMESTAMP
         tx.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
             values=[(r.kind, r.key, r.body.decode("utf-8"), (COMMIT_TIMESTAMP if r.kind == HEALTH_KIND else dt.datetime.fromtimestamp(self.wall(), dt.UTC))) for r in rows])
+
+    def read_shadow_claim(self, budget: Budget) -> dict[str, Any] | None:
+        row = self.read(CLAIM_KIND, "local/publish", budget.child(CYCLE_SECONDS))
+        return row.value() if row is not None else None
 
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None

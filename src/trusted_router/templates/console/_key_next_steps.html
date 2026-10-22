@@ -1,0 +1,12 @@
+{% from "console/_key_icons.html" import icon %}
+<div class="ux-tiles">
+  <span class="ux-tile-slot" data-rewards-key-card hidden>
+    <button class="ux-tile ux-tile-rewards" type="button" data-rewards-open data-rewards-api-keys hidden>
+      <span class="ux-tile-icon">{{ icon('gift') }}</span>
+      <span class="ux-tile-body">
+        <strong class="ux-tile-value">Social rewards</strong>
+        <span class="ux-tile-action"><span data-rewards-label>Earn API credit for a follow</span> {{ icon('arrow') }}</span>
+      </span>
+    </button>
+  </span>
+</div>

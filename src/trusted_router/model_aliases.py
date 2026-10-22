@@ -64,6 +64,9 @@ def merge_openrouter_model_rows(raw_models: Iterable[object]) -> list[dict[str, 
 
 
 def canonical_router_model_id(model_id: str) -> str:
+    publisher, separator, native_id = model_id.partition("/")
+    if publisher in {"system1models", "system1models-eu"} and separator:
+        return publisher.replace("system1models", "decisionmodelsio") + "/" + native_id
     if model_id.startswith("nyte/"):
         model_id = "trustedrouter/" + model_id.removeprefix("nyte/")
     base, separator, variant = model_id.partition(":")
@@ -73,6 +76,9 @@ def canonical_router_model_id(model_id: str) -> str:
 
 
 def router_model_aliases(model_id: str) -> list[str]:
+    publisher, separator, native_id = model_id.partition("/")
+    if publisher in {"decisionmodelsio", "decisionmodelsio-eu"} and separator:
+        return [publisher.replace("decisionmodelsio", "system1models") + "/" + native_id]
     if not model_id.startswith("trustedrouter/"):
         return []
     aliases = ["nyte/" + model_id.removeprefix("trustedrouter/")]

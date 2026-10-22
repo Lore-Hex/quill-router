@@ -279,10 +279,10 @@ assigned to an increment rather than left floating:
   (B) is therefore a security fix, not just plumbing. The conformant
   endpoints (D) additionally echo-check `redirect_uri` at token
   exchange per RFC 6749 §4.1.3.
-- **PKCE is optional for https/loopback callbacks and `plain` is
-  accepted.** The new `/oauth/authorize` (D) requires S256 for every
-  public client per OAuth 2.1; the legacy `/auth` alias keeps its
-  current behavior until sunset, stated in docs.
+- **Historical PKCE gap, now closed:** legacy https/loopback callbacks
+  previously accepted optional or plain PKCE. Both the legacy `/auth` and
+  registered `/oauth/authorize` flows now require S256. The legacy exchange
+  also rejects insecure codes issued before this change.
 - **`/auth/approve` has no CSRF token** and trusts the POSTed
   `callback_url`. D adds a per-consent CSRF token and re-derives the
   authorization parameters from a server-side consent record instead of

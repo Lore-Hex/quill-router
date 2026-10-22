@@ -9,7 +9,7 @@ function shell(count) {
 import sys
 from jinja2 import Environment, FileSystemLoader, ChoiceLoader, DictLoader
 env=Environment(loader=ChoiceLoader([DictLoader({'console/_social_rewards.html':'','_favicon.html':''}),FileSystemLoader('src/trusted_router/templates')]))
-print(env.get_template('console/_layout.html').render(workspaces=[{'id':str(i),'name':'Workspace '+str(i)} for i in range(int(sys.argv[1]))], current_workspace_id='0', console_next_path='/console/api-keys', user_email='test@example.test', active='api-keys', page_title='API Keys', provider_mode=False))
+print(env.get_template('console/_layout.html').render(workspaces=[{'id':str(i),'name':'Workspace '+str(i)} for i in range(int(sys.argv[1]))], current_workspace_id='0', console_next_path='/console/api-keys', user_email='test@example.test', active='api-keys', page_title='API Keys', provider_mode=False, credits_available='$0.15', credits_empty=False))
 `, String(count)], { cwd:root, encoding:'utf8' });
 }
 for (const count of [1,2]) test(`navigation retains workspace and account controls (${count} workspaces)`, async ({page}) => {

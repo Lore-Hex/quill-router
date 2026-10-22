@@ -26,6 +26,13 @@ on:
 permissions:
   contents: read
 
+# One scan per branch or pull request; a newer push cancels the scan of the
+# commit it supersedes (same reason as ci.yml: superseded runs starved the
+# 2026-10-20 queue). Main keeps one scan per commit, as ci.yml does.
+concurrency:
+  group: dependency-scan-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   scan-full:
     if: ${{ github.event_name != 'pull_request' }}
@@ -40,7 +47,7 @@ jobs:
           persist-credentials: false
       - name: Run scanner
         id: scan
-        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        uses: google/osv-scanner-action/osv-scanner-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
         env:
           GOTOOLCHAIN: auto
         continue-on-error: true
@@ -56,7 +63,7 @@ jobs:
       - name: Check that the scan completed
         run: test -s results.sarif || { echo "::error::OSV-Scanner wrote no results"; exit 1; }
       - name: Upload to code-scanning
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           sarif_file: results.sarif
 
@@ -75,7 +82,7 @@ jobs:
         run: git checkout "$GITHUB_BASE_REF"
       - name: Run scanner on existing code
         id: scan-old
-        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        uses: google/osv-scanner-action/osv-scanner-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
         env:
           GOTOOLCHAIN: auto
         continue-on-error: true
@@ -90,7 +97,7 @@ jobs:
         run: git checkout -f "$GITHUB_SHA"
       - name: Run scanner on new code
         id: scan-new
-        uses: google/osv-scanner-action/osv-scanner-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        uses: google/osv-scanner-action/osv-scanner-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
         env:
           GOTOOLCHAIN: auto
         continue-on-error: true
@@ -110,7 +117,7 @@ jobs:
           [ -s new-results.json ] || { echo "::error::scan of this branch wrote no results"; status=1; }
           exit "$status"
       - name: Report new vulnerabilities
-        uses: google/osv-scanner-action/osv-reporter-action@0a65f82af05cd58cf587827b0bb0489548c18346 # v2.7.0
+        uses: google/osv-scanner-action/osv-reporter-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
         with:
           scan-args: |-
             --output=results.sarif
@@ -120,6 +127,6 @@ jobs:
             --fail-on-vuln=true
       - name: Upload to code-scanning
         if: ${{ !cancelled() && hashFiles('results.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           sarif_file: results.sarif

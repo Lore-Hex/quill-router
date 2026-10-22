@@ -102,6 +102,7 @@ response = client.chat.completions.create(
     </div>
   </div>
   <p class="section-center">When enabled for Chat Completions or Responses, TrustedRouter returns route metadata in <code>openrouter_metadata</code>. It never includes credentials, tags, trace contents, prompts, or outputs.</p>
+  <p class="section-center"><code>gateway_region</code> identifies the TrustedRouter gateway, not where the upstream provider ran inference. The provider's serving location is separate in <code>usage.inference_location.serving_region</code> and remains <code>null</code> when not reported.</p>
 </section>
 
 <section class="marketing-split" style="margin-top:48px">

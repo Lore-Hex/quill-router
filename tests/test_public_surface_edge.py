@@ -109,6 +109,59 @@ def test_prepare_attaches_existing_policy_without_mutating_it(tmp_path: Path) ->
     )
 
 
+def test_check_verifies_every_active_region_without_cloud_mutation(tmp_path: Path) -> None:
+    harness = DeployScriptHarness(tmp_path / "check-trust")
+
+    run = harness.run(SCRIPT, args=("check",))
+
+    assert run.returncode == 0, summarise(run)
+    assert "public client-IP trust boundary verified" in run.stderr
+    revision_reads = [call for call in run.calls if "revisions" in call and "describe" in call]
+    assert len(revision_reads) == 4
+    assert not any(_is_cloud_mutation(call) for call in run.calls)
+
+
+@pytest.mark.parametrize(
+    ("resource", "value", "expected"),
+    [
+        ("ingress", "all", "ingress='all'"),
+        ("revision", "untrusted", "TR_RATE_LIMIT_CLIENT_IP_MODE='untrusted'"),
+        ("header", "X-TrustedRouter-Client-IP:caller-controlled", "client-IP overwrite"),
+        ("header", "", "client-IP overwrite"),
+    ],
+)
+def test_check_rejects_spoofable_or_missing_trust_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resource: str,
+    value: str,
+    expected: str,
+) -> None:
+    original = SCRIPT_FIXTURES[SCRIPT]
+    responses = []
+    for pattern, response in original.responses:
+        if resource == "ingress" and "run services describe trusted-router-public" in pattern:
+            service = json.loads(response)
+            service["metadata"]["annotations"]["run.googleapis.com/ingress"] = value
+            response = json.dumps(service)
+        elif resource == "revision" and "run revisions describe trusted-router-public" in pattern:
+            revision = json.loads(response)
+            revision["spec"]["containers"][0]["env"][0]["value"] = value
+            response = json.dumps(revision)
+        elif resource == "header" and pattern.endswith(".*--format=json") and (
+            "backend-services describe trusted-router-public-backend" in pattern
+        ):
+            response = json.dumps({"customRequestHeaders": [value] if value else []})
+        responses.append((pattern, response))
+    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(original, responses=tuple(responses)))
+
+    run = DeployScriptHarness(tmp_path / "check-drift").run(SCRIPT, args=("check",))
+
+    assert run.returncode != 0
+    assert expected in run.stderr
+    assert not any(_is_cloud_mutation(call) for call in run.calls)
+
+
 def test_cutover_refuses_companion_ingress_before_url_map_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

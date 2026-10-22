@@ -111,7 +111,9 @@ def test_provider_pages_expose_location_evidence_and_limits(test_settings: Setti
     assert html is not None
     for text in ("Inference locations", "Can locations change?", "Provider region pinning",
                  "Pinning through TrustedRouter", "Infrastructure declaration",
-                 "company jurisdiction, not GPU location", "not by themselves restrict geography"):
+                 "company jurisdiction, not GPU location", "not by themselves restrict geography",
+                 "usage.provider_usage.gateway_region", "not the provider's inference location",
+                 "usage.inference_location.serving_region", "does not mean the model ran in Europe"):
         assert text in html
     assert PROVIDER_INFERENCE_LOCATIONS[slug].reviewed_on in html
     for _, url in PROVIDER_INFERENCE_LOCATIONS[slug].sources:

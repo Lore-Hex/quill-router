@@ -31,6 +31,7 @@
   <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
   <link rel="preload" href="/static/homepage/archivo.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/tokens.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/brand.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/site-chrome.css?v={{ static_version|default('local') }}">
@@ -42,6 +43,22 @@
   {% include "public/_nav.html" %}
   <main id="main" class="wrap public-wrap">
     {% block hero %}
+    {% if hero_pitch is defined and hero_pitch %}
+    {# Catalog pages (model, comparison, provider): the label and sentence come
+       from dashboard.py (_model_hero and friends). The button opens the shared
+       dialog in sign-up mode through the same wiring as the homepage; it is a
+       <button>, which keeps the served page free of links to a redirecting console URL. #}
+    <section class="public-hero catalog-hero">
+      <div>
+        <div class="kicker">{{ hero_label }}</div>
+        <h1>{{ heading }}</h1>
+        <p class="lead">{{ hero_pitch }}</p>
+        <div class="hero-actions">
+          <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup" data-catalog-cta>Create key</button>
+        </div>
+      </div>
+    </section>
+    {% else %}
     <section class="public-hero marketing-hero">
       <div>
         <div class="kicker">OpenAI compatible API · Attested · Public status</div>
@@ -58,6 +75,7 @@
         <div><strong>0</strong><span>prompt or output logs. Always.</span></div>
       </div>
     </section>
+    {% endif %}
     {% endblock %}
     {% block body %}{% endblock %}
     {% if catalog_evidence %}{% include "public/_catalog_evidence.html" %}{% endif %}

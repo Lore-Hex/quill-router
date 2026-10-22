@@ -10,6 +10,18 @@ on:
   # generated branch before advancing protected main with the checked SHA.
   workflow_dispatch: {}
 
+# One CI run per branch or pull request: a newer push cancels the run of the
+# commit it supersedes. Without this, 2026-10-20's push cadence left 60 queued
+# runs and the coverage job of every main run starved for five hours, so no run
+# concluded and the deploy gate (which needs its commit's CI run to conclude
+# success) could ship nothing. Main is exempt: every main commit keeps its own
+# run, because a later push that touches no deploy path starts no deploy of its
+# own, and the earlier commit's deploy gate would read the cancelled run as a
+# refusal and strand a valid rollout.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
 # conclusion for the SHA, and a run only concludes success when every job
@@ -105,7 +117,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".node-version"
       - name: Install npm deps
         run: npm ci
       - name: TypeScript build (verify the committed .js matches its .ts)
@@ -219,6 +231,19 @@ jobs:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
+      - name: Check out enclave source for the mandatory Sentry guard
+        uses: actions/checkout@v4
+        with:
+          repository: Lore-Hex/quill-cloud-proxy
+          ref: main
+          path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
+          persist-credentials: false
+      - name: Require and inspect enclave source
+        run: |
+          echo "TR_ENCLAVE_SOURCE_ROOT=$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" >> "$GITHUB_ENV"
+          git -C .security/quill-cloud-proxy rev-parse HEAD
+          TR_ENCLAVE_SOURCE_ROOT="$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" uv run python -m scripts.check_enclave_sentry
       # The coverage invocation executes the ordinary suite; the frozen-main
       # differential runs in proof-oracle without coverage tracing. Running a
       # separate plain pytest pass doubled CI time and delayed every guarded
@@ -295,8 +320,10 @@ jobs:
     # tests and the coverage number rather than hiding one behind the other --
     # but it still fails if any shard did, because coverage computed from a
     # partial run is not a measurement of this commit.
+    # Cancelled runs must release their concurrency slot. always() kept this
+    # job queued after superseding PR runs, blocking the replacement's CI.
     needs: test
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -380,6 +407,19 @@ jobs:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
+      - name: Check out enclave source for the mandatory Sentry guard
+        uses: actions/checkout@v4
+        with:
+          repository: Lore-Hex/quill-cloud-proxy
+          ref: main
+          path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
+          persist-credentials: false
+      - name: Require and inspect enclave source
+        run: |
+          echo "TR_ENCLAVE_SOURCE_ROOT=$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" >> "$GITHUB_ENV"
+          git -C .security/quill-cloud-proxy rev-parse HEAD
+          TR_ENCLAVE_SOURCE_ROOT="$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" uv run python -m scripts.check_enclave_sentry
       # Computed from _RETIREMENTS rather than hard-coded, so adding a
       # retirement moves this clock with it and no one has to remember. The
       # max() with now() keeps the clock in the future once every announced
@@ -467,7 +507,7 @@ jobs:
         run: uv sync --frozen
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".node-version"
       - name: Install npm deps
         run: npm ci
       - name: Install Playwright Chromium
@@ -544,7 +584,7 @@ jobs:
   fastpath:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # The module stays on Go 1.24, the enclave's: a dependency that needs a
+    # The module stays on the patched Go 1.26 toolchain: a dependency that needs a
     # later Go fails the build rather than fetching a newer toolchain.
     env:
       GOTOOLCHAIN: local
@@ -555,7 +595,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - uses: actions/setup-java@v4
         with:
@@ -605,7 +645,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - name: Wait for the Spanner emulator (fail if unavailable)
         run: |
@@ -656,7 +696,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - name: Wait for the Spanner emulator (fail if unavailable)
         run: |

@@ -204,16 +204,20 @@ def test_zero_retention_request_never_yields_a_weaker_endpoint() -> None:
     assert not weak, f"ZDR request would have been routed to weaker endpoints: {weak}"
 
 
-def test_explicit_model_below_the_requested_floor_fails_before_dispatch() -> None:
-    """Naming a model that cannot meet the request's own privacy bar must be a
-    fast 400, not a call to that provider followed by a surprise."""
+def test_explicit_provider_below_the_requested_floor_fails_before_dispatch() -> None:
+    """A qualifying Vertex route must not bypass an Anthropic-only request."""
+    provider = {"only": ["anthropic"], "allow_fallbacks": False}
+    body = {"model": "anthropic/claude-sonnet-4.6", "provider": provider, "messages": []}
+    candidates = chat_route_endpoint_candidates(body, Settings())
+    assert candidates
+    assert all(
+        endpoint.provider == "anthropic"
+        and endpoint_privacy_tier(endpoint) < PRIVACY_TIER_ZERO_RETENTION
+        for _model, endpoint in candidates
+    )
     with pytest.raises(HTTPException) as raised:
         chat_route_endpoint_candidates(
-            {
-                "model": "anthropic/claude-sonnet-4.6",
-                "provider": {"min_privacy": "zdr"},
-                "messages": [],
-            },
+            {**body, "provider": {**provider, "min_privacy": "zdr"}},
             Settings(),
         )
     assert raised.value.status_code == 400

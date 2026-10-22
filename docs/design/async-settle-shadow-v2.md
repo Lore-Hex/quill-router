@@ -269,6 +269,50 @@ transactions remain mandatory. Publish only after a won claim and one
 strong unresolved read; increasing observation and slot fences prevent a delayed
 winner overwriting new data. Claiming never leases money outbox work.
 
+Owner ruling (2026-10-20): avoid contention inside the existing slot allowance,
+without changing any format, budget or bound. A contender whose own most recent
+cycle in this process published slot s-1 or s-2 is the incumbent and attempts the
+claim for s at slot start. Every other contender waits d = 60 ms + 30 ms *
+(H(boot, slot) mod 3) after its admitted start, using the first eight bytes of
+SHA-256 of "boot:slot" as a big-endian integer, rechecks that the job is current
+and not revoked, then makes one bounded snapshot point read of the claim row.
+A valid claim for this slot by another boot ends the cycle as `lost_claim`: a
+definitive healthy contention loss, counting the read in rpc_count/rpc_elapsed
+and opening no read-write transaction. Otherwise the existing read-write claim
+runs unchanged. The 500 ms cycle budget, 250 ms observation bound, claim and health
+row formats, trace format and counter identities remain unchanged; no retries or
+catch-up. The incumbent state is process-local, set by the Service owner when a
+published reply is accepted and captured in the next job's inputs. An aborted
+claim transaction remains a `lost_claim`.
+
+Owner ruling A′ (2026-10-21): create the observer-owned session at installation,
+before the first cycle, under its own five-second scope. Owned sessions carry
+`tr_component=shadow-v2` and `tr_boot=<boot id>`. Recovery runs outside cycle
+budgets, at most once per 60 seconds. After an unknown creation result, complete
+a server-filtered ListSessions with
+`labels.tr_component:shadow-v2 AND labels.tr_boot:<boot>`, delete every returned
+session except the one this client holds, then create the replacement. NotFound
+on deletion is success. A failed listing or deletion keeps quarantine until the
+next retry window; startup unknown results use the same first retry window.
+Known retired identities must also be deleted before replacement. Successful
+recovery clears quarantine; unavailable cycles remain missed, with no claim
+attempt and zero RPCs. The inventory bound is one live session per client, plus
+retired or unknown identities deleted by the next successful reconciliation.
+The 60-second cadence bounds ListSessions RPCs to one per minute per instance.
+If the inventory is paginated, retain its names and token and fetch the next page
+in the next retry window; no replacement is allowed until listing completes.
+Each recovery attempt shares one five-second deadline across its RPCs.
+
+A released publisher job does not advance the last actual start to its latest
+permitted start. An early worker waits until the existing monotonic cadence bound
+within the same slot, then rechecks generation, revocation and the original start
+window. Late workers remain missed. With no known incumbent, followers use
+30 ms * (H(boot, slot) mod 8), or 0–210 ms, instead of the three warm buckets.
+A recent accepted local publication or an existing installed fleet health row
+from slot s-1 or s-2 supplies the incumbent timing hint. Followers with that hint
+retain 60/90/120 ms. The hint never grants claim ownership. The 250 ms server
+observation bound, 500 ms cycle budget and claim/publication fences are unchanged.
+
 | Statement name (proposed except reused unresolved query) | Exact access / index / maximum rows |
 |---|---|
 | `shadow_health_claim_read` | `SELECT (SELECT body FROM tr_entities WHERE kind=@kind AND id=@id) AS body, CURRENT_TIMESTAMP() AS claim_at`; scalar subquery uses complete PK `(kind,id)`, ≤1 table row/one result row even when absent; same transaction checks server slot then inserts/updates only that key on winning slot |

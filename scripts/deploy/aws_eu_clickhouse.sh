@@ -163,6 +163,10 @@ JSON
 # expire, presenting as an unrelated outage. Every other role in this account
 # uses hard StringEquals because every other one is a service principal
 # (ecs-tasks, apprunner, events, cloudtrail) that does populate it.
+#
+# DsqlOutboxDrain's dsql:DbConnect also serves the delivery verifier's
+# tr_verifier role. IAM cannot narrow it to one Postgres role; that boundary is
+# each role's AWS IAM GRANT mapping (scripts/deploy/aws_eu_tr_verifier_role.sql).
 
 ROLE_POLICY="$(cat <<JSON
 {"Version":"2012-10-17","Statement":[

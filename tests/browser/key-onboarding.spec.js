@@ -3,49 +3,87 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const key = 'sk-tr-review-fixture-not-a-real-key';
-
 function welcome() {
   return execFileSync(process.env.TEST_PYTHON || 'python3', ['-c', `
-from jinja2 import Environment, FileSystemLoader, ChoiceLoader, DictLoader
-env = Environment(loader=ChoiceLoader([DictLoader({'console/_layout.html': '''<!doctype html>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/tokens.css"><link rel="stylesheet" href="/static/dashboard.css">
-<link rel="stylesheet" href="/static/console.css"><script defer src="/static/console.js"></script>
-<body class="console"><main class="console-main">{% block body %}{% endblock %}</main></body>'''}),
-FileSystemLoader('src/trusted_router/templates')]))
-print(env.get_template('console/welcome.html').render(revealed_key='${key}', api_base_url='https://api.example.test/v1'))
+from jinja2 import Environment, FileSystemLoader
+env = Environment(loader=FileSystemLoader('src/trusted_router/templates'))
+print(env.get_template('console/welcome.html').render(revealed_key='${key}', api_base_url='https://api.example.test/v1', credits_available='$0.15', user={'id': 'test-user'}))
 `], { cwd: root, encoding: 'utf8' });
 }
-
-for (const width of [390, 1280]) test(`current key onboarding copies secrets and switches setup tabs at ${width}px`, async ({ page }) => {
-  const calls = [];
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'clipboard', { value: {
-      writeText: async (value) => { window.copied = value; },
-    }});
+async function load(page, reply = {status: 200, json: {choices: [{message: {content: '<b>Safe text</b>'}}]}}) {
+  const inference = [], analytics = [];
+  await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: {writeText: async value => {window.copied = value;}} }));
+  await page.route('https://api.example.test/**', async route => {
+    inference.push(route.request());
+    await route.fulfill(reply);
   });
   await page.route('https://onboarding.test/**', route => {
     const url = new URL(route.request().url());
-    if (url.pathname.startsWith('/static/')) return route.fulfill({ path: path.join(root, 'src/trusted_router', url.pathname) });
-    if (route.request().method() === 'POST') calls.push(url.pathname);
-    return route.fulfill({ contentType: 'text/html', body: welcome() });
+    if (url.pathname.startsWith('/static/')) return route.fulfill({path: path.join(root, 'src/trusted_router', url.pathname)});
+    if (url.pathname === '/console/social-rewards') return route.fulfill({json: {enabled: false, eligible: false, actions: []}});
+    if (url.pathname === '/analytics/events') { analytics.push(route.request().postDataJSON()); return route.fulfill({status: 204}); }
+    return route.fulfill({contentType: 'text/html', body: welcome()});
   });
-  await page.setViewportSize({ width, height: 900 });
   await page.goto('https://onboarding.test/console/welcome');
-  await expect(page.locator('[data-action="run-first-call"]')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Copy API key', exact: true }).click();
+  return {inference, analytics};
+}
+for (const width of [320, 390, 1280]) test(`key copy, setup and deliberate first call at ${width}px`, async ({page}) => {
+  await page.setViewportSize({width, height: 900});
+  const {inference, analytics} = await load(page);
+  expect(inference).toHaveLength(0);
+  await page.getByRole('button', {name: 'Copy API key', exact: true}).click();
   await expect.poll(() => page.evaluate(() => window.copied)).toBe(key);
-  await page.locator('#connect-your-app > summary').click();
-  await page.getByRole('button', { name: 'Copy message', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => window.copied)).toContain(`TrustedRouter API key: ${key}`);
-  await page.getByRole('tab', { name: 'Python', exact: true }).click();
-  await expect(page.locator('#setup-python')).toBeVisible();
-  await page.locator('#setup-python button').click();
+  await page.getByRole('tab', {name: 'Connect app'}).click();
+  await page.getByRole('button', {name: 'Copy agent prompt'}).click();
+  await expect.poll(() => page.evaluate(() => window.copied)).toContain(key);
+  await page.getByLabel('Set up with').selectOption('Python');
+  await page.getByRole('button', {name: 'Copy code', exact: true}).click();
   await expect.poll(() => page.evaluate(() => window.copied)).toContain(`api_key="${key}"`);
-  await page.getByRole('tab', { name: 'Python', exact: true }).focus();
+  await page.getByRole('tab', {name: 'Connect app'}).focus();
   await page.keyboard.press('ArrowRight');
-  await expect(page.locator('#setup-js')).toBeVisible();
-  await expect(page.locator('#setup-python')).toBeHidden();
+  await expect(page.locator('#try-pane')).toBeVisible();
+  expect(inference).toHaveLength(0);
+  await page.getByRole('button', {name: 'Send request', exact: true}).click();
+  await expect(page.locator('#result')).toContainText('<b>Safe text</b>');
+  await expect(page.locator('#result b')).toHaveCount(0);
+  expect(inference).toHaveLength(1);
+  expect(inference[0].headers().authorization).toBe(`Bearer ${key}`);
+  expect(inference[0].postDataJSON().max_tokens).toBe(256);
+  await expect.poll(() => analytics.length).toBe(2);
+  expect(analytics[1].event).toBe('onboarding_call_succeeded');
+  expect(JSON.stringify(analytics)).not.toContain(key);
+  expect(JSON.stringify(analytics)).not.toContain('capital of France');
+  expect(JSON.stringify(analytics)).not.toContain('Safe text');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
-  expect(calls).toEqual([]);
+});
+test('payment failure offers recovery without reporting success', async ({page}) => {
+  const {analytics} = await load(page, {status: 402, json: {error: {message: 'private provider detail'}}});
+  await page.getByRole('tab', {name: 'Try a request'}).click();
+  await page.getByRole('button', {name: 'Send request'}).click();
+  await expect(page.locator('#result')).toContainText('Not enough credit');
+  await expect(page.locator('#connected')).toBeHidden();
+  await expect(page.getByRole('button', {name: 'Send request'})).toBeEnabled();
+  await expect.poll(() => analytics.length).toBe(2);
+  expect(analytics[1].event).toBe('onboarding_call_failed');
+  expect(JSON.stringify(analytics)).not.toContain('private provider detail');
+});
+
+test('mobile header contains large balances and keeps Menu usable', async ({page}) => {
+  await page.setViewportSize({width: 320, height: 900});
+  await load(page);
+  for (const balance of ['$1,000.00', '$1,000,000.00']) {
+    await page.locator('.console-balance span').evaluate((node, value) => { node.textContent = value; }, balance);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+    await page.getByRole('button', {name: 'Menu', exact: true}).click();
+    await expect(page.locator('#console-navigation')).toBeVisible();
+    await page.getByRole('button', {name: 'Close', exact: true}).click();
+  }
+});
+
+test('clipboard failure shows a manual-copy recovery', async ({page}) => {
+  await load(page);
+  await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; });
+  await page.getByRole('button', {name: 'Copy API key', exact: true}).click();
+  await expect(page.locator('#key-status')).toBeVisible();
+  await expect(page.locator('#key-status')).toContainText('copy it manually');
 });

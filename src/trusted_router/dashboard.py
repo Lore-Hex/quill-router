@@ -62,6 +62,7 @@ from trusted_router.catalog import (
     provider_confidential_inference,
     provider_is_routable,
     providers_for_display,
+    published_context_length,
 )
 from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
@@ -254,38 +255,16 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/gemini-flash-alternative",
     "/llm-provider-latency-benchmarks",
     "/pricing",
-    "/docs",
-    "/docs/x402",
-    "/docs/user-models",
-    "/docs/custom-models",
     "/api/reference",
     "/apps",
     "/resources",
     "/customers/robot-robot-human",
     "/careers",
     "/blog",
-    "/docs/agent-setup",
-    "/docs/evals",
-    "/docs/provider-conformance",
-    "/docs/synth",
-    "/docs/mcp",
-    "/docs/migrate-from-openrouter",
-    "/docs/tagging",
-    "/docs/telemetry",
-    "/docs/receipts",
-    "/docs/provider-routing",
     "/performance-routing",
     "/spend-controls",
     "/prompt-caching",
     "/model-precision",
-    "/docs/performance-routing",
-    "/docs/spend-controls",
-    "/docs/model-precision",
-    "/docs/prompt-caching",
-    "/docs/batch",
-    "/docs/decide",
-    "/docs/web-search",
-    "/docs/video",
     "/vibe-coders",
     "/for-developers",
     "/llms.txt",
@@ -2317,6 +2296,104 @@ def _seo_model_name(model: Model) -> str:
     return model.name
 
 
+def _hero_model_name(model: Model) -> str:
+    """The name the catalog hero sentence uses: the model without its publisher.
+
+    `_seo_model_name` only strips the prefix when it matches the stored
+    publisher string; "MoonshotAI: Kimi K3" with publisher "Moonshot AI" keeps
+    it. The hero sentence reads "Try Kimi K3 on us", so drop any leading
+    "Publisher: " segment here. Titles and headings keep the full name.
+    """
+    name = _seo_model_name(model)
+    return name.split(": ", 1)[1] if ": " in name else name
+
+
+# The catalog hero (model, comparison and provider pages) gives one
+# page-specific reason to sign up. "Free to start" rests on the starter credit,
+# which only pays for Credits routes, so a page without one says "Bring your
+# own key" and makes no credit claim. Keep the sentences free of "no", "not"
+# and "never": public-page copy avoids them.
+HERO_FREE_TO_START = "Free to start"
+HERO_BRING_YOUR_OWN_KEY = "Bring your own key"
+_HERO_STARTER = "Starter credit covers your first requests, then one key "
+
+
+def _model_hero(model: Model, view: dict[str, object]) -> tuple[str, str]:
+    name = _hero_model_name(model)
+    if view["is_meta"]:
+        candidates = cast(list[object], view["candidate_models"])
+        if view["configuration_hidden"] or len(candidates) == 0:
+            reach = "routes through the attested preset"
+        elif orchestration_primitive(model.id) is None:
+            # A pool (auto, green, zdr, ...) picks among whole models; a preset
+            # composes component models.
+            reach = f"picks among {len(candidates)} models"
+        else:
+            reach = f"routes across {len(candidates)} component models"
+        return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach} with automatic failover."
+    routes = cast(int, view["endpoint_count"])
+    if routes >= 2:
+        reach = f"reaches all {routes} provider routes with automatic failover."
+    elif routes == 1:
+        reach = "reaches this route and every other model in the catalog."
+    else:
+        # The key the visitor brings is the serving provider's, which is the
+        # publisher's for most models and a reseller's for a few.
+        byok_providers = sorted(
+            {PROVIDERS[e.provider].name for e in endpoints_for_model(model.id) if e.usage_type == "BYOK"}
+        )
+        key = f"{byok_providers[0]} key" if len(byok_providers) == 1 else "provider key"
+        return HERO_BRING_YOUR_OWN_KEY, (
+            f"Run {name} through TrustedRouter with your own {key}. "
+            "One base URL, usage records and spend limits, alongside every other model in the catalog."
+        )
+    return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
+
+
+def _comparison_hero(
+    left: Model,
+    right: Model,
+    left_view: dict[str, object],
+    right_view: dict[str, object],
+) -> tuple[str, str]:
+    left_name, right_name = _hero_model_name(left), _hero_model_name(right)
+    left_funded = cast(int, left_view["endpoint_count"]) > 0
+    right_funded = cast(int, right_view["endpoint_count"]) > 0
+    switch = "Switch by changing the model name."
+    if left_funded and right_funded:
+        return HERO_FREE_TO_START, (
+            f"Try both on us. {_HERO_STARTER}routes {left_name} and {right_name}. {switch}"
+        )
+    if left_funded or right_funded:
+        funded, byok = (left_name, right_name) if left_funded else (right_name, left_name)
+        return HERO_BRING_YOUR_OWN_KEY, (
+            f"One key routes both. Starter credit covers your first {funded} requests, "
+            f"while {byok} runs on your own provider key. {switch}"
+        )
+    return HERO_BRING_YOUR_OWN_KEY, (
+        f"Route {left_name} and {right_name} through one base URL with your own provider keys. {switch}"
+    )
+
+
+def _provider_hero(provider: Provider, credits_model_count: int) -> tuple[str, str]:
+    if provider.slug == "trustedrouter":
+        return HERO_FREE_TO_START, (
+            "Try the attested gateway on us. "
+            f"{_HERO_STARTER}reaches every model in the catalog."
+        )
+    name = provider.name
+    if credits_model_count >= 2:
+        reach = f"reaches all {credits_model_count} {name} models, with the privacy posture shown on every route."
+    elif credits_model_count == 1:
+        reach = f"reaches the {name} model, with its privacy posture shown on the route."
+    else:
+        return HERO_BRING_YOUR_OWN_KEY, (
+            f"Bring your own {name} key and route {name} models through TrustedRouter "
+            "with one base URL, usage records and spend limits."
+        )
+    return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
+
+
 def _seo_comparison_title(left: Model, right: Model) -> str:
     left_name = _seo_model_name(left)
     right_name = _seo_model_name(right)
@@ -4105,6 +4182,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
     test_mode = settings.environment == "test"
     served_models = _provider_model_rows(provider_slug, test_mode=test_mode)
     provider_faq_items = _provider_faq_items(provider, model_count=len(served_models))
+    hero_label, hero_pitch = _provider_hero(provider, len(served_models))
     return (
         _env()
         .get_template("public/provider_detail.html")
@@ -4113,6 +4191,8 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
             site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
             title=f"{provider.name} Models, Pricing & Privacy | TrustedRouter",
             heading=provider.name,
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=(
                 f"Explore {provider.name} models on TrustedRouter with current routes, token pricing, "
                 "policy sources, privacy posture, regional availability, and API support."
@@ -4228,6 +4308,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     seo_name = _seo_model_name(model)
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
     model_view = _model_detail_view(model, test_mode=test_mode)
+    hero_label, hero_pitch = _model_hero(model, model_view)
     route_evidence = _model_route_evidence(model, test_mode=test_mode)
     faq_items = _model_faq_items(model, route_evidence=route_evidence)
     return (
@@ -4238,6 +4319,8 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
             site_url=site_url,
             title=f"{seo_name} API, Pricing and Providers | TrustedRouter",
             heading=model.name,
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=(
                 f"Compare every TrustedRouter route for {seo_name}, including token pricing, context "
                 "limits, privacy policy, regional availability, measured uptime, and API support."
@@ -4272,6 +4355,9 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
     site_path = canonical_model_comparison_path(left.id, right.id)
     assert site_path is not None
     comparison = _comparison_view(left, right, test_mode=test_mode)
+    left_view = _model_detail_view(left, test_mode=test_mode, include_section_links=False)
+    right_view = _model_detail_view(right, test_mode=test_mode, include_section_links=False)
+    hero_label, hero_pitch = _comparison_hero(left, right, left_view, right_view)
     faq_items = _model_comparison_faq_items(left, right, comparison=comparison)
     return (
         _env()
@@ -4281,19 +4367,13 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             site_url=f"https://{settings.trusted_domain}{site_path}",
             title=_seo_comparison_title(left, right),
             heading=f"{left.name} vs {right.name}",
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=(
                 f"{comparison['summary']} Compare price, speed, context, and privacy."
             ),
-            left=_model_detail_view(
-                left,
-                test_mode=test_mode,
-                include_section_links=False,
-            ),
-            right=_model_detail_view(
-                right,
-                test_mode=test_mode,
-                include_section_links=False,
-            ),
+            left=left_view,
+            right=right_view,
             comparison=comparison,
             related_comparisons=_related_model_comparison_rows(
                 left.id,
@@ -4405,6 +4485,8 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     seo_name = _seo_model_name(model)
     measured = measured_for_model(model.id, test_mode=settings.environment == "test")
     section_indexable = _model_section_indexable(model, section, measured)
+    model_view = _model_detail_view(model, active_section=section, test_mode=test_mode)
+    hero_label, hero_pitch = _model_hero(model, model_view)
     return (
         _env()
         .get_template("public/model_section.html")
@@ -4414,8 +4496,10 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
             robots_meta=None if section_indexable else "noindex,follow",
             title=f"{seo_name} {label} | TrustedRouter",
             heading=f"{model.name} {label}",
+            hero_label=hero_label,
+            hero_pitch=hero_pitch,
             description=_model_section_description(model, section),
-            model=_model_detail_view(model, active_section=section, test_mode=test_mode),
+            model=model_view,
             section=section,
             section_label=label,
             benchmark_links=_benchmark_links(model, test_mode=test_mode),
@@ -4502,7 +4586,10 @@ def sitemap_xml(settings: Settings) -> str:
 def sitemap_core_xml(settings: Settings) -> str:
     domain = settings.trusted_domain
     paths: list[tuple[str, str, str]] = []
-    for path in SEO_CORE_PATHS:
+    # Published docs are registered with their page metadata. Derive their
+    # sitemap entries here so a new guide cannot be lost in a second manual list.
+    doc_paths = (f"/{slug}" for slug in PUBLIC_PAGES if slug == "docs" or slug.startswith("docs/"))
+    for path in dict.fromkeys((*SEO_CORE_PATHS, *doc_paths)):
         paths.append((path, "daily" if path in {"/models", "/providers"} else "weekly", "0.9"))
     for post in BLOG_POSTS:
         paths.append((post.href, "monthly", "0.7"))
@@ -5045,6 +5132,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     publisher = _model_publisher(model)
     is_meta = model.id in META_MODEL_IDS
+    context_length = published_context_length(model) if is_meta else model.context_length
     endpoints = _credits_endpoints(endpoints_for_model(model.id)) if not is_meta else []
     route_endpoints = _credits_endpoints(_model_route_endpoints(model))
     ai_iq = (
@@ -5127,9 +5215,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "name": model.name,
         "provider": publisher.name,
         "publisher_slug": publisher.slug,
-        "context_length": f"{model.context_length:,}",
-        "context_length_compact": _compact_token_count(model.context_length),
-        "context_length_int": model.context_length,
+        "context_length": f"{context_length:,}",
+        "context_length_compact": _compact_token_count(context_length),
+        "context_length_int": context_length,
         "prompt_price": prompt,
         "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else cached_prompt,
         "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
@@ -5497,6 +5585,7 @@ def _model_detail_view(
     speech = SPEECH_MODELS.get(model.id)
     transcription = TRANSCRIPTION_MODELS.get(model.id)
     is_meta = model.id in META_MODEL_IDS
+    context_length = published_context_length(model) if is_meta else model.context_length
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
         or model.completion_price_microdollars_per_million_tokens > 0
@@ -5563,8 +5652,8 @@ def _model_detail_view(
         "name": model.name,
         "provider": publisher.name,
         "publisher_slug": publisher.slug,
-        "context_length": f"{model.context_length:,}",
-        "context_length_int": model.context_length,
+        "context_length": f"{context_length:,}",
+        "context_length_int": context_length,
         "fixed_price": fixed_price,
         "speech": speech_metadata(model.id) if speech else None,
         "transcription": transcription_metadata(model.id) if transcription else None,

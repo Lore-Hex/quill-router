@@ -21,11 +21,16 @@ It is about records and their readers. Money stays where it is.
   purged) and a row in `tr_operational_analytics_outbox` (the content-free
   activity projection). The outbox row is the only thing that reaches
   ClickHouse. Benchmarks are a separate entity write with no outbox.
-- **There is no tenant record reader on these planes but one.**
-  `PostgresStore` raises not-implemented for activity, activity events,
-  usage series, key usage and the activity repair, so `GET /activity` and
-  the console's activity pages answer 500 on AWS and Azure today. The one
-  working reader is `GET /generation?id=`, a point read of the entity.
+- **No tenant record page is served on these planes.** The AWS ECS and
+  Azure control planes run the `observer` surface only
+  (`TR_SERVICE_SURFACE=observer`; `prepare_ecs_release.py` refuses any
+  other), and `/activity`, `/v1/activity` and the console's activity pages
+  are registered on the control and combined surfaces only, so on AWS and
+  Azure they answer 404. Behind them, `PostgresStore` had no reader for
+  activity, activity events or usage series until R1 (#1899), and still
+  raises not-implemented for key usage (`typed_key_usage`).
+  `GET /generation?id=` is registered with the activity routes, so it is
+  not served on these planes either.
 - **The enclave's lookups do not read records.** The disposition and the
   evidence lookups read the authorization entity, as does a settle replay.
   Moving records touches none of them.
@@ -93,12 +98,23 @@ schema set are plane-specific.
 - A setting, record reads from `postgres` (today) or `clickhouse`, per
   plane, refusing `clickhouse` where the plane sets no ClickHouse URL (the
   standby regions). `PostgresStore` gets the operational-analytics client
-  `SpannerStore` has and answers activity, activity events, usage series
-  and key usage by the code GCP uses. Nothing stops being written. Today's
-  500s become working reads.
+  `SpannerStore` has and answers activity, activity events and usage
+  series by the code GCP uses (key usage still raises not-implemented).
+  Nothing stops being written. The routes that call these readers are not
+  served on the Postgres planes; see **Traffic** below.
 - **Way back:** the setting, which restores today's behaviour.
-- **Measured:** the activity query's p50 and p99 per workspace; drain lag;
-  the verifier; the 5xx rate on `/activity`.
+- **Measured:** the activity query's p50 and p99 per workspace and its
+  error rate, once a reader has traffic; drain lag; the verifier.
+- **Traffic:** none yet. The readers serve only the control surface's
+  activity and console routes, and no AWS or Azure service runs that
+  surface, so a plane switched to `clickhouse` answers no more requests
+  than before and its `/activity` measurement is empty. R1's measurement
+  needs either a control surface on the plane (a separate decision: it
+  makes the plane serve the console) or a probe that calls the readers
+  directly as the read-only user. The same holds for R2 and R3:
+  `/generation` is a control-surface route. Until a plane serves that
+  surface, the evidence that ClickHouse holds the plane's records is the
+  delivery verifier alone, and R2 to R4 have no reader to measure.
 
 ### R2. `/generation` reads both
 

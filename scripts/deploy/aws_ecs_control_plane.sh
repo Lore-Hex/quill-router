@@ -120,8 +120,15 @@ SERVICES=(tr-cp-euw1 tr-cp-euw3)
 # Both regions enqueue into the same DSQL outbox; the Paris drain delivers it.
 # Enabling eu-west-1 needs no ClickHouse URL or secret on the control plane.
 EXPECTED_OUTBOX=("$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
-[[ ${#REGIONS[@]} -eq ${#SERVICES[@]} && ${#REGIONS[@]} -eq ${#EXPECTED_OUTBOX[@]} ]] \
-  || die "REGIONS, SERVICES, and EXPECTED_OUTBOX must have the same length"
+# Paris has a reader endpoint; Ireland remains on Postgres until one is provisioned.
+# Paris moves to clickhouse in its own change, once tr-cp-exec's grant on the
+# reader secret (infra/aws_ecs_control_reader.tf) has applied: a task whose
+# execution role cannot read its secret fails to start, and this release
+# would update Ireland before Paris failed.
+EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" "${TR_RECORD_READ_BACKEND_EU_WEST_3:-postgres}")
+[[ ${#REGIONS[@]} -eq ${#SERVICES[@]} && ${#REGIONS[@]} -eq ${#EXPECTED_OUTBOX[@]} \
+  && ${#REGIONS[@]} -eq ${#EXPECTED_RECORD_READ_BACKEND[@]} ]] \
+  || die "REGIONS, SERVICES, EXPECTED_OUTBOX, and EXPECTED_RECORD_READ_BACKEND must have the same length"
 for region in "${REGIONS[@]}"; do
   registry="330422590279.dkr.ecr.${region}.amazonaws.com"
   aws ecr get-login-password --region "$region" \
@@ -166,8 +173,14 @@ PY
   aws ecs describe-task-definition --task-definition "$previous" --include TAGS \
     --region "$region" --output json > "${WORK}/previous.json"
   image="330422590279.dkr.ecr.${region}.amazonaws.com/trusted-router@${SOURCE_DIGEST}"
+  reader_secret_arn=""
+  if [ "${EXPECTED_RECORD_READ_BACKEND[$index]}" = clickhouse ]; then
+    reader_secret_arn="$(aws secretsmanager describe-secret --region "$region" \
+      --secret-id quill/tr-eu-clickhouse-read-password --query ARN --output text)"
+  fi
   python3 "${SCRIPT_DIR}/prepare_ecs_release.py" "${WORK}/previous.json" "$image" \
-    "$RELEASE" "${WORK}/next.json" "${EXPECTED_OUTBOX[$index]}"
+    "$RELEASE" "${WORK}/next.json" "${EXPECTED_OUTBOX[$index]}" \
+    "${EXPECTED_RECORD_READ_BACKEND[$index]}" "$reader_secret_arn"
   next="$(aws ecs register-task-definition --cli-input-json "file://${WORK}/next.json" \
     --region "$region" --query taskDefinition.taskDefinitionArn --output text)"
   [[ "$next" = arn:aws:ecs:* ]] || die "no registered task definition"

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Prepare, cut over, or roll back the T1 public website on the existing global
-# HTTPS load balancer. No subcommand ever creates or mutates Cloud Armor.
+# Check, prepare, cut over, or roll back the T1 public website on the existing
+# global HTTPS load balancer. Check is read-only. No command mutates Cloud Armor.
 
 set -euo pipefail
 
 COMMAND="${1:-}"
 case "$COMMAND" in
-  prepare|cutover|rollback) ;;
+  check|prepare|cutover|rollback) ;;
   *)
-    echo "usage: $0 prepare|cutover|rollback" >&2
+    echo "usage: $0 check|prepare|cutover|rollback" >&2
     exit 2
     ;;
 esac
@@ -77,8 +77,8 @@ preflight_public_services() {
 
 preflight_routed_services() {
   read_regions
-  local target
-  local service_json
+  local target service_json active_json rate_mode
+  local SERVICE="$PUBLIC_SERVICE"
   for target in "${REGIONS[@]}"; do
     if ! service_json="$(gc run services describe "$PUBLIC_SERVICE" \
         --region "$target" --format=json)"; then
@@ -93,24 +93,42 @@ service = json.load(sys.stdin)
 ingress = service.get("metadata", {}).get("annotations", {}).get(
     "run.googleapis.com/ingress"
 )
-env = {
-    item.get("name"): item.get("value")
-    for item in service.get("spec", {})
-    .get("template", {})
-    .get("spec", {})
-    .get("containers", [{}])[0]
-    .get("env", [])
-}
 if ingress != "internal-and-cloud-load-balancing":
     raise SystemExit(f"ingress={ingress!r}")
-rate_mode = env.get("TR_RATE_LIMIT_CLIENT_IP_MODE")
-if rate_mode != "edge_header":
-    raise SystemExit(f"TR_RATE_LIMIT_CLIENT_IP_MODE={rate_mode!r}")
 ' <<<"$service_json"; then
       echo "ERROR: ${PUBLIC_SERVICE} in ${target} is not in routed mode; run public_surface.sh routed before cutover" >&2
       return 1
     fi
+    # A rolled-back service template can describe a rejected candidate. Check
+    # the revision actually serving requests, not latestReady or the template.
+    active_json="$(active_revision_json "$target" false)" || return 1
+    rate_mode="$(revision_env "$active_json" TR_RATE_LIMIT_CLIENT_IP_MODE __missing__)" || return 1
+    if [ "$rate_mode" != "edge_header" ]; then
+      echo "ERROR: ${PUBLIC_SERVICE}/${target}: active TR_RATE_LIMIT_CLIENT_IP_MODE='${rate_mode}'" >&2
+      return 1
+    fi
   done
+}
+
+check_client_ip_trust() {
+  preflight_routed_services
+  local backend_json
+  backend_json="$(gc compute backend-services describe "$PUBLIC_BACKEND" \
+    --global --format=json)" || return 1
+  python3 -c '
+import json
+import sys
+
+headers = json.load(sys.stdin).get("customRequestHeaders", [])
+values = []
+for header in headers:
+    name, separator, value = header.partition(":")
+    if separator and name.strip().casefold() == "x-trustedrouter-client-ip":
+        values.append(value.strip())
+if values != ["{client_ip_address}"]:
+    raise SystemExit("public backend lacks exactly one trusted client-IP overwrite")
+' <<<"$backend_json" || return 1
+  log "public client-IP trust boundary verified in all ${#REGIONS[@]} regions"
 }
 
 legacy_load_balancing_scheme() {
@@ -401,6 +419,7 @@ rollback() {
 }
 
 case "$COMMAND" in
+  check) check_client_ip_trust ;;
   prepare) prepare_edge ;;
   cutover) cutover ;;
   rollback) rollback ;;

@@ -1,11 +1,11 @@
-FROM node:22-bookworm-slim AS frontend
+FROM node:24.22.1-bookworm-slim@sha256:1681862882da07ee5476fee047bcf34138833f1df42633bb25bcb0f438d5bf3d AS frontend
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY frontend.js pages.js setup.mjs session.mjs chrome.mjs ./
 RUN npm run build
 
-FROM ghcr.io/astral-sh/uv:0.10.11 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.4 AS uv
 FROM debian:bookworm-slim AS lexe
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
 RUN curl --fail --location --proto '=https' --tlsv1.2 \

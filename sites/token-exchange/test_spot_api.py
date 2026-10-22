@@ -13,8 +13,9 @@ class SpotAPITests(unittest.TestCase):
         self.assertIn('id="spot-api"', page)
         self.assertRegex(page, r'href="/assets/spot-api\.css\?v=[a-f0-9]{12}"')
         self.assertIn('href="#spot-api">Use the spot exchange', page)
-        self.assertIn('href="https://trustedrouter.com/docs#two-hosts">API documentation', page)
-        self.assertIn("NYTE address activation is in progress.", page)
+        self.assertIn('href="https://trustedrouter.com/docs#nyte-api">API documentation', page)
+        self.assertNotIn("NYTE address activation is in progress.", page)
+        self.assertNotIn('class="spot-api-status"', page)
         self.assertIn("https://api.nytokenexchange.com/v1", page)
         self.assertIn("https://api.confidential.nytokenexchange.com/v1/chat/completions", page)
         self.assertIn("Authorization: Bearer $TR_API_KEY", page)
@@ -24,6 +25,9 @@ class SpotAPITests(unittest.TestCase):
         self.assertEqual(request["model"], "nyte/auto")
         self.assertEqual(request["provider"], {"min_privacy": "confidential"})
         self.assertIs(request["stream"], True)
+        # The live auto route can spend over 128 tokens on reasoning before its greeting.
+        self.assertEqual(request["max_tokens"], 1024)
+        self.assertIn("curl --no-buffer --fail-with-body", page)
         self.assertIn("fail closed", page)
 
     def test_other_markets_keep_existing_primary_experience(self):
@@ -34,6 +38,17 @@ class SpotAPITests(unittest.TestCase):
                 self.assertNotIn('id="spot-api"', page)
                 self.assertNotIn('/assets/spot-api.css', page)
                 self.assertIn('href="https://trustedrouter.com/trust">Verify a live route', page)
+
+    def test_quick_start_follows_supplier_sections_near_bottom(self):
+        markets = load_markets()
+        market = next(m for m in markets if m["slug"] == "new-york")
+        page = render(market, markets, "test")
+        sections = ('id="demo"', 'id="buyers"', 'id="brochure"',
+                    'id="sellers"', 'id="open-stack"', 'id="spot-api"',
+                    'class="shell section questions"', 'id="closing-title"')
+        positions = [page.index(section) for section in sections]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(page.count('id="spot-api"'), 1)
 
 
 if __name__ == "__main__":

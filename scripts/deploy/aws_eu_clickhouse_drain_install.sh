@@ -69,6 +69,16 @@
 # grants secretsmanager, kms, ecr and logs, and no dsql action whatsoever. The
 # drain would start, fail every connection, and deliver nothing. That grant is
 # an operator step and it is printed in full below.
+#
+# THE DELIVERY VERIFIER
+# ---------------------
+# This payload also carries clickhouse/verify_postgres_delivery.py, which
+# runs from this tree. Its units, Postgres role and first run belong to
+# scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh, which this
+# script names as the next step and never runs. This install never fails on
+# the verifier, and does not even import it: that script checks the import.
+# It only keeps the verifier's dependency (httpx) in the venv, and stops and
+# restarts its timer around the tree swap.
 set -euo pipefail
 
 REGION="${REGION:-eu-west-3}"                       # Paris.
@@ -79,7 +89,11 @@ SECRET_ID="${SECRET_ID:-quill/tr-eu-clickhouse-password}"
 CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"
 DSQL_REGION="${DSQL_REGION:-$REGION}"
 DSQL_HOST="${DSQL_HOST:-${CLUSTER_ID}.dsql.${DSQL_REGION}.on.aws}"
-DSQL_USER="${DSQL_USER:-admin}"
+# The scoped role (LOGIN; SELECT and DELETE on the outbox table only). Never
+# admin: the ClickHouse host must not hold superuser-equivalent credentials
+# for a database that also holds wallets, keys and the ledger.
+DSQL_USER="${DSQL_USER:-tr_drain}"
+[ "$DSQL_USER" != admin ] || { printf '\nFATAL: DSQL_USER=admin refused: the drain connects as the scoped tr_drain role\n' >&2; exit 1; }
 # "default"/"default" and NOT the "tr"/"tr" default, because this node's schema
 # was applied unqualified. Getting this wrong fails authentication only AFTER a
 # batch has been read out of the outbox.
@@ -89,6 +103,10 @@ REMOTE_ROOT="${REMOTE_ROOT:-/opt/tr-clickhouse}"
 STAGE_DIR="${STAGE_DIR:-/opt/tr-clickhouse.staging}"
 ENV_FILE="${ENV_FILE:-/etc/tr-clickhouse-ingest-postgres.env}"
 SERVICE="tr-clickhouse-operational-ingest-postgres.service"
+# Installed by aws_eu_postgres_delivery_verifier_install.sh. Named here only so
+# the tree swap can stop it and start it again.
+VERIFIER_SERVICE="tr-clickhouse-postgres-delivery.service"
+VERIFIER_TIMER="tr-clickhouse-postgres-delivery.timer"
 SERVICE_USER="${SERVICE_USER:-tr-clickhouse-ingest}"
 STATE_DIR="${STATE_DIR:-/var/lib/tr-clickhouse-ingest}"
 # Ubuntu 22.04's system python is 3.10; trusted_router.types uses StrEnum
@@ -180,10 +198,10 @@ log "install epoch $INSTALL_STARTED_AT; pre-install PID $PRE_INSTALL_PID"
 # while this one is missing and the result is a running unit that delivers
 # nothing -- the exact shape of the outage this script exists to end.
 #
-# The DSN names user=admin, so the token is generate_db_connect_admin_auth_token
-# and the action is dsql:DbConnectAdmin (see trusted_router/postgres_dsn.py,
-# dsql_token_is_admin). A scoped role uses dsql:DbConnect instead; either is
-# accepted here.
+# The DSN names user=tr_drain, so the token is the non-admin
+# generate_db_connect_auth_token and the action is dsql:DbConnect (see
+# trusted_router/postgres_dsn.py, dsql_token_is_admin). DbConnectAdmin alone
+# would pass a broader check and still fail at connect, after the tree swap.
 # ---------------------------------------------------------------------------
 NODE_ROLE="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text | sed 's#.*instance-profile/##')"
@@ -200,7 +218,7 @@ log "node role: $NODE_ROLE; checking DSQL connect permission on $CLUSTER_ARN"
 SIMULATE_ERROR=""
 if ! DSQL_DECISION="$(aws iam simulate-principal-policy \
   --policy-source-arn "arn:aws:iam::${ACCOUNT}:role/${NODE_ROLE}" \
-  --action-names dsql:DbConnectAdmin dsql:DbConnect \
+  --action-names dsql:DbConnect \
   --resource-arns "$CLUSTER_ARN" \
   --query 'EvaluationResults[?EvalDecision==`allowed`].EvalActionName' --output text 2>&1)"; then
   SIMULATE_ERROR="$DSQL_DECISION"
@@ -223,33 +241,20 @@ if [ -z "$DSQL_DECISION" ]; then
 FATAL: ${NODE_ROLE} cannot connect to DSQL, so the drain would start, fail
 every connection, and deliver nothing.
 
-This is an IAM change and this script will not make it. The control plane's
-role (tr-eu-app) already holds exactly this grant and is the model to copy:
+These are operator steps and this script will not make them. The drain
+connects as the scoped role tr_drain (SELECT and DELETE on the outbox table
+only), never as admin: the cluster also holds wallets, keys and the ledger.
 
-  aws iam put-role-policy --role-name ${NODE_ROLE} \\
-    --policy-name dsql-connect-drain \\
-    --policy-document '{
-      "Version": "2012-10-17",
-      "Statement": [{
-        "Effect": "Allow",
-        "Action": ["dsql:DbConnectAdmin"],
-        "Resource": ["${CLUSTER_ARN}"]
-      }]
-    }'
+1. Grant the node dsql:DbConnect (NOT DbConnectAdmin) by re-running
+   scripts/deploy/aws_eu_clickhouse.sh, which owns that grant (statement
+   DsqlOutboxDrain in the node role's inline policy). A hand-made second
+   policy is one no script manages or removes.
 
-PREFER A SCOPED ROLE. The drain needs SELECT and DELETE on ONE table; admin is
-every table plus DDL, on a cluster that also holds wallets, keys and the
-ledger. To scope it, grant the node dsql:DbConnect (NOT DbConnectAdmin) above,
-then, connected to DSQL as admin, run:
+2. Once, connected to DSQL as admin, create and map the role:
 
   CREATE ROLE tr_drain WITH LOGIN;
   AWS IAM GRANT tr_drain TO 'arn:aws:iam::${ACCOUNT}:role/${NODE_ROLE}';
   GRANT SELECT, DELETE ON tr_operational_analytics_outbox TO tr_drain;
-
-and set user=tr_drain in TR_POSTGRES_DSN below. postgres_dsn.dsql_token_is_admin
-reads the role out of the DSN and mints the non-admin token automatically, so
-the DSN is the only thing that changes. The repo documents no scoped DSQL role
-today; this is the first one.
 EOF
   exit 1
 fi
@@ -330,12 +335,13 @@ install -d -o '$SERVICE_USER' -g '$SERVICE_USER' -m 0750 '$STATE_DIR'
 test -x '$PYTHON_BIN' || { echo 'missing $PYTHON_BIN; provision 3.12 (deadsnakes on 22.04)'; exit 1; }
 '$PYTHON_BIN' -m venv '$STAGE_DIR/venv'
 '$STAGE_DIR/venv/bin/pip' install --quiet --upgrade pip
-# The drain's own dependencies. clickhouse/requirements-live.txt also carries
+# The drain's own dependencies, plus httpx for the delivery verifier's
+# ClickHouse reader. clickhouse/requirements-live.txt also carries
 # the google-cloud-* trio for the Spanner-sourced siblings, which this node has
 # no use for and no credentials for.
 '$STAGE_DIR/venv/bin/pip' install --quiet \
   'psycopg[binary]>=3.2.0' 'boto3>=1.35.0' 'pydantic>=2' 'pydantic-settings>=2' \
-  'structlog>=24' 'python-dateutil>=2.9'
+  'structlog>=24' 'python-dateutil>=2.9' 'httpx>=0.27.0'
 '$STAGE_DIR/venv/bin/python' -V
 "
 
@@ -359,6 +365,11 @@ set -eux
 # Poco 'cannot get current directory', while the Python loop remains active.
 if systemctl show $SERVICE >/dev/null 2>&1; then
   systemctl stop $SERVICE
+fi
+# The delivery verifier runs from the same tree. Stopping it does not disable
+# it, so step 8 starts it again exactly when it was enabled.
+if [ -f /etc/systemd/system/$VERIFIER_TIMER ]; then
+  systemctl stop $VERIFIER_TIMER $VERIFIER_SERVICE
 fi
 rm -rf '${REMOTE_ROOT}.previous'
 if [ -d '$REMOTE_ROOT' ]; then mv '$REMOTE_ROOT' '${REMOTE_ROOT}.previous'; fi
@@ -425,6 +436,11 @@ systemctl enable $SERVICE
 # Explicit start, not enable --now: --now is a no-op for an already-active
 # service and was the mechanism that kept the old PID running old bytecode.
 systemctl start $SERVICE
+# Restart the verifier stopped in step 6, if it is installed and enabled. Its
+# results never affect this install.
+if systemctl is-enabled --quiet $VERIFIER_TIMER 2>/dev/null; then
+  systemctl start $VERIFIER_TIMER
+fi
 "
 
 # ---------------------------------------------------------------------------
@@ -488,6 +504,11 @@ Installed. What "working" looks like, and what to do when it is not:
 Rollback: systemctl disable --now $SERVICE, then
   mv ${REMOTE_ROOT}.previous $REMOTE_ROOT   (kept from this run)
 Nothing is lost by stopping the drain: undelivered rows stay in the outbox.
+
+Next step, optional and separate (it never affects the drain):
+  bash scripts/deploy/aws_eu_postgres_delivery_verifier_install.sh
+      installs the hourly delivery verifier. Needs the tr_verifier role once
+      (scripts/deploy/aws_eu_tr_verifier_role.sql); it prints the command.
 EOF
 
 # ---------------------------------------------------------------------------

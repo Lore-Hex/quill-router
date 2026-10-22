@@ -60,6 +60,21 @@
     });
   }
 
+  const catalogSearch = $("[data-model-search]");
+  document.addEventListener("keydown", (event) => {
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+    // Leave the shortcut to text fields: Ctrl+K deletes to the end of the line on macOS.
+    const active = document.activeElement;
+    if (active && (active.matches("input, textarea, select") || active.isContentEditable)) return;
+    event.preventDefault();
+    if (catalogSearch) {
+      closeMenu();
+      catalogSearch.focus({ preventScroll: true });
+    } else {
+      openSearch(active);
+    }
+  });
+
   // Model search dialog, fed by the public picker endpoint.
   const search = $("#model-search");
   const query = $("#model-query");
@@ -146,12 +161,4 @@
     if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) search.close();
   });
   query.addEventListener("input", renderSearch);
-  document.addEventListener("keydown", (event) => {
-    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
-    // Leave the shortcut to text fields: Ctrl+K deletes to the end of the line on macOS.
-    const active = document.activeElement;
-    if (active && (active.matches("input, textarea, select") || active.isContentEditable)) return;
-    event.preventDefault();
-    openSearch(active);
-  });
 })();
