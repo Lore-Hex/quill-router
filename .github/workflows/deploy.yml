@@ -226,16 +226,65 @@ jobs:
             sleep 5
           done
 
-  admit-cloud:
+  confirm-current-main:
+    # A newer push can arrive while this run waits for CI. Concurrency keeps
+    # mutations serialized, but without this gate the obsolete image would
+    # still spend ~30 minutes rolling through production before the newer run.
+    # The check runs BEFORE the production lease is taken: a lease can cost
+    # hours of waiting behind an enclave rollout, and a run that gives it up
+    # after acquiring it hands the next deploy the same wait (2026-10-21: five
+    # control-plane pushes in a row waited for the lease, found themselves
+    # superseded and skipped; main went 13 h undeployed). A superseded run
+    # therefore skips only when the pending newer run can deploy at once (its
+    # CI is already green); otherwise it ships its own commit now and the
+    # newer run follows.
     needs: [gate-on-ci, build-image]
-    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.current.outputs.proceed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/deploy/superseded_deploy.py
+          sparse-checkout-cone-mode: false
+      - name: Confirm this push is still current main
+        id: current
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
+            exit 0
+          fi
+          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${latest_sha}" = "${GITHUB_SHA}" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_SHA} is still current main"
+          elif python3 scripts/deploy/superseded_deploy.py \
+              --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_SHA}" --head "${latest_sha}"; then
+            # The script says why on stdout: main moved only outside the deploy
+            # paths (no newer run exists), or the newer run cannot deploy yet.
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Main moved to ${latest_sha}; deploying ${GITHUB_SHA} now (superseded_deploy says why above)."
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping superseded deploy ${GITHUB_SHA}; the pending run for current main ${latest_sha} deploys next."
+          fi
+
+  admit-cloud:
+    needs: [gate-on-ci, build-image, confirm-current-main]
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     # The wait must outlast the longest legitimate holder of the gcp lease. A
     # quill-cloud-proxy gateway rollout holds it for about 2 h 20 min (four
     # regions, one at a time, with a bake after us-central1); with a 1 h wait,
     # every control-plane push that landed in a gateway rollout's first 80
-    # minutes failed (7 of 9 failed deploys 2026-09-30 to 10-02).
-    timeout-minutes: 190
+    # minutes failed (7 of 9 failed deploys 2026-09-30 to 10-02). With the
+    # trust-page verification and a runner-queue wait before the release, one
+    # hold reached 2 h 56 min (2026-10-21/22), four minutes short of a 3 h wait.
+    timeout-minutes: 250
     outputs:
       TR_DEPLOY_MUTEX_OPERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_OPERATION }}
       TR_DEPLOY_MUTEX_GENERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_GENERATION }}
@@ -252,7 +301,7 @@ jobs:
         env:
           TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TR_DEPLOY_MUTEX_CLOUD: gcp
-          TR_DEPLOY_WAIT_SECONDS: "10800"
+          TR_DEPLOY_WAIT_SECONDS: "14400"
           TR_DEPLOY_MUTEX_TTL_SECONDS: "21600"
         run: |
           set -euo pipefail
@@ -425,47 +474,6 @@ jobs:
           ensure_secret_value \
             "trustedrouter-clickhouse-provider-read-password" \
             "$TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD"
-
-  confirm-current-main:
-    # A newer push can arrive while this run is building. Concurrency keeps
-    # mutations serialized, but without this gate the obsolete image would
-    # still spend ~30 minutes rolling through production before the newer run.
-    # Exit cleanly before the first production mutation and let the queued
-    # current-main run deploy instead.
-    needs: [build-image, migrate-schema, sync-runtime-secrets]
-    runs-on: ubuntu-latest
-    outputs:
-      proceed: ${{ steps.current.outputs.proceed }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          sparse-checkout: scripts/deploy/superseded_deploy.py
-          sparse-checkout-cone-mode: false
-      - name: Confirm this push is still current main
-        id: current
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" != "push" ]; then
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
-            exit 0
-          fi
-          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          if [ "${latest_sha}" = "${GITHUB_SHA}" ]; then
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            echo "${GITHUB_SHA} is still current main"
-          elif python3 scripts/deploy/superseded_deploy.py \
-              --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_SHA}" --head "${latest_sha}"; then
-            # A newer commit that touches no deploy path starts no run of its
-            # own, so skipping here would leave main undeployed.
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Main moved to ${latest_sha} only outside the deploy paths; deploying ${GITHUB_SHA}."
-          else
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping superseded deploy ${GITHUB_SHA}; current main is ${latest_sha}."
-          fi
 
   deploy:
     needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, admit-cloud]

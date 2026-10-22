@@ -1,4 +1,4 @@
-"""A superseded deploy ships when main moved only outside the deploy paths."""
+"""A superseded deploy ships unless the run waiting to replace it can deploy at once."""
 
 from __future__ import annotations
 
@@ -105,21 +105,51 @@ def test_docs_only_changes_deploy() -> None:
     assert superseded.may_deploy(compare) is True
 
 
-def _fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, stdout: str, exit_code: int = 0) -> Path:
+def _fake_gh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stdout: str = "",
+    exit_code: int = 0,
+    responses: dict[str, tuple[str, int]] | None = None,
+) -> Path:
+    """Put a fake `gh` on PATH and return its call log.
+
+    `responses` maps a substring of the argv to (stdout, exit code); the first
+    matching entry answers, and `stdout`/`exit_code` answer anything unmatched.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "gh.log"
-    (tmp_path / "gh.out").write_text(stdout)
+    table: dict[str, list[object]] = {key: list(value) for key, value in (responses or {}).items()}
+    table[""] = [stdout, exit_code]
+    (tmp_path / "gh.json").write_text(json.dumps(table))
     gh = bin_dir / "gh"
     gh.write_text(
-        "#!/bin/sh\n"
-        f'printf "%s\\n" "$*" >> "{log}"\n'
-        f'cat "{tmp_path / "gh.out"}"\n'
-        f"exit {exit_code}\n"
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        'argv = " ".join(sys.argv[1:])\n'
+        f'open({str(log)!r}, "a").write(argv + "\\n")\n'
+        f'table = json.load(open({str(tmp_path / "gh.json")!r}))\n'
+        "matches = [key for key in table if key and key in argv]\n"
+        'out, code = table[matches[0] if matches else ""]\n'
+        "sys.stdout.write(out + '\\n')\n"
+        "sys.exit(code)\n"
     )
     gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return log
+
+
+SOURCE_MOVED = json.dumps({"status": "ahead", "files": [{"filename": "src/trusted_router/x.py"}]})
+# Newest first, as `gh run list` prints: the pending successor, then this run.
+WAITING_RUN = json.dumps(
+    [{"databaseId": 2, "status": "pending", "headSha": "bbb"}, {"databaseId": 1, "status": "in_progress", "headSha": "aaa"}]
+)
+
+
+def _ci(status: str, conclusion: str = "") -> str:
+    return json.dumps([{"status": status, "conclusion": conclusion}])
 
 
 def test_main_deploys_when_only_docs_moved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,15 +160,86 @@ def test_main_deploys_when_only_docs_moved(tmp_path: Path, monkeypatch: pytest.M
     assert log.read_text().strip() == "api repos/Lore-Hex/quill-router/compare/aaa...bbb"
 
 
-def test_main_skips_when_a_newer_commit_touches_source(
+def test_main_skips_when_the_waiting_run_for_newer_source_has_green_ci(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    log = _fake_gh(
+        tmp_path,
+        monkeypatch,
+        responses={
+            "compare": (SOURCE_MOVED, 0),
+            "--workflow deploy.yml": (WAITING_RUN, 0),
+            "--workflow ci.yml --commit bbb": (_ci("completed", "success"), 0),
+        },
+    )
+    assert superseded.main(["--repo", "o/r", "--base", "aaa", "--head", "bbb"]) == 1
+    calls = log.read_text().splitlines()
+    assert calls[0] == "api repos/o/r/compare/aaa...bbb"
+    assert "run list --repo o/r --workflow deploy.yml" in calls[1]
+    assert "run list --repo o/r --workflow ci.yml --commit bbb" in calls[2]
+
+
+@pytest.mark.parametrize(
+    "ci",
+    [_ci("in_progress"), _ci("queued"), _ci("completed", "failure"), "[]"],
+    ids=["running", "queued", "red", "no-ci-run"],
+)
+def test_main_deploys_when_the_waiting_run_cannot_deploy_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ci: str
+) -> None:
+    # The waiting run's gate would hold (or refuse) for an unknown time; shipping BASE now is progress.
     _fake_gh(
         tmp_path,
         monkeypatch,
-        stdout=json.dumps({"status": "ahead", "files": [{"filename": "src/trusted_router/x.py"}]}),
+        responses={"compare": (SOURCE_MOVED, 0), "--workflow deploy.yml": (WAITING_RUN, 0), "--workflow ci.yml": (ci, 0)},
     )
-    assert superseded.main(["--repo", "o/r", "--base", "aaa", "--head", "bbb"]) == 1
+    assert superseded.main(["--repo", "o/r", "--base", "aaa", "--head", "bbb"]) == 0
+
+
+@pytest.mark.parametrize("own_status", ["in_progress", "queued"])
+def test_main_deploys_when_no_newer_run_is_waiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, own_status: str
+) -> None:
+    # The newer run was cancelled, or the listing shows only this run itself: skipping would leave main undeployed.
+    runs = json.dumps([{"databaseId": 1, "status": own_status, "headSha": "aaa"}])
+    log = _fake_gh(tmp_path, monkeypatch, responses={"compare": (SOURCE_MOVED, 0), "--workflow deploy.yml": (runs, 0)})
+    assert superseded.main(["--repo", "o/r", "--base", "aaa", "--head", "bbb"]) == 0
+    assert "ci.yml" not in log.read_text()
+
+
+@pytest.mark.parametrize("failing", ["--workflow deploy.yml", "--workflow ci.yml"], ids=["run-list-fails", "ci-lookup-fails"])
+def test_main_deploys_when_the_successor_lookup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    # "Unknown" reads as "not known to be ready": BASE ships at the cost of at most one extra rollout.
+    responses = {
+        "compare": (SOURCE_MOVED, 0),
+        "--workflow deploy.yml": (WAITING_RUN, 0),
+        "--workflow ci.yml": (_ci("completed", "success"), 0),
+    }
+    responses[failing] = ("", 1)
+    _fake_gh(tmp_path, monkeypatch, responses=responses)
+    assert superseded.main(["--repo", "o/r", "--base", "aaa", "--head", "bbb"]) == 0
+
+
+def test_pending_successor_is_the_newest_waiting_run_other_than_this_one() -> None:
+    runs = [
+        {"status": "pending", "headSha": "ccc"},
+        {"status": "queued", "headSha": "bbb"},
+        {"status": "in_progress", "headSha": "aaa"},
+    ]
+    assert superseded.pending_successor(runs, base="aaa") == "ccc"
+    assert superseded.pending_successor([{"status": "completed", "headSha": "zzz"}], base="aaa") is None
+    assert superseded.pending_successor([{"status": "in_progress", "headSha": "aaa"}], base="aaa") is None
+    # GitHub may list the calling run as queued while this job runs; it is never its own successor.
+    assert superseded.pending_successor([{"status": "queued", "headSha": "aaa"}], base="aaa") is None
+    assert superseded.pending_successor({"not": "a list"}, base="aaa") is None
+
+
+def test_ci_green_needs_a_completed_successful_run() -> None:
+    assert superseded.ci_green([{"status": "completed", "conclusion": "success"}]) is True
+    for runs in ([], [{"status": "in_progress", "conclusion": ""}], [{"status": "completed", "conclusion": "failure"}], "x"):
+        assert superseded.ci_green(runs) is False, runs
 
 
 @pytest.mark.parametrize(("stdout", "exit_code"), [("", 1), ("not json", 0)], ids=["gh-fails", "garbage"])
@@ -162,12 +263,28 @@ def test_the_workflow_asks_the_script_before_skipping() -> None:
     assert '--base "${GITHUB_SHA}" --head "${latest_sha}"' in run
 
 
+def test_the_check_runs_before_the_lease_and_before_every_production_mutation() -> None:
+    jobs = _workflow()["jobs"]
+    # The check holds nothing: it needs CI and the image, never the lease.
+    assert set(jobs["confirm-current-main"]["needs"]) <= {"gate-on-ci", "build-image"}
+    admit = jobs["admit-cloud"]
+    assert "confirm-current-main" in admit["needs"]
+    assert "needs.confirm-current-main.outputs.proceed == 'true'" in admit["if"]
+    # Everything that mutates production sits behind the lease, so a skipped
+    # run migrates no schema, rotates no secret and ships no revision.
+    for name in ("migrate-schema", "sync-runtime-secrets", "deploy"):
+        assert "admit-cloud" in jobs[name]["needs"], name
+    assert "needs.confirm-current-main.outputs.proceed == 'true'" in jobs["deploy"]["if"]
+
+
 def test_the_admit_wait_outlasts_a_gateway_rollout() -> None:
     job = _workflow()["jobs"]["admit-cloud"]
     acquire = next(step for step in job["steps"] if step.get("id") == "acquire_mutex")
     wait = int(acquire["env"]["TR_DEPLOY_WAIT_SECONDS"])
-    # Gateway rollouts held the gcp lease for about 2 h 20 min (2026-10-01/02).
-    assert wait >= 3 * 3600
+    # Gateway rollouts held the gcp lease for about 2 h 20 min (2026-10-01/02);
+    # with trust-page verification and a runner-queue wait before the release,
+    # one hold reached 2 h 56 min (2026-10-21/22).
+    assert wait >= 4 * 3600
     # The job must not time out before the wait does, and the lease must last
     # longer than the job that holds it.
     assert job["timeout-minutes"] * 60 > wait
