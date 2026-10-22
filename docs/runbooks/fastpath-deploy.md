@@ -201,7 +201,7 @@ turn 503 and its last proxied request ends: `fastpathctl node` exiting 0
 says the node owns no lease, not that its edge is quiet. Before a reset
 or a stop, wait for `gcloud compute backend-services get-health
 tr-fastpath-edge-backend --global` to report the node `UNHEALTHY` and
-then the backend's request timeout (8 s) more.
+then the authorize route's timeout (24 s) more.
 
 A node keeps the startup script it was created with (`ignore_changes` in
 `infra/fastpath.tf`; a script change is not drift, so which script a
