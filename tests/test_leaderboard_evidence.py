@@ -9,6 +9,7 @@ import pytest
 from clickhouse import build_public_snapshots as worker
 from trusted_router.config import Settings
 from trusted_router.dashboard import public_leaderboard_html
+from trusted_router.operational_analytics import OperationalAnalyticsClient
 from trusted_router.routes import public
 from trusted_router.storage_models import ProviderBenchmarkSample
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
@@ -68,6 +69,30 @@ def test_evidence_does_not_blend_into_recent_sample_or_lower_rank_floor() -> Non
     assert evidence["providers"][0]["rank"] is None
     assert evidence["rank_minimums"] == current["rank_minimums"]
     assert evidence["window"] == "7d"
+
+
+def test_every_published_snapshot_can_be_read_by_the_production_adapter() -> None:
+    snapshots = worker.build_snapshots(
+        [sample()], evidence_samples=[sample()], generated_at="2026-09-05T00:00:00Z"
+    )
+    observed: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        name = request.url.params["param_name"]
+        observed.append(name)
+        assert "WHERE name = {name:String}" in request.content.decode()
+        assert request.extensions["timeout"]["read"] == 2.0
+        return httpx.Response(200, json={"data": [{"payload": json.dumps(snapshots[name])}]})
+
+    reader = OperationalAnalyticsClient(
+        base_url="https://analytics.invalid",
+        user="reader",
+        password="unused-test-credential",  # noqa: S106 - local transport only.
+        transport=httpx.MockTransport(respond),
+    )
+    for name, payload in snapshots.items():
+        assert reader.public_snapshot(name) == payload
+    assert set(observed) == set(snapshots)
 
 
 def test_evidence_query_is_bounded_balanced_and_does_not_filter_failures(monkeypatch) -> None:

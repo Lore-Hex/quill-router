@@ -408,7 +408,7 @@ def _python_requested(body: dict[str, Any], settings: Settings) -> Any:
     for key, value in overrides.items():
         if key in {"order", "only"}:
             value = tuple(item.strip() for item in value.split(",") if item.strip())
-        elif key == "privacy_requirements":
+        elif key in {"privacy_requirements", "pool_model_ids"}:
             value = tuple(sorted(value))
         normalized[key] = value
     return ids, normalized
@@ -419,6 +419,8 @@ def _requested(snapshot: RoutingSnapshotV1, raws: list[str]) -> Any:
     entries = {r.id: r for r in snapshot.requested_models}
     ids: list[str] = []
     overrides: dict[str, Any] = {}
+    pool_ids: set[str] = set()
+    named_ids: set[str] = set()
     for raw in raws:
         stripped, variant = _strip_variant(snapshot, raw)
         canonical = _resolve(snapshot, stripped)
@@ -428,6 +430,7 @@ def _requested(snapshot: RoutingSnapshotV1, raws: list[str]) -> Any:
         overrides.update(variant)
         if entry is None:
             ids.append(canonical)
+            named_ids.add(canonical)
             continue
         o = entry.overrides
         if o.usage is not None:
@@ -445,6 +448,9 @@ def _requested(snapshot: RoutingSnapshotV1, raws: list[str]) -> Any:
         if o.only is not None:
             overrides["only"] = o.only
         ids.extend(entry.expands_to)
+        (pool_ids if list(entry.expands_to) != [canonical] else named_ids).update(entry.expands_to)
+    if pool_ids - named_ids:
+        overrides["pool_model_ids"] = tuple(sorted(pool_ids - named_ids))
     return (ids, overrides) if ids else 400
 
 

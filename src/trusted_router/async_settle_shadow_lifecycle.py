@@ -349,9 +349,9 @@ def _release_failed(state: State, slot: int, generation: int, reason: str) -> tu
     d = _emit(d, effects, SlotOutcome(slot*SLOT_US, slot, "failed"))
     effects = [replace(e, unknown_outcome=True) if isinstance(e, EmitTrace) and e.slot == slot else e
                for e in effects]
-    # The actual start is unavailable; keep the latest permitted start as the
-    # conservative cadence bound for the following cycle.
-    state = replace(state, job=None, last_actual_start=max(state.last_actual_start, job.latest_start_mono))
+    # A release supplies no actual start. Do not move the cadence bound to
+    # the end of this window and thereby reject the next slot.
+    state = replace(state, job=None)
     return _progress(_put(state, d), effects)
 
 

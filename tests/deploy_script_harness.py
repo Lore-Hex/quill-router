@@ -1227,6 +1227,9 @@ _PUBLIC_EDGE_ROUTED_SERVICE_JSON = json.dumps(
                 "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
             }
         },
+        "status": {
+            "traffic": [{"revisionName": "trusted-router-public-active", "percent": 100}]
+        },
         "spec": {
             "template": {
                 "spec": {
@@ -1628,6 +1631,18 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             (
                 r"run services describe trusted-router-public .*--format=json",
                 _PUBLIC_EDGE_ROUTED_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-public-active .*--format=json",
+                _PUBLIC_SURFACE_PUBLIC_REVISION_JSON,
+            ),
+            (
+                r"backend-services describe trusted-router-public-backend .*--format=json",
+                json.dumps({
+                    "customRequestHeaders": [
+                        "X-TrustedRouter-Client-IP:{client_ip_address}"
+                    ],
+                }),
             ),
             (
                 r"backend-services describe trusted-router-public-backend"

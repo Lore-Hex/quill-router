@@ -363,6 +363,7 @@ async def test_google_callback_delegated_signup_starts_at_zero_without_managemen
     next_path = (
         "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor"
         "&key_label=SlopNazi&limit=5&usage_limit_type=monthly"
+        "&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256"
     )
     state = _begin_oauth(google_client, "google", next_path=next_path)
 

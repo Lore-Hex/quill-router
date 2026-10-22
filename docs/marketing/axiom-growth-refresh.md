@@ -83,6 +83,9 @@ feed live. Dashboard stale state and missing-data notices remain visible.
 
 The acquisition sink uses exact event-name comparisons, not a regex. Reapply
 its allowlist with `python -m scripts.axiom_growth.provision source-filter`.
+An exact match is a read-only no-op, so ordinary worker redeploys need only
+`logging.sinks.get`. A changed filter still requires an authorized operator to
+apply it; the deploy identity is not granted general sink-update access.
 During rollout an overescaped filter was caught by comparing an actual browser
 event in the primary logs with the isolated bucket. HTTP success and a worker
 heartbeat alone do not prove source delivery.
