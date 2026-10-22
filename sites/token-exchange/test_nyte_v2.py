@@ -8,7 +8,7 @@ class NyteV2Tests(unittest.TestCase):
     def test_navigation_and_ctas(self):
         for name in ('home', 'api', 'sup'):
             page = render_nyte(name)
-            self.assertEqual(page.count('>Confidential API</a>'), 2)
+            self.assertEqual(page.count('>Confidential API</a>'), 1)
             self.assertNotIn('Plan a pilot', page)
             self.assertNotIn('data-go=', page)
             self.assertNotIn('/confidential-api', page)
@@ -38,7 +38,10 @@ class NyteV2Tests(unittest.TestCase):
         self.assertNotIn('catalog-source', page)
         self.assertIn('data-catalog-models>—', page)
         self.assertIn('data-catalog-providers>—', page)
-        self.assertIn('Operated by Lore Hex Corp, a Delaware corporation.', page)
+        self.assertNotIn('Operated by Lore Hex Corp, a Delaware corporation.', page)
+        self.assertNotIn('footer-product-links', page)
+        for label in ('Media kit', 'Privacy', 'Terms', 'Exchange overview'):
+            self.assertIn('>' + label + '</a>', page)
         self.assertIn('aria-label="Exchange markets"', page)
         self.assertIn('Email us', page)
         self.assertNotIn('autoplay', page)
