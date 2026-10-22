@@ -38,6 +38,25 @@ class NyteV2Tests(unittest.TestCase):
         self.assertIn('Browse Tinfoil model routes', page)
         self.assertIn('api.confidential.nytokenexchange.com/v1', page)
 
+    def test_quickstart_requires_confidential_routing(self):
+        import ast
+        import html
+        import re
+
+        page = render_nyte('api')
+        example = re.search(r'<pre>(.*?)</pre>', page, re.S).group(1)
+        example = re.sub(r'</span><span class="l', '</span>\n<span class="l', example)
+        code = html.unescape(re.sub(r'<[^>]+>', '', example)).replace('\xa0', ' ')
+        calls = [node for node in ast.walk(ast.parse(code)) if isinstance(node, ast.Call)]
+        client = next(node for node in calls if isinstance(node.func, ast.Name) and node.func.id == 'OpenAI')
+        request = next(node for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == 'create')
+        client_args = {item.arg: item.value for item in client.keywords}
+        request_args = {item.arg: item.value for item in request.keywords}
+        self.assertEqual(ast.literal_eval(client_args['base_url']), 'https://api.confidential.nytokenexchange.com/v1')
+        self.assertEqual(ast.literal_eval(request_args['model']), 'nyte/auto')
+        self.assertEqual(ast.literal_eval(request_args['extra_body']), {'provider': {'min_privacy': 'confidential'}})
+        self.assertNotIn('NYTE address activation is in progress.', page)
+
     def test_home_counts_are_not_mock_values(self):
         page = render_nyte()
         self.assertNotIn('600+', page)

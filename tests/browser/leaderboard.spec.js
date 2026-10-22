@@ -20,12 +20,12 @@ test("provider/model tabs, search, evidence, paging and URL persistence", async 
   await page.getByRole("button", { name: "Next page" }).click();
   await expect(page.locator("[data-lb-count]")).toHaveText("26-50 of 62 models");
   await page.locator("[data-lb-provider]").selectOption("mistral");
-  await page.locator("[data-lb-search]").fill("model-0");
+  await page.getByRole("searchbox", { name: "Filter leaderboard" }).fill("model-0");
   await expect(page.locator("#lb-models [data-lb-row]:visible")).toHaveCount(3);
   await page.reload();
-  await expect(page.locator("[data-lb-search]")).toHaveValue("model-0");
+  await expect(page.getByRole("searchbox", { name: "Filter leaderboard" })).toHaveValue("model-0");
   await expect(page.locator("#lb-models [data-lb-row]:visible")).toHaveCount(3);
-  await page.locator("[data-lb-search]").fill("");
+  await page.getByRole("searchbox", { name: "Filter leaderboard" }).fill("");
   await page.locator("[data-lb-evidence]").selectOption("config");
   await expect(page.locator("#lb-models [data-lb-row]:visible")).toHaveCount(1);
   await expect(page.locator("#lb-models [data-lb-row]:visible")).toContainText("needs-configuration");
@@ -45,7 +45,7 @@ test("numeric sorting keeps absent measurements last and filters unranked routes
   await expect(page.locator("#lb-models [data-lb-row]:visible .lb-badge").first()).toHaveAttribute("title", /does not disable routing/);
   await expect(page.locator("#lb-models [data-lb-row]:visible").first()).toContainText("model-60");
   await expect(page.locator("#lb-models [data-lb-row]:visible").last()).toContainText("needs-configuration");
-  await page.locator("[data-lb-search]").fill("no-such-model");
+  await page.getByRole("searchbox", { name: "Filter leaderboard" }).fill("no-such-model");
   await expect(page.locator("#lb-models [data-lb-empty]")).toBeVisible();
   await expect(page.getByRole("button", { name: "Next page" })).toBeDisabled();
   await page.getByRole("tab", { name: "Models", exact: true }).focus();

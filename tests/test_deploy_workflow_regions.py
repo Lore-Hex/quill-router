@@ -430,10 +430,13 @@ def test_billing_path_gate_only_attributes_errors_to_candidate_revision() -> Non
 def test_superseded_push_stops_before_production_mutation() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     confirm = workflow.index("confirm-current-main:")
-    deploy = workflow.index("\n  deploy:", confirm)
+    admit = workflow.index("\n  admit-cloud:", confirm)
+    deploy = workflow.index("\n  deploy:", admit)
     mutation = workflow.index("- name: Capture pre-deploy revisions", deploy)
 
-    assert confirm < deploy < mutation
+    # The check precedes the lease (2026-10-22): a superseded run skips before
+    # it waits for or holds the production mutex.
+    assert confirm < admit < deploy < mutation
     assert 'git/ref/heads/main" --jq' in workflow[confirm:deploy]
     assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
     assert (
@@ -459,8 +462,8 @@ def test_rollback_capture_uses_the_sole_serving_revision() -> None:
 def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     sync = workflow.index("sync-runtime-secrets:")
-    confirm = workflow.index("confirm-current-main:", sync)
-    section = workflow[sync:confirm]
+    end = workflow.index("\n  confirm-still-on-main:", sync)
+    section = workflow[sync:end]
 
     assert "needs: [gate-on-ci, admit-cloud]" in section
     assert "trustedrouter-aws-access-key-id" in section

@@ -59,12 +59,17 @@ reconciler publishes each name only after TLS and attestation qualification,
 including the confidential policy probe where required. Website deployment
 does not create API records or terminate prompt traffic. Preserve the website's
 apex/www routing and Certificate Manager authorization records. Publish the
-quickstart as live only after both API origins pass production tests. Until then,
-retain the activation notice and explicit working TrustedRouter confidential
-alternative. Never publish DNS records to bypass qualification. The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
-New York's homepage, `/confidential`, and `/suppliers`; its assets are under
-`assets/nyte-v2/`. Back up live objects before an authorized release and preserve
-concurrent content and unrelated market pages.
+quickstart as live only after both API origins pass production tests. Verify
+strict TLS-bound attestation, receipt-key evidence, missing/weaker privacy
+rejections and a completed streamed `nyte/auto` request. Certificate issuance
+also requires the enclave's existing TXT-writer role to cover the two delegated
+NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publish
+DNS records to bypass qualification.
+
+The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
+New York's homepage, `/confidential`, `/suppliers`, and `/index`; its shared
+assets are under `assets/nyte-v2/`. Back up live objects before an authorized
+release and preserve concurrent content and unrelated market pages.
 
 ### NYTE Token Index and open-source supplier stack
 

@@ -31,7 +31,7 @@ def _auth_styles_version() -> str:
     # change with their bytes.
     static_dir = Path(__file__).parent / "static"
     content = b"".join(
-        (static_dir / name).read_bytes() for name in ("tokens.css", "auth.css", "charter.css")
+        (static_dir / name).read_bytes() for name in ("tokens.css", "brand.css", "auth.css", "charter.css")
     )
     return hashlib.sha256(content).hexdigest()[:16]
 
