@@ -3919,8 +3919,8 @@ def _routing_snapshot_bindings(deploy: list[str]) -> list[str]:
 def test_rollout_pins_routing_snapshot_publishing_off_without_inheritance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # E2 publish dark: off, no key file and no public key, whatever the caller
-    # or the serving revision carries; and with no key version, nothing mounted.
+    # E2 publish dark: off whatever the caller or the serving revision carries;
+    # version 1 of the key is mounted and pinned by number, with its public key.
     hostile = {
         "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
         "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/old/signing.pem",
@@ -3938,11 +3938,13 @@ def test_rollout_pins_routing_snapshot_publishing_off_without_inheritance(
         rendered = _cloud_run_job_env(deploy)
         assert {name: rendered[name] for name in hostile if name.startswith("TR_")} == {
             "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
-            "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "",
+            "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/secrets/routing-snapshot/signing.pem",
             "TR_ROUTING_SNAPSHOT_KID": "tr-routing-snapshot-2026-10a",
-            "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": "",
+            "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM",
         }
-        assert _routing_snapshot_bindings(deploy) == []
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:1"
+        ]
         settings = Settings(**{
             "routing_snapshot_publish_enabled": rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"],
         })
@@ -3982,8 +3984,9 @@ def test_rollout_mounts_the_routing_snapshot_key_by_its_version_number(
 
 
 @pytest.mark.parametrize("literals", [
-    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true"},
-    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KEY_VERSION": "1"},
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KEY_VERSION": ""},
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KEY_VERSION": "1",
+     "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
     {"ROUTING_SNAPSHOT_KEY_VERSION": "latest"},
     {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "yes"},
 ], ids=["enabled-without-key", "enabled-without-public-key", "latest", "not-a-boolean"])
