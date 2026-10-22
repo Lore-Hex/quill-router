@@ -274,8 +274,10 @@ def consumer_snapshots(monkeypatch, query_log, *, now=None):
     )
     # Module attributes, never STORE proxy methods. No global store pollution.
     import trusted_router.storage as storage
+    from trusted_router import storage_models
 
     monkeypatch.setattr(storage, "STORE", store)
+    monkeypatch.setattr(storage_models, "utcnow", lambda: now)
     monkeypatch.setattr(status, "utcnow", lambda: now)
     monkeypatch.setattr(status, "iso_now", lambda: now.isoformat())
     monkeypatch.setattr(status, "get_settings", lambda: cfg)
