@@ -33,7 +33,12 @@ from trusted_router.detached_jws import TrustedKey, b64encode
 from trusted_router.main import create_app
 from trusted_router.routes.internal import fastpath_snapshot
 from trusted_router.routes.internal.fastpath_snapshot import PATH
-from trusted_router.routing_snapshot import EPOCH_SECONDS, CatalogInputs, publication_window
+from trusted_router.routing_snapshot import (
+    EPOCH_SECONDS,
+    CatalogInputs,
+    SnapshotRefused,
+    publication_window,
+)
 from trusted_router.routing_snapshot_signing import PURPOSE, verify_manifest
 from trusted_router.services import routing_snapshot_publisher as publisher_module
 from trusted_router.services.routing_snapshot_publisher import (
@@ -322,6 +327,34 @@ def test_an_instance_imported_before_a_retirement_refuses_the_windows_after_it(k
     assert refused.value.status == "snapshot-refused"
     # Positive control: instances imported after it publish, the same bytes.
     assert cold.current().response == colder.current().response
+
+
+def test_a_refusal_while_loading_the_inputs_is_held_for_the_hour(key) -> None:
+    # CatalogInputs.live itself refuses some catalogs (an unknown variant
+    # suffix or override, a sub-second instant): a 503, never a 500, and no
+    # second multi-second load until the next hour.
+    clock = Clock(DAY + HOUR + 60)
+    loads: list[int] = []
+    good = _fixture_inputs(clock)
+
+    def refusing() -> CatalogInputs:
+        loads.append(clock.now)
+        if clock.now < DAY + 2 * HOUR:
+            raise SnapshotRefused("requested model override is unknown")
+        return good()
+
+    app = _app(_settings(key), clock, inputs=refusing)
+    client = TestClient(app, raise_server_exceptions=True)
+    for _ in range(2):
+        refused = _get(client)
+        assert refused.status_code == 503
+        assert refused.json() == {"status": "snapshot-refused", "retry_at": DAY + 2 * HOUR}
+    assert loads == [DAY + HOUR + 60]
+    clock.now = DAY + 2 * HOUR - 1
+    assert _get(client).status_code == 503 and len(loads) == 1
+    # Positive control: the next hour loads again, and publishes.
+    clock.now = DAY + 2 * HOUR
+    assert _get(client).status_code == 200 and len(loads) == 2
 
 
 def test_a_transient_failure_is_retried_after_a_short_backoff(key) -> None:

@@ -69,7 +69,17 @@ then answers 503 `{"status": "signer-unavailable"}`.
    before anything depends on it.
 
 5. Turn it on: set `ROUTING_SNAPSHOT_PUBLISH_ENABLED=true`, merge, deploy.
-   First measure the compile where it will run. It is 1.5 to 4.5 s of
+   Two conditions come first.
+
+   The catalog must be rebuilt as of `at`, both endpoints and models
+   (`docs/design/routing-snapshot-v1.md`, "Not yet"). Until then, at every
+   retirement (00:00 UTC) each published copy expires and every instance
+   imported before the retirement refuses until a deploy replaces it, hours
+   with no snapshot. Replacing every instance at each retirement is a weaker
+   substitute (it depends on a restart timed to every retirement, and leaves
+   minutes of gap while revisions roll); do not enable on it alone.
+
+   And the compile must be measured where it will run. It is 1.5 to 4.5 s of
    CPU-bound Python on development machines (4.3 s measured in review), and
    on the combined service it holds the GIL against that instance's authorize
    requests for as long, once a window on each instance the edge polls.
@@ -124,7 +134,8 @@ then answers 503 `{"status": "signer-unavailable"}`.
    `snapshot-refused` (the catalog refused the window; the log line
    `routing snapshot compile refused` names the reason, and the next window
    retries; an instance started before a retirement refuses every later
-   window until it is replaced), or `snapshot-error` (any other failure,
+   window until it is replaced, and the edge's copy expires at that
+   retirement, so nothing is published meanwhile), or `snapshot-error` (any other failure,
    logged by its class as `routing snapshot compile failed`, retried after
    5 s).
 

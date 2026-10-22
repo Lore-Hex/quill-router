@@ -234,10 +234,16 @@ refuses (`SnapshotRefused`) rather than approximate:
   `not_after` is clamped to the first retirement after `max(compiled_at,
   catalog_resolved_at)`, so catalogs imported at any two instants of the
   window hold the same endpoints. A process imported before a retirement
-  therefore cannot compile any window starting after it; the publisher
-  answers 503 there until the instance is replaced (every deploy replaces
-  them), and the edge keeps its last good copy or polls another instance.
-  The rule is the compiler's, not the publisher's, so no caller can produce
+  therefore cannot compile any window starting after it, and the publisher
+  answers 503 there until the instance is replaced. The edge's last good copy
+  does not cover that gap: every window a process imported before the
+  retirement compiled ends at the retirement itself (the clamp above), so at
+  the retirement every published copy expires, Go passes every request to
+  Python, and no snapshot is published until an instance imported after the
+  retirement serves the poll. Retirements fall at 00:00 UTC and deploys are 3
+  to 12 hours apart, so that is hours of no fast path, overnight, at each
+  retirement. Publishing must not be turned on until the catalog can be rebuilt
+  as of `at` (see "Not yet"). The rule is the compiler's, not the publisher's, so no caller can produce
   two documents for one window. (Requiring `compiled_at >=
   catalog_resolved_at` instead would also be correct, but would refuse every
   hourly compile in the first partial hour of a process's life even when
@@ -467,8 +473,29 @@ are pinned, so the hourly price refresh cannot make it stale.
   cache, the response, the shadow comparator. Until then nothing calls it.
 - The edge's poll of the published snapshot, its last-good copy and its
   trusted keys (Go).
+- **Before publishing is turned on: the catalog rebuilt as of `at`.** The
+  registry is built once, at import, and drops what is retired then, so a
+  process imported before a retirement holds endpoints and models (and with
+  them privacy-pool members and requested-model expansions) that one imported
+  after it does not; on the live catalog around 2026-10-23 00:00, 1823
+  endpoints and 696 models against 1808 and 688. The compiler refuses rather
+  than publish two documents for one window, which leaves no snapshot from
+  each retirement until instances imported after it serve (see "The window,
+  and failing closed"). The fix is for `CatalogInputs` to rebuild the
+  registry's endpoints and models, and everything derived from them, as of
+  `at` (or as of the latest retirement at or before `at`), so a warm process
+  compiles the same bytes as a cold one and the retirement refusal can return
+  to `(at, catalog_resolved_at]`. The weaker alternative is to replace every
+  control-plane instance at each retirement (a scheduled restart or deploy at
+  the retirement instant). It is weaker because the snapshot's availability
+  then rests on an operational action timed to every retirement, including
+  ones the hourly price refresh adds: a late or failed replacement, a held
+  deploy mutex or a paused rollout reopens the gap; the replacement itself
+  leaves a gap of minutes while revisions roll; and it changes nothing about
+  the compiler, so any other caller compiling in a warm process still
+  refuses.
 - Publishing on: version 1 of the key and the switch
-  (`docs/runbooks/routing-snapshot-key.md`).
+  (`docs/runbooks/routing-snapshot-key.md`), after the item above.
 - Other clouds' planes: the publisher signs for `gcp` only (E5).
 - Out of the cohort, so out of v1: OpenAI priority and auto service-tier
   prices, video tariffs (`output_token_price_per_m_by_resolution`), image,

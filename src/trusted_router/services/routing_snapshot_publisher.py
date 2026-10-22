@@ -14,7 +14,9 @@ next window. A window whose compile the catalog refuses is not compiled again;
 the next window start retries. Any other failure is retried after a few
 seconds. An instance imported before a retirement cannot compile a window
 starting after it (the compiler refuses, so two instances never publish two
-documents for one window); it answers 503 until it is replaced.
+documents for one window); it answers 503 until it is replaced, and the
+windows it published before end at that retirement. Publishing stays off until
+the catalog is rebuilt as of the window's start (the design doc, "Not yet").
 
 Compiling takes 1.5 to 4.5 s of CPU on development machines (4.3 s measured in
 review). On the combined service it holds the GIL against authorize for that
@@ -79,7 +81,7 @@ ERROR_BACKOFF_SECONDS = 5
 
 
 class SnapshotUnavailable(Exception):
-    """No snapshot is current; the caller answers 503 and Go keeps its last good copy."""
+    """No snapshot is current; the caller answers 503 (Go keeps its last good copy until its not_after)."""
 
     def __init__(self, status: str, retry_at: int, now: int) -> None:
         super().__init__(status)
@@ -168,8 +170,9 @@ class RoutingSnapshotPublisher:
         self._horizon = horizon
         self._lock = threading.Lock()
         self._cached: Publication | None = None
-        # The window start whose compile refused; a new start retries.
-        self._refused: int | None = None
+        # A refused window's end: no load or compile before the next window
+        # start (the window start is constant until then).
+        self._refused_until = 0
         # After an unexpected failure, no compile before this instant.
         self._error_until = 0
         self.compiles = 0
@@ -188,24 +191,27 @@ class RoutingSnapshotPublisher:
             cached = self._cached
             if cached is not None and cached.current(now):
                 return cached
+            if now < self._refused_until:
+                raise SnapshotUnavailable("snapshot-refused", self._refused_until, now)
             if now < self._error_until:
                 raise SnapshotUnavailable("snapshot-error", self._error_until, now)
+            # Until the inputs name the window, a refusal holds for the hour.
+            hour = now - now % EPOCH_SECONDS
+            next_start = hour + EPOCH_SECONDS
             try:
                 inputs = self._inputs()
                 start, next_start = publication_window(now, inputs)
-                if self._refused == start:
-                    raise SnapshotUnavailable("snapshot-refused", next_start, now)
                 snapshot = self._compile(start, inputs)
                 if not now < snapshot.not_after:
                     raise SnapshotRefused("the window ended before it was published")
                 publication = self._sign(snapshot, next_start)
-            except SnapshotUnavailable:
-                raise
             except SnapshotRefused as exc:
                 # The catalog refuses this window for good: an event between
-                # its start and the process's clocks or import, which a later
-                # attempt would meet again. The next window start retries.
-                self._cached, self._refused = None, start
+                # its start and the process's clocks or import, or (from the
+                # inputs) a catalog shape the compiler does not know, both
+                # facts of this process that a later attempt would meet again.
+                # The next window start retries.
+                self._cached, self._refused_until = None, next_start
                 # The reason names instants, providers or fields, never secrets.
                 log.warning("routing snapshot compile refused: %s", exc)
                 raise SnapshotUnavailable("snapshot-refused", next_start, now) from None
@@ -216,7 +222,7 @@ class RoutingSnapshotPublisher:
                 self._error_until = now + ERROR_BACKOFF_SECONDS
                 log.warning("routing snapshot compile failed: %s", type(exc).__name__)
                 raise SnapshotUnavailable("snapshot-error", self._error_until, now) from None
-            self._cached, self._refused = publication, None
+            self._cached = publication
             return publication
 
     def _compile(self, at: int, inputs: CatalogInputs) -> RoutingSnapshotV1:

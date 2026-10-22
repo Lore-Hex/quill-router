@@ -26,7 +26,8 @@ def register(router: APIRouter) -> None:
         the body's exact bytes in standard base64, and when to poll again.
 
         ``ETag`` is the body's sha256; a matching ``If-None-Match`` is a 304.
-        503 while no window is current; the edge keeps its last good copy.
+        503 while no window is current; the edge keeps its last good copy
+        until that copy's not_after.
         """
         require_internal_gateway(request, settings)
         publisher = getattr(request.app.state, "routing_snapshot_publisher", None)
