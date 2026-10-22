@@ -29,8 +29,10 @@ seconds. This allows billing's 20-second work budget plus up to two seconds of
 cleanup to return before the edge cuts off the request, while remaining below
 the enclave's 25-second response-header deadline.
 
-Do not change the fast-path traffic weight, billing deadline, credit limits,
-attestation policy, or alert thresholds. This is separate from disabling the
+Hold the fast-path traffic weight at 0: #1911 had raised it to 1 on main
+after the incident, and it was applied at 04:45Z; this change returns it to 0
+and it is not raised again until the incident is explained. Do not change the
+billing deadline, credit limits, attestation policy, or alert thresholds. This is separate from disabling the
 shadow-only observer: that containment cannot repair the edge timeout.
 
 The regression test fails against the previous route configuration and requires

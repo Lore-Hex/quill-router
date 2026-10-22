@@ -118,8 +118,9 @@ resource "google_compute_url_map" "control" {
     # so a 503 from an unhealthy edge, which the weighted split does not
     # fail over, is retried and lands on the control backend almost surely;
     # the terminals (settle, refund, heartbeat, disposition) are not all
-    # retried, and the maintenance drains run longer than the authorize
-    # deadline. The split is global: the share is of every region's
+    # retried, and the maintenance drains run longer than the edge
+    # backend's own 8 s timeout, which they would get without a route
+    # timeout. The split is global: the share is of every region's
     # authorize, all of it served by the us-central1 edge and Python, so it
     # stays small while the edge runs in one region. Its weight at 0 is the
     # way back.

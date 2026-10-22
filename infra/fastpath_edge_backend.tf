@@ -98,11 +98,11 @@ resource "google_compute_backend_service" "fastpath_edge" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = "HTTP"
   port_name             = "edge"
-  # Under the enclave's authorize budget (a 25 s response-header timeout,
-  # 28 s in all, three attempts): a stalled upstream answers 504 at 8 s,
-  # which the enclave retries, rather than outliving the budget as a
-  # transport error it does not. Authorize through the balancer over a day
-  # of 2026-10-20: p99 2.85 s, max 5.8 s of 3,000.
+  # Applies only where no route timeout is set. The one route to this
+  # backend, /internal/gateway/authorize, sets 24 s (control_lb_url_map.tf),
+  # which governs: billing's 20 s budget plus cleanup must finish before the
+  # balancer cuts the call off (docs/incidents/2026-10-22-authorize-edge-
+  # deadline.md).
   timeout_sec     = 8
   health_checks   = [google_compute_health_check.fastpath_edge.id]
   security_policy = google_compute_security_policy.legacy_edge.id
