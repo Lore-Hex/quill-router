@@ -521,6 +521,15 @@
     "route_mode": "Prepaid",
     "slug": "morph"
   },
+  "muna": {
+    "card_version": 2,
+    "model_count": 2,
+    "name": "Muna",
+    "privacy": "Policy documented",
+    "route_count": 2,
+    "route_mode": "Prepaid",
+    "slug": "muna"
+  },
   "near-ai": {
     "card_version": 2,
     "model_count": 0,
