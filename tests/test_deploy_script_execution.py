@@ -3905,6 +3905,117 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     assert "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest" in bindings
 
 
+_ROUTING_SNAPSHOT_PUBLIC_KEY = "U1I1REk6JqeFqKq5ZGH0P8b1b_OEwbFG0lCOkYL-jjY"
+
+
+def _routing_snapshot_bindings(deploy: list[str]) -> list[str]:
+    secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in deploy)
+    return [
+        binding for binding in deploy[deploy.index(secret_flag) + 1].split(",")
+        if "routing-snapshot" in binding
+    ]
+
+
+def test_rollout_pins_routing_snapshot_publishing_off_without_inheritance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # E2 publish dark: off, no key file and no public key, whatever the caller
+    # or the serving revision carries; and with no key version, nothing mounted.
+    hostile = {
+        "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
+        "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/old/signing.pem",
+        "TR_ROUTING_SNAPSHOT_KID": "old-kid",
+        "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": _ROUTING_SNAPSHOT_PUBLIC_KEY,
+        "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
+        "ROUTING_SNAPSHOT_KEY_VERSION": "7",
+    }
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        rendered = _cloud_run_job_env(deploy)
+        assert {name: rendered[name] for name in hostile if name.startswith("TR_")} == {
+            "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+            "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "",
+            "TR_ROUTING_SNAPSHOT_KID": "tr-routing-snapshot-2026-10a",
+            "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": "",
+        }
+        assert _routing_snapshot_bindings(deploy) == []
+        settings = Settings(**{
+            "routing_snapshot_publish_enabled": rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"],
+        })
+        assert settings.routing_snapshot_publish_enabled is False
+    assert Settings().routing_snapshot_publish_enabled is False
+
+
+def _edit_routing_snapshot_literals(harness: Any, **literals: str) -> None:
+    script = harness.mirror / "scripts" / "deploy" / "rollout.sh"
+    text = script.read_text()
+    for name, value in literals.items():
+        line = re.search(rf"^{name}=.*$", text, re.MULTILINE)
+        assert line is not None, name
+        text = text.replace(line.group(0), f'{name}="{value}"', 1)
+    script.write_text(text)
+
+
+def test_rollout_mounts_the_routing_snapshot_key_by_its_version_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(
+        isolated, ROUTING_SNAPSHOT_KEY_VERSION="1",
+        ROUTING_SNAPSHOT_PUBLIC_KEY=_ROUTING_SNAPSHOT_PUBLIC_KEY,
+    )
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    for deploy in _gcloud_calls(run, "run", "deploy"):
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:1",
+        ]
+        rendered = _cloud_run_job_env(deploy)
+        # The key is mounted ahead of the switch; publishing stays off.
+        assert rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "false"
+        assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == "/secrets/routing-snapshot/signing.pem"
+        assert rendered["TR_ROUTING_SNAPSHOT_PUBLIC_KEY"] == _ROUTING_SNAPSHOT_PUBLIC_KEY
+
+
+@pytest.mark.parametrize("literals", [
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true"},
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KEY_VERSION": "1"},
+    {"ROUTING_SNAPSHOT_KEY_VERSION": "latest"},
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "yes"},
+], ids=["enabled-without-key", "enabled-without-public-key", "latest", "not-a-boolean"])
+def test_rollout_refuses_routing_snapshot_publishing_without_a_pinned_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, literals: dict[str, str],
+) -> None:
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(isolated, **literals)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode != 0
+    assert "refusing rollout" in run.stderr and "routing snapshot" in run.stderr.lower()
+    assert _gcloud_calls(run, "run", "deploy") == []
+
+
+def test_rollout_publishes_routing_snapshots_with_a_pinned_key_when_turned_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Positive control for the refusals above: the documented switch deploys.
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(
+        isolated, ROUTING_SNAPSHOT_PUBLISH_ENABLED="true", ROUTING_SNAPSHOT_KEY_VERSION="2",
+        ROUTING_SNAPSHOT_PUBLIC_KEY=_ROUTING_SNAPSHOT_PUBLIC_KEY,
+    )
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    for deploy in _gcloud_calls(run, "run", "deploy"):
+        assert _cloud_run_job_env(deploy)["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "true"
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:2",
+        ]
+
+
 def test_rollout_pins_dormant_drain_knobs_without_inheritance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

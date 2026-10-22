@@ -762,10 +762,14 @@ def test_the_live_document_holds_nothing_secret_shaped(live, settings) -> None:
 
 
 def test_importing_the_app_loads_neither_snapshot_module() -> None:
+    # Publishing is off by default (Settings and rollout.sh): off, the app
+    # imports neither module; only the publisher, which main imports when
+    # publishing is on, reads them (tests/test_routing_snapshot_publish.py).
     script = (
         "import sys; import trusted_router.main; "
         "loaded = [m for m in ('trusted_router.routing_snapshot', "
-        "'trusted_router.routing_snapshot_signing') if m in sys.modules]; "
+        "'trusted_router.routing_snapshot_signing', "
+        "'trusted_router.services.routing_snapshot_publisher') if m in sys.modules]; "
         "assert not loaded, loaded"
     )
     result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or caller input
@@ -783,4 +787,7 @@ def test_importing_the_app_loads_neither_snapshot_module() -> None:
                      r"from trusted_router import .*\brouting_snapshot\b",
                      path.read_text(), re.MULTILINE)
     )
-    assert importers == ["src/trusted_router/routing_snapshot_signing.py"]
+    assert importers == [
+        "src/trusted_router/routing_snapshot_signing.py",
+        "src/trusted_router/services/routing_snapshot_publisher.py",
+    ]

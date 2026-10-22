@@ -79,6 +79,7 @@ from trusted_router.routes.internal import (
     register_internal_routes,
     register_observer_internal_routes,
     register_operator_internal_routes,
+    register_routing_snapshot_routes,
 )
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.lightning_support import register_lightning_support_routes
@@ -301,6 +302,13 @@ def create_app(
     if surface in {"combined", "internal"} and settings.speculative_provider_shadow_enabled:
         from trusted_router.services.speculation_shadow import install
         install(app, settings)
+    if surface in {"combined", "internal"} and settings.routing_snapshot_publish_enabled:
+        # E2 publish dark: off by default, and off means neither snapshot
+        # module is imported (tests/test_routing_snapshot.py).
+        from trusted_router.services.routing_snapshot_publisher import (
+            install as install_routing_snapshot,
+        )
+        install_routing_snapshot(app, settings)
     if surface in {"combined", "internal"}:
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
@@ -906,6 +914,8 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_observer_internal_routes(router)
     if surface in {"combined", "internal"} and settings.operator_token:
         register_operator_internal_routes(router)
+    if surface in {"combined", "internal"} and settings.routing_snapshot_publish_enabled:
+        register_routing_snapshot_routes(router)
     return router
 
 
