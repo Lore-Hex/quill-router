@@ -71,7 +71,10 @@ def test_the_snapshot_alone_admits_and_prices_every_answer() -> None:
             assert endpoint["catalog_valid_until"] is None or at < endpoint["catalog_valid_until"]
             assert endpoint["retired_at"] is None or at < endpoint["retired_at"]
             rule = endpoint["gateway_regions"]
-            region = request.get("region") or ("" if rule["requires_explicit_origin"] else plane_region)
+            # The authorize schema strips the region (str_strip_whitespace).
+            region = (request.get("region") or "").strip() or (
+                "" if rule["requires_explicit_origin"] else plane_region
+            )
             assert (rule["only"] is None or region in rule["only"]) and region not in rule["deny"]
             if endpoint["usage_type"] == "BYOK":
                 assert endpoint["provider"] in case["byok_providers"], case["name"]

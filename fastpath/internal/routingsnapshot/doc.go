@@ -1,8 +1,21 @@
-// Package routingsnapshot will read the control plane's signed routing
-// snapshot (docs/design/routing-snapshot-v1.md, E2 of
-// docs/design/fast-admission-enclave-direct.md). Nothing imports it yet: today
-// it holds only the checks that the golden files in fastpath/testdata, which
-// src/trusted_router/routing_snapshot.py writes, verify as Go will verify a
-// published snapshot: the body's sha256 and size, and the Ed25519 manifest
-// over them.
+// Package routingsnapshot reads and evaluates the control plane's signed
+// routing snapshot (docs/design/routing-snapshot-v1.md, E2 of
+// docs/design/fast-admission-enclave-direct.md).
+//
+//   - Verify checks a manifest the way routing_snapshot_signing.verify_manifest
+//     does (Ed25519 under an accepted kid, the public test key only in test
+//     mode, the claims bound to the sha256 and size of the bytes received,
+//     the verifier's own plane and audience, freshness) and decodes the body
+//     strictly (Parse).
+//   - Snapshot.Evaluate answers one request as authorize_candidates'
+//     plan_route, resolve_candidates and finish_candidates would with no
+//     health re-rank: the candidate endpoint ids in order and the model
+//     estimate in microdollars, or Python's refusal. A request outside the
+//     cohort the snapshot and the golden routing cases cover is passed to
+//     Python with its reason, never guessed at.
+//   - Cost is stage_d's frozen-candidate pricing, exact to the microdollar.
+//
+// The tests hold it to fastpath/testdata/routing_cases_v1.json and
+// tests/fixtures/usage_cost_vectors.json, which Python generates. Nothing at
+// runtime imports it yet.
 package routingsnapshot

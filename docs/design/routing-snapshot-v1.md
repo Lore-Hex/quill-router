@@ -1,11 +1,13 @@
 # Routing snapshot v1
 
-Status: dormant. The first pull request of E2's routing snapshot
+Status: dormant. E2's routing snapshot
 ([`fast-admission-enclave-direct.md`](fast-admission-enclave-direct.md), E2
-and §4 hard parts 1, 2 and 7). It adds a compiler, a signer and golden files.
-Nothing at runtime imports them: no route, service, Settings field or rollout
-change, and `tests/test_routing_snapshot.py` checks in a subprocess that
-importing `trusted_router.main` loads neither module.
+and §4 hard parts 1, 2 and 7): a compiler, a signer and golden files, and the
+Go reader and evaluator that reproduce Python's candidates from them (see
+"What Go evaluates"). Nothing at runtime imports them: no route, service,
+Settings field or rollout change. `tests/test_routing_snapshot.py` checks in a
+subprocess that importing `trusted_router.main` loads neither Python module,
+and a Go test checks that no other Go package imports the evaluator.
 
 | File | Role |
 |---|---|
@@ -14,7 +16,7 @@ importing `trusted_router.main` loads neither module.
 | `scripts/fastpath/routing_snapshot_vectors.py` | Synthetic catalog, golden files, the test key |
 | `fastpath/testdata/routing_snapshot_v1.body.json` | The golden body: exact canonical bytes, no trailing newline |
 | `fastpath/testdata/routing_snapshot_v1.manifest.json` | The golden manifest: JWS, test public key, kid, issuer, audience |
-| `fastpath/internal/routingsnapshot` | Go: verifies the golden body's sha256, size and signature |
+| `fastpath/internal/routingsnapshot` | Go: `Verify` (manifest and strict body), `Snapshot.Evaluate` (candidates and estimate), `Cost` |
 | `tests/test_fastpath_routing_snapshot_vectors.py` | Staleness, signature refusals, fail-closed compiles |
 | `tests/test_routing_snapshot.py` | Live-catalog properties, determinism, field allowlist, dormancy |
 
@@ -359,7 +361,11 @@ are pinned, so the hourly price refresh cannot make it stale.
 - In the routing cases: meta models, decision chains and the full fee
   stack (receipt fee, custom-model markup, additional cost, app markup), and
   `candidate_cost_reporting`, which authorize derives from the stored row.
-- The Go reader beyond the golden checks: parsing, freshness, evaluation.
+- Wiring the Go evaluator into the edge: the cohort predicate, the per-workspace
+  cache, the response, the shadow comparator. Until then nothing calls it.
+- `context_length` in the snapshot (see "What Go evaluates"): until it is
+  there, Go passes every request with a prompt estimate or `max_tokens` to
+  Python, which in production is nearly every request.
 - Publishing: hourly compile, key custody (pinned Secret Manager versions,
   rotation), the internal endpoint, the edge's poll and last-good copy.
 - Out of the cohort, so out of v1: OpenAI priority and auto service-tier
@@ -375,6 +381,154 @@ are pinned, so the hourly price refresh cannot make it stale.
 - Non-ASCII model strings: Python's `\d` in the dated-suffix pattern matches
   Unicode digits and Go's does not, so Go passes them to Python.
 
+## What Go evaluates
+
+`fastpath/internal/routingsnapshot` is the Go side of this contract. Nothing
+imports it yet.
+
+**Verify** checks a manifest as `verify_manifest` does, in its order: the
+compact JWS (at most 64 KiB, strict base64url, a header that is exactly the
+canonical `{alg EdDSA, kid, typ tr-routing-snapshot-v1}`); exactly one
+accepted key with that kid, of purpose `routing-snapshot`; its Ed25519
+signature; the public test key (by kid or by public key) refused unless the
+caller sets `AllowTestKey`; claims that are exactly the v1 fields with strict
+non-negative integers, whose canonical encoding is the signed payload and
+whose `iss` and `aud` are the key's; `aud` the verifier's own and `plane` the
+verifier's own; `sha256` and `size` of the bytes received (Go hashes them and
+never re-encodes); the body's own `compiled_at`, `not_after`,
+`source_revision` and `plane` equal to the claims'; and `compiled_at <= now <
+not_after`. It does not re-check that the body is its own canonical encoding:
+the signer refuses to sign one that is not, and the signature binds these
+exact bytes.
+
+**Parse** decodes the body strictly: printable ASCII only, one JSON value, no
+duplicate key, no float or exponent, no lone surrogate escape, every object
+exactly its schema fields (none missing, none extra, null only where the
+schema allows it). It then refuses literals Go does not evaluate (another
+version, kind, epoch length, rounding, usage type, `dated_suffix_pattern`, a
+variant suffix that is not a sort), a window over 24 hours, and dangling
+references. A refused snapshot is never evaluated; every request goes to
+Python.
+
+**Evaluate** takes the authorize body's routing fields as the enclave sent
+them (`model`, `models`, `provider`, the top-level `allow_fallbacks`,
+`route_type`, `region`, `service_tier`, `requested_parameters`,
+`input_modalities`), the workspace's BYOK provider slugs, the token counts and
+the instant. It first applies what `schemas.GatewayAuthorizeRequest` does to
+them: `str_strip_whitespace` on every string and list-of-strings field (not on
+`provider` values or the extra `allow_fallbacks`, which the schema keeps as
+sent), and `min_length`/`max_length` on `model` and `service_tier`. Go strips
+only the space; a string with any other byte outside printable ASCII, where
+pydantic's or Python's whitespace could differ from Go's, goes to Python, as
+does a string the schema would refuse. It then answers as `plan_route`, `resolve_candidates` and
+`finish_candidates` do with `rerank` absent: the candidate endpoint ids in
+order and the largest candidate's price at the instant, or Python's refusal
+(status, type and message). `Cost` is
+`endpoint_cost_microdollars_from_candidate` on exact integers.
+`StageDReason` is `_stage_d_eligibility_reason` for given Stage D inputs. Go
+covers the chat resolver for chat models (route types `chat.completions`,
+`responses`, `messages`, `embeddings`, `decide` or none), the model rewrite
+chain above, `provider.order`, `only` and `ignore` with their aliases,
+`allow_fallbacks` (top-level and nested, with their type and conflict
+refusals), `sort` (string or object, with `partition`),
+`data_collection` (with the soft `deny`), `usage` (`byok`, `credits`),
+`jurisdiction` (`us`), `zdr`, input modalities, the gateway-region rule, BYOK
+presence, the `default` service tier and the refusals these make.
+
+Evaluate assumes absent the inputs of `authorize_candidates` that are not in
+its request, and whoever wires the cohort predicate must pass a request
+carrying any of them to Python: `additional_cost_reservation` (a hosted tool or
+media reservation), a partner billing mode (`partner_mode`), a custom model or
+a user-provided model (`custom_model`, `user_model_candidate`,
+`user_model_prices`), `video_resolution` and `video_allowed_providers`, and
+the process-local health re-rank (`rerank`, which a live `ROUTING_STATE`
+supplies; Go answers as an empty one would).
+
+It passes to Python, with the reason, and never guesses:
+
+- An instant outside `[compiled_at, not_after)`; negative token counts.
+- Any context-window input (`ContextPromptTokens` or
+  `ContextCompletionTokens` positive): `candidates_fitting_context` reads
+  `Model.context_length`, which the snapshot does not carry. The routing
+  cases pass zero for both (the generator calls `resolve_candidates` without
+  them), so they never exercise it.
+- Other route types (images, videos, audio, fetch, orchestration
+  sub-routes), and a requested model that is embeddings-only or
+  decision-only (the other resolvers).
+- Any model resolving to a `requested_models` entry, a decision chain, an
+  `alias_targets` target, or an unlisted `trustedrouter/` id; a
+  `system1models/` or `system1models-eu/` model
+  (`canonical_router_model_id` rewrites these to `decisionmodelsio`, which
+  `router_prefix_rewrites` does not carry); an empty or non-printable-ASCII
+  model string.
+- `provider` fields and spellings outside the list above: `min_privacy`,
+  `max_price`, `preferred_max_latency`, `preferred_min_throughput` when not
+  null, `require_parameters` other than `false`, `usage_type`, `billing`,
+  `country` and the other jurisdiction keys, alternative spellings (`prepaid`,
+  `usa`, ...), an unknown field, any non-printable value, and a provider slug
+  the snapshot does not list (Python refuses only slugs its process does not
+  know; see below), and an order, only or ignore list with a null, non-string
+  or blank item (Python validates the whole list, and refuses such an item,
+  before it looks up any name).
+- On `chat.completions`, `responses` or no route type, any non-empty
+  `requested_parameters`: `CAPABILITY_REQUIRED_PARAMETERS` is not in the
+  snapshot.
+- `auto` or `priority` service tier with an OpenAI candidate (priority
+  prices), and `priority` over 272,000 prompt tokens. That bound is
+  `OPENAI_PRIORITY_MAX_PROMPT_TOKENS`, copied into Go; the cases pin it only
+  to the extent that a 1,000-token priority request is refused as unavailable.
+- An estimate, or a `sort=price` headline sum, outside int64.
+
+Against `routing_cases_v1.json` (184 cases), Go answers 116 and refuses 43
+exactly as Python (candidates and order, estimate, service tier and Stage D
+reason; or status, type and message), and passes 25 to Python. The test
+lists each passed case with its reason and fails if Go answers one of them or
+passes any other:
+
+| Passed | Cases | Reason |
+|---|---|---|
+| 4 | `*+confidential` | `provider.min_privacy`: privacy-tier spellings |
+| 4 | `*+max_price` | `provider.max_price`: decimal parsing |
+| 4 | `*+perf` | `provider.preferred_max_latency`: thresholds, and stays on Python |
+| 2 | `required_parameters`, `missing_parameters` | `provider.require_parameters`: its aliases |
+| 1 | `route:images` | the image resolver |
+| 2 | `router_name_then_blank_item`, `router_name_then_null_item` | a malformed provider list |
+| 4 | `*+group_alias` | `google` names `google-vertex`, which the fixture omits |
+| 4 | `*+unknown_provider` | `nope-provider` is not in the snapshot |
+
+The last two rows are the fixture, not the rule. The fixture snapshot lists 13
+providers, but the case generator runs routing against the process's whole
+`catalog_data.PROVIDERS`, which knows `google-vertex`: so a slug missing from
+the snapshot is not evidence Python refuses it, and Go passes it. A live
+snapshot carries every provider, where the doc's "a slug not in `providers`
+is a 400" holds; refusing there needs the fixture made complete first
+(patching `routing.PROVIDERS` in the generator), which changes these eight
+answers.
+
+The generator builds each case's body through `GatewayAuthorizeRequest`, as
+authorize does, so the cases see its stripping and its extra fields; no
+earlier case's answer changed. It gained twelve cases for the top-level
+`allow_fallbacks` (false, true, agreeing, conflicting, not a boolean, the
+nested one not a boolean, after a router name), malformed provider lists after
+a router name, and spaced `region`, `model`, `models` and `route_type`; and
+seven cases (`order_reorders`,
+`order_ceiling_without_fallbacks`, `order_and_only_disjoint`,
+`prepaid_floor_across_models`, `variant_suffix_over_body_sort`,
+`variant_suffix_later_wins`, `latency_table_across_models`) because in the
+fixture provider order, the prepaid floor, a variant suffix's sort, the
+`only` and `order` ceiling and the latency table were tied with what a wrong
+rule would give: mutating any of them in Go left every earlier case passing.
+Still unpinned by any case, for want of a fixture that separates them: the
+single-model condition on `model_provider_preference` (applying it to
+several models orders this fixture the same), availability
+(`catalog_valid_until`, `retired_at`: the compiler clamps the window so no
+fixture endpoint changes inside it), and the rank evidence's age bounds (the
+fixture's evidence spans the whole window).
+
+`tests/fixtures/usage_cost_vectors.json` holds `Cost` to Python on all 29
+vectors (cache reads and writes, tiers, the private tier basis, rounding
+before the sum, the one-microdollar minimum, a rate above 2^53).
+
 ## Found while building
 
 A dated spelling of an alias key that is itself a catalog model escapes the
@@ -384,3 +538,10 @@ e2e model pool without the Confidential privacy requirement (3) or the
 `tinfoil,phala` order that `trustedrouter/confidential` gets. The snapshot
 reproduces Python exactly (that id has its own `requested_models` entry); the
 routing behaviour itself is a separate fix.
+
+`canonical_router_model_id` rewrites `system1models/` and `system1models-eu/`
+to `decisionmodelsio/` and `decisionmodelsio-eu/` before anything else; the
+snapshot's `router_prefix_rewrites` carries only `nyte/`, and
+`tests/test_routing_snapshot.py`'s spellings include no `system1models` id, so
+the compiled alias table and routing disagree there. Go passes those strings
+to Python.
