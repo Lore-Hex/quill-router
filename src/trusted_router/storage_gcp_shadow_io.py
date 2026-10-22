@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextvars
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -65,14 +66,27 @@ def scope_now() -> Scope:
     return scope
 
 
+class SessionUnavailable(RuntimeError):
+    """No owned session is ready; a cycle must not attempt storage."""
+
+
+class SessionCheckoutTimeout(TimeoutError):
+    """The session lane remained occupied through the checkout deadline."""
+
+
 class Sessions:
     """One bounded checkout lane; no SDK pool/maintenance-thread wait escapes."""
-    def __init__(self, database: Any) -> None:
+    def __init__(self, database: Any, *, managed: bool = False) -> None:
         self.database = database
+        self.managed = managed
+        self.boot = str(uuid.uuid4())
+        self.next_recovery = float("-inf")
         self.lock = threading.Lock()
         self.session: Any = None
         self.retired: Any = None
         self.creation_unknown = False
+        self.reconciliation_names: list[str] = []
+        self.reconciliation_token = ""
 
     def retire(self) -> None:
         # Keep the server identity until deletion succeeds. Dropping it here
@@ -80,30 +94,69 @@ class Sessions:
         if self.session is not None:
             self.retired, self.session = self.session, None
 
+    @property
+    def ready(self) -> bool:
+        return not self.creation_unknown and (not self.managed or self.session is not None)
+
+    def recovery_due(self, clock: Callable[[], float]) -> bool:
+        return not self.ready and clock() >= self.next_recovery
+
+    def prepare(self, clock: Callable[[], float], boot: str | None = None) -> bool:
+        """One installation/recovery operation, outside any cycle RPC scope."""
+        if _SCOPE.get() is not None:
+            raise RuntimeError("shadow_session_prepare_in_cycle")
+        if boot is not None and boot != self.boot:
+            if self.managed or self.session is not None or self.retired is not None or self.creation_unknown:
+                raise RuntimeError("shadow_session_boot_changed")
+            self.boot = boot
+        self.managed = True
+        if self.ready or not self.recovery_due(clock):
+            return self.ready
+        try:
+            with rpc_scope(clock()+5, 5, clock):
+                session = self._checkout(create=True)
+                self.put_session(session)
+        except Exception:
+            return False
+        return True
+
     def get_session(self, transaction_type: Any) -> Any:
+        return self._checkout(create=not self.managed)
+
+    def _checkout(self, *, create: bool) -> Any:
         scope = scope_now()
         if not self.lock.acquire(timeout=scope.remaining()):
-            raise TimeoutError("shadow_checkout")
+            raise SessionCheckoutTimeout("shadow_checkout")
         try:
+            # Read readiness while owning the lane, including after recovery
+            # held it until the deadline. No RPC has started at this point.
+            if not create and not self.ready:
+                raise SessionUnavailable("shadow_session_unavailable")
             scope.remaining()
+            if create and self.managed and not self.ready:
+                if scope.clock() < self.next_recovery:
+                    raise SessionUnavailable("shadow_session_recovery_wait")
+                self.next_recovery = scope.clock()+60
             if self.creation_unknown:
-                # CreateSession is not idempotent. A lost reply may have
-                # allocated a session whose identity we cannot clean up.
-                # Quarantine this observer rather than allocate indefinitely.
-                raise RuntimeError("shadow_session_creation_unknown")
+                if not create or not self.managed:
+                    raise SessionUnavailable("shadow_session_creation_unknown")
+                self._reconcile()
             if self.retired is not None:
                 self.retired.delete()
                 self.retired = None
                 scope.remaining()
             if self.session is None:
                 from google.cloud.spanner_v1.session import Session
-                session = Session(self.database, labels={"tr_component": "shadow-v2"})
+                session = Session(self.database, labels={"tr_component": "shadow-v2", "tr_boot": self.boot})
                 self.creation_unknown = True
                 session.create()
                 self.session = session
                 self.creation_unknown = False
             scope.remaining()
             return self.session
+        except SessionUnavailable:
+            self.lock.release()
+            raise
         except Exception:
             self.retire()
             self.lock.release()
@@ -111,6 +164,35 @@ class Sessions:
 
     def put_session(self, session: Any) -> None:
         self.lock.release()
+
+    def _reconcile(self) -> None:
+        """Finish the boot-filtered inventory and cleanup before allocating."""
+        scope = scope_now()
+        try:
+            # The pinned SDK exposes listing on spanner_api, not Database.
+            # One page per recovery window bounds actual ListSessions RPCs.
+            pager = self.database.spanner_api.list_sessions(request=dict(
+                database=self.database.name,
+                filter=f"labels.tr_component:shadow-v2 AND labels.tr_boot:{self.boot}",
+                page_token=self.reconciliation_token))
+            page = next(iter(pager.pages))
+            scope.remaining()
+        except Exception:
+            self.reconciliation_names = []
+            self.reconciliation_token = ""
+            raise
+        self.reconciliation_names.extend(session.name for session in page.sessions)
+        self.reconciliation_token = page.next_page_token
+        if self.reconciliation_token:
+            raise SessionUnavailable("shadow_session_inventory_incomplete")
+        names, self.reconciliation_names = self.reconciliation_names, []
+        held = self.session.name if self.session is not None else None
+        for name in names:
+            if name != held:
+                self.database.spanner_api.delete_session(name=name)
+                scope.remaining()
+        self.retired = None
+        self.creation_unknown = False
 
 
 def owned_database(database: Any) -> Any:

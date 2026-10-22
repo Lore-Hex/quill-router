@@ -10,6 +10,7 @@ it at the other. The instant that priced the hold is now the one stored.
 from __future__ import annotations
 
 import datetime as real_dt
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +22,8 @@ from tests.test_gateway_authorize_spanner_operations import (
     _request,
     _seed_typed_gateway_store,
 )
-from trusted_router.catalog import effective_endpoint
+from trusted_router.catalog import MODELS, effective_endpoint
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import PHALA_JULY_2026_EFFECTIVE_AT
@@ -32,6 +34,16 @@ from trusted_router.storage import STORE
 _MODEL = "qwen/qwen-2.5-7b-instruct"
 _HOST = "phala"
 _BEFORE = PHALA_JULY_2026_EFFECTIVE_AT - real_dt.timedelta(seconds=1)
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch) -> ModelEndpoint:
+    """The model on the host whose price steps. The hold covers a million
+    prompt tokens, so the per-million price is the bill; routing sends a
+    request only to a model whose context window holds it, so the model gets
+    a window that does."""
+    route = serve_on_fixture_route(monkeypatch, _MODEL, _HOST, author="qwen")
+    monkeypatch.setitem(MODELS, _MODEL, replace(MODELS[_MODEL], context_length=1_048_576))
+    return route
 
 
 def _iso(instant: real_dt.datetime) -> str:
@@ -68,7 +80,7 @@ def test_the_typed_authorization_is_stamped_with_the_instant_that_priced_it(
 def test_the_legacy_authorization_is_stamped_with_the_instant_that_priced_it(
     monkeypatch: pytest.MonkeyPatch, client: TestClient,
 ) -> None:
-    serve_on_fixture_route(monkeypatch, _MODEL, _HOST, author="qwen")
+    _serve(monkeypatch)
     key = _new_key(client)
     _authorize_at(monkeypatch, _BEFORE)
 
@@ -82,7 +94,7 @@ def test_the_legacy_authorization_is_stamped_with_the_instant_that_priced_it(
 def test_a_price_change_between_two_clock_readings_does_not_split_the_bill(
     monkeypatch: pytest.MonkeyPatch, client: TestClient,
 ) -> None:
-    route = serve_on_fixture_route(monkeypatch, _MODEL, _HOST, author="qwen")
+    route = _serve(monkeypatch)
     before = effective_endpoint(route, at=_BEFORE).prompt_price_microdollars_per_million_tokens
     after = effective_endpoint(route, at=PHALA_JULY_2026_EFFECTIVE_AT).prompt_price_microdollars_per_million_tokens
     # Control: the price the hold was estimated at is not the price today.

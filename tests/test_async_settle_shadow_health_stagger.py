@@ -65,6 +65,7 @@ def test_incumbent_uses_only_recent_accepted_publication(monkeypatch, gap):
 def test_follower_committed_claim_is_one_measured_snapshot(sdk_database, monkeypatch):  # noqa: F811
     svc, job, db, clock, sdk_sleeps = native_owner(sdk_database)
     svc.incumbent_slot = None
+    svc.observer.health = {"body": {"slot": job.slot-1}}
     db.rows = [Row.build(CLAIM_KIND, "local/publish", claim("other-boot", job.slot)).body.decode()]
     @contextmanager
     def snapshot():

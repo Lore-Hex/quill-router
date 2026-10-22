@@ -14,7 +14,7 @@ PATHS = (
     APP, "scripts/lightning", "docs/bitcoin-node.md",
     "docs/lightning-receiving-node.md", "docs/lightning-funding-production.md",
     "docs/lightning-btcpay.md", "docs/lightning-liquidity.md", "docs/lightning-lexe.md",
-    ".github/workflows/lightning-experiment.yml", "tsconfig.json",
+    ".github/workflows/lightning-experiment.yml", "tsconfig.json", ".node-version",
 )
 BLOCKED = {".private", ".env", ".venv", "node_modules", "__pycache__", "test-results"}
 SUFFIXES = {".db", ".sqlite", ".pem", ".key", ".macaroon", ".wallet", ".pyc"}

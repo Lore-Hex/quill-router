@@ -107,6 +107,9 @@ class ErrorType(StrEnum):
     WORKSPACE_UNKNOWN = "workspace_unknown"
     SETTLEMENT_CLAMPED = "settlement_clamped"
     MODEL_NOT_SUPPORTED = "model_not_supported"
+    # No candidate model's context window holds the request's estimated
+    # prompt plus its max_tokens. The string is OpenAI's error code for it.
+    CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
     PROVIDER_AUTH_ERROR = "provider_auth_error"
     PROVIDER_ERROR = "provider_error"
     PROVIDER_RATE_LIMITED = "provider_rate_limited"

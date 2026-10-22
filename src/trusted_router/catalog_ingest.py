@@ -266,6 +266,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "near-ai",
         "phala",
         "telnyx",
+        "tinfoil",
         "together",
         "wafer",
         "engy",

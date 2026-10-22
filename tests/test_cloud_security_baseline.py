@@ -149,6 +149,12 @@ def test_gcp_workflow_installs_monitoring_alpha_component() -> None:
     assert "install_components: alpha" in body
 
 
+def test_gcp_baseline_checks_the_public_client_ip_trust_boundary() -> None:
+    body = _executable_lines(GCP)
+    assert 'public_surface_edge.sh" check' in body
+    assert 'drift "public client-IP trust boundary' in body
+
+
 def test_gcp_workflow_does_not_require_optional_security_label() -> None:
     body = WORKFLOW.read_text()
     assert 'LABEL_ARGS=()' in body

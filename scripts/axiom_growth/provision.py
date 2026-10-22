@@ -28,8 +28,14 @@ def source_filter():
 
 
 def update_source_filter():
+    expected = source_filter()
+    current = json.loads(run(['gcloud', 'logging', 'sinks', 'describe', 'tr-growth-source',
+                              '--project='+PROJECT, '--format=json']))
+    if current.get('filter') == expected:
+        print(json.dumps({'unchanged': 'tr-growth-source', 'exact_events': len(m.BROWSER_EVENTS | m.CONVERSION_EVENTS)}))
+        return
     run(['gcloud', 'logging', 'sinks', 'update', 'tr-growth-source',
-         '--project='+PROJECT, '--log-filter='+source_filter()])
+         '--project='+PROJECT, '--log-filter='+expected])
     print(json.dumps({'updated': 'tr-growth-source', 'exact_events': len(m.BROWSER_EVENTS | m.CONVERSION_EVENTS)}))
 
 

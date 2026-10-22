@@ -31,8 +31,16 @@ The public contract is at `/docs#model-capabilities`.
   privacy predicate, limited to chat models. Confidential routing requires
   `provider.min_privacy: "confidential"`. Aliases and hidden orchestration
   omit the model-level object because their subcalls and selected models vary.
-- Default routing does not filter by parameters. With
-  `provider.require_parameters: true`, routing keeps only routes whose own
+- Default routing filters by the parameters that decide what kind of
+  response comes back (`routing.CAPABILITY_REQUIRED_PARAMETERS`): `tools` and
+  `tool_choice` need tool calling, `response_format` needs structured output.
+  A route is skipped only on the catalog's evidence: for tool calling, it does
+  not declare `tools` while another route of its model does; for either, a
+  routing pool picked a model that declares the capability on no route and
+  not on its own row. A model the caller names keeps its routes when the
+  catalog says nothing either way. No route left is a 400 naming the
+  parameter. Other parameters are filtered only with
+  `provider.require_parameters: true`, which keeps only routes whose own
   `supported_parameters` include every parameter sent. Check per-route values
   first (endpoint discovery's `capabilities` and `supported_parameters`),
   because some routes declare less than the model supports.

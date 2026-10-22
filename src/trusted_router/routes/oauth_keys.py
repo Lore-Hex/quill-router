@@ -39,7 +39,7 @@ from trusted_router.types import ErrorType
 from trusted_router.verification import enriched_identity_payload, identity_payload
 from trusted_router.views import render_template
 
-PKCE_METHODS = {"S256", "plain"}
+PKCE_METHODS = {"S256"}
 OAUTH_CONFORMANT_PKCE_METHODS = {"S256"}
 OAUTH_AUTHORIZATION_ENDPOINT_PATH = "/auth"
 OAUTH_KEY_EXCHANGE_ENDPOINT_PATH = "/auth/keys"
@@ -505,18 +505,14 @@ def _is_native_callback(callback_url: str) -> bool:
     )
 
 
-def _pkce_method(raw: Any, *, has_challenge: bool) -> str | None:
+def _pkce_method(raw: Any, *, has_challenge: bool) -> str:
+    if not has_challenge:
+        raise api_error(400, "code_challenge is required for PKCE S256", ErrorType.BAD_REQUEST)
     if raw in {None, ""}:
-        return "S256" if has_challenge else None
+        return "S256"
     method = str(raw)
     if method not in PKCE_METHODS:
-        raise api_error(400, "code_challenge_method must be S256 or plain", ErrorType.BAD_REQUEST)
-    if method and not has_challenge:
-        raise api_error(
-            400,
-            "code_challenge is required when code_challenge_method is set",
-            ErrorType.BAD_REQUEST,
-        )
+        raise api_error(400, "code_challenge_method must be S256", ErrorType.BAD_REQUEST)
     return method
 
 
@@ -626,8 +622,9 @@ def _key_label(raw: Any, callback_url: str) -> str:
 
 
 def _verify_pkce(code: OAuthAuthorizationCode, body: dict[str, Any]) -> None:
-    if not code.code_challenge:
-        return
+    # Also reject legacy codes/consents issued before S256 became mandatory.
+    if not code.code_challenge or code.code_challenge_method != "S256":
+        raise api_error(400, "Authorization code requires PKCE S256; authorize again", ErrorType.BAD_REQUEST)
     supplied_method = body.get("code_challenge_method")
     if supplied_method not in {None, ""} and str(supplied_method) != code.code_challenge_method:
         raise api_error(
@@ -636,19 +633,13 @@ def _verify_pkce(code: OAuthAuthorizationCode, body: dict[str, Any]) -> None:
     verifier = str(body.get("code_verifier") or "")
     if not verifier:
         raise api_error(400, "code_verifier is required", ErrorType.BAD_REQUEST)
-    if code.code_challenge_method == "plain":
-        expected = verifier
-    else:
-        try:
-            verifier_bytes = verifier.encode("ascii")
-        except UnicodeEncodeError as exc:
-            raise api_error(400, "code_verifier must be ASCII", ErrorType.BAD_REQUEST) from exc
-        expected = (
-            base64.urlsafe_b64encode(hashlib.sha256(verifier_bytes).digest())
-            .decode("ascii")
-            .rstrip("=")
-        )
-    if expected != code.code_challenge:
+    try:
+        verifier.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise api_error(400, "code_verifier must be ASCII", ErrorType.BAD_REQUEST) from exc
+    if not CODE_VERIFIER_RE.fullmatch(verifier):
+        raise api_error(400, "code_verifier must be 43-128 RFC 7636 characters", ErrorType.BAD_REQUEST)
+    if not _pkce_matches(code, verifier):
         raise api_error(403, "Invalid code_verifier", ErrorType.FORBIDDEN)
 
 
@@ -819,7 +810,10 @@ def _oauth_error(error: str, description: str, *, status: int = 400, headers: di
 
 def _pkce_matches(code: OAuthAuthorizationCode, verifier: str) -> bool:
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
-    return hmac.compare_digest(expected, str(code.code_challenge or ""))
+    # compare_digest(str, str) raises for non-ASCII input. A malformed stored
+    # challenge is an authentication failure, not an internal server error.
+    challenge = str(code.code_challenge or "")
+    return challenge.isascii() and hmac.compare_digest(expected, challenge)
 
 
 def _rate_limit_exchange(request: Request, *, rfc: bool) -> JSONResponse | None:

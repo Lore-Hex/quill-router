@@ -82,22 +82,41 @@ client = OpenAI(base_url="https://api.trustedrouter.com/v1", api_key="sk-tr-v1-.
 <summary><strong>For the nerds: how the privacy is provable</strong></summary>
 
 TrustedRouter's gateway runs inside GCP Confidential Space. The platform signs
-a measurement of the running binary; you
-compare that hash to this repo. If they match, you *know* — not assume — that
-the code handling your prompts is the code you can read here, and that it never
-writes your prompts to disk.
+a measurement of the running container. Verify that signed evidence and compare
+its image digest with the published release measurement. Source review and the
+release build provenance establish what that measured image does; a matching
+digest alone does not prove the absence of bugs or logging.
 
-Verify it yourself in 60 seconds, no account:
+Inspect the GCP evidence, no account:
 
 ```bash
 NONCE=$(openssl rand -hex 16)
-curl -s "https://api.trustedrouter.com/attestation?nonce=$NONCE" | jq .
-#   eat_nonce     your nonce  (replay-protected)
-#   image_digest  SHA-256 of the running container
-#   pcrs          boot-time platform measurements
-# Compare image_digest to the published artifact at
-# https://trustedrouter.com/security — match = the running code is this repo.
+curl --fail --silent --show-error \
+  "https://api-us-central1.quillrouter.com/attestation?nonce=$NONCE" \
+  --output attestation.jwt
+# GCP returns a raw Google-signed JWT, not a JSON response.
+# Decoded claims include eat_nonce and submods.container.image_digest.
+# GCP evidence has no pcrs field; PCRs belong to AWS Nitro evidence.
 ```
+
+Saving or decoding a JWT is **not verification**. Use the
+[attestation verifier](https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/tools/verify-attestation.py)
+from a reviewed checkout of `quill-cloud-proxy` to verify the issuer/signature,
+fresh nonce, TLS certificate/exporter binding, and expected release measurement.
+For a GCP endpoint, run from that checkout:
+
+```bash
+DIGESTS=$(curl --fail --silent --show-error \
+  https://trust.trustedrouter.com/trust/accepted-image-digests-gcp.txt)
+test -n "$DIGESTS" && uv run --script tools/verify-attestation.py \
+  --api-host api-us-central1.quillrouter.com --expect-digest "$DIGESTS"
+```
+
+The verifier fetches fresh evidence on the TLS connection it verifies. That
+check does not attest a later, separate `curl` or SDK connection. These examples
+use the published US Central GCP hostname to select the GCP evidence format. The global
+endpoint can select another cloud; use its cloud-specific verification policy
+and measurements from [the trust site](https://trust.trustedrouter.com/).
 
 | | trust model |
 |---|---|

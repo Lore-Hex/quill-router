@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.test_oauth_key_delegation import _pkce_challenge
 from trusted_router.app_markup_billing import (
     app_markup_microdollars,
     app_markup_microdollars_from_charge,
@@ -36,7 +37,7 @@ def _mint_app_key(
     assert created.status_code == 201, created.text
     consent_page = client.get(
         "/auth",
-        params={"client_id": app_id, "callback_url": "https://app.example/callback"},
+        params={"client_id": app_id, "callback_url": "https://app.example/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
     assert consent_page.status_code == 200, consent_page.text
 
@@ -50,7 +51,7 @@ def _mint_app_key(
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     assert exchanged.status_code == 200, exchanged.text
     return user, str(exchanged.json()["key"])
 
