@@ -26,8 +26,11 @@ def index_panel() -> str:
 
 def render_nyte(
     page: str = "home", *, content: str | None = None, extra_head: str = "",
-    image_url: str = "https://nytokenexchange.com/assets/og-new-york.png",
+    image_url: str | None = None,
 ) -> str:
+    if image_url is None:
+        image_version = hashlib.sha256((HERE / "social-images/og-new-york.png").read_bytes()).hexdigest()[:12]
+        image_url = "https://nytokenexchange.com/assets/og-new-york.png?v=" + image_version
     path, title, description = {
         "home": ("/", "New York Token Exchange: enterprise AI from competing providers", "Every major model from competing providers, through one API. Set your privacy and price rules once, and check the proof yourself."),
         "api": ("/confidential", "Confidential API · New York Token Exchange", "Frontier AI for sensitive work. Confidential compute, end-to-end encryption and live evidence."),
