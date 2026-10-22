@@ -39,7 +39,7 @@ def test_lightning_build_image_includes_october_2026_security_fixes() -> None:
 
 
 def test_runtime_updates_trigger_all_consuming_workflows() -> None:
-    for name in ("lightning-experiment", "token-exchange-sites"):
+    for name in ("token-exchange-sites",):
         workflow = yaml.safe_load((ROOT / f".github/workflows/{name}.yml").read_text())
         triggers = workflow.get("on", workflow.get(True))
         for event in ("push", "pull_request"):

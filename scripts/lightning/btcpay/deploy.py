@@ -181,6 +181,10 @@ def publish(operator: Operator, output: Path) -> None:
 
 
 def main() -> None:
+    raise SystemExit("LightningRouter was retired on 2026-10-22. Deployment is disabled.")
+
+
+def _historical_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=("provision", "install", "publish"))
     parser.add_argument("--account", required=True)
