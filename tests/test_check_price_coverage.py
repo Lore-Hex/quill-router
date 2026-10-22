@@ -83,8 +83,8 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "z-ai/glm-5.2",
     "sakana-ai/fugu-ultra-v1.1",
     "sakana-ai/sakana-namazu-v1.0",
-    "system1models/s1-fast",
-    "system1models-eu/s1-fast",
+    "decisionmodelsio/s1-fast",
+    "decisionmodelsio-eu/s1-fast",
 }
 _NEW_AUTOMATIC_FEED_ALIASES = {
     "deepseek-v4-flash",

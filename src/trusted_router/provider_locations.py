@@ -107,7 +107,7 @@ PROVIDER_INFERENCE_LOCATIONS = {
             evidence="Public API and regional documentation; authenticated tier probes",
             reviewed_on="2026-10-09",
             sources=(("Regional processing and pricing", "https://decisionmodels.io/models"), ("Processing locations", "https://decisionmodels.io/legal/subprocessors"), ("API contract", "https://decisionmodels.io/openapi.json")),
-        ) for slug, tier in (("system1models", "global"), ("system1models-eu", "eu"))
+        ) for slug, tier in (("decisionmodelsio", "global"), ("decisionmodelsio-eu", "eu"))
     },
     "lyceum": InferenceLocations(
         scope="Lyceum documents model-specific serving locations; its German headquarters is not a fleet-wide EU residency guarantee.",

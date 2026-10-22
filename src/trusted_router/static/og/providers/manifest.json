@@ -809,24 +809,6 @@
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
-  "system1models": {
-    "card_version": 2,
-    "model_count": 5,
-    "name": "Decision Models (Global)",
-    "privacy": "Policy documented",
-    "route_count": 5,
-    "route_mode": "Prepaid",
-    "slug": "system1models"
-  },
-  "system1models-eu": {
-    "card_version": 2,
-    "model_count": 5,
-    "name": "Decision Models (EU)",
-    "privacy": "Policy documented",
-    "route_count": 5,
-    "route_mode": "Prepaid",
-    "slug": "system1models-eu"
-  },
   "telluvian": {
     "card_version": 2,
     "model_count": 0,
@@ -997,5 +979,23 @@
     "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "zro"
+  },
+  "decisionmodelsio": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "Decision Models (Global)",
+    "privacy": "Policy documented",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "decisionmodelsio"
+  },
+  "decisionmodelsio-eu": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "Decision Models (EU)",
+    "privacy": "Policy documented",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "decisionmodelsio-eu"
   }
 }

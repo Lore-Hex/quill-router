@@ -1066,8 +1066,8 @@ def _supplemental_provider_models_and_endpoints(
     endpoints: dict[str, ModelEndpoint] = {}
     for provider_slug in (
         "abliterate",
-        "system1models",
-        "system1models-eu",
+        "decisionmodelsio",
+        "decisionmodelsio-eu",
         "novita",
         "nebius",
         "minimax",
@@ -1155,7 +1155,7 @@ def _supplemental_provider_models_and_endpoints(
         "meta",
         "openrouter",
     ):
-        if held_decisions_only and provider_slug not in {"system1models", "system1models-eu"}:
+        if held_decisions_only and provider_slug not in {"decisionmodelsio", "decisionmodelsio-eu"}:
             continue
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
@@ -1214,7 +1214,7 @@ def _supplemental_provider_models_and_endpoints(
             decision = raw_model.get("model_type") == "decision"
             if decision and (
                 not (
-                    (provider_slug in {"system1models", "system1models-eu"} and model_id.startswith(provider_slug + "/s1-"))
+                    (provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"} and model_id.startswith(provider_slug + "/s1-"))
                     or (provider_slug == "regolo" and model_id == "cloudflare/clef-flash" and upstream_id == "clef-flash")
                 )
                 or not decision_manifest_price_is_valid(raw_model)

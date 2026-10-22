@@ -118,14 +118,13 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
         description="Inference integration pending valid credentials and verified current pricing.",
         resources=(("Documentation", "https://hyperbolic.ai/docs/overview/overview"),),
     ),
-    # Keep public IDs and regional credentials stable across the provider rebrand.
-    "system1models": ProviderBrand(
+    "decisionmodelsio": ProviderBrand(
         "https://decisionmodels.io/",
-        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The Global route uses the peer-to-peer tier.",
+        description="Formerly System1 Models. Models use the decisionmodelsio namespace. The Global route uses the peer-to-peer tier.",
     ),
-    "system1models-eu": ProviderBrand(
+    "decisionmodelsio-eu": ProviderBrand(
         "https://decisionmodels.io/eu",
-        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The EU route remains EU-only.",
+        description="Formerly System1 Models. Models use the decisionmodelsio-eu namespace. The EU route remains EU-only.",
     ),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
     "upstage": ProviderBrand("https://www.upstage.ai/"),

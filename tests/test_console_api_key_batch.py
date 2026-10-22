@@ -47,7 +47,7 @@ def _console_client(store: Any, email: str) -> tuple[TestClient, Any, Any]:
 
 
 @pytest.mark.parametrize("key_count", [0, 1, 10])
-def test_console_api_key_page_uses_two_read_rpcs_regardless_of_key_count(
+def test_console_api_key_page_uses_four_read_rpcs_regardless_of_key_count(
     key_count: int,
 ) -> None:
     store, database = make_fake_store()
@@ -68,10 +68,15 @@ def test_console_api_key_page_uses_two_read_rpcs_regardless_of_key_count(
         response = client.get("/console/api-keys")
 
         assert response.status_code == 200
-        assert database.snapshot_execute_sql_calls - before_reads == 2
-        assert database.snapshot_calls[before_snapshots:] == [{}, {}]
-        assert "/* auth_session_context */" in database.snapshot_sql[-2]
-        assert "/* console_api_keys */" in database.snapshot_sql[-1]
+        # Auth + batched keys, then the header balance's metadata + typed shards.
+        # The balance uses one consistent snapshot and never fans out per key.
+        assert database.snapshot_execute_sql_calls - before_reads == 4
+        assert database.snapshot_calls[before_snapshots:] == [{}, {}, {"multi_use": True}]
+        assert "/* auth_session_context */" in database.snapshot_sql[-4]
+        assert "/* console_api_keys */" in database.snapshot_sql[-3]
+        assert "tr_entities" in database.snapshot_sql[-2]
+        assert "tr_credit_balance" in database.snapshot_sql[-1]
+        assert "workspace_id=@pk" in database.snapshot_sql[-1]
     finally:
         client.close()
         configure_store(InMemoryStore())

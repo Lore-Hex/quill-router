@@ -56,7 +56,7 @@ def test_held_perplexity_tariff_is_available_only_for_settlement() -> None:
         endpoint.usage_type == "Credits"
         and (
             endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
-            or endpoint.provider in {"system1models", "system1models-eu"}
+            or endpoint.provider in {"decisionmodelsio", "decisionmodelsio-eu"}
         )
         for endpoint in HELD_PREPAID_SETTLEMENT_ENDPOINTS.values()
     )

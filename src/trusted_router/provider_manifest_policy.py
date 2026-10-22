@@ -57,8 +57,8 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "recraft",
         "relace",
         "stepfun",
-        "system1models",
-        "system1models-eu",
+        "decisionmodelsio",
+        "decisionmodelsio-eu",
     }
 )
 PROVIDER_MANIFEST_MAX_AGE_DAYS = 14
@@ -84,7 +84,7 @@ def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
     return (
         isinstance(model_id, str)
         and (
-            re.fullmatch(r"system1models(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+            re.fullmatch(r"decisionmodelsio(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
             or (model_id == "cloudflare/clef-flash" and row.get("upstream_id") == "clef-flash")
         )
         and (
@@ -253,7 +253,7 @@ def provider_manifest_canary_quarantine_valid_until(
         if row.get("routable") is not False:
             return EXPIRED_PROVIDER_MANIFEST
         allowed_reasons = _CANARY_QUARANTINE_REASONS
-        if provider_slug in {"system1models", "system1models-eu"}:
+        if provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"}:
             allowed_reasons |= DECISION_CONTRACT_HOLDS
         if row.get("routable_reason") not in allowed_reasons:
             return EXPIRED_PROVIDER_MANIFEST

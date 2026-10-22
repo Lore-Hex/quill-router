@@ -514,8 +514,8 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
     ("boundless", boundless.URL, ("BOUNDLESS_API_KEY",), boundless.canonical_model_id),
     ("zro", zro.URL, ("ZRO_API_KEY",), zro.canonical_model_id),
     ("byteplus", byteplus.URL, ("BYTEPLUS_API_KEY",), byteplus.canonical_model_id),
-    ("system1models", system1models.URL, (), system1models.canonical_model_id),
-    ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
+    ("decisionmodelsio", system1models.URL, (), system1models.canonical_model_id),
+    ("decisionmodelsio-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
 )
 
 # Providers on the direct OpenAI catalog adapter. Their credentials are
