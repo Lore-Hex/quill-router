@@ -232,10 +232,6 @@ _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
     # other backends for these exact models. Remove after verified recovery.
     "deepseek/deepseek-v4.1-flash": {"nvidia-nim": 3_000},
     "qwen/qwen3-235b-a22b-thinking-2507": {"chutes": 3_000},
-    # Jev's vendor before the relay: one third party instead of two, and a
-    # measured 238 ms median against ~330 ms through Vercel (2026-09-19, the
-    # gateway's labeled ticket set). The relay stays as the failover.
-    "typesafe-ai/jev": {"typesafe": -1},
 }
 
 _CandidateT = TypeVar("_CandidateT")
