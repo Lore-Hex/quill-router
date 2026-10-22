@@ -237,34 +237,29 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
 .ls-win{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ver-tx)}
 
 
-.duty{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--rule);border-radius:2px;background:var(--panel)}
-.duty>div{padding:28px 28px 30px}
-.duty>div+div{border-left:1px solid var(--rule)}
-.duty h3{font-size:17px;margin-bottom:16px}
-.duty ul{list-style:none;margin:0;padding:0}
-.duty li{position:relative;padding:10px 0 10px 26px;color:var(--t2);border-top:1px solid var(--rule-soft)}
-.duty li::before{content:"✓";position:absolute;left:2px;color:var(--mint)}
 
 .sec-lede{margin-top:16px}
-.oss-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:72px;align-items:end}
-.oss-grid .body{color:var(--t2);margin:20px 0 8px;max-width:32em}
+.oss-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:72px;align-items:center}
+.oss-grid .body{color:var(--t2);margin:20px 0 0;max-width:32em}
+.oss-grid .btns{margin-top:32px}
+.oss-layers{display:flex;flex-direction:column;gap:10px}
+.oss-layer{padding:22px 24px;border:1px solid var(--rule);border-radius:2px;background:var(--panel)}
+.oss-label{font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mint);margin-bottom:12px}
+.oss-layer:last-child .oss-label{color:var(--t3)}
+.oss-items{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:10px 24px}
+.oss-items li{display:inline-flex;align-items:center;gap:10px;font-size:16px;line-height:1.6;color:var(--t1)}
+.oss-icon{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;color:var(--strong)}
+.oss-layer-stack{margin:0 -12px;border-color:var(--strong);background:var(--raised)}
+.oss-layer-stack .oss-label{margin-bottom:6px}
+.oss-layer-stack p{margin:0 0 14px;font-size:14px;line-height:1.5;color:var(--t3)}
+.oss-layer-stack .oss-icon{color:var(--mint)}
 .vsteps{list-style:none;margin:24px 0 0;padding:0;counter-reset:v}
 .vsteps li{counter-increment:v;display:grid;grid-template-columns:44px minmax(0,1fr);padding:20px 0;border-top:1px solid var(--rule)}
 .vsteps li:last-child{border-bottom:1px solid var(--rule)}
 .vsteps li::before{content:counter(v);grid-row:span 2;display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--strong);border-radius:50%;font:500 13px var(--mono);color:var(--t1)}
 .vsteps b{font-weight:550;font-size:18px;letter-spacing:-.015em}
 .vsteps span{color:var(--t2);margin-top:4px}
-.oss-card{background:var(--panel);border:1px solid var(--rule);border-radius:2px}
-.oc-top{padding:32px}
-.oc-top h3{font-size:22px;margin-bottom:10px}
-.oc-top p{color:var(--t2);margin-bottom:14px}
-.oc-list{list-style:none;margin:0 0 28px;padding:0}
-.oc-list li{position:relative;padding:10px 0 10px 26px;color:var(--t2);border-top:1px solid var(--rule-soft)}
-.oc-list li:last-child{border-bottom:1px solid var(--rule-soft)}
-.oc-list li::before{content:"✓";position:absolute;left:2px;color:var(--mint)}
-.oss-grid .duty{margin-top:32px}
 .fine{margin-top:28px;font-size:14px;color:var(--t3)}
-.oss-card .duty{border:0;border-radius:0;background:none}
 .idx-body{color:var(--t2);margin:18px 0 32px;max-width:28em}
 .idx{background:var(--panel);border:1px solid var(--rule);border-radius:2px}
 .idx-hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding:22px 24px;border-bottom:1px solid var(--rule)}
@@ -340,10 +335,12 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
   .nav a.on{box-shadow:none}
   .menu-btn{display:inline-flex}
   .hdr .btn-sm{display:none}
-  .duty{grid-template-columns:1fr}
-  .duty>div+div{border-left:0;border-top:1px solid var(--rule)}
 }
 @media (max-width:600px){
+  .oss-grid .btn{white-space:normal;text-align:center}
+  .oss-layer{padding:18px 20px}
+  .oss-layer-stack{margin:0}
+  .oss-items{gap:8px 18px}
   :root{--gutter:20px;--header:64px}
   body{font-size:16px}
   section{padding:64px 0}
@@ -386,8 +383,6 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
   .idx-row .chg{display:none}
   .idx-hd{padding:18px 16px}
   .idx-big{font-size:28px}
-  .oc-top{padding:24px 20px}
-  .oc-top .btns .btn{flex:1 1 100%}
   .idx-hd{flex-direction:column;align-items:flex-start}
   details p{padding-right:8px}
   summary{font-size:17px}
