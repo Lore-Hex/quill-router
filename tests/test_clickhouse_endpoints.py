@@ -170,6 +170,33 @@ def test_errors_that_every_replica_shares_are_raised_without_failover(first) -> 
     assert _hosts(seen) == ["lb.internal"]
 
 
+def test_small_public_snapshot_fails_over_on_server_disconnect() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "lb.internal":
+            raise httpx.RemoteProtocolError("server disconnected", request=request)
+        return httpx.Response(200, json={"data": [{"payload": '{"generated_at":"now"}'}]})
+
+    client = _client(f"{LB},{REPLICA_2}", handler)
+    assert client.public_snapshot("leaderboard") == {"generated_at": "now"}
+    assert _hosts(seen) == ["lb.internal", "replica-2.internal"]
+    assert seen[0].content == seen[1].content
+    assert seen[0].url.params == seen[1].url.params
+
+
+def test_public_snapshot_disconnect_without_a_healthy_replica_is_not_hidden() -> None:
+    seen: list[httpx.Request] = []
+    client = _client(f"{LB},{REPLICA_2}", _router({
+        "lb.internal": httpx.RemoteProtocolError,
+        "replica-2.internal": httpx.RemoteProtocolError,
+    }, seen))
+    with pytest.raises(httpx.RemoteProtocolError):
+        client.public_snapshot("leaderboard")
+    assert _hosts(seen) == ["lb.internal", "replica-2.internal"]
+
+
 def test_every_endpoint_is_tried_once_in_order_then_the_last_error_is_raised() -> None:
     seen: list[httpx.Request] = []
     behaviour = {

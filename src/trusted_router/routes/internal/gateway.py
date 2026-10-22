@@ -3500,40 +3500,38 @@ def _is_web_search_restricted_provider(provider: Any) -> bool:
 
 
 def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
-    """Accumulate successful provider failovers in Sentry as warnings.
-
-    Each event means one provider route failed pre-output and the attested
-    gateway routed around it — harmless individually, invisible in aggregate
-    until now. A model+provider pair that accumulates these is a dead default
-    route (GMI/nemotron 2026-07-15, GMI/kimi-k3 2026-07-16): alert on volume,
-    then demote the route (see _PROVIDER_UNSERVED_CREDITS_MODELS).
-    Grouping: message embeds model + failed providers, so each pair gets its
-    own Sentry issue whose event count IS the accumulation signal.
-    """
+    """Keep every recovery in logs and bounded representative warnings in Sentry."""
     try:
-        import sentry_sdk
+        from trusted_router.sentry_config import capture_recovered_failover_warning
 
         failures = [f for f in (getattr(body, "route_failures", None) or []) if isinstance(f, str)][
             :8
         ]
         providers = sorted({f.split("|", 1)[0] for f in failures if f})
         model = body.selected_model or body.model or "unknown"
-        with sentry_sdk.push_scope() as scope:
-            scope.set_level("warning")
-            scope.set_tag("failover.model", model[:100])
-            if providers:
-                scope.set_tag("failover.failed_providers", ",".join(providers)[:200])
-            scope.set_context(
-                "route_failover",
-                {
-                    "fallbacks": getattr(body, "route_fallbacks", None),
-                    "failures": failures,
-                    "served_by": body.selected_endpoint or body.endpoint,
-                },
-            )
-            sentry_sdk.capture_message(
-                f"provider failover: {model} routed around {','.join(providers) or 'unknown'}"
-            )
+        failed_providers = ",".join(providers) or "unknown"
+        # Do not put raw upstream errors in logs. These fixed routing fields
+        # preserve the volume signal even when repeat Sentry events are sampled.
+        logger.info("gateway.provider_failover", extra={
+            "failover_model": model[:100],
+            "failed_providers": failed_providers[:200],
+            "fallbacks": getattr(body, "route_fallbacks", None),
+            "served_by": body.selected_endpoint or body.endpoint,
+        })
+        capture_recovered_failover_warning({
+            "level": "warning",
+            "message": f"provider failover: {model} routed around {failed_providers}",
+            "fingerprint": ["recovered-provider-failover", model[:100], failed_providers[:200]],
+            "tags": {
+                "failover.model": model[:100],
+                "failover.failed_providers": failed_providers[:200],
+            },
+            "contexts": {"route_failover": {
+                "fallbacks": getattr(body, "route_fallbacks", None),
+                "failures": failures,
+                "served_by": body.selected_endpoint or body.endpoint,
+            }},
+        })
     except Exception:  # noqa: BLE001 - observability must never break settlement
         logger.warning("route fallback sentry report failed", exc_info=True)
 

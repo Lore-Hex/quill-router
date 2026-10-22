@@ -272,7 +272,8 @@
         "logprobs",
         "top_logprobs"
       ],
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-alias-unavailable",
       "input_token_price_per_m": 650000,
       "output_token_price_per_m": 750000,
       "missing_since": "2026-10-20"
@@ -353,7 +354,8 @@
         "logprobs",
         "top_logprobs"
       ],
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-alias-unavailable",
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 650000,
       "missing_since": "2026-10-20"

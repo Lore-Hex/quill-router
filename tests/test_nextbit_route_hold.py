@@ -13,15 +13,16 @@ MODEL = "thedrummer/unslopnemo-12b-v4.1"
 NATIVE_ID = "unslopnemo:12b"
 
 
-def test_unavailable_nextbit_alias_is_not_routable() -> None:
+@pytest.mark.parametrize("model", [MODEL, "undi95/remm-slerp-l2-13b", "sao10k/l3.3-70b-euryale-v2.3"])
+def test_unavailable_nextbit_alias_is_not_routable(model: str) -> None:
     assert not any(
-        endpoint.provider == "nextbit" and endpoint.model_id == MODEL
+        endpoint.provider == "nextbit" and endpoint.model_id == model
         for endpoint in MODEL_ENDPOINTS.values()
     )
-    assert provider_model_operator_held("nextbit", MODEL)
+    assert provider_model_operator_held("nextbit", model)
     # The hold is this route's alone: the model elsewhere, and nextbit's other
     # models, are not held.
-    assert not provider_model_operator_held("novita", MODEL)
+    assert not provider_model_operator_held("novita", model)
     assert not provider_model_operator_held("nextbit", "qwen/qwen3-14b")
 
 
@@ -33,12 +34,15 @@ def test_nextbit_manifest_records_alias_hold() -> None:
 
 
 @pytest.mark.parametrize("old_state", ["routable", "failed-canary", "delisted"])
+@pytest.mark.parametrize("model,native", [(MODEL, NATIVE_ID),
+    ("undi95/remm-slerp-l2-13b", "remm-slerp:l2-13b"),
+    ("sao10k/l3.3-70b-euryale-v2.3", "euryale:33-70b")])
 def test_nextbit_refresh_cannot_clear_alias_hold(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, old_state: str,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, old_state: str, model: str, native: str,
 ) -> None:
     manifest = tmp_path / "nextbit.json"
     old_row: dict[str, object] = {
-        "id": MODEL, "upstream_id": NATIVE_ID, "routable": old_state == "routable",
+        "id": model, "upstream_id": native, "routable": old_state == "routable",
         "input_token_price_per_m": 400_000, "output_token_price_per_m": 400_000,
     }
     if old_state != "routable":
@@ -49,7 +53,7 @@ def test_nextbit_refresh_cannot_clear_alias_hold(
     monkeypatch.setenv("NEXTBIT_API_KEY", "fake")
     monkeypatch.setattr(
         _direct_openai, "fetch_json",
-        lambda *a, **k: {"data": [{"id": NATIVE_ID}, {"id": "qwen3:14b"}]},
+        lambda *a, **k: {"data": [{"id": native}, {"id": "qwen3:14b"}]},
     )
     probed: list[str] = []
 
@@ -60,7 +64,7 @@ def test_nextbit_refresh_cannot_clear_alias_hold(
     monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
     spec = replace(
         nextbit.CATALOG.spec,
-        static_prices={MODEL: ModelPrice(400_000, 400_000), "qwen/qwen3-14b": ModelPrice(1, 2)},
+        static_prices={model: ModelPrice(400_000, 400_000), "qwen/qwen3-14b": ModelPrice(1, 2)},
         expected_models=(),
     )
     catalog = _direct_openai.DirectOpenAIProvider(spec, manifest_path=manifest)
@@ -68,12 +72,12 @@ def test_nextbit_refresh_cannot_clear_alias_hold(
     catalog.write_provider_manifest(result)
     published = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
     assert probed == ["qwen3:14b"]
-    assert published[MODEL]["upstream_id"] == NATIVE_ID
-    assert published[MODEL]["routable"] is False
-    assert published[MODEL]["routable_reason"] == "provider-alias-unavailable"
+    assert published[model]["upstream_id"] == native
+    assert published[model]["routable"] is False
+    assert published[model]["routable_reason"] == "provider-alias-unavailable"
     if old_state == "routable":
         # Holding the only baseline route trips the bulk-removal safeguard:
         # apply the hold, but discard unrelated discovery changes.
-        assert set(published) == {MODEL}
+        assert set(published) == {model}
     else:
         assert published["qwen/qwen3-14b"]["routable"] is True

@@ -7,8 +7,8 @@ from scripts.pricing.providers._direct_openai import (
     DirectOpenAIProviderSpec,
 )
 from trusted_router.provider_contracts import (
+    NEXTBIT_UNAVAILABLE_MODEL_IDS,
     NEXTBIT_UNSLOPNEMO_HOLD_REASON,
-    NEXTBIT_UNSLOPNEMO_MODEL_ID,
 )
 
 SLUG = "nextbit"
@@ -36,7 +36,8 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="NEXTBIT_API_KEY",
         explicit_model_map=EXPLICIT_MODEL_MAP,
         expected_models=("deepseek/deepseek-v4-flash-0731", "google/gemma-4-26b-a4b-it"),
-        operator_hold_reasons={NEXTBIT_UNSLOPNEMO_MODEL_ID: NEXTBIT_UNSLOPNEMO_HOLD_REASON},
+        operator_hold_reasons={model: NEXTBIT_UNSLOPNEMO_HOLD_REASON
+                              for model in NEXTBIT_UNAVAILABLE_MODEL_IDS},
     ),
     manifest_path=MANIFEST_PATH,
 )

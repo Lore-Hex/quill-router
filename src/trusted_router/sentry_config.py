@@ -204,6 +204,27 @@ _CONTRACT_WARNING_LIMITS = SentryFloodgateConfig(
     max_fingerprints=128,
 )
 _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS)
+_RECOVERED_FAILOVER_LIMITS = SentryFloodgateConfig(
+    window_seconds=6 * 60 * 60,
+    max_events_per_fingerprint=1,
+    max_events_per_window=10,
+    max_fingerprints=128,
+)
+_recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS)
+
+
+def capture_recovered_failover_warning(event: dict[str, Any]) -> bool:
+    """Sample recovered routes, not requests, before they consume the error budget.
+
+    This is process-local, not a fleet-wide quota. Full content-free failover
+    counts remain in operational logs; billing failures keep the normal gate.
+    """
+    if not _recovered_failover_floodgate.allow(event):
+        return False
+    import sentry_sdk
+
+    sentry_sdk.capture_event(cast(Any, event))
+    return True
 
 
 def capture_gateway_contract_warning(event: dict[str, Any]) -> bool:
@@ -451,9 +472,10 @@ def _safe_route_identity(event: Mapping[str, Any]) -> str:
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:
-    global _floodgate, _contract_warning_floodgate
+    global _floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
     _floodgate = _SentryFloodgate(_floodgate_config(settings))
     _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS)
+    _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS)
 
 
 def reset_sentry_floodgate_for_tests(
@@ -461,8 +483,9 @@ def reset_sentry_floodgate_for_tests(
     settings: Settings | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    global _floodgate, _contract_warning_floodgate
+    global _floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
     _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS, clock=clock)
+    _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS, clock=clock)
     if settings is None:
         _floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)
         return

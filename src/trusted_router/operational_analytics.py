@@ -72,6 +72,7 @@ class OperationalAnalyticsClient:
         *,
         params: dict[str, str | int] | None = None,
         timeout_seconds: float = 20.0,
+        retry_read_disconnect: bool = False,
     ) -> list[dict[str, Any]]:
         query_params: dict[str, str] = {"database": self._database}
         for key, value in (params or {}).items():
@@ -91,6 +92,7 @@ class OperationalAnalyticsClient:
                     content=sql,
                     headers={"content-type": "text/plain; charset=utf-8"},
                 ),
+                retry_read_disconnect=retry_read_disconnect,
             )
             response.raise_for_status()
             payload = response.json()
@@ -459,6 +461,7 @@ FORMAT JSON
 """,
             params={"name": name},
             timeout_seconds=PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS,
+            retry_read_disconnect=True,
         )
         if not rows:
             return None
