@@ -236,20 +236,40 @@ def test_each_generated_attachment_deletion_blocks(generated_transport, index):
     assert any(i.gap == 'artifact_gap' and i.subject.object_id == stream for i in context.issues[before:])
 
 
+@pytest.fixture(scope='module')
+def support_completion_capture(tmp_path_factory):
+    from tests import test_async_settle_shadow_v2_export_native as native_test
+    from tests.shadow_v2_pack_round3_captures import writer_capture
+
+    original_native = native_test.native
+
+    def deterministic_native(db, **kwargs):
+        port = original_native(db, **kwargs)
+        # Like the fake database reader, use its controllable clock for mocked
+        # object reads. Fixture serialization/scheduling is not source latency.
+        port.generation.clock = lambda: db.now
+        return port
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(native_test, 'native', deterministic_native)
+        return writer_capture(tmp_path_factory.mktemp('support-completion-writer'))
+
+
 @pytest.mark.parametrize('support', ['absent', 'incomplete', 'tail'])
-def test_support_completion_precedes_inner_flags(tmp_path, captured, monkeypatch, support):  # noqa: F811
+def test_support_completion_precedes_inner_flags(tmp_path, support_completion_capture, monkeypatch, support):
+    capture = support_completion_capture
     from scripts.async_settle import shadow_v2_window as command
     from tests.test_async_settle_shadow_v2_pack_round3_composition import stage_capture
     from trusted_router import async_settle_shadow_v2_evidence as p1
     from trusted_router.async_settle_shadow_v2_pack_composition import compose_day
     from trusted_router.async_settle_shadow_v2_pack_references import TerminalReconciliation
-    plan = stage_capture(tmp_path / 'source', captured)
+    plan = stage_capture(tmp_path / 'source', capture)
     source_files = PackFiles(tmp_path / 'source')
     plan['completion'] = source_files.obj('captures/support-completion', dict(
         command='collect', complete=True, completed_at_us=plan['complete_through_us'] + 1))
     plan['files'].append(plan['completion'])
-    pages = [json.loads(r['raw']) for r in captured['bundle']['rows'] if r['kind'] == p1.KINDS[2]]
-    samples = [json.loads(r['raw']) for r in captured['bundle']['rows'] if r['kind'] == p1.KINDS[0]]
+    pages = [json.loads(r['raw']) for r in capture['bundle']['rows'] if r['kind'] == p1.KINDS[2]]
+    samples = [json.loads(r['raw']) for r in capture['bundle']['rows'] if r['kind'] == p1.KINDS[0]]
     joined = TerminalReconciliation(pages, samples)
     days = joined.support_days([plan['day']])
     if support != 'absent':
