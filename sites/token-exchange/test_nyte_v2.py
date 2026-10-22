@@ -20,12 +20,12 @@ class NyteV2Tests(unittest.TestCase):
             self.assertNotIn('Send the deck', page)
         self.assertEqual(render_nyte('sup').count('href="/providers">Get the provider deck</a>'), 2)
 
-    def test_supplier_stack_layers(self):
+    def test_supplier_stack_panel(self):
         page = render_nyte('sup')
-        for label in ('TrustedRouter runs', 'Open-source stack', 'You run',
+        for label in ('TrustedRouter runs', 'The inference stack is open source.', 'You run',
                       'Get the open-source stack', 'Operator guide'):
             self.assertEqual(page.count('>' + label + '<'), 1)
-        for obsolete in ('oss-card', 'duty'):
+        for obsolete in ('oss-layers', 'oss-icon', 'duty'):
             self.assertNotIn(obsolete, page)
 
     def test_confidential_evidence_has_no_static_success(self):

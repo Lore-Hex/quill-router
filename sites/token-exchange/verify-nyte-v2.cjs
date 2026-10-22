@@ -76,5 +76,27 @@ await page.goto(base+'/index');
 await page.getByRole('link',{name:'Start building',exact:true}).click();await page.waitForURL('**/confidential#start');assert.equal(await page.locator('#start').count(),1);
 await page.goto(base+'/index');
 await page.getByRole('link',{name:'Explore the open-source inference stack',exact:true}).click();await page.waitForURL('**/suppliers#open-stack');assert.equal(await page.locator('#open-stack').count(),1);
+// Keyboard focus reveals even the partly clipped final market link.
+for (const width of [1440,390]) {
+ await page.setViewportSize({width,height:900});await page.goto(base+'/');
+ await page.evaluate(()=>document.fonts.ready);
+ await page.locator('.market-links a').first().focus();
+ const links=await page.locator('.market-links a').count();
+ for (let index=1;index<links;index++) await page.keyboard.press('Tab');
+ const focused=await page.locator('.market-links').evaluate(nav=>{
+  const link=document.activeElement, box=link.getBoundingClientRect(), rail=nav.getBoundingClientRect();
+  return {last:link===nav.lastElementChild,visible:box.left>=rail.left-1 && box.right<=rail.right+1};
+ });
+ assert(focused.last && focused.visible,`footer market focus must be visible at ${width}px`);
+}
+// Narrow-phone buttons keep their approved labels inside their touch targets.
+for (const path of ['/', '/confidential', '/suppliers']) {
+ await page.setViewportSize({width:320,height:844});
+ await page.goto(base+path);await page.evaluate(()=>document.fonts.ready);
+ const overflowing=await page.locator('.btns .btn').evaluateAll(elements=>elements
+  .filter(el=>el.getClientRects().length && el.scrollWidth>el.clientWidth+1)
+  .map(el=>el.textContent.trim()));
+ assert.deepEqual(overflowing,[],`${path}: button text must fit at 320px`);
+}
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
 })().catch(error=>{console.error(error);process.exit(1);});

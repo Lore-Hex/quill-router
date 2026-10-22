@@ -87,14 +87,20 @@ The stack is pre-alpha; confidential serving requires independent hardware
 and software qualification, not merely installing the software.
 
 Run `node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089`
-alongside the existing browser checks. For a narrow publish, back up live objects
-and publish only `index` (as `text/html`), `assets/index-page.css`,
-`assets/token-index.css`, `assets/token-index.js`, the five public files in
-`assets/token-index/` and New York's sitemap.
-Insert the new sections, navigation links and stylesheet into fresh live New
-York homepage HTML, preserving concurrent content, CSS/JS versions and other
-markets. Use generation preconditions on every upload and verify the reverse
-patch restores the original homepage bytes before publishing it.
+alongside the existing browser checks. The Index now uses the NYTE shared shell;
+its release also needs the matching `assets/nyte-v2/` and `assets/analytics.js`,
+in addition to `assets/index-page.css`, `assets/token-index.css`,
+`assets/token-index.js` and `assets/token-index/`. Publish extensionless page
+objects (`index`, `confidential`, `suppliers`) as `text/html`. Back up live objects,
+preserve unrelated markets and concurrent content, and use generation
+preconditions on every upload.
+
+Release the public catalogue JSON/CORS support before the redesigned homepage:
+`deploy.py` checks that `/v1/models/count` and `/v1/providers` are readable from
+the NYTE origin before publishing. The `nyte.*` analytics events also require
+the collector and the separately dispatched marketing-worker/source-filter
+update in `.github/workflows/deploy-growth-sync.yml`. Local preview success
+does not verify an authenticated confidential inference request or its attestation.
 
 ### Public New York media kit
 

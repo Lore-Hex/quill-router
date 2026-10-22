@@ -77,6 +77,35 @@ def require_brochure_origins() -> None:
         )
 
 
+def require_nyte_catalogue() -> None:
+    """Do not publish live totals before the public catalogue is browser-readable."""
+    origin = "https://nytokenexchange.com"
+    for path in ("models/count", "providers"):
+        endpoint = "https://trustedrouter.com/v1/" + path
+        request = urllib.request.Request(endpoint, headers={"Origin": origin})  # noqa: S310
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
+                allowed = response.headers.get("Access-Control-Allow-Origin") in ("*", origin)
+                payload = json.load(response)
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if path == "models/count":
+                count = data.get("count") if isinstance(data, dict) else None
+                usable = type(count) is int and 0 <= count <= 9007199254740991
+            else:
+                usable = isinstance(data, list) and all(
+                    isinstance(provider, dict) and isinstance(provider.get("id"), str)
+                    and provider.get("routing_status") in ("active", "blocked")
+                    for provider in data
+                )
+        except (OSError, http.client.HTTPException, ValueError):
+            allowed = usable = False
+        if not allowed or not usable:
+            raise RuntimeError(
+                "The live NYTE catalogue endpoint is not browser-ready: " + endpoint
+                + ". Deploy the app's public catalogue JSON and CORS support first."
+            )
+
+
 def certificate_requests(attached: list[dict], hosts: list[str]) -> list[tuple[str, list[str]]]:
     """Certificates to create so every host is in an attached certificate's managed domains.
 
@@ -192,6 +221,7 @@ def publish(output: Path, state: Path) -> None:
     if not all(p.is_file() for p in required):
         raise ValueError("Build and verify all market pages and OG images before publishing")
     require_brochure_origins()
+    require_nyte_catalogue()
     # A proxy with a certificate map serves the map's certificates
     # (infra/control_lb_certificate_map.tf) and ignores its classic ones. Then
     # publish creates and attaches none, and changes nothing until every host

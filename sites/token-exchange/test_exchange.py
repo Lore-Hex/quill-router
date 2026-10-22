@@ -16,6 +16,7 @@ from deploy import certificate_requests, domains, publish_certificates, unrouted
 
 RIYADH = ["riyadhtokenexchange.com", "www.riyadhtokenexchange.com"]
 REAL_BROCHURE_GAPS = deploy.brochure_gaps
+REAL_REQUIRE_NYTE_CATALOGUE = deploy.require_nyte_catalogue
 
 
 class FakeCloud:
@@ -167,6 +168,9 @@ class ExchangeTests(unittest.TestCase):
         patcher = mock.patch.object(deploy, "brochure_gaps", return_value=[])
         patcher.start()
         self.addCleanup(patcher.stop)
+        catalogue = mock.patch.object(deploy, "require_nyte_catalogue")
+        catalogue.start()
+        self.addCleanup(catalogue.stop)
 
     def test_inventory(self):
         self.assertEqual(len(load_markets()), 13)
@@ -209,6 +213,52 @@ class ExchangeTests(unittest.TestCase):
 
         with mock.patch.object(deploy.urllib.request, "urlopen", answer):
             self.assertEqual(REAL_BROCHURE_GAPS(), ["dubaitokenexchange.com", "tokyotokenexchange.com"])
+
+    def test_nyte_catalogue_requires_cors_and_usable_public_data(self):
+        from io import BytesIO
+
+        origin = "https://nytokenexchange.com"
+        payloads = {"models/count": {"data": {"count": 2}}, "providers": {"data": [
+            {"id": "live", "routing_status": "active"},
+            {"id": "blocked", "routing_status": "blocked"},
+        ]}}
+
+        def answer(request, timeout):
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.headers["Origin"], origin)
+            self.assertEqual(timeout, 15)
+            response = BytesIO(json.dumps(payloads[request.full_url.split("/v1/")[1]]).encode())
+            response.headers = {"Access-Control-Allow-Origin": _allowed}
+            return response
+
+        for _allowed in ("*", origin):
+            with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+                REAL_REQUIRE_NYTE_CATALOGUE()
+        for _allowed in (None, "https://unrelated.example"):
+            with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+                with self.assertRaisesRegex(RuntimeError, "models/count.*CORS support first"):
+                    REAL_REQUIRE_NYTE_CATALOGUE()
+        _allowed = "*"
+        for path, invalid in (("models/count", {"count": True}),
+                              ("models/count", {"count": -1}),
+                              ("models/count", {"count": "2"}),
+                              ("providers", [{"id": "live"}]),
+                              ("providers", [{"id": "live", "routing_status": "unknown"}])):
+            with self.subTest(path=path, invalid=invalid), mock.patch.dict(payloads, {path: {"data": invalid}}):
+                with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+                    with self.assertRaisesRegex(RuntimeError, "browser-ready"):
+                        REAL_REQUIRE_NYTE_CATALOGUE()
+        for failure in (TimeoutError("timed out"), ValueError("invalid JSON")):
+            with mock.patch.object(deploy.urllib.request, "urlopen", side_effect=failure):
+                with self.assertRaisesRegex(RuntimeError, "browser-ready"):
+                    REAL_REQUIRE_NYTE_CATALOGUE()
+
+    def test_publish_refuses_before_cloud_changes_if_catalogue_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(deploy, "require_nyte_catalogue", side_effect=RuntimeError("catalogue unavailable")), \
+                mock.patch.object(deploy, "gcloud", side_effect=AssertionError("published")):
+            with self.assertRaisesRegex(RuntimeError, "catalogue unavailable"):
+                deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
 
     def test_pages(self):
         markets = load_markets()

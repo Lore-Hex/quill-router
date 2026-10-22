@@ -124,6 +124,9 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   previous.addEventListener('click', () => move(-1));
   next.addEventListener('click', () => move(1));
   nav.addEventListener('scroll', update, {passive:true});
+  nav.addEventListener('focusin', event => {
+    if (event.target.matches('a')) event.target.scrollIntoView({block:'nearest', inline:'nearest'});
+  });
   window.addEventListener('resize', update);
   if ('ResizeObserver' in window) new ResizeObserver(update).observe(nav);
   document.fonts.ready.then(() => {
