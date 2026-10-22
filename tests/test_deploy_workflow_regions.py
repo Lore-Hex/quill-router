@@ -319,7 +319,9 @@ def test_secondaries_ramp_serially() -> None:
 
     assert "needs: [deploy]" in rollout
     _assert_rollout_secondaries_requires_successful_deploy(workflow)
-    assert "timeout-minutes: 55" in rollout
+    # Three sequential routing drains (15 minutes each, bounded at 20) must
+    # fit alongside the existing canaries and completion gates.
+    assert "timeout-minutes: 85" in rollout
     first_step = rollout.index("- name: Import production deployment mutex fence")
     checkout = rollout.index("- uses: actions/checkout@v7")
     assert first_step < checkout
@@ -491,7 +493,7 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
     assert "cloud_run_probe_tag_reconcile" in rollout
     assert '"${base_url}/ready"' in rollout
     verify = staged.index("probe tag already resolves to warmed revision")
-    reconcile = staged.index("cloud_run_probe_tag_reconcile")
+    reconcile = staged.index("cloud_run_probe_tag_reconcile", staged.index("configure_probe_tag()"))
     assert verify < reconcile
 
     watchdog_start = staged.index('python3 "${SCRIPT_DIR}/watchdog.py"')
