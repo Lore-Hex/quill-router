@@ -17,8 +17,12 @@ locals {
   # (docs/runbooks/fastpath-p0.md). bfa94e22e: the merge of #1728, P1's run,
   # the first release carrying loadgen, fastpathwatch and load-mix.json.
   # 6709d268e: main after the edge's health answer (#1875); the first
-  # release a node with the edge attributes may run.
-  fastpath_release        = "6709d268ef44dd5090d737a6d61903ff707d550c"
+  # release a node with the edge attributes may run. 04c5ad769: the merge
+  # of #1970, the routing snapshot compiled as of its window's start, on
+  # #1969's edge flags (-edge-snapshot-url, -public-key, -kid, -plane and
+  # -edge-shadow); the first release a node with the snapshot attributes
+  # below may run. Its fastpath/ tree is main's as of f12f8967d.
+  fastpath_release        = "04c5ad7692f8c234c4a7d2040f86bd120f88f1f9"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -36,6 +40,26 @@ locals {
   fastpath_edge_port         = 8081
   fastpath_edge_upstream     = "https://trusted-router-vsjf6qu4la-uc.a.run.app"
   fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/1"
+  # The edge's routing snapshot and its shadow comparator (E2, docs/design/
+  # routing-snapshot-v1.md): the nodes named here poll Python's published
+  # snapshot on the edge's own upstream (the startup script refuses any
+  # other origin), verify its manifest with version 1 of
+  # trustedrouter-routing-snapshot-signing-key's public half, under its kid
+  # and plane, and, shadow on, compare Go's verdict with Python's on each
+  # authorize the edge passes on, logging counts alone: Python still
+  # decides. A node reads these when its startup script runs, and only a
+  # script from #1969 on reads them, so they reach the fleet on nodes added
+  # under new names (docs/runbooks/fastpath-deploy.md, "Turning the edge
+  # on"). Until publishing is on (docs/runbooks/routing-snapshot-key.md)
+  # the poll answers 404 and the edge keeps polling, admission unaffected.
+  fastpath_edge_snapshot_nodes = ["tr-fastpath-5", "tr-fastpath-6"]
+  fastpath_edge_snapshot = tomap({
+    fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
+    fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
+    fastpath-edge-snapshot-kid        = "tr-routing-snapshot-2026-10a"
+    fastpath-edge-snapshot-plane      = "gcp/${local.fastpath_region}"
+    fastpath-edge-shadow              = "true"
+  })
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -251,18 +275,28 @@ resource "google_storage_bucket_iam_member" "fastpath_releases_reader" {
 
 # --- The nodes ---------------------------------------------------------------
 
-# Two nodes, each in a zone of its own, on the default network's us-central1
-# subnet behind the project's NAT (tr-nat), no external address; the
-# network's default-allow-internal rule lets the fleet reach port 8080. A
-# node is replaced, never restarted in place, once it holds leases
-# (docs/runbooks/fastpath-deploy.md); at P0 it holds none.
+# A node in each of two zones, on the default network's us-central1 subnet
+# behind the project's NAT (tr-nat), no external address; the network's
+# default-allow-internal rule lets the fleet reach port 8080. A node is
+# replaced, never restarted in place, once it holds leases
+# (docs/runbooks/fastpath-deploy.md); at P0 it holds none. Nothing counts
+# the nodes: front doors find owners and peers in the membership table,
+# auditor members share the subscriptions, and the edge's firewall rule
+# names the nodes' service account.
 resource "google_compute_instance" "fastpath_node" {
   # 3 and 4 took the places of 1 and 2 on 2026-10-20, with the edge on
   # (docs/runbooks/fastpath-deploy.md, "Turning the edge on"); 1 and 2 were
-  # drained, left the edge backend, then were removed.
+  # drained, left the edge backend, then were removed. 5 and 6 take the
+  # places of 3 and 4 the same way, with the routing snapshot and the
+  # shadow on (local.fastpath_edge_snapshot_nodes): 3 and 4 run a script
+  # from before #1969, which reads neither. Each of 3 and 4 is then marked
+  # leaving and drained, the other serving, and they leave the edge
+  # backend (local.fastpath_edge_retiring) one apply before their removal.
   for_each = {
     "tr-fastpath-3" = "us-central1-a"
     "tr-fastpath-4" = "us-central1-b"
+    "tr-fastpath-5" = "us-central1-a"
+    "tr-fastpath-6" = "us-central1-b"
   }
 
   project      = local.gcp_project_id
@@ -288,12 +322,12 @@ resource "google_compute_instance" "fastpath_node" {
     scopes = ["cloud-platform"]
   }
 
-  metadata = {
+  metadata = merge({
     enable-oslogin             = "TRUE"
     fastpath-release           = local.fastpath_release
     fastpath-edge-upstream     = local.fastpath_edge_upstream
     fastpath-edge-token-secret = local.fastpath_edge_token_secret
-  }
+  }, contains(local.fastpath_edge_snapshot_nodes, each.key) ? local.fastpath_edge_snapshot : tomap({}))
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
     release_bucket = google_storage_bucket.fastpath_releases.name
