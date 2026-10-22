@@ -38,7 +38,10 @@
   .pv-topics span{margin-bottom:6px}
 }
 @media (max-width:600px){
-  .hero-pv{min-height:0;padding:48px 0 72px}
+  .hero-pv{--hero-top:clamp(32px,6svh,56px);--hero-bottom:clamp(32px,5svh,48px);min-height:calc(100svh - var(--header));padding:var(--hero-top) 0 var(--hero-bottom)}
+  .hero-pv .inner{min-height:calc(100svh - var(--header) - var(--hero-top) - var(--hero-bottom));display:flex;flex-direction:column;justify-content:space-between;gap:32px}
+  .hero-pv h1{font-size:clamp(44px,13vw,60px);margin-bottom:0}
+  .hero-pv .lede{font-size:19px;margin-bottom:0}
   .hero-pv .ph{background-position:64% 50%}
   .hero-pv .btns{grid-template-columns:1fr}
   .pv-deck-hd{padding:18px 16px}
