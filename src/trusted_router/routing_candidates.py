@@ -44,6 +44,7 @@ from trusted_router.catalog_data import (
     OPEN_PATCHER_S3_MODEL_ID,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_STANDARD,
+    PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
     PRIVATE_PROXY_MODEL_TARGETS,
     PROMETHEUS_1_0_1M_MODEL_ID,
@@ -81,6 +82,8 @@ from trusted_router.catalog_data import (
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_ZEUS_3_MODEL_ORDER,
     TIER_MODEL_ORDERS,
+    TRUSTED_MODEL_ID,
+    TRUSTED_PROVIDER_ORDER,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
@@ -379,6 +382,14 @@ def e2e_candidate_models(limit: int = 12) -> list[Model]:
     )
 
 
+def trusted_candidate_models(limit: int = 12) -> list[Model]:
+    return _privacy_candidate_models(
+        requirement=PRIVACY_TIER_TRUSTED,
+        preferred_providers=TRUSTED_PROVIDER_ORDER,
+        limit=limit,
+    )
+
+
 def _models_for_ids(model_ids: tuple[str, ...]) -> list[Model]:
     models: list[Model] = []
     seen: set[str] = set()
@@ -426,6 +437,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return zdr_candidate_models()
     if model_id == E2E_MODEL_ID:
         return e2e_candidate_models()
+    if model_id == TRUSTED_MODEL_ID:
+        return trusted_candidate_models()
     if model_id == MONITOR_MODEL_ID:
         return monitor_candidate_models()
     advisor_order = ADVISOR_CATALOG_MODEL_ORDERS.get(model_id)
@@ -505,6 +518,8 @@ def _meta_route_kind(model_id: str) -> str:
         return "zdr_pool"
     if model_id == E2E_MODEL_ID:
         return "e2e_pool"
+    if model_id == TRUSTED_MODEL_ID:
+        return "trusted_pool"
     if model_id == MONITOR_MODEL_ID:
         return "synthetic_monitor_pool"
     if model_id == SUBAGENT_MODEL_ID:

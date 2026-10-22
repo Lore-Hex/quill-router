@@ -33,6 +33,7 @@ from trusted_router.catalog import (
     ROUTING_MODEL_MIN_PRIVACY_TIERS,
     SYNTH_MODEL_ID,
     TIER_MODEL_ORDERS,
+    TRUSTED_MODEL_ID,
     ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
@@ -61,6 +62,7 @@ _ROUTE_IDS = (
     CONFIDENTIAL_MODEL_ID,
     SYNTH_MODEL_ID,
     ADVISOR_MODEL_ID,
+    TRUSTED_MODEL_ID,
 )
 
 _ROUTE_DESCRIPTIONS = {
@@ -97,6 +99,10 @@ _ROUTE_DESCRIPTIONS = {
     ),
     CONFIDENTIAL_MODEL_ID: (
         "Readable alias for the same verified compute, provider-E2EE and explicit-ZDR route pool."
+    ),
+    TRUSTED_MODEL_ID: (
+        "Confidential inference only from Tinfoil and Privatemode, selected by TrustedRouter "
+        "for operator physical security and reliability history. Every fallback stays in this tier."
     ),
     SYNTH_MODEL_ID: (
         "Runs a model panel, judge, and synthesizer. Every inner inference call is billable."

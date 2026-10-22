@@ -13,6 +13,9 @@ applies an independent specification of the subsequently approved context
 limit. Its provider hook independently requires an explicit upgraded origin
 for the new native adapters, without changing the frozen file. Reservation
 quotes are compared too.
+
+The frozen leg also applies an independent search-processor privacy contract:
+Trusted, NYTE aliases, suffixes and fallback lists cannot authorize search.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import itertools
 import json
 import logging
 import random
+import re
 import secrets
 import sys
 import types
@@ -239,6 +243,22 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
     with monkeypatch.context() as scope:
         scope.setattr(type(store), method, observe_reservation)
         if module is FROZEN_GATEWAY:
+            def reference_search_model(model: str) -> bool:
+                return any(re.match(
+                    r"^(?:trustedrouter|nyte)/(?:zdr|e2e|confidential|trusted|eu|green)(?:$|[-/:])",
+                    candidate.strip().lower(),
+                ) is not None for candidate in [model, *(body.models or [])])
+
+            old_search_provider = module._is_web_search_restricted_provider
+
+            def reference_search_provider(provider: Any) -> bool:
+                return old_search_provider(provider) or (
+                    isinstance(provider, dict)
+                    and str(provider.get("min_privacy") or "").strip().lower() == "trusted"
+                )
+
+            scope.setattr(module, "_is_web_search_restricted_model", reference_search_model)
+            scope.setattr(module, "_is_web_search_restricted_provider", reference_search_provider)
             old_chat = module.chat_route_endpoint_candidates
 
             def reference_chat(*args: Any, **kwargs: Any) -> Any:
@@ -399,6 +419,29 @@ def test_the_comparison_rejects_missing_native_origin_guard(monkeypatch, caplog)
 
     monkeypatch.setattr(authorize_candidates, "EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL", {})
     case = {"model": "cloudflare/clef-flash", "route_type": "decide"}
+    with pytest.raises(AssertionError, match="1 differences"):
+        _compare([case], "memory", monkeypatch, caplog)
+
+
+@pytest.mark.parametrize("backend", ["memory", "typed"])
+@pytest.mark.parametrize("selection", [
+    {"model": "trustedrouter/trusted"},
+    {"model": "nyte/trusted:online"},
+    {"model": "trustedrouter/auto", "models": ["nyte/trusted"]},
+    {"model": "openai/gpt-oss-120b", "provider": {"min_privacy": "trusted"}},
+])
+def test_trusted_search_is_refused_before_any_reservation(backend, selection, monkeypatch, caplog):
+    case = {**selection, "route_type": "chat.completions", "additional_cost_reservation_microdollars": 1000}
+    assert _compare([case], backend, monkeypatch, caplog) == {400: 1}
+    result = json.loads(_run(gateway, case, backend, monkeypatch, caplog))
+    assert result["reservation_quotes"] == []
+    assert "stored" not in result
+    assert result["detail"]["error"]["message"] == "web_search is not available for this privacy tier"
+
+
+def test_comparison_detects_a_missing_trusted_search_guard(monkeypatch, caplog):
+    monkeypatch.setattr(gateway, "_is_web_search_restricted_model", lambda *args: False)
+    case = {"model": "trustedrouter/trusted", "additional_cost_reservation_microdollars": 1000}
     with pytest.raises(AssertionError, match="1 differences"):
         _compare([case], "memory", monkeypatch, caplog)
 

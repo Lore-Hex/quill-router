@@ -1148,7 +1148,7 @@ def _authorize_gateway_sync_impl(
         elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
             raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
         if body.additional_cost_reservation_microdollars and (
-            _is_web_search_restricted_model(route_model_id)
+            _is_web_search_restricted_model(route_model_id, body_dict.get("models"))
             or _is_web_search_restricted_provider(body_dict.get("provider"))
         ):
             raise api_error(
@@ -3477,14 +3477,22 @@ def _force_credit_routes(body: dict[str, Any], *, error_message: str) -> None:
         body["provider"] = {"usage": "credits"}
 
 
-def _is_web_search_restricted_model(model_id: str) -> bool:
+def _is_web_search_restricted_model(model_id: str, fallback_models: Any = None) -> bool:
+    if isinstance(fallback_models, list) and any(
+        isinstance(candidate, str) and _is_web_search_restricted_model(candidate)
+        for candidate in fallback_models
+    ):
+        return True
     model = model_id.strip().lower()
+    if model.startswith("nyte/"):
+        model = "trustedrouter/" + model.removeprefix("nyte/")
     return any(
-        model == prefix or model.startswith(f"{prefix}-") or model.startswith(f"{prefix}/")
+        model == prefix or model.startswith((f"{prefix}-", f"{prefix}/", f"{prefix}:"))
         for prefix in (
             "trustedrouter/zdr",
             "trustedrouter/e2e",
             "trustedrouter/confidential",
+            "trustedrouter/trusted",
             "trustedrouter/eu",
             "trustedrouter/green",
         )
@@ -3494,6 +3502,8 @@ def _is_web_search_restricted_model(model_id: str) -> bool:
 def _is_web_search_restricted_provider(provider: Any) -> bool:
     if not isinstance(provider, dict):
         return False
+    if str(provider.get("min_privacy") or "").strip().lower() == "trusted":
+        return True
     return str(provider.get("data_collection") or "").strip().lower() == "deny" or (
         str(provider.get("jurisdiction") or "").strip().lower() == "eu"
     )

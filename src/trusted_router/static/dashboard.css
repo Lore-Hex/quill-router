@@ -272,6 +272,8 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .provider-location-models summary { cursor:pointer; padding:10px 0; }
 
 @media (max-width:640px) {
+  .provider-detail-head { flex-wrap:wrap; }
+  .provider-detail-head .provider-detail-title { flex-basis:100%; }
   .provider-location-facts { grid-template-columns:minmax(0, 1fr); gap:6px; }
   .provider-location-facts dd { margin-bottom:14px; }
 }

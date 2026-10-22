@@ -125,7 +125,7 @@ reason that does not depend on time, at every instant of the window.
   is `["text"]` where the catalog has none (`endpoint_supports_input_modalities`).
 - `privacy`: `stores_content` (`endpoint_stores_content`, for
   `data_collection=deny`) and `meets`, the requirement values of
-  `PRIVACY_TIER_*` (0 to 3) for which `endpoint_meets_privacy_requirement` is
+  `PRIVACY_TIER_*` (0 to 4) for which `endpoint_meets_privacy_requirement` is
   true. Any other requirement value matches nothing.
 - `gateway_regions`: available from gateway region `r` iff
   `(only is null or r in only) and r not in deny`

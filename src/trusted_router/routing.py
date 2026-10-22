@@ -22,6 +22,7 @@ from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
     PRIVACY_TIER_ALIASES,
+    PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
@@ -30,6 +31,8 @@ from trusted_router.catalog import (
     SELECTOR_MODEL_ID,
     SYNTH_CODE_MODEL_ID,
     SYNTH_MODEL_ID,
+    TRUSTED_MODEL_ID,
+    TRUSTED_PROVIDER_ORDER,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     Model,
@@ -800,7 +803,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         if key not in PRIVACY_TIER_ALIASES:
             raise api_error(
                 400,
-                "provider.min_privacy must be one of: any, no_store, zdr, confidential (aliases: e2e, e2ee)",
+                "provider.min_privacy must be one of: any, no_store, zdr, confidential, trusted (aliases: e2e, e2ee)",
                 ErrorType.BAD_REQUEST,
             )
         min_privacy_rank = PRIVACY_TIER_ALIASES[key]
@@ -962,7 +965,11 @@ def _routing_for_body(
         prefs = dataclasses.replace(prefs, pool_model_ids=overrides["pool_model_ids"])
     if "sort" in overrides:
         prefs = dataclasses.replace(prefs, sort=overrides["sort"])
-    if "order" in overrides:
+    # A caller's explicit pin must not be replaced by the Trusted pool's
+    # preference, especially when allow_fallbacks=False makes it a hard pin.
+    if "order" in overrides and not (
+        prefs.order and PRIVACY_TIER_TRUSTED in overrides.get("privacy_requirements", ())
+    ):
         prefs = dataclasses.replace(
             prefs,
             order=tuple(_provider_filter_list("order", overrides["order"])),
@@ -1144,6 +1151,8 @@ def _requested_model_ids(
             )
         elif stripped == E2E_MODEL_ID:
             overrides["order"] = "tinfoil,phala"
+        elif stripped == TRUSTED_MODEL_ID:
+            overrides["order"] = ",".join(TRUSTED_PROVIDER_ORDER)
         elif stripped == EU_MODEL_ID:
             provider_order = ",".join(EU_FOCUSED_PROVIDER_ORDER)
             overrides["order"] = provider_order
