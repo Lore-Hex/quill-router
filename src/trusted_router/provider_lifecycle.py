@@ -75,6 +75,7 @@ NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 NOVITA_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
+ARCEE_TRINITY_LARGE_THINKING_RETIREMENT_AT = datetime(2026, 10, 26, 0, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
@@ -981,6 +982,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"NousResearch/Hermes-3-Llama-3.1-405B"}),
         effective_at=DEEPINFRA_HERMES_3_405B_RETIREMENT_AT,
         replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    # Arcee's October 22 notice deprecates Trinity Large Thinking on
+    # 2026-10-26 (date only; 00:00 UTC conservatively) and lists models that
+    # remain available; quote the first one listed, Kimi K3.
+    _Retirement(
+        provider="arcee",
+        model_ids=frozenset({"arcee-ai/trinity-large-thinking"}),
+        upstream_ids=frozenset({"trinity-large-thinking"}),
+        effective_at=ARCEE_TRINITY_LARGE_THINKING_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3",),
     ),
     # Novita's October 22 notice retires MiMo V2.5 and V2.5 Pro at
     # 2026-10-23 00:00 UTC and recommends the V2.6 Flash and Pro models.
