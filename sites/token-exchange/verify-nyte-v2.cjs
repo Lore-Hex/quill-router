@@ -106,9 +106,11 @@ for (const width of [320, 360, 390, 430, 768, 880]) {
  const layout=await page.evaluate(()=>{
   const header=document.querySelector('.hdr'),hero=document.querySelector('.hero-api');
   return {overflow:document.documentElement.scrollWidth>innerWidth || header.scrollWidth>header.clientWidth,
+   brandGap:document.querySelector('.hdr>.btn-sm').getBoundingClientRect().left-header.querySelector('.brand').getBoundingClientRect().right,
    gap:hero.getBoundingClientRect().bottom-hero.querySelector('.btns').getBoundingClientRect().bottom};
  });
  assert(!layout.overflow,`header must fit at ${width}px`);
+ if(width<=600)assert(layout.brandGap>=24,`wordmark needs breathing room at ${width}px`);
  assert(layout.gap<=81,`API hero must follow its content at ${width}px`);
 }
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
