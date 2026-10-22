@@ -410,10 +410,17 @@ variant suffix that is not a sort), a window over 24 hours, and dangling
 references. A refused snapshot is never evaluated; every request goes to
 Python.
 
-**Evaluate** takes the routing body's fields as sent (`model`, `models`,
-`provider`, `route_type`, `region`, `service_tier`, `requested_parameters`,
+**Evaluate** takes the authorize body's routing fields as the enclave sent
+them (`model`, `models`, `provider`, the top-level `allow_fallbacks`,
+`route_type`, `region`, `service_tier`, `requested_parameters`,
 `input_modalities`), the workspace's BYOK provider slugs, the token counts and
-the instant, and answers as `plan_route`, `resolve_candidates` and
+the instant. It first applies what `schemas.GatewayAuthorizeRequest` does to
+them: `str_strip_whitespace` on every string and list-of-strings field (not on
+`provider` values or the extra `allow_fallbacks`, which the schema keeps as
+sent), and `min_length`/`max_length` on `model` and `service_tier`. Go strips
+only the space; a string with any other byte outside printable ASCII, where
+pydantic's or Python's whitespace could differ from Go's, goes to Python, as
+does a string the schema would refuse. It then answers as `plan_route`, `resolve_candidates` and
 `finish_candidates` do with `rerank` absent: the candidate endpoint ids in
 order and the largest candidate's price at the instant, or Python's refusal
 (status, type and message). `Cost` is
@@ -422,10 +429,20 @@ order and the largest candidate's price at the instant, or Python's refusal
 covers the chat resolver for chat models (route types `chat.completions`,
 `responses`, `messages`, `embeddings`, `decide` or none), the model rewrite
 chain above, `provider.order`, `only` and `ignore` with their aliases,
-`allow_fallbacks`, `sort` (string or object, with `partition`),
+`allow_fallbacks` (top-level and nested, with their type and conflict
+refusals), `sort` (string or object, with `partition`),
 `data_collection` (with the soft `deny`), `usage` (`byok`, `credits`),
 `jurisdiction` (`us`), `zdr`, input modalities, the gateway-region rule, BYOK
 presence, the `default` service tier and the refusals these make.
+
+Evaluate assumes absent the inputs of `authorize_candidates` that are not in
+its request, and whoever wires the cohort predicate must pass a request
+carrying any of them to Python: `additional_cost_reservation` (a hosted tool or
+media reservation), a partner billing mode (`partner_mode`), a custom model or
+a user-provided model (`custom_model`, `user_model_candidate`,
+`user_model_prices`), `video_resolution` and `video_allowed_providers`, and
+the process-local health re-rank (`rerank`, which a live `ROUTING_STATE`
+supplies; Go answers as an empty one would).
 
 It passes to Python, with the reason, and never guesses:
 
@@ -450,7 +467,9 @@ It passes to Python, with the reason, and never guesses:
   `country` and the other jurisdiction keys, alternative spellings (`prepaid`,
   `usa`, ...), an unknown field, any non-printable value, and a provider slug
   the snapshot does not list (Python refuses only slugs its process does not
-  know; see below).
+  know; see below), and an order, only or ignore list with a null, non-string
+  or blank item (Python validates the whole list, and refuses such an item,
+  before it looks up any name).
 - On `chat.completions`, `responses` or no route type, any non-empty
   `requested_parameters`: `CAPABILITY_REQUIRED_PARAMETERS` is not in the
   snapshot.
@@ -460,9 +479,9 @@ It passes to Python, with the reason, and never guesses:
   to the extent that a 1,000-token priority request is refused as unavailable.
 - An estimate, or a `sort=price` headline sum, outside int64.
 
-Against `routing_cases_v1.json` (172 cases), Go answers 111 and refuses 38
+Against `routing_cases_v1.json` (184 cases), Go answers 116 and refuses 43
 exactly as Python (candidates and order, estimate, service tier and Stage D
-reason; or status, type and message), and passes 23 to Python. The test
+reason; or status, type and message), and passes 25 to Python. The test
 lists each passed case with its reason and fails if Go answers one of them or
 passes any other:
 
@@ -473,6 +492,7 @@ passes any other:
 | 4 | `*+perf` | `provider.preferred_max_latency`: thresholds, and stays on Python |
 | 2 | `required_parameters`, `missing_parameters` | `provider.require_parameters`: its aliases |
 | 1 | `route:images` | the image resolver |
+| 2 | `router_name_then_blank_item`, `router_name_then_null_item` | a malformed provider list |
 | 4 | `*+group_alias` | `google` names `google-vertex`, which the fixture omits |
 | 4 | `*+unknown_provider` | `nope-provider` is not in the snapshot |
 
@@ -485,7 +505,13 @@ is a 400" holds; refusing there needs the fixture made complete first
 (patching `routing.PROVIDERS` in the generator), which changes these eight
 answers.
 
-The generator gained seven cases (`order_reorders`,
+The generator builds each case's body through `GatewayAuthorizeRequest`, as
+authorize does, so the cases see its stripping and its extra fields; no
+earlier case's answer changed. It gained twelve cases for the top-level
+`allow_fallbacks` (false, true, agreeing, conflicting, not a boolean, the
+nested one not a boolean, after a router name), malformed provider lists after
+a router name, and spaced `region`, `model`, `models` and `route_type`; and
+seven cases (`order_reorders`,
 `order_ceiling_without_fallbacks`, `order_and_only_disjoint`,
 `prepaid_floor_across_models`, `variant_suffix_over_body_sort`,
 `variant_suffix_later_wins`, `latency_table_across_models`) because in the

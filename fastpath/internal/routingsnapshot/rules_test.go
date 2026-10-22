@@ -64,8 +64,16 @@ func TestThePassRules(t *testing.T) {
 			func(r *Request) { r.Model = "system1models/x" }, func(r *Request) { r.Model = "system1/x" }, Refused},
 		{"router namespace", "router model \"trustedrouter/unknown\"",
 			func(r *Request) { r.Model = "trustedrouter/unknown" }, func(r *Request) { r.Model = "nope/unknown" }, Refused},
-		{"non-ASCII model", "a model string that is not printable ASCII",
+		{"non-ASCII model", "a string field that is not printable ASCII",
 			func(r *Request) { r.Model += " " }, func(r *Request) { r.Model += " " }, Answered},
+		{"non-ASCII region", "a string field that is not printable ASCII",
+			func(r *Request) { r.Region = ptr("us-central1\u00a0") }, func(r *Request) { r.Region = ptr(" us-central1 ") }, Answered},
+		{"blank service tier", "a string field that is not printable ASCII, or one the authorize schema refuses",
+			func(r *Request) { r.ServiceTier = ptr("   ") }, func(r *Request) { r.ServiceTier = ptr(" default ") }, Refused},
+		{"long service tier", "a string field that is not printable ASCII, or one the authorize schema refuses",
+			func(r *Request) { r.ServiceTier = ptr("default-default-default") }, func(r *Request) { r.ServiceTier = ptr("default-default-defa") }, Refused},
+		{"blank model", "a string field that is not printable ASCII, or one the authorize schema refuses",
+			func(r *Request) { r.Model = "  " }, func(r *Request) { r.Model = " nope/x " }, Refused},
 		{"route type", "route type \"videos\"",
 			func(r *Request) { r.RouteType = ptr("videos") }, func(r *Request) { r.RouteType = ptr("responses") }, Answered},
 		{"capability parameters", "requested_parameters",
@@ -120,9 +128,6 @@ func TestNothingAtRuntimeImportsTheEvaluator(t *testing.T) {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
 		}
-		if filepath.Dir(path) == "." {
-			return nil
-		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 		if err != nil {
 			return err
@@ -145,5 +150,28 @@ func TestNothingAtRuntimeImportsTheEvaluator(t *testing.T) {
 	// Positive control: the walk sees the module's code and its internal imports.
 	if files < 50 || internalImports < 10 {
 		t.Fatalf("scanned %d files with %d internal imports", files, internalImports)
+	}
+}
+
+// TestTheSchemaStripsStringFields pins the authorize schema's
+// str_strip_whitespace where the routing cases cannot show it: the region
+// decides Bedrock's reachability, and a stripped route type and model must
+// answer as the unspaced ones do.
+func TestTheSchemaStripsStringFields(t *testing.T) {
+	s := goldenSnapshot(t)
+	spaced := baseRequest()
+	spaced.Model, spaced.Region, spaced.RouteType = "  minimax/minimax-m2 ", ptr(" us-east4 "), ptr(" chat.completions ")
+	plain := baseRequest()
+	plain.Model, plain.Region = "minimax/minimax-m2", ptr("us-east4")
+	got, want := s.Evaluate(spaced), s.Evaluate(plain)
+	if got.Outcome != Answered || want.Outcome != Answered || len(got.Candidates) != 1 ||
+		got.Candidates[0] != want.Candidates[0] || got.ModelEstimate != 965 {
+		t.Fatalf("spaced %+v, plain %+v", got, want)
+	}
+	// Positive control: an unconfigured region is not stripped into one.
+	other := plain
+	other.Region = ptr("us-east4x")
+	if r := s.Evaluate(other); r.Outcome != Refused {
+		t.Fatalf("an unlisted region reached Bedrock: %+v", r)
 	}
 }

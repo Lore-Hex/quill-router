@@ -16,6 +16,7 @@ type routingCase struct {
 		Model                string          `json:"model"`
 		Models               []string        `json:"models"`
 		Provider             json.RawMessage `json:"provider"`
+		AllowFallbacks       json.RawMessage `json:"allow_fallbacks"`
 		RouteType            *string         `json:"route_type"`
 		Region               *string         `json:"region"`
 		ServiceTier          *string         `json:"service_tier"`
@@ -81,6 +82,11 @@ func init() {
 	outsideTheCohort["route:images"] = `route type "images"`
 	outsideTheCohort["required_parameters"] = "provider.require_parameters"
 	outsideTheCohort["missing_parameters"] = "provider.require_parameters"
+	// Python validates the whole list before looking up any item, so a blank
+	// or null item after a router name is refused as a bad item; Go passes
+	// the malformed list.
+	outsideTheCohort["router_name_then_blank_item"] = "provider.only has an item that is not a provider name"
+	outsideTheCohort["router_name_then_null_item"] = "provider.only has an item that is not a provider name"
 }
 
 func loadCases(t *testing.T) routingCases {
@@ -100,7 +106,7 @@ func (c routingCase) request(t *testing.T) Request {
 	}
 	r := c.Request
 	return Request{
-		Model: r.Model, Models: r.Models, Provider: r.Provider, RouteType: r.RouteType,
+		Model: r.Model, Models: r.Models, Provider: r.Provider, AllowFallbacks: r.AllowFallbacks, RouteType: r.RouteType,
 		Region: r.Region, ServiceTier: r.ServiceTier, RequestedParameters: r.RequestedParameters,
 		InputModalities: r.InputModalities, BYOKProviders: c.BYOKProviders,
 		EstimatedInputTokens: r.EstimatedInputTokens, OutputTokens: r.OutputTokens, At: at,

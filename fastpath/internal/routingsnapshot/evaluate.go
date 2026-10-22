@@ -12,18 +12,28 @@ import (
 )
 
 // Request is what authorize's candidate pipeline reads for one request in
-// the E2 cohort, as the gateway hands it over: the routing body's fields
-// (authorize_candidates.CandidateRequest.routing_body, before any model
-// string is canonicalized), the workspace's BYOK presence, the service tier,
-// the token counts and the instant.
+// the E2 cohort: the authorize body's routing fields exactly as the enclave
+// sent them, before schemas.GatewayAuthorizeRequest strips or canonicalizes
+// anything (Evaluate applies that schema's whitespace stripping itself), the
+// workspace's BYOK presence, the token counts and the instant.
+//
+// Evaluate assumes the inputs authorize_candidates takes besides these are
+// absent: a custom or user-provided model, a partner billing mode, an
+// additional cost reservation, a video resolution, and the process-local
+// health re-rank. The caller's cohort predicate must pass any request that
+// has one to Python.
 type Request struct {
-	// Model and Models are the body's model strings exactly as sent; Models
-	// is nil when the body has no models array.
+	// Model and Models are the body's model strings as sent; Models is nil
+	// when the body has no models array.
 	Model  string
 	Models []string
-	// Provider is the body's provider object exactly as sent (nil or null
-	// when absent).
+	// Provider is the body's provider object as sent (nil or null when
+	// absent).
 	Provider json.RawMessage
+	// AllowFallbacks is the body's top-level allow_fallbacks as sent (nil or
+	// null when absent): an extra field the schema keeps unvalidated, which
+	// provider_route_preferences reads beside provider.allow_fallbacks.
+	AllowFallbacks json.RawMessage
 	// RouteType, Region and ServiceTier are nil when the body omits them.
 	RouteType   *string
 	Region      *string
@@ -153,10 +163,18 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	if req.ContextPromptTokens != 0 || req.ContextCompletionTokens != 0 {
 		return pass("context-window fitting: the snapshot carries no context_length")
 	}
+	// The authorize schema (str_strip_whitespace) strips every string field
+	// and every string in a list of strings; provider values and extra fields
+	// it keeps as sent. Go strips only the space: anything else Python or
+	// pydantic might strip is not printable ASCII, which goes to Python.
+	req, ok := schemaStrip(req)
+	if !ok {
+		return pass("a string field that is not printable ASCII, or one the authorize schema refuses")
+	}
 	if req.RouteType != nil && !chatArmRouteTypes[*req.RouteType] {
 		return pass("route type %q", *req.RouteType)
 	}
-	p, result, ok := s.parseProvider(req.Provider)
+	p, result, ok := s.parseProvider(req.Provider, req.AllowFallbacks)
 	if !ok {
 		return result
 	}
@@ -175,10 +193,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	p.modalities = req.InputModalities
 	tier := ""
 	if req.ServiceTier != nil {
-		if !printable(*req.ServiceTier) {
-			return pass("service_tier is not printable ASCII")
-		}
-		tier = strings.ToLower(strings.Trim(*req.ServiceTier, " "))
+		tier = strings.ToLower(*req.ServiceTier)
 	}
 
 	ids, result, ok := s.requestedModelIDs(req, &p)
@@ -233,7 +248,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	for _, i := range candidates {
 		e := &s.Endpoints[i]
 		region := s.Settings.PrimaryRegion
-		if req.Region != nil && *req.Region != "" {
+		if req.Region != nil && *req.Region != "" { // stripped by schemaStrip
 			region = *req.Region
 		} else if e.GatewayRegions.RequiresExplicitOrigin {
 			region = ""
@@ -452,19 +467,17 @@ func (s *Snapshot) requestedModelIDs(req Request, p *prefs) ([]string, Result, b
 // passes to Python, which owns request parsing until the snapshot carries
 // its tables. The one refusal it makes is the router-name refusal, in
 // Python's field and item order.
-func (s *Snapshot) parseProvider(raw json.RawMessage) (prefs, Result, bool) {
+func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (prefs, Result, bool) {
 	p := prefs{allowFallbacks: true}
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return p, Result{}, true
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(trimmed, &fields); err != nil || fields == nil {
-		return p, pass("provider is not an object"), false
+	fields := map[string]json.RawMessage{}
+	if !isJSONNull(raw) {
+		if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+			return p, pass("provider is not an object"), false
+		}
 	}
 	isNull := func(name string) bool {
 		v, present := fields[name]
-		return !present || bytes.Equal(bytes.TrimSpace(v), []byte("null"))
+		return !present || isJSONNull(v)
 	}
 	str := func(name string) (string, bool) {
 		var v string
@@ -503,6 +516,9 @@ func (s *Snapshot) parseProvider(raw json.RawMessage) (prefs, Result, bool) {
 		if isNull(field) {
 			continue
 		}
+		// routing._string_list: the whole list is validated (every item a
+		// non-blank string) before any item is looked up, so a bad item
+		// after a router name is refused as a bad item. Go passes it.
 		var items []string
 		if text, ok := str(field); ok {
 			for _, item := range strings.Split(text, ",") {
@@ -510,14 +526,22 @@ func (s *Snapshot) parseProvider(raw json.RawMessage) (prefs, Result, bool) {
 					items = append(items, item)
 				}
 			}
-		} else if err := json.Unmarshal(fields[field], &items); err != nil {
-			return p, pass("provider.%s is not a list of strings", field), false
+		} else {
+			var raws []json.RawMessage
+			if err := json.Unmarshal(fields[field], &raws); err != nil || raws == nil {
+				return p, pass("provider.%s is not a list or a string", field), false
+			}
+			for _, rawItem := range raws {
+				var item string
+				if isJSONNull(rawItem) || json.Unmarshal(rawItem, &item) != nil ||
+					!printable(item) || strings.Trim(item, " ") == "" {
+					return p, pass("provider.%s has an item that is not a provider name", field), false
+				}
+				items = append(items, item)
+			}
 		}
 		var out []string
 		for _, item := range items {
-			if !printable(item) || strings.Trim(item, " ") == "" {
-				return p, pass("provider.%s item %q", field, item), false
-			}
 			rawSlug := strings.NewReplacer("_", "-", " ", "-").Replace(strings.ToLower(strings.Trim(item, " ")))
 			slugs, group := s.Aliases.ProviderGroupAliases[rawSlug]
 			if !group {
@@ -547,10 +571,37 @@ func (s *Snapshot) parseProvider(raw json.RawMessage) (prefs, Result, bool) {
 		}
 		lists[field] = out
 	}
-	if v, present := fields["allow_fallbacks"]; present && !isNull("allow_fallbacks") {
-		if err := json.Unmarshal(v, &p.allowFallbacks); err != nil {
-			return p, pass("provider.allow_fallbacks is not a boolean"), false
+	// The top-level and nested allow_fallbacks: each a boolean when present,
+	// and equal when both are. These refusals follow the lists' in Python.
+	var top, nested *bool
+	var fallbackRefusal *Result
+	for _, f := range []struct {
+		raw    json.RawMessage
+		into   **bool
+		reason string
+	}{
+		{topLevelAllowFallbacks, &top, "allow_fallbacks must be a boolean"},
+		{fields["allow_fallbacks"], &nested, "provider.allow_fallbacks must be a boolean"},
+	} {
+		if fallbackRefusal != nil || isJSONNull(f.raw) {
+			continue
 		}
+		var v bool
+		if err := json.Unmarshal(f.raw, &v); err != nil {
+			r := refused(400, "bad_request", f.reason)
+			fallbackRefusal = &r
+			continue
+		}
+		*f.into = &v
+	}
+	if fallbackRefusal == nil && top != nil && nested != nil && *top != *nested {
+		r := refused(400, "bad_request", "allow_fallbacks conflicts with provider.allow_fallbacks")
+		fallbackRefusal = &r
+	}
+	if top != nil {
+		p.allowFallbacks = *top
+	} else if nested != nil {
+		p.allowFallbacks = *nested
 	}
 	if !isNull("data_collection") {
 		v, ok := str("data_collection")
@@ -624,10 +675,62 @@ func (s *Snapshot) parseProvider(raw json.RawMessage) (prefs, Result, bool) {
 	if routerRefusal != nil {
 		return p, *routerRefusal, false
 	}
+	if fallbackRefusal != nil {
+		return p, *fallbackRefusal, false
+	}
 	p.order = lists["order"]
 	p.only = set(lists["only"])
 	p.ignore = set(lists["ignore"])
 	return p, Result{}, true
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
+}
+
+// schemaStrip applies schemas.GatewayAuthorizeRequest to the routing fields:
+// str_strip_whitespace on every str and list[str] field, min_length=1 on
+// model and service_tier, max_length=20 on service_tier. ok is false for a
+// string that is not printable ASCII (where Python's or pydantic's notion of
+// whitespace could differ from Go's) or that the schema refuses.
+func schemaStrip(req Request) (Request, bool) {
+	strip := func(v string) (string, bool) {
+		return strings.Trim(v, " "), printable(v)
+	}
+	ok := true
+	field := func(v *string) *string {
+		if v == nil {
+			return nil
+		}
+		out, good := strip(*v)
+		ok = ok && good
+		return &out
+	}
+	list := func(values []string) []string {
+		if values == nil {
+			return nil
+		}
+		out := make([]string, len(values))
+		for i, v := range values {
+			var good bool
+			out[i], good = strip(v)
+			ok = ok && good
+		}
+		return out
+	}
+	var good bool
+	req.Model, good = strip(req.Model)
+	ok = ok && good && req.Model != ""
+	req.Models = list(req.Models)
+	req.RouteType = field(req.RouteType)
+	req.Region = field(req.Region)
+	req.ServiceTier = field(req.ServiceTier)
+	req.RequestedParameters = list(req.RequestedParameters)
+	if req.ServiceTier != nil && (*req.ServiceTier == "" || len(*req.ServiceTier) > 20) {
+		ok = false
+	}
+	return req, ok
 }
 
 func set(values []string) map[string]bool {

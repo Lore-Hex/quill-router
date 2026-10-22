@@ -53,8 +53,8 @@ from trusted_router.authorize_candidates import (  # noqa: E402
 )
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
-from trusted_router.model_aliases import canonical_router_model_id  # noqa: E402
 from trusted_router.regions import choose_region  # noqa: E402
+from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 
 OUTPUT = ROOT / "fastpath" / "testdata" / "routing_cases_v1.json"
 GENERATOR = "scripts/fastpath/routing_cases_vectors.py"
@@ -134,16 +134,23 @@ def fixture_catalog(at: dt.datetime) -> Iterator[None]:
         MODEL_ENDPOINTS.update(saved_endpoints)
 
 
-def _routing_body(request: dict[str, Any], model: str) -> dict[str, Any]:
-    """The routing fields of the gateway's request body, as authorize builds it."""
-    body: dict[str, Any] = {"model": model}
-    for name in ("models", "provider", "requested_parameters", "input_modalities",
-                 "route_type", "region", "service_tier", "stream"):
-        if request.get(name) is not None:
-            body[name] = request[name]
-    if "models" in body:
-        body["models"] = [canonical_router_model_id(m) for m in body["models"]]
-    return body
+# The routing fields of authorize's body_dict: the schema's fields routing
+# reads, and the top-level allow_fallbacks, an extra field the schema keeps.
+ROUTING_FIELDS = ("model", "models", "provider", "allow_fallbacks", "requested_parameters",
+                  "input_modalities", "route_type", "region", "service_tier", "stream")
+
+
+def _authorize_body(request: dict[str, Any]) -> tuple[GatewayAuthorizeRequest, dict[str, Any]]:
+    """The request as the authorize schema admits it, and its routing body.
+
+    GatewayAuthorizeRequest strips every string (str_strip_whitespace) and
+    canonicalizes the model ids; extra fields such as allow_fallbacks stay as
+    sent; authorize's body_dict is its dump without None.
+    """
+    fields = {k: v for k, v in request.items() if k not in ("estimated_input_tokens", "output_tokens")}
+    body = GatewayAuthorizeRequest.model_validate({**fields, "api_key_lookup_hash": "routing-cases"})
+    dumped = body.model_dump(exclude_none=True)
+    return body, {name: dumped[name] for name in ROUTING_FIELDS if name in dumped}
 
 
 def evaluate(case: dict[str, Any]) -> dict[str, Any]:
@@ -156,22 +163,22 @@ def evaluate(case: dict[str, Any]) -> dict[str, Any]:
             environment="test", regions=",".join(REGIONS), primary_region=PRIMARY_REGION,
             auto_model_order="",
         )
-        region = choose_region(settings, request.get("region") or None)
-        model = canonical_router_model_id(request["model"])
+        body, routing_body = _authorize_body(request)
+        region = choose_region(settings, body.region or None)
         candidate_request = CandidateRequest(
-            route_type=request.get("route_type"), route_model_id=model,
-            routing_body=_routing_body(request, model), body_region=request.get("region"),
+            route_type=body.route_type, route_model_id=body.model,
+            routing_body=routing_body, body_region=body.region,
         )
         try:
             plan = plan_route(candidate_request, settings, region=region)
             resolved = resolve_candidates(plan, candidate_request, region=region, at=at)
             outcome = finish_candidates(
                 plan, resolved,
-                route_type=request.get("route_type"),
+                route_type=body.route_type,
                 byok_providers=frozenset(case["byok_providers"]),
                 estimated_input_tokens=request["estimated_input_tokens"],
                 output_tokens=request["output_tokens"],
-                service_tier=request.get("service_tier"),
+                service_tier=body.service_tier,
                 additional_cost_reservation=0,
                 video_resolution=None,
                 at=at,
@@ -189,8 +196,8 @@ def evaluate(case: dict[str, Any]) -> dict[str, Any]:
             boot_accepted=STAGE_D_INPUTS["boot_accepted"],
             heartbeat_declared=STAGE_D_INPUTS["heartbeat_declared"],
             require_heartbeat_declaration=STAGE_D_INPUTS["require_heartbeat_declaration"],
-            stream=request.get("stream"),
-            route_type=request.get("route_type"),
+            stream=body.stream,
+            route_type=body.route_type,
             endpoint_candidates=outcome.candidates,
             standard_endpoint_pricing=STAGE_D_INPUTS["standard_endpoint_pricing"],
             service_tier=outcome.service_tier,
@@ -293,6 +300,22 @@ def cases() -> list[dict[str, Any]]:
     add("variant_suffix_over_body_sort", {"model": f"{GLM}:floor", "provider": {"sort": "latency"}})
     add("variant_suffix_later_wins", {"model": f"{GLM}:floor", "models": [f"{FLASH}:nitro"]})
     add("latency_table_across_models", {"model": INKLING, "models": [GLM], "provider": {"sort": {"by": "latency", "partition": "none"}}})
+    # The top-level allow_fallbacks, an extra field of the authorize body that
+    # routing reads beside provider.allow_fallbacks.
+    add("top_level_no_fallbacks", {"model": GLM, "allow_fallbacks": False})
+    add("top_level_fallbacks", {"model": GLM, "allow_fallbacks": True})
+    add("top_level_fallbacks_conflict", {"model": GLM, "allow_fallbacks": True, "provider": {"allow_fallbacks": False}})
+    add("top_level_fallbacks_agree", {"model": GLM, "allow_fallbacks": False, "provider": {"allow_fallbacks": False}})
+    add("top_level_fallbacks_not_bool", {"model": GLM, "allow_fallbacks": "false"})
+    add("provider_fallbacks_not_bool", {"model": GLM, "provider": {"allow_fallbacks": 0}})
+    add("router_name_then_fallbacks_not_bool", {"model": GLM, "allow_fallbacks": 1, "provider": {"only": ["openrouter"]}})
+    # A provider list is validated whole before any item is looked up.
+    add("router_name_then_blank_item", {"model": GLM, "provider": {"only": ["openrouter", ""]}})
+    add("router_name_then_null_item", {"model": GLM, "provider": {"only": ["openrouter", None]}})
+    # The authorize schema strips every string field (str_strip_whitespace).
+    add("spaced_region", {"model": BEDROCK, "region": " us-east4 "})
+    add("spaced_region_denied", {"model": FUGU, "region": " europe-west4"})
+    add("spaced_model_and_route", {"model": f"  {GLM} ", "models": [f" {FLASH}"], "route_type": " chat.completions "})
     return out
 
 
