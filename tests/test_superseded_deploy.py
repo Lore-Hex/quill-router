@@ -119,7 +119,7 @@ def _fake_gh(
 
     `responses` maps a substring of the argv to (stdout, exit code); the first
     matching entry answers, and `stdout`/`exit_code` answer anything unmatched.
-    The stdout `SLEEP` makes the fake hang for three seconds instead.
+    The stdout `SLEEP` makes the fake hang for six seconds instead.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -137,7 +137,7 @@ def _fake_gh(
         "matches = [key for key in table if key and key in argv]\n"
         'out, code = table[matches[0] if matches else ""]\n'
         'if out == "SLEEP":\n'
-        "    time.sleep(3)\n"
+        "    time.sleep(6)\n"
         "sys.stdout.write(out + '\\n')\n"
         "sys.exit(code)\n"
     )
@@ -164,6 +164,9 @@ READY = {
     "--workflow ci.yml --commit bbb": ('[{"status": "completed", "conclusion": "success"}]', 0),
 }
 ARGS = ["--repo", "o/r", "--base", "aaa", "--head", "ccc"]
+# A hanging fake sleeps 6 s; the timeout under test must be far below that and far above the fake's own
+# interpreter start-up, which exceeded 0.3 s on a loaded machine (review round 3 saw three flakes).
+HANG_TIMEOUT = 2.0
 
 
 def _ci(status: str, conclusion: str = "") -> str:
@@ -281,17 +284,17 @@ def test_main_deploys_when_a_successor_lookup_fails(
 def test_main_deploys_when_a_successor_lookup_times_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hanging: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", HANG_TIMEOUT)
     _fake_gh(tmp_path, monkeypatch, responses={**READY, hanging: ("SLEEP", 0)})
     assert superseded.main(ARGS) == 0
-    assert "timed out after 0.3 s" in capsys.readouterr().err
+    assert f"timed out after {HANG_TIMEOUT} s" in capsys.readouterr().err
 
 
 def test_main_skips_when_the_comparison_times_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # The compare decides whether BASE is even on main; unknown there never deploys.
-    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", HANG_TIMEOUT)
     _fake_gh(tmp_path, monkeypatch, responses={"compare/aaa...ccc": ("SLEEP", 0)})
     assert superseded.main(ARGS) == 1
     assert "timed out" in capsys.readouterr().err
@@ -312,7 +315,7 @@ def test_ancestry_mode_deploys_only_while_base_is_on_main(
 def test_ancestry_mode_never_deploys_on_an_unknown_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str, exit_code: int
 ) -> None:
-    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", HANG_TIMEOUT)
     _fake_gh(tmp_path, monkeypatch, stdout=stdout, exit_code=exit_code)
     assert superseded.main(["--mode", "ancestry", *ARGS]) == 1
 
