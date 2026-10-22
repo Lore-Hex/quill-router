@@ -14,9 +14,12 @@ class NyteV2Tests(unittest.TestCase):
             self.assertNotIn('/confidential-api', page)
             self.assertIn('href="/confidential#start">Start building</a>', page)
             self.assertNotIn('data-open="pdeck"', page)
-            self.assertIn('name="website"', page)
-            self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)
-            self.assertIn('id="m-deck"', page)
+            if name in ('home', 'api'):
+                self.assertIn('name="website"', page)
+                self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)
+                self.assertIn('id="m-deck"', page)
+            else:
+                self.assertNotIn('id="m-deck"', page)
             self.assertNotIn('Send the deck', page)
         self.assertEqual(render_nyte('sup').count('href="/providers">Get the provider deck</a>'), 2)
 
@@ -44,7 +47,9 @@ class NyteV2Tests(unittest.TestCase):
         self.assertNotIn('<time', panel)
         self.assertNotIn('7d', panel)
         self.assertNotIn('%', panel)
-        self.assertIn('href="/index">Explore the index</a>', render_nyte('sup'))
+        page = render_nyte('sup')
+        self.assertIn('href="/index">Explore the index</a>', page)
+        self.assertNotIn('Index figures are dated published prices', page)
 
     def test_supplier_listing_steps(self):
         page = render_nyte('sup')

@@ -52,7 +52,7 @@ def render_nyte(
     if content is None:
         content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel())
     result = (SOURCE / "shell.html").read_text()
-    for key, value in dict(buyer_deck="" if page == "providers" else (SOURCE / "buyer-deck.html").read_text(), extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/live-evidence.js?v=' + version + '" defer></script>' if page == "api" else "").items():
+    for key, value in dict(buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/live-evidence.js?v=' + version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
     if page == "providers":
         result = result.replace('<div class="legal">', '<div class="legal"><a href="https://trustedrouter.com/trust">Trust center</a>')

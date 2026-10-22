@@ -24,7 +24,8 @@
 .pv-topics>div+div{padding-left:28px;border-left:1px solid var(--rule-soft)}
 .pv-topics span{display:block;font:500 13px/1 var(--mono);color:var(--mint);margin-bottom:10px}
 .pv-topics b{display:block;font-size:18px;font-weight:550;line-height:1.35;letter-spacing:-.015em;color:var(--t1)}
-.pv-deck-link{margin-top:26px}
+.pv-request-note{margin-top:26px;max-width:62em;color:var(--t2);font-size:15px;line-height:1.6}
+.pv-deck-link{margin-top:14px}
 
 .pv-legal{padding:56px 0 88px}
 .pv-legal .fine{margin:0;font-size:15px;line-height:1.55;color:var(--t2);max-width:62em}

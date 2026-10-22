@@ -383,8 +383,7 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
   .idx-row .p{grid-column:3;align-self:center;font-size:16px}
   .idx-row .d b{font-size:16px}
   .idx-row .d small{font-size:13.5px}
-  .idx-hd{padding:22px 18px;gap:20px}
-  .idx-hd{grid-template-columns:minmax(0,1fr) 100px;gap:14px}
+  .idx-hd{padding:22px 18px}
   .idx-value{font-size:40px}
   details p{padding-right:8px}
   summary{font-size:17px}
