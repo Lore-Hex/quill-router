@@ -31,14 +31,13 @@ def render_nyte(page: str = "home") -> str:
         "sup": ("/suppliers", "Suppliers · New York Token Exchange", "Sell your inference to enterprise buyers. List your models and prices once."),
     }[page]
     version = hashlib.sha256((SOURCE / "styles.css").read_bytes() + (SOURCE / "app.js").read_bytes() + (HERE / "analytics.js").read_bytes()).hexdigest()[:12]
-    counts = json.loads((SOURCE / "catalogue-counts.json").read_text())
     markets = json.loads((HERE / "markets.json").read_text())
     market_links = "".join(
         '<a href="https://' + html.escape(market["domain"], quote=True) + '/"'
         + (' aria-current="page"' if market["slug"] == "new-york" else '')
         + '>' + html.escape(market["region"]) + '</a>' for market in markets
     )
-    content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel()).replace("{{model_count}}", f'{counts["models"]:,}').replace("{{provider_count}}", f'{counts["providers"]:,}')
+    content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel())
     result = (SOURCE / "shell.html").read_text()
     for key, value in dict(title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/live-evidence.js?v=' + version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)

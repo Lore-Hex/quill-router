@@ -621,7 +621,9 @@ def register_catalog_routes(router: APIRouter) -> None:
         )
 
     @router.get("/models/count")
-    async def models_count(request: Request) -> dict[str, dict[str, int]]:
+    async def models_count(request: Request, response: Response) -> dict[str, dict[str, int]]:
+        # Anonymous public catalogue data, readable by static exchange sites.
+        response.headers["Access-Control-Allow-Origin"] = "*"
         return {"data": {"count": len(_public_model_shapes(request))}}
 
     @router.get("/models/picker")
@@ -761,7 +763,9 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/providers")
-    async def providers() -> dict[str, list[dict[str, Any]]]:
+    async def providers(response: Response) -> dict[str, list[dict[str, Any]]]:
+        # No credentials are needed or allowed for cross-origin catalogue reads.
+        response.headers["Access-Control-Allow-Origin"] = "*"
         return {
             "data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]
         }

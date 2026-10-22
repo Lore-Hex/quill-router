@@ -137,3 +137,58 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   });
   update();
 });
+
+/* Read the public catalogue at runtime; never substitute a build-time snapshot. */
+(() => {
+  'use strict';
+  const models = document.querySelector('[data-catalog-models]');
+  const providers = document.querySelector('[data-catalog-providers]');
+  if (!models || !providers) return;
+  const interval = 60000;
+  const count = value => Number.isSafeInteger(value) && value >= 0;
+  const clear = element => { element.textContent = '—'; };
+  const read = async (endpoint, element, select) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`https://trustedrouter.com/v1/${endpoint}`, {
+        mode: 'cors', credentials: 'omit', cache: 'no-store', signal: controller.signal,
+      });
+      if (!response.ok) throw new Error('Catalogue unavailable');
+      const value = select(await response.json());
+      if (!count(value)) throw new Error('Invalid catalogue count');
+      element.textContent = value.toLocaleString('en-US');
+    } catch {
+      clear(element);
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  let busy = false;
+  let expires = 0;
+  const refresh = async () => {
+    if (busy) return;
+    busy = true;
+    await Promise.all([
+      read('models/count', models, payload => payload?.data?.count),
+      read('providers', providers, payload => {
+        if (!Array.isArray(payload?.data) || payload.data.some(provider =>
+          !provider || typeof provider.id !== 'string' ||
+          !['active', 'blocked'].includes(provider.routing_status))) return NaN;
+        return new Set(payload.data.filter(provider => provider.routing_status === 'active')
+          .map(provider => provider.id)).size;
+      }),
+    ]);
+    expires = Date.now() + interval;
+    busy = false;
+  };
+  const expire = () => {
+    if (Date.now() >= expires) { clear(models); clear(providers); }
+  };
+  setInterval(() => { expire(); if (!document.hidden) void refresh(); }, interval);
+  document.addEventListener('visibilitychange', () => {
+    expire();
+    if (!document.hidden) void refresh();
+  });
+  void refresh();
+})();
