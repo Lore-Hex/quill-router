@@ -78,12 +78,14 @@ def test_token_exchange_footer_links_to_media_kit(tmp_path: Path) -> None:
     homepages = list(tmp_path.glob("*/index.html"))
     markets = json.loads((root / "sites/token-exchange/markets.json").read_text())
     assert {path.parent.name for path in homepages} == {market["slug"] for market in markets}
+    domains = {market["slug"]: market["domain"] for market in markets}
     for path in homepages:
         page = BeautifulSoup(path.read_text(), "html.parser")
         links = [link for link in page.select("footer .legal a") if link.get_text() == "Media kit"]
-        # New York is served at nytokenexchange.com, so its footer may link the
-        # media kit relatively; compare where the link resolves, not its spelling.
-        site = "https://nytokenexchange.com/" if path.parent.name == "new-york" else "https://trustedrouter.com/"
-        expected = urljoin(site, "media-kit")
+        # Each market is served at its own domain, so a relative footer link
+        # resolves there; compare where the link lands, not its spelling. Only
+        # New York has its own media kit; every other market links TrustedRouter's.
+        base = f"https://{domains[path.parent.name]}/"
+        expected = "https://nytokenexchange.com/media-kit" if path.parent.name == "new-york" else "https://trustedrouter.com/media-kit"
         assert len(links) == 1
-        assert urljoin(site, links[0]["href"]) == expected
+        assert urljoin(base, links[0]["href"]) == expected
