@@ -21,6 +21,8 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "gryphe/mythomax-l2-13b", "Gryphe/MythoMax-L2-13b",
+         datetime(2026, 10, 29, tzinfo=UTC), "sao10k/l3-8b-lunaris-v1-turbo"),
     Case("arcee", "arcee-ai/trinity-large-thinking", "trinity-large-thinking",
          datetime(2026, 10, 26, tzinfo=UTC), "moonshotai/kimi-k3"),
     Case("novita", "xiaomimimo/mimo-v2.5", "xiaomimimo/mimo-v2.5",
