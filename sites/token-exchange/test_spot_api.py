@@ -25,7 +25,8 @@ class SpotAPITests(unittest.TestCase):
         self.assertEqual(request["model"], "nyte/auto")
         self.assertEqual(request["provider"], {"min_privacy": "confidential"})
         self.assertIs(request["stream"], True)
-        self.assertEqual(request["max_tokens"], 128)
+        # The live auto route can spend over 128 tokens on reasoning before its greeting.
+        self.assertEqual(request["max_tokens"], 1024)
         self.assertIn("curl --no-buffer --fail-with-body", page)
         self.assertIn("fail closed", page)
 
