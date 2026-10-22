@@ -101,6 +101,7 @@ def register(app: FastAPI) -> None:
                 page_title="Credits",
                 page_subtitle="Top up to keep prepaid routes flowing.",
                 credits_available=money(summary["available"] if summary else 0),
+                credits_empty=not summary or summary["available"] <= 0,
                 credits_usage=money(summary["total_usage"] if summary else 0),
                 auto_refill_enabled=credit.auto_refill_enabled if credit else False,
                 auto_refill_threshold_dollars=(
