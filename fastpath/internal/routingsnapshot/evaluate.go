@@ -41,6 +41,9 @@ type Request struct {
 	// RequestedParameters and InputModalities are nil when absent.
 	RequestedParameters []string
 	InputModalities     []string
+	// Stream is the body's stream flag (nil when absent); only the Stage D
+	// reason reads it.
+	Stream *bool
 	// BYOKProviders are the provider slugs whose BYOK credentials the
 	// workspace holds.
 	BYOKProviders []string
@@ -872,37 +875,44 @@ type StageDInputs struct {
 	SettlementBackend           bool
 }
 
-// StageDReason is gateway._stage_d_eligibility_reason for an answered
-// request.
-func (s *Snapshot) StageDReason(in StageDInputs, stream *bool, routeType *string, r Result) string {
+// StageDReason is gateway._stage_d_eligibility_reason for req and r, the
+// Result Evaluate gave for it. It reads req through the same schemaStrip as
+// Evaluate, so the route type it compares is the one the candidates were
+// chosen for. ok is false unless r answered req.
+func (s *Snapshot) StageDReason(in StageDInputs, req Request, r Result) (reason string, ok bool) {
+	req, ok = schemaStrip(req)
+	if !ok || r.Outcome != Answered {
+		return "", false
+	}
+	stream, routeType := req.Stream, req.RouteType
 	switch {
 	case !in.EligibilityEnabled:
-		return "stage_d_disabled"
+		return "stage_d_disabled", true
 	case !in.Pilot:
-		return "workspace_not_pilot"
+		return "workspace_not_pilot", true
 	case !in.HeartbeatEnabled:
-		return "heartbeats_disabled"
+		return "heartbeats_disabled", true
 	case !in.BootAccepted:
-		return "boot_not_accepted"
+		return "boot_not_accepted", true
 	case in.RequireHeartbeatDeclaration && !in.HeartbeatDeclared:
-		return "heartbeat_undeclared"
+		return "heartbeat_undeclared", true
 	case stream == nil || !*stream:
-		return "not_streaming"
+		return "not_streaming", true
 	case routeType == nil || (*routeType != "chat.completions" && *routeType != "responses"):
-		return "route"
+		return "route", true
 	}
 	for _, id := range r.Candidates {
 		if s.Endpoints[s.endpointIndex[id]].UsageType != usageCredits {
-			return "mixed_usage_type"
+			return "mixed_usage_type", true
 		}
 	}
 	switch {
 	case !in.StandardEndpointPricing:
-		return "pricing_kind"
+		return "pricing_kind", true
 	case r.ServiceTier == "priority" || r.ServiceTier == "auto":
-		return "service_tier"
+		return "service_tier", true
 	case !in.SettlementBackend:
-		return "settlement_backend"
+		return "settlement_backend", true
 	}
-	return "ok"
+	return "ok", true
 }

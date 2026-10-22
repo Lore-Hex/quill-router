@@ -315,7 +315,8 @@ def cases() -> list[dict[str, Any]]:
     # The authorize schema strips every string field (str_strip_whitespace).
     add("spaced_region", {"model": BEDROCK, "region": " us-east4 "})
     add("spaced_region_denied", {"model": FUGU, "region": " europe-west4"})
-    add("spaced_model_and_route", {"model": f"  {GLM} ", "models": [f" {FLASH}"], "route_type": " chat.completions "})
+    add("spaced_model_and_route", {"model": f"  {GLM} ", "models": [f" {FLASH}"], "route_type": " chat.completions ",
+                                   "stream": True})
     return out
 
 

@@ -106,7 +106,7 @@ func (c routingCase) request(t *testing.T) Request {
 	}
 	r := c.Request
 	return Request{
-		Model: r.Model, Models: r.Models, Provider: r.Provider, AllowFallbacks: r.AllowFallbacks, RouteType: r.RouteType,
+		Model: r.Model, Models: r.Models, Stream: r.Stream, Provider: r.Provider, AllowFallbacks: r.AllowFallbacks, RouteType: r.RouteType,
 		Region: r.Region, ServiceTier: r.ServiceTier, RequestedParameters: r.RequestedParameters,
 		InputModalities: r.InputModalities, BYOKProviders: c.BYOKProviders,
 		EstimatedInputTokens: r.EstimatedInputTokens, OutputTokens: r.OutputTokens, At: at,
@@ -170,7 +170,7 @@ func TestTheEvaluatorReproducesEveryRoutingCase(t *testing.T) {
 			t.Errorf("%s: want %v %d %q, got %+v", c.Name, c.Expect.Candidates, *c.Expect.ModelEstimate, tier, got)
 			continue
 		}
-		if reason := s.StageDReason(stageD, c.Request.Stream, c.Request.RouteType, got); reason != c.Expect.StageDReason {
+		if reason, ok := s.StageDReason(stageD, c.request(t), got); !ok || reason != c.Expect.StageDReason {
 			t.Errorf("%s: Stage D reason %q, want %q", c.Name, reason, c.Expect.StageDReason)
 		}
 	}
