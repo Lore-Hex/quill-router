@@ -3,6 +3,7 @@ startup script, the load mix)."""
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -243,9 +244,10 @@ def _snapshot_flags(script: str) -> set[str]:
 
 def test_the_snapshot_flags_wait_for_metadata_and_a_release_that_takes_them() -> None:
     """The routing snapshot's flags reach the unit only from instance
-    metadata that infra/fastpath.tf does not set, so the default node polls
-    and compares nothing. Once Terraform sets any of those attributes, the
-    pinned release must take every flag they add, as for the edge's own."""
+    metadata, which infra/fastpath.tf sets on the nodes it names alone, so
+    any other node polls and compares nothing. Once Terraform sets any of
+    those attributes, the pinned release must take every flag they add, as
+    for the edge's own."""
     script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
     flags = _snapshot_flags(script)
     assert flags == {
@@ -329,6 +331,55 @@ def test_the_script_refuses_a_snapshot_url_off_the_edges_upstream() -> None:
     # None set: nothing passed.
     none = _run_snapshot_block(script)
     assert none.returncode == 0 and none.stdout == "", none.stderr
+
+
+def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> None:
+    """The attributes infra/fastpath.tf gives the snapshot's nodes, rendered
+    as Terraform renders them, pass the startup script's own checks (all
+    four, on the edge's upstream, characters the unit can carry) and turn
+    the shadow on; a value the script refused would leave a new node
+    stopped. The nodes named are nodes Terraform declares."""
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    upstream = re.search(r'^\s*fastpath_edge_upstream\s*=\s*"([^"]+)"', tf, re.M)
+    region = re.search(r'^\s*fastpath_region\s*=\s*"([^"]+)"', tf, re.M)
+    assert upstream and region
+    start = tf.index("fastpath_edge_snapshot = tomap({")
+    block = tf[start:tf.index("})", start)]
+    rendered = {
+        name: value.replace("${local.fastpath_edge_upstream}", upstream.group(1))
+        .replace("${local.fastpath_region}", region.group(1))
+        for name, value in re.findall(r'^\s*(fastpath-edge-[a-z-]+)\s*=\s*"([^"]*)"', block, re.M)
+    }
+    assert set(rendered) == set(_SNAPSHOT_ATTRIBUTES), sorted(rendered)
+    assert not any("${" in value for value in rendered.values()), rendered
+    assert rendered["fastpath-edge-snapshot-plane"] == "gcp/us-central1"
+    # The key and kid are the ones the control plane signs with (rollout.sh's
+    # pin): a different valid key fails every verification, and a key that is
+    # not 32 bytes stops the binary at start, admission and all.
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text(encoding="utf-8")
+    for attribute, literal in (
+        ("fastpath-edge-snapshot-public-key", "ROUTING_SNAPSHOT_PUBLIC_KEY"),
+        ("fastpath-edge-snapshot-kid", "ROUTING_SNAPSHOT_KID"),
+    ):
+        pinned = re.search(rf'^{literal}="([^"]+)"$', rollout, re.M)
+        assert pinned and rendered[attribute] == pinned.group(1), (attribute, pinned)
+    key = rendered["fastpath-edge-snapshot-public-key"]
+    assert len(base64.urlsafe_b64decode(key + "=" * (-len(key) % 4))) == 32, key
+    ran = _run_snapshot_block(script, upstream=upstream.group(1), **rendered)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == (
+        f"-edge-snapshot-url {upstream.group(1)}/internal/fastpath/routing-snapshot "
+        f"-edge-snapshot-public-key {rendered['fastpath-edge-snapshot-public-key']} "
+        f"-edge-snapshot-kid {rendered['fastpath-edge-snapshot-kid']} -edge-snapshot-plane gcp/us-central1 -edge-shadow"
+    )
+    nodes = re.search(r"fastpath_edge_snapshot_nodes\s*=\s*\[([^\]]*)\]", tf)
+    assert nodes
+    named = re.findall(r'"([^"]+)"', nodes.group(1))
+    assert named
+    declared = tf[tf.index('resource "google_compute_instance" "fastpath_node"'):]
+    for node in named:
+        assert re.search(rf'^\s*"{node}"\s*=\s*"us-central1-[a-z]"', declared, re.M), node
 
 
 def test_the_snapshot_flags_are_found() -> None:
