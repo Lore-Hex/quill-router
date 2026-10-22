@@ -1,7 +1,7 @@
 """Approved v2 routes, real download contract and source-backed evidence."""
 import unittest
 
-from nyte_v2 import render_nyte
+from nyte_v2 import index_panel, render_nyte
 
 
 class NyteV2Tests(unittest.TestCase):
@@ -36,6 +36,15 @@ class NyteV2Tests(unittest.TestCase):
         page = render_nyte('api')
         self.assertEqual(page.count('href="https://trustedrouter.com/console/api-keys?'), 2)
         self.assertNotIn('/console/keys', page)
+
+    def test_supplier_price_panel_is_illustrative(self):
+        panel = index_panel()
+        self.assertIn('Illustrative price comparison', panel)
+        self.assertIn('Example USD per billion tokens', panel)
+        self.assertNotIn('<time', panel)
+        self.assertNotIn('7d', panel)
+        self.assertNotIn('%', panel)
+        self.assertIn('href="/index">Explore the index</a>', render_nyte('sup'))
 
     def test_supplier_listing_steps(self):
         page = render_nyte('sup')

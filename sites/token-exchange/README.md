@@ -138,7 +138,9 @@ approved founder photography, the existing press contact is
 ### Private provider deck request page
 
 `https://nytokenexchange.com/providers` is a public, request-only landing
-page. Its email link opens a request to `providers@trustedrouter.com`; it does
+page, rendered from `nyte-v2/providers.html` with the shared NYTE header,
+footer, and design tokens. `/suppliers` is the supply-side overview; `/providers`
+is its private-deck request destination. Its email link opens a request to `providers@trustedrouter.com`; it does
 not submit a form, automatically send mail, or deliver a download. The team
 reviews requests and shares the deck privately. Never add the confidential PDF,
 slide images, or a publicly resolvable deck URL to the build or storage bucket.
@@ -151,7 +153,8 @@ It stays in the private outreach workflow, never in this source tree or build.
 The request is reviewed manually; it is not an automated attachment-delivery flow.
 
 For a narrow update, publish only the built `providers` and `providers.html` objects and
-`new-york/sitemap.xml` after the repository and site checks. Do not sync a stale
+`new-york/sitemap.xml` and required `assets/nyte-v2/` styles/scripts after the
+repository and site checks. Do not sync a stale
 full build over other markets. Both objects use a five-minute public cache.
 
 ### NYTE Privacy Secured seal

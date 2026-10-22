@@ -157,7 +157,7 @@ def build(output: Path) -> None:
     for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js"):
         shutil.copyfile(HERE / name, assets / name)
     # Shared public pages. The provider deck itself remains private.
-    for page in ("providers", "badge"):
+    for page in ("badge",):
         for name in (page, f"{page}.html"):
             shutil.copyfile(HERE / f"{page}.html", output / name)
     for name in ("badge.css", "badge.js"):

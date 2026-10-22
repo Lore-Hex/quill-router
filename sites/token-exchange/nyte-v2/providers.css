@@ -1,0 +1,45 @@
+/* Private provider briefing, using the shared NYTE surfaces and type. */
+.provider-hero{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:center;gap:72px;padding:88px 0 104px}
+.provider-page .eyebrow{font:500 12px/1.5 var(--mono);color:var(--t3);margin-bottom:24px}
+.provider-page .lead{font-size:19px;line-height:1.6;color:var(--t2);margin:28px 0 36px;max-width:33em}
+.provider-page .btn svg{width:17px;height:17px;flex:none;margin-left:12px}
+.provider-page .request-note{font-size:13px;color:var(--t3);margin-top:20px}
+.provider-page .deck{background:var(--panel);border:1px solid var(--rule);border-radius:2px;padding:36px;min-height:440px;display:flex;flex-direction:column}
+.provider-page .deck-meta,.provider-page .deck-bottom{display:flex;justify-content:space-between;gap:16px;color:var(--t3);font:400 12px/1.5 var(--mono)}
+.provider-page .deck-seal{width:64px;height:64px;margin:40px 0 28px;color:var(--mint)}
+.provider-page .deck-title{font-size:clamp(32px,3vw,42px);font-weight:600;line-height:1.1;letter-spacing:-.04em;margin-bottom:20px}
+.provider-page .deck-title span{display:block}
+.provider-page .deck-subtitle{font-size:16px;color:var(--t2);margin-bottom:32px}
+.provider-page .deck-bottom{margin-top:auto;padding-top:20px;border-top:1px solid var(--rule)}
+.provider-page .private-badge{color:var(--mint)}
+.provider-page .scope{display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px 28px;padding:28px 0;border-block:1px solid var(--rule);font-size:15px;color:var(--t3)}
+.provider-page .scope strong{font-weight:550;color:var(--t1)}
+.provider-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:72px}
+.provider-page .intro{margin-top:24px;color:var(--t2);max-width:32em}
+.provider-page .fine-print{font-size:14px;color:var(--t3);margin-top:24px;max-width:36em}
+.provider-page .topics{list-style:none;margin:0;padding:0}
+.provider-page .topics li{display:grid;grid-template-columns:30px minmax(0,1fr);gap:20px;padding:24px 0;border-bottom:1px solid var(--rule)}
+.provider-page .topics li:first-child{padding-top:0}
+.provider-page .number{font:400 13px/2 var(--mono);color:var(--mint)}
+.provider-page .topics p{margin-top:12px;color:var(--t2)}
+.provider-request{background:var(--panel);border:1px solid var(--rule);border-radius:2px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:40px;align-items:center;padding:40px;margin-bottom:64px}
+.provider-request h2{margin-bottom:20px}
+.provider-request p:not(.eyebrow){color:var(--t2);max-width:38em}
+.provider-request .contact{font-size:14px;margin-top:20px;overflow-wrap:anywhere}
+.provider-request .contact a{text-decoration:underline;text-underline-offset:4px}
+@media(max-width:1000px){
+ .provider-hero,.provider-details,.provider-request{grid-template-columns:1fr;gap:48px}
+ .provider-page .deck-wrap{max-width:600px;width:100%}
+ .provider-request>.btn{justify-self:start}
+}
+@media(max-width:600px){
+ .provider-hero{padding:56px 0 64px}
+ .provider-page .lead{font-size:17px;margin:24px 0 32px}
+ .provider-hero .btns{flex-direction:column}
+ .provider-page .deck{padding:24px;min-height:0}
+ .provider-page .deck-meta,.provider-page .deck-bottom{font-size:11px;flex-wrap:wrap}
+ .provider-page .deck-seal{width:48px;height:48px;margin:32px 0 24px}
+ .provider-page .scope{flex-direction:column}
+ .provider-request{padding:24px;gap:28px;margin-bottom:32px}
+ .provider-request>.btn{justify-self:stretch;white-space:normal;text-align:center;padding-inline:12px}
+}

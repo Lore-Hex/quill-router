@@ -62,6 +62,14 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn("Company:", query["body"][0])
         self.assertIn("My role:", query["body"][0])
 
+    def test_shared_design_preserves_request_only_flow(self):
+        self.assertIn('/assets/nyte-v2/styles.css?', self.page)
+        self.assertIn('/assets/nyte-v2/providers.css?', self.page)
+        self.assertIn('class="site-footer"', self.page)
+        self.assertNotIn('id="m-deck"', self.page)
+        self.assertIn('>Trust center</a>', self.page)
+        self.assertNotIn('>Providers</a>', self.page)
+
     def test_metadata_and_new_york_only_sitemap(self):
         url = "https://nytokenexchange.com/providers"
         self.assertIn(f'<link rel="canonical" href="{url}">', self.page)
