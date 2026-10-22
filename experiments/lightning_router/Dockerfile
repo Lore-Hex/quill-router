@@ -5,7 +5,7 @@ RUN npm ci --ignore-scripts
 COPY frontend.js pages.js setup.mjs session.mjs chrome.mjs ./
 RUN npm run build
 
-FROM ghcr.io/astral-sh/uv:0.13.4 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
 FROM debian:bookworm-slim AS lexe
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
 RUN curl --fail --location --proto '=https' --tlsv1.2 \
