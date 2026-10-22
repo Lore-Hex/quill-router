@@ -147,9 +147,14 @@ def test_the_as_of_compile_judges_catalog_freshness_at_the_window_start() -> Non
     # requested-model expansions must be judged as of the window's start, not
     # on the worker's wall clock.
     deadline = max(int(d.timestamp()) for d in provider_manifest_deadlines().values())
-    now = deadline + 600
+    start, next_start = publication_window_as_of(deadline)
+    assert start == deadline
+    # A newly refreshed manifest can expire less than ten minutes before the
+    # next hourly boundary. Keep the probe inside that manifest's window.
+    now = min(deadline + 600, next_start - 1)
     published = _run(_PUBLISHER, now - 60, now)
-    assert published["start"] == deadline < now < published["next_start"]
+    assert published["start"] == deadline <= now < published["next_start"]
+    assert published["next_start"] == next_start
     assert published["digest"] == _run(_TRUTH, published["start"])["digest"]
 
 
