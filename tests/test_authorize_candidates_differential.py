@@ -10,7 +10,9 @@ the refusals (status, body and headers), the stored authorization and the
 log lines must be identical, except for the explicitly checked reservation
 guidance and diagnostic added in #1926. The frozen leg's chat candidate hook
 applies an independent specification of the subsequently approved context
-limit, without changing the frozen file. Reservation quotes are compared too.
+limit. Its provider hook independently requires an explicit upgraded origin
+for the new native adapters, without changing the frozen file. Reservation
+quotes are compared too.
 """
 
 from __future__ import annotations
@@ -243,6 +245,19 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
                 return _reference_context_candidates(old_chat(*args, **kwargs), body)
 
             scope.setattr(module, "chat_route_endpoint_candidates", reference_chat)
+            old_available = module.provider_model_available_from_gateway_region
+
+            def reference_available(provider: str, model: str, region: str) -> bool:
+                # Independent release contract, not the production allowlist:
+                # these native adapters are deployed and credentialed on GCP only.
+                if (provider, model) in {
+                    ("regolo", "cloudflare/clef-flash"),
+                    ("cloudflare-workers-ai", "cloudflare/clairic"),
+                }:
+                    return body.region in {"us-central1", "us-east4", "us-west1", "europe-west4"}
+                return old_available(provider, model, region)
+
+            scope.setattr(module, "provider_model_available_from_gateway_region", reference_available)
         try:
             data = module._authorize_gateway_sync(request, body, SETTINGS[case.get("settings", 0)])
         except HTTPException as exc:
@@ -364,6 +379,28 @@ def test_the_typed_store_matrix_is_byte_identical(monkeypatch: pytest.MonkeyPatc
     statuses = _compare(_cases(6_000, 2), "typed", monkeypatch, caplog)
     assert statuses.get(200, 0) > 800 and sum(v for k, v in statuses.items() if k != 200) > 3_000
     assert {400, 402, 403, 501} <= set(statuses)
+
+
+@pytest.mark.parametrize("backend", ["memory", "typed"])
+@pytest.mark.parametrize("region,expected", [
+    (None, 400), ("", 400), ("unknown-region", 400),
+    ("eu-west-1", 400), ("eu-west-3", 400), ("uaenorth", 400), ("australiaeast", 400),
+    ("us-central1", 200), ("us-east4", 200), ("us-west1", 200), ("europe-west4", 200),
+])
+def test_native_decision_origin_contract_is_byte_identical(
+    backend, region, expected, monkeypatch, caplog,
+) -> None:
+    case = {"model": "cloudflare/clef-flash", "route_type": "decide", "region": region}
+    assert _compare([case], backend, monkeypatch, caplog) == {expected: 1}
+
+
+def test_the_comparison_rejects_missing_native_origin_guard(monkeypatch, caplog) -> None:
+    from trusted_router import authorize_candidates
+
+    monkeypatch.setattr(authorize_candidates, "EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL", {})
+    case = {"model": "cloudflare/clef-flash", "route_type": "decide"}
+    with pytest.raises(AssertionError, match="1 differences"):
+        _compare([case], "memory", monkeypatch, caplog)
 
 
 def test_the_comparison_sees_a_difference(monkeypatch: pytest.MonkeyPatch,
