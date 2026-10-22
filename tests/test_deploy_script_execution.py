@@ -3916,11 +3916,11 @@ def _routing_snapshot_bindings(deploy: list[str]) -> list[str]:
     ]
 
 
-def test_rollout_pins_routing_snapshot_publishing_off_without_inheritance(
+def test_rollout_pins_routing_snapshot_publishing_from_its_literals_without_inheritance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # E2 publish dark: off whatever the caller or the serving revision carries;
-    # version 1 of the key is mounted and pinned by number, with its public key.
+    # E2 publishing: on, from the literals only, whatever the caller or the
+    # serving revision carries; version 1 of the key, pinned by number.
     hostile = {
         "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
         "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/old/signing.pem",
@@ -3937,7 +3937,7 @@ def test_rollout_pins_routing_snapshot_publishing_off_without_inheritance(
     for deploy in deploys:
         rendered = _cloud_run_job_env(deploy)
         assert {name: rendered[name] for name in hostile if name.startswith("TR_")} == {
-            "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+            "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
             "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/secrets/routing-snapshot/signing.pem",
             "TR_ROUTING_SNAPSHOT_KID": "tr-routing-snapshot-2026-10a",
             "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM",
@@ -3948,7 +3948,8 @@ def test_rollout_pins_routing_snapshot_publishing_off_without_inheritance(
         settings = Settings(**{
             "routing_snapshot_publish_enabled": rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"],
         })
-        assert settings.routing_snapshot_publish_enabled is False
+        assert settings.routing_snapshot_publish_enabled is True
+    # The code's own default stays off: only the rollout literal turns it on.
     assert Settings().routing_snapshot_publish_enabled is False
 
 
@@ -3967,7 +3968,7 @@ def test_rollout_mounts_the_routing_snapshot_key_by_its_version_number(
 ) -> None:
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
     _edit_routing_snapshot_literals(
-        isolated, ROUTING_SNAPSHOT_KEY_VERSION="1",
+        isolated, ROUTING_SNAPSHOT_PUBLISH_ENABLED="false", ROUTING_SNAPSHOT_KEY_VERSION="1",
         ROUTING_SNAPSHOT_PUBLIC_KEY=_ROUTING_SNAPSHOT_PUBLIC_KEY,
     )
     run = isolated.run("scripts/deploy/rollout.sh")
@@ -3981,6 +3982,27 @@ def test_rollout_mounts_the_routing_snapshot_key_by_its_version_number(
         assert rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "false"
         assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == "/secrets/routing-snapshot/signing.pem"
         assert rendered["TR_ROUTING_SNAPSHOT_PUBLIC_KEY"] == _ROUTING_SNAPSHOT_PUBLIC_KEY
+
+
+def test_rollout_with_no_key_version_mounts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The way back for a rotation: publishing off and the version empty
+    # mounts no key and passes no key file.
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(
+        isolated, ROUTING_SNAPSHOT_PUBLISH_ENABLED="false", ROUTING_SNAPSHOT_KEY_VERSION="",
+        ROUTING_SNAPSHOT_PUBLIC_KEY="",
+    )
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        assert _routing_snapshot_bindings(deploy) == []
+        rendered = _cloud_run_job_env(deploy)
+        assert rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "false"
+        assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == ""
 
 
 @pytest.mark.parametrize("literals", [
