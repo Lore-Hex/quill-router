@@ -213,6 +213,8 @@ class ExchangeTests(unittest.TestCase):
     def test_pages(self):
         markets = load_markets()
         for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, "test")
             self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
             self.assertIn('id="buyers"', page)
@@ -247,6 +249,8 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(PROVIDERS[:2], [("openai", "OpenAI"), ("databricks", "Databricks")])
         markets = load_markets()
         for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, "test")
             visible = page.split('<div class="hero-provider-group">', 1)[1].split('</div>', 1)[0]
             self.assertLess(visible.index('<span>OpenAI</span>'), visible.index('<span>Databricks</span>'))
@@ -272,6 +276,8 @@ class ExchangeTests(unittest.TestCase):
         markets = load_markets()
         expected = [f'https://{m["domain"]}/' for m in markets]
         for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
             with self.subTest(market=market["slug"]):
                 page = render(market, markets, "test")
                 self.assertLess(page.index('aria-label="Market directory"'), page.index('<main'))
@@ -520,7 +526,7 @@ class ExchangeTests(unittest.TestCase):
                 namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
                 paths = ["/"]
                 if market["slug"] == "new-york":
-                    paths += ["/providers", "/badge", "/media-kit", "/index"]
+                    paths += ["/confidential", "/suppliers", "/providers", "/badge", "/media-kit", "/index"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market["domain"]}{path}' for path in paths],

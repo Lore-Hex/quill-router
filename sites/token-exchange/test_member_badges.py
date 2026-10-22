@@ -49,6 +49,9 @@ class MemberBadgeTests(unittest.TestCase):
 
     def test_all_markets_link_private_deck_and_badge(self):
         for market in load_markets():
+            if market["slug"] == "new-york":
+                self.assertIn('href="/providers"', (self.root / "suppliers").read_text())
+                continue  # v2 moves supplier CTAs to /suppliers.
             home = (self.root / market["slug"] / "index.html").read_text()
             self.assertIn('href="/providers"', home)
             self.assertIn('href="/badge"', home)

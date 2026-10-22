@@ -67,6 +67,7 @@ jobs:
             sleep 1
           done
           node sites/token-exchange/verify.cjs /tmp/token-exchange-build
+          node sites/token-exchange/verify-nyte-v2.cjs /tmp/token-exchange-build
           node sites/token-exchange/verify-badge.cjs http://127.0.0.1:8089
           node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089
           node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089

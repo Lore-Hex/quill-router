@@ -116,3 +116,43 @@ def test_collector_memory_and_rate_caps_reset() -> None:
     assert len(collector._CLIENTS) <= 4096
     assert not collector.accept_event("new", now=120)
     assert collector.accept_event("client", now=180)
+
+
+@pytest.mark.parametrize(('name', 'properties'), [
+    ('nyte.cta_clicked', {'cta': 'api_quick_start', 'position': 'hero'}),
+    ('nyte.video_played', {}),
+    ('nyte.form_submitted', {'form': 'buyer_deck'}),
+    ('nyte.outbound_clicked', {'destination_host': 'trustedrouter.com', 'cta': 'api_key'}),
+])
+def test_nyte_events_survive_logging_and_export(
+    client: TestClient, caplog: pytest.LogCaptureFixture, name: str, properties: dict[str, str],
+) -> None:
+    from scripts.axiom_growth.model import project_event
+    from trusted_router.main import _ApplicationConsoleFormatter
+
+    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
+    response = client.post('/token-exchange/events', headers=HEADERS, json={
+        'event': name, 'visitor_id': str(uuid4()), 'page': '/confidential', **properties,
+    })
+    assert response.status_code == 204
+    record = next(r for r in caplog.records if getattr(r, 'event', '') == 'acquisition.' + name)
+    serialized = json.loads(_ApplicationConsoleFormatter().format(record))
+    exported = project_event({**serialized, '_time': '2026-10-21T17:00:00Z'}, source='cloud_logging')
+    assert exported['site_domain'] == 'nytokenexchange.com'
+    assert exported['page_path'] == '/confidential'
+    for key, value in properties.items():
+        assert exported[key] == value
+
+
+@pytest.mark.parametrize('properties', [
+    {'cta': 'reader@example.com', 'position': 'hero'},
+    {'cta': 'api_quick_start'},
+    {'cta': 'api_quick_start', 'position': 'hero', 'form': 'buyer_deck'},
+    {'cta': 'api_quick_start', 'position': 'hero', 'email': 'reader@example.com'},
+])
+def test_nyte_event_properties_are_bounded(client: TestClient, properties: dict[str, str]) -> None:
+    response = client.post('/token-exchange/events', headers=HEADERS, json={
+        'event': 'nyte.cta_clicked', 'visitor_id': str(uuid4()), **properties,
+    })
+    assert response.status_code == 422
+    assert not response.content

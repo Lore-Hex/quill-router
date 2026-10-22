@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 from evidence import render_evidence, sector_art
 from member_badges import build_badges
+from nyte_v2 import build_nyte, render_nyte
 from press import build_press
 from token_index_page import build_token_index
 
@@ -93,6 +94,8 @@ def provider_ticker(copies: int = 2) -> str:
 
 
 def render(market: dict, markets: list[dict], version: str) -> str:
+    if market["slug"] == "new-york":
+        return render_nyte()
     profile = {"new-york": "new-york", "dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
     catalogue, health = render_evidence(profile)
     headline = html.escape(market["headline"])
@@ -163,7 +166,7 @@ def build(output: Path) -> None:
         (HERE / "exchange.css").read_bytes() + (HERE / "exchange.js").read_bytes()
         + (HERE / "live-evidence.js").read_bytes() + (HERE / "analytics.js").read_bytes()
     ).hexdigest()[:12]
-    for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js", "spot-api.css"):
+    for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js"):
         shutil.copyfile(HERE / name, assets / name)
     # Shared public pages. The provider deck itself remains private.
     for page in ("providers", "badge"):
@@ -174,6 +177,7 @@ def build(output: Path) -> None:
     build_badges(assets / "badges")
     build_press(output)
     build_token_index(output)
+    build_nyte(output)
     for name in ("nyte-routing-demo.mp4", "nyte-routing-demo-poster.jpg"):
         shutil.copyfile(HERE / "media" / name, assets / name)
     for art in sorted((HERE / "art").glob("*.webp")):
@@ -197,6 +201,8 @@ def build(output: Path) -> None:
             f"User-agent: *\nAllow: /\nSitemap: https://{market['domain']}/sitemap.xml\n"
         )
         provider_page = (
+            '<url><loc>https://nytokenexchange.com/confidential</loc></url>'
+            '<url><loc>https://nytokenexchange.com/suppliers</loc></url>'
             '<url><loc>https://nytokenexchange.com/providers</loc></url>'
             '<url><loc>https://nytokenexchange.com/badge</loc></url>'
             '<url><loc>https://nytokenexchange.com/media-kit</loc></url>'

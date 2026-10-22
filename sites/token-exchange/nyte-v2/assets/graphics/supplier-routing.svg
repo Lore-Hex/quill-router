@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 260" width="320" height="260"><style>
+svg{fill:rgba(204,232,215,.1);stroke:rgba(204,232,215,.6);stroke-width:1}
+.supply-lines{fill:none;stroke:url(#supply-light);opacity:.65}
+.supply-signals{fill:none;stroke:url(#supply-light);stroke-width:2;stroke-linecap:round}
+.supply-signals path{stroke-dasharray:18 120;stroke-dashoffset:18;animation:supply-flow 9s ease-in-out infinite}
+.supply-signals path:nth-child(2){animation-delay:.6s}
+.supply-signals path:nth-child(3){animation-delay:1.2s}
+@keyframes supply-flow{0%,10%{stroke-dashoffset:18;opacity:0}18%{opacity:1}70%{stroke-dashoffset:-100;opacity:1}80%,100%{stroke-dashoffset:-100;opacity:0}}
+@media (prefers-reduced-motion:reduce){.supply-signals{display:none}}
+</style><defs><linearGradient id="supply-light" gradientUnits="userSpaceOnUse" x1="56" y1="0" x2="264" y2="0"><stop stop-color="#cce8d7"/><stop offset="1" stop-color="#6891cf"/></linearGradient></defs><g class="supply-lines"><path d="M56 130H104C164 130 146 58 210 58H264"/><path d="M56 130H264"/><path d="M56 130H104C164 130 146 202 210 202H264"/></g><g class="supply-signals"><path pathLength="100" d="M56 130H104C164 130 146 58 210 58H264"/><path pathLength="100" d="M56 130H264"/><path pathLength="100" d="M56 130H104C164 130 146 202 210 202H264"/></g><circle class="supply-origin" cx="56" cy="130" r="22"/><circle cx="264" cy="58" r="7"/><circle cx="264" cy="130" r="7"/><circle cx="264" cy="202" r="7"/></svg>

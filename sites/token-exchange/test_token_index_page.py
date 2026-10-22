@@ -39,12 +39,10 @@ class TokenIndexPageTests(unittest.TestCase):
     def test_new_york_links_index_and_supplier_stack_only(self):
         page = (self.output / "new-york/index.html").read_text()
         self.assertIn('href="/index">Index</a>', page)
-        self.assertIn("Your GPUs. Your brand.", page)
-        self.assertIn("token-exchange-neocloud-in-a-box", page)
-        self.assertIn("Pre-alpha", page)
-        self.assertIn("NYTE address activation is in progress.", page)
-        self.assertIn("api.confidential.trustedrouter.com/v1", page)
-        self.assertIn("/docs#privacy-filters", page)
+        suppliers = (self.output / "suppliers").read_text()
+        self.assertIn("token-exchange-neocloud-in-a-box", suppliers)
+        self.assertIn('href="/suppliers"', page)
+        self.assertIn('href="/confidential"', page)
         self.assertIn("https://nytokenexchange.com/index", (self.output / "new-york/sitemap.xml").read_text())
         for other in self.output.glob("*/index.html"):
             if other.parent.name != "new-york":

@@ -47,6 +47,7 @@ BROWSER_EVENTS = frozenset(
         "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
         "home.token_exchange_clicked",
         "exchange.landing_viewed", "exchange.landing_engaged",
+        "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked",
         "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
         # Server-confirmed exchange downloads use the same Cloud Logging source.
         # Never accept these as browser-submitted conversion claims.
@@ -73,7 +74,7 @@ EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_doma
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
 FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain",
-          "page_path", "device_category", "reward_placement", "reward_action", "observation_id",
+          "page_path", "cta", "position", "form", "destination_host", "device_category", "reward_placement", "reward_action", "observation_id",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
@@ -161,11 +162,15 @@ def project_event(
     if event in {"acquisition.landing_viewed", "acquisition.landing_engaged"}:
         output["page_path"] = safe_path(row.get("page_path"))
     output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
-    if event.startswith("acquisition.exchange.") or event in {
+    if event.startswith(("acquisition.exchange.", "acquisition.nyte.")) or event in {
         "acquisition.enterprise_brief_delivered", "acquisition.enterprise_security_pack_delivered",
     }:
         output["site_domain"] = domain(row.get("site_domain"))
         output["page_path"] = safe_path(row.get("page_path"))
+    if event.startswith("acquisition.nyte."):
+        for field in ("cta", "position", "form"):
+            output[field] = safe_label(row.get(field))
+        output["destination_host"] = domain(row.get("destination_host"))
     if row.get('first_utm_source'):
         output['first_utm_source'] = canonical_source(row['first_utm_source'], output['first_referrer_domain'])
     output['identity_link_status'] = (
@@ -283,6 +288,7 @@ def safe_path(value):
 
 
 PUBLIC_LANDINGS = frozenset(('/' + p) for p in (
+    'confidential', 'suppliers', 'index', 'badge',
     '', 'pricing', 'models', 'providers', 'leaderboard', 'blog', 'docs', 'trust', 'status',
     'choose', 'marketplace', 'support', 'vibe-coders', 'agents', 'quickstart',
     'openrouter-alternative', 'compare', 'eu', 'token-exchange', 'green-tokens',
