@@ -452,13 +452,13 @@ def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob,
 
 def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> float:
     hashed = int.from_bytes(hashlib.sha256(f"{boot}:{slot}".encode()).digest()[:8], "big")
-    # Production's contended claim alone averaged 220 ms (33 ms commit).
-    # This provisional margin allows observation and publication too; it is
-    # not yet a bound calibrated from claim_at_ns -> ack_at_us production traces.
-    # This is follower discovery time, NOT an extension of the S1 write window.
+    # Healthy incumbent: server claim stamp B+3.6ms, observation B+54ms
+    # (after claim commit), publication ack B+126ms. Discover the committed
+    # claim at 60/90/120ms; waiting for publication is unnecessary. These
+    # measurements justify a margin, not a bound on a contended claim commit.
     # Cold candidates retain their hash spread within the observation window.
     # Hashing reduces collisions; without a roster it cannot bound their count.
-    return (350 + 10 * (hashed % 3) if incumbent_present else 30 * (hashed % 8)) / 1000
+    return (60 + 30 * (hashed % 3) if incumbent_present else 30 * (hashed % 8)) / 1000
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
@@ -780,38 +780,75 @@ class Service:
                         job: lifecycle.PublisherJob | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
         current = self.state.job
+        def invalid(group: str, error: Exception | None = None, *, release: bool = True) -> tuple[lifecycle.Effect, ...]:
+            # Never interpolate a reply, arbitrary key, identity, timestamp or
+            # exception containing input data. Schema require() messages are
+            # fixed rule names; unexpected Python messages are redacted.
+            fields = PUBLISHER_SLOT_TRACE.fields.keys() | PUBLISHER_SLOT_TRACE.optional_fields.keys()
+            value = reply.trace if isinstance(reply, PublisherReply) and isinstance(reply.trace, dict) else {}
+            message = str(error) if error is not None else group + "_checks"
+            safe_messages = {"evidence_schema_gap", "native-json-domain", "a1-server-slot",
+                "evidence_size", "integer", "json_encoding", "json_shape", "json_depth", "duplicate_key"}
+            if error is not None and message not in safe_messages:
+                message = (repr(error.args[0]) if isinstance(error, KeyError) and error.args
+                    and type(error.args[0]) is str and error.args[0] in fields else "redacted_non_schema_message")
+            field_types = {key: type(value[key]).__name__ if key in value else "missing"
+                           for key in sorted(fields)}
+            # Extra field names can themselves contain payloads. Report every
+            # extra field's key/value TYPES, with an ordinal instead of its name.
+            extras = [(type(key).__name__, type(item).__name__)
+                      for key, item in value.items() if key not in fields]
+            outcome = value.get("outcome")
+            outcome = outcome if type(outcome) is str and outcome in (
+                "missed", "lost_claim", "published", "failed") else "invalid_or_missing"
+            durations = reply.rpc_durations if isinstance(reply, PublisherReply) else None
+            measurements = {key: item if item is not None and type(item) in (int, float) and 0 <= item <= INT64
+                            else "unavailable" for key in ("rpc_count", "rpc_elapsed_us", "cycle_us")
+                            for item in (value.get(key),)}
+            # release_reason traces require zero measurements by contract. Keep
+            # the rejected measurements here, without treating them as accepted
+            # evidence or adding unreconciled RPC histogram samples.
+            logger.warning("shadow_v2_publisher_reply_rejected group=%s exception_type=%s "
+                "exception_message=%s outcome=%s trace_types=%s extra_field_types=%s "
+                "reply_type=%s trace_type=%s claimed_type=%s generation_type=%s "
+                "rpc_durations_type=%s rpc_duration_element_types=%s measurements=%s",
+                group, type(error).__name__ if error is not None else "none", message,
+                outcome, field_types, extras, type(reply).__name__,
+                type(reply.trace).__name__ if isinstance(reply, PublisherReply) else "missing",
+                type(reply.claimed).__name__ if isinstance(reply, PublisherReply) else "missing",
+                type(reply.generation).__name__ if isinstance(reply, PublisherReply) else "missing",
+                type(durations).__name__,
+                [type(item).__name__ for item in durations] if isinstance(durations, (tuple, list)) else [],
+                measurements)
+            if release and current is not None:
+                return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
+                    current.slot, current.generation, "invalid_publisher_reply"))
+            self.publisher_faults += 1
+            return (lifecycle.Fault("invalid_publisher_reply"),)
         # The dispatch identity survives even a completely malformed result.
         # A late callback must never complete the replacement job.
         if job is not None and job != current:
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return invalid("identity", release=False)
         job = current
         if (isinstance(reply, PublisherReply) and isinstance(reply.trace, dict)
                 and type(reply.trace.get("slot")) is int and type(reply.generation) is int
                 and (job is None or (reply.trace["slot"], reply.generation) != (job.slot, job.generation))):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
-        def invalid() -> tuple[lifecycle.Effect, ...]:
-            if job is not None:
-                return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
-                    job.slot, job.generation, "invalid_publisher_reply"))
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return invalid("identity", release=False)
         if (not isinstance(reply, PublisherReply) or not isinstance(reply.trace, dict)
                 or type(reply.generation) is not int or type(reply.claimed) is not bool
                 or not isinstance(reply.rpc_durations, tuple)
                 or any(type(value) is not int or value < 0 for value in reply.rpc_durations)):
-            return invalid()
+            return invalid("type")
         trace = reply.trace
         # Validate the entire immutable identity before counters or ownership.
         if (job is None or trace.get("slot") != job.slot or reply.generation != job.generation
                 or trace.get("day") != day_at(job.slot*SLOT_US)):
-            return invalid()
+            return invalid("identity")
         day, slot = day_at(job.slot*SLOT_US), job.slot
         try:
             PUBLISHER_SLOT_TRACE(trace)
-        except (ValueError, TypeError, KeyError):
-            return invalid()
+        except (ValueError, TypeError, KeyError) as error:
+            return invalid("contract", error)
         if trace["outcome"] == "failed" and reply.actual_start_mono is None:
             # Unknown worker/submission failures have no observed start. The
             # release transition owns their trace and accounting exactly once.

@@ -64,11 +64,12 @@ def test_cadence_wait_rechecks_revocation_and_window(monkeypatch, change):
     assert not svc.store.database.commits
 
 
-def test_stagger_retains_cold_spread_and_waits_for_warm_publication():
+def test_stagger_retains_cold_spread_and_waits_for_warm_claim():
     cold = {shell.follower_stagger(f'boot-{b}', s, False) for b in range(12) for s in range(100)}
     warm = {shell.follower_stagger(f'boot-{b}', s, True) for b in range(12) for s in range(100)}
     assert cold == {0, .03, .06, .09, .12, .15, .18, .21}
-    assert warm == {.35, .36, .37}
+    assert warm == {.06, .09, .12}
+    assert .054 < min(warm) < max(warm) < .250  # Claim committed before observation at B+54ms.
     assert shell.follower_stagger('boot', 7, False) == .09
 
 

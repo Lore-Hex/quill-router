@@ -84,7 +84,7 @@ def test_follower_committed_claim_is_one_measured_snapshot(sdk_database, monkeyp
     monkeypatch.setattr(shell, "sleep", sleep, raising=False)
     svc.submit_publisher(job.slot, NOW_US)
     trace = outcome(svc, job, "lost_claim")
-    assert len(waits) == 1 and .35 <= waits[0] <= .37
+    assert len(waits) == 1 and .06 <= waits[0] <= .12
     assert trace["rpc_count"] == 1 and trace["rpc_elapsed_us"] == 10_000
     assert trace["claim_at_ns"] is None
     assert [name for name, _ in db.calls] == ["read"]
@@ -118,9 +118,9 @@ def test_stagger_is_deterministic_and_bounded():
     stagger = getattr(shell, "follower_stagger", None)
     assert callable(stagger)
     values = {stagger(f"boot-{boot}", slot) for boot in range(12) for slot in range(100)}
-    assert values == {.35, .36, .37}
+    assert values == {.06, .09, .12}
     assert [stagger("boot", s) for s in range(100)] == [stagger("boot", s) for s in range(100)]
-    assert stagger("boot", 7) == .37  # SHA-256's first eight bytes, big-endian.
+    assert stagger("boot", 7) == .12  # SHA-256's first eight bytes, big-endian.
 
 
 def test_stopped_incumbent_follower_wins_and_then_attempts_immediately(monkeypatch):

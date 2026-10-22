@@ -272,3 +272,87 @@ def test_release_reason_is_optional_bounded_and_only_on_unknown_release():
                    {"unknown_outcome": False}, {"rpc_count": 1}, {"cycle_us": 1}):
         with pytest.raises(ValueError):
             PUBLISHER_SLOT_TRACE({**current, **change})
+
+
+@pytest.mark.parametrize("change,rule", [
+    ({"claim_at_ns": NOW_US*1000-1_000_000}, "a1-server-slot"),
+    ({"observed_at_ns": NOW_US*1000+251_000_000,
+      "publisher_heartbeat_ns": NOW_US*1000+251_000_000}, "evidence_schema_gap"),
+    ({"claim_at_ns": NOW_US*1000+1}, "evidence_schema_gap"),
+    ({"cycle_us": 12345.0}, "native-json-domain"),
+    ({"rpc_elapsed_us": 1500.0}, "native-json-domain"),
+    ({"cycle_us": 500001}, "evidence_schema_gap"),
+    ({"ack_at_us": None}, "evidence_schema_gap"),
+    ({"publisher_heartbeat_ns": NOW_US*1000+1}, "evidence_schema_gap"),
+    ({"secret-extra-key": "secret-extra-value"}, "evidence_schema_gap"),
+])
+def test_rejected_contract_diagnostic_preserves_measurements_in_log_only(change, rule, caplog):
+    svc, wall, _, job = owner()
+    reply = shell.publish_cycle(svc.store, svc.journal.boot, svc.settings.effective_serving_region,
+                                svc.settings.source_revision, job, wall[0], svc, True, True)
+    assert reply.trace["outcome"] == "published"
+    trace = dict(reply.trace, cycle_us=12345, rpc_count=2, rpc_elapsed_us=1500)
+    trace.update(change)
+    reply = replace(reply, trace=trace, rpc_durations=(700, 800))
+    svc.publisher_reply(reply, job=job)
+    diagnostic, = [r for r in caplog.records if r.msg.startswith("shadow_v2_publisher_reply_rejected")]
+    message = diagnostic.getMessage()
+    assert diagnostic.levelname == "WARNING"
+    assert "group=contract exception_type=ValueError" in message
+    assert f"exception_message={rule}" in message
+    assert "outcome=published" in message
+    assert "claimed_type=bool generation_type=int" in message
+    assert "rpc_duration_element_types=['int', 'int']" in message
+    for field, value in trace.items():
+        if field in PUBLISHER_SLOT_TRACE.fields:
+            assert f"'{field}': '{type(value).__name__}'" in message
+    for field in ("rpc_count", "rpc_elapsed_us", "cycle_us"):
+        assert f"'{field}': {trace[field]}" in message
+    for secret in (svc.journal.boot, str(job.slot), str(NOW_US), reply.trace["body_sha256"],
+                   "secret-extra-key", "secret-extra-value", reply.trace["day"]):
+        assert secret not in message
+    failed(svc, job)
+    released = entries(svc)[-1]
+    assert released["release_reason"] == "invalid_publisher_reply"
+    assert released["rpc_count"] == released["rpc_elapsed_us"] == released["cycle_us"] == 0
+
+
+@pytest.mark.parametrize("field,value,group", [
+    ("generation", True, "type"), ("claimed", 1, "type"),
+    ("rpc_durations", (1, -1), "type"), ("rpc_durations", (1.0,), "type"),
+    ("rpc_durations", [1], "type"), ("trace", None, "type"),
+    ("day", "secret-day", "identity"),
+])
+def test_reply_diagnostic_groups(field, value, group, caplog):
+    svc, _, _, job = owner()
+    reply = shell.PublisherReply(missed(svc, job.slot), (), False, job.generation)
+    reply = (replace(reply, trace=dict(reply.trace, day=value)) if field == "day"
+             else replace(reply, **{field: value}))
+    svc.publisher_reply(reply, job=job)
+    diagnostic, = [r.getMessage() for r in caplog.records
+                   if r.msg.startswith("shadow_v2_publisher_reply_rejected")]
+    assert f"group={group}" in diagnostic
+    assert "secret-day" not in diagnostic
+    failed(svc, job)
+
+
+@pytest.mark.parametrize("error,message", [
+    (TypeError("secret-body"), "redacted_non_schema_message"),
+    (KeyError("secret-body"), "redacted_non_schema_message"),
+    (KeyError("ack_at_us"), "'ack_at_us'"),
+])
+def test_unexpected_validator_exception_cannot_log_payload(monkeypatch, caplog, error, message):
+    svc, _, _, job = owner()
+    def reject(value):
+        raise error
+    monkeypatch.setattr(shell, "PUBLISHER_SLOT_TRACE", type("Validator", (), {
+        "fields": PUBLISHER_SLOT_TRACE.fields,
+        "optional_fields": PUBLISHER_SLOT_TRACE.optional_fields,
+        "__call__": staticmethod(reject),
+    })())
+    svc.publisher_reply(shell.PublisherReply(missed(svc, job.slot), (), False, job.generation), job=job)
+    diagnostic, = [r.getMessage() for r in caplog.records
+                   if r.msg.startswith("shadow_v2_publisher_reply_rejected")]
+    assert f"exception_type={type(error).__name__} exception_message={message}" in diagnostic
+    assert "secret-body" not in diagnostic
+    failed(svc, job)
