@@ -20,6 +20,18 @@ class NyteV2Tests(unittest.TestCase):
             self.assertNotIn('Send the deck', page)
         self.assertEqual(render_nyte('sup').count('href="/providers">Get the provider deck</a>'), 2)
 
+    def test_api_hero_keeps_full_lede_with_phone_copy_span(self):
+        import re
+
+        page = render_nyte('api')
+        lede = re.search(r'<p class="lede">(.*?)</p>', page).group(1)
+        full_copy = ('For prompts that carry client material, regulated records or your own '
+                     'source code. Every request runs on verified confidential hardware, '
+                     'encrypted end to end, and is never stored.')
+        self.assertEqual(re.sub(r'<[^>]+>', '', lede), full_copy)
+        self.assertEqual(re.sub(r'<[^>]+>', '', page).count(full_copy), 1)
+        self.assertEqual(lede.count('<span class="d">'), 1)
+
     def test_api_key_links_use_console_route(self):
         page = render_nyte('api')
         self.assertEqual(page.count('href="https://trustedrouter.com/console/api-keys?'), 2)
