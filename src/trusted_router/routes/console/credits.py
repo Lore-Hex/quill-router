@@ -8,6 +8,7 @@ actual API calls so this module stays focused on form parsing + redirects."""
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, cast
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -24,6 +25,7 @@ from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.money import (
     MICRODOLLARS_PER_CENT,
+    MICRODOLLARS_PER_DOLLAR,
     MIN_PAYPAL_CHECKOUT_DOLLARS,
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
     money_pair,
@@ -35,6 +37,12 @@ from trusted_router.services.adyen_billing import (
     ADYEN_WEB_JS_SRI,
     adyen_web_asset_urls,
     create_adyen_checkout_session,
+)
+from trusted_router.services.checkout_fees import (
+    FEE_RAILS,
+    FeeRail,
+    rail_fee_rates,
+    rail_processing_fee,
 )
 from trusted_router.services.paypal_billing import (
     capture_paypal_order_for_workspace,
@@ -59,6 +67,70 @@ _PRIVATE_CREDITS_HEADERS = {
     "X-Robots-Tag": "noindex, nofollow",
 }
 
+# The Credits page offers three whole-dollar presets plus "Other". $25 is the
+# amount people bought most and what identity verification asks for; $200 is
+# what larger buyers pick. When the page is opened from identity verification
+# the middle preset becomes the remaining lifetime top-up (see
+# ``checkout_presets``).
+CHECKOUT_PRESET_DOLLARS: tuple[int, int, int] = (5, 25, 200)
+CHECKOUT_DEFAULT_PRESET_DOLLARS = 25
+
+# Form value for the preset radio that reveals the free-amount field; the
+# dollar amount then arrives in ``other_amount``.
+CHECKOUT_OTHER_AMOUNT = "other"
+
+# Which fee rail each payment-method option is priced on. The page ships
+# this map with the rates so its preview and the checkout services agree.
+CHECKOUT_METHOD_RAILS: dict[str, FeeRail] = {
+    "auto": "card",
+    "card": "card",
+    "paypal": "card",
+    "ach": "ach",
+    "stablecoin": "stablecoin",
+    "adyen": "adyen",
+}
+
+# One amber line per redirect code the checkout handlers send back to the page.
+_CHECKOUT_ERROR_COPY: dict[str, str] = {
+    "invalid_checkout": "Enter a whole-dollar amount from $1 to $10,000; PayPal starts at $20.",
+    "stablecoin_only": "This account adds credits with USDC only.",
+    "paypal_missing_order": "PayPal sent you back without an order to confirm.",
+    "paypal_capture_failed": "The PayPal payment failed to complete.",
+    "checkout_unavailable": "Checkout is temporarily unavailable.",
+}
+
+
+def checkout_fee_schedule(settings: Settings) -> dict[str, Any]:
+    """What the page needs to preview a checkout's line items: the option →
+    rail map and each rail's ``processing_fee()`` inputs."""
+    return {
+        "rails": CHECKOUT_METHOD_RAILS,
+        "rates": {rail: rail_fee_rates(settings, rail).as_dict() for rail in FEE_RAILS},
+    }
+
+
+def checkout_presets(verification_remaining_microdollars: int | None) -> tuple[list[int], int]:
+    """Preset dollar amounts and the preselected one.
+
+    Opened from identity verification with ``remaining`` still owed, the
+    middle preset becomes that remainder (rounded up to a dollar) and is
+    selected, so one tap finishes verification. A remainder within the first
+    preset keeps the normal row with the first preset selected; one at or
+    above the last preset keeps the row and selects the last preset.
+    """
+    presets = list(CHECKOUT_PRESET_DOLLARS)
+    selected = CHECKOUT_DEFAULT_PRESET_DOLLARS
+    if verification_remaining_microdollars and verification_remaining_microdollars > 0:
+        remaining_dollars = -(-verification_remaining_microdollars // MICRODOLLARS_PER_DOLLAR)
+        if remaining_dollars <= presets[0]:
+            selected = presets[0]
+        elif remaining_dollars < presets[-1]:
+            presets[1] = remaining_dollars
+            selected = remaining_dollars
+        else:
+            selected = presets[-1]
+    return presets, selected
+
 
 def register(app: FastAPI) -> None:
     @app.get("/console/credits")
@@ -67,6 +139,7 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         purpose: str = "",
         checkout: str = "",
+        error: str = "",
     ) -> Response:
         credit = STORE.get_credit_account(ctx.workspace.id)
         summary = live_credit_summary(ctx.workspace.id)
@@ -92,6 +165,13 @@ def register(app: FastAPI) -> None:
             if purpose == "identity_verification"
             else {}
         )
+        presets, selected_preset = checkout_presets(
+            verification_remaining if purpose == "identity_verification" else None
+        )
+        default_rail = CHECKOUT_METHOD_RAILS["stablecoin" if wallet_only_billing else "auto"]
+        default_fee = rail_processing_fee(settings, default_rail, selected_preset * 100)
+        selected_microdollars = selected_preset * MICRODOLLARS_PER_DOLLAR
+        default_fee_microdollars = default_fee.processing_fee_microdollars
         return HTMLResponse(
             render(
                 "console/credits.html",
@@ -99,7 +179,20 @@ def register(app: FastAPI) -> None:
                 ctx=ctx,
                 active="credits",
                 page_title="Credits",
-                page_subtitle="Top up to keep prepaid routes flowing.",
+                checkout_presets=presets,
+                checkout_selected_preset=selected_preset,
+                checkout_fee_schedule_json=json.dumps(
+                    checkout_fee_schedule(settings), separators=(",", ":")
+                ),
+                checkout_summary={
+                    "credit": money(selected_microdollars),
+                    "fee": money(default_fee_microdollars),
+                    "total": money(selected_microdollars + default_fee_microdollars),
+                },
+                checkout_error_message=_CHECKOUT_ERROR_COPY.get(error),
+                verification_topup_line=(
+                    purpose == "identity_verification" and verification_remaining > 0
+                ),
                 credits_available=money(summary["available"] if summary else 0),
                 credits_empty=not summary or summary["available"] <= 0,
                 credits_usage=money(summary["total_usage"] if summary else 0),
@@ -211,7 +304,12 @@ def register(app: FastAPI) -> None:
         amount: str = Form(...),
         payment_method: str = Form("auto"),
         purpose: str = Form(""),
+        other_amount: str = Form(""),
     ) -> Response:
+        if amount == CHECKOUT_OTHER_AMOUNT:
+            # The "Other" preset posts its dollar amount in a second field so
+            # the preset radios and the free amount share one form name.
+            amount = other_amount.strip()
         if is_wallet_only_user(ctx.user) and not is_stablecoin_checkout_method(
             payment_method
         ):
