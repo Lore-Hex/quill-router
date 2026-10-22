@@ -203,7 +203,8 @@ PROVIDER_SLUGS = [
 # Python module names to public provider identities, never across products.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "amazon_bedrock": ("amazon-bedrock",),
-    "system1models_eu": ("system1models-eu",),
+    "system1models": ("decisionmodelsio",),
+    "system1models_eu": ("decisionmodelsio-eu",),
     "confidential_ai": ("confidential-ai",),
     "gemini": ("google-ai-studio",),
     "google_vertex": ("google-vertex",),

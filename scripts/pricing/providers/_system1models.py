@@ -1,4 +1,4 @@
-"""Decision Models' regional catalogs, retaining the System1 API namespaces."""
+"""Decision Models' regional catalogs, using the existing regional credentials."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class System1Catalog:
         if tier not in {"eu", "global"}:
             raise ValueError("unknown System1 tier")
         self.tier = tier
-        self.slug = "system1models-eu" if tier == "eu" else "system1models"
+        self.slug = "decisionmodelsio-eu" if tier == "eu" else "decisionmodelsio"
         self.key_env = f"SYSTEM1MODELS_{tier.upper()}_API_KEY"
         self.manifest_path = (
             Path(__file__).resolve().parents[3]
