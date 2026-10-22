@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -219,6 +220,125 @@ def test_the_unit_passes_only_flags_the_pinned_release_takes() -> None:
     assert passed <= taken, sorted(passed - taken)
     deploy = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text(encoding="utf-8")
     assert "## A flag the unit passes" in deploy and "two releases, and no flag" in deploy
+
+
+_SNAPSHOT_ATTRIBUTES = (
+    "fastpath-edge-snapshot-url",
+    "fastpath-edge-snapshot-public-key",
+    "fastpath-edge-snapshot-kid",
+    "fastpath-edge-snapshot-plane",
+    "fastpath-edge-shadow",
+)
+
+
+def _snapshot_flags(script: str) -> set[str]:
+    """The flags the script adds for the edge's routing snapshot and shadow
+    (E2), from the instance's metadata alone."""
+    flags: set[str] = set()
+    for line in script.splitlines():
+        if "snapshot_flags=" in line:
+            flags.update(re.findall(r"(?:^|[\s\"])-([a-z][a-z-]*)", line.split("snapshot_flags=", 1)[1]))
+    return flags
+
+
+def test_the_snapshot_flags_wait_for_metadata_and_a_release_that_takes_them() -> None:
+    """The routing snapshot's flags reach the unit only from instance
+    metadata that infra/fastpath.tf does not set, so the default node polls
+    and compares nothing. Once Terraform sets any of those attributes, the
+    pinned release must take every flag they add, as for the edge's own."""
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    flags = _snapshot_flags(script)
+    assert flags == {
+        "edge-snapshot-url", "edge-snapshot-public-key", "edge-snapshot-kid", "edge-snapshot-plane", "edge-shadow",
+    }
+    for attribute in _SNAPSHOT_ATTRIBUTES:
+        assert f"$(attribute {attribute})" in script, attribute
+    assert "-subscriptions auditor,stager $edge_flags $snapshot_flags" in script
+    # Not among the unit's unconditional flags.
+    assert not flags & _unit_flags(script)
+    head = _command_flags((ROOT / "fastpath" / "cmd" / "fastpath" / "main.go").read_text(encoding="utf-8"))
+    assert flags <= head, sorted(flags - head)
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    if any(attribute in tf for attribute in _SNAPSHOT_ATTRIBUTES):
+        pinned = re.search(r'fastpath_release\s*=\s*"([0-9a-f]{40})"', tf)
+        assert pinned
+        taken = _command_flags(_source_at(pinned.group(1), "fastpath/cmd/fastpath/main.go"))
+        assert flags <= taken, sorted(flags - taken)
+
+
+def _run_snapshot_block(
+    script: str, upstream: str = "https://trusted-router-x.a.run.app", **attributes: str,
+) -> subprocess.CompletedProcess[str]:
+    """The startup script's routing snapshot block, run by bash with the
+    instance's attributes given, the edge's upstream and flags set."""
+    start = script.index('snapshot_url="$(attribute fastpath-edge-snapshot-url)"')
+    block = script[start:script.index("install -d /opt/fastpath", start)]
+    # Rendered as it stands: the block has no template interpolation.
+    assert "${" not in block and "%{" not in block
+    stub = (
+        'attribute() { local name="A_${1//-/_}"; printf "%s" "${!name:-}"; }\n'
+        "systemd-cat() { cat >&2; }\n"
+        f'edge_upstream="{upstream}"\nedge_flags="-edge-address 10.0.0.1:8081"\n'
+    )
+    env = {"PATH": "/usr/bin:/bin", **{"A_" + name.replace("-", "_"): value for name, value in attributes.items()}}
+    bash = shutil.which("bash")
+    assert bash
+    return subprocess.run(  # noqa: S603 - bash on the repository's own script
+        [bash, "-c", "set -euo pipefail\n" + stub + block + 'printf "%s" "$snapshot_flags"'],
+        capture_output=True, text=True, env=env, check=False,
+    )
+
+
+def test_the_script_refuses_a_snapshot_url_off_the_edges_upstream() -> None:
+    """edge.New refuses a snapshot URL on another scheme or host than the
+    upstream, which would end the whole process, admission included; the
+    startup script refuses it first, and passes one on the upstream."""
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    key = "A" * 43
+    given = {
+        "fastpath-edge-snapshot-public-key": key,
+        "fastpath-edge-snapshot-kid": "routing-snapshot-1",
+        "fastpath-edge-snapshot-plane": "gcp/us-central1",
+    }
+    ok = _run_snapshot_block(
+        script, **given, **{"fastpath-edge-snapshot-url": "https://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot"},
+        **{"fastpath-edge-shadow": "true"},
+    )
+    assert ok.returncode == 0, ok.stderr
+    assert ok.stdout == (
+        "-edge-snapshot-url https://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot "
+        f"-edge-snapshot-public-key {key} -edge-snapshot-kid routing-snapshot-1 -edge-snapshot-plane gcp/us-central1 "
+        "-edge-shadow"
+    )
+    for url in (
+        "https://elsewhere.example/internal/fastpath/routing-snapshot",
+        "http://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot",
+        "https://trusted-router-x.a.run.app:8443/internal/fastpath/routing-snapshot",
+        "https://trusted-router-x.a.run.app.elsewhere.example/internal/fastpath/routing-snapshot",
+        "https:/trusted-router-x.a.run.app/x",
+    ):
+        refused = _run_snapshot_block(script, **given, **{"fastpath-edge-snapshot-url": url})
+        assert refused.returncode == 1, url
+        assert "not on the edge's upstream" in refused.stderr, (url, refused.stderr)
+    # An upstream with userinfo, which the edge refuses beside a snapshot.
+    userinfo = _run_snapshot_block(
+        script, upstream="https://u@trusted-router-x.a.run.app", **given,
+        **{"fastpath-edge-snapshot-url": "https://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot"},
+    )
+    assert userinfo.returncode == 1 and "carries userinfo" in userinfo.stderr, userinfo.stderr
+    # None set: nothing passed.
+    none = _run_snapshot_block(script)
+    assert none.returncode == 0 and none.stdout == "", none.stderr
+
+
+def test_the_snapshot_flags_are_found() -> None:
+    """The control: the reader finds the flags in each line that adds them."""
+    script = (
+        'snapshot_flags="-edge-snapshot-url $u -edge-snapshot-kid $k"\n'
+        '    true) snapshot_flags="$snapshot_flags -edge-shadow" ;;\n'
+        'edge_flags="-edge-address $x"\n'
+    )
+    assert _snapshot_flags(script) == {"edge-snapshot-url", "edge-snapshot-kid", "edge-shadow"}
 
 
 def test_a_flag_the_pinned_command_lacks_is_found() -> None:

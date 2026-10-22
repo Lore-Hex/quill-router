@@ -132,12 +132,14 @@ func TestThePassRules(t *testing.T) {
 	}
 }
 
-// TestNothingAtRuntimeImportsTheEvaluator: the package stays dormant until
+// TestOnlyTheEdgeImportsTheEvaluator: the edge's poll and shadow comparator
+// are the one runtime reader, and nothing decides with the evaluator until
 // the edge's handler PR wires it.
-func TestNothingAtRuntimeImportsTheEvaluator(t *testing.T) {
+func TestOnlyTheEdgeImportsTheEvaluator(t *testing.T) {
 	const self = "github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	root := filepath.Join("..", "..")
-	files, internalImports := 0, 0
+	edgeDir := filepath.Join(root, "internal", "edge")
+	files, internalImports, edgeImports := 0, 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
@@ -153,6 +155,10 @@ func TestNothingAtRuntimeImportsTheEvaluator(t *testing.T) {
 				internalImports++
 			}
 			if imported == self {
+				if filepath.Dir(path) == edgeDir {
+					edgeImports++
+					continue
+				}
 				t.Errorf("%s imports the routing snapshot evaluator", path)
 			}
 		}
@@ -162,8 +168,9 @@ func TestNothingAtRuntimeImportsTheEvaluator(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Positive control: the walk sees the module's code and its internal imports.
-	if files < 50 || internalImports < 10 {
-		t.Fatalf("scanned %d files with %d internal imports", files, internalImports)
+	if files < 50 || internalImports < 10 || edgeImports == 0 {
+		t.Fatalf("scanned %d files with %d internal imports, %d of the evaluator by the edge", files, internalImports,
+			edgeImports)
 	}
 }
 

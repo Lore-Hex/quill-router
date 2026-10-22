@@ -8,7 +8,9 @@ Go evaluates"), and a publisher behind a setting that is off (see
 "Publishing"). Off, nothing at runtime imports the Python modules: no route,
 no publisher. `tests/test_routing_snapshot.py` checks in a subprocess that
 importing `trusted_router.main` loads neither module nor the publisher, and a
-Go test checks that no other Go package imports the evaluator.
+Go test checks that no Go package but the edge imports the evaluator. The
+edge polls the snapshot and compares in shadow behind flags that are off
+(see "The edge's poll and shadow comparator").
 
 | File | Role |
 |---|---|
@@ -25,6 +27,8 @@ Go test checks that no other Go package imports the evaluator.
 | `infra/routing_snapshot_key.tf` | The signing key's secret and its one reader |
 | `docs/runbooks/routing-snapshot-key.md` | Adding version 1, turning publishing on and off, rotation |
 | `tests/test_routing_snapshot_publish.py` | Route, authentication, determinism, refresh, key custody, budget |
+| `fastpath/internal/edge/snapshot.go` | Go: the edge's poll, the pinned key, the last good copy |
+| `fastpath/internal/edge/shadow.go` | Go: the shadow comparator, its classes and counts |
 
 ## What it is for
 
@@ -469,10 +473,9 @@ are pinned, so the hourly price refresh cannot make it stale.
 - In the routing cases: meta models, decision chains and the full fee
   stack (receipt fee, custom-model markup, additional cost, app markup), and
   `candidate_cost_reporting`, which authorize derives from the stored row.
-- Wiring the Go evaluator into the edge: the cohort predicate, the per-workspace
-  cache, the response, the shadow comparator. Until then nothing calls it.
-- The edge's poll of the published snapshot, its last-good copy and its
-  trusted keys (Go).
+- Wiring the Go evaluator into the edge's answers: the per-workspace cache
+  (BYOK presence, pilot membership, the key's `budget_strict`) and the
+  response. The shadow comparator calls it; nothing decides with it.
 - **Before publishing is turned on: the catalog rebuilt as of `at`.** The
   registry is built once, at import, and drops what is retired then, so a
   process imported before a retirement holds endpoints and models (and with
@@ -512,8 +515,8 @@ are pinned, so the hourly price refresh cannot make it stale.
 
 ## What Go evaluates
 
-`fastpath/internal/routingsnapshot` is the Go side of this contract. Nothing
-imports it yet.
+`fastpath/internal/routingsnapshot` is the Go side of this contract. Only the
+edge imports it, to poll the snapshot and compare in shadow.
 
 **Verify** checks a manifest as `verify_manifest` does, in its order: the
 compact JWS (at most 64 KiB, strict base64url, a header that is exactly the
@@ -550,7 +553,9 @@ them: `str_strip_whitespace` on every string and list-of-strings field (not on
 sent), and `min_length`/`max_length` on `model` and `service_tier`. Go strips
 only the space; a string with any other byte outside printable ASCII, where
 pydantic's or Python's whitespace could differ from Go's, goes to Python, as
-does a string the schema would refuse. It then answers as `plan_route`, `resolve_candidates` and
+does a string the schema would refuse. An omitted `estimated_input_tokens` is
+the schema's default of 1; an explicit `null` is not an omission (the schema's
+int refuses it), and the caller passes such a body to Python. It then answers as `plan_route`, `resolve_candidates` and
 `finish_candidates` do with `rerank` absent: the candidate endpoint ids in
 order and the largest candidate's price at the instant, or Python's refusal
 (status, type and message). `Cost` is
@@ -683,6 +688,143 @@ fixture's evidence spans the whole window).
 `tests/fixtures/usage_cost_vectors.json` holds `Cost` to Python on all 29
 vectors (cache reads and writes, tiers, the private tier basis, rounding
 before the sum, the one-microdollar minimum, a rate above 2^53).
+
+## The edge's poll and shadow comparator
+
+`fastpath/internal/edge` polls the publication and compares Go's answers with
+Python's on the authorizes it passes on. Python decides every request; the
+comparison reads a copy of the bytes as they pass and changes none of them.
+All of it is off unless the node's flags turn it on, and the node's unit adds
+those flags only from instance metadata that `infra/fastpath.tf` does not set:
+
+| Flag | Instance attribute | Default |
+|---|---|---|
+| `-edge-snapshot-url` | `fastpath-edge-snapshot-url` | empty: no poll |
+| `-edge-snapshot-public-key` | `fastpath-edge-snapshot-public-key` (two, comma-separated, in a rotation) | empty |
+| `-edge-snapshot-kid` | `fastpath-edge-snapshot-kid` (in the keys' order) | empty |
+| `-edge-snapshot-plane` | `fastpath-edge-snapshot-plane` (`gcp/us-central1`) | empty |
+| `-edge-shadow` | `fastpath-edge-shadow` (`true`) | false |
+
+The pinned release must take these flags before any of the attributes is set
+(`tests/test_fastpath_p1.py`). The startup script refuses a snapshot URL whose
+scheme and host are not the edge upstream's, or an upstream that carries
+userinfo, the refusals `edge.New` would make: there it would stop the whole process, admission included, restarted
+into the same refusal.
+
+**The poll.** A goroutine of its own GETs the URL with the internal token,
+which is why the URL must be on the edge's own upstream (scheme and host); it
+follows no redirect, and sends the held body's sha256 as `If-None-Match`. A
+publication must be exactly `{v, kind, manifest, body, refresh_at}`, its body
+standard base64; `Verify` checks the manifest against the decoded bytes under
+the pinned key of its kid, one or a rotation's two (purpose `routing-snapshot`, issuer
+`https://trustedrouter.com`, audience `tr-fastpath-edge`), the expected plane,
+and `AllowTestKey` false, and the edge refuses to start with the test key's
+kid or public key. What verifies replaces the copy held; a refusal, a 503, a
+404 or an outage keeps it. The next poll is at `refresh_at`, between 5 s and
+a minute; after a 304 past `refresh_at`, a minute; after a failure, a backoff
+from 5 s to a minute; and never before a `Retry-After`, except that with no
+snapshot held a `Retry-After` longer than a minute waits a minute, so an edge
+without a copy asks again within a minute. The copy is read with
+one atomic load, never outside `[compiled_at, not_after)`, and is dropped at
+`not_after`: memory holds one snapshot (two while a new one is verified).
+Each poll logs its status and outcome with the sha256 and instants, or the
+refusal's reason.
+
+**The comparison.** On a POST to `/internal/gateway/authorize` (or its `/v1`
+twin) with the internal token, the shadow on and a snapshot held, the edge
+notes the snapshot, the instant, its boot verdict, and whether the
+`X-Quill-Video-Allowed-Providers` header came and the `Idempotency-Key` header
+names the partner prefix. It keeps a copy of the request body (up to 1 MiB)
+and of Python's answer (up to 4 MiB; gzip is read) as they pass, each read
+passed on at once (a chunked answer streams, its trailers with it), and when
+the proxy closes Python's answer it queues the comparison, or drops it when 256
+are waiting. A body the edge read whole (a signed request's) past 1 MiB is
+counted as passed at once and not kept, nor is Python's answer copied. All
+copies, in flight and queued, share a budget of 64 MiB: a copy that would
+pass it is not made, and the request is counted as passed; a copy's bytes go
+back to the budget once it is compared or dropped. One goroutine compares. The body is read as `Evaluate` takes it,
+each field's JSON type checked (a value the schema would coerce or refuse
+goes to Python), and the request goes to Python, with the reason, for every
+input `Evaluate` assumes absent: an additional cost reservation, an inference
+receipt (its fee), a video resolution or allowed providers, speech or
+transcription usage, a partner billing mode (the model, or either
+idempotency key; partner route types Go passes already), a custom or
+user-provided model in `model` or `models`; the health re-rank's latency and
+throughput preferences Go passes already. An explicit
+`"estimated_input_tokens": null` goes to Python.
+
+The edge cannot know the workspace's BYOK presence. Go evaluates with none and
+with every provider present; when the two answers are the same, presence
+cannot matter (`byok=determined`). Otherwise Go evaluates with the providers
+of the BYOK endpoints among Python's candidates (none when Python refused):
+admission keeps a BYOK candidate exactly when its provider is present, so if
+any presence explains Python's answer this one does, and a difference means
+none does (`byok=consistent`). Stage D's inputs the edge cannot know, the
+key's `budget_strict` (when eligibility is on), pilot membership (when the
+list is not empty), whether Python accepted the boot (unless the request
+carried no boot signature, which Python never accepts), whether the boot
+declared heartbeats, and the settlement backend (when the write mode is
+`typed`), are each tried both ways: `stage_d=determined` when every way gives
+one reason, `consistent` when Python's is among those some way gives, and a
+difference when none gives it. The abliterate estimated-usage reason is not
+compared. Go evaluates at the request's arrival and again at the answer's; if
+the two answers differ (a price epoch or an availability instant passed while
+Python decided), the request is counted as passed to Python. Both readings
+are the edge's clock, and Python reads its own: a skew between the two clocks
+at a price epoch or availability instant can put Python's reading on the
+other side of the boundary from both of the edge's, a rare false difference
+(`estimate_high` or `estimate_low`, or `candidates` at an availability instant) for requests within
+the skew of an hour's start or an endpoint's deadline.
+
+The classes, counted per snapshot digest and logged each minute:
+
+- `agree`: the candidates and their order, the estimate
+  (`estimated_cost_microdollars` against the model estimate) and the Stage D
+  reason; or the refusal's status, type, message and param.
+- `differ`, by field: `candidates`, `estimate_high` (Python's estimate
+  higher than Go's), `estimate_low` (lower), `stage_d_reason`, `outcome`
+  (one answered, the other refused), `refusal.status`, `refusal.type`,
+  `refusal.message`, `refusal.param`. Every estimate mismatch is a
+  difference. For each `estimate_high` the period's line carries a histogram
+  (`estimate_high_markup_bps`) of the smallest integer basis points in
+  1..30000 that, as an OAuth app's markup (`gateway.py` adds
+  `estimate * bps // 10000` for an app's key, up to 30,000 basis points in
+  `oauth_apps.py`), make Go's estimate Python's, or `none`. Below 10,000
+  microdollars every higher estimate up to four times Go's has such a
+  value, a 1 microdollar overcharge included, so no single one is evidence
+  of a markup: real markups show as a few spikes, a pricing bug as a smear.
+  The cutover decision reads the histogram; the comparator never calls a
+  mismatch fine.
+- `affinity`: the body names a `cache_affinity_key`, and Python's list is
+  Go's with one endpoint moved to the front of its model's run (or of the
+  list), as `ROUTING_STATE.rank` orders a session's warm endpoint.
+- `affinity_warm`: with fallbacks off Python re-ranks and then keeps one
+  candidate, so its one endpoint is the warm one. When the body names a
+  `cache_affinity_key`, both lists are one long, there is no `provider.order`
+  (under which Python does not re-rank), and Python's endpoint is of Go's
+  model and among those Go admits for the request with fallbacks on (a BYOK
+  endpoint's provider taken as present), the request is its own class, never
+  `agree`, so its share stays visible. Stage D is read over Python's
+  candidate. The estimate is checked where it can be: Go evaluates the
+  request, fallbacks still off, with `provider.only` the warm endpoint's
+  provider, and when that answers exactly the warm endpoint its estimate is
+  compared (`affinity_warm_estimate` counts `checked` and `unchecked`).
+  Mismatches are counted by field within the class
+  (`affinity_warm.estimate_high`, `affinity_warm.stage_d_reason`). Any other
+  single-candidate mismatch differs in `candidates` and the estimate. Under
+  `sort` partition `none` the warm endpoint may be another model's; with
+  fallbacks off that shows as a difference.
+- `passed_to_python`, by reason: Go's own pass reasons with every request
+  value redacted (`<value>`, `provider.<field>`), the inputs above, Python
+  refusing outside routing (any status but 400, or a 400 whose type is not a
+  routing error's), an idempotent replay, an answer not read through.
+- `no_snapshot`: the shadow is on and no snapshot is held.
+
+Python's answer carries no service tier, so the tier is compared through the
+candidates it filters and the Stage D reason it decides. The logs carry
+counts, field names, redacted reasons, the snapshot digest and the HTTP
+status: never a body, a model string, a message, a key, a header value or the
+token, and no workspace id (the edge logs none).
 
 ## Found while building
 

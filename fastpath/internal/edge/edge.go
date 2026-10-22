@@ -12,6 +12,13 @@
 // the path and the exact body. Python's further questions, whether the
 // body names the key the signature is bound to and whether the boot's
 // image digest is accepted, are Python's until the edge decides (E2).
+//
+// With a routing snapshot configured (SnapshotConfig, E2), the edge also
+// polls Python's signed routing snapshot and keeps the last good copy, and
+// with the shadow on it evaluates each authorize it passes on against that
+// copy, off the request path, and counts how Go's answer compares with
+// Python's (shadow.go). Python still decides, and its answer still reaches
+// the enclave byte for byte.
 package edge
 
 import (
@@ -24,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -120,6 +128,14 @@ type Config struct {
 	// Serving is the node's state for the balancer's health check; nil
 	// means serving.
 	Serving func() bool
+	// Snapshot is the routing snapshot's poll and the shadow comparator;
+	// its URL nil runs neither.
+	Snapshot SnapshotConfig
+	// ShadowEvery is how often the comparator logs its counts (a minute
+	// when 0); Logf is where the poll and the comparator log (log.Printf
+	// when nil). Both log metadata alone.
+	ShadowEvery time.Duration
+	Logf        func(format string, args ...any)
 }
 
 // Edge serves the enclave's control-plane paths.
@@ -128,6 +144,10 @@ type Edge struct {
 	proxy *httputil.ReverseProxy
 	mu    sync.Mutex
 	boots map[string]cachedBoot
+	// poller and shadow are nil unless the snapshot is configured, and the
+	// shadow unless it is on.
+	poller *poller
+	shadow *shadow
 }
 
 type cachedBoot struct {
@@ -167,7 +187,22 @@ func New(cfg Config) (*Edge, error) {
 			IdleConnTimeout:     90 * time.Second,
 		}
 	}
+	if cfg.Logf == nil {
+		cfg.Logf = log.Printf
+	}
 	e := &Edge{cfg: cfg, boots: map[string]cachedBoot{}}
+	if cfg.Snapshot.URL != nil {
+		p, err := newPoller(cfg.Snapshot, cfg.Upstream, cfg.Token, cfg.Transport, cfg.Clock, cfg.Logf)
+		if err != nil {
+			return nil, err
+		}
+		e.poller = p
+		if cfg.Snapshot.Shadow {
+			e.shadow = newShadow(cfg.Logf, cfg.Clock, cfg.ShadowEvery)
+		}
+	} else if cfg.Snapshot.Shadow {
+		return nil, errors.New("edge: the shadow compares against a routing snapshot, which needs its URL")
+	}
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""
 	e.proxy = &httputil.ReverseProxy{
@@ -189,12 +224,22 @@ func New(cfg Config) (*Edge, error) {
 				r.Out.Header.Set(VerdictHeader, string(v))
 			}
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+			if call, ok := r.Context().Value(shadowKey{}).(*shadowCall); ok {
+				e.shadow.submit(comparison{call: call, passed: "python was not reached"})
+			}
 			answer(w, http.StatusBadGateway, "The control plane was not reached; retry", "bad_gateway")
 		},
 		// A redirect Python builds names the upstream, which the caller
 		// cannot reach: it is given back under the authority the caller used.
 		ModifyResponse: func(resp *http.Response) error {
+			if resp.Request != nil {
+				// The comparator reads a copy of the bytes as they pass;
+				// the status, the headers and the bytes are Python's.
+				if call, ok := resp.Request.Context().Value(shadowKey{}).(*shadowCall); ok {
+					e.shadow.tapResponse(resp, call)
+				}
+			}
 			location := resp.Header.Get("Location")
 			if location == "" || resp.Request == nil {
 				return nil
@@ -268,11 +313,17 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.proxy.ServeHTTP(w, r)
 		return
 	}
+	// An authorize to compare, when the shadow is on and a snapshot held.
+	call := e.begin(r)
 	headers := r.Header.Values(BootHeader)
 	// A boot header the request names as hop-by-hop (`Connection:
 	// X-TR-Boot-Auth`) is dropped by the proxy: Python sees none.
 	if len(headers) == 0 || listedAsHopByHop(r.Header, BootHeader) {
-		e.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent)))
+		out := r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent))
+		if call != nil {
+			out = e.shadow.attach(call, out, Absent, nil)
+		}
+		e.proxy.ServeHTTP(w, out)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
@@ -285,6 +336,9 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// declared, since the body is the same.
 		out := r.Clone(context.WithValue(r.Context(), verdictKey{}, Unchecked))
 		out.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+		if call != nil {
+			e.shadow.submit(comparison{call: call, passed: "the request body is over the comparator's bound"})
+		}
 		e.proxy.ServeHTTP(w, out)
 		return
 	}
@@ -301,7 +355,33 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	out := r.Clone(context.WithValue(r.Context(), verdictKey{}, verdict))
 	out.Body = io.NopCloser(bytes.NewReader(body))
 	out.ContentLength = int64(len(body))
+	if call != nil {
+		out = e.shadow.attach(call, out, verdict, body)
+	}
 	e.proxy.ServeHTTP(w, out)
+}
+
+// Run polls the routing snapshot and runs the shadow comparator, each on its
+// own goroutine, until ctx ends; with no snapshot configured it returns at
+// once. ServeHTTP never waits for either.
+func (e *Edge) Run(ctx context.Context) {
+	if e.poller == nil {
+		return
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.poller.run(ctx)
+	}()
+	if e.shadow != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.shadow.run(ctx)
+		}()
+	}
+	wg.Wait()
 }
 
 // listedAsHopByHop: the Connection header names the header, so the proxy

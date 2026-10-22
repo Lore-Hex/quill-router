@@ -255,6 +255,137 @@ func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 	}
 }
 
+// TestAProcessWithTheSnapshotPollsItBesideTheEdge: configured, the edge's
+// routing snapshot is polled from the upstream with the internal token by
+// the running process, and authorizes still get Python's answer as it was.
+func TestAProcessWithTheSnapshotPollsItBesideTheEdge(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	polls := make(chan string, 16)
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/routing-snapshot" {
+			select {
+			case polls <- r.Header.Get(edge.TokenHeader):
+			default:
+			}
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"snapshot-refused","retry_at":0}`))
+			return
+		}
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":{"code":402}}`))
+	}))
+	defer python.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config(ln)
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: python.URL, Token: "token-1",
+		SnapshotURL: python.URL + "/internal/fastpath/routing-snapshot", SnapshotKid: "routing-snapshot-1",
+		SnapshotPublicKey: base64.RawURLEncoding.EncodeToString(public), SnapshotPlane: "gcp/us-central1", Shadow: true}
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	select {
+	case got := <-polls:
+		if got != "token-1" {
+			t.Fatalf("the poll carried %q, not the internal token", got)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the process did not poll the routing snapshot")
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	var resp *http.Response
+	eventually(t, 20*time.Second, "the edge serving", func() (bool, error) {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+edgeLn.Addr().String()+"/internal/gateway/authorize",
+			strings.NewReader(`{"model":"m"}`))
+		req.Header.Set(edge.TokenHeader, "token-1")
+		var err error
+		resp, err = client.Do(req)
+		return err == nil, nil
+	})
+	defer resp.Body.Close()
+	if answer, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusPaymentRequired || string(answer) != `{"error":{"code":402}}` {
+		t.Fatalf("python's answer: %d %s", resp.StatusCode, answer)
+	}
+}
+
+// TestTheEdgesSnapshotGoesWithTheEdgeAndItsKey: the routing snapshot is the
+// edge's, needs its key, kid and plane, and the shadow needs the snapshot;
+// with no URL the edge polls nothing, which is the default.
+func TestTheEdgesSnapshotGoesWithTheEdgeAndItsKey(t *testing.T) {
+	cfg := Defaults()
+	cfg.Admission, cfg.Address, cfg.Region, cfg.Key = true, "127.0.0.1:1", "us-central1", key
+	cfg.SettleTopic, cfg.RecordTopic = "projects/spike/topics/settle-log", "projects/spike/topics/records"
+	if cfg.Edge.SnapshotURL != "" || cfg.Edge.Shadow {
+		t.Fatalf("the defaults poll or compare: %+v", cfg.Edge)
+	}
+	public := base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	whole := EdgeConfig{Address: "127.0.0.1:2", Upstream: "http://python.internal", Token: "t",
+		SnapshotURL: "http://python.internal/internal/fastpath/routing-snapshot", SnapshotPublicKey: public,
+		SnapshotKid: "routing-snapshot-1", SnapshotPlane: "gcp/us-central1", Shadow: true}
+	cfg.Edge = whole
+	if err := cfg.valid(); err != nil {
+		t.Fatalf("a whole snapshot: %v", err)
+	}
+	snapshot, err := snapshotConfig(whole)
+	if err != nil || snapshot.URL == nil || len(snapshot.Keys) != 1 || len(snapshot.Keys[0].PublicKey) != ed25519.PublicKeySize ||
+		!snapshot.Shadow || snapshot.Keys[0].Kid != "routing-snapshot-1" || snapshot.Plane != "gcp/us-central1" {
+		t.Fatalf("the snapshot's configuration: %+v %v", snapshot, err)
+	}
+	// A rotation's two keys, paired with their kids in order.
+	rotation := whole
+	rotation.SnapshotPublicKey = public + "," + base64.RawURLEncoding.EncodeToString(append(make([]byte, 31), 1))
+	rotation.SnapshotKid = "routing-snapshot-1,routing-snapshot-2"
+	if both, err := snapshotConfig(rotation); err != nil || len(both.Keys) != 2 || both.Keys[1].Kid != "routing-snapshot-2" ||
+		both.Keys[1].PublicKey[31] != 1 {
+		t.Fatalf("a rotation's keys: %+v %v", both, err)
+	}
+	if none, err := snapshotConfig(EdgeConfig{}); err != nil || none.URL != nil || none.Shadow {
+		t.Fatalf("no URL polls nothing: %+v %v", none, err)
+	}
+	for _, c := range []struct {
+		name   string
+		change func(*EdgeConfig)
+	}{
+		{"no edge", func(e *EdgeConfig) { e.Address, e.Upstream, e.Token = "", "", "" }},
+		{"a shadow with no snapshot", func(e *EdgeConfig) { e.SnapshotURL = "" }},
+		{"no key", func(e *EdgeConfig) { e.SnapshotPublicKey = "" }},
+		{"no kid", func(e *EdgeConfig) { e.SnapshotKid = "" }},
+		{"no plane", func(e *EdgeConfig) { e.SnapshotPlane = "" }},
+	} {
+		cfg.Edge = whole
+		c.change(&cfg.Edge)
+		if err := cfg.valid(); err == nil {
+			t.Errorf("%s: valid", c.name)
+		}
+	}
+	for _, c := range []struct {
+		name   string
+		change func(*EdgeConfig)
+	}{
+		{"a short key", func(e *EdgeConfig) { e.SnapshotPublicKey = public[:20] }},
+		{"a padded key", func(e *EdgeConfig) { e.SnapshotPublicKey = public + "=" }},
+		{"another scheme", func(e *EdgeConfig) { e.SnapshotURL = "ftp://python.internal/x" }},
+		{"a key without its kid", func(e *EdgeConfig) { e.SnapshotPublicKey = public + "," + public }},
+	} {
+		edgeCfg := whole
+		c.change(&edgeCfg)
+		if _, err := snapshotConfig(edgeCfg); err == nil {
+			t.Errorf("%s: accepted", c.name)
+		}
+	}
+}
+
 // TestAFailedProcessIsNotServing: a part's failure ends the parts without
 // their leaving, so the edge's answer follows the parts' context too.
 func TestAFailedProcessIsNotServing(t *testing.T) {

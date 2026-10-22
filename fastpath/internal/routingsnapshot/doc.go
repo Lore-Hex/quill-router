@@ -16,6 +16,7 @@
 //   - Cost is stage_d's frozen-candidate pricing, exact to the microdollar.
 //
 // The tests hold it to fastpath/testdata/routing_cases_v1.json and
-// tests/fixtures/usage_cost_vectors.json, which Python generates. Nothing at
-// runtime imports it yet.
+// tests/fixtures/usage_cost_vectors.json, which Python generates. At runtime
+// only the edge imports it, to poll the snapshot and compare Go's answers
+// with Python's in shadow (fastpath/internal/edge); nothing decides with it.
 package routingsnapshot

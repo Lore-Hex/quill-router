@@ -19,9 +19,9 @@ import (
 //
 // Evaluate assumes the inputs authorize_candidates takes besides these are
 // absent: a custom or user-provided model, a partner billing mode, an
-// additional cost reservation, a video resolution, and the process-local
-// health re-rank. The caller's cohort predicate must pass any request that
-// has one to Python.
+// additional cost reservation, a video resolution or allowed providers, and
+// the process-local health re-rank. The caller's cohort predicate must pass
+// any request that has one to Python (the edge's shadow, requestOf).
 type Request struct {
 	// Model and Models are the body's model strings as sent; Models is nil
 	// when the body has no models array.
@@ -47,11 +47,14 @@ type Request struct {
 	// BYOKProviders are the provider slugs whose BYOK credentials the
 	// workspace holds.
 	BYOKProviders []string
-	// EstimatedInputTokens is the body's estimated_input_tokens, nil when the
-	// body omits it; Evaluate then applies the schema's default, 1
-	// (schemas.py GatewayAuthorizeRequest). It is the enclave's prompt
-	// estimate, a number Go receives, not one it derives from the messages.
-	// It prices the estimate and is the prompt the context window must hold.
+	// EstimatedInputTokens is the body's estimated_input_tokens, nil only
+	// when the body omits the field; Evaluate then applies the schema's
+	// default, 1 (schemas.py GatewayAuthorizeRequest). An explicit JSON null
+	// is not an omission: the schema's field is an int, which refuses None,
+	// so the caller passes such a body to Python rather than set nil. It is
+	// the enclave's prompt estimate, a number Go receives, not one it
+	// derives from the messages. It prices the estimate and is the prompt the
+	// context window must hold.
 	EstimatedInputTokens *int64
 	// MaxTokens, MaxCompletionTokens and MaxOutputTokens are the body's
 	// fields (nil when absent). The window must also hold max_tokens, else
