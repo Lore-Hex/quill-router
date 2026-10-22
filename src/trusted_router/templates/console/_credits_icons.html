@@ -1,0 +1,21 @@
+{#- Stroke icons for the Credits page. Decorative: every use sits beside text
+    or inside a labelled control, so each svg is hidden from assistive tech. -#}
+{% set paths = {
+  'wallet': '<path d="M20 8V5H4a2 2 0 0 0 0 4h17v11H4a2 2 0 0 1-2-2V7m19 6h-6v4h6"/>',
+  'transfer': '<path d="M3 8h14l-3-3m3 3-3 3M21 16H7l3-3m-3 3 3 3"/>',
+  'card': '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/>',
+  'bank': '<path d="M3 10h18L12 4zM5 10v8m4-8v8m6-8v8m4-8v8M3 20h18"/>',
+  'coin': '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c0-1-1.3-1.7-3-1.7s-3 .7-3 1.7 1.3 1.6 3 1.6 3 .7 3 1.7-1.3 1.7-3 1.7-3-.7-3-1.7M12 6v2m0 8v2"/>',
+  'paypal': '<path d="M4 14V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H9"/><path d="m2 17 5-5 3 3 5-5 3 3"/>',
+  'chevron': '<path d="m6 9 6 6 6-6"/>',
+  'alert': '<circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/>',
+  'shield': '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
+  'arrow': '<path d="M4 12h16m-6-6 6 6-6 6"/>',
+  'info': '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
+  'refresh': '<path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/>',
+  'gift': '<path d="M3 9h18v4H3zm2 4v8h14v-8M12 9v12"/><path d="M12 9C4 9 5 2 8 3c3 0 4 6 4 6Zm0 0c8 0 7-7 4-6-3 0-4 6-4 6Z"/>',
+  'external': '<path d="M14 4h6v6M20 4l-9 9M19 14v6H4V5h6"/>'
+} %}
+{% macro svg(name, size=20, stroke=1.6) -%}
+<svg class="credits-icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="{{ stroke }}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ paths[name]|safe }}</svg>
+{%- endmacro %}

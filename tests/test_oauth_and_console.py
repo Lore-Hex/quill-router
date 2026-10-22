@@ -1487,10 +1487,10 @@ def test_console_routing_credits_settings_and_preferences_show_operational_contr
     assert "api-europe-west4.quillrouter.com" in routing.text
 
     assert credits.status_code == 200
-    assert "Stripe card" in credits.text
-    assert "Stripe USDC / stablecoin" in credits.text
+    assert '<option value="auto">Card</option>' in credits.text
+    assert '<option value="stablecoin">USDC</option>' in credits.text
     assert "Payment methods" in credits.text
-    assert "Add payment method" in credits.text
+    assert "Add a card" in credits.text
     assert "Auto refill" in credits.text
     assert "Continue to checkout" in credits.text
 
@@ -1515,10 +1515,11 @@ def test_console_credits_shows_pending_stripe_setup_state(
     credits = client.get("/console/credits")
 
     assert credits.status_code == 200
-    assert "pending" in credits.text
-    assert "Stripe setup is pending" in credits.text
     assert "Complete setup" in credits.text
-    assert "Replace card" not in credits.text
+    assert "Add a card" not in credits.text
+    assert "data-checkout-change" not in credits.text
+    assert 'data-auto-refill-switch' in credits.text
+    assert 'disabled data-auto-refill-switch' in credits.text
 
 
 def test_console_checkbox_inputs_are_not_full_width() -> None:
@@ -1554,7 +1555,7 @@ def test_console_checkout_exposes_and_enforces_paypal_minimum(
 
     assert page.status_code == 200
     assert 'data-paypal-minimum="20"' in page.text
-    assert "PayPal purchases have a $20 minimum." in page.text
+    assert '<option value="paypal">PayPal</option>' in page.text
 
     too_small = client.post(
         "/console/credits/checkout",
@@ -1675,9 +1676,10 @@ def test_console_add_payment_method_mock_saves_method(
     assert account.stripe_payment_method_id
     page = client.get("/console/credits")
     details = client.get("/console/credits/stripe-details")
-    assert "Replace card" in page.text
+    assert "data-checkout-change" in page.text
+    assert '<option value="card">Another card</option>' in page.text
     assert "Manage in Stripe" in page.text
-    assert "Test card" in details.text
+    assert "test ····" in details.text
     assert "Remove" in page.text
 
 
@@ -1824,11 +1826,10 @@ def test_console_credits_lists_saved_stripe_card(monkeypatch) -> None:
 
     assert page.status_code == 200
     assert details.status_code == 200
-    assert "Stripe card details are temporarily unavailable" in page.text
-    assert "Visa card" in details.text
-    assert "ending in 4242" in details.text
-    assert "expires 12/2031" in details.text
-    assert "id ...e_card" in details.text
+    assert "Saved card" in page.text
+    assert "pm_console_card" not in page.text
+    assert "visa ····4242" in details.text
+    assert "pm_console_card" not in details.text
     assert "Remove" in page.text
 
 

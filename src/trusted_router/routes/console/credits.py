@@ -8,6 +8,7 @@ actual API calls so this module stays focused on form parsing + redirects."""
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, cast
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -24,6 +25,7 @@ from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.money import (
     MICRODOLLARS_PER_CENT,
+    MICRODOLLARS_PER_DOLLAR,
     MIN_PAYPAL_CHECKOUT_DOLLARS,
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
     money_pair,
@@ -48,7 +50,10 @@ from trusted_router.services.stripe_billing import (
     list_workspace_payments,
     remove_saved_payment_method,
 )
-from trusted_router.services.stripe_fees import scale_processing_fee_cents
+from trusted_router.services.stripe_fees import (
+    processing_fee,
+    scale_processing_fee_cents,
+)
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.views import render_template
@@ -59,6 +64,104 @@ _PRIVATE_CREDITS_HEADERS = {
     "X-Robots-Tag": "noindex, nofollow",
 }
 
+# The Credits page offers three whole-dollar presets plus "Other". When the
+# page is opened from identity verification, the middle preset becomes the
+# remaining lifetime top-up instead (see ``checkout_presets``).
+CHECKOUT_PRESET_DOLLARS: tuple[int, int, int] = (5, 20, 100)
+CHECKOUT_DEFAULT_PRESET_DOLLARS = 20
+
+# Form value for the preset radio that reveals the free-amount field; the
+# dollar amount then arrives in ``other_amount``.
+CHECKOUT_OTHER_AMOUNT = "other"
+
+# Which fee rail each payment-method option is priced on. PayPal checkouts
+# reuse the card schedule (services/paypal_billing.py); Adyen has its own
+# schedule and no customer surcharge multiplier (services/adyen_billing.py).
+CHECKOUT_METHOD_RAILS: dict[str, str] = {
+    "auto": "card",
+    "card": "card",
+    "paypal": "card",
+    "ach": "ach",
+    "stablecoin": "stablecoin",
+    "adyen": "adyen",
+}
+
+# One amber line per redirect code the checkout handlers can send back.
+_CHECKOUT_ERROR_COPY: dict[str, str] = {
+    "paypal_missing_order": "PayPal sent you back without an order to confirm.",
+    "paypal_capture_failed": "The PayPal payment failed to complete.",
+    "checkout_unavailable": "Checkout is temporarily unavailable.",
+}
+
+
+def checkout_fee_schedule(settings: Settings) -> dict[str, dict[str, int | None]]:
+    """Fee inputs per rail, exactly as the checkout services pass them to
+    ``processing_fee()``; the page previews Stripe's line items from these."""
+    surcharge = settings.stripe_paypal_fee_multiplier_basis_points
+    return {
+        "card": {
+            "basis_points": settings.stripe_card_fee_basis_points,
+            "fixed_cents": settings.stripe_card_fee_fixed_cents,
+            "minimum_cents": settings.checkout_card_fee_minimum_cents,
+            "max_cents": None,
+            "multiplier_basis_points": surcharge,
+        },
+        "ach": {
+            "basis_points": settings.stripe_ach_fee_basis_points,
+            "fixed_cents": settings.stripe_ach_fee_fixed_cents,
+            "minimum_cents": 0,
+            "max_cents": settings.stripe_ach_fee_max_cents,
+            "multiplier_basis_points": surcharge,
+        },
+        "stablecoin": {
+            "basis_points": settings.stripe_stablecoin_fee_basis_points,
+            "fixed_cents": settings.stripe_stablecoin_fee_fixed_cents,
+            "minimum_cents": 0,
+            "max_cents": None,
+            "multiplier_basis_points": surcharge,
+        },
+        "adyen": {
+            "basis_points": settings.adyen_card_fee_basis_points,
+            "fixed_cents": settings.adyen_card_fee_fixed_cents,
+            "minimum_cents": settings.checkout_card_fee_minimum_cents,
+            "max_cents": None,
+            "multiplier_basis_points": 10_000,
+        },
+    }
+
+
+def checkout_fee_cents(credit_cents: int, rail: str, settings: Settings) -> int:
+    """The processing fee the checkout for ``rail`` will add to ``credit_cents``."""
+    rates = checkout_fee_schedule(settings)[rail]
+    return processing_fee(
+        credit_amount_cents=credit_cents,
+        variable_basis_points=rates["basis_points"] or 0,
+        fixed_fee_cents=rates["fixed_cents"] or 0,
+        minimum_fee_cents=rates["minimum_cents"] or 0,
+        max_fee_cents=rates["max_cents"],
+        fee_multiplier_basis_points=rates["multiplier_basis_points"] or 10_000,
+    ).processing_fee_cents
+
+
+def checkout_presets(verification_remaining_microdollars: int | None) -> tuple[list[int], int]:
+    """Preset dollar amounts and the preselected one.
+
+    Opened from identity verification with ``remaining`` still owed, the
+    middle preset becomes that remainder (rounded up to a dollar) and is
+    selected, so one tap finishes verification. A remainder within the first
+    preset keeps the normal row with the first preset selected.
+    """
+    presets = list(CHECKOUT_PRESET_DOLLARS)
+    selected = CHECKOUT_DEFAULT_PRESET_DOLLARS
+    if verification_remaining_microdollars and verification_remaining_microdollars > 0:
+        remaining_dollars = -(-verification_remaining_microdollars // MICRODOLLARS_PER_DOLLAR)
+        if remaining_dollars <= presets[0]:
+            selected = presets[0]
+        else:
+            presets[1] = remaining_dollars
+            selected = remaining_dollars
+    return presets, selected
+
 
 def register(app: FastAPI) -> None:
     @app.get("/console/credits")
@@ -67,6 +170,7 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         purpose: str = "",
         checkout: str = "",
+        error: str = "",
     ) -> Response:
         credit = STORE.get_credit_account(ctx.workspace.id)
         summary = live_credit_summary(ctx.workspace.id)
@@ -92,6 +196,13 @@ def register(app: FastAPI) -> None:
             if purpose == "identity_verification"
             else {}
         )
+        presets, selected_preset = checkout_presets(
+            verification_remaining if purpose == "identity_verification" else None
+        )
+        default_rail = "stablecoin" if wallet_only_billing else "card"
+        default_fee_cents = checkout_fee_cents(selected_preset * 100, default_rail, settings)
+        selected_microdollars = selected_preset * MICRODOLLARS_PER_DOLLAR
+        default_fee_microdollars = default_fee_cents * MICRODOLLARS_PER_CENT
         return HTMLResponse(
             render(
                 "console/credits.html",
@@ -99,7 +210,20 @@ def register(app: FastAPI) -> None:
                 ctx=ctx,
                 active="credits",
                 page_title="Credits",
-                page_subtitle="Top up to keep prepaid routes flowing.",
+                checkout_presets=presets,
+                checkout_selected_preset=selected_preset,
+                checkout_fee_schedule_json=json.dumps(
+                    checkout_fee_schedule(settings), separators=(",", ":")
+                ),
+                checkout_summary={
+                    "credit": money(selected_microdollars),
+                    "fee": money(default_fee_microdollars),
+                    "total": money(selected_microdollars + default_fee_microdollars),
+                },
+                checkout_error_message=_CHECKOUT_ERROR_COPY.get(error),
+                verification_topup_line=(
+                    purpose == "identity_verification" and verification_remaining > 0
+                ),
                 credits_available=money(summary["available"] if summary else 0),
                 credits_empty=not summary or summary["available"] <= 0,
                 credits_usage=money(summary["total_usage"] if summary else 0),
@@ -211,7 +335,12 @@ def register(app: FastAPI) -> None:
         amount: str = Form(...),
         payment_method: str = Form("auto"),
         purpose: str = Form(""),
+        other_amount: str = Form(""),
     ) -> Response:
+        if amount == CHECKOUT_OTHER_AMOUNT:
+            # The "Other" preset posts its dollar amount in a second field so
+            # the preset radios and the free amount share one form name.
+            amount = other_amount.strip()
         if is_wallet_only_user(ctx.user) and not is_stablecoin_checkout_method(
             payment_method
         ):

@@ -77,7 +77,6 @@ def test_credits_html_finishes_before_stripe_starts_and_keeps_live_money_read(
     assert not stripe_started.is_set()
     assert money_reads == [workspace.id]
     assert "$10.00" in response.text
-    assert "$2.34" in response.text
     assert response.headers["cache-control"] == "private, no-store"
     assert "Cookie" in response.headers["vary"].split(", ")
     assert 'data-credits-stripe-details-url="/console/credits/stripe-details"' in response.text
@@ -131,10 +130,8 @@ def test_stripe_fragment_populates_masked_card_and_payment_history(monkeypatch) 
 
     assert response.status_code == 200
     assert seen_workspaces == [workspace.id]
-    assert "Visa card" in response.text
-    assert "ending in 4242" in response.text
-    assert "expires 12/2031" in response.text
-    assert "$10.00" in response.text
+    assert "visa ····4242" in response.text
+    assert "$10.00 credit" in response.text
     assert "$1.34 fee" in response.text
     assert "2026-05-24" in response.text
     assert "https://pay.stripe.com/receipts/deferred" in response.text
@@ -161,8 +158,7 @@ def test_stripe_fragment_falls_back_when_each_stripe_read_fails(monkeypatch) -> 
     response = client.get("/console/credits/stripe-details")
 
     assert response.status_code == 200
-    assert "Stripe card details are temporarily unavailable" in response.text
-    assert "id ...tifier" in response.text
+    assert "Saved card" in response.text
     assert "pm_secret_full_identifier" not in response.text
     assert "Payment history is temporarily unavailable" in response.text
 
@@ -213,7 +209,7 @@ def test_stripe_fragment_loads_card_and_history_concurrently(monkeypatch) -> Non
     response = client.get("/console/credits/stripe-details")
 
     assert response.status_code == 200
-    assert "Parallel-card card" in response.text
+    assert "parallel-card ····0002" in response.text
     assert "parallel-history" in response.text
 
 
