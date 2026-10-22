@@ -707,8 +707,8 @@ those flags only from instance metadata that `infra/fastpath.tf` does not set:
 
 The pinned release must take these flags before any of the attributes is set
 (`tests/test_fastpath_p1.py`). The startup script refuses a snapshot URL whose
-scheme and host are not the edge upstream's, the refusal `edge.New` would
-make: there it would stop the whole process, admission included, restarted
+scheme and host are not the edge upstream's, or an upstream that carries
+userinfo, the refusals `edge.New` would make: there it would stop the whole process, admission included, restarted
 into the same refusal.
 
 **The poll.** A goroutine of its own GETs the URL with the internal token,
@@ -773,7 +773,7 @@ Python decided), the request is counted as passed to Python. Both readings
 are the edge's clock, and Python reads its own: a skew between the two clocks
 at a price epoch or availability instant can put Python's reading on the
 other side of the boundary from both of the edge's, a rare false difference
-(`estimate`, or `candidates` at an availability instant) for requests within
+(`estimate_high` or `estimate_low`, or `candidates` at an availability instant) for requests within
 the skew of an hour's start or an endpoint's deadline.
 
 The classes, counted per snapshot digest and logged each minute:
@@ -781,26 +781,39 @@ The classes, counted per snapshot digest and logged each minute:
 - `agree`: the candidates and their order, the estimate
   (`estimated_cost_microdollars` against the model estimate) and the Stage D
   reason; or the refusal's status, type, message and param.
-- `estimate_app_markup`, counted beside the class: Python's estimate is
-  higher than Go's by an OAuth app's markup of some integer basis points in
-  1..10000 (`gateway.py` adds `estimate * bps // 10000` for an app's key,
-  which the edge cannot know). Consistent, not a difference; the request's
-  class is what its other fields make it.
-- `differ`, by field: `candidates`, `estimate` (one no app markup explains),
-  `stage_d_reason`, `outcome` (one answered, the other refused),
-  `refusal.status`, `refusal.type`, `refusal.message`, `refusal.param`.
+- `differ`, by field: `candidates`, `estimate_high` (Python's estimate
+  higher than Go's), `estimate_low` (lower), `stage_d_reason`, `outcome`
+  (one answered, the other refused), `refusal.status`, `refusal.type`,
+  `refusal.message`, `refusal.param`. Every estimate mismatch is a
+  difference. For each `estimate_high` the period's line carries a histogram
+  (`estimate_high_markup_bps`) of the smallest integer basis points in
+  1..30000 that, as an OAuth app's markup (`gateway.py` adds
+  `estimate * bps // 10000` for an app's key, up to 30,000 basis points in
+  `oauth_apps.py`), make Go's estimate Python's, or `none`. Below 10,000
+  microdollars every higher estimate up to four times Go's has such a
+  value, a 1 microdollar overcharge included, so no single one is evidence
+  of a markup: real markups show as a few spikes, a pricing bug as a smear.
+  The cutover decision reads the histogram; the comparator never calls a
+  mismatch fine.
 - `affinity`: the body names a `cache_affinity_key`, and Python's list is
   Go's with one endpoint moved to the front of its model's run (or of the
-  list), as `ROUTING_STATE.rank` orders a session's warm endpoint. With
-  fallbacks off Python re-ranks and then keeps one candidate, so its one
-  endpoint is the warm one and its estimate that endpoint's price: when both
-  lists are one long, there is no `provider.order` (under which Python does
-  not re-rank), and Python's endpoint is of Go's model and among those Go
-  admits for the request with fallbacks on, it is `affinity`, the estimate is
-  not compared, and Stage D is read over Python's candidate. Otherwise both
-  `candidates` and `estimate` differ. Under `sort` partition `none` the warm
-  endpoint may be another model's; with fallbacks off that shows as a
-  difference.
+  list), as `ROUTING_STATE.rank` orders a session's warm endpoint.
+- `affinity_warm`: with fallbacks off Python re-ranks and then keeps one
+  candidate, so its one endpoint is the warm one. When the body names a
+  `cache_affinity_key`, both lists are one long, there is no `provider.order`
+  (under which Python does not re-rank), and Python's endpoint is of Go's
+  model and among those Go admits for the request with fallbacks on (a BYOK
+  endpoint's provider taken as present), the request is its own class, never
+  `agree`, so its share stays visible. Stage D is read over Python's
+  candidate. The estimate is checked where it can be: Go evaluates the
+  request, fallbacks still off, with `provider.only` the warm endpoint's
+  provider, and when that answers exactly the warm endpoint its estimate is
+  compared (`affinity_warm_estimate` counts `checked` and `unchecked`).
+  Mismatches are counted by field within the class
+  (`affinity_warm.estimate_high`, `affinity_warm.stage_d_reason`). Any other
+  single-candidate mismatch differs in `candidates` and the estimate. Under
+  `sort` partition `none` the warm endpoint may be another model's; with
+  fallbacks off that shows as a difference.
 - `passed_to_python`, by reason: Go's own pass reasons with every request
   value redacted (`<value>`, `provider.<field>`), the inputs above, Python
   refusing outside routing (any status but 400, or a 400 whose type is not a

@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -216,9 +218,9 @@ func TestADifferenceIsCountedByItsField(t *testing.T) {
 			[]string{"candidates"}},
 		{"a candidate fewer", glm, func(p *python) { p.candidates = p.candidates[:2] }, []string{"candidates"}},
 		// Lower than Go's: no app markup explains it.
-		{"the estimate", glm, func(p *python) { p.estimate-- }, []string{"estimate"}},
+		{"a lower estimate", glm, func(p *python) { p.estimate-- }, []string{"estimate_low"}},
 		// More than doubled: past any markup of 10,000 basis points.
-		{"an estimate past any markup", glm, func(p *python) { p.estimate = 2*p.estimate + 1 }, []string{"estimate"}},
+		{"a higher estimate", glm, func(p *python) { p.estimate = 2*p.estimate + 1 }, []string{"estimate_high"}},
 		// pricing_kind needs pricing the edge passes to Python.
 		{"the Stage D reason", glm, func(p *python) { p.stageD = "pricing_kind" }, []string{"stage_d_reason"}},
 		{"Python refused", glm, func(p *python) {
@@ -368,97 +370,164 @@ func TestPythonsAffinityPromotesOneEndpointWithinItsModel(t *testing.T) {
 }
 
 // TestPythonsWarmEndpointWithFallbacksOff: with fallbacks off Python
-// re-ranks and keeps one candidate, so its one endpoint is the warm one and
-// its estimate that endpoint's price. Under a cache affinity key, an
-// endpoint of the same model that Go admits with fallbacks on is affinity,
-// the estimate not compared; without the key, another model's endpoint, or
-// with provider.order (under which Python does not re-rank), it differs in
-// both.
+// re-ranks and keeps one candidate, so its one endpoint is the warm one.
+// Under a cache affinity key, an endpoint of Go's model that Go admits with
+// fallbacks on is its own class, affinity_warm, never agree; its estimate is
+// checked where Go pinned to its provider answers exactly that endpoint, and
+// a mismatch is counted within the class. Without the key, another model's
+// endpoint (also one the request's models list names), under
+// provider.order, or an endpoint Go does not admit, it differs.
 func TestPythonsWarmEndpointWithFallbacksOff(t *testing.T) {
 	h := goldenHeld(t)
-	glm := routingCases(t)["z-ai/glm-5.3+none"]
+	cases := routingCases(t)
+	glm, list := cases["z-ai/glm-5.3+none"], cases["fallback_list"]
 	key := strings.Repeat("ab", 32)
 	off := map[string]any{"allow_fallbacks": false}
 	ordered := map[string]any{"allow_fallbacks": false, "order": []string{"wafer", "fireworks"}}
 	ignored := map[string]any{"allow_fallbacks": false, "ignore": []string{"fireworks"}}
+	// The warm endpoints' prices, as Go prices one provider's endpoint.
+	price := func(base routingCase, provider string) int64 {
+		req, _, why := requestOf(withFields(t, base.Request, map[string]any{"provider": map[string]any{"only": []string{provider},
+			"allow_fallbacks": false}}), &shadowCall{})
+		if why != "" {
+			t.Fatal(why)
+		}
+		req.At = caseAt(t, base)
+		r := h.snapshot.Evaluate(req)
+		if r.Outcome != routingsnapshot.Answered || len(r.Candidates) != 1 {
+			t.Fatalf("pricing %s: %+v", provider, r)
+		}
+		return r.ModelEstimate
+	}
+	fireworks, together, wafer := price(glm, "fireworks"), price(glm, "together"), price(glm, "wafer")
+	if fireworks == wafer && together == wafer {
+		t.Fatal("the warm endpoints' prices do not tell them from Go's first")
+	}
 	for _, c := range []struct {
 		name     string
+		base     routingCase
 		fields   map[string]any
 		endpoint string
+		estimate int64
 		class    string
 		want     []string
+		checked  string
 	}{
-		{"the warm endpoint", map[string]any{"cache_affinity_key": key, "provider": off}, "z-ai/glm-5.3@fireworks/prepaid",
-			ClassAffinity, nil},
-		{"the warm endpoint, top-level", map[string]any{"cache_affinity_key": key, "allow_fallbacks": false},
-			"z-ai/glm-5.3@together/prepaid", ClassAffinity, nil},
-		{"Go's own", map[string]any{"cache_affinity_key": key, "provider": off}, "z-ai/glm-5.3@wafer/prepaid", ClassAgree, nil},
-		{"no key", map[string]any{"provider": off}, "z-ai/glm-5.3@fireworks/prepaid", ClassDiffer,
-			[]string{"candidates", "estimate"}},
-		{"another model", map[string]any{"cache_affinity_key": key, "provider": off},
-			"deepseek/deepseek-v4-flash@deepseek/prepaid", ClassDiffer, []string{"candidates", "estimate"}},
-		{"under an order", map[string]any{"cache_affinity_key": key, "provider": ordered}, "z-ai/glm-5.3@fireworks/prepaid",
-			ClassDiffer, []string{"candidates", "estimate"}},
-		{"an endpoint Go does not admit", map[string]any{"cache_affinity_key": key, "provider": ignored},
-			"z-ai/glm-5.3@fireworks/prepaid", ClassDiffer, []string{"candidates", "estimate"}},
+		{"the warm endpoint", glm, map[string]any{"cache_affinity_key": key, "provider": off},
+			"z-ai/glm-5.3@fireworks/prepaid", fireworks, ClassAffinityWarm, nil, "checked"},
+		{"the warm endpoint, top-level", glm, map[string]any{"cache_affinity_key": key, "allow_fallbacks": false},
+			"z-ai/glm-5.3@together/prepaid", together, ClassAffinityWarm, nil, "checked"},
+		{"the warm endpoint overcharged", glm, map[string]any{"cache_affinity_key": key, "provider": off},
+			"z-ai/glm-5.3@fireworks/prepaid", fireworks + 1, ClassAffinityWarm, []string{"affinity_warm.estimate_high"}, "checked"},
+		{"the warm endpoint undercharged", glm, map[string]any{"cache_affinity_key": key, "provider": off},
+			"z-ai/glm-5.3@fireworks/prepaid", fireworks - 1, ClassAffinityWarm, []string{"affinity_warm.estimate_low"}, "checked"},
+		{"Go's own", glm, map[string]any{"cache_affinity_key": key, "provider": off}, "z-ai/glm-5.3@wafer/prepaid", wafer,
+			ClassAgree, nil, ""},
+		{"no key", glm, map[string]any{"provider": off}, "z-ai/glm-5.3@fireworks/prepaid", 1, ClassDiffer,
+			[]string{"candidates", "estimate_low"}, ""},
+		{"another model", glm, map[string]any{"cache_affinity_key": key, "provider": off},
+			"deepseek/deepseek-v4-flash@deepseek/prepaid", 1, ClassDiffer, []string{"candidates", "estimate_low"}, ""},
+		// Go admits glm's endpoints for this request with fallbacks on (its
+		// models list), but Python with fallbacks off reads model alone.
+		{"a model from the models list", list, map[string]any{"cache_affinity_key": key, "provider": off},
+			"z-ai/glm-5.3@wafer/prepaid", 1, ClassDiffer, []string{"candidates", "estimate_low"}, ""},
+		{"under an order", glm, map[string]any{"cache_affinity_key": key, "provider": ordered}, "z-ai/glm-5.3@fireworks/prepaid",
+			1, ClassDiffer, []string{"candidates", "estimate_low"}, ""},
+		{"an endpoint Go does not admit", glm, map[string]any{"cache_affinity_key": key, "provider": ignored},
+			"z-ai/glm-5.3@fireworks/prepaid", 1, ClassDiffer, []string{"candidates", "estimate_low"}, ""},
 	} {
-		request := withFields(t, glm.Request, c.fields)
-		py := pythonOf(glm)
-		py.candidates = []string{c.endpoint}
-		if c.endpoint == "z-ai/glm-5.3@wafer/prepaid" {
-			// Go's own endpoint at Go's price: the control.
-			var req routingsnapshot.Request
-			req, _, _ = requestOf(request, &shadowCall{})
-			req.At = caseAt(t, glm)
-			py.estimate = h.snapshot.Evaluate(req).ModelEstimate
-		} else {
-			py.estimate = 1
-		}
-		r := compareCase(t, h, glm, Verified, request, py)
-		if r.class != c.class || !slices.Equal(r.fields, c.want) {
-			t.Errorf("%s: got %+v, want %s %v", c.name, r, c.class, c.want)
+		request := withFields(t, c.base.Request, c.fields)
+		py := pythonOf(c.base)
+		py.candidates, py.estimate = []string{c.endpoint}, c.estimate
+		r := compareCase(t, h, c.base, Verified, request, py)
+		if r.class != c.class || !slices.Equal(r.fields, c.want) || r.warmEstimate != c.checked {
+			t.Errorf("%s: got %+v, want %s %v %q", c.name, r, c.class, c.want, c.checked)
 		}
 	}
 }
 
-// TestAnAppMarkupExplainsAHigherEstimate: Python adds estimate*bps//10000
-// for an OAuth app's key, which the edge cannot know; an estimate some
-// integer basis points explain is counted apart, consistent, and any other
-// stays a difference.
-func TestAnAppMarkupExplainsAHigherEstimate(t *testing.T) {
+// TestAWarmEndpointsStageDIsReadOverPythonsCandidate: Python's warm
+// endpoint is Gemini's BYOK one where Go's first is its prepaid one, so
+// Stage D is mixed_usage_type over Python's candidate, a reason Go's could
+// not give; ok, which no BYOK candidate gives, differs within the class.
+// Pinned to the provider Go answers the prepaid endpoint, so the estimate
+// is not checked.
+func TestAWarmEndpointsStageDIsReadOverPythonsCandidate(t *testing.T) {
+	h := goldenHeld(t)
+	gemini := routingCases(t)["google/gemini-3.1-pro-preview@off_peak"]
+	request := withFields(t, gemini.Request, map[string]any{"cache_affinity_key": strings.Repeat("cd", 32),
+		"allow_fallbacks": false})
+	py := pythonOf(gemini)
+	py.candidates, py.stageD = []string{"google/gemini-3.1-pro-preview@google-ai-studio/byok"}, "mixed_usage_type"
+	r := compareCase(t, h, gemini, Verified, request, py)
+	if r.class != ClassAffinityWarm || len(r.fields) != 0 || r.stageD != "consistent" || r.warmEstimate != "unchecked" {
+		t.Fatalf("the BYOK warm endpoint: %+v", r)
+	}
+	py.stageD = "ok"
+	r = compareCase(t, h, gemini, Verified, request, py)
+	if r.class != ClassAffinityWarm || !slices.Equal(r.fields, []string{"affinity_warm.stage_d_reason"}) {
+		t.Fatalf("ok over the BYOK warm endpoint: %+v", r)
+	}
+}
+
+// TestAnEstimateMismatchIsAlwaysADifference: a higher estimate is
+// estimate_high with the smallest app markup that explains it, or none, for
+// the histogram to read; a lower one is estimate_low. None of it is agree:
+// below 10,000 microdollars every higher estimate up to four times Go's has
+// a markup that explains it, a 1 microdollar overcharge included.
+func TestAnEstimateMismatchIsAlwaysADifference(t *testing.T) {
 	h := goldenHeld(t)
 	glm := routingCases(t)["z-ai/glm-5.3+none"]
 	base := *glm.Expect.ModelEstimate
 	for _, c := range []struct {
+		name     string
 		estimate int64
-		markup   bool
+		field    string
+		markup   string
 	}{
-		{base + base*500/10_000, true},
-		{base + base*10_000/10_000, true},
-		{base + base*1234/10_000, true},
-		{2*base + 1, false},
-		{base - 1, false},
+		{"a 1 microdollar overcharge", base + 1, "estimate_high", markupBPS(base, base+1)},
+		{"a 5% markup", base + base*500/10_000, "estimate_high", "500"},
+		{"a 300% markup", 4 * base, "estimate_high", "30000"},
+		{"past any markup", 4*base + 1, "estimate_high", "none"},
+		{"a lower estimate", base - 1, "estimate_low", ""},
 	} {
 		py := pythonOf(glm)
 		py.estimate = c.estimate
 		r := compareCase(t, h, glm, Verified, glm.Request, py)
-		if c.markup && (r.class != ClassAgree || r.estimate != "app_markup") {
-			t.Errorf("%d over %d: got %+v, want an app markup", c.estimate, base, r)
-		}
-		if !c.markup && (r.class != ClassDiffer || !slices.Equal(r.fields, []string{"estimate"})) {
-			t.Errorf("%d over %d: got %+v, want an estimate difference", c.estimate, base, r)
+		if r.class != ClassDiffer || !slices.Equal(r.fields, []string{c.field}) || r.markup != c.markup {
+			t.Errorf("%s: got %+v, want %s with markup %q", c.name, r, c.field, c.markup)
 		}
 	}
-	// Above 10,000 microdollars a basis point moves the estimate by more
-	// than one, so some higher estimates no markup gives.
+	if got := markupBPS(base, base+1); got == "none" || got == "" {
+		t.Fatalf("the 1 microdollar overcharge has no markup recorded: %q", got)
+	}
 	for _, c := range []struct {
 		goEstimate, py int64
-		want           bool
-	}{{2640, 2772, true}, {1, 2, true}, {0, 5, false}, {10_000, 10_001, true}, {30_000, 30_003, true},
-		{30_000, 30_001, false}, {30_000, 30_002, false}, {30_000, 60_000, true}, {30_000, 60_001, false}} {
-		if got := appMarkup(c.goEstimate, c.py); got != c.want {
-			t.Errorf("appMarkup(%d, %d) = %v", c.goEstimate, c.py, got)
+		want           string
+	}{{2640, 2772, "500"}, {2640, 2641, "4"}, {1, 2, "10000"}, {1, 4, "30000"}, {1, 5, "none"}, {0, 5, "none"},
+		{30_000, 30_003, "1"}, {30_000, 30_001, "none"}, {30_000, 120_000, "30000"}, {30_000, 120_001, "none"},
+		{2640, 2640, "none"}, {math.MaxInt64 / 20_000, math.MaxInt64/20_000 + 1, "none"},
+		// The overflow guard is for 30,000 basis points: the largest Go
+		// estimate it takes, and the next.
+		{math.MaxInt64 / 30_000, 4 * (math.MaxInt64 / 30_000), "30000"},
+		// Past it nothing is computed, even a markup of one basis point
+		// that would not overflow.
+		{math.MaxInt64/30_000 + 1, math.MaxInt64/30_000 + 1 + (math.MaxInt64/30_000+1)/10_000, "none"}} {
+		if got := markupBPS(c.goEstimate, c.py); got != c.want {
+			t.Errorf("markupBPS(%d, %d) = %q, want %q", c.goEstimate, c.py, got, c.want)
 		}
+	}
+	// The histogram: a period's estimate_high counts by markup, in the line.
+	sh := newShadow(func(string, ...any) {}, time.Now, time.Minute)
+	var lines []string
+	sh.logf = func(f string, a ...any) { lines = append(lines, fmt.Sprintf(f, a...)) }
+	for _, bps := range []string{"500", "500", "none"} {
+		sh.record("d", result{class: ClassDiffer, fields: []string{"estimate_high"}, markup: bps})
+	}
+	sh.flush()
+	if text := strings.Join(lines, "\n"); !strings.Contains(text, `estimate_high_markup_bps={"500":2,"none":1}`) ||
+		!strings.Contains(text, `"estimate_high":3`) || !strings.Contains(text, "agree=0 differ=3") {
+		t.Fatalf("the histogram is not logged:\n%s", text)
 	}
 }
 
@@ -676,6 +745,93 @@ func TestAFullComparatorDropsAndNeverWaits(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+	// The dropped comparisons gave their copies back: what the budget holds
+	// is the queued copies', and nothing once they are compared.
+	sh := h.edge.shadow
+	var queued []comparison
+	var held int64
+	for len(sh.queue) > 0 {
+		c := <-sh.queue
+		queued = append(queued, c)
+		held += heldOf(c)
+	}
+	if got := sh.bytes.Load(); held == 0 || got != held {
+		t.Fatalf("the budget holds %d, the queued copies %d", got, held)
+	}
+	for _, c := range queued {
+		sh.process(c)
+	}
+	if got := sh.bytes.Load(); got != 0 {
+		t.Fatalf("%d bytes of the budget still held after draining", got)
+	}
+}
+
+// heldOf is what a comparison's copies hold of the budget.
+func heldOf(c comparison) int64 {
+	held := func(t *tap) int64 {
+		if t == nil {
+			return 0
+		}
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.held
+	}
+	return c.call.bodyHeld + held(c.call.tap) + held(c.answer)
+}
+
+// TestACopyCutShortByTheBudgetGivesItBack: a request streamed in two chunks,
+// the budget room for the first and not the second, is copied until the
+// second, then not at all: Python gets both, the request is counted as
+// passed, and the first chunk's bytes go back to the budget.
+func TestACopyCutShortByTheBudgetGivesItBack(t *testing.T) {
+	h := shadowEdge(t)
+	h.python.onAuthorize(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusPaymentRequired) })
+	first, second := `{"model":"deepseek/deepseek-v4-flash",`, `"estimated_input_tokens":10}`
+	sh := h.edge.shadow
+	sh.budget = int64(len(first)) + 4
+	body, writer := io.Pipe()
+	req, err := http.NewRequest(http.MethodPost, h.server.URL+"/internal/gateway/authorize", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(TokenHeader, token)
+	answered := make(chan *http.Response, 1)
+	go func() {
+		resp, err := plainClient.Do(req)
+		if err != nil {
+			answered <- nil
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		answered <- resp
+	}()
+	_, _ = io.WriteString(writer, first)
+	deadline := time.Now().Add(5 * time.Second)
+	for sh.bytes.Load() != int64(len(first)) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the first chunk was not copied: %d held", sh.bytes.Load())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	_, _ = io.WriteString(writer, second)
+	_ = writer.Close()
+	if resp := <-answered; resp == nil || resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("the answer: %+v", resp)
+	}
+	h.drain(t, 1)
+	h.python.mu.Lock()
+	sent := string(h.python.bodies[len(h.python.bodies)-1])
+	h.python.mu.Unlock()
+	if sent != first+second {
+		t.Fatalf("Python got %q", sent)
+	}
+	if got := h.tally(t); got == nil || got.reasons["the comparator's byte budget is spent"] != 1 {
+		t.Fatalf("the counts: %+v", got)
+	}
+	if got := sh.bytes.Load(); got != 0 {
+		t.Fatalf("%d bytes of the budget still held", got)
+	}
 }
 
 // TestTheLogsCarryNoRequestOrAnswerContent: the poll's and the comparator's
@@ -734,8 +890,8 @@ func TestTheLogsCarryNoRequestOrAnswerContent(t *testing.T) {
 		t.Fatalf("the logs carry %v:\n%s", found, text)
 	}
 	digest := h.edge.poller.snapshot().claims.SHA256
-	for _, want := range []string{"fastpath edge shadow differs: snapshot=" + digest + " fields=candidates",
-		"fastpath edge shadow: snapshot=" + digest + " agree=1 differ=2 affinity=0 passed_to_python=3",
+	for _, want := range []string{"fastpath edge shadow differs: snapshot=" + digest + " class=differ fields=candidates",
+		"fastpath edge shadow: snapshot=" + digest + " agree=1 differ=2 affinity=0 affinity_warm=0 passed_to_python=3",
 		`"router model <value>":1`, `"provider.<field>":1`, `"outcome":1`, `"candidates":1`,
 		`"python refused outside routing: 402 insufficient_credits":1`, "outcome=installed"} {
 		if !strings.Contains(text, want) {
@@ -969,7 +1125,7 @@ func TestRunComparesAndLogsUntilItsContextEnds(t *testing.T) {
 	}
 	cancel()
 	<-stopped
-	if !strings.Contains(h.logs.text(), "agree=1 differ=0 affinity=0 passed_to_python=0") {
+	if !strings.Contains(h.logs.text(), "agree=1 differ=0 affinity=0 affinity_warm=0 passed_to_python=0") {
 		t.Fatalf("Run's counts:\n%s", h.logs.text())
 	}
 }

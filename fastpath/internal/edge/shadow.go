@@ -31,11 +31,14 @@ import (
 
 // The comparison's classes.
 const (
-	ClassAgree      = "agree"
-	ClassDiffer     = "differ"
-	ClassPassed     = "passed_to_python"
-	ClassAffinity   = "affinity"
-	ClassNoSnapshot = "no_snapshot"
+	ClassAgree    = "agree"
+	ClassDiffer   = "differ"
+	ClassPassed   = "passed_to_python"
+	ClassAffinity = "affinity"
+	// ClassAffinityWarm: with fallbacks off, Python's one candidate is a
+	// session's warm endpoint in place of Go's first; never agree.
+	ClassAffinityWarm = "affinity_warm"
+	ClassNoSnapshot   = "no_snapshot"
 )
 
 const (
@@ -51,6 +54,11 @@ const (
 	maxShadowReasons = 64
 	// maxDifferLogs bounds the per-comparison lines a period logs.
 	maxDifferLogs = 20
+	// maxMarkupBuckets bounds estimate_high's histogram; past it, "other".
+	maxMarkupBuckets = 256
+	// maxMarkupBPS is the largest OAuth app markup (oauth_apps.py,
+	// _validated_markup_basis_points).
+	maxMarkupBPS = 30_000
 	// maxShadowBytes bounds the copies the comparator holds at once, in
 	// flight and queued: past it a request is not copied, and is counted
 	// as passed.
@@ -212,11 +220,14 @@ type result struct {
 	// changes Go's answer), "consistent" (some value gives Python's), or
 	// "" (not compared).
 	byok, stageD string
-	// estimate is "app_markup" when Python's estimate is Go's with an
-	// integer app markup on it (gateway.py adds estimate*bps//10000 for an
-	// OAuth app's key, which the edge cannot know): consistent, not a
-	// difference.
-	estimate     string
+	// markup is set for an estimate_high: the smallest integer basis points
+	// in 1..30000 that, as an OAuth app's markup (gateway.py adds
+	// estimate*bps//10000), make Go's estimate Python's, or "none". It is
+	// read, not trusted: real markups are a few spikes, a pricing bug a
+	// smear.
+	markup string
+	// warmEstimate is "checked" or "unchecked" for affinity_warm.
+	warmEstimate string
 	goOutcome    string
 	pythonStatus int
 }
@@ -230,13 +241,15 @@ type tally struct {
 	reasons map[string]int
 	byok    map[string]int
 	stageD  map[string]int
-	// appMarkup counts the estimates an app markup explains.
-	appMarkup int
+	// markup is estimate_high's histogram by the smallest app markup that
+	// explains it; warm counts affinity_warm's estimates checked or not.
+	markup map[string]int
+	warm   map[string]int
 }
 
 func newTally() *tally {
 	return &tally{classes: map[string]int{}, fields: map[string]int{}, reasons: map[string]int{},
-		byok: map[string]int{}, stageD: map[string]int{}}
+		byok: map[string]int{}, stageD: map[string]int{}, markup: map[string]int{}, warm: map[string]int{}}
 }
 
 // shadow runs the comparisons on one goroutine and logs their counts.
@@ -408,18 +421,24 @@ func (sh *shadow) record(digest string, r result) {
 	if r.stageD != "" {
 		t.stageD[r.stageD]++
 	}
-	if r.estimate == "app_markup" {
-		t.appMarkup++
+	if r.markup != "" {
+		boundedTo(t.markup, r.markup, maxMarkupBuckets)
 	}
-	if r.class == ClassDiffer && sh.differLogs < maxDifferLogs {
+	if r.warmEstimate != "" {
+		t.warm[r.warmEstimate]++
+	}
+	if len(r.fields) > 0 && sh.differLogs < maxDifferLogs {
 		sh.differLogs++
-		sh.logf("fastpath edge shadow differs: snapshot=%s fields=%s go=%s python_status=%d byok=%s stage_d=%s",
-			digest, strings.Join(r.fields, ","), r.goOutcome, r.pythonStatus, orNone(r.byok), orNone(r.stageD))
+		sh.logf("fastpath edge shadow differs: snapshot=%s class=%s fields=%s go=%s python_status=%d byok=%s stage_d=%s "+
+			"markup_bps=%s", digest, r.class, strings.Join(r.fields, ","), r.goOutcome, r.pythonStatus, orNone(r.byok),
+			orNone(r.stageD), orNone(r.markup))
 	}
 }
 
-func bounded(m map[string]int, key string) {
-	if _, ok := m[key]; !ok && len(m) >= maxShadowReasons {
+func bounded(m map[string]int, key string) { boundedTo(m, key, maxShadowReasons) }
+
+func boundedTo(m map[string]int, key string, most int) {
+	if _, ok := m[key]; !ok && len(m) >= most {
 		key = "other"
 	}
 	m[key]++
@@ -444,10 +463,11 @@ func (sh *shadow) flush() {
 	sort.Strings(digests)
 	for _, d := range digests {
 		t := sh.tallies[d]
-		sh.logf("fastpath edge shadow: snapshot=%s agree=%d differ=%d affinity=%d passed_to_python=%d "+
-			"estimate_app_markup=%d differ_fields=%s passed_reasons=%s byok=%s stage_d=%s", d, t.classes[ClassAgree],
-			t.classes[ClassDiffer], t.classes[ClassAffinity], t.classes[ClassPassed], t.appMarkup, jsonOf(t.fields),
-			jsonOf(t.reasons), jsonOf(t.byok), jsonOf(t.stageD))
+		sh.logf("fastpath edge shadow: snapshot=%s agree=%d differ=%d affinity=%d affinity_warm=%d passed_to_python=%d "+
+			"differ_fields=%s estimate_high_markup_bps=%s affinity_warm_estimate=%s passed_reasons=%s byok=%s stage_d=%s",
+			d, t.classes[ClassAgree], t.classes[ClassDiffer], t.classes[ClassAffinity], t.classes[ClassAffinityWarm],
+			t.classes[ClassPassed], jsonOf(t.fields), jsonOf(t.markup), jsonOf(t.warm), jsonOf(t.reasons),
+			jsonOf(t.byok), jsonOf(t.stageD))
 	}
 	if noSnapshot, dropped := sh.noSnapshot.Swap(0), sh.dropped.Swap(0); noSnapshot > 0 || dropped > 0 {
 		sh.logf("fastpath edge shadow: no_snapshot=%d dropped=%d", noSnapshot, dropped)
@@ -543,29 +563,37 @@ func (sh *shadow) compare(c comparison) result {
 	default:
 		out.goOutcome = "refused"
 	}
-	affinity := false
+	affinity, warm := false, false
 	switch {
 	case goAnswer.Outcome == routingsnapshot.Answered && py.answered:
-		estimated, stageD := true, goAnswer
+		estimate, stageD := goAnswer.ModelEstimate, goAnswer
+		estimated := true
 		if !slices.Equal(goAnswer.Candidates, py.candidates) {
 			switch {
 			case affinityKey && h.promotedWithinItsModel(goAnswer.Candidates, py.candidates):
 				affinity = true
 			case affinityKey && h.warmInsteadOfFirst(req, goAnswer.Candidates, py.candidates):
 				// Python re-ranked, then kept one: its candidate and its
-				// estimate are the warm endpoint's, which Go cannot price as
-				// Python chose it. Stage D is read over Python's candidate.
-				affinity, estimated = true, false
-				stageD.Candidates = py.candidates
+				// estimate are the warm endpoint's. Stage D is read over
+				// Python's candidate, and the estimate checked where Go,
+				// pinned to the warm endpoint's provider, answers exactly
+				// that endpoint.
+				warm, stageD.Candidates = true, py.candidates
+				estimate, estimated = h.warmEstimate(req, py.candidates[0])
+				out.warmEstimate = "unchecked"
+				if estimated {
+					out.warmEstimate = "checked"
+				}
 			default:
 				out.fields = append(out.fields, "candidates")
 			}
 		}
-		if estimated && goAnswer.ModelEstimate != py.estimate {
-			if appMarkup(goAnswer.ModelEstimate, py.estimate) {
-				out.estimate = "app_markup"
+		if estimated && estimate != py.estimate {
+			if py.estimate > estimate {
+				out.fields = append(out.fields, "estimate_high")
+				out.markup = markupBPS(estimate, py.estimate)
 			} else {
-				out.fields = append(out.fields, "estimate")
+				out.fields = append(out.fields, "estimate_low")
 			}
 		}
 		out.stageD = stageDOf(s, call.verdict, req, stageD, py.stageD)
@@ -590,6 +618,13 @@ func (sh *shadow) compare(c comparison) result {
 		out.fields = append(out.fields, "outcome")
 	}
 	switch {
+	case warm:
+		// Its own class whatever else differs, which is counted by field
+		// within it: the warm endpoint's share stays visible.
+		out.class = ClassAffinityWarm
+		for i, f := range out.fields {
+			out.fields[i] = ClassAffinityWarm + "." + f
+		}
 	case len(out.fields) > 0:
 		out.class = ClassDiffer
 	case affinity:
@@ -660,8 +695,38 @@ func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string
 	if !ok {
 		return false
 	}
+	// A BYOK endpoint Python chose is one whose provider it found present.
+	on.BYOKProviders = append(slices.Clone(on.BYOKProviders), h.impliedBYOK(py)...)
 	r := h.snapshot.Evaluate(on)
 	return r.Outcome == routingsnapshot.Answered && slices.Contains(r.Candidates, py[0])
+}
+
+// warmEstimate is Go's estimate for the warm endpoint: the request, its
+// fallbacks still off, with provider.only the endpoint's provider. ok is
+// false unless Go then answers exactly that endpoint, when its estimate is
+// not one Go can name.
+func (h *held) warmEstimate(req routingsnapshot.Request, endpoint string) (int64, bool) {
+	fields := map[string]json.RawMessage{}
+	if !isJSONNull(req.Provider) && (json.Unmarshal(req.Provider, &fields) != nil || fields == nil) {
+		return 0, false
+	}
+	only, err := json.Marshal([]string{h.endpointProvider[endpoint]})
+	if err != nil {
+		return 0, false
+	}
+	fields["only"] = only
+	provider, err := json.Marshal(fields)
+	if err != nil {
+		return 0, false
+	}
+	pinned := req
+	pinned.Provider = provider
+	pinned.BYOKProviders = append(slices.Clone(req.BYOKProviders), h.impliedBYOK([]string{endpoint})...)
+	r := h.snapshot.Evaluate(pinned)
+	if r.Outcome != routingsnapshot.Answered || !slices.Equal(r.Candidates, []string{endpoint}) {
+		return 0, false
+	}
+	return r.ModelEstimate, true
 }
 
 // withFallbacks is req with allow_fallbacks unset, top-level and in
@@ -687,15 +752,21 @@ func withFallbacks(req routingsnapshot.Request) (routingsnapshot.Request, bool) 
 	return req, true
 }
 
-// appMarkup: py is goEstimate with an app markup of some integer basis
-// points in 1..10000 on it, as gateway.py adds it (estimate*bps//10000).
-func appMarkup(goEstimate, py int64) bool {
-	if goEstimate <= 0 || py <= goEstimate || goEstimate > math.MaxInt64/20_000 {
-		return false
+// markupBPS is the smallest integer basis points in 1..30000 that, as an
+// app markup gateway.py adds (estimate*bps//10000), make goEstimate py,
+// or "none". Below 10,000 microdollars every higher estimate up to four
+// times Go's has one, a pricing bug as well as a markup: the histogram of
+// these, not any one of them, tells the two apart.
+func markupBPS(goEstimate, py int64) string {
+	if goEstimate <= 0 || py <= goEstimate || goEstimate > math.MaxInt64/maxMarkupBPS {
+		return "none"
 	}
 	marked := func(bps int64) int64 { return goEstimate + goEstimate*bps/10_000 }
-	bps := sort.Search(10_000, func(i int) bool { return marked(int64(i)+1) >= py }) + 1
-	return bps <= 10_000 && marked(int64(bps)) == py
+	bps := int64(sort.Search(maxMarkupBPS, func(i int) bool { return marked(int64(i)+1) >= py })) + 1
+	if bps > maxMarkupBPS || marked(bps) != py {
+		return "none"
+	}
+	return strconv.FormatInt(bps, 10)
 }
 
 // stageDOf compares Python's Stage D reason with Go's. The edge knows the

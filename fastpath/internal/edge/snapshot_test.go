@@ -477,6 +477,11 @@ func TestTheTestKeyIsNeverTrustedAndTheSnapshotComesFromTheUpstream(t *testing.T
 			c.Snapshot.URL, _ = url.Parse("http://elsewhere.example:" + c.Upstream.Port() + snapshotPath)
 		}},
 		{"a user in the URL", func(c *Config) { c.Snapshot.URL, _ = url.Parse("http://u@" + c.Upstream.Host + snapshotPath) }},
+		{"a user in the upstream", func(c *Config) {
+			upstream := *c.Upstream
+			upstream.User = url.User("u")
+			c.Upstream = &upstream
+		}},
 		{"no plane", func(c *Config) { c.Snapshot.Plane = "gcp" }},
 		{"no key", func(c *Config) { c.Snapshot.Keys = nil }},
 		{"a short key", func(c *Config) { c.Snapshot.Keys = []SnapshotKey{{Kid: "k", PublicKey: testKey[:31]}} }},

@@ -266,7 +266,9 @@ def test_the_snapshot_flags_wait_for_metadata_and_a_release_that_takes_them() ->
         assert flags <= taken, sorted(flags - taken)
 
 
-def _run_snapshot_block(script: str, **attributes: str) -> subprocess.CompletedProcess[str]:
+def _run_snapshot_block(
+    script: str, upstream: str = "https://trusted-router-x.a.run.app", **attributes: str,
+) -> subprocess.CompletedProcess[str]:
     """The startup script's routing snapshot block, run by bash with the
     instance's attributes given, the edge's upstream and flags set."""
     start = script.index('snapshot_url="$(attribute fastpath-edge-snapshot-url)"')
@@ -276,7 +278,7 @@ def _run_snapshot_block(script: str, **attributes: str) -> subprocess.CompletedP
     stub = (
         'attribute() { local name="A_${1//-/_}"; printf "%s" "${!name:-}"; }\n'
         "systemd-cat() { cat >&2; }\n"
-        'edge_upstream="https://trusted-router-x.a.run.app"\nedge_flags="-edge-address 10.0.0.1:8081"\n'
+        f'edge_upstream="{upstream}"\nedge_flags="-edge-address 10.0.0.1:8081"\n'
     )
     env = {"PATH": "/usr/bin:/bin", **{"A_" + name.replace("-", "_"): value for name, value in attributes.items()}}
     bash = shutil.which("bash")
@@ -318,6 +320,12 @@ def test_the_script_refuses_a_snapshot_url_off_the_edges_upstream() -> None:
         refused = _run_snapshot_block(script, **given, **{"fastpath-edge-snapshot-url": url})
         assert refused.returncode == 1, url
         assert "not on the edge's upstream" in refused.stderr, (url, refused.stderr)
+    # An upstream with userinfo, which the edge refuses beside a snapshot.
+    userinfo = _run_snapshot_block(
+        script, upstream="https://u@trusted-router-x.a.run.app", **given,
+        **{"fastpath-edge-snapshot-url": "https://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot"},
+    )
+    assert userinfo.returncode == 1 and "carries userinfo" in userinfo.stderr, userinfo.stderr
     # None set: nothing passed.
     none = _run_snapshot_block(script)
     assert none.returncode == 0 and none.stdout == "", none.stderr

@@ -73,7 +73,10 @@ type held struct {
 	// providers are every provider slug, for BYOK presence.
 	endpointModel map[string]string
 	byokProvider  map[string]string
-	providers     []string
+	// endpointProvider maps an endpoint id to its provider, to pin a warm
+	// endpoint's provider when its estimate is checked.
+	endpointProvider map[string]string
+	providers        []string
 }
 
 // poller keeps the last good routing snapshot: it polls Python, verifies
@@ -96,7 +99,7 @@ type poller struct {
 func newPoller(cfg SnapshotConfig, upstream *url.URL, token string, transport http.RoundTripper,
 	clock func() time.Time, logf func(string, ...any)) (*poller, error) {
 	u := cfg.URL
-	if u.Scheme != upstream.Scheme || u.Host != upstream.Host || u.User != nil {
+	if u.Scheme != upstream.Scheme || u.Host != upstream.Host || u.User != nil || upstream.User != nil {
 		return nil, errors.New("edge: the routing snapshot is polled from the edge's own upstream")
 	}
 	if len(cfg.Keys) == 0 || len(cfg.Keys) > 2 {
@@ -342,9 +345,11 @@ func (p *poller) verify(raw []byte) (*held, int64, error) {
 
 func hold(s *routingsnapshot.Snapshot, claims routingsnapshot.Claims) *held {
 	h := &held{snapshot: s, claims: claims, etag: `"` + claims.SHA256 + `"`,
-		endpointModel: make(map[string]string, len(s.Endpoints)), byokProvider: map[string]string{}}
+		endpointModel: make(map[string]string, len(s.Endpoints)), byokProvider: map[string]string{},
+		endpointProvider: make(map[string]string, len(s.Endpoints))}
 	for _, e := range s.Endpoints {
 		h.endpointModel[e.ID] = e.ModelID
+		h.endpointProvider[e.ID] = e.Provider
 		if e.UsageType == "BYOK" {
 			h.byokProvider[e.ID] = e.Provider
 		}

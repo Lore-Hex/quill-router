@@ -109,6 +109,11 @@ if [ -n "$snapshot_url$snapshot_public_key$snapshot_kid$snapshot_plane" ]; then
   # refusal, so the script refuses first and the unit keeps what it had.
   snapshot_origin="$(printf '%s' "$snapshot_url" | cut -d/ -f1-3)"
   upstream_origin="$(printf '%s' "$edge_upstream" | cut -d/ -f1-3)"
+  case "$upstream_origin" in
+    *@*)
+      echo "fastpath: the edge's upstream carries userinfo, which the routing snapshot's poll refuses; the startup script stops here" | systemd-cat -t fastpath -p err
+      exit 1 ;;
+  esac
   if [ "$snapshot_origin" != "$upstream_origin" ] || [ -n "$(printf '%s' "$snapshot_url" | cut -d/ -f2)" ]; then
     echo "fastpath: the routing snapshot's URL is not on the edge's upstream; the startup script stops here" | systemd-cat -t fastpath -p err
     exit 1
