@@ -7,24 +7,25 @@ queue with no reader barging; competing upgrades abort the younger holder.
 Snapshot timestamps are selected at RPC start. The SDK retry loop re-enters
 actual application callbacks, including the wrapper's ContentionLoss guard.
 
-All point reads cost 20 ms, mutation Commit 33 ms, empty Commit 15 ms,
-Rollback 10 ms and observation 80 ms. The actual publish callable has TWO
-reads, so these RPC costs imply 73 ms end to end, not 60 ms. The optional
-publish_commit_seconds=0.020 variant gives the requested aggregate 60 ms;
-it does not change claim RPCs. Neither variant injects contention or lag.
+The small lock witnesses use fixed costs. Production calibration uses seeded
+service distributions and the real Service owner, including dispatch, delivery,
+cadence, watchdog and released replies. Post-ack stalls are an explicitly
+hypothetical sensitivity input, not a measured explanation for released jobs.
 """
 from __future__ import annotations
 
 import heapq
 import importlib.util
 import json
+import random
 import subprocess
 import sys
 import tempfile
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from statistics import median
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +37,7 @@ from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from trusted_router.async_settle_shadow_journal import CLAIM_KIND, HEALTH_KIND
 from trusted_router.async_settle_shadow_v2_a1_health import PUBLISHER_SLOT_TRACE
 from trusted_router.async_settle_shadow_v2_schema import POLICY
+from trusted_router.storage_gcp_shadow_io import _RECORDER
 
 ROOT = Path(__file__).resolve().parents[1]
 START = 896313600
@@ -74,6 +76,7 @@ class Clock:
         self.active = None
         self.finished = 0
         self.ready = 0
+        self.callbacks = 0
 
     def sleep(self, seconds):
         ident = threading.get_ident()
@@ -113,6 +116,24 @@ class Clock:
                 self.now, _, self.active = heapq.heappop(self.events)
                 self.condition.notify_all()
                 self.condition.wait_for(lambda: self.active is None)
+
+    def schedule(self, stamp, callback):
+        with self.condition:
+            self.callbacks += 1
+            heapq.heappush(self.events, (stamp, -self.callbacks, callback))
+
+    def run_queue(self):
+        """Owner callbacks run on the caller, workers on cooperative threads."""
+        with self.condition:
+            while self.events:
+                self.now, _, event = heapq.heappop(self.events)
+                if callable(event):
+                    event()
+                else:
+                    self.active = event
+                    self.condition.notify_all()
+                    self.condition.wait_for(lambda: self.active is None)
+            assert self.finished == self.ready
 
 
 class Lock:
@@ -171,7 +192,7 @@ class Lock:
 
 
 class Database:
-    def __init__(self, clock, storage, *, publish_commit_seconds=.033):
+    def __init__(self, clock, storage, *, publish_commit_seconds=.033, distributed=False):
         self.clock, self.storage = clock, storage
         self.rows = {}
         self.locks = {}
@@ -183,6 +204,30 @@ class Database:
         self.publish_commit_seconds = publish_commit_seconds
         self.reentries = 0
         self.backoffs = []
+        self.distributed = distributed
+        self.random = random.Random(20261022)  # noqa: S311 - reproducible simulation, not secrets
+
+    def duration(self, kind):
+        median, tail = {"read": (.020, .060), "snapshot": (.020, .030),
+                        "commit": (.033, .100), "empty_commit": (.015, .0225),
+                        "rollback": (.010, .015), "observe": (.050, .075)}[kind]
+        if not self.distributed:
+            return .080 if kind == "observe" else median
+        # Two uniform halves give the specified median and bounded upper tail.
+        # Lower endpoint = median/2. Tail shapes are assumptions: traces only
+        # supplied medians and approximate tails, not per-RPC empirical CDFs.
+        u = self.random.random()
+        return median * (.5 + u) if u <= .5 else median + (2*u-1)*(tail-median)
+
+    @contextmanager
+    def rpc(self):
+        started = self.clock.now
+        try:
+            yield
+        finally:
+            record = _RECORDER.get()
+            if record is not None:
+                record(max(0, round((self.clock.now-started)*1e6)))
 
     def lock(self, key):
         return self.locks.setdefault(key, Lock(self))
@@ -215,20 +260,22 @@ class Database:
                     raise
                 except Exception:
                     tx.final_rpc = "rollback"
-                    self.clock.sleep(.010)
+                    with self.rpc():
+                        self.clock.sleep(self.duration("rollback"))
                     raise
                 tx.final_rpc = "commit" if tx.mutations else "empty_commit"
                 # Count Commit RPC requests, including aborted requests. Losers
                 # returning False still submit an empty Commit with S held.
                 if tx.claim:
                     self.claim_commits += 1
-                for key in sorted(tx.mutations):
-                    self.lock(key).acquire(tx, "X")
-                seconds = .033 if tx.mutations else .015
-                if tx.mutations and not tx.claim:
-                    seconds = self.publish_commit_seconds
-                self.clock.sleep(seconds)
-                tx.check()
+                with self.rpc():
+                    for key in sorted(tx.mutations):
+                        self.lock(key).acquire(tx, "X")
+                    seconds = self.duration("commit" if tx.mutations else "empty_commit")
+                    if tx.mutations and not tx.claim and not self.distributed:
+                        seconds = self.publish_commit_seconds
+                    self.clock.sleep(seconds)
+                    tx.check()
                 if self.inject_abort and tx.claim and tx.mutations:
                     self.inject_abort = False
                     self.abort(tx)
@@ -273,6 +320,10 @@ class Reader:
             raise Aborted("younger shared-lock upgrader")
 
     def execute_sql(self, sql, *, params, **options):
+        with self.db.rpc():
+            return self._execute_sql(sql, params=params, **options)
+
+    def _execute_sql(self, sql, *, params, **options):
         db = self.db
         self.reads += 1
         key = (params.get("kind"), params.get("id"))
@@ -291,7 +342,8 @@ class Reader:
             rows = []
         else:
             rows = [] if body is None else [(body,)]
-        db.clock.sleep(.080 if sql == db.storage.UNRESOLVED_SQL else .020)
+        db.clock.sleep(db.duration("observe" if sql == db.storage.UNRESOLVED_SQL
+                                   else "read" if self.transaction else "snapshot"))
         self.check()
         class Stream(list):
             metadata = SimpleNamespace(transaction=SimpleNamespace(read_timestamp=stamp))
@@ -403,12 +455,179 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
         max_published_observation_ms=max_observed/1000, aborts=db.aborts)
 
 
+def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=0.,
+                       post_ack_seconds=2., seed=73):
+    """Execute actual owner/worker admission, not a synthesized busy outcome.
+
+    The 40% sensitivity holds publish_cycle *after* ack but before it returns.
+    A 2s hold crosses exactly the next boundary; its duration is hypothetical,
+    selected only to test the operator's allowed post-ack-busy hypothesis.
+    Nothing forces a release: tick/submit/reply/watchdog decide all outcomes.
+    No bookkeeping delay is injected into claims or their row locks.
+    """
+    from trusted_router.config import Settings
+
+    storage, publisher = modules(ref)
+    clock = Clock()
+    clock.now = START*2.
+    publisher.sleep = clock.sleep
+    db = Database(clock, storage, distributed=True)
+    boots = [f"boot-{i}" for i in range(8)]
+    traces, services, futures = [], [], []
+    stalls = random.Random(seed)  # noqa: S311 - reproducible simulation, not secrets
+    held = []
+    original = publisher.publish_cycle
+    def cycle(*args):
+        result = original(*args)
+        if result.trace["outcome"] == "published" and stalls.random() < post_ack_probability:
+            held.append((args[1], args[4].slot))
+            clock.sleep(post_ack_seconds)
+        return result
+    publisher.publish_cycle = cycle
+
+    class Loop:
+        @staticmethod
+        def create_future():
+            return Future()
+
+        @staticmethod
+        def call_soon_threadsafe(callback, *args):
+            clock.schedule(clock.now, lambda: callback(*args))
+
+    class Executor:
+        def __init__(self, pool, index):
+            self.pool, self.index = pool, index
+
+        def submit(self, callback):
+            with clock.condition:
+                expected = clock.ready+1
+                future = self.pool.submit(clock.worker, callback, self.index)
+                futures.append(future)
+                # Ensure the initial worker wake is queued before advancing time.
+                clock.condition.wait_for(lambda: clock.ready == expected
+                    and any(index == self.index for _, index, _ in clock.events))
+                return future
+
+    def capture(day, trace):
+        PUBLISHER_SLOT_TRACE(trace)
+        traces.append(dict(trace))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for index, boot in enumerate(boots):
+            store = storage.ObservationStore(db, clock=lambda: clock.now, wall=lambda: clock.now)
+            settings = Settings(environment="test", async_settle_shadow_policy=POLICY,
+                async_settle_shadow_workspaces="ws", source_revision="a"*40)
+            settings.async_settle_shadow_health_region = settings.effective_serving_region
+            svc = publisher.Service(settings, store)
+            svc.journal.boot = boot
+            # Evidence sink only: retain/validate every trace without simulating
+            # GCS. Admission, counters and lifecycle still execute unchanged.
+            svc.traces.append = capture
+            svc.publisher_executor.shutdown(wait=True)
+            svc.publisher_executor = Executor(pool, index)
+            svc.loop = Loop()
+            services.append(svc)
+        if warm:
+            services[0].incumbent_slot = START-1
+            db.rows[CLAIM_KIND, "local/publish"] = json.dumps(dict(v=2, policy_version=POLICY,
+                contract_revision="a1", authority="local", slot=START-1,
+                claim_at_ns=(START-1)*2_000_000_000, owner_boot_id=boots[0]))
+            db.rows[HEALTH_KIND, "local/fleet"] = json.dumps(storage.summarize([], boot=boots[0],
+                region="us-central1", revision="a"*40, slot=START-1,
+                observed_ns=(START-1)*2_000_000_000, age_seconds=(START-1)*2., row_limit=10000))
+
+        no_incumbent = set()
+        def tick(slot, boundary):
+            if boundary:
+                health = db.rows.get((HEALTH_KIND, "local/fleet"))
+                body = json.loads(health) if health else None
+                if body is None or body["slot"] != slot-1:
+                    no_incumbent.add(slot)
+                for svc in services:
+                    # Ideal observer installation, as in round 2. Reader cache
+                    # transport/session contention is not modeled here.
+                    svc.observer.health = {"body": body} if body else None
+            for svc in services:
+                for effect in svc.tick(round(clock.now*1e6)):
+                    if isinstance(effect, publisher.lifecycle.StartPublisherCycle):
+                        svc.submit_publisher(effect.slot, round(clock.now*1e6))
+        for offset in range(slots):
+            slot = START+offset
+            clock.schedule(slot*2., lambda slot=slot: tick(slot, True))
+            # Check the prior job's 2.75s watchdog, without moving a boundary.
+            clock.schedule(slot*2.+.750001, lambda slot=slot: tick(slot, False))
+        clock.run_queue()
+        for future in futures:
+            future.result()
+        for svc in services:
+            assert svc.state.job is None
+            for predicate in (publisher.lifecycle.accounted_once, publisher.lifecycle.conservation,
+                              publisher.lifecycle.lifetime_coverage):
+                assert predicate(svc.state)
+            svc.evidence_executor.shutdown(wait=True)
+            svc.session_executor.shutdown(wait=True)
+
+    rows = {(t["boot"], t["slot"]): t for t in traces}
+    assert len(rows) == len(traces) == slots*8
+    measured = [t for t in traces if t["slot"] >= START+10]
+    winners = {t["slot"]: t["boot"] for t in traces if t["outcome"] == "published"}
+    assert len(winners) == sum(t["outcome"] == "published" for t in traces)
+    following = [rows[boot, slot+1] for slot, boot in winners.items()
+                 if START+9 <= slot < START+slots-1]
+    claim_txs = [tx for tx in db.transactions if tx.claim and tx.started >= (START+10)*2]
+    commits = {slot: sum(tx.final_rpc in ("commit", "empty_commit")
+        and int(tx.started//2) == slot for tx in claim_txs) for slot in range(START+10, START+slots)}
+    absent = no_incumbent & commits.keys()
+    streaks, last, length = [], None, 0
+    for slot in range(START+10, START+slots):
+        boot = winners.get(slot)
+        if boot != last or boot is None:
+            if length:
+                streaks.append(length)
+            length = 0
+        if boot is not None:
+            length += 1
+        last = boot
+    if length:
+        streaks.append(length)
+    attempts = sum(t["outcome"] != "missed" for t in measured)
+    published = [t for t in measured if t["outcome"] == "published"]
+    def fraction(outcome):
+        return sum(t["outcome"] == outcome for t in following)/max(1, len(following))
+    return dict(slots=slots, measured_slots=slots-10,
+        rate=sum(t["outcome"] == "published" for t in measured)/(slots-10),
+        commits_per_slot=sum(commits.values())/(slots-10),
+        no_incumbent_slots=len(absent),
+        no_incumbent_commits_per_slot=sum(commits[slot] for slot in absent)/max(1, len(absent)),
+        previous_winner_failures=fraction("failed"), previous_winner_missed=fraction("missed"),
+        unknown_ratio=sum(t["unknown_outcome"] for t in measured)/max(1, attempts),
+        attempts=attempts, median_incumbency_streak=median(streaks) if streaks else 0,
+        max_60_slot_commits=max(sum(commits[s] for s in range(slot, slot+60))/60
+            for slot in range(START+10, START+slots-59)),
+        average_claim_transaction_ms=sum(tx.ended-tx.started for tx in claim_txs)*1000/max(1, len(claim_txs)),
+        claim_lock_wait_seconds=sum(tx.lock_wait for tx in claim_txs), aborts=db.aborts,
+        published_claim_at_ms=median((t["claim_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published),
+        published_observed_at_ms=median((t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published),
+        published_ack_ms=median((t["ack_at_us"]-t["slot"]*2_000_000)/1000 for t in published),
+        max_claim_contenders=max(sum(int(tx.started//2) == slot for tx in claim_txs) for slot in commits),
+        post_ack_stalls=len(held),
+        released=sum(t["unknown_outcome"] and t["cycle_us"] == t["rpc_count"] == 0 for t in measured),
+        release_reasons={reason: sum(t.get("release_reason") == reason for t in measured)
+            for reason in sorted({t["release_reason"] for t in measured if "release_reason" in t})})
+
+
 def assert_calibrated(results):
-    assert all(r["commits_per_slot"] >= 5 and r["rate"] <= .5
-               and 150 <= r["average_claim_transaction_ms"] <= 300 for r in results), (
-        "Negative control failed: the specified FIFO/retry/RPC model does not "
-        "reproduce production on origin/main. Do not treat this as differential proof."
+    assert all(r["commits_per_slot"] >= 3 and r["no_incumbent_commits_per_slot"] >= 5
+               and r["rate"] <= .5 and .30 <= r["previous_winner_failures"] <= .50
+               and r["unknown_ratio"] >= .15 for r in results), (
+        "Negative control failed: measured RPC distributions and actual owner/worker "
+        "lifecycle do not reproduce production on origin/main. Do not invent delays "
+        "or treat positive worktree results as differential proof."
     )
+    # Retain round 2's stronger aggregate/transaction-latency witness too; the
+    # new gate does not turn a previously failing calibration into a pass.
+    assert all(r["commits_per_slot"] >= 5
+               and 150 <= r["average_claim_transaction_ms"] <= 300 for r in results)
 
 
 def run_workers(clock, *callbacks):
@@ -536,34 +755,41 @@ def test_fake_sdk_retries_callable_with_exponential_backoff_until_deadline():
 
 def test_production_calibration(capsys):
     """Must stay red until the baseline reproduces production, never xfail."""
-    import json
     import time
 
     started = time.monotonic()
     baseline = []
     with capsys.disabled():
-        for publish_commit_seconds in (.033, .020):
+        for post_ack_probability in (0., .4):
             for ref in ("origin/main", None):
                 for warm in (False, True):
-                    result = simulate(ref=ref, warm=warm,
-                                      publish_commit_seconds=publish_commit_seconds)
+                    result = simulate_lifecycle(ref=ref, warm=warm,
+                                                post_ack_probability=post_ack_probability)
                     print(json.dumps(dict(ref=ref or "worktree", warm=warm,
-                        publish_end_to_end_ms=round((.040+publish_commit_seconds)*1000),
-                        **result)), flush=True)
-                    if ref:
+                        post_ack_probability=post_ack_probability, **result)), flush=True)
+                    if ref and post_ack_probability:
                         baseline.append(result)
     elapsed = time.monotonic() - started
     with capsys.disabled():
-        print(f"Eight 130-slot scenarios: {elapsed:.3f} seconds", flush=True)
+        print(f"Eight 130-slot lifecycle scenarios: {elapsed:.3f} seconds", flush=True)
     assert elapsed < 20
     assert_calibrated(baseline)
+
+
+@pytest.mark.parametrize("ref", ["origin/main", None])
+def test_post_ack_stall_crosses_boundary_as_missed_not_released(ref):
+    result = simulate_lifecycle(ref=ref, slots=70, warm=True, post_ack_probability=1.)
+    assert result["post_ack_stalls"] > 0
+    assert result["previous_winner_missed"] >= .5
+    assert result["previous_winner_failures"] == result["released"] == 0
+    assert result["unknown_ratio"] == 0
 
 
 if __name__ == "__main__":
     baseline = []
     for ref in ("origin/main", None):
         for warm in (False, True):
-            result = simulate(ref=ref, warm=warm)
+            result = simulate_lifecycle(ref=ref, warm=warm, post_ack_probability=.4)
             print(json.dumps(dict(ref=ref or "worktree", warm=warm, **result)), flush=True)
             if ref:
                 baseline.append(result)

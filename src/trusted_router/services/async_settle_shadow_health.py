@@ -434,15 +434,19 @@ class PublisherReply:
     seen_claim_slot: int | None = None
 
 
-def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherReply:
+def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob,
+                           reason: str = "publisher_unknown_completion") -> PublisherReply:
     """Unknown completion; no claim, RPC timing, or publication is inferred."""
     # Durable released-job signature, even when Python logs are unavailable:
     # cycle_us=0, rpc_count=0, unknown_outcome=true, claim_at_ns=null.
+    # These are missing measurements, not proof that the worker did no I/O:
+    # rejected replies and the watchdog also use this signature.
     trace = dict(v=2, policy_version=POLICY, contract_revision="a1",
         day=day_at(job.slot*SLOT_US), boot=boot, slot=job.slot,
         claim_start_us=job.slot*SLOT_US, claim_at_ns=None, observed_at_ns=None,
         publisher_heartbeat_ns=None, body_sha256=None, ack_at_us=None, cycle_us=0,
-        outcome="failed", unknown_outcome=True, late_cycle=False, rpc_count=0, rpc_elapsed_us=0)
+        outcome="failed", unknown_outcome=True, late_cycle=False, rpc_count=0, rpc_elapsed_us=0,
+        release_reason=reason)
     return PublisherReply(trace, (), False, job.generation)
 
 
@@ -812,7 +816,7 @@ class Service:
             # Unknown worker/submission failures have no observed start. The
             # release transition owns their trace and accounting exactly once.
             return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
-                slot, reply.generation, "publisher_unknown_completion"))
+                slot, reply.generation, trace.get("release_reason", "publisher_unknown_completion")))
         effects = self.accept(lifecycle.SlotOutcome(int(self.store.wall()*1_000_000), slot,
             trace["outcome"], generation=reply.generation, actual_start_mono=reply.actual_start_mono), trace=trace)
         if any(isinstance(e, lifecycle.Fault) for e in effects):
@@ -1060,7 +1064,8 @@ class Service:
                     emitted = trace if trace is not None and effect.slot == trace["slot"] else None
                     if effect.unknown_outcome:
                         assert before.job is not None
-                        emitted = failed_publisher_reply(self.journal.boot, before.job).trace
+                        reason = next(e.reason for e in effects if isinstance(e, lifecycle.Fault))
+                        emitted = failed_publisher_reply(self.journal.boot, before.job, reason).trace
                         day = day_at(effect.slot*SLOT_US)
                         self.operation(day, "unknown_outcomes")
                         self.histogram(day, "cycle_us", 0)
@@ -1405,7 +1410,7 @@ class Service:
             # executor bounded while its old call remains outstanding.
             self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_worker_busy"))
             return
-        fallback = failed_publisher_reply(self.journal.boot, job)
+        fallback = failed_publisher_reply(self.journal.boot, job, "publisher_worker_exception")
         if self.loop is None:
             try:
                 result = publish_cycle(*args)
@@ -1441,7 +1446,7 @@ class Service:
             self.publisher_worker = self.publisher_executor.submit(execute)
         except Exception:
             worker_active.clear()
-            deliver(fallback)
+            deliver(failed_publisher_reply(self.journal.boot, job, "publisher_submit_failed"))
             raise
 
     async def run(self) -> None:

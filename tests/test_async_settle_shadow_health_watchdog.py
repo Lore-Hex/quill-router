@@ -89,6 +89,7 @@ def test_rejected_current_reply_releases_and_schedules(reason):
     effects = svc.accept(event)
     assert m.Fault(reason) in effects
     failed(svc, job)
+    assert entries(svc)[-1]["release_reason"] == reason
     next_job = next_cycle(svc, wall, mono, offset=m.DAY_US if reason == "frozen_day" else 4_000_000)
     before, traces = svc.state, entries(svc)
     assert any(isinstance(e, m.Fault) for e in svc.accept(event))
@@ -116,6 +117,8 @@ def test_invalid_reply_releases_and_schedules(malformation):
     effects = svc.publisher_reply(reply)
     assert any(isinstance(e, m.Fault) for e in effects)
     failed(svc, job)
+    assert entries(svc)[-1]["release_reason"] == (
+        "invalid_start" if malformation == "start" else "invalid_publisher_reply")
     next_job = next_cycle(svc, wall, mono)
     before, traces = svc.state, entries(svc)
     assert svc.publisher_reply(shell.PublisherReply(missed(svc, job.slot), (), False)) == (
@@ -210,6 +213,7 @@ async def test_watchdog_releases_never_delivered_reply_and_schedules(monkeypatch
         effects = svc.tick(wall[0])
         assert m.Fault("publisher_watchdog") in effects
         failed(svc, job)
+        assert next(e for e in entries(svc) if e["slot"] == job.slot)["release_reason"] == "publisher_watchdog"
         assert first_reply.done()
         worker = svc.publisher_worker
         assert not worker.done()
@@ -219,6 +223,7 @@ async def test_watchdog_releases_never_delivered_reply_and_schedules(monkeypatch
         assert "publisher_worker_busy" in caplog.text
         assert svc.state.job is None and svc.publisher_worker is worker
         assert entries(svc)[-1]["outcome"] == "failed"
+        assert entries(svc)[-1]["release_reason"] == "publisher_worker_busy"
         accounting(svc)
         next_job = next_cycle(svc, wall, mono, offset=6_000_000)
         before, traces = svc.state, entries(svc)
@@ -237,3 +242,33 @@ async def test_watchdog_releases_never_delivered_reply_and_schedules(monkeypatch
     await svc.publisher_job
     assert svc.state.job is None and entries(svc)[-1]["outcome"] == "published"
     accounting(svc)
+
+
+def test_release_signature_does_not_prove_worker_did_no_io():
+    svc, wall, _, job = owner()
+    reply = shell.publish_cycle(svc.store, svc.journal.boot,
+        svc.settings.effective_serving_region, svc.settings.source_revision,
+        job, wall[0], svc, incumbent=True)
+    assert reply.trace["outcome"] == "published"
+    assert svc.store.database.commits == 2  # Claim and publication already landed.
+    assert reply.trace["claim_at_ns"] is not None and reply.trace["ack_at_us"] is not None
+    # An invalid returned start releases the owner, erasing even a successful
+    # publication's timings. The old zero-RPC signature cannot identify B.
+    svc.publisher_reply(replace(reply, actual_start_mono=job.latest_start_mono+1))
+    failed(svc, job)
+    trace = entries(svc)[-1]
+    assert trace["release_reason"] == "invalid_start"
+    assert trace["claim_at_ns"] is trace["ack_at_us"] is None
+    assert trace["cycle_us"] == trace["rpc_count"] == 0
+
+
+def test_release_reason_is_optional_bounded_and_only_on_unknown_release():
+    svc, _, _, job = owner()
+    current = shell.failed_publisher_reply(svc.journal.boot, job, "publisher_worker_busy").trace
+    historical = {k: v for k, v in current.items() if k != "release_reason"}
+    for trace in (current, historical):
+        assert PUBLISHER_SLOT_TRACE.parse(PUBLISHER_SLOT_TRACE.serialize(trace)) == trace
+    for change in ({"release_reason": "x"*65}, {"release_reason": None},
+                   {"unknown_outcome": False}, {"rpc_count": 1}, {"cycle_us": 1}):
+        with pytest.raises(ValueError):
+            PUBLISHER_SLOT_TRACE({**current, **change})

@@ -118,6 +118,8 @@ async def test_unknown_fallback_preserves_start_and_next_slot(monkeypatch, failu
                 with pytest.raises(RuntimeError, match='no worker start evidence'):
                     svc.submit_publisher(job.slot, wall[0])
         trace = outcome(svc, job, 'failed', unknown=True)
+        assert trace['release_reason'] == (
+            'publisher_worker_exception' if failure == 'worker' else 'publisher_submit_failed')
         PUBLISHER_SLOT_TRACE(trace)
         assert trace['rpc_count'] == 0 and trace['claim_at_ns'] is None
         assert svc.store.database.commits == commits
