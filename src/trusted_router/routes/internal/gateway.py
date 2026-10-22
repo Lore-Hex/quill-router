@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache
@@ -257,6 +258,7 @@ from trusted_router.storage_models import (
     ByokProviderConfig,
     CustomModelMarkupPayout,
     GatewayAuthorization,
+    Reservation,
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
@@ -1385,6 +1387,11 @@ def _authorize_gateway_sync_impl(
     # request at one tariff and bill it at another whenever a scheduled price
     # change fell between them.
     pricing_effective_at = dt.datetime.now(dt.UTC)
+    # The prompt estimate the hold is reserved on; chat routing also sends a
+    # request only to models whose window holds it.
+    input_tokens = body.estimated_input_tokens
+    if custom_model is not None and custom_model.hidden_prompt.strip():
+        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     user_model_candidate = None
     if user_model is not None:
         if is_image_request:
@@ -1412,6 +1419,8 @@ def _authorize_gateway_sync_impl(
     resolved_candidates = resolve_candidates(
         route_plan, candidate_request, region=region, at=pricing_effective_at,
         user_model_candidate=user_model_candidate,
+        prompt_tokens=input_tokens,
+        completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
     )
     effective_route_preferences = resolved_candidates.effective_preferences
     endpoint_candidates = resolved_candidates.candidates
@@ -1420,9 +1429,6 @@ def _authorize_gateway_sync_impl(
         folded_rows=folded_byok,
     )
     byok_providers = _byok_present_providers(endpoint_candidates, workspace.id, byok_configs)
-    input_tokens = body.estimated_input_tokens
-    if custom_model is not None and custom_model.hidden_prompt.strip():
-        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
     if is_transcription_request:
         additional_cost_reservation = transcription_quote
@@ -1975,6 +1981,7 @@ def _authorize_gateway_sync_impl(
             if _is_native_batch_route(body.route_type)
             else None
         )
+        credit_reservation: Reservation | None = None
         if has_credit_candidate:
             try:
                 with gateway_phase("store_ms", after="post_commit_ms"):
@@ -2135,6 +2142,67 @@ def _authorize_gateway_sync_impl(
         except BaseException:
             release_user_model_slot_after_error()
             raise
+        if authorization.id != authorization_id:
+            release_user_model_slot_after_error()
+
+            def refund_replay_hold(
+                refund: Callable[[], Any], event_name: str, reserved_microdollars: int
+            ) -> None:
+                try:
+                    refund()
+                except Exception as exc:
+                    outcome = "rolled_back" if isinstance(exc, StoreConflict) else "unknown"
+                    logger.error(
+                        "%s workspace_id=%s request_id=%s "
+                        "key_hash=%s reserved_microdollars=%s error_class=%s outcome=%s",
+                        event_name,
+                        _log_value(workspace.id),
+                        _log_value(getattr(request.state, "request_id", None)),
+                        _log_value(api_key.hash[:12]),
+                        reserved_microdollars,
+                        type(exc).__name__,
+                        outcome,
+                    )
+
+            # Stores own the conflict retry budget; an unknown commit outcome makes
+            # a blind retry risk double refunds. Durable recovery needs attempt-scoped
+            # key holds in the stores, which this change does not add.
+            if key_limit_reservation.reserved_microdollars > 0:
+                refund_replay_hold(
+                    functools.partial(
+                        STORE.refund_key_limit,
+                        api_key.hash,
+                        key_limit_reservation.reserved_microdollars,
+                        usage_type=reservation_usage_type,
+                    ),
+                    "billing.replay_key_refund_failed",
+                    key_limit_reservation.reserved_microdollars,
+                )
+            # Only this workspace/key/idempotency slot can receive our reservation, and
+            # the winner already owns it (a replay writes nothing; pointers are only
+            # replaced by an armed pause rejection), so no later attempt can attach an
+            # unreferenced hold. Holds ONLY once no worker predating the scoped
+            # reservation index is running: such a worker hands reservations out by the
+            # bare idempotency key. Do not deploy this before that rollout has drained.
+            if (
+                credit_reservation_id is not None
+                and credit_reservation_id != authorization.credit_reservation_id
+                and credit_reservation is not None
+                and credit_reservation.workspace_id == workspace.id
+                and credit_reservation.key_hash == api_key.hash
+            ):
+                refund_replay_hold(
+                    functools.partial(STORE.refund, credit_reservation_id),
+                    "billing.replay_credit_refund_failed",
+                    credit_reservation.amount_microdollars,
+                )
+            if authorization.idempotency_fingerprint != request_fingerprint:
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            return _replay_response(authorization)
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider, byok_configs) if model_usage_type.is_byok() else None
     )

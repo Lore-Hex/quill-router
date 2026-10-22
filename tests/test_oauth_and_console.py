@@ -363,6 +363,7 @@ async def test_google_callback_delegated_signup_starts_at_zero_without_managemen
     next_path = (
         "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor"
         "&key_label=SlopNazi&limit=5&usage_limit_type=monthly"
+        "&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256"
     )
     state = _begin_oauth(google_client, "google", next_path=next_path)
 
@@ -1067,31 +1068,28 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     URL falls through to the static fallback (one-shot reveal semantics)."""
     client, _ = console_session
     fake_raw_key = "sk-tr-v1-test-reveal-secret-abc123"  # noqa: S105 - test fixture
-    client.cookies.set("tr_pending_reveal", fake_raw_key)
+    client.cookies.set("tr_pending_reveal", fake_raw_key, domain="testserver.local", path="/console/welcome")
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "private, no-store"
     assert resp.text.count(fake_raw_key) == 2, (
         "the raw API key must appear in the direct reveal and the optional "
         "Claude Code / Codex message"
     )
-    assert 'data-copy-secret="welcome-api-key"' in resp.text
-    assert 'data-copy-template-target="welcome-agent-message"' in resp.text
-    assert 'data-secret-source="welcome-api-key"' in resp.text
-    assert 'id="welcome-agent-message" data-copy-lines' in resp.text
-    agent_message = re.search(r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL)
+    assert 'id="onboarding-key"' in resp.text
+    assert 'aria-label="Copy API key"' in resp.text
+    agent_message = re.search(r'<pre id="setup-code".*?</pre>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert fake_raw_key in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert resp.text.index('id="welcome-api-key"') < resp.text.index('id="welcome-agent-message"')
-    assert 'data-action="run-first-call"' not in resp.text
-    assert 'class="activation-progress"' not in resp.text
-    assert 'id="setup-agent-tab"' in resp.text
-    assert 'aria-labelledby="setup-agent-tab" data-setup-panel' in resp.text
+    assert resp.text.index('id="onboarding-key"') < resp.text.index('id="setup-code"')
+    assert 'id="try-tab"' in resp.text
+    assert 'Uses your API credit' in resp.text
     assert "data-rewards-key-card" in resp.text
     assert "Python" in resp.text
     assert "JavaScript" in resp.text
-    assert "curl" in resp.text
+    assert "cURL" in resp.text
     assert "https://trust.trustedrouter.com" in resp.text
     assert "already been displayed" not in resp.text
     # One-shot: cookie must be cleared on the response so a refresh
@@ -1105,6 +1103,9 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
         or "Max-Age=0" in set_cookie
         or "max-age=0" in set_cookie
     ), f"expected tr_pending_reveal cookie to be cleared; got {set_cookie!r}"
+    refreshed = client.get("/console/welcome?first=1")
+    assert fake_raw_key not in refreshed.text
+    assert "already been displayed" in refreshed.text
 
 
 def test_console_specific_styles_load_after_shared_charter_styles() -> None:
@@ -1131,7 +1132,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     # The page renders the fallback message; the cookie is left for a
     # later legitimate `?first=1` request to consume.
     assert fake_raw_key not in resp.text
-    assert 'id="welcome-agent-message"' not in resp.text
+    assert 'data-key-onboarding' not in resp.text
     assert "already been displayed" in resp.text
     # Cookie not cleared — the response should NOT include a delete-cookie
     # header for tr_pending_reveal.
@@ -1151,26 +1152,18 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     )
 
     assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "private, no-store"
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
     assert resp.text.count(match.group(0)) == 2
-    assert 'data-copy-secret="created-api-key"' in resp.text
-    assert 'data-copy-template-target="created-agent-message"' in resp.text
-    assert 'data-secret-source="created-api-key"' in resp.text
-    assert 'id="created-agent-message" data-copy-lines' in resp.text
-    assert '<pre id="created-agent-message"' not in resp.text
-    agent_message = re.search(
-        r'<div class="agent-message" id="created-agent-message".*?</div>\s*</div>',
-        resp.text,
-        re.DOTALL,
-    )
+    assert 'id="onboarding-key"' in resp.text
+    assert 'aria-label="Copy API key"' in resp.text
+    agent_message = re.search(r'<pre id="setup-code".*?</pre>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert "Paste this into your coding agent." in resp.text
-    assert "Paste this into your coding agent." not in agent_message.group(0)
-    assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
+    assert resp.text.index('id="onboarding-key"') < resp.text.index('id="setup-code"')
     assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
     assert "Use it in memory for this request" not in resp.text
@@ -1195,9 +1188,12 @@ def test_console_welcome_without_credits_keeps_key_and_funding_access(
 
     assert response.status_code == 200
     assert fake_raw_key in response.text
-    assert 'data-copy-secret="welcome-api-key"' in response.text
+    assert 'id="onboarding-key"' in response.text
+    assert 'aria-label="Copy API key"' in response.text
     assert 'href="/console/credits"' in response.text
     assert 'data-action="run-first-call"' not in response.text
+    credits = client.get("/console/credits")
+    assert 'class="console-balance is-empty"' in credits.text
 
 
 def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(

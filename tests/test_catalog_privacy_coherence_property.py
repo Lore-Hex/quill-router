@@ -373,7 +373,7 @@ def test_confidential_never_admits_the_model_vendor(monkeypatch: pytest.MonkeyPa
         ("microsoft/phi-5", "azure"),
         ("meta-llama/llama-4-maverick", "meta"),
         # A provider named like the model's author.
-        ("system1models/s1-pro", "system1models"),
+        ("decisionmodelsio/s1-pro", "decisionmodelsio"),
     ],
 )
 def test_every_host_the_vendor_runs_is_the_vendor(

@@ -72,7 +72,7 @@ def test_console_renders_account_scoped_dismissal_and_api_keys_invitation():
         assert f'data-rewards-user="{result.user.id}"' in response.text
     page = client.get("/console/api-keys").text
     assert "data-rewards-key-card" in page
-    assert "Earn extra API credit." in page
+    assert "Earn API credit for a follow" in page
 
 
 def test_claims_concurrent_fixed_total_and_destination():

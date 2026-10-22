@@ -484,3 +484,24 @@ def test_verification_display_reuses_stale_total_but_post_gate_stays_strong(
     )
     assert start.status_code == 303
     assert stale_flags == [False]
+
+
+@pytest.mark.parametrize("path", ["/console/api-keys", "/console/welcome", "/console/settings"])
+def test_console_remains_available_when_header_balance_read_fails(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, path: str,
+) -> None:
+    user = STORE.ensure_user("balance-unavailable@example.com")
+    token, _ = STORE.create_auth_session(
+        user_id=user.id, provider="google", label=user.email,
+        ttl_seconds=3600, state="active",
+    )
+    client.cookies.set("tr_session", token)
+
+    def unavailable(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("sensitive backend detail")
+
+    monkeypatch.setattr(InMemoryStore, "credit_money_snapshot", unavailable)
+    response = client.get(path)
+    assert response.status_code == 200
+    assert 'class="console-balance' not in response.text
+    assert "sensitive backend detail" not in response.text

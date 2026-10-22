@@ -96,13 +96,20 @@ def test_tier_routes_preferred_then_fallback_without_privacy_floor(
     assert [model.id for model, _endpoint in fallback] == list(order[1:])
 
 
-def test_public_catalog_lists_tiers_and_their_order(client: TestClient) -> None:
+def test_public_catalog_lists_tiers_and_their_order(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for member in {member for order in TIER_MODEL_ORDERS.values() for member in order}:
+        drop_routes(monkeypatch, member)
+        serve_on_fixture_route(monkeypatch, member, "gmi", author=MODELS[member].provider)
     response = client.get("/v1/models")
     assert response.status_code == 200
     rows = {row["id"]: row for row in response.json()["data"]}
     for alias, order in TIER_MODEL_ORDERS.items():
         row = rows[alias]
-        assert row["context_length"] == min(MODELS[member].context_length for member in order)
+        window = max(MODELS[member].context_length for member in order)
+        assert row["context_length"] == window
+        assert row["top_provider"]["context_length"] == window
         assert row["trustedrouter"]["route_kind"] == "tier_pool"
         assert row["trustedrouter"]["auto_candidates"] == list(order)
         assert row["trustedrouter"]["orchestration_role"] == "routing_pool"

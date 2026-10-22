@@ -23,8 +23,8 @@ _DECISION_PRO_EFFECTIVE_ON = date(2026, 11, 12)
 _DECISION_PRO_TRANSITIONS = {
     f"{slug}/{model} [{slug}:{slug}:{model}]": ((before, 0), (after, 0))
     for slug, before, after in (
-        ("system1models", 38_000, 80_000),
-        ("system1models-eu", 40_000, 84_000),
+        ("decisionmodelsio", 38_000, 80_000),
+        ("decisionmodelsio-eu", 40_000, 84_000),
     )
     for model in ("s1-pro", "s1-pro-2")
 }

@@ -13,7 +13,7 @@ async function copyText(text) {
   document.body.appendChild(input);
   input.select();
   try {
-    document.execCommand("copy");
+    if (!document.execCommand("copy")) throw new Error("Copy failed");
   } finally {
     input.remove();
   }
@@ -35,19 +35,6 @@ function setCopyStatus(button, message, isError) {
       }
     }, 2200);
   }
-}
-
-function copyTargetText(target) {
-  if (target.hasAttribute("data-copy-lines")) {
-    return Array.from(target.children, (line) => line.textContent.trim())
-      .join("\n\n")
-      .trim();
-  }
-  return target.textContent.trim();
-}
-
-function templateCopyText(target, secret) {
-  return copyTargetText(target).replaceAll("YOUR_TRUSTEDROUTER_API_KEY", secret);
 }
 
 function selectSetupTab(tab) {
@@ -247,35 +234,13 @@ function initConsole() {
       selectSetupTab(setupTab);
       return;
     }
-    const templateButton = target.closest("[data-copy-template-target]");
-    if (templateButton) {
-      event.preventDefault();
-      const templateId = templateButton.getAttribute("data-copy-template-target");
-      const sourceId = templateButton.getAttribute("data-secret-source");
-      const template = templateId ? document.getElementById(templateId) : null;
-      const source = sourceId ? document.getElementById(sourceId) : null;
-      const secret = source ? copyTargetText(source) : "";
-      const value = template && secret ? templateCopyText(template, secret) : "";
-      if (!value) {
-        setCopyStatus(templateButton, "No key to copy.", true);
-        return;
-      }
-      copyText(value)
-        .then(() => setCopyStatus(templateButton, "Copied to clipboard.", false))
-        .catch(() => setCopyStatus(
-          templateButton,
-          "Select the setup and copy it manually.",
-          true,
-        ));
-      return;
-    }
     const button = target.closest("[data-copy-secret]");
     if (!button)
       return;
     event.preventDefault();
     const secretId = button.getAttribute("data-copy-secret");
     const secret = secretId ? document.getElementById(secretId) : null;
-    const value = secret ? copyTargetText(secret) : "";
+    const value = secret ? secret.textContent.trim() : "";
     if (!value) {
       setCopyStatus(button, "No key to copy.", true);
       return;

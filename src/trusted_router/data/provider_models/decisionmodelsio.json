@@ -1,8 +1,8 @@
 {
-  "provider": "system1models-eu",
+  "provider": "decisionmodelsio",
   "models": [
     {
-      "display_name": "Decision Models s1-fast (EU)",
+      "display_name": "Decision Models s1-fast (GLOBAL)",
       "title": "s1-fast",
       "model_type": "decision",
       "input_modalities": [
@@ -15,7 +15,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-fast",
+      "id": "decisionmodelsio/s1-fast",
       "upstream_id": "s1-fast",
       "context_length": 8192,
       "supported_features": [],
@@ -24,18 +24,22 @@
         "description": "Fast open typed-decision profile for text decisions; noul/choice/score answers with probabilities in milliseconds. An alias for the current Fast version (see model_version in every response and the S1-Model-Version header); pin s1-fast-1 or s1-fast-2 to stay on one version. Inputs the current version cannot take (several questions, very long input) are answered by s1-fast-1.",
         "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
-        "example_input": "{\"model\": \"system1models-eu/s1-fast\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
-        "example_output": "{\"model\": \"system1models-eu/s1-fast\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+        "example_input": "{\"model\":\"decisionmodelsio/s1-fast\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio/s1-fast\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
       },
       "routable": true,
-      "input_token_price_per_m": 21000,
+      "input_token_price_per_m": 19000,
       "output_token_price_per_m": 0,
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": null
+      "pricing_valid_until": null,
+      "settlement_prices": {
+        "input_token_price_per_m": 32000,
+        "output_token_price_per_m": 0
+      }
     },
     {
-      "display_name": "Decision Models s1-pro (EU)",
+      "display_name": "Decision Models s1-pro (GLOBAL)",
       "title": "s1-pro",
       "model_type": "decision",
       "input_modalities": [
@@ -48,7 +52,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-pro",
+      "id": "decisionmodelsio/s1-pro",
       "upstream_id": "s1-pro",
       "context_length": 8192,
       "supported_features": [],
@@ -57,18 +61,22 @@
         "description": "Larger open typed-decision profile for text decisions; noul/choice/score answers with probabilities. An alias for the current Pro version: since 12 October 2026 s1-pro-3, based on vLLM-SR d3 26B (Apache-2.0), served in FP8 (see model_version in every response and the S1-Model-Version header). Pin s1-pro-3, or s1-pro-2 (the previous version, Perplexity Decider v1.1, available until at least 11 November 2026), to stay on one version. Text only; up to 3 questions per request, at most 8,192 input tokens per question including the state.",
         "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
-        "example_input": "{\"model\": \"system1models-eu/s1-pro\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
-        "example_output": "{\"model\": \"system1models-eu/s1-pro\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+        "example_input": "{\"model\":\"decisionmodelsio/s1-pro\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio/s1-pro\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
       },
       "routable": true,
-      "input_token_price_per_m": 40000,
+      "input_token_price_per_m": 38000,
       "output_token_price_per_m": 0,
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": "2026-11-12T00:00:00Z"
+      "pricing_valid_until": "2026-11-12T00:00:00Z",
+      "settlement_prices": {
+        "input_token_price_per_m": 38000,
+        "output_token_price_per_m": 0
+      }
     },
     {
-      "display_name": "Decision Models s1-vision (EU)",
+      "display_name": "Decision Models s1-vision (GLOBAL)",
       "title": "s1-vision",
       "model_type": "decision",
       "input_modalities": [
@@ -82,7 +90,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-vision",
+      "id": "decisionmodelsio/s1-vision",
       "upstream_id": "s1-vision",
       "context_length": 8192,
       "supported_features": [],
@@ -93,19 +101,19 @@
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
       },
       "routable": false,
-      "input_token_price_per_m": 32000,
+      "input_token_price_per_m": 31000,
       "output_token_price_per_m": 0,
-      "decision_contract_hold": "decision-image-pricing-unsupported",
-      "decision_image_input_price_per_m": 228000,
-      "pricing_valid_until": null,
       "routable_reason": "decision-image-pricing-unsupported",
+      "decision_contract_hold": "decision-image-pricing-unsupported",
+      "decision_image_input_price_per_m": 217000,
+      "pricing_valid_until": null,
       "settlement_prices": {
-        "input_token_price_per_m": 40000,
+        "input_token_price_per_m": 38000,
         "output_token_price_per_m": 0
       }
     },
     {
-      "display_name": "Decision Models s1-llm-auto-router (EU)",
+      "display_name": "Decision Models s1-llm-auto-router (GLOBAL)",
       "title": "s1-llm-auto-router",
       "model_type": "decision",
       "input_modalities": [
@@ -118,7 +126,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-llm-auto-router",
+      "id": "decisionmodelsio/s1-llm-auto-router",
       "upstream_id": "s1-llm-auto-router",
       "context_length": 0,
       "supported_features": [],
@@ -137,7 +145,7 @@
       "pricing_valid_until": null
     },
     {
-      "display_name": "Decision Models quyet-1-large (EU)",
+      "display_name": "Decision Models quyet-1-large (GLOBAL)",
       "title": "quyet-1-large",
       "model_type": "decision",
       "input_modalities": [
@@ -150,7 +158,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/quyet-1-large",
+      "id": "decisionmodelsio/quyet-1-large",
       "upstream_id": "quyet-1-large",
       "context_length": 8192,
       "supported_features": [],
@@ -165,11 +173,11 @@
       "pricing_valid_until": null,
       "routable": false,
       "routable_reason": "decision-model-namespace-unsupported",
-      "input_token_price_per_m": 38000,
+      "input_token_price_per_m": 35000,
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "Decision Models s1-fast-2 (EU)",
+      "display_name": "Decision Models s1-fast-2 (GLOBAL)",
       "title": "s1-fast-2",
       "model_type": "decision",
       "input_modalities": [
@@ -182,7 +190,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-fast-2",
+      "id": "decisionmodelsio/s1-fast-2",
       "upstream_id": "s1-fast-2",
       "context_length": 8192,
       "supported_features": [],
@@ -191,18 +199,18 @@
         "description": "Current Fast version: a 26B-A4B open typed-decision model; noul/choice/score answers with probabilities. Text only, exactly one question per request, at most 8,192 input tokens and 26 options per question. Billed at the s1-fast price.",
         "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
-        "example_input": "{\"model\": \"system1models-eu/s1-fast-2\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
-        "example_output": "{\"model\": \"system1models-eu/s1-fast-2\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+        "example_input": "{\"model\":\"decisionmodelsio/s1-fast-2\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio/s1-fast-2\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
       },
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": null,
       "routable": true,
-      "input_token_price_per_m": 21000,
+      "input_token_price_per_m": 19000,
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "Decision Models s1-pro-2 (EU)",
+      "display_name": "Decision Models s1-pro-2 (GLOBAL)",
       "title": "s1-pro-2",
       "model_type": "decision",
       "input_modalities": [
@@ -215,7 +223,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-pro-2",
+      "id": "decisionmodelsio/s1-pro-2",
       "upstream_id": "s1-pro-2",
       "context_length": 8192,
       "supported_features": [],
@@ -224,18 +232,18 @@
         "description": "Current Pro version: a 27B open typed-decision model served in NVFP4; noul/choice/score answers with probabilities. Text only; up to 3 questions per request, each answered separately, with at most 8,192 input tokens per question including the state. Billed at the s1-pro price.",
         "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
-        "example_input": "{\"model\": \"system1models-eu/s1-pro-2\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
-        "example_output": "{\"model\": \"system1models-eu/s1-pro-2\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+        "example_input": "{\"model\":\"decisionmodelsio/s1-pro-2\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio/s1-pro-2\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
       },
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": "2026-11-12T00:00:00Z",
       "routable": true,
-      "input_token_price_per_m": 40000,
+      "input_token_price_per_m": 38000,
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "Decision Models s1-vision-2 (EU)",
+      "display_name": "Decision Models s1-vision-2 (GLOBAL)",
       "title": "s1-vision-2",
       "model_type": "decision",
       "input_modalities": [
@@ -249,7 +257,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-vision-2",
+      "id": "decisionmodelsio/s1-vision-2",
       "upstream_id": "s1-vision-2",
       "context_length": 8192,
       "supported_features": [],
@@ -260,15 +268,15 @@
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
       },
       "decision_contract_hold": "decision-image-pricing-unsupported",
-      "decision_image_input_price_per_m": 228000,
+      "decision_image_input_price_per_m": 217000,
       "pricing_valid_until": null,
       "routable": false,
       "routable_reason": "decision-image-pricing-unsupported",
-      "input_token_price_per_m": 32000,
+      "input_token_price_per_m": 31000,
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "Decision Models s1-pro-3 (EU)",
+      "display_name": "Decision Models s1-pro-3 (GLOBAL)",
       "title": "s1-pro-3",
       "model_type": "decision",
       "input_modalities": [
@@ -281,7 +289,7 @@
         "decide"
       ],
       "status": 1,
-      "id": "system1models-eu/s1-pro-3",
+      "id": "decisionmodelsio/s1-pro-3",
       "upstream_id": "s1-pro-3",
       "context_length": 8192,
       "supported_features": [],
@@ -290,14 +298,14 @@
         "description": "Current Pro version: vLLM-SR d3 26B, an open typed-decision model (Apache-2.0, by the vLLM Semantic Router project), served in FP8; noul/choice/score answers with probabilities. Text only; up to 3 questions per request, each answered separately, with at most 8,192 input tokens per question including the state. Billed at the s1-pro price.",
         "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
-        "example_input": "{\"model\": \"system1models-eu/s1-pro-3\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
-        "example_output": "{\"model\": \"system1models-eu/s1-pro-3\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+        "example_input": "{\"model\":\"decisionmodelsio/s1-pro-3\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio/s1-pro-3\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
       },
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": null,
       "routable": true,
-      "input_token_price_per_m": 84000,
+      "input_token_price_per_m": 80000,
       "output_token_price_per_m": 0
     }
   ],
