@@ -130,7 +130,7 @@ def _model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
             return PRIVACY_TIER_TRUSTED
         return PRIVACY_TIER_CONFIDENTIAL
     if override is not None:
-        if override.privacy_tier != PRIVACY_TIER_CONFIDENTIAL:
+        if override.privacy_tier not in {PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_TRUSTED}:
             return override.privacy_tier
         if model_provider_zero_data_retention(model_id, provider_slug) is True:
             return PRIVACY_TIER_ZERO_RETENTION

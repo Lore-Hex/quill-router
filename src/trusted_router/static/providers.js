@@ -43,7 +43,7 @@
   input.value = initialQuery;
   if (privacy) {
     const initialPrivacy = new URL(window.location.href).searchParams.get("privacy");
-    privacy.value = ["confidential", "zdr"].includes(initialPrivacy) ? initialPrivacy : "all";
+    privacy.value = ["confidential", "zdr", "trusted"].includes(initialPrivacy) ? initialPrivacy : "all";
     privacy.addEventListener("change", applySearch);
   }
   input.addEventListener("input", applySearch);

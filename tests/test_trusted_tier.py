@@ -20,6 +20,7 @@ from trusted_router.catalog import (
     ModelEndpoint,
     endpoint_meets_privacy_requirement,
     endpoint_privacy_tier,
+    model_provider_privacy_tier,
     model_to_openrouter_shape,
     provider_privacy_tier,
     provider_to_openrouter_shape,
@@ -135,6 +136,18 @@ def test_all_catalog_trusted_endpoints_are_also_confidential() -> None:
         assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED) is expected
 
 
+def test_a_declared_tier_cannot_replace_missing_technical_evidence(monkeypatch) -> None:
+    from trusted_router.catalog_data import (
+        _MODEL_PROVIDER_PRIVACY_OVERRIDES,
+        ModelProviderPrivacyOverride,
+    )
+
+    monkeypatch.setitem(_MODEL_PROVIDER_PRIVACY_OVERRIDES, ("test/model", "tinfoil"),
+        ModelProviderPrivacyOverride(privacy_tier=PRIVACY_TIER_TRUSTED,
+            provider_zero_data_retention=False, provider_e2ee=False))
+    assert model_provider_privacy_tier("test/model", "tinfoil") < PRIVACY_TIER_CONFIDENTIAL
+
+
 def test_public_labels_and_docs(client: TestClient) -> None:
     soup = BeautifulSoup(client.get("/providers").text, "html.parser")
     trusted = {
@@ -142,6 +155,11 @@ def test_public_labels_and_docs(client: TestClient) -> None:
         if card.select('[data-privacy="trusted"]')
     }
     assert trusted == {"tinfoil", "privatemode"}
+    assert soup.select_one('select[data-provider-privacy] option[value="trusted"]')
+    assert {card["data-provider-id"] for card in soup.select('[data-trusted="true"]')} == trusted
+    filtered = BeautifulSoup(client.get("/models?filter=trusted").text, "html.parser")
+    assert filtered.select_one('a.good[href="/models?filter=trusted"]')
+    assert filtered.select('[data-privacy="trusted"]')
     docs = client.get("/docs")
     assert docs.status_code == 200
     assert 'id="trusted-tier"' in docs.text

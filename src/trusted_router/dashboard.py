@@ -3747,6 +3747,8 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
         models = [model for model in models if model.get("eu_focused_provider_available")]
     elif normalized_filter == "zdr":
         models = [model for model in models if model.get("zdr_available")]
+    elif normalized_filter == "trusted":
+        models = [model for model in models if model.get("trusted_available")]
     elif normalized_filter in {"e2e", "confidential"}:
         normalized_filter = "e2e"
         models = [model for model in models if model.get("e2e_available")]
@@ -3784,6 +3786,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             active_filter=normalized_filter,
             model_filters=[
                 {"id": "all", "label": "All", "href": "/models"},
+                {"id": "trusted", "label": "Trusted", "href": "/models?filter=trusted"},
                 {"id": "e2e", "label": "Confidential", "href": "/models?filter=e2e"},
                 {"id": "zdr", "label": "ZDR", "href": "/models?filter=zdr"},
                 {"id": "open", "label": "Open weights", "href": "/models?filter=open"},
