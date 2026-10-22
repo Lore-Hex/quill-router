@@ -3479,12 +3479,15 @@ def _force_credit_routes(body: dict[str, Any], *, error_message: str) -> None:
 
 def _is_web_search_restricted_model(model_id: str) -> bool:
     model = model_id.strip().lower()
+    if model.startswith("nyte/"):
+        model = "trustedrouter/" + model.removeprefix("nyte/")
     return any(
         model == prefix or model.startswith(f"{prefix}-") or model.startswith(f"{prefix}/")
         for prefix in (
             "trustedrouter/zdr",
             "trustedrouter/e2e",
             "trustedrouter/confidential",
+            "trustedrouter/trusted",
             "trustedrouter/eu",
             "trustedrouter/green",
         )
@@ -3494,6 +3497,8 @@ def _is_web_search_restricted_model(model_id: str) -> bool:
 def _is_web_search_restricted_provider(provider: Any) -> bool:
     if not isinstance(provider, dict):
         return False
+    if str(provider.get("min_privacy") or "").strip().lower() == "trusted":
+        return True
     return str(provider.get("data_collection") or "").strip().lower() == "deny" or (
         str(provider.get("jurisdiction") or "").strip().lower() == "eu"
     )

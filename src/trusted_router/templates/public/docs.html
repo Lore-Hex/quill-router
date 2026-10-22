@@ -65,6 +65,19 @@ const r = await client.chat.completions.create({
   <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same verified compute + E2EE + ZDR pool. A TR-funded ZDR agreement qualifies only the funded route, not BYOK. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
 </section>
 
+<section style="margin-top:48px" id="trusted-tier">
+  <h2>Trusted: selected operators, confidential inference</h2>
+  <p><a href="/models/trustedrouter/trusted"><code>trustedrouter/trusted</code></a> and <code>nyte/trusted</code> route only through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a>. TrustedRouter selects these operators for their physical-security posture and history of reliability. This is our operator assessment, separate from hardware attestation or an independent certification.</p>
+  <p>Every eligible endpoint must also meet the Confidential requirements: verified confidential compute, provider-side E2EE and explicit ZDR. Every fallback keeps those requirements and the same two-provider restriction. When no qualifying route remains, the request fails before inference.</p>
+  <pre><code>{
+  "model": "trustedrouter/trusted",
+  "messages": [{"role": "user", "content": "Hello"}],
+  "stream": true
+}</code></pre>
+  <p>To choose a specific model instead, send <code>provider.min_privacy: "trusted"</code> on the ordinary API. Catalog endpoints in this tier report <code>privacy_tier: 4</code> and <code>privacy_tier_label: "Trusted"</code>. Provider filters can narrow the tier, never expand it.</p>
+  <p>On <code>api.confidential.nytokenexchange.com</code> or <code>api.confidential.trustedrouter.com</code>, use <code>model: "nyte/trusted"</code> with the host's required <code>provider.min_privacy: "confidential"</code>. The model's stronger Trusted restriction still applies. These aliases use your TrustedRouter credits; pricing follows the selected eligible route.</p>
+</section>
+
 <section style="margin-top:48px" id="confidential-api">
   <h2>Confidential-only API hostname</h2>
   <p>Use <code>https://api.confidential.trustedrouter.com/v1</code> and explicitly include <code>"provider": {"min_privacy": "confidential"}</code> in every inference request. The hostname is an additional guard, not an implicit default: missing, weaker, or alias values such as <code>e2e</code> return <code>400 confidential_privacy_required</code> before inference.</p>

@@ -42,6 +42,7 @@ from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
+    PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
     PRIVATE_PROXY_MODEL_TARGETS,
     ROUTING_MODEL_ALIAS_TARGETS,
@@ -84,6 +85,7 @@ MAX_HORIZON_SECONDS = 24 * 3_600
 PRIVACY_REQUIREMENTS = (
     PRIVACY_TIER_STANDARD, PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_ZERO_RETENTION, PRIVACY_TIER_CONFIDENTIAL,
+    PRIVACY_TIER_TRUSTED,
 )
 # Literals inside model_aliases.canonical_router_model_id and
 # routing.resolve_model_alias; tests hold these to those functions.

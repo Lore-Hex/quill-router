@@ -66,6 +66,14 @@ PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
 
 PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR, not the vendor
 
+PRIVACY_TIER_TRUSTED = 4  # Confidential plus TrustedRouter's curated operator assessment
+
+# This is an explicit product allowlist, not inferred from a provider's own
+# security claims. Adding an operator requires a separate physical-security
+# and operating-history review; technical Confidential eligibility still applies.
+TRUSTED_PROVIDER_ORDER = ("tinfoil", "privatemode")
+TRUSTED_PROVIDER_SLUGS = frozenset(TRUSTED_PROVIDER_ORDER)
+
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
     "any": PRIVACY_TIER_STANDARD,
@@ -76,6 +84,7 @@ PRIVACY_TIER_ALIASES: dict[str, int] = {
     "zero_retention": PRIVACY_TIER_ZERO_RETENTION,
     "zero-retention": PRIVACY_TIER_ZERO_RETENTION,
     "confidential": PRIVACY_TIER_CONFIDENTIAL,
+    "trusted": PRIVACY_TIER_TRUSTED,
     "e2e": PRIVACY_TIER_CONFIDENTIAL,
     "e2ee": PRIVACY_TIER_CONFIDENTIAL,
     "max": PRIVACY_TIER_CONFIDENTIAL,
@@ -87,6 +96,7 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
     PRIVACY_TIER_NO_STORE: "No-store",
     PRIVACY_TIER_ZERO_RETENTION: "Zero retention",
     PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE + ZDR",
+    PRIVACY_TIER_TRUSTED: "Trusted",
 }
 
 # provider_headquarters_country records the legal home of the entity that
@@ -2549,6 +2559,8 @@ E2E_MODEL_ID = "trustedrouter/e2e"
 
 CONFIDENTIAL_MODEL_ID = "trustedrouter/confidential"
 
+TRUSTED_MODEL_ID = "trustedrouter/trusted"
+
 # Upstream privacy floors enforced by routing aliases. Keep this as the single
 # source of truth for authorization, public catalog copy, and recommendation
 # surfaces. General-purpose aliases such as auto and cheap intentionally have
@@ -2556,6 +2568,7 @@ CONFIDENTIAL_MODEL_ID = "trustedrouter/confidential"
 ROUTING_MODEL_MIN_PRIVACY_TIERS: dict[str, int] = {
     ZDR_MODEL_ID: PRIVACY_TIER_ZERO_RETENTION,
     E2E_MODEL_ID: PRIVACY_TIER_CONFIDENTIAL,
+    TRUSTED_MODEL_ID: PRIVACY_TIER_TRUSTED,
 }
 
 MONITOR_MODEL_ID = "trustedrouter/monitor"
@@ -2862,6 +2875,7 @@ META_MODEL_IDS = frozenset(
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
         CONFIDENTIAL_MODEL_ID,
+        TRUSTED_MODEL_ID,
         MONITOR_MODEL_ID,
         ARCHIMEDES_1_0_MODEL_ID,
         SOCRATES_1_0_MODEL_ID,
