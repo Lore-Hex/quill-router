@@ -69,6 +69,16 @@ then answers 503 `{"status": "signer-unavailable"}`.
    before anything depends on it.
 
 5. Turn it on: set `ROUTING_SNAPSHOT_PUBLISH_ENABLED=true`, merge, deploy.
+   First measure the compile where it will run. It is 1.5 to 4.5 s of
+   CPU-bound Python on development machines (4.3 s measured in review), and
+   on the combined service it holds the GIL against that instance's authorize
+   requests for as long, once a window on each instance the edge polls.
+   Before this step, time `compile_routing_snapshot` with
+   `CatalogInputs.live` on the release image and the service's CPU shape
+   (for example a one-off Cloud Run job of that image), and decide the
+   authorize latency it implies is acceptable. After it, watch the
+   `routing snapshot compiled` log line's `elapsed_ms` and authorize latency
+   on the polled instances; if it hurts authorize, turn publishing off.
 
 6. Check it where the edge will poll it: the us-central1 service's run.app
    address, whose ingress admits only the project's network and the load
@@ -110,10 +120,13 @@ then answers 503 `{"status": "signer-unavailable"}`.
    ```
 
    A 200 whose manifest verifies is published. A 503 says why in `status`:
-   `signer-unavailable` (step 3's public key is not the mounted version's) or
+   `signer-unavailable` (step 3's public key is not the mounted version's),
    `snapshot-refused` (the catalog refused the window; the log line
    `routing snapshot compile refused` names the reason, and the next window
-   retries).
+   retries; an instance started before a retirement refuses every later
+   window until it is replaced), or `snapshot-error` (any other failure,
+   logged by its class as `routing snapshot compile failed`, retried after
+   5 s).
 
 ## Turning it off
 

@@ -303,6 +303,38 @@ def test_a_retirement_between_compiled_at_and_the_import_refuses() -> None:
     assert clamped.not_after == retirement
 
 
+def test_a_retirement_between_the_import_and_compiled_at_refuses_on_either_side() -> None:
+    """The import instant is not in the body, so the body must not depend on it.
+
+    A process imported before a retirement still holds what a process imported
+    after it has dropped; compiling one window in both would give two documents.
+    """
+    from dataclasses import replace
+
+    from trusted_router.routing_snapshot import canonical_snapshot_bytes
+
+    # A real retirement: DeepInfra's GPT-OSS-120B Turbo route, 2026-10-20 00:00 UTC.
+    retirement = GENERATOR.COMPILED_AT + 24 * HOUR
+    arguments = {
+        "at": retirement, "horizon": 6 * HOUR, "settings": GENERATOR.fixture_settings(),
+        "source_revision": "golden-fixture", "plane": GOLDEN_PLANE,
+    }
+
+    def compiled(resolved: int) -> bytes:
+        inputs = replace(GENERATOR.fixture_inputs(), catalog_resolved_at=resolved,
+                         expansions_clock=(retirement, retirement))
+        return canonical_snapshot_bytes(compile_routing_snapshot(inputs=inputs, **arguments))
+
+    # Positive control: imported at or after the retirement, two processes
+    # compile the window, into the same bytes.
+    at_import = compiled(retirement)
+    assert compiled(retirement + HOUR // 2) == at_import
+    # Imported before it: refused, never a second document for the window.
+    for resolved in (retirement - HOUR // 2, retirement - 1):
+        with pytest.raises(SnapshotRefused, match="retirement"):
+            compiled(resolved)
+
+
 def test_a_provider_other_than_the_catalogs_refuses() -> None:
     from dataclasses import replace
 

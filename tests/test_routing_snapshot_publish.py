@@ -40,6 +40,7 @@ from trusted_router.services.routing_snapshot_publisher import (
     AUDIENCE,
     ISSUER,
     RoutingSnapshotPublisher,
+    SnapshotUnavailable,
     build_publisher,
     load_signer,
     plane_of,
@@ -170,7 +171,24 @@ def test_the_route_refuses_without_the_internal_token(key) -> None:
     assert client.get(PATH, headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.get(PATH, headers={"X-TrustedRouter-Internal-Token": "wrong"}).status_code == 401
     assert client.get(PATH, headers={"X-TrustedRouter-Internal-Token": TOKEN}).status_code == 200
-    assert _get(client).status_code == 200
+    ok = _get(client)
+    assert ok.status_code == 200
+    # Authentication comes before every other answer: a matching ETag, ...
+    etag = {"If-None-Match": ok.headers["etag"]}
+    assert _get(client, **etag).status_code == 304
+    assert client.get(PATH, headers=etag).status_code == 401
+    assert client.get(PATH, headers={**etag, "Authorization": "Bearer wrong"}).status_code == 401
+    # ... a refused window, ...
+    refusing = TestClient(_app(_settings(key), Clock(DEADLINE + 600),
+                               inputs=_fixture_inputs(Clock(DAY))))
+    assert _get(refusing).status_code == 503
+    assert refusing.get(PATH).status_code == 401
+    # ... and no usable key.
+    other = b64encode(Ed25519PrivateKey.generate().public_key().public_bytes_raw())
+    unsigned = TestClient(create_app(_settings(key, routing_snapshot_public_key=other),
+                                     init_observability=False))
+    assert _get(unsigned).status_code == 503
+    assert unsigned.get(PATH).status_code == 401
 
 
 def test_a_deployed_plane_without_a_token_refuses() -> None:
@@ -285,6 +303,61 @@ def test_a_refused_window_answers_503_and_is_not_compiled_again(key) -> None:
     assert _get(client).status_code == 200 and publisher.compiles == 3
 
 
+def test_an_instance_imported_before_a_retirement_refuses_the_windows_after_it(key) -> None:
+    # The fixture's retirement: DeepInfra's GPT-OSS-120B Turbo, 2026-10-20 00:00.
+    retirement = DAY + 24 * HOUR
+    settings = _settings(key)
+    clock = Clock(retirement + 1_800)
+
+    def imported_at(resolved: int) -> Callable[[], CatalogInputs]:
+        def inputs() -> CatalogInputs:
+            return replace(_fixture_inputs(clock)(), catalog_resolved_at=resolved)
+        return inputs
+
+    warm = build_publisher(settings, clock=clock, inputs=imported_at(retirement - 1_800))
+    cold = build_publisher(settings, clock=clock, inputs=imported_at(retirement + 1_200))
+    colder = build_publisher(settings, clock=clock, inputs=imported_at(retirement + 1_500))
+    with pytest.raises(SnapshotUnavailable) as refused:
+        warm.current()
+    assert refused.value.status == "snapshot-refused"
+    # Positive control: instances imported after it publish, the same bytes.
+    assert cold.current().response == colder.current().response
+
+
+def test_a_transient_failure_is_retried_after_a_short_backoff(key) -> None:
+    clock = Clock(DAY + HOUR + 60)
+    calls: list[int] = []
+    good = _fixture_inputs(clock)
+
+    def flaky() -> CatalogInputs:
+        calls.append(clock.now)
+        if len(calls) == 1:
+            raise OSError("evidence file briefly unreadable")
+        return good()
+
+    publisher = build_publisher(_settings(key), clock=clock, inputs=flaky)
+    with pytest.raises(SnapshotUnavailable) as failed:
+        publisher.current()
+    assert failed.value.status == "snapshot-error"
+    assert failed.value.retry_after == publisher_module.ERROR_BACKOFF_SECONDS
+    # Within the backoff, no attempt; not a refusal held for the window.
+    clock.now += publisher_module.ERROR_BACKOFF_SECONDS - 1
+    with pytest.raises(SnapshotUnavailable):
+        publisher.current()
+    assert len(calls) == 1
+    clock.now += 1
+    assert publisher.current().compiled_at == DAY + HOUR and len(calls) == 2
+
+
+def test_a_clock_before_compiled_at_is_not_served_the_cached_window(key) -> None:
+    clock = Clock(DAY + HOUR + 60)
+    publisher = build_publisher(_settings(key), clock=clock, inputs=_fixture_inputs(clock))
+    later = publisher.current()
+    clock.now = DAY + HOUR - 1
+    earlier = publisher.current()
+    assert earlier is not later and earlier.compiled_at == DAY and publisher.compiles == 2
+
+
 def test_concurrent_polls_compile_once(key) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
@@ -369,7 +442,7 @@ def test_no_secret_appears_in_responses_or_logs(key, caplog: pytest.LogCaptureFi
 def test_the_live_compile_is_off_the_event_loop_and_within_budget(
     key, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """About 1.5 s of CPU per window: compiled lazily under the publisher's lock,
+    """1.5 to 4.5 s of CPU per window: compiled lazily under the publisher's lock,
     in the threadpool worker of a sync route, never on the event loop, once a window."""
     router = APIRouter()
     fastpath_snapshot.register(router)
@@ -386,7 +459,7 @@ def test_the_live_compile_is_off_the_event_loop_and_within_budget(
     publication = publisher.current()
     elapsed = time.monotonic() - started
     assert len(publication.body) > 1_000_000
-    # Today about 1.5 s; the bound catches a runaway, not a slow host.
+    # 1.5 to 4.5 s on development machines; the bound catches a runaway.
     assert elapsed < 60
     started = time.monotonic()
     assert publisher.current() is publication and publisher.compiles == 1

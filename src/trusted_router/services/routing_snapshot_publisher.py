@@ -11,12 +11,18 @@ produces identical bytes and an identical manifest (Ed25519 signatures are
 deterministic). A publication is served until the next hour or its
 ``not_after``, whichever comes first, and the next poll after that compiles the
 next window. A window whose compile the catalog refuses is not compiled again;
-the next window start retries.
+the next window start retries. Any other failure is retried after a few
+seconds. An instance imported before a retirement cannot compile a window
+starting after it (the compiler refuses, so two instances never publish two
+documents for one window); it answers 503 until it is replaced.
 
-Compiling takes about 1.5 s of CPU. It runs lazily, single-flight under a
-lock, in the threadpool worker of the first poll that finds no current
-snapshot; never on the event loop, never on authorize. Polls that arrive
-meanwhile wait for it and are then served the same cached bytes.
+Compiling takes 1.5 to 4.5 s of CPU on development machines (4.3 s measured in
+review). On the combined service it holds the GIL against authorize for that
+long, once a window per polled instance: measure it there before enabling. It
+runs lazily, single-flight under a lock, in the threadpool worker of the first
+poll that finds no current snapshot; never on the event loop, never on
+authorize. Polls that arrive meanwhile wait for it and are then served the same
+cached bytes.
 
 Nothing here logs or returns key material: the signing key is read from its
 mounted file once, at construction; responses carry the body and the manifest,
@@ -68,6 +74,8 @@ AUDIENCE = "tr-fastpath-edge"
 # Six hours of last-good copy for the edge, recompiled every hour.
 HORIZON_SECONDS = 6 * EPOCH_SECONDS
 RESPONSE_KIND = "tr-routing-snapshot-publication"
+# After a failure other than the catalog's refusal, which may be transient.
+ERROR_BACKOFF_SECONDS = 5
 
 
 class SnapshotUnavailable(Exception):
@@ -162,6 +170,8 @@ class RoutingSnapshotPublisher:
         self._cached: Publication | None = None
         # The window start whose compile refused; a new start retries.
         self._refused: int | None = None
+        # After an unexpected failure, no compile before this instant.
+        self._error_until = 0
         self.compiles = 0
 
     @property
@@ -178,8 +188,8 @@ class RoutingSnapshotPublisher:
             cached = self._cached
             if cached is not None and cached.current(now):
                 return cached
-            hour = now - now % EPOCH_SECONDS
-            start, next_start = hour, hour + EPOCH_SECONDS
+            if now < self._error_until:
+                raise SnapshotUnavailable("snapshot-error", self._error_until, now)
             try:
                 inputs = self._inputs()
                 start, next_start = publication_window(now, inputs)
@@ -191,13 +201,21 @@ class RoutingSnapshotPublisher:
                 publication = self._sign(snapshot, next_start)
             except SnapshotUnavailable:
                 raise
-            except Exception as exc:
+            except SnapshotRefused as exc:
+                # The catalog refuses this window for good: an event between
+                # its start and the process's clocks or import, which a later
+                # attempt would meet again. The next window start retries.
                 self._cached, self._refused = None, start
-                # A refusal's reason names instants, providers or fields; any
-                # other failure is logged by its class alone.
-                reason = str(exc) if isinstance(exc, SnapshotRefused) else type(exc).__name__
-                log.warning("routing snapshot compile refused: %s", reason)
+                # The reason names instants, providers or fields, never secrets.
+                log.warning("routing snapshot compile refused: %s", exc)
                 raise SnapshotUnavailable("snapshot-refused", next_start, now) from None
+            except Exception as exc:
+                # Anything else may be transient: retry after a short backoff,
+                # logged by its class alone.
+                self._cached = None
+                self._error_until = now + ERROR_BACKOFF_SECONDS
+                log.warning("routing snapshot compile failed: %s", type(exc).__name__)
+                raise SnapshotUnavailable("snapshot-error", self._error_until, now) from None
             self._cached, self._refused = publication, None
             return publication
 

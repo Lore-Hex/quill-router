@@ -765,7 +765,8 @@ def publication_window(now: int, inputs: CatalogInputs) -> tuple[int, int]:
     ends. ``next_start`` is the first of those after ``now``, or the next hour.
     Every process with the same catalog derives the same start for every
     ``now`` in ``[start, next_start)``, so compiling at it gives the same bytes
-    on every instance, cold or warm.
+    on every instance, cold or warm, or refuses: a process imported before a
+    retirement that the window starts at or after cannot compile it.
     """
     if type(now) is not int or now < 0:
         raise SnapshotRefused("now must be integer seconds")
@@ -779,16 +780,23 @@ def publication_window(now: int, inputs: CatalogInputs) -> tuple[int, int]:
 def _not_after(at: int, horizon: int, inputs: CatalogInputs) -> int:
     """Clamp the window so the imported catalog and the expansions hold on it.
 
-    The registry drops what is retired at its import instant, so a retirement
-    in (at, catalog_resolved_at] would remove endpoints still available at
-    `at`. Retirements before the import stay in the registry, carried with
-    their exact retired_at. The privacy pools read each endpoint's catalog
-    currency on the catalog clock, so they are constant on the window only if
-    no catalog deadline falls between that clock and any of its instants.
+    The registry drops what is retired at its import instant, and the instant
+    is not in the body, so no retirement may fall between the import and `at`
+    on either side. After `at` (a retirement in (at, catalog_resolved_at]) the
+    registry has dropped endpoints still available at `at`; before it (in
+    (catalog_resolved_at, at]) the registry still holds endpoints, models and
+    privacy-pool members that a process imported after the retirement has
+    dropped. Either way two processes would compile the same window into
+    different bytes, so both refuse. The privacy pools read each endpoint's
+    catalog currency on the catalog clock, so they are constant on the window
+    only if no catalog deadline falls between that clock and any of its
+    instants.
     """
     retirements = _retirement_instants()
     resolved = inputs.catalog_resolved_at
-    not_after = _clamp(at, horizon, retirements, at, max(at, resolved), "retirement")
+    not_after = _clamp(
+        at, horizon, retirements, min(at, resolved), max(at, resolved), "retirement",
+    )
     deadlines = _catalog_deadlines(inputs)
     low = min(inputs.expansions_clock[0], at)
     high = max(inputs.expansions_clock[1], at)

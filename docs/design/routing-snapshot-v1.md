@@ -217,25 +217,31 @@ refuses (`SnapshotRefused`) rather than approximate:
   compiler compares the effective endpoint at each minute of each epoch with
   the epoch's start. Minute resolution is a guard on that assumption, not a
   proof about seconds.
-- **A retirement between `compiled_at` and the catalog's import.** The
-  registry is built once, at `CATALOG_RESOLVED_AT`, and drops what is retired
-  then; every import-time time dependence goes through
+- **A retirement between `compiled_at` and the catalog's import, on either
+  side.** The registry is built once, at `CATALOG_RESOLVED_AT`, and drops what
+  is retired then; every import-time time dependence goes through
   `provider_model_retired`. `CatalogInputs.catalog_resolved_at` carries that
   instant (floored to the second, which is exact against whole-second
-  retirements). A retirement in `(compiled_at, catalog_resolved_at]` refuses:
+  retirements). The import instant is not in the body, so the body must not
+  depend on it: a retirement between `min(compiled_at, catalog_resolved_at)`
+  and `max(compiled_at, catalog_resolved_at)` refuses. After `compiled_at`,
   the registry has already dropped endpoints still available at
   `compiled_at`, and with them models and members of the privacy pools.
+  Before `compiled_at`, the registry still holds endpoints, models and pool
+  members that a process imported after the retirement has dropped (on the
+  live catalog around 2026-10-23 00:00, 1823 endpoints and 696 models against
+  1808 and 688), so the two would publish different bytes for one window.
   `not_after` is clamped to the first retirement after `max(compiled_at,
   catalog_resolved_at)`, so catalogs imported at any two instants of the
-  window hold the same endpoints. Retirements between the import and
-  `compiled_at` do not refuse: the compiling process's registry still holds
-  those endpoints, the snapshot carries their exact `retired_at` (unavailable
-  throughout the window, as the process's own request-time filter has it),
-  and its models and privacy pools are that process's, which is what a shadow
-  comparison against that process sees. (Requiring
-  `compiled_at >= catalog_resolved_at` instead would also be correct, but
-  would refuse every hourly compile in the first partial hour of a process's
-  life even when nothing retired.)
+  window hold the same endpoints. A process imported before a retirement
+  therefore cannot compile any window starting after it; the publisher
+  answers 503 there until the instance is replaced (every deploy replaces
+  them), and the edge keeps its last good copy or polls another instance.
+  The rule is the compiler's, not the publisher's, so no caller can produce
+  two documents for one window. (Requiring `compiled_at >=
+  catalog_resolved_at` instead would also be correct, but would refuse every
+  hourly compile in the first partial hour of a process's life even when
+  nothing retired.)
 - **A catalog deadline the requested-model expansions straddle.** The
   privacy pools behind `trustedrouter/zdr`, `eu`, `e2e` and `green` read
   catalog currency on the catalog clock (`catalog_data._utc_now`), not on any
@@ -298,8 +304,8 @@ standard base64 (the verifier hashes the decoded bytes), and when to poll
 again (advisory; the manifest's `not_after` is what binds). `ETag` is the
 body's sha256 and a matching `If-None-Match` is a 304, so a poll between
 windows costs no body. `Cache-Control: no-store`. 503 with `status`
-`signer-unavailable` (no usable key) or `snapshot-refused` (with `retry_at`
-and `Retry-After`) when no window is current; the edge keeps its last good
+`signer-unavailable` (no usable key), `snapshot-refused` or `snapshot-error`
+(both with `retry_at` and `Retry-After`) when no window is current; the edge keeps its last good
 copy.
 
 **The window.** `publication_window(now, inputs)` starts a window at the
@@ -317,13 +323,18 @@ latest event, not at the hour, is what lets a window compiled after a
 catalog deadline pass: compiled at the hour, that deadline would fall between
 `compiled_at` and the expansions clock and refuse.
 
-**The compile.** About 1.5 s of CPU for the live catalog (3 MB). It runs
-lazily: the first poll that finds no current publication compiles under the
-publisher's lock (single flight; concurrent polls wait and get the same
-bytes), in the threadpool worker of the sync route, never on the event loop
-and never on authorize. Only instances the edge polls compile, once a window.
-A background refresher would compile on every instance every hour for a
-reader that polls one.
+**The compile.** 1.5 to 4.5 s of CPU for the live catalog (3 MB) on
+development machines; review measured 4.3 s. It runs lazily: the first poll
+that finds no current publication compiles under the publisher's lock (single
+flight; concurrent polls wait and get the same bytes), in the threadpool
+worker of the sync route, never on the event loop and never on authorize.
+Only instances the edge polls compile, once a window. A background refresher
+would compile on every instance every hour for a reader that polls one. The
+compile is CPU-bound Python: on the combined service it holds the GIL against
+that instance's authorize requests for its whole duration, so it must be
+measured on the release image and the service's CPU shape before publishing
+is turned on (`docs/runbooks/routing-snapshot-key.md`, step 5). A failure other than the catalog's refusal (status
+`snapshot-error`) is retried after 5 s; a refusal waits for the next window.
 
 **Key custody.** The Ed25519 private key is the Secret Manager secret
 `trustedrouter-routing-snapshot-signing-key` (`infra/routing_snapshot_key.tf`),
