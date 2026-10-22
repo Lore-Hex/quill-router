@@ -313,6 +313,7 @@ html {
     padding-block: 12px;
   }
   .trnav .tbar--catalog .brand { margin-right: auto; }
+  .trnav .tbar--catalog .menu { margin-left: 0; }
   .trnav .tbar--catalog .search {
     order: 4;
     flex: none;

@@ -59,7 +59,7 @@
 .trs .stat .who,.trs .stat .go,.trs .q .by,.trs .press a{font-size:15px;line-height:1.6}
 .trf summary{font-size:20px}
 .trft .col a{font-size:16px;line-height:1.6}.trft .col h3{font-size:15px}
-.trft .base{font-size:14px}.trft .brand{padding-bottom:0}
+.trft .base{font-size:14px}.trft .cols > .brand{padding-bottom:0}
 .mobile-disclosure>summary{font-size:16px}
 @media(max-width:700px){
  .proof-grid{grid-template-columns:1fr;gap:16px}
@@ -282,7 +282,7 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .trs .q blockquote{padding-left:16px}
  .trft{padding-top:24px;padding-bottom:16px}
  .trft .cols{gap:0;padding-block:0 12px}
- .trft .brand{align-items:flex-start;margin-bottom:16px}
+ .trft .cols > .brand{align-items:flex-start;margin-bottom:16px}
  .trft .footer-disclosure>summary{min-height:48px;padding:10px 0}
  .trft .base{gap:6px;padding-top:12px}
  .trft .base .r{gap:18px;flex-wrap:wrap}
@@ -343,9 +343,8 @@ footer{background:#070a08;border-top:1px solid #33403a}
 
 /* Tools sit by the heading; actions close each module at the copy's left edge. */
 .trc .fl .catalog-browse{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:10px;width:auto;max-width:100%;min-height:48px;padding:0 14px;border:1px solid #526859;border-radius:6px;background:#0c1411;color:#adbbb2;font:400 15px/1.4 var(--sans);letter-spacing:0;text-transform:none;text-align:left;cursor:pointer}
-.trc .fl .catalog-browse:hover{border-color:#8cab99;color:#edf8f5}
+.trc .fl .catalog-browse:hover{background:#14251c;border-color:#8cab99;color:#edf8f5}
 .trc .fl .catalog-browse:focus-visible{outline:3px solid #c0e1ff;outline-offset:3px;border-color:#8cab99;color:#edf8f5}
-@media(max-width:700px){.trc .fl .catalog-actions,.trc .fl .catalog-browse{width:100%}}
 .trp .pricing-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px;margin-top:4px}
 .trs .story-actions{padding:0 48px 36px;background:#cce8d7}
 @media(max-width:700px){.trs .story-actions{padding:0 24px 28px}}
@@ -360,9 +359,9 @@ footer{background:#070a08;border-top:1px solid #33403a}
 .trh .labs.paused .labtrack{animation-play-state:paused}
 .trh .lab{text-shadow:0 1px 8px #050706}
 
-/* Catalog toolbar: filters left, search right; search first and full width on phones. */
+/* Catalog toolbar: filters left, browse link right; browse link first on phones. */
 .trc .fl .catalog-actions{margin-left:auto}
-@media(max-width:700px){.trc .fl .catalog-actions{order:-1;flex-basis:100%;margin:0 0 8px}.trc .fl .catalog-browse{width:100%}}
+@media(max-width:700px){.trc .fl .catalog-actions{order:-1;flex-basis:100%;width:100%;margin:0 0 8px}.trc .fl .catalog-browse{width:100%}}
 
 /* Customer story: the collapsed perspective row reads as a quiet label, not another line of the headline. */
 .trs .customer-details>summary{font-style:italic;font-size:15px;color:#234636;margin:0 24px;padding:14px 0 16px;border-top:1px solid #9ebaa9}

@@ -1,6 +1,6 @@
 const { expect, test } = require("@playwright/test");
 
-for (const width of [1440, 1280, 880, 390, 320]) {
+for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
   test(`header controls remain reachable after scrolling at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
@@ -12,6 +12,7 @@ for (const width of [1440, 1280, 880, 390, 320]) {
       const brandLink = page.locator(".trnav .brand");
       await expect(brandLink).toHaveCSS("font-weight", "600");
       await expect(brandLink).toHaveCSS("gap", "12px");
+      await expect(page.locator(".trft .brand-link")).toHaveCSS("gap", "12px");
       const header = await page.locator(".trnav .tbar").boundingBox();
       const brand = await brandLink.boundingBox();
       const mark = page.locator(".trnav .brand-mark");

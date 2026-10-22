@@ -102,6 +102,7 @@ for (const width of [1440, 390, 320]) {
     await search.fill("no-such-model-xyz");
     await expect(page.locator("[data-model-result-count]")).toHaveText("0 results");
     await expect(page.locator("[data-model-empty]")).toBeVisible();
+    await expect(page.locator("[data-model-result-count]")).toBeInViewport();
     await page.locator("[data-model-clear]").first().click();
     await expect(search).toHaveValue("");
     await expect(search).toBeFocused();
@@ -115,6 +116,8 @@ for (const width of [1440, 390, 320]) {
     expect((await search.boundingBox()).y).toBeGreaterThanOrEqual(0);
     await search.fill("kimi k3");
     await expect(page.locator('[data-model-id="moonshotai/kimi-k3"]')).toBeVisible();
+    await expect(page.locator("[data-model-result-count]")).toBeInViewport();
+    await expect(search).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath("catalog-sticky-search.png") });

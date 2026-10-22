@@ -82,6 +82,8 @@
   search.addEventListener("input", () => {
     visibleLimit = pageSize;
     render();
+    // Keep the response to typing visible while the input stays in the sticky header.
+    count.scrollIntoView({ block: "start", behavior: "instant" });
   });
   sort.addEventListener("change", () => {
     visibleLimit = pageSize;
