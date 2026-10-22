@@ -280,6 +280,19 @@ def cases() -> list[dict[str, Any]]:
     add("image_input_unsupported", {"model": FLASH, "input_modalities": ["image"]})
     add("inkling_before_its_deadline", {"model": INKLING}, at="late")
     add("not_streaming", {"model": GEMINI, "stream": None})
+    # Rules the cases above leave tied in the fixture, so that the Go
+    # evaluator's order is held to Python's for each: provider.order as a
+    # rank and, without fallbacks, as a ceiling; the prepaid floor where no
+    # single-model preference replaces it; a variant suffix over the body's
+    # sort and over an earlier suffix; the latency table where it differs
+    # from the default one.
+    add("order_reorders", {"model": GLM, "provider": {"order": ["fireworks"]}})
+    add("order_ceiling_without_fallbacks", {"model": GLM, "provider": {"order": ["fireworks", "together"], "allow_fallbacks": False}})
+    add("order_and_only_disjoint", {"model": GLM, "provider": {"order": ["fireworks"], "only": ["wafer"], "allow_fallbacks": False}})
+    add("prepaid_floor_across_models", {"model": FLASH, "models": [TENCENT_FLASH]})
+    add("variant_suffix_over_body_sort", {"model": f"{GLM}:floor", "provider": {"sort": "latency"}})
+    add("variant_suffix_later_wins", {"model": f"{GLM}:floor", "models": [f"{FLASH}:nitro"]})
+    add("latency_table_across_models", {"model": INKLING, "models": [GLM], "provider": {"sort": {"by": "latency", "partition": "none"}}})
     return out
 
 
