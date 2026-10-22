@@ -102,7 +102,8 @@ def test_confidential_privatemode_has_only_reviewed_priced_credits_routes():
         route = routes[0]
         assert route.usage_type == "Credits"
         assert route.upstream_id == upstream_id
-        assert catalog.endpoint_privacy_tier(route) == catalog.PRIVACY_TIER_CONFIDENTIAL
+        assert catalog.endpoint_privacy_tier(route) == catalog.PRIVACY_TIER_TRUSTED
+        assert catalog.endpoint_meets_privacy_requirement(route, catalog.PRIVACY_TIER_CONFIDENTIAL)
         if upstream_id in privatemode._TRANSCRIPTION_MODELS:
             from trusted_router.transcription import TRANSCRIPTION_MODELS
 
