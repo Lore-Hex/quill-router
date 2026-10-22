@@ -3,6 +3,7 @@ startup script, the load mix)."""
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -353,6 +354,18 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
     assert set(rendered) == set(_SNAPSHOT_ATTRIBUTES), sorted(rendered)
     assert not any("${" in value for value in rendered.values()), rendered
     assert rendered["fastpath-edge-snapshot-plane"] == "gcp/us-central1"
+    # The key and kid are the ones the control plane signs with (rollout.sh's
+    # pin): a different valid key fails every verification, and a key that is
+    # not 32 bytes stops the binary at start, admission and all.
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text(encoding="utf-8")
+    for attribute, literal in (
+        ("fastpath-edge-snapshot-public-key", "ROUTING_SNAPSHOT_PUBLIC_KEY"),
+        ("fastpath-edge-snapshot-kid", "ROUTING_SNAPSHOT_KID"),
+    ):
+        pinned = re.search(rf'^{literal}="([^"]+)"$', rollout, re.M)
+        assert pinned and rendered[attribute] == pinned.group(1), (attribute, pinned)
+    key = rendered["fastpath-edge-snapshot-public-key"]
+    assert len(base64.urlsafe_b64decode(key + "=" * (-len(key) % 4))) == 32, key
     ran = _run_snapshot_block(script, upstream=upstream.group(1), **rendered)
     assert ran.returncode == 0, ran.stderr
     assert ran.stdout == (
