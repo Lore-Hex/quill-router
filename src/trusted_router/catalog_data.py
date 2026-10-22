@@ -2227,25 +2227,6 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.typesafe.ai/legal",
     ),
-    "vercel-ai-gateway": Provider(
-        slug="vercel-ai-gateway",
-        name="Vercel AI Gateway",
-        # Carried for ONE modality and ONE job: the automatic fallback for
-        # TypeSafe's Jev decision model when TypeSafe's own API is down or
-        # rate limiting. Chat models are deliberately not resold through a
-        # second gateway.
-        supports_chat=False,
-        supports_prepaid=True,
-        supports_byok=False,
-        provider_policy=(
-            "Fallback route for TypeSafe AI's Jev decision model, through "
-            "Vercel AI Gateway's /v1/evaluate endpoint. A request served here "
-            "transits two third parties (Vercel, then TypeSafe). No contractual "
-            "ZDR, confidential-compute, or E2EE claim is tracked for this route."
-        ),
-        provider_policy_url="https://vercel.com/docs/ai-gateway/modalities/evaluation",
-        provider_headquarters_country="US",
-    ),
     "fal": Provider(
         slug="fal",
         name="fal.ai",
@@ -2393,7 +2374,6 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "zro",
         "privatemode",
         "telluvian",
-        "vercel-ai-gateway",
         "typesafe",
         "regolo",
         "anthropic",
@@ -3514,13 +3494,10 @@ _DECISION_SPECS: tuple[_DecisionSpec, ...] = (
         # TypeSafe budgets 32k tokens for `state` plus the longest question.
         "context_length": 32000,
         "cost_dollars_per_million": "0.042",
-        "fallback_routes": (
-            {
-                "provider": "vercel-ai-gateway",
-                "upstream_id": "typesafe-ai/jev",
-                "cost_dollars_per_million": "0.042",
-            },
-        ),
+        # Vendor only. A Vercel AI Gateway relay was wired as the failover from
+        # 2026-09-21 to 2026-10-22 and served three requests, all a launch test;
+        # it sent `state` through a second third party for no measured benefit.
+        "fallback_routes": (),
     },
 )
 

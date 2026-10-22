@@ -1,7 +1,7 @@
 """POST /v1/decide: decision models in the catalog and on gateway authorize.
 
 Two kinds of model answer the route. A HOSTED decision model (TypeSafe AI's Jev,
-at TypeSafe's own API with Vercel AI Gateway as the failover) is its own catalog
+at TypeSafe's own API, its only host) is its own catalog
 entry: no chat, input-only pricing. A NATIVE decision model is an ordinary chat model the attested gateway
 drives with strict structured output; it keeps its chat entry and authorizes as
 chat, pinned to one provider.
@@ -58,7 +58,7 @@ NAMED_IDS = [named.id for named in NAMED_DECISION_MODELS]
 AUTHORIZE = "/v1/internal/gateway/authorize"
 
 
-JEV_HOSTS = [("typesafe", "jev-latest"), ("vercel-ai-gateway", JEV)]
+JEV_HOSTS = [("typesafe", "jev-latest")]
 
 
 def _jev_built_from_its_pinned_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Model:
@@ -75,11 +75,11 @@ def _jev_built_from_its_pinned_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
 
 def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch, model: Model | None = None) -> None:
-    """Jev's routes as the builder makes them from its spec: the vendor's, then
-    the relay's. The catalog drops a route whose host's manifest goes dark, and
-    TypeSafe or Vercel delisting Jev must not fail a rule about what the spec
-    builds or how a request for Jev routes. Whether both hosts still serve it
-    is test_every_decision_spec_route_is_still_served, a provider_health check."""
+    """Jev's routes as the builder makes them from its spec: the vendor's only.
+    The catalog drops a route whose host's manifest goes dark, and TypeSafe
+    delisting Jev must not fail a rule about what the spec builds or how a
+    request for Jev routes. Whether the host still serves it is
+    test_every_decision_spec_route_is_still_served, a provider_health check."""
     from trusted_router import catalog, catalog_ingest
 
     model = model or catalog.MODELS.get(JEV) or catalog_ingest._decision_models()[JEV]
@@ -173,6 +173,11 @@ def test_every_decision_fallback_route_became_an_endpoint() -> None:
             # Azure is the only verified direct host for this preview. Never
             # substitute a different model or a relay as implicit failover.
             assert spec["provider"] == "azure" and spec["fallback_routes"] == ()
+        elif spec["id"] == JEV:
+            # TypeSafe only, by decision (2026-10-22): the Vercel relay served
+            # three requests in a month and put `state` through a second third
+            # party. A relay coming back has to be a new decision, not a drift.
+            assert spec["provider"] == "typesafe" and spec["fallback_routes"] == ()
         else:
             assert spec["fallback_routes"], f"{spec['id']} has no failover host"
         served = {(e.provider, e.upstream_id) for e in built.values() if e.model_id == spec["id"]}
@@ -322,11 +327,8 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
 def test_decide_resolver_accepts_only_decision_models(monkeypatch: pytest.MonkeyPatch) -> None:
     _serve_jev_as_built(monkeypatch)
     candidates = decide_route_endpoint_candidates({"model": JEV}, Settings(environment="test"))
-    # Vendor first by default, relay second: the order IS the failover plan.
-    assert [(m.id, e.provider) for m, e in candidates] == [
-        (JEV, "typesafe"),
-        (JEV, "vercel-ai-gateway"),
-    ]
+    # The vendor is Jev's only host: no relay carries `state` anywhere else.
+    assert [(m.id, e.provider) for m, e in candidates] == [(JEV, "typesafe")]
     with pytest.raises(Exception) as raised:  # noqa: PT011 - api_error is an HTTPException
         decide_route_endpoint_candidates(
             {"model": "openai/gpt-5.4-nano"}, Settings(environment="test")
@@ -410,8 +412,8 @@ async def test_gateway_authorizes_the_hosted_decision_model(
     payload = response.json()["data"] if "data" in response.json() else response.json()
     assert payload["provider"] == "typesafe"
     assert payload["model"] == JEV
-    # The gateway fails over by walking this list, so both hosts must be in
-    # it, in order, each with the upstream id that host understands.
+    # The gateway walks this list; Jev's is the vendor alone, with the
+    # upstream id the vendor understands.
     assert [
         (candidate["provider"], candidate["upstream_model"])
         for candidate in payload["route_candidates"]
@@ -419,17 +421,27 @@ async def test_gateway_authorizes_the_hosted_decision_model(
 
 
 @pytest.mark.asyncio
+async def test_jev_cannot_be_routed_through_the_retired_relay(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_jev_as_built(monkeypatch)
+    for provider in ({"order": ["vercel-ai-gateway"]}, {"only": ["vercel-ai-gateway"]}):
+        response = await _authorize({
+            "model": JEV,
+            "route_type": "decide",
+            "estimated_input_tokens": 400,
+            "max_output_tokens": 1,
+            "provider": provider,
+        })
+        assert response.status_code == 400, response.text
+        assert "Unknown provider" in response.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "expected"),
     [
-        # Default and an explicit vendor-first order agree.
-        (None, ["typesafe", "vercel-ai-gateway"]),
-        ({"order": ["typesafe", "vercel-ai-gateway"]}, ["typesafe", "vercel-ai-gateway"]),
-        # A caller's explicit preference still beats the default ranking.
-        ({"order": ["vercel-ai-gateway"]}, ["vercel-ai-gateway", "typesafe"]),
-        ({"only": ["vercel-ai-gateway"]}, ["vercel-ai-gateway"]),
+        (None, ["typesafe"]),
+        ({"order": ["typesafe"]}, ["typesafe"]),
         ({"only": ["typesafe"]}, ["typesafe"]),
-        ({"ignore": ["typesafe"]}, ["vercel-ai-gateway"]),
     ],
 )
 async def test_jev_host_order_follows_the_default_then_the_caller(
