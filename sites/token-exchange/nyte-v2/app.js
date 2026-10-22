@@ -13,8 +13,6 @@ dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
 const video=document.getElementById('filmVid');
 document.getElementById('filmPlay')?.addEventListener('click',()=>{video.controls=true;video.play().catch(()=>{document.getElementById('film').classList.remove('playing');});});
 video?.addEventListener('playing',()=>{document.getElementById('film').classList.add('playing');window.TokenExchangeAnalytics?.track('nyte.video_played');},{once:true});
-const art=document.querySelector('.supplier-art');
-if(art && 'IntersectionObserver' in window)new IntersectionObserver(entries=>entries.forEach(e=>art.classList.toggle('is-animating',e.isIntersecting)),{threshold:.3}).observe(art);
 const ctas={'Start building':'api_quick_start','Get the buyer deck':'buyer_deck','Get the provider deck':'provider_deck','Get your API key':'api_key','Read documentation':'documentation','Apply as a provider':'apply_provider','List spare capacity':'spare_capacity','Get the open-source stack':'open_source_stack','Operator guide':'operator_guide','Explore the index':'index'};
 document.addEventListener('click',e=>{
  const el=e.target.closest('a,button');if(!el)return;

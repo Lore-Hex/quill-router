@@ -25,6 +25,13 @@ class NyteV2Tests(unittest.TestCase):
         self.assertEqual(page.count('href="https://trustedrouter.com/console/api-keys?'), 2)
         self.assertNotIn('/console/keys', page)
 
+    def test_supplier_listing_steps(self):
+        page = render_nyte('sup')
+        for title in ('Listing status', 'Show your service', 'Make it verifiable', 'Serve real workloads'):
+            self.assertEqual(page.count(title), 1)
+        self.assertNotIn('supplier-art', page)
+        self.assertNotIn('vsteps', page)
+
     def test_supplier_stack_panel(self):
         page = render_nyte('sup')
         for label in ('TrustedRouter runs', 'The inference stack is open source.', 'You run',
