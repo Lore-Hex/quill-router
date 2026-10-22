@@ -44,6 +44,12 @@
         <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
       </div></details>
     </div>
+    {% if credits_available %}
+    <a class="console-balance{% if credits_empty %} is-empty{% endif %}" href="/console/credits" title="API credit {{ credits_available }}" aria-label="API credit {{ credits_available }}. Add credits">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8V5H4a2 2 0 0 0 0 4h17v11H4a2 2 0 0 1-2-2V7m19 6h-6v4h6"/></svg>
+      <span>{{ credits_available }}</span>
+    </a>
+    {% endif %}
     <button class="console-menu-toggle" type="button" aria-controls="console-navigation" aria-expanded="false" hidden>Menu</button>
   </header>
   <div class="console-shell">
