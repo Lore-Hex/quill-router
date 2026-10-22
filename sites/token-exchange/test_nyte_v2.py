@@ -12,7 +12,7 @@ class NyteV2Tests(unittest.TestCase):
             self.assertNotIn('Plan a pilot', page)
             self.assertNotIn('data-go=', page)
             self.assertNotIn('/confidential-api', page)
-            self.assertIn('href="/confidential#start">API quick start</a>', page)
+            self.assertIn('href="/confidential#start">Start building</a>', page)
             self.assertNotIn('data-open="pdeck"', page)
             self.assertIn('name="website"', page)
             self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)

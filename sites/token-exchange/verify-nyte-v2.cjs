@@ -62,7 +62,7 @@ await page.clock.resume();
 await page.getByRole('button',{name:'Menu',exact:true}).click();await page.locator('nav').getByRole('link',{name:'Confidential API',exact:true}).click();await page.waitForURL('**/confidential');
 await page.locator('.privacy-price').first().waitFor();assert.equal(await page.locator('.health-bar').count(),24);assert.equal(await page.locator('.build-digest').count(),1);
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-await page.locator('.hero-api a',{hasText:'API quick start'}).click();await page.waitForURL('**/confidential#start');
+await page.locator('.hero-api a',{hasText:'Start building'}).click();await page.waitForURL('**/confidential#start');
 await page.getByRole('button',{name:'Get the buyer deck',exact:true}).click();assert(await page.locator('dialog').isVisible());
 await page.getByRole('button',{name:'Download the deck',exact:true}).click();assert.equal(downloads,0);
 await page.locator('input[name=email]').fill('preview@example.com');await page.getByRole('button',{name:'Download the deck',exact:true}).click();await page.waitForFunction(()=>document.getElementById('brochure-status').dataset.state==='error');assert.equal(downloads,1);assert(!(events.some(e=>e.event==='nyte.form_submitted')));
@@ -71,8 +71,9 @@ await page.keyboard.press('Escape');assert(!(await page.locator('dialog').isVisi
 await page.waitForTimeout(200);assert(events.some(e=>e.event==='nyte.form_submitted'&&e.form==='buyer_deck'));assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta==='api_quick_start'));assert(events.every(e=>!('email' in e)));
 evidence={...evidence,generated_at:'2000-01-01T00:00:00Z'};await page.reload();await page.waitForTimeout(200);assert.equal(await page.locator('.build-digest').count(),0);assert.equal(await page.locator('.health-bar').count(),0);assert(await page.getByRole('link',{name:'Published release'}).isVisible());
 
+await page.setViewportSize({width:1440,height:900});
 await page.goto(base+'/index');
-await page.getByRole('link',{name:'API quick start',exact:true}).click();await page.waitForURL('**/confidential#start');assert.equal(await page.locator('#start').count(),1);
+await page.getByRole('link',{name:'Start building',exact:true}).click();await page.waitForURL('**/confidential#start');assert.equal(await page.locator('#start').count(),1);
 await page.goto(base+'/index');
 await page.getByRole('link',{name:'Explore the open-source inference stack',exact:true}).click();await page.waitForURL('**/suppliers#open-stack');assert.equal(await page.locator('#open-stack').count(),1);
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));

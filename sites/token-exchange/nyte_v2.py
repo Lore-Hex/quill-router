@@ -24,11 +24,15 @@ def index_panel() -> str:
         result += f'<div class="idx-row"><span class="g">{html.escape(grade["code"])}</span><div class="d"><b>{html.escape(grade["name"])}</b><small>{html.escape(grade["use"])}</small></div><span class="p">${quote["value"]:,}</span><span class="chg">{change(quote["change_7d"])}</span></div>'
     return result + '</div>'
 
-def render_nyte(page: str = "home") -> str:
+def render_nyte(
+    page: str = "home", *, content: str | None = None, extra_head: str = "",
+    image_url: str = "https://nytokenexchange.com/assets/og-new-york.png",
+) -> str:
     path, title, description = {
         "home": ("/", "New York Token Exchange: enterprise AI from competing providers", "Every major model from competing providers, through one API. Set your privacy and price rules once, and check the proof yourself."),
         "api": ("/confidential", "Confidential API · New York Token Exchange", "Frontier AI for sensitive work. Confidential compute, end-to-end encryption and live evidence."),
         "sup": ("/suppliers", "Suppliers · New York Token Exchange", "Sell your inference to enterprise buyers. List your models and prices once."),
+        "index": ("/index", "NYTE Token Index | New York Token Exchange", "Compare AI inference prices across four capability grades. List spare GPU capacity under your own brand on the New York Token Exchange."),
     }[page]
     version = hashlib.sha256((SOURCE / "styles.css").read_bytes() + (SOURCE / "app.js").read_bytes() + (HERE / "analytics.js").read_bytes()).hexdigest()[:12]
     markets = json.loads((HERE / "markets.json").read_text())
@@ -37,9 +41,10 @@ def render_nyte(page: str = "home") -> str:
         + (' aria-current="page"' if market["slug"] == "new-york" else '')
         + '>' + html.escape(market["region"]) + '</a>' for market in markets
     )
-    content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel())
+    if content is None:
+        content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel())
     result = (SOURCE / "shell.html").read_text()
-    for key, value in dict(title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/live-evidence.js?v=' + version + '" defer></script>' if page == "api" else "").items():
+    for key, value in dict(extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/live-evidence.js?v=' + version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
     def tracked(match):
         url = urlsplit(html.unescape(match[1]))

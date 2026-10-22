@@ -246,7 +246,7 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
 .duty li::before{content:"✓";position:absolute;left:2px;color:var(--mint)}
 
 .sec-lede{margin-top:16px}
-.oss-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:72px;align-items:center}
+.oss-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:72px;align-items:end}
 .oss-grid .body{color:var(--t2);margin:20px 0 8px;max-width:32em}
 .vsteps{list-style:none;margin:24px 0 0;padding:0;counter-reset:v}
 .vsteps li{counter-increment:v;display:grid;grid-template-columns:44px minmax(0,1fr);padding:20px 0;border-top:1px solid var(--rule)}
