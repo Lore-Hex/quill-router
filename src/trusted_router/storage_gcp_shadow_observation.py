@@ -86,7 +86,7 @@ class UnknownCommit(RuntimeError):
 
 
 class ContentionLoss(RuntimeError):
-    """The transaction was aborted and definitively did not commit."""
+    """The transaction lost its claim or aborted; it definitively did not commit."""
 
 
 def shadow_health_claim_read() -> Statement:
@@ -165,6 +165,7 @@ class ObservationStore:
         attempted = False
         committing = False
         aborted = False
+        loss: ContentionLoss | None = None
         def record_abort(error: BaseException) -> None:
             nonlocal aborted
             seen: set[int] = set()
@@ -176,7 +177,7 @@ class ObservationStore:
                     break
                 cause = cause.__cause__
         def once(tx: Any) -> T:
-            nonlocal attempted, committing, aborted
+            nonlocal attempted, committing, aborted, loss
             if attempted:
                 # Session re-enters only after ABORTED. Do not run a second attempt.
                 aborted = True
@@ -188,6 +189,8 @@ class ObservationStore:
                 budget.remaining(cap)
             except Exception as error:
                 # SDK rollback can replace this exception. Retain the abort now.
+                if isinstance(error, ContentionLoss):
+                    loss = error
                 record_abort(error)
                 raise
             committing = True
@@ -204,6 +207,8 @@ class ObservationStore:
             # The bounded transport keeps SDK retry loops stopped with a plain
             # exception, retaining ABORTED as its cause for this classification.
             record_abort(error)
+            if loss is not None:
+                raise loss from None
             if aborted:
                 raise ContentionLoss("transaction_aborted") from None
             if committing:
@@ -236,8 +241,12 @@ class ObservationStore:
             HEALTH_CLAIM(value)  # The contract rejects skew before any write/scan.
             self.last_claim = value
             old = Row(CLAIM_KIND, "local/publish", body.encode()).value() if body is not None else None
-            if not claim_allowed(old, slot):
-                return False
+            if (not claim_allowed(old, slot) or old is not None
+                    and old["owner_boot_id"] != boot and old["slot"] > slot-2):
+                # Returning False still sends an empty Commit and holds the
+                # hot row until it completes. A loss must roll back instead;
+                # like ABORTED it is recorded once, never retried in this slot.
+                raise ContentionLoss("slot_already_claimed")
             row = Row.build(CLAIM_KIND, "local/publish", value)
             self.write(tx, [row], budget)
             if self.startup_retention:

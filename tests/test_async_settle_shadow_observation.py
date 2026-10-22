@@ -41,7 +41,12 @@ from trusted_router.services.async_settle import (
 )
 from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.services.async_settle_shadow_health import Service
-from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore, UnknownCommit
+from trusted_router.storage_gcp_shadow_observation import (
+    Budget,
+    ContentionLoss,
+    ObservationStore,
+    UnknownCommit,
+)
 
 NOW_US = int(dt.datetime(2026, 10, 12, tzinfo=dt.UTC).timestamp()*1_000_000)
 
@@ -406,7 +411,10 @@ def test_claim_fence_and_delayed_winner_fake() -> None:
     budget = Budget(logical_time()+.5, logical_time)
     slot = NOW_US//2_000_000
     assert store.claim("first", slot, NOW_US, budget)
-    assert not store.claim("second", slot, NOW_US, budget)
+    commits = db.commits
+    with pytest.raises(ContentionLoss):
+        store.claim("second", slot, NOW_US, budget)
+    assert db.commits == commits
     h = health()
     h["publisher_boot_id"] = "first"
     assert store.publish(h, budget)
@@ -414,7 +422,10 @@ def test_claim_fence_and_delayed_winner_fake() -> None:
     found = store.read_shadow_health()
     assert found is not None and found["body"] == h
     db.server_ns += 2_000_000_000
-    assert store.claim("second", slot+1, NOW_US+2_000_000, budget)
+    with pytest.raises(ContentionLoss):
+        store.claim("second", slot+1, NOW_US+2_000_000, budget)
+    db.server_ns += 2_000_000_000
+    assert store.claim("second", slot+2, NOW_US+4_000_000, budget)
     assert not store.publish(h, budget)
     assert all(kind in (HEALTH_KIND, CLAIM_KIND) for kind, _ in db.rows)
     assert db.transaction_execute_update_calls == 0

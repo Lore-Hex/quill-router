@@ -215,3 +215,46 @@ def test_released_vetoed_day_enumerates_remaining_slots():
     assert old.scheduled == 3 and old.missed == 2 and old.attempted == old.failed == 1
     assert [e["outcome"] for e in entries(svc) if e["day"] == day] == ["failed", "missed", "missed"]
     accounting(svc)
+
+
+@pytest.mark.parametrize("gap", [0, 1])
+def test_losing_claim_rolls_back_without_empty_commit(gap):
+    from trusted_router.storage_gcp_shadow_observation import Budget, ContentionLoss
+    svc, wall, _, job = owner()
+    db = svc.store.database
+    db.server_ns = (job.slot-gap)*m.SLOT_US*1000
+    assert svc.store.claim("incumbent", job.slot-gap, wall[0], Budget(101., svc.store.clock))
+    db.server_ns = wall[0]*1000
+    commits = db.commits
+    with pytest.raises(ContentionLoss, match="slot_already_claimed"):
+        svc.store.claim("follower", job.slot, wall[0], Budget(101., svc.store.clock))
+    assert db.commits == commits
+
+
+def test_one_aborted_cycle_keeps_recent_accepted_incumbent(sdk_database):  # noqa: F811
+    svc, job, db, _, _ = native_owner(sdk_database)
+    db.errors = [Aborted("claim aborted")]
+    svc.submit_publisher(job.slot, NOW_US)
+    outcome(svc, job, "lost_claim")
+    assert svc.is_incumbent(job.slot+1)
+    assert not svc.is_incumbent(job.slot+2)
+
+
+@pytest.mark.parametrize("rollback_error", [None, DeadlineExceeded, ServiceUnavailable])
+def test_claim_already_taken_uses_sdk_rollback_not_commit(sdk_database, monkeypatch, rollback_error):  # noqa: F811
+    import json
+
+    from tests.test_async_settle_shadow_health_stagger import claim
+    svc, job, db, _, sleeps = native_owner(sdk_database)
+    original = db.spanner_api.execute_streaming_sql
+    def claimed(**kwargs):
+        for response in original(**kwargs):
+            response._pb.values[0].string_value = json.dumps(claim("other", job.slot))
+            yield response
+    monkeypatch.setattr(db.spanner_api, "execute_streaming_sql", claimed)
+    if rollback_error is not None:
+        db.rollback_errors = [rollback_error("rollback response failed")]
+    svc.submit_publisher(job.slot, NOW_US)
+    outcome(svc, job, "lost_claim")
+    assert [name for name, _ in db.calls] == ["read", "rollback"]
+    assert not sleeps

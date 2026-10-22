@@ -64,11 +64,12 @@ def test_cadence_wait_rechecks_revocation_and_window(monkeypatch, change):
     assert not svc.store.database.commits
 
 
-def test_cold_stagger_uses_eight_buckets_and_preserves_warm_buckets():
+def test_stagger_retains_cold_spread_and_waits_for_warm_claim():
     cold = {shell.follower_stagger(f'boot-{b}', s, False) for b in range(12) for s in range(100)}
     warm = {shell.follower_stagger(f'boot-{b}', s, True) for b in range(12) for s in range(100)}
     assert cold == {0, .03, .06, .09, .12, .15, .18, .21}
     assert warm == {.06, .09, .12}
+    assert .054 < min(warm) < max(warm) < .250  # Claim committed before observation at B+54ms.
     assert shell.follower_stagger('boot', 7, False) == .09
 
 
@@ -77,7 +78,8 @@ def test_installed_fleet_publication_selects_follower_stagger(monkeypatch, gap):
     svc, wall, _, job, waits = timed_owner(monkeypatch)
     svc.observer.health = {'body': {'slot': job.slot-gap}}
     svc.submit_publisher(job.slot, wall[0])
-    outcome(svc, job, 'published')
+    outcome(svc, job, 'lost_claim' if gap <= 2 else 'published')
+    assert svc.store.database.commits == (0 if gap <= 2 else 2)
     assert waits == [shell.follower_stagger(svc.journal.boot, job.slot, gap <= 2)]
 
 
@@ -117,6 +119,8 @@ async def test_unknown_fallback_preserves_start_and_next_slot(monkeypatch, failu
                 with pytest.raises(RuntimeError, match='no worker start evidence'):
                     svc.submit_publisher(job.slot, wall[0])
         trace = outcome(svc, job, 'failed', unknown=True)
+        assert trace['release_reason'] == (
+            'publisher_worker_exception' if failure == 'worker' else 'publisher_submit_failed')
         PUBLISHER_SLOT_TRACE(trace)
         assert trace['rpc_count'] == 0 and trace['claim_at_ns'] is None
         assert svc.store.database.commits == commits
