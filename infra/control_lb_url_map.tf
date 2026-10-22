@@ -119,9 +119,10 @@ resource "google_compute_url_map" "control" {
     # fail over, is retried and lands on the control backend almost surely;
     # the terminals (settle, refund, heartbeat, disposition) are not all
     # retried, and the maintenance drains run longer than the edge
-    # backend's 30 s. The edge runs in us-central1 only while the control
-    # backend serves every region, so the share is small; its weight at 0
-    # is the way back.
+    # backend's 8 s. The split is global: the share is of every region's
+    # authorize, all of it served by the us-central1 edge and Python, so it
+    # stays small while the edge runs in one region. Its weight at 0 is the
+    # way back.
     path_rule {
       paths = ["/internal/gateway/authorize"]
       route_action {
