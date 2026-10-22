@@ -174,8 +174,8 @@ footer{border-top:1px solid #2a3b32;background:#0a110d}.trft{padding-bottom:32px
 .trc .m>div{min-width:0}
 .trc .m a,.trc .m code{overflow-wrap:anywhere}
 .catalog-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;flex-shrink:0}
-.trc .catalog-search{min-height:44px;padding:10px 14px;border:1px solid #526859;border-radius:6px;background:#0c1411;color:var(--green);font-size:14px}
-.trc .catalog-search:hover{background:#14251c}
+.trc .catalog-browse{min-height:44px;padding:10px 14px;border:1px solid #526859;border-radius:6px;background:#0c1411;color:var(--green);font-size:14px}
+.trc .catalog-browse:hover{background:#14251c}
 
 @media(min-width:881px){.catalog-actions{align-items:flex-start;flex-direction:column}}
 
