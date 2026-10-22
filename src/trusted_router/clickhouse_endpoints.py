@@ -6,15 +6,17 @@ behind it. Every GCP replica holds the whole dataset (one shard, three
 ReplicatedMergeTree replicas; docs/design/clickhouse-high-availability.md), so
 any of them can answer any read.
 
-One endpoint, which is what every deployment configures today, behaves exactly
-as before this module existed: one attempt, the caller's timeout, every error
-raised. Failover is only possible when the setting lists somewhere else to go.
+One endpoint behaves exactly as before this module existed: one attempt, the
+caller's timeout, every error raised. Failover is only possible when the
+setting lists somewhere else to go.
 
 The client moves to the next endpoint only when the query provably never
 reached ClickHouse (``httpx.ConnectError`` or ``httpx.ConnectTimeout``) or when
 the endpoint answered 502, 503 or 504. A read timeout, a 500 or any 4xx is
 raised: those fail identically on every replica, or would run an expensive
 query a second time while the first may still be executing.
+Small idempotent public-snapshot reads may explicitly opt into replay after
+a server disconnect; arbitrary analytics queries retain the stricter default.
 """
 
 from __future__ import annotations
@@ -62,8 +64,10 @@ def send_with_failover(
     client: httpx.Client,
     endpoints: tuple[str, ...],
     build: Callable[[str], httpx.Request],
+    *,
+    retry_read_disconnect: bool = False,
 ) -> httpx.Response:
-    """Send ``build(endpoint)`` to each endpoint in order until one can serve it."""
+    """Try ordered endpoints; disconnect replay is opt-in for small idempotent reads."""
     last = len(endpoints) - 1
     for index, endpoint in enumerate(endpoints):
         try:
@@ -72,6 +76,13 @@ def send_with_failover(
             if index == last:
                 raise
             _log_failover(endpoints, index, type(exc).__name__)
+            continue
+        except httpx.RemoteProtocolError:
+            # The request may have reached the server. Only callers proving a
+            # bounded idempotent read may replay it, never arbitrary analytics.
+            if not retry_read_disconnect or index == last:
+                raise
+            _log_failover(endpoints, index, "RemoteProtocolError")
             continue
         if index < last and response.status_code in FAILOVER_STATUS_CODES:
             response.close()

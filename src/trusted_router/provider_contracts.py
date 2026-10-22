@@ -5,6 +5,14 @@ SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
 NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
+NEXTBIT_UNAVAILABLE_MODEL_IDS = frozenset({
+    NEXTBIT_UNSLOPNEMO_MODEL_ID,
+    # October 22: absent from /models and direct authenticated chat returns
+    # HTTP 400 "Model alias ... not found or not default". Require recovery
+    # evidence before a stale catalog or hourly refresh can restore routing.
+    "undi95/remm-slerp-l2-13b",
+    "sao10k/l3.3-70b-euryale-v2.3",
+})
 STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
 STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
@@ -41,7 +49,7 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
         # A listed alias is not proof of serving availability. Require a
         # reviewed recovery before refresh can re-enable this route.
-        ("nextbit", NEXTBIT_UNSLOPNEMO_MODEL_ID),
+        *(("nextbit", model_id) for model_id in NEXTBIT_UNAVAILABLE_MODEL_IDS),
         # October 17: repeated production 404s reproduced directly as
         # model_not_found on the operator key; Kimi K2.6 succeeds on that key.
         # Public catalog/pricing still list this ID. Require a reviewed live
