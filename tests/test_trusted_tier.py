@@ -176,4 +176,6 @@ def test_trusted_disallows_unqualified_search_processors() -> None:
 
     assert _is_web_search_restricted_model("nyte/trusted")
     assert _is_web_search_restricted_model(TRUSTED_MODEL_ID)
+    assert _is_web_search_restricted_model("nyte/trusted:online")
+    assert _is_web_search_restricted_model("trustedrouter/auto", ["nyte/trusted"])
     assert _is_web_search_restricted_provider({"min_privacy": "trusted"})

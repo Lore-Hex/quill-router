@@ -5,7 +5,9 @@ implication ladder for raw technical flags: confidential compute describes
 where plaintext is processed, while ZDR describes retention. The Confidential
 product tier requires verified compute, E2EE and explicit ZDR together, from a
 host that is not the model's own vendor. The TR gateway hop is always attested;
-these values describe the upstream provider.
+these values describe the upstream provider. Trusted additionally requires
+membership in TrustedRouter's reviewed operator allowlist; it never replaces
+any of the Confidential prerequisites.
 Split out of the catalog.py god-module (#38); this module
 depends only on the catalog_data leaf and therefore cannot create a cycle.
 """
