@@ -155,6 +155,7 @@ PROVIDER_SLUGS = [
     "sail_research",
     "reka",
     "nextbit",
+    "nextbit_eu",
     "akashml",
     "mancer",
     "abliterate",
@@ -169,6 +170,7 @@ PROVIDER_SLUGS = [
     "lyceum",
     "amazon_bedrock",
     "greenference",
+    "coralbricks",
     "boundless",
     "zro",
     "byteplus",
@@ -203,6 +205,7 @@ PROVIDER_SLUGS = [
 # Python module names to public provider identities, never across products.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "amazon_bedrock": ("amazon-bedrock",),
+    "nextbit_eu": ("nextbit-eu",),
     "system1models": ("decisionmodelsio",),
     "system1models_eu": ("decisionmodelsio-eu",),
     "confidential_ai": ("confidential-ai",),

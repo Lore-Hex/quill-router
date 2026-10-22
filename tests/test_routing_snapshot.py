@@ -197,7 +197,13 @@ def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> Non
     for entry in snapshot.endpoints:
         endpoint = raw[entry.id]
         rule = entry.gateway_regions
-        assert rule.requires_explicit_origin == (endpoint.provider == "amazon-bedrock")
+        assert rule.requires_explicit_origin == (
+            endpoint.provider == "amazon-bedrock"
+            or (endpoint.provider, endpoint.model_id) in {
+                ("cloudflare-workers-ai", "cloudflare/clairic"),
+                ("regolo", "cloudflare/clef-flash"),
+            }
+        )
         for region in sorted(regions):
             available = (rule.only is None or region in rule.only) and region not in rule.deny
             assert available == provider_model_available_from_gateway_region(
@@ -226,7 +232,11 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
     assert "region = choose_region(settings, body.region or None)" in source
     assert "body_region=body.region," in source
     pipeline = inspect.getsource(authorize_candidates.resolve_candidates)
-    assert 'request.body_region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region)' in pipeline
+    assert " ".join('''request.body_region or (
+        "" if candidate_endpoint.provider == "amazon-bedrock"
+        or (candidate_endpoint.provider, candidate_endpoint.model_id)
+        in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL else region
+    )'''.split()) in " ".join(pipeline.split())
     us_only = Settings(environment="test", regions="us-central1,us-east4",
                        primary_region="us-central1")
     settings = snapshot_settings_from(us_only)
@@ -248,8 +258,13 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
         rule = entry.gateway_regions
         for body_region in (None, "", "europe-west4", "us-east4", "unknown-region"):
             checked = _gateway_region(settings, rule, body_region)
-            python = body_region or ("" if endpoint.provider == "amazon-bedrock"
-                                     else choose_region(us_only, body_region or None))
+            explicit_origin = endpoint.provider == "amazon-bedrock" or (
+                endpoint.provider, endpoint.model_id
+            ) in {
+                ("cloudflare-workers-ai", "cloudflare/clairic"),
+                ("regolo", "cloudflare/clef-flash"),
+            }
+            python = body_region or ("" if explicit_origin else choose_region(us_only, body_region or None))
             assert checked == python
             available = (rule.only is None or checked in rule.only) and checked not in rule.deny
             assert available == provider_model_available_from_gateway_region(

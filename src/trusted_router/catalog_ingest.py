@@ -300,6 +300,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "lyceum",
         "amazon-bedrock",
         "greenference",
+        "coralbricks",
         "boundless",
         "zro",
         "byteplus",
@@ -1137,6 +1138,7 @@ def _supplemental_provider_models_and_endpoints(
         "sail-research",
         "reka",
         "nextbit",
+        "nextbit-eu",
         "akashml",
         "mancer",
         "aion-labs",
@@ -1150,6 +1152,7 @@ def _supplemental_provider_models_and_endpoints(
         "lyceum",
         "amazon-bedrock",
         "greenference",
+        "coralbricks",
         "boundless",
         "zro",
         "byteplus",
@@ -1220,8 +1223,10 @@ def _supplemental_provider_models_and_endpoints(
             embedding = raw_model.get("model_type") == "embedding"
             decision = raw_model.get("model_type") == "decision"
             if decision and (
-                provider_slug not in {"decisionmodelsio", "decisionmodelsio-eu"}
-                or not model_id.startswith(provider_slug + "/s1-")
+                not (
+                    (provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"} and model_id.startswith(provider_slug + "/s1-"))
+                    or (provider_slug == "regolo" and model_id == "cloudflare/clef-flash" and upstream_id == "clef-flash")
+                )
                 or not decision_manifest_price_is_valid(raw_model)
             ):
                 continue
@@ -1366,7 +1371,7 @@ def _supplemental_provider_models_and_endpoints(
                     raw_model.get("input_modalities"),
                     default=("text",),
                 ),
-                output_modalities=_modalities(
+                output_modalities=("decision",) if decision else _modalities(
                     raw_model.get("output_modalities"),
                     default=("text",),
                 ),

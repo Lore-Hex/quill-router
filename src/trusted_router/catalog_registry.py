@@ -968,7 +968,9 @@ for _model_id, _model in _HELD_DECISION_MODELS.items():
     MODELS.setdefault(_model_id, _model)
 for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
     _existing_model = MODELS.get(_model_id)
-    if _existing_model is None:
+    if _existing_model is None or (_model.supports_decide and not _model.supports_chat):
+        # A callable hosted decision route is authoritative over an older
+        # snapshot's chat classification of the same weights.
         MODELS[_model_id] = _model
         continue
     # A provider-native catalog may advertise a capability before the shared

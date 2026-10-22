@@ -48,6 +48,7 @@ from scripts.pricing.providers import (
     boundless,
     byteplus,
     confidential_ai,
+    coralbricks,
     decart,
     fal,
     featherless,
@@ -61,6 +62,7 @@ from scripts.pricing.providers import (
     meta,
     near_ai,
     nextbit,
+    nextbit_eu,
     nscale,
     nvidia_nim,
     perplexity,
@@ -520,12 +522,14 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
 # available to the hourly refresh workflow, so a missing workflow secret is a
 # deployment error, not an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    coralbricks,
     meta,
     abliterate,
     upstage,
     sail_research,
     reka,
     nextbit,
+    nextbit_eu,
     akashml,
     mancer,
     aion_labs,
@@ -960,7 +964,8 @@ def _model_discovery_audit(
             raw_id = row.get("id") or row.get("name")
             if slug == "regolo":
                 raw_id = row.get("model_group")
-                if row.get("mode") != "chat" or str(raw_id).startswith("brick-"):
+                supported = row.get("mode") == "chat" or (row.get("mode") == "decision" and raw_id == "clef-flash")
+                if not supported or str(raw_id).startswith("brick-"):
                     continue
             if not isinstance(raw_id, str):
                 continue

@@ -365,6 +365,7 @@ def zdr_candidate_models(limit: int = 12) -> list[Model]:
             "tinfoil",
             "venice",
             "phala",
+            "nextbit-eu",
         ),
         limit=limit,
     )

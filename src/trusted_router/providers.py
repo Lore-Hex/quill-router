@@ -121,6 +121,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "lyceum": (("LYCEUM_API_KEY",), "https://api.lyceum.technology/openai/v1"),
     "amazon-bedrock": (("BEDROCK_API_KEY",), "https://bedrock-mantle.us-east-1.api.aws/v1"),
     "greenference": (("GREENFERENCE_API_KEY",), "https://llm.eu.greenference.com/trustedrouter/v1"),
+    "coralbricks": (("CORALBRICKS_API_KEY",), "https://inference.coralbricks.ai/v1"),
     "boundless": (("BOUNDLESS_API_KEY",), "https://api.inference.boundless.network/v1"),
     "zro": (("ZRO_API_KEY",), "https://zro.moonmath.ai/v1"),
     "confidential-ai": (("CONFIDENTIAL_AI_API_KEY",), "https://api.confidential.ai/v1"),

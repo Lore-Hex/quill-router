@@ -53,7 +53,10 @@ from trusted_router.openai_service_tiers import (
     openai_priority_pricing,
 )
 from trusted_router.partner_billing import PartnerBillingMode, partner_cost_microdollars
-from trusted_router.provider_contracts import provider_model_available_from_gateway_region
+from trusted_router.provider_contracts import (
+    EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL,
+    provider_model_available_from_gateway_region,
+)
 from trusted_router.routing import (
     NormalizedRoutingInputs,
     RoutePreferences,
@@ -329,10 +332,14 @@ def resolve_candidates(
         if provider_model_available_from_gateway_region(
             candidate_endpoint.provider,
             candidate_endpoint.model_id,
-            # Bedrock needs an explicit, upgraded gateway origin; missing
-            # metadata must not inherit the receiving control plane's region.
+            # New native adapters need an explicit, upgraded gateway origin;
+            # missing metadata must not inherit the control plane's region.
             # Preserve legacy region fallback for already-deployed providers.
-            request.body_region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region),
+            request.body_region or (
+                "" if candidate_endpoint.provider == "amazon-bedrock"
+                or (candidate_endpoint.provider, candidate_endpoint.model_id)
+                in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL else region
+            ),
         )
     ]
     return ResolvedCandidates(candidates, effective_preferences)

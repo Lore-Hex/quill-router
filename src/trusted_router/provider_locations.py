@@ -32,6 +32,40 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "nextbit-eu": InferenceLocations(
+        locations=("Spain (EU)",),
+        scope="The EU API's DPA commits to inference exclusively on NextBit infrastructure in Spain.",
+        routing="Model availability can change; the EU endpoint must not route inference outside Spain.",
+        provider_pinning="Use https://eu.api.nextbit256.com/v1, not the separate global endpoint.",
+        trustedrouter_pinning="Select provider.only=[nextbit-eu] with allow_fallbacks=false and min_privacy=zdr.",
+        declaration="Spain-only inference; gateway in the EU. Operational metadata retained; no content retention.",
+        evidence="Public DPA sections 4 and 11; EU catalog declares ES for every model; authenticated inference smoke",
+        reviewed_on="2026-10-14",
+        sources=(("EU processing and retention", "https://www.nextbit256.com/docs/dpa"),
+                 ("EU model catalog", "https://eu.api.nextbit256.com/v1/models")),
+    ),
+    "nextbit": InferenceLocations(
+        scope="NextBit's global API may run inference on third-party infrastructure outside the EEA.",
+        routing="Global model placement can change; the EU gateway does not establish EU-only inference.",
+        provider_pinning="The separately listed NextBit (EU) endpoint is required for Spain-only inference.",
+        trustedrouter_pinning="Use provider.only=[nextbit-eu] for the separate EU route, not nextbit.",
+        declaration="Global inference; countries unspecified. Not an EU-only route.",
+        evidence="Public DPA sections 4 and 11",
+        reviewed_on="2026-10-14",
+        sources=(("Global versus EU endpoints", "https://www.nextbit256.com/docs/dpa"),),
+    ),
+    "coralbricks": InferenceLocations(
+        locations=("United States",),
+        scope="Provider-declared US inference and data storage on leased infrastructure; no downstream inference operators.",
+        routing="Provider declares placement and failover remain within the US; individual regions are unspecified.",
+        provider_pinning="No documented per-request region parameter or serving-region response field.",
+        trustedrouter_pinning="Select provider.only=[coralbricks] with allow_fallbacks=false; no finer regional pin is available.",
+        declaration="United States (provider-declared); specific datacenter region is not exposed.",
+        evidence="Provider marketplace application dated 2026-10-14; country declaration, not attested location.",
+        reviewed_on="2026-10-14",
+        sources=(("API documentation", "https://www.coralbricks.ai/docs"),
+                 ("Trust center", "https://trust.coralbricks.ai/")),
+    ),
     "zro": InferenceLocations(
         locations=("Europe (countries unspecified)", "United States"),
         scope="Provider-declared inference locations, including third-party capacity. Authentication is routed through the EU.",

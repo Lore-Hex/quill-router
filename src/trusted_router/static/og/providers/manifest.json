@@ -170,6 +170,15 @@
     "route_mode": "Prepaid",
     "slug": "confidential-ai"
   },
+  "coralbricks": {
+    "card_version": 2,
+    "model_count": 2,
+    "name": "CoralBricks",
+    "privacy": "Zero retention",
+    "route_count": 2,
+    "route_mode": "Prepaid",
+    "slug": "coralbricks"
+  },
   "crusoe": {
     "card_version": 2,
     "model_count": 13,
@@ -547,6 +556,15 @@
     "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "nextbit"
+  },
+  "nextbit-eu": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "NextBit (EU)",
+    "privacy": "Zero retention",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "nextbit-eu"
   },
   "novita": {
     "card_version": 2,
