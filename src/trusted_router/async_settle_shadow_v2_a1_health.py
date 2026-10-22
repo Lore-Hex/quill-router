@@ -1,7 +1,6 @@
 """Pure A1 health freshness and publisher evidence. No clocks, IO or caches."""
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 
 from trusted_router import async_settle_shadow_v2_a1_deltas as d
@@ -160,7 +159,9 @@ PUBLISHER_SLOT_TRACE = versioned({"contract_revision": literal("a1"), "day": day
     "unknown_outcome": boolean, "late_cycle": boolean, "rpc_count": integer, "rpc_elapsed_us": integer}, 1024, _trace)
 # Historical traces retain their exact bytes. Only released-job records carry
 # this optional diagnostic; no reader freshness or publication rule changes.
-PUBLISHER_SLOT_TRACE = replace(PUBLISHER_SLOT_TRACE, optional_fields={"release_reason": text(64)})
+PUBLISHER_SLOT_TRACE = Schema(
+    PUBLISHER_SLOT_TRACE.fields, PUBLISHER_SLOT_TRACE.limit, PUBLISHER_SLOT_TRACE.invariant,
+    optional_fields={"release_reason": text(64)})
 
 
 def _trace_page(v: Any) -> None:
