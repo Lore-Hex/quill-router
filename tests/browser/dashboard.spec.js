@@ -271,7 +271,7 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
 
 test("delegated sign-in explains zero-credit onboarding", async ({ page }) => {
   const target = encodeURIComponent(
-    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",
+    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
   );
   await page.goto(`/?reason=signin&next=${target}`);
 
@@ -288,7 +288,7 @@ test("delegated sign-in explains zero-credit onboarding", async ({ page }) => {
 test("delegated consent exposes funding and an editable app cap", async ({ page }) => {
   await page.setExtraHTTPHeaders({ "x-trustedrouter-user": "oauth-browser@example.com" });
   await page.goto(
-    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",
+    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
   );
 
   await expect(page.getByRole("heading", { name: "Authorize SlopNazi" })).toBeVisible();

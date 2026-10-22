@@ -4,6 +4,7 @@ import re
 import tempfile
 import unittest
 import urllib.error
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
@@ -515,8 +516,18 @@ class ExchangeTests(unittest.TestCase):
             build(output)
             self.assertEqual(len(list(output.glob("*/index.html"))), 13)
             for market in load_markets():
+                sitemap = ET.parse(output / market["slug"] / "sitemap.xml")  # noqa: S314 — trusted build output
+                namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+                paths = ["/"]
+                if market["slug"] == "new-york":
+                    paths += ["/providers", "/badge", "/media-kit", "/index"]
+                self.assertEqual(
+                    [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
+                    [f'https://{market["domain"]}{path}' for path in paths],
+                )
                 self.assertIn(
-                    market["domain"], (output / market["slug"] / "sitemap.xml").read_text()
+                    f'Sitemap: https://{market["domain"]}/sitemap.xml',
+                    (output / market["slug"] / "robots.txt").read_text(),
                 )
             # Every copied asset is referenced by the built pages, styles or scripts, and nothing
             # referenced is missing.

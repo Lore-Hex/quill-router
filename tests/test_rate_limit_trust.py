@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.middleware import _rate_limit_request
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
 from trusted_router.services.ops_chat import OpsChatFanoutResult
@@ -79,8 +82,18 @@ def _active_session(email: str) -> str:
 
 
 @pytest.mark.parametrize("environment", ["production", "canary"])
+@pytest.mark.parametrize(
+    "forwarded_for",
+    [
+        "{spoof}",
+        "{spoof}, 203.0.113.10, 192.0.2.10",
+        "{spoof}, 192.0.2.99, 203.0.113.10, 192.0.2.10",
+    ],
+    ids=["direct-origin-shape", "gclb-shape", "extra-untrusted-hop"],
+)
 def test_deployed_env_uses_only_normalized_lb_client_ip_for_identity(
     environment: str,
+    forwarded_for: str,
 ) -> None:
     app = create_app(
         _production_settings(environment=environment, rate_limit_ip_per_window=2),
@@ -96,7 +109,7 @@ def test_deployed_env_uses_only_normalized_lb_client_ip_for_identity(
             headers={
                 "host": hosts[index],
                 "x-trustedrouter-client-ip": "2001:0db8:0:0:0:0:0:1",
-                "x-forwarded-for": f"198.51.100.{index}",
+                "x-forwarded-for": forwarded_for.format(spoof=f"198.51.100.{index}"),
                 "cf-connecting-ip": f"203.0.113.{index}",
                 "x-trustedrouter-user": f"spoof-{index}@example.com",
             },
@@ -108,6 +121,43 @@ def test_deployed_env_uses_only_normalized_lb_client_ip_for_identity(
     assert [response.status_code for response in responses[:2]] == [400, 400]
     assert responses[2].status_code == 429
     assert responses[2].json()["error"]["type"] == "rate_limited"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edge_header", "untrusted"])
+@pytest.mark.parametrize("path", ["/", "/v1/signup", "/internal/gateway/authorize"])
+async def test_rotating_xff_prefix_cannot_mint_new_ingress_buckets(
+    mode: str, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _production_settings(rate_limit_client_ip_mode=mode, rate_limit_ip_per_window=2)
+    limiter = InMemoryRateLimits(lock=threading.RLock())
+    monkeypatch.setattr(
+        InMemoryStore,
+        "hit_rate_limit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("untrusted source identity reached durable rate limits")
+        ),
+    )
+    responses = []
+    for index in range(3):
+        request = Request({
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [
+                (b"x-forwarded-for", f"198.51.100.{index}, 203.0.113.7, 192.0.2.1".encode()),
+                (b"x-trustedrouter-client-ip", b"203.0.113.7"),
+            ],
+            "client": (f"198.51.100.{index}", 12345),
+        })
+        responses.append(await _rate_limit_request(
+            request,
+            settings,
+            ingress_rate_limits=limiter,
+            federation_settlement_tokens=(),
+        ))
+    assert responses[:2] == [None, None]
+    assert responses[2] is not None and responses[2].status_code == 429
 
 
 @pytest.mark.parametrize("environment", ["production", "canary"])

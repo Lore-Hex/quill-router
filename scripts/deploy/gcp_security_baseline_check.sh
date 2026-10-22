@@ -286,6 +286,17 @@ for sa in tr-deploy tr-ops-local tr-azure-acme-cache tr-clickhouse quill-workloa
   done <<<"$keys"
 done
 
+# The overwritten header is trustworthy only while every public origin is
+# LB-only. An interrupted rollout once left an edge_header revision reachable
+# directly; the parser was correct but callers could bypass the overwriter.
+sec "public client-IP trust boundary"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if PROJECT_ID="$PROJECT" bash "${SCRIPT_DIR}/public_surface_edge.sh" check; then
+  ok "public origins are LB-only and the backend overwrites client identity"
+else
+  drift "public client-IP trust boundary failed verification"
+fi
+
 echo
 if [ "$FAIL" = 0 ]; then
   echo "=== GCP baseline OK"

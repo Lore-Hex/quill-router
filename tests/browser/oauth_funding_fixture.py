@@ -1,5 +1,7 @@
 """Render real consent responses using only an isolated in-memory test account."""
 
+import base64
+import hashlib
 import json
 
 from bs4 import BeautifulSoup
@@ -24,7 +26,11 @@ def render() -> dict[str, str]:
     pages = {}
     consents = {}
     for flow in ("legacy", "registered"):
-        params = {"callback_url": "https://app.example.com/callback", "key_label": "Pizza Ninjas wiki coach", "limit": "5", "usage_limit_type": "monthly"}
+        params = {
+            "callback_url": "https://app.example.com/callback", "key_label": "Pizza Ninjas wiki coach",
+            "limit": "5", "usage_limit_type": "monthly", "code_challenge_method": "S256",
+            "code_challenge": base64.urlsafe_b64encode(hashlib.sha256(b"a" * 48).digest()).decode().rstrip("="),
+        }
         if flow == "registered":
             params["client_id"] = "pizza-ninjas"
         response = client.get("/auth", params=params)

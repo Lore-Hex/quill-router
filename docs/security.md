@@ -186,5 +186,48 @@ an incident, set
 `trustedrouter.com` can be Cloudflare proxied. `api.trustedrouter.com` must be
 DNS-only so TLS reaches the attested Confidential Space workload.
 
-`trust.trustedrouter.com` should point at the control-plane/trust hosting, not
-the enclave API IP.
+`trust.trustedrouter.com` is hosted on **GitHub Pages**, independently of the
+control plane and the enclave API. Its custom domain is declared in
+[`trust-page/CNAME`](https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/trust-page/CNAME)
+and deployed by
+[`publish-trust-page.yml`](https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/.github/workflows/publish-trust-page.yml).
+It must not point at the enclave API IP or the control-plane service.
+`trust.quill.lorehex.co` is the separate S3/CloudFront mirror, published by
+`publish-trust-s3.yml` after Pages. The control-plane `/trust` page links to this
+verification material; it is not the hosting origin for the trust subdomain.
+
+The cloud-specific signing workflows produce the signed release bundles.
+Pages and the mirror publish those bundles unchanged; they do not sign them.
+Verify signatures and live attestation against the published measurements,
+not just the existence of an HTTPS page.
+
+For GCP, compare the verified live `submods.container.image_digest` with
+`accepted_image_digests` in the signed release record. The scalar `image_digest`
+and `source_commit` describe the target release, not every serving region during
+a rolling deployment. The deployment publishes the approved transition set
+before switching regions and narrows it only after the rollout succeeds.
+Reject an empty or malformed set and any live digest outside it. Keep the
+Google signature, issuer, audience, fresh nonce, TLS-session binding, and
+production debug-state checks; accepting a published transition set does not
+replace those checks. A locally pinned single-image policy can intentionally
+block during a rollout, but that is different from an unpublished image.
+
+## Legacy delegated-key PKCE
+
+Both `/v1/auth/keys/code` and the legacy `/auth` consent flow require a PKCE
+challenge. Only `S256` is accepted; omitting the method with a challenge defaults
+to `S256`. `/v1/auth/keys` rejects plain, missing, and unknown methods on stored
+authorization codes as well. Old insecure codes must be replaced by a fresh
+authorization. The legacy JSON response envelope is unchanged. New integrations
+should use the registered OAuth 2.1 flow.
+
+## Enclave telemetry checks
+
+CI explicitly checks out `quill-cloud-proxy` and records its revision. The
+Sentry guard fails on missing source and checks Go source, Dockerfiles, and Go
+dependency manifests, including the attestation sidecar. Local full-suite runs
+need a sibling checkout or `TR_ENCLAVE_SOURCE_ROOT` pointing to `enclave-go`.
+
+This Sentry source/dependency check is not a whole-image SBOM audit and must
+not be described as proof that every third-party runtime binary is free of
+every telemetry SDK.

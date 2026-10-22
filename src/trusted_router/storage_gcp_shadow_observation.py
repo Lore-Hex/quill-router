@@ -36,6 +36,7 @@ from trusted_router.async_settle_shadow_v2_schema import POLICY, require
 from trusted_router.detached_jws import canonical
 from trusted_router.storage_gcp_async_admission import HEALTH_ROW_LIMIT, unresolved_statement
 from trusted_router.storage_gcp_shadow_io import (
+    Sessions,
     configure,
     elapsed_clock,
     owned_database,
@@ -118,6 +119,18 @@ class ObservationStore:
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
         configure(self.database)
+
+    def session_ready(self) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return not isinstance(manager, Sessions) or manager.ready
+
+    def session_recovery_due(self) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+
+    def prepare_session(self, boot: str | None = None) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
 
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement

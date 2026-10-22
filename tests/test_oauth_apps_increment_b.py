@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
+from tests.test_oauth_key_delegation import _pkce_challenge
 from trusted_router.serialization import key_shape
 from trusted_router.storage import STORE, InMemoryStore, OAuthApp
 from trusted_router.storage_activity import generation_events
@@ -72,6 +73,7 @@ def _active_session(client: TestClient, email: str = "alice@example.com") -> Non
 
 
 def _consent_form(client: TestClient, params: dict[str, str]) -> dict[str, str]:
+    params = {"code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256", **params}
     page = client.get("/auth", params=params)
     assert page.status_code == 200, page.text
     def value(name: str) -> str:
@@ -489,7 +491,7 @@ def test_authorize_client_id_uses_exact_registry_identity_and_legacy_is_unchange
 
     legacy = client.get(
         "/auth",
-        params={"callback_url": "https://legacy.example/callback", "key_label": "Legacy"},
+        params={"callback_url": "https://legacy.example/callback", "key_label": "Legacy", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
     registered = client.get(
         "/auth",
@@ -497,6 +499,8 @@ def test_authorize_client_id_uses_exact_registry_identity_and_legacy_is_unchange
             "client_id": APP_ID,
             "callback_url": CALLBACK_URL,
             "key_label": "Spoofed name",
+            "code_challenge": _pkce_challenge("a" * 48),
+            "code_challenge_method": "S256",
         },
     )
 
@@ -548,7 +552,7 @@ def test_registration_and_patch_require_verified_legal_name(
     # Defense in depth for rows predating the stronger registration gate.
     consent = client.get(
         "/auth",
-        params={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        params={"client_id": APP_ID, "callback_url": CALLBACK_URL, "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
         follow_redirects=False,
     )
 
@@ -620,7 +624,7 @@ def test_registered_consent_escapes_hostile_name_and_logo_url(
 
     consent = client.get(
         "/auth",
-        params={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        params={"client_id": APP_ID, "callback_url": CALLBACK_URL, "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
     rejected_logo = client.patch(
         f"/v1/oauth/apps/{APP_ID}",
@@ -653,7 +657,7 @@ def test_authorize_rejects_unknown_or_non_exact_client_callback_without_redirect
     _register_app(client, user_headers)
     response = client.get(
         "/auth",
-        params={"client_id": client_id, "callback_url": callback_url},
+        params={"client_id": client_id, "callback_url": callback_url, "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
         follow_redirects=False,
     )
 
@@ -669,7 +673,7 @@ def test_authorize_rejects_suspended_app_without_redirect(
     _register_app(client, user_headers, suspended=True)
     response = client.get(
         "/auth",
-        params={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        params={"client_id": APP_ID, "callback_url": CALLBACK_URL, "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
         follow_redirects=False,
     )
     assert response.status_code == 400
@@ -720,7 +724,7 @@ def test_registered_approve_exchange_stamps_key_while_legacy_stays_empty(
     stored_code = next(iter(STORE.oauth_code_store.codes.values()))
     assert stored_code.client_app_id == APP_ID
 
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     key = STORE.get_key_by_raw(exchanged.json()["key"])
     assert exchanged.status_code == 200, exchanged.text
     assert key is not None and key.app_id == APP_ID
@@ -733,7 +737,7 @@ def test_registered_approve_exchange_stamps_key_while_legacy_stays_empty(
         follow_redirects=False,
     )
     legacy_code = parse_qs(urlsplit(legacy_approved.headers["location"]).query)["code"][0]
-    legacy_exchange = client.post("/v1/auth/keys", json={"code": legacy_code})
+    legacy_exchange = client.post("/v1/auth/keys", json={"code": legacy_code, "code_verifier": "a" * 48})
     legacy_key = STORE.get_key_by_raw(legacy_exchange.json()["key"])
     assert legacy_key is not None and legacy_key.app_id == ""
     assert "app_id" not in legacy_exchange.json()["data"]
@@ -766,6 +770,8 @@ def test_programmatic_code_client_id_requires_app_owner(
     code_body = {
         "client_id": APP_ID,
         "callback_url": CALLBACK_URL,
+        "code_challenge": _pkce_challenge("a" * 48),
+        "code_challenge_method": "S256",
     }
 
     owner_code = client.post(
@@ -781,13 +787,13 @@ def test_programmatic_code_client_id_requires_app_owner(
     legacy = client.post(
         "/v1/auth/keys/code",
         headers={"authorization": f"Bearer {bob_raw}"},
-        json={"callback_url": "https://legacy.example/callback"},
+        json={"callback_url": "https://legacy.example/callback", "code_challenge": _pkce_challenge("a" * 48), "code_challenge_method": "S256"},
     )
 
     assert owner_code.status_code == 200, owner_code.text
     exchanged = client.post(
         "/v1/auth/keys",
-        json={"code": owner_code.json()["data"]["id"]},
+        json={"code": owner_code.json()["data"]["id"], "code_verifier": "a" * 48},
     )
     assert exchanged.status_code == 200, exchanged.text
     assert exchanged.json()["data"]["app_id"] == APP_ID
@@ -905,7 +911,7 @@ def test_registered_app_end_to_end_reaches_authorization_generation_and_activity
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     key = STORE.get_key_by_raw(exchanged.json()["key"])
     assert key is not None
 
@@ -956,7 +962,7 @@ def test_suspension_after_mint_denies_gateway_and_federation_until_unsuspended(
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     key = STORE.get_key_by_raw(exchanged.json()["key"])
     assert key is not None and key.app_id == APP_ID
 
@@ -1029,7 +1035,7 @@ def test_suspension_allows_identical_authorization_replay_but_denies_new_work(
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
-    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    exchanged = client.post("/v1/auth/keys", json={"code": code, "code_verifier": "a" * 48})
     key = STORE.get_key_by_raw(exchanged.json()["key"])
     assert key is not None
     body = {
