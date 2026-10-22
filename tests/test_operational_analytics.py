@@ -717,17 +717,18 @@ def test_public_snapshot_uses_a_short_optional_read_timeout(monkeypatch) -> None
         user="reader",
         password="secret",  # noqa: S106 - inert test credential.
     )
-    observed: dict[str, float] = {}
+    observed: dict[str, float | bool] = {}
 
-    def query(_sql, *, params=None, timeout_seconds=20.0):
+    def query(_sql, *, params=None, timeout_seconds=20.0, retry_read_disconnect=False):
         _ = params
         observed["timeout_seconds"] = timeout_seconds
+        observed["retry_read_disconnect"] = retry_read_disconnect
         return []
 
     monkeypatch.setattr(client, "_query", query)
 
     assert client.public_snapshot("leaderboard") is None
-    assert observed == {"timeout_seconds": 2.0}
+    assert observed == {"timeout_seconds": 2.0, "retry_read_disconnect": True}
 
 
 def _outbox_row() -> OperationalOutboxRow:
