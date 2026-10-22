@@ -4295,6 +4295,17 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "those labs' rows instead."
         ),
     ),
+    "tinfoil": ModelOrigin(
+        country=None,
+        lab_name="Tinfoil (serving namespace)",
+        source_url="https://docs.tinfoil.sh/models/decisions",
+        note=(
+            "Tinfoil's decision-small, decision-medium and decision-large aliases "
+            "currently serve the vllm-sr d3 family. The documented checkpoints "
+            "can change; Tinfoil's US provider headquarters do not establish "
+            "the origin country of the underlying model weights."
+        ),
+    ),
     "cerebras": ModelOrigin(
         country=None,
         lab_name="Cerebras (serving namespace)",
@@ -4427,10 +4438,16 @@ MAKER_PROVIDER_BY_AUTHOR: dict[str, str] = {
 # and stealth/*, whose maker is unannounced.
 AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
 
+# Reviewed host-branded aliases, not blanket exemptions for a provider's namespace.
+# https://docs.tinfoil.sh/models/decisions names the vllm-sr d3 family.
+HOSTED_MODEL_AUTHOR_OVERRIDES = {
+    f"tinfoil/decision-{size}": "vllm-sr" for size in ("small", "medium", "large")
+}
+
 
 def maker_provider_slug(model_id: str) -> str | None:
     """The PROVIDERS slug of the model maker's own API, when TrustedRouter has one."""
-    author = model_id.split("/", 1)[0].lower()
+    author = HOSTED_MODEL_AUTHOR_OVERRIDES.get(model_id, model_id.split("/", 1)[0].lower())
     if author in AUTHORS_NAMING_NO_MAKER:
         return None
     slug = MAKER_PROVIDER_BY_AUTHOR.get(author)
@@ -4453,7 +4470,7 @@ def model_vendor_provider_slugs(model_id: str) -> frozenset[str]:
     That is the maker's own API, the hosts its company runs, and a provider
     named like the model's author.
     """
-    author = model_id.split("/", 1)[0].lower()
+    author = HOSTED_MODEL_AUTHOR_OVERRIDES.get(model_id, model_id.split("/", 1)[0].lower())
     if author in AUTHORS_NAMING_NO_MAKER:
         return frozenset()
     slugs = set(MAKER_OPERATED_HOSTS_BY_AUTHOR.get(author, ()))

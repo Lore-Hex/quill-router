@@ -38,6 +38,11 @@ def unavailable_gateway_routes() -> frozenset[tuple[str, str]]:
         ("openai/whisper-large-v3", "privatemode"),
         ("mistralai/voxtral-mini-3b-2507", "privatemode"),
         ("mistralai/voxtral-small-24b", "tinfoil"),
+        # Native Decisions needs the gateway's Tinfoil protocol adapter;
+        # control-plane catch-up alone cannot enable it on another cloud.
+        ("tinfoil/decision-small", "tinfoil"),
+        ("tinfoil/decision-medium", "tinfoil"),
+        ("tinfoil/decision-large", "tinfoil"),
     })
 
 

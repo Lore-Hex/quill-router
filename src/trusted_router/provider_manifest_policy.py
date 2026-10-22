@@ -70,6 +70,9 @@ DECISION_CONTRACT_HOLDS = frozenset({
     "decision-image-pricing-unsupported",
     "decision-image-contract-unsupported",
 })
+TINFOIL_DECISION_MODEL_IDS = frozenset(
+    f"tinfoil/decision-{size}" for size in ("small", "medium", "large")
+)
 
 
 def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
@@ -81,7 +84,15 @@ def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
     image_price = row.get("decision_image_input_price_per_m")
     return (
         isinstance(model_id, str)
-        and re.fullmatch(r"decisionmodelsio(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+        and (
+            re.fullmatch(r"decisionmodelsio(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+            or (
+                model_id in TINFOIL_DECISION_MODEL_IDS
+                and row.get("upstream_id") == model_id.removeprefix("tinfoil/")
+                and row.get("input_modalities") == ["text"]
+                and row.get("output_modalities") == ["decision"]
+            )
+        )
         and (
             hold is None
             or (isinstance(hold, str) and hold in DECISION_CONTRACT_HOLDS and row.get("routable") is False)
