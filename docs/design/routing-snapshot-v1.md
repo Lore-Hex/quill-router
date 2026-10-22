@@ -23,12 +23,14 @@ edge polls the snapshot and compares in shadow behind flags that are off
 | `tests/test_fastpath_routing_snapshot_vectors.py` | Staleness, signature refusals, fail-closed compiles |
 | `tests/test_routing_snapshot.py` | Live-catalog properties, determinism, field allowlist, dormancy |
 | `src/trusted_router/services/routing_snapshot_publisher.py` | The window, the lazy compile, signing, the cached response |
+| `src/trusted_router/routing_snapshot_worker.py` | The compile as of the window's start, in a process of its own |
 | `src/trusted_router/routes/internal/fastpath_snapshot.py` | `GET /internal/fastpath/routing-snapshot` |
 | `infra/routing_snapshot_key.tf` | The signing key's secret and its one reader |
 | `docs/runbooks/routing-snapshot-key.md` | Adding version 1, turning publishing on and off, rotation |
 | `tests/test_routing_snapshot_publish.py` | Route, authentication, determinism, refresh, key custody, budget |
 | `fastpath/internal/edge/snapshot.go` | Go: the edge's poll, the pinned key, the last good copy |
 | `fastpath/internal/edge/shadow.go` | Go: the shadow comparator, its classes and counts |
+| `tests/test_routing_snapshot_as_of.py` | Warm and cold publishers across real retirements publish the as-of snapshot |
 
 ## What it is for
 
@@ -238,20 +240,19 @@ refuses (`SnapshotRefused`) rather than approximate:
   `not_after` is clamped to the first retirement after `max(compiled_at,
   catalog_resolved_at)`, so catalogs imported at any two instants of the
   window hold the same endpoints. A process imported before a retirement
-  therefore cannot compile any window starting after it, and the publisher
-  answers 503 there until the instance is replaced. The edge's last good copy
-  does not cover that gap: every window a process imported before the
-  retirement compiled ends at the retirement itself (the clamp above), so at
-  the retirement every published copy expires, Go passes every request to
-  Python, and no snapshot is published until an instance imported after the
-  retirement serves the poll. Retirements fall at 00:00 UTC and deploys are 3
-  to 12 hours apart, so that is hours of no fast path, overnight, at each
-  retirement. Publishing must not be turned on until the catalog can be rebuilt
-  as of `at` (see "Not yet"). The rule is the compiler's, not the publisher's, so no caller can produce
-  two documents for one window. (Requiring `compiled_at >=
-  catalog_resolved_at` instead would also be correct, but would refuse every
-  hourly compile in the first partial hour of a process's life even when
-  nothing retired.)
+  therefore cannot compile, in process, any window starting after it. The
+  publisher does not compile in process: it compiles as of the window's start
+  in a worker whose import instant is that start (see "Publishing"), so
+  `catalog_resolved_at == compiled_at` there, the interval is empty and the
+  rule never refuses. It stays for in-process compiles (the golden files,
+  tests, any future caller with the live registry): returning it to
+  `(compiled_at, catalog_resolved_at]` would let a warm process publish a
+  second document for a window, and removing it would also let one compile a
+  window whose routes its registry has already dropped. The rule is the
+  compiler's, not the publisher's, so no caller can produce two documents for
+  one window. (Requiring `compiled_at >= catalog_resolved_at` instead would
+  also be correct, but would refuse every hourly compile in the first partial
+  hour of a process's life even when nothing retired.)
 - **A catalog deadline the requested-model expansions straddle.** The
   privacy pools behind `trustedrouter/zdr`, `eu`, `e2e` and `green` read
   catalog currency on the catalog clock (`catalog_data._utc_now`), not on any
@@ -314,37 +315,92 @@ standard base64 (the verifier hashes the decoded bytes), and when to poll
 again (advisory; the manifest's `not_after` is what binds). `ETag` is the
 body's sha256 and a matching `If-None-Match` is a 304, so a poll between
 windows costs no body. `Cache-Control: no-store`. 503 with `status`
-`signer-unavailable` (no usable key), `snapshot-refused` or `snapshot-error`
-(both with `retry_at` and `Retry-After`) when no window is current; the edge keeps its last good
-copy.
+`signer-unavailable` (no usable key), `compiling` (another poll's compile is
+in flight), `snapshot-refused` or `snapshot-error` (each but the first with
+`retry_at` and `Retry-After`) when no window is current; the edge
+keeps its last good copy until that copy's `not_after`.
 
-**The window.** `publication_window(now, inputs)` starts a window at the
-hour, or at the latest retirement or catalog deadline in `(hour, now]`: the
-instants at which a window compiled earlier in the hour ends, because the
+**The window.** `publication_window_as_of(now)` starts a window at the hour,
+or at the latest retirement or expiring-manifest deadline in `(hour, now]`:
+the instants at which a window compiled earlier in the hour ends, because the
 compiler clamps `not_after` to them. It ends at the next hour or the next such
-instant. Every instance of a revision, cold or warm, derives the same start
-for the same instant, and compiles with the same horizon (6 hours, a
-constant), the same settings and the same `source_revision`, so every
-instance produces identical bytes and, Ed25519 signatures being
-deterministic, an identical manifest. A publication is served while
-`compiled_at <= now < min(next window start, not_after)`. A refused window is
-not compiled again; the next window start tries again. Starting at the
-latest event, not at the hour, is what lets a window compiled after a
-catalog deadline pass: compiled at the hour, that deadline would fall between
-`compiled_at` and the expansions clock and refuse.
+instant. The events are read from the image (the lifecycle module's
+retirements, `catalog_ingest.provider_manifest_deadlines()` from the bundled
+manifests), not from the serving process's registry, which has dropped what
+was retired when it was imported; an event whose routes are gone only starts a
+window early. A publication is served while `compiled_at <= now < min(next
+window start, not_after)`. A refused window is not compiled again; the next
+window start tries again. Starting at the latest event, not at the hour, is
+what lets a window start right after a catalog deadline or a retirement.
 
-**The compile.** 1.5 to 4.5 s of CPU for the live catalog (3 MB) on
-development machines; review measured 4.3 s. It runs lazily: the first poll
-that finds no current publication compiles under the publisher's lock (single
-flight; concurrent polls wait and get the same bytes), in the threadpool
-worker of the sync route, never on the event loop and never on authorize.
-Only instances the edge polls compile, once a window. A background refresher
-would compile on every instance every hour for a reader that polls one. The
-compile is CPU-bound Python: on the combined service it holds the GIL against
-that instance's authorize requests for its whole duration, so it must be
-measured on the release image and the service's CPU shape before publishing
-is turned on (`docs/runbooks/routing-snapshot-key.md`, step 5). A failure other than the catalog's refusal (status
-`snapshot-error`) is retried after 5 s; a refusal waits for the next window.
+**The catalog as of the window's start.** The registry
+(`catalog_registry`) is built once, when a process imports it, and every
+time-dependent decision of that build reads one instant, `CATALOG_RESOLVED_AT`:
+endpoints dropped at their retirement (ingested, supplemental, decision
+fallback, video and the provider filters, all through
+`provider_model_retired(at=CATALOG_RESOLVED_AT)`), the DeepSeek V4 Pro release
+leaves (whose route set depends on a retirement), and with them the models
+left with no route, the consolidated aliases, the gateway holds, the
+normalized capabilities, the tier aliases' context windows and the named
+decision models' chain prices. After the build, catalog freshness
+(`catalog_data._utc_now`) decides the privacy pools behind
+`trustedrouter/zdr`, `eu`, `e2e` and `green`, and with them the
+requested-model expansions. So a process imported before a retirement holds
+endpoints and models (and pool members and expansions) that one imported
+after it does not: on the live catalog around 2026-10-23 00:00, 1823
+endpoints and 696 models against 1808 and 688.
+
+The publisher therefore never compiles its own registry. It runs
+`python -m trusted_router.routing_snapshot_worker`, a process of its own that
+pins both clocks to the window's start before it imports the catalog (and
+checks `CATALOG_RESOLVED_AT` is that instant), builds `CatalogInputs.live`
+there, compiles at that instant and signs: by definition the snapshot a
+process imported at the window's start compiles. Every instance, cold or warm,
+publishes it byte for byte, across retirements and manifest deadlines too
+(`tests/test_routing_snapshot_as_of.py` holds a publisher imported before
+three real retirements and one imported after each to a process imported at
+the window's start), and the serving process's catalog, which authorize
+reads, is never touched. The worker reads the request on stdin (the window
+start, horizon, snapshot settings, plane, revision and `auto_model_order`, the
+one setting routing reads while expanding, and the signing key's file, kid
+and public key), inherits the serving process's environment (the catalog's
+gateway holds read the region from it), writes the body and manifest or the
+refusal on stdout, and its stderr is discarded. Nothing is
+decided outside it: every import-time decision and every expansion runs in
+the worker, as of the window's start. The one thing the serving process
+decides is the window, from the image's events.
+
+**The compile.** On development machines the worker takes about 3 s of
+CPU end to end (about 1 s importing, then building the inputs, compiling and
+signing) and peaks between 150 and 300 MB; the serving process spends about
+0.03 s, checking the manifest's signature, key, plane and audience and that it
+binds the bytes received (`verify_manifest_digest`: the sha256 and size,
+without parsing the body; the worker's `RoutingSnapshotSigner.sign` verified
+the body in full before signing). The worker signs with the same mounted key
+file, named in its request with the pinned kid and public key, and refuses a
+file that is not the pinned key; the key never crosses the pipe. The worker
+runs with `-P`, so the working directory is not on its import path. It runs
+lazily: the first poll that finds no current publication starts the worker
+under the publisher's lock (single flight), in the threadpool worker of the
+sync route, never on the event loop and never on authorize. A poll that finds
+a compile in flight does not wait on the lock, which would hold a threadpool
+thread authorize shares for as long as the worker runs: it answers 503
+`compiling` with `Retry-After: 2`. Only instances the edge polls compile, once a
+window. A background refresher would compile on every instance every hour for
+a reader that polls one. The worker's CPU is not the serving process's, so it
+holds no GIL that authorize waits on, but it shares the instance: its 3 to 6 s
+of CPU compete with authorize for the service's one vCPU (`rollout.sh` passes
+no `--cpu`, so Cloud Run's default of 1 applies), and its memory sits beside
+the serving process's within the instance's limit (2 GiB:
+`TR_CLOUD_RUN_MEMORY` defaults to `2Gi` in `scripts/deploy/_lib.sh`). Both
+must be measured on the release image before publishing is turned on
+(`docs/runbooks/routing-snapshot-key.md`, step 5). A worker that fails, exits
+non-zero or runs past 120 s is a `snapshot-error`; it prints only its
+exception's class (`{"error": "<class>"}`), which the publisher logs, never a
+message. The retry backs off from 5 s, doubling with each failure in the
+window, up to the window's end, so a deterministic failure costs one worker
+run a window at most once the backoff has grown. A refusal waits for the next
+window.
 
 **Key custody.** The Ed25519 private key is the Secret Manager secret
 `trustedrouter-routing-snapshot-signing-key` (`infra/routing_snapshot_key.tf`),
@@ -476,29 +532,9 @@ are pinned, so the hourly price refresh cannot make it stale.
 - Wiring the Go evaluator into the edge's answers: the per-workspace cache
   (BYOK presence, pilot membership, the key's `budget_strict`) and the
   response. The shadow comparator calls it; nothing decides with it.
-- **Before publishing is turned on: the catalog rebuilt as of `at`.** The
-  registry is built once, at import, and drops what is retired then, so a
-  process imported before a retirement holds endpoints and models (and with
-  them privacy-pool members and requested-model expansions) that one imported
-  after it does not; on the live catalog around 2026-10-23 00:00, 1823
-  endpoints and 696 models against 1808 and 688. The compiler refuses rather
-  than publish two documents for one window, which leaves no snapshot from
-  each retirement until instances imported after it serve (see "The window,
-  and failing closed"). The fix is for `CatalogInputs` to rebuild the
-  registry's endpoints and models, and everything derived from them, as of
-  `at` (or as of the latest retirement at or before `at`), so a warm process
-  compiles the same bytes as a cold one and the retirement refusal can return
-  to `(at, catalog_resolved_at]`. The weaker alternative is to replace every
-  control-plane instance at each retirement (a scheduled restart or deploy at
-  the retirement instant). It is weaker because the snapshot's availability
-  then rests on an operational action timed to every retirement, including
-  ones the hourly price refresh adds: a late or failed replacement, a held
-  deploy mutex or a paused rollout reopens the gap; the replacement itself
-  leaves a gap of minutes while revisions roll; and it changes nothing about
-  the compiler, so any other caller compiling in a warm process still
-  refuses.
-- Publishing on: version 1 of the key and the switch
-  (`docs/runbooks/routing-snapshot-key.md`), after the item above.
+- Publishing on: version 1 of the key, the compile's time and the worker's
+  memory measured on the release image, and the switch
+  (`docs/runbooks/routing-snapshot-key.md`).
 - Other clouds' planes: the publisher signs for `gcp` only (E5).
 - Out of the cohort, so out of v1: OpenAI priority and auto service-tier
   prices, video tariffs (`output_token_price_per_m_by_resolution`), image,

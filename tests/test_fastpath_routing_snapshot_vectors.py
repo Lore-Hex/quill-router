@@ -32,6 +32,7 @@ from trusted_router.routing_snapshot_signing import (
     TEST_PUBLIC_KEY_B64URL,
     RoutingSnapshotSigner,
     verify_manifest,
+    verify_manifest_digest,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,6 +115,34 @@ def test_verification_binds_the_verifiers_plane_and_audience() -> None:
                 expected_plane=Plane(cloud="aws", region="us-central1"))
     with pytest.raises(ValueError, match="manifest audience"):
         _verify(manifest["jws"], [key], body, now=now, expected_aud="tr-other-consumer")
+
+
+def test_the_digest_check_binds_the_bytes_the_key_the_plane_and_the_audience() -> None:
+    """verify_manifest_digest: the serving process's check of its worker's answer."""
+    body, token = _body(), _manifest()["jws"]
+    test_key = GENERATOR.TEST_KEY
+    arguments = {"expected_plane": GOLDEN_PLANE, "expected_aud": test_key.aud,
+                 "allow_test_key": True}
+    # Positive control: the golden manifest binds the golden body.
+    claims = verify_manifest_digest(token, [test_key], body, **arguments)
+    assert claims.sha256 == hashlib.sha256(body).hexdigest() and claims.size == len(body)
+    flipped = body[:100] + bytes([body[100] ^ 1]) + body[101:]
+    for changed in (flipped, body + b" ", body[:-1]):
+        with pytest.raises(ValueError, match="manifest binding"):
+            verify_manifest_digest(token, [test_key], changed, **arguments)
+    # Another key under the same kid: the signature does not verify.
+    other = TrustedKey(test_key.kid, PURPOSE,
+                       b64encode(Ed25519PrivateKey.generate().public_key().public_bytes_raw()),
+                       test_key.iss, test_key.aud)
+    with pytest.raises(JWSError):
+        verify_manifest_digest(token, [other], body, **arguments)
+    with pytest.raises(ValueError, match="manifest plane"):
+        verify_manifest_digest(token, [test_key], body, **{
+            **arguments, "expected_plane": Plane(cloud="gcp", region="europe-west4")})
+    with pytest.raises(ValueError, match="manifest audience"):
+        verify_manifest_digest(token, [test_key], body, **{**arguments, "expected_aud": "other"})
+    with pytest.raises(ValueError, match="test key outside test mode"):
+        verify_manifest_digest(token, [test_key], body, **{**arguments, "allow_test_key": False})
 
 
 def test_the_public_test_key_is_refused_outside_test_mode() -> None:

@@ -768,7 +768,7 @@ def test_importing_the_app_loads_neither_snapshot_module() -> None:
     script = (
         "import sys; import trusted_router.main; "
         "loaded = [m for m in ('trusted_router.routing_snapshot', "
-        "'trusted_router.routing_snapshot_signing', "
+        "'trusted_router.routing_snapshot_signing', 'trusted_router.routing_snapshot_worker', "
         "'trusted_router.services.routing_snapshot_publisher') if m in sys.modules]; "
         "assert not loaded, loaded"
     )
@@ -789,5 +789,6 @@ def test_importing_the_app_loads_neither_snapshot_module() -> None:
     )
     assert importers == [
         "src/trusted_router/routing_snapshot_signing.py",
+        "src/trusted_router/routing_snapshot_worker.py",
         "src/trusted_router/services/routing_snapshot_publisher.py",
     ]

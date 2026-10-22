@@ -211,14 +211,11 @@ def _has_token_prices(raw_model: dict[str, Any]) -> bool:
 _EXPIRING_PROVIDER_MANIFEST_SLUGS = EXPIRING_PROVIDER_MANIFEST_SLUGS
 
 
-def _apply_provider_manifest_expiry(
-    endpoints: dict[str, ModelEndpoint],
-) -> dict[str, ModelEndpoint]:
-    """Attach one provider-scoped deadline to every manifest-backed route.
+def provider_manifest_deadlines() -> dict[str, datetime]:
+    """Each expiring provider manifest's deadline, read from the bundled files.
 
-    Some media routes are installed statically after supplemental ingestion,
-    so applying the policy at the final endpoint boundary is what guarantees
-    chat, image, video, Credits, and BYOK routes all fail closed together.
+    A function of the files alone, not of any clock: the routing snapshot's
+    publisher reads it to place its windows the same way in every process.
     """
     deadlines: dict[str, datetime] = {}
     for provider_slug in _EXPIRING_PROVIDER_MANIFEST_SLUGS:
@@ -231,6 +228,19 @@ def _apply_provider_manifest_expiry(
         deadlines[provider_slug] = (
             _provider_manifest_valid_until(provider_slug, raw) or _EXPIRED_PROVIDER_MANIFEST
         )
+    return deadlines
+
+
+def _apply_provider_manifest_expiry(
+    endpoints: dict[str, ModelEndpoint],
+) -> dict[str, ModelEndpoint]:
+    """Attach one provider-scoped deadline to every manifest-backed route.
+
+    Some media routes are installed statically after supplemental ingestion,
+    so applying the policy at the final endpoint boundary is what guarantees
+    chat, image, video, Credits, and BYOK routes all fail closed together.
+    """
+    deadlines = provider_manifest_deadlines()
 
     return {
         endpoint_id: (

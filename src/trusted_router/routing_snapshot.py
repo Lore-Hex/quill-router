@@ -768,10 +768,30 @@ def publication_window(now: int, inputs: CatalogInputs) -> tuple[int, int]:
     on every instance, cold or warm, or refuses: a process imported before a
     retirement that the window starts at or after cannot compile it.
     """
+    return _window(now, _retirement_instants() | _catalog_deadlines(inputs))
+
+
+def publication_window_as_of(now: int) -> tuple[int, int]:
+    """``publication_window`` over events that do not depend on the process.
+
+    The retirements and every expiring provider manifest's deadline, read from
+    the bundled files rather than from this process's registry, which has
+    dropped what was retired when it was imported. A superset of the events
+    any as-of catalog carries, so every window still ends where a compile at
+    its start would clamp ``not_after``; an extra event only starts a window
+    early. For compiles made as of the window's start
+    (``routing_snapshot_worker``).
+    """
+    from trusted_router.catalog_ingest import provider_manifest_deadlines
+
+    deadlines = {_exact_seconds(deadline) for deadline in provider_manifest_deadlines().values()}
+    return _window(now, _retirement_instants() | deadlines)
+
+
+def _window(now: int, events: set[int]) -> tuple[int, int]:
     if type(now) is not int or now < 0:
         raise SnapshotRefused("now must be integer seconds")
     hour = now - now % EPOCH_SECONDS
-    events = _retirement_instants() | _catalog_deadlines(inputs)
     start = max([hour, *(event for event in events if hour < event <= now)])
     next_start = min([hour + EPOCH_SECONDS, *(event for event in events if event > now)])
     return start, next_start
