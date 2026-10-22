@@ -29,7 +29,9 @@ class ExchangeEvent(BaseModel):
             "nyte.form_submitted": {"form"},
             "nyte.outbound_clicked": {"destination_host", "cta"},
         }.get(self.event, set())
-        supplied = {name for name in ("cta", "position", "form", "destination_host") if getattr(self, name) is not None}
+        fields = (("cta", self.cta), ("position", self.position), ("form", self.form),
+                  ("destination_host", self.destination_host))
+        supplied = {name for name, value in fields if value is not None}
         if supplied != required:
             raise ValueError("Invalid event properties")
         return self
