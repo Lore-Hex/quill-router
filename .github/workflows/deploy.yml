@@ -970,7 +970,9 @@ jobs:
     if: ${{ github.repository == 'Lore-Hex/quill-router' && success() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     # Finalization owns the cloud reservation through all completion gates.
-    timeout-minutes: 55
+    # Three serial ramps now each retain the old warm revision for 15 minutes
+    # (up to 20), in addition to staging, canaries and completion gates.
+    timeout-minutes: 85
     env:
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1

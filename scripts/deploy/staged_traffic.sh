@@ -6,6 +6,7 @@
 # → 100% with a 1-min synthetic watch between each step. If any watch
 # trips, traffic is rolled back to 100% on the old revision and the
 # script exits non-zero so the workflow fails.
+# The old revision remains warm for a bounded post-cutover routing drain.
 #
 # Usage:
 #   PROJECT_ID=quill-cloud-proxy SERVICE=trusted-router \
@@ -36,6 +37,10 @@ WATCHDOG_PID=""
 WATCHDOG_GATE_DIR=""
 WATCHDOG_GATE_FILE=""
 FINAL_BASELINE_PID=""
+DRAIN_TAG="staged-drain"
+DRAIN_TAG_OWNED=0
+DRAIN_PENDING=0
+DRAIN_MINUTES="${TR_REVISION_DRAIN_MINUTES:-15}"
 
 log() { echo "[staged-traffic ${REGION}] $*"; }
 
@@ -43,6 +48,80 @@ if deploy_region_is_held "$REGION"; then
   deploy_warn_region_held "$REGION"
   exit 0
 fi
+
+case "$DRAIN_MINUTES" in
+  15|16|17|18|19|20) ;;
+  *) echo "ERROR: TR_REVISION_DRAIN_MINUTES must be an integer from 15 to 20" >&2; exit 1 ;;
+esac
+
+prepare_revision_drain() {
+  local resolved document
+  resolved="$(cloud_run_probe_tag_revision \
+    "$SERVICE" "$REGION" "$PROJECT_ID" "$DRAIN_TAG")" || return 1
+  if [ -n "$resolved" ] && [ "$resolved" != "$OLD_REV" ]; then
+    log "refusing to replace outstanding drain tag on ${resolved}; inspect the interrupted rollout"
+    return 1
+  fi
+  # A tag alone does not guarantee warm capacity on a scale-to-zero revision.
+  # Inspect the immutable revision floor, never change production capacity here.
+  document="$(gcloud run revisions describe "$OLD_REV" \
+    --region="$REGION" --project="$PROJECT_ID" --format=json)" || return 1
+  if ! printf '%s' "$document" | python3 -c '
+import json, sys
+try:
+    document = json.load(sys.stdin)
+    floor = int(document.get("metadata", {}).get("annotations", {}).get(
+        "autoscaling.knative.dev/minScale", "0"))
+    ready = any(c.get("type") == "Ready" and c.get("status") == "True"
+                for c in document.get("status", {}).get("conditions", []))
+except (ValueError, TypeError):
+    raise SystemExit(1)
+raise SystemExit(0 if floor > 0 and ready else 1)
+'; then
+    log "old revision must be Ready with a positive revision-level minimum before retirement"
+    return 1
+  fi
+  DRAIN_TAG_OWNED=1
+  cloud_run_probe_tag_reconcile \
+    "$SERVICE" "$REGION" "$PROJECT_ID" "$DRAIN_TAG" "$OLD_REV"
+}
+
+cleanup_revision_drain() {
+  local resolved
+  [ "$DRAIN_TAG_OWNED" -eq 1 ] || return 0
+  if [ "$DRAIN_PENDING" -eq 1 ]; then
+    # An interrupted/ambiguous cutover must not immediately retire the old
+    # containers. Leave one bounded warm revision and make the leak explicit.
+    log "CRITICAL: routing drain interrupted; retaining ${DRAIN_TAG}=${OLD_REV}. Inspect traffic and complete the drain before removing the tag."
+    return 1
+  fi
+  resolved="$(cloud_run_probe_tag_revision \
+    "$SERVICE" "$REGION" "$PROJECT_ID" "$DRAIN_TAG")" || return 1
+  if [ -n "$resolved" ] && [ "$resolved" != "$OLD_REV" ]; then
+    log "CRITICAL: drain tag changed to ${resolved}; refusing to remove another revision's protection"
+    return 1
+  fi
+  cloud_run_probe_tag_remove \
+    "$SERVICE" "$REGION" "$PROJECT_ID" "$DRAIN_TAG" || return 1
+  DRAIN_TAG_OWNED=0
+}
+
+finish_revision_drain() {
+  local baseline_args=(--skip-baseline --baseline-grace-sec 0)
+  if [ -s "${TR_STAGED_WATCHDOG_BASELINE_FILE:-}" ]; then
+    baseline_args=(--baseline-input "$TR_STAGED_WATCHDOG_BASELINE_FILE")
+  fi
+  log "keeping ${OLD_REV} warm for ${DRAIN_MINUTES} minutes after cutover while watching router health"
+  if ! python3 "${SCRIPT_DIR}/watchdog.py" \
+      --regions "$REGION" --duration-min "$DRAIN_MINUTES" \
+      --rollback-after 1 --slo-class "$WATCHDOG_SLO_CLASS" "${baseline_args[@]}"; then
+    rollback_to_old "router health failed during the old-revision routing drain"
+    return 1
+  fi
+  deploy_mutex_assert || return 1
+  DRAIN_PENDING=0
+  cleanup_revision_drain
+}
 
 configure_probe_tag() {
   local resolved
@@ -89,6 +168,9 @@ cleanup_staged_traffic() {
   stop_watchdog
   stop_final_baseline
   if ! cleanup_probe_tag && [ "$staged_status" -eq 0 ]; then
+    staged_status=1
+  fi
+  if ! cleanup_revision_drain && [ "$staged_status" -eq 0 ]; then
     staged_status=1
   fi
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
@@ -138,6 +220,8 @@ shift_traffic() {
   local old_pct=$((100 - new_pct))
   log "shifting traffic: ${new_pct}% ${NEW_REV} / ${old_pct}% ${OLD_REV}"
   if [ "$old_pct" -eq 0 ]; then
+    # Mark pending before the API call: a timeout can mean traffic DID move.
+    DRAIN_PENDING=1
     if ! gcloud run services update-traffic "$SERVICE" \
         --region="$REGION" --project="$PROJECT_ID" \
         --to-revisions="${NEW_REV}=100" \
@@ -162,7 +246,8 @@ rollback_to_old() {
   gcloud run services update-traffic "$SERVICE" \
     --region="$REGION" --project="$PROJECT_ID" \
     --to-revisions="${OLD_REV}=100" \
-    --quiet
+    --quiet || return 1
+  DRAIN_PENDING=0
   cleanup_probe_tag
   log "${REGION} traffic restored to ${OLD_REV} (0% on bad revision)"
 }
@@ -299,7 +384,7 @@ start_final_baseline() {
   local output_file="${TR_STAGED_WATCHDOG_BASELINE_FILE:-}"
   [ -n "$output_file" ] || return 0
   rm -f "$output_file"
-  log "starting final-canary baseline concurrently with 100% traffic shift"
+  log "capturing final-canary baseline before 100% traffic shift"
   if [ "${TR_STAGED_WATCHDOG_SKIP_BASELINE:-0}" = "1" ]; then
     python3 "${SCRIPT_DIR}/watchdog.py" \
       --regions "$REGION" \
@@ -363,13 +448,20 @@ shift_and_watch 10
 shift_and_watch 50
 
 # Final cut over
+if ! prepare_revision_drain; then
+  rollback_to_old "could not protect the old revision during routing propagation"
+  exit 1
+fi
 start_final_baseline
+# Wait for the baseline while the old revision still serves traffic. Capturing
+# it after cutover could classify a new outage as pre-existing.
+finish_final_baseline
 if ! shift_traffic 100; then
   stop_final_baseline
   exit 1
 fi
-finish_final_baseline
 probe_legacy_surface_or_rollback 100
+finish_revision_drain
 if ! cleanup_probe_tag; then
   exit 1
 fi
