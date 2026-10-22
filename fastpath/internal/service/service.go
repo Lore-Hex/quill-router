@@ -10,6 +10,8 @@ package service
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -162,12 +165,26 @@ type EdgeConfig struct {
 	Upstream string
 	Token    string
 	BootWait time.Duration
+	// The routing snapshot the edge polls (edge.SnapshotConfig, E2): its URL
+	// on the upstream, empty for none; the manifest keys' Ed25519 public keys
+	// in unpadded base64url and their kids, each a comma-separated list in
+	// the same order (two during a rotation); and the plane it is signed
+	// for, as cloud/region. Shadow runs the comparator against it.
+	SnapshotURL, SnapshotPublicKey, SnapshotKid, SnapshotPlane string
+	Shadow                                                     bool
 }
 
 func (c Config) valid() error {
 	switch {
 	case c.Edge.Address != "" && (c.Edge.Upstream == "" || c.Edge.Token == ""):
 		return errors.New("service: an edge needs its upstream and the internal token")
+	case c.Edge.SnapshotURL != "" && c.Edge.Address == "":
+		return errors.New("service: the routing snapshot is the edge's, which needs its address")
+	case c.Edge.Shadow && c.Edge.SnapshotURL == "":
+		return errors.New("service: the edge's shadow compares against a routing snapshot, which needs its URL")
+	case c.Edge.SnapshotURL != "" && (c.Edge.SnapshotPublicKey == "" || c.Edge.SnapshotKid == "" ||
+		c.Edge.SnapshotPlane == ""):
+		return errors.New("service: the routing snapshot needs its public key, kid and plane")
 	case c.Edge.Address != "" && !c.Admission:
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
@@ -309,12 +326,23 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		MaxIdleConnsPerHost: 256,
 		IdleConnTimeout:     90 * time.Second,
 	}
-	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport, Serving: p.serving})
+	snapshot, err := snapshotConfig(cfg.Edge)
 	if err != nil {
 		_ = ln.Close()
 		return err
 	}
+	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
+		Transport: transport, Serving: p.serving, Snapshot: snapshot})
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	// The snapshot's poll and the shadow comparator, beside the server and
+	// never in its way; with no snapshot configured this returns at once.
+	p.run("edge snapshot", func(ctx context.Context) error {
+		e.Run(ctx)
+		return nil
+	})
 	p.whenLeaving(func() { p.retiring.Store(true) })
 	handlers := &inFlight{}
 	requests, endRequests := context.WithCancel(context.Background())
@@ -345,6 +373,33 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		return nil
 	})
 	return nil
+}
+
+// snapshotConfig is the edge's routing snapshot from the node's flags; the
+// zero config, polling nothing, when no URL is given.
+func snapshotConfig(c EdgeConfig) (edge.SnapshotConfig, error) {
+	if c.SnapshotURL == "" {
+		return edge.SnapshotConfig{}, nil
+	}
+	u, err := url.Parse(c.SnapshotURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return edge.SnapshotConfig{}, fmt.Errorf("service: the routing snapshot's URL %q is not an http or https URL",
+			c.SnapshotURL)
+	}
+	publics, kids := strings.Split(c.SnapshotPublicKey, ","), strings.Split(c.SnapshotKid, ",")
+	if len(publics) != len(kids) {
+		return edge.SnapshotConfig{}, errors.New("service: the routing snapshot's public keys and kids pair up")
+	}
+	var keys []edge.SnapshotKey
+	for i, public := range publics {
+		key, err := base64.RawURLEncoding.Strict().DecodeString(public)
+		if err != nil || len(key) != ed25519.PublicKeySize {
+			return edge.SnapshotConfig{}, errors.New("service: a routing snapshot public key is not 32 bytes of " +
+				"unpadded base64url")
+		}
+		keys = append(keys, edge.SnapshotKey{Kid: kids[i], PublicKey: key})
+	}
+	return edge.SnapshotConfig{URL: u, Keys: keys, Plane: c.SnapshotPlane, Shadow: c.Shadow}, nil
 }
 
 // storeBoots reads the edge's boots from the store: production's entity

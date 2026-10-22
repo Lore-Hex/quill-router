@@ -221,6 +221,60 @@ def test_the_unit_passes_only_flags_the_pinned_release_takes() -> None:
     assert "## A flag the unit passes" in deploy and "two releases, and no flag" in deploy
 
 
+_SNAPSHOT_ATTRIBUTES = (
+    "fastpath-edge-snapshot-url",
+    "fastpath-edge-snapshot-public-key",
+    "fastpath-edge-snapshot-kid",
+    "fastpath-edge-snapshot-plane",
+    "fastpath-edge-shadow",
+)
+
+
+def _snapshot_flags(script: str) -> set[str]:
+    """The flags the script adds for the edge's routing snapshot and shadow
+    (E2), from the instance's metadata alone."""
+    flags: set[str] = set()
+    for line in script.splitlines():
+        if "snapshot_flags=" in line:
+            flags.update(re.findall(r"(?:^|[\s\"])-([a-z][a-z-]*)", line.split("snapshot_flags=", 1)[1]))
+    return flags
+
+
+def test_the_snapshot_flags_wait_for_metadata_and_a_release_that_takes_them() -> None:
+    """The routing snapshot's flags reach the unit only from instance
+    metadata that infra/fastpath.tf does not set, so the default node polls
+    and compares nothing. Once Terraform sets any of those attributes, the
+    pinned release must take every flag they add, as for the edge's own."""
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    flags = _snapshot_flags(script)
+    assert flags == {
+        "edge-snapshot-url", "edge-snapshot-public-key", "edge-snapshot-kid", "edge-snapshot-plane", "edge-shadow",
+    }
+    for attribute in _SNAPSHOT_ATTRIBUTES:
+        assert f"$(attribute {attribute})" in script, attribute
+    assert "-subscriptions auditor,stager $edge_flags $snapshot_flags" in script
+    # Not among the unit's unconditional flags.
+    assert not flags & _unit_flags(script)
+    head = _command_flags((ROOT / "fastpath" / "cmd" / "fastpath" / "main.go").read_text(encoding="utf-8"))
+    assert flags <= head, sorted(flags - head)
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    if any(attribute in tf for attribute in _SNAPSHOT_ATTRIBUTES):
+        pinned = re.search(r'fastpath_release\s*=\s*"([0-9a-f]{40})"', tf)
+        assert pinned
+        taken = _command_flags(_source_at(pinned.group(1), "fastpath/cmd/fastpath/main.go"))
+        assert flags <= taken, sorted(flags - taken)
+
+
+def test_the_snapshot_flags_are_found() -> None:
+    """The control: the reader finds the flags in each line that adds them."""
+    script = (
+        'snapshot_flags="-edge-snapshot-url $u -edge-snapshot-kid $k"\n'
+        '    true) snapshot_flags="$snapshot_flags -edge-shadow" ;;\n'
+        'edge_flags="-edge-address $x"\n'
+    )
+    assert _snapshot_flags(script) == {"edge-snapshot-url", "edge-snapshot-kid", "edge-shadow"}
+
+
 def test_a_flag_the_pinned_command_lacks_is_found() -> None:
     """The control: the check reads the unit's flags and the command's."""
     unit = "[Service]\nExecStart=/opt/fastpath/fastpath \\\n  -roles admission \\\n  -hold-boot\nKillSignal=SIGTERM\n"

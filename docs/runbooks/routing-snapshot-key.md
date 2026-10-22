@@ -152,8 +152,11 @@ no edge ever refuses the key a snapshot is signed with:
 
 1. Add the new version as in steps 2 and 3, under a new kid
    (`tr-routing-snapshot-YYYY-MMx`).
-2. Give the edge both public keys (its configuration arrives with the edge's
-   poll, a later change), and wait until every node runs with both.
+2. Give the edge both public keys: the nodes' `fastpath-edge-snapshot-public-key`
+   and `fastpath-edge-snapshot-kid` attributes each name both, comma-separated
+   in the same order (`-edge-snapshot-public-key`, `-edge-snapshot-kid`;
+   `docs/design/routing-snapshot-v1.md`, "The edge's poll and shadow
+   comparator"), and wait until every node runs with both.
 3. In `rollout.sh`, set the version, the public key and the kid to the new
    ones, and deploy.
 4. Once six hours have passed since the deploy finished (the longest window a

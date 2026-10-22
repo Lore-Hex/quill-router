@@ -85,6 +85,19 @@ func run() error {
 	edgeTokenSecret := flag.String("edge-token-secret", "",
 		"the internal service token the enclave sends, as a Secret Manager version pinned by its number")
 	flag.DurationVar(&cfg.Edge.BootWait, "edge-boot-wait", 2*time.Second, "how long the edge's boot read may take before its verdict is unread")
+	flag.StringVar(&cfg.Edge.SnapshotURL, "edge-snapshot-url", "",
+		"the routing snapshot the edge polls on its upstream, GET /internal/fastpath/routing-snapshot "+
+			"(docs/design/routing-snapshot-v1.md, E2); empty polls none")
+	flag.StringVar(&cfg.Edge.SnapshotPublicKey, "edge-snapshot-public-key", "",
+		"the routing snapshot manifest key's Ed25519 public key, unpadded base64url, or a rotation's two separated "+
+			"by a comma; never the test key")
+	flag.StringVar(&cfg.Edge.SnapshotKid, "edge-snapshot-kid", "",
+		"the routing snapshot manifest key's kid, or a rotation's two in the public keys' order")
+	flag.StringVar(&cfg.Edge.SnapshotPlane, "edge-snapshot-plane", "",
+		"the plane the routing snapshot is signed for, as cloud/region (gcp/us-central1)")
+	flag.BoolVar(&cfg.Edge.Shadow, "edge-shadow", false,
+		"compare Go's answer from the routing snapshot with Python's on each authorize the edge passes on, "+
+			"logging counts alone; Python still decides")
 	flag.Parse()
 
 	switch *roles {
