@@ -431,6 +431,7 @@ class PublisherReply:
     actual_start_mono: float | None = None
     reason: str | None = None
     originals: dict[str, Any] | None = None
+    seen_claim_slot: int | None = None
 
 
 def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherReply:
@@ -447,7 +448,13 @@ def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob) -> PublisherR
 
 def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> float:
     hashed = int.from_bytes(hashlib.sha256(f"{boot}:{slot}".encode()).digest()[:8], "big")
-    return (60 + 30 * (hashed % 3) if incumbent_present else 30 * (hashed % 8)) / 1000
+    # Production's contended claim alone averaged 220 ms (33 ms commit).
+    # This provisional margin allows observation and publication too; it is
+    # not yet a bound calibrated from claim_at_ns -> ack_at_us production traces.
+    # This is follower discovery time, NOT an extension of the S1 write window.
+    # Cold candidates retain their hash spread within the observation window.
+    # Hashing reduces collisions; without a roster it cannot bound their count.
+    return (350 + 10 * (hashed % 3) if incumbent_present else 30 * (hashed % 8)) / 1000
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
@@ -467,11 +474,12 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     ack_us = None
     rpc_durations: list[int] = []
     actual_us = claim_us
+    seen_claim_slot = None
     store.last_claim = None
     def record(elapsed: int) -> None:
         rpc_durations.append(elapsed)
     def attempt() -> None:
-        nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason
+        nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason, seen_claim_slot
         if not store.session_ready():
             reason = "session_unavailable"
             return
@@ -498,7 +506,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             finally:
                 admission.admission_lock.release()
             if not incumbent:
-                sleep(follower_stagger(boot, slot, incumbent_present))
+                stagger = follower_stagger(boot, slot, incumbent_present)
+                sleep(stagger)
                 # The admitted start and budget include the stagger. Recheck the
                 # owner before any I/O; a retired job remains a missed slot.
                 if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
@@ -508,8 +517,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                             or admission.admission_job != job):
                         reason = "revoked"
                         return
-                    if (store.clock() > job.latest_start_mono
-                            or int(store.wall()*1_000_000) // SLOT_US != slot):
+                    if (int(store.wall()*1_000_000) // SLOT_US != slot
+                            or not incumbent_present and store.clock() > job.latest_start_mono):
                         reason = "outside_window"
                         return
                 finally:
@@ -520,7 +529,13 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             attempted, outcome = True, "failures"
             if not incumbent:
                 current = store.read_shadow_claim(budget)
-                if current is not None and current["slot"] == slot and current["owner_boot_id"] != boot:
+                seen_claim_slot = current["slot"] if current is not None else None
+                # A visible publication from slot-1/slot-2 protects its owner.
+                # Even without that cache, a claim newer than slot-2 forbids
+                # takeover. Followers pay zero Commit RPCs in steady state.
+                # Recheck in claim() too, since this snapshot can race a winner.
+                if (incumbent_present or current is not None and current["slot"] > slot-2
+                        or store.clock() > job.latest_start_mono):
                     outcome = "lost_claims"
                     return
             if not store.claim(boot, slot, actual_us, budget):
@@ -567,7 +582,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             originals = dict(claim_raw=claim_raw, publication_raw=publication_raw,
                 publication_elapsed_us=interval_ns // 1000, claim_at_ns=claim["claim_at_ns"],
                 published_at_ns=value["observed_at_ns"] if value else None)
-    return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason, originals)
+    return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason, originals,
+                          seen_claim_slot)
 
 
 class Service:
@@ -599,6 +615,7 @@ class Service:
         self.generation = 0
         self.admission_job: lifecycle.PublisherJob | None = None
         self.incumbent_slot: int | None = None
+        self.seen_claim_slot: int | None = None
         # Terminal epoch: every publisher job is issued in epoch zero. Once a
         # signal revokes it, no later owner transition can reopen admission.
         self.revocation_epoch = 0
@@ -742,14 +759,17 @@ class Service:
         self.publisher_reply(reply)
 
     def is_incumbent(self, slot: int) -> bool:
+        # An acknowledged incumbent runs immediately on consecutive slots,
+        # without follower discovery or re-election. S1 and RPC budgets remain
+        # unchanged; the storage fence still permits only one winner per slot.
         self.assert_owner()
         return self.incumbent_slot in (slot-1, slot-2)
 
     def has_incumbent(self, slot: int) -> bool:
-        """Recent installed health is a timing hint, never claim authority."""
+        """Recent health or a fresh claim snapshot protects the incumbent."""
         self.assert_owner()
         health = self.observer.health
-        return self.is_incumbent(slot) or bool(health is not None
+        return (self.is_incumbent(slot) or self.seen_claim_slot == slot-1) or bool(health is not None
             and health["body"]["slot"] in (slot-1, slot-2))
 
     def publisher_reply(self, reply: PublisherReply, *,
@@ -797,7 +817,12 @@ class Service:
             trace["outcome"], generation=reply.generation, actual_start_mono=reply.actual_start_mono), trace=trace)
         if any(isinstance(e, lifecycle.Fault) for e in effects):
             return effects
-        self.incumbent_slot = slot if trace["outcome"] == "published" else None
+        # One failed cycle does not revoke a recently acknowledged incumbent.
+        # is_incumbent bounds this grace to two slots; stale callbacks never get
+        # here, and followers cannot promote themselves from a claim alone.
+        if trace["outcome"] == "published":
+            self.incumbent_slot = slot
+        self.seen_claim_slot = reply.seen_claim_slot
         if reply.originals is not None and trace["outcome"] == "published":
             self.startup_publication = reply.originals
         if trace["outcome"] != "missed" and reply.actual_start_mono is not None:

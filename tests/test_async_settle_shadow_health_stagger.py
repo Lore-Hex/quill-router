@@ -84,7 +84,7 @@ def test_follower_committed_claim_is_one_measured_snapshot(sdk_database, monkeyp
     monkeypatch.setattr(shell, "sleep", sleep, raising=False)
     svc.submit_publisher(job.slot, NOW_US)
     trace = outcome(svc, job, "lost_claim")
-    assert len(waits) == 1 and .06 <= waits[0] <= .12
+    assert len(waits) == 1 and .35 <= waits[0] <= .37
     assert trace["rpc_count"] == 1 and trace["rpc_elapsed_us"] == 10_000
     assert trace["claim_at_ns"] is None
     assert [name for name, _ in db.calls] == ["read"]
@@ -94,7 +94,7 @@ def test_follower_committed_claim_is_one_measured_snapshot(sdk_database, monkeyp
 
 
 @pytest.mark.parametrize("existing", ["absent", "previous", "same-owner"])
-def test_follower_without_other_current_claim_proceeds(monkeypatch, existing):
+def test_follower_only_proceeds_without_recent_claim(monkeypatch, existing):
     svc, wall, _, job, waits = timed_owner(monkeypatch)
     if existing != "absent":
         value = claim("other" if existing == "previous" else svc.journal.boot,
@@ -102,25 +102,25 @@ def test_follower_without_other_current_claim_proceeds(monkeypatch, existing):
         if existing == "same-owner":
             svc.store.claim(value["owner_boot_id"], value["slot"], wall[0], Budget(101., svc.store.clock))
         if existing == "previous":
-            # A prior slot's row is valid, but does not settle this slot.
+            # A prior slot protects the incumbent even before it renews.
             svc.store.database.server_ns = (job.slot-1)*m.SLOT_US*1000
             svc.store.claim("other", job.slot-1, wall[0]-m.SLOT_US, Budget(101., svc.store.clock))
             svc.store.database.server_ns = wall[0]*1000
     before = svc.store.database.transaction_execute_sql_calls
     svc.submit_publisher(job.slot, wall[0])
-    outcome(svc, job, "lost_claim" if existing == "same-owner" else "published")
+    outcome(svc, job, "published" if existing == "absent" else "lost_claim")
     assert len(waits) == 1
-    assert svc.store.database.transaction_execute_sql_calls > before
-    assert svc.store.database.snapshot_execute_sql_calls == (1 if existing == "same-owner" else 2)
+    assert (svc.store.database.transaction_execute_sql_calls > before) == (existing == "absent")
+    assert svc.store.database.snapshot_execute_sql_calls == (2 if existing == "absent" else 1)
 
 
 def test_stagger_is_deterministic_and_bounded():
     stagger = getattr(shell, "follower_stagger", None)
     assert callable(stagger)
     values = {stagger(f"boot-{boot}", slot) for boot in range(12) for slot in range(100)}
-    assert values == {.06, .09, .12}
+    assert values == {.35, .36, .37}
     assert [stagger("boot", s) for s in range(100)] == [stagger("boot", s) for s in range(100)]
-    assert stagger("boot", 7) == .12  # SHA-256's first eight bytes, big-endian.
+    assert stagger("boot", 7) == .37  # SHA-256's first eight bytes, big-endian.
 
 
 def test_stopped_incumbent_follower_wins_and_then_attempts_immediately(monkeypatch):
@@ -130,13 +130,16 @@ def test_stopped_incumbent_follower_wins_and_then_attempts_immediately(monkeypat
     outcome(svc, job, "lost_claim")
     next_job = advance(svc, wall, mono, job.slot+1)
     svc.submit_publisher(next_job.slot, wall[0])
-    trace = outcome(svc, next_job, "published")
-    assert trace["observed_at_ns"]-next_job.slot*m.SLOT_US*1000 <= 250_000_000
-    assert len(waits) == 2 and svc.incumbent_slot == next_job.slot
+    outcome(svc, next_job, "lost_claim")
     next_job = advance(svc, wall, mono, job.slot+2)
     svc.submit_publisher(next_job.slot, wall[0])
+    trace = outcome(svc, next_job, "published")
+    assert trace["observed_at_ns"]-next_job.slot*m.SLOT_US*1000 <= 250_000_000
+    assert len(waits) == 3 and svc.incumbent_slot == next_job.slot
+    next_job = advance(svc, wall, mono, job.slot+3)
+    svc.submit_publisher(next_job.slot, wall[0])
     outcome(svc, next_job, "published")
-    assert len(waits) == 2
+    assert len(waits) == 3
     accounting(svc)
 
 
