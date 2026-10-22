@@ -170,6 +170,7 @@ PROVIDER_SLUGS = [
     "lyceum",
     "amazon_bedrock",
     "greenference",
+    "muna",
     "coralbricks",
     "boundless",
     "zro",
