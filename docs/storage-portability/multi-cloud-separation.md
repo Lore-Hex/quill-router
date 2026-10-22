@@ -413,10 +413,11 @@ stated exactly:** every run in which `rollout-secondaries` ran, whatever the
 result. It does not run when primary-live `deploy` fails, because the convergence
 job never schedules. It also does not mean "after every production mutation" —
 `migrate-schema` and `sync-runtime-secrets` run *before* `deploy` and mutate
-production, so a run that fails between them and `deploy` never reaches this
-check. (A superseded run no longer gets that far: since 2026-10-22
-`confirm-current-main` runs before `admit-cloud`, so a run that skips does so
-before the lease, the schema step and the secrets step.)
+production; a run that then fails, or stops at `confirm-still-on-main` because
+its commit left main during the lease wait, never reaches this check. (A
+superseded run no longer gets that far: since 2026-10-22 `confirm-current-main`
+decides supersession before `admit-cloud`, so a run that skips does so before
+the lease, the schema step and the secrets step.)
 
 Honest caveat, because this is a control that has never fired: it lands with
 this change and has not yet run on a merge.

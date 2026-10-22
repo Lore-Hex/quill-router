@@ -475,9 +475,46 @@ jobs:
             "trustedrouter-clickhouse-provider-read-password" \
             "$TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD"
 
+  confirm-still-on-main:
+    # Supersession is decided before the lease (confirm-current-main). This
+    # narrower check runs after admission, where the old check stood, and asks
+    # only whether this commit is still on main at all: a force-push during a
+    # lease wait of hours would otherwise ship a state main never had. A commit
+    # that is merely no longer the head still deploys; the lease is not given up.
+    needs: [admit-cloud, migrate-schema, sync-runtime-secrets]
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    outputs:
+      on_main: ${{ steps.ancestry.outputs.on_main }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/deploy/superseded_deploy.py
+          sparse-checkout-cone-mode: false
+      - name: Confirm this commit is still on main
+        id: ancestry
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "on_main=true" >> "$GITHUB_OUTPUT"
+            echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
+            exit 0
+          fi
+          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${latest_sha}" = "${GITHUB_SHA}" ] || python3 scripts/deploy/superseded_deploy.py --mode ancestry \
+              --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_SHA}" --head "${latest_sha}"; then
+            echo "on_main=true" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_SHA} is on main (head ${latest_sha})"
+          else
+            echo "on_main=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::${GITHUB_SHA} is no longer on main (head ${latest_sha}); releasing the lease without deploying."
+          fi
+
   deploy:
-    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, admit-cloud]
-    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.confirm-current-main.outputs.proceed == 'true' }}
+    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, admit-cloud]
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.confirm-current-main.outputs.proceed == 'true' && needs.confirm-still-on-main.outputs.on_main == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
@@ -1427,7 +1464,7 @@ jobs:
         run: bash scripts/deploy/verify_gcp_complete.sh
 
   finalize-cloud:
-    needs: [admit-cloud, migrate-schema, sync-runtime-secrets, confirm-current-main, deploy, rollout-secondaries, public-surface-companion, verify-cloud-complete]
+    needs: [admit-cloud, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, verify-cloud-complete]
     if: ${{ always() && github.repository == 'Lore-Hex/quill-router' && needs.admit-cloud.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

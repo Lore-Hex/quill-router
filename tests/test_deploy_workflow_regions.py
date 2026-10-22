@@ -462,7 +462,7 @@ def test_rollback_capture_uses_the_sole_serving_revision() -> None:
 def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     sync = workflow.index("sync-runtime-secrets:")
-    end = workflow.index("\n  deploy:", sync)
+    end = workflow.index("\n  confirm-still-on-main:", sync)
     section = workflow[sync:end]
 
     assert "needs: [gate-on-ci, admit-cloud]" in section
