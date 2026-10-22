@@ -29,6 +29,7 @@ from scripts.pricing.base import (
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 from trusted_router.provider_lifecycle import provider_model_retired
+from trusted_router.provider_manifest_policy import TINFOIL_DECISION_MODEL_IDS
 
 SLUG = "tinfoil"
 URL = "https://inference.tinfoil.sh/v1/models"
@@ -80,6 +81,7 @@ _NATIVE_TO_OR_ID = {
     "voxtral-tts": "mistralai/voxtral-4b-tts-2603",
     "voxtral-mini-4b-realtime": "mistralai/voxtral-mini-4b-realtime-2602",
     "nomic-embed-text": "nomic-ai/nomic-embed-text",
+    **{model.removeprefix("tinfoil/"): model for model in TINFOIL_DECISION_MODEL_IDS},
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
@@ -210,6 +212,13 @@ def _microdollars_per_million(raw: object) -> int | None:
     return int((value * Decimal(1_000_000)).to_integral_value(ROUND_HALF_UP))
 
 
+def _exact_zero(raw: object) -> bool:
+    try:
+        return Decimal(str(raw)) == 0
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
 def _chat_manifest_row(
     source: dict[str, Any],
     *,
@@ -289,6 +298,31 @@ def fetch() -> ProviderPricingResult:
         )
         pricing = row.get("pricing") or {}
         if not isinstance(pricing, dict):
+            if or_id in TINFOIL_DECISION_MODEL_IDS:
+                raise ValueError(f"tinfoil: decision contract has invalid pricing: {native_id}")
+            continue
+        if or_id in TINFOIL_DECISION_MODEL_IDS:
+            input_micro = _microdollars_per_million(pricing.get("inputTokenPricePer1M"))
+            context = row.get("context_window")
+            if (
+                row.get("type") != "decision"
+                or row.get("endpoints") != ["/v1/decisions"]
+                or row.get("multimodal") is not False
+                or type(context) is not int or context <= 0
+                or input_micro is None or input_micro <= 0
+                or not _exact_zero(pricing.get("outputTokenPricePer1M"))
+                or not _exact_zero(pricing.get("requestPrice"))
+                or "cachedInputTokenPricePer1M" in pricing
+            ):
+                raise ValueError(f"tinfoil: decision contract or input-only tariff changed: {native_id}")
+            prices[or_id] = ModelPrice(input_micro, 0)
+            discovered[or_id] = {
+                "id": or_id, "upstream_id": native_id,
+                "display_name": str(row.get("name") or native_id),
+                "model_type": "decision", "context_length": context,
+                "input_modalities": ["text"], "output_modalities": ["decision"],
+                "endpoints": ["decide"], "features": [], "status": 1,
+            }
             continue
         # A token-only tariff cannot represent a per-request charge. Keep
         # unsupported protocols visible to discovery without advertising a

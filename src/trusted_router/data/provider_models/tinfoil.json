@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil launched Kimi K3 and DeepSeek V4 Flash on 2026-08-20, then GLM 5.3 and multimodal GLM 5.3 Flash on 2026-09-03. Tinfoil supports confidential prompt caching where published by its live feed. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-10-21T02:28:24Z",
-  "model_count": 17,
+  "generated_at": "2026-10-22T03:27:37Z",
+  "model_count": 20,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -426,6 +426,69 @@
       "input_token_price_per_m": 650000,
       "output_token_price_per_m": 1450000,
       "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "Decision Large",
+      "title": "decision-large",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "tinfoil/decision-large",
+      "upstream_id": "decision-large",
+      "context_length": 32768,
+      "features": [],
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Medium",
+      "title": "decision-medium",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "tinfoil/decision-medium",
+      "upstream_id": "decision-medium",
+      "context_length": 32768,
+      "features": [],
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Small",
+      "title": "decision-small",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "tinfoil/decision-small",
+      "upstream_id": "decision-small",
+      "context_length": 32768,
+      "features": [],
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0
     }
   ],
   "price_scale": "microdollars_per_million"

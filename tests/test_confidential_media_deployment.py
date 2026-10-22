@@ -29,7 +29,7 @@ def test_media_cloud_hold_fails_closed(
     monkeypatch.setenv("TR_PRIMARY_REGION", primary)
     monkeypatch.setenv("TR_SERVING_REGION", serving)
     monkeypatch.setenv("TR_ENVIRONMENT", environment)
-    assert len(unavailable_gateway_routes()) == (0 if allowed else 6)
+    assert len(unavailable_gateway_routes()) == (0 if allowed else 9)
 
 
 @pytest.mark.parametrize("region", [
@@ -54,6 +54,9 @@ def test_media_discovery_and_authorization_follow_gateway_release(region: str) -
                 ("openai/whisper-large-v3", "privatemode"),
                 ("mistralai/voxtral-mini-3b-2507", "privatemode"),
                 ("mistralai/voxtral-small-24b", "tinfoil"),
+                ("tinfoil/decision-small", "tinfoil"),
+                ("tinfoil/decision-medium", "tinfoil"),
+                ("tinfoil/decision-large", "tinfoil"),
             }
             for model, provider in routes:
                 assert any(e.model_id == model and e.provider == provider
