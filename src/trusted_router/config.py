@@ -984,6 +984,17 @@ class Settings(BaseSettings):
     # shadow grant generation. Zero means authority has not been provisioned.
     async_settle_authority_epoch: int = Field(default=0, ge=0)
 
+    # E2 routing snapshot publication (docs/design/routing-snapshot-v1.md,
+    # "Publishing"). Off by default: the internal route is not registered and
+    # neither snapshot module is imported. The key file is a Secret Manager
+    # version mounted by rollout.sh, pinned by its number; the public key and
+    # kid are its public identity, the trust anchor Go will be given, and the
+    # publisher refuses a mounted key that is not the pinned one.
+    routing_snapshot_publish_enabled: bool = False
+    routing_snapshot_private_key_file: str = ""
+    routing_snapshot_public_key: str = ""
+    routing_snapshot_kid: str = ""
+
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
     spend_lease_accepted_gcp_image_digests: str = ""

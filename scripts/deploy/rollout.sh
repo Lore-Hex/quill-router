@@ -112,6 +112,46 @@ SECRET_ENVS=(
 # Retired environment bindings remain on Cloud Run until explicitly removed.
 REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
 
+# E2 routing snapshot publication, dark (docs/design/routing-snapshot-v1.md,
+# "Publishing"). Literals here, never read from the caller or a previous
+# revision. The Ed25519 signing key is a Secret Manager version mounted as a
+# FILE and pinned by its number, never latest, so every instance and every
+# restart signs with one key; the public key beside it is that version's
+# public half, the pin the publisher checks the mounted key against and the
+# trust anchor Go is given. No version exists yet: with the version empty
+# nothing is mounted, and publishing cannot be turned on. The operator steps
+# that add version 1 and turn it on are in docs/runbooks/routing-snapshot-key.md.
+ROUTING_SNAPSHOT_PUBLISH_ENABLED=false
+ROUTING_SNAPSHOT_KEY_SECRET="trustedrouter-routing-snapshot-signing-key"
+ROUTING_SNAPSHOT_KEY_VERSION=""
+ROUTING_SNAPSHOT_KEY_PATH="/secrets/routing-snapshot/signing.pem"
+ROUTING_SNAPSHOT_KID="tr-routing-snapshot-2026-10a"
+ROUTING_SNAPSHOT_PUBLIC_KEY=""
+if [ -n "$ROUTING_SNAPSHOT_KEY_VERSION" ] &&
+   [[ ! "$ROUTING_SNAPSHOT_KEY_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+  echo "refusing rollout: the routing snapshot key version must be a number, never latest" >&2
+  exit 1
+fi
+case "$ROUTING_SNAPSHOT_PUBLISH_ENABLED" in
+  false) ;;
+  true)
+    if [ -z "$ROUTING_SNAPSHOT_KEY_VERSION" ] ||
+       [[ ! "$ROUTING_SNAPSHOT_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+      echo "refusing rollout: routing snapshot publishing needs a pinned key version and its public key" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "refusing rollout: routing snapshot publishing must be true or false" >&2
+    exit 1
+    ;;
+esac
+ROUTING_SNAPSHOT_KEY_FILE=""
+if [ -n "$ROUTING_SNAPSHOT_KEY_VERSION" ]; then
+  SECRET_ENVS+=("${ROUTING_SNAPSHOT_KEY_PATH}=${ROUTING_SNAPSHOT_KEY_SECRET}:${ROUTING_SNAPSHOT_KEY_VERSION}")
+  ROUTING_SNAPSHOT_KEY_FILE="$ROUTING_SNAPSHOT_KEY_PATH"
+fi
+
 # Read the metadata inventory once. Probing every optional name with
 # `secrets describe` records an ERROR audit event for each expected missing
 # secret, which obscures real Secret Manager failures and inflates logging
@@ -675,6 +715,11 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
   "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
+  # E2 routing snapshot publication: the literals of the key block above.
+  "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
+  "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"
+  "TR_ROUTING_SNAPSHOT_KID=${ROUTING_SNAPSHOT_KID}"
+  "TR_ROUTING_SNAPSHOT_PUBLIC_KEY=${ROUTING_SNAPSHOT_PUBLIC_KEY}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

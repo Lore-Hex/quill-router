@@ -11,6 +11,7 @@ from . import admin as admin
 from . import adyen as adyen
 from . import broadcast_queue as broadcast_queue
 from . import chat_browser_key as chat_browser_key
+from . import fastpath_snapshot as fastpath_snapshot
 from . import federation as federation
 from . import fetch_image as fetch_image
 from . import gateway as gateway
@@ -51,6 +52,11 @@ def register_gateway_internal_routes(router: APIRouter) -> None:
     lightning.register(router)
 
 
+def register_routing_snapshot_routes(router: APIRouter) -> None:
+    """Register the fast path's routing snapshot poll; only when publishing is on."""
+    fastpath_snapshot.register(router)
+
+
 def register_operator_internal_routes(router: APIRouter) -> None:
     """Register operator controls only when their dedicated token is configured."""
     admin.register(router)
@@ -80,4 +86,5 @@ __all__ = [
     "register_internal_routes",
     "register_observer_internal_routes",
     "register_operator_internal_routes",
+    "register_routing_snapshot_routes",
 ]

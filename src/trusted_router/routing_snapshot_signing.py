@@ -1,11 +1,12 @@
-"""Dormant Ed25519 manifest over a routing snapshot's bytes; no key IO, no runtime imports.
+"""Ed25519 manifest over a routing snapshot's bytes; no key IO.
 
 The snapshot body (megabytes) exceeds detached_jws's 64 KiB token bound, so the
 compact JWS signs a small manifest that binds the body's sha256 and size, and
 repeats the body's window, revision and plane. A verifier hashes the bytes it
 received and never re-serializes them. Ed25519, not HMAC: a shared key would
-let every node that verifies a snapshot also forge one. Key custody (pinned
-Secret Manager versions, rotation) belongs to the publishing PR.
+let every node that verifies a snapshot also forge one. Key custody (a pinned
+Secret Manager version, rotation) is the publisher's
+(services/routing_snapshot_publisher.py, docs/runbooks/routing-snapshot-key.md).
 """
 
 from __future__ import annotations

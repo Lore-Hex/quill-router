@@ -1,10 +1,11 @@
-"""Dormant E2 routing snapshot v1; no gateway imports or activation side effects.
+"""E2 routing snapshot v1; no gateway imports or activation side effects.
 
 Compiles the catalog facts Go needs to reproduce Python's authorize candidates
 and prices (docs/design/fast-admission-enclave-direct.md, E2 and §4.1) into one
-versioned document with canonical bytes. Nothing at runtime imports this
-module: no route, service, settings or rollout reads it yet, and the compiler
-only reads module globals when a caller asks for ``CatalogInputs.live``.
+versioned document with canonical bytes. Only the publisher
+(services/routing_snapshot_publisher.py) imports this module at runtime, and
+only when publishing is on; the compiler reads module globals only when a
+caller asks for ``CatalogInputs.live``.
 The schema contract is docs/design/routing-snapshot-v1.md.
 
 Every instant is an integer: Unix seconds, or microseconds where Python
@@ -745,23 +746,58 @@ def _clamp(at: int, horizon: int, events: set[int], low: int, high: int, what: s
     return min([at + horizon, *(event for event in events if event > high)])
 
 
-def _not_after(at: int, horizon: int, inputs: CatalogInputs) -> int:
-    """Clamp the window so the imported catalog and the expansions hold on it.
+def _retirement_instants() -> set[int]:
+    return {_exact_seconds(r.effective_at) for r in provider_retirements()}
 
-    The registry drops what is retired at its import instant, so a retirement
-    in (at, catalog_resolved_at] would remove endpoints still available at
-    `at`. Retirements before the import stay in the registry, carried with
-    their exact retired_at. The privacy pools read each endpoint's catalog
-    currency on the catalog clock, so they are constant on the window only if
-    no catalog deadline falls between that clock and any of its instants.
-    """
-    retirements = {_exact_seconds(r.effective_at) for r in provider_retirements()}
-    resolved = inputs.catalog_resolved_at
-    not_after = _clamp(at, horizon, retirements, at, max(at, resolved), "retirement")
-    deadlines = {
+
+def _catalog_deadlines(inputs: CatalogInputs) -> set[int]:
+    return {
         deadline for endpoint in inputs.endpoints
         if (deadline := _seconds(endpoint.catalog_valid_until)) is not None
     }
+
+
+def publication_window(now: int, inputs: CatalogInputs) -> tuple[int, int]:
+    """The publishing window for instant ``now``: ``(start, next_start)``.
+
+    ``start`` is the hour, or the latest retirement or catalog deadline in
+    ``(hour, now]``: the instants at which a window compiled earlier in the hour
+    ends. ``next_start`` is the first of those after ``now``, or the next hour.
+    Every process with the same catalog derives the same start for every
+    ``now`` in ``[start, next_start)``, so compiling at it gives the same bytes
+    on every instance, cold or warm, or refuses: a process imported before a
+    retirement that the window starts at or after cannot compile it.
+    """
+    if type(now) is not int or now < 0:
+        raise SnapshotRefused("now must be integer seconds")
+    hour = now - now % EPOCH_SECONDS
+    events = _retirement_instants() | _catalog_deadlines(inputs)
+    start = max([hour, *(event for event in events if hour < event <= now)])
+    next_start = min([hour + EPOCH_SECONDS, *(event for event in events if event > now)])
+    return start, next_start
+
+
+def _not_after(at: int, horizon: int, inputs: CatalogInputs) -> int:
+    """Clamp the window so the imported catalog and the expansions hold on it.
+
+    The registry drops what is retired at its import instant, and the instant
+    is not in the body, so no retirement may fall between the import and `at`
+    on either side. After `at` (a retirement in (at, catalog_resolved_at]) the
+    registry has dropped endpoints still available at `at`; before it (in
+    (catalog_resolved_at, at]) the registry still holds endpoints, models and
+    privacy-pool members that a process imported after the retirement has
+    dropped. Either way two processes would compile the same window into
+    different bytes, so both refuse. The privacy pools read each endpoint's
+    catalog currency on the catalog clock, so they are constant on the window
+    only if no catalog deadline falls between that clock and any of its
+    instants.
+    """
+    retirements = _retirement_instants()
+    resolved = inputs.catalog_resolved_at
+    not_after = _clamp(
+        at, horizon, retirements, min(at, resolved), max(at, resolved), "retirement",
+    )
+    deadlines = _catalog_deadlines(inputs)
     low = min(inputs.expansions_clock[0], at)
     high = max(inputs.expansions_clock[1], at)
     return min(not_after, _clamp(at, horizon, deadlines, low, high, "catalog deadline"))
