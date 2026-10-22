@@ -67,7 +67,7 @@ NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publis
 DNS records to bypass qualification.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
-New York's homepage, `/confidential`, `/suppliers`, and `/index`; its shared
+New York's homepage, `/confidential`, `/suppliers`, `/providers`, and `/index`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 
