@@ -84,3 +84,46 @@ test("model privacy is visible above provider details and filterable", async ({ 
   await expect(page).toHaveURL(/filter=zdr/);
   await expect(cards.first().locator('.model-card-heading [data-privacy="zdr"]')).toBeVisible();
 });
+
+for (const width of [1440, 390, 320]) {
+  test(`catalog uses one sticky search with shortcuts and URL state at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/models?q=kimi&sort=name");
+    const search = page.getByRole("searchbox", { name: "Search models" });
+    await expect(page.getByRole("searchbox")).toHaveCount(1);
+    await expect(search).toHaveValue("kimi");
+    await expect(page.locator("[data-model-sort]")).toHaveValue("name");
+    await expect(page.locator("#model-search")).toHaveCount(0);
+    for (const shortcut of ["Control+k", "Meta+k"]) {
+      await search.evaluate(el => el.blur());
+      await page.keyboard.press(shortcut);
+      await expect(search).toBeFocused();
+    }
+    await search.fill("no-such-model-xyz");
+    await expect(page.locator("[data-model-result-count]")).toHaveText("0 results");
+    await expect(page.locator("[data-model-empty]")).toBeVisible();
+    await expect(page.locator("[data-model-result-count]")).toBeInViewport();
+    await page.locator("[data-model-clear]").first().click();
+    await expect(search).toHaveValue("");
+    await expect(search).toBeFocused();
+    await expect(page).toHaveURL(/\/models$/);
+    await page.locator('[data-model-query="deepseek"]').click();
+    await expect(search).toHaveValue("deepseek");
+    await expect(page).toHaveURL(/q=deepseek/);
+    await page.reload();
+    await expect(search).toHaveValue("deepseek");
+    await page.evaluate(() => window.scrollTo(0, 800));
+    expect((await search.boundingBox()).y).toBeGreaterThanOrEqual(0);
+    await search.fill("kimi k3");
+    await expect(page.locator('[data-model-id="moonshotai/kimi-k3"]')).toBeVisible();
+    await expect(page.locator("[data-model-result-count]")).toBeInViewport();
+    await expect(search).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath("catalog-sticky-search.png") });
+    await page.locator('[data-model-id="moonshotai/kimi-k3"] .model-card-heading h2 a').first().click();
+    await expect(page.locator(".trnav [data-open-search]")).toBeVisible();
+    await page.locator(".trnav [data-open-search]").click();
+    await expect(page.locator("#model-query")).toBeFocused();
+  });
+}

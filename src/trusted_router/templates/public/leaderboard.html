@@ -46,7 +46,7 @@
       <button type="button" role="tab" id="tab-providers" aria-controls="lb-providers" data-lb-tab="providers">Providers</button>
       <button type="button" role="tab" id="tab-models" aria-controls="lb-models" data-lb-tab="models">Models</button>
     </div>
-    <label class="lb-search">Search<input type="search" data-lb-search placeholder="Provider or model" autocomplete="off"></label>
+    <label class="lb-search">Filter leaderboard<input type="search" data-lb-search placeholder="Provider or model" autocomplete="off"></label>
     <label>Provider<select data-lb-provider><option value="">All providers</option>{% for p in snapshot.providers|sort(attribute='provider') %}<option value="{{ p.provider }}">{{ p.provider }}</option>{% endfor %}</select></label>
     <label>Sort by<select data-lb-sort><option value="rank">Rank</option><option value="ttft">Lowest TTFT</option><option value="throughput">Highest throughput</option><option value="completion">Highest completion</option><option value="samples">Most samples</option></select></label>
     <label>Evidence<select data-lb-evidence><option value="all">All measurements</option><option value="qualified">Ranked</option><option value="warming">Limited evidence</option><option value="config">Excluded attempts</option></select></label>

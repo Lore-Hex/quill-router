@@ -83,8 +83,6 @@ body { margin:0; font-family:Inter, ui-sans-serif, system-ui, -apple-system, Bli
 a { color:var(--blue); text-decoration:none; }
 button, input, select { font:inherit; }
 
-.brand { display:flex; align-items:center; gap:10px; color:var(--ink); font-weight:800; }
-
 /* Theme toggle button in the nav — small icon-only square that flips
  * data-theme. Distinct aria-label ("Switch theme") so it never collides
  * with the "Sign in" button's accessible name in tests. */

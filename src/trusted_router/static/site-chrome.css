@@ -66,6 +66,34 @@ html {
   cursor: pointer;
 }
 
+.trnav .search:focus-within {
+  outline: 2px solid var(--tr-color-focus);
+  outline-offset: 2px;
+}
+
+.trnav .search input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--tr-color-text-primary);
+  font: inherit;
+  box-shadow: none;
+}
+
+.trnav .search input:focus-visible {
+  outline: none !important;
+}
+
+@media (max-width: 880px) {
+  .trnav .search input { font-size: 16px; }
+}
+
 .trnav .search:hover {
   border-color: var(--tr-color-line-strong);
   color: var(--tr-color-text-primary);
@@ -273,6 +301,25 @@ html {
   .trnav .search { gap: 8px; padding: 0 10px; font-size: 13px; }
   .trnav .search-verb { display: none; }
   .trnav .search-noun { text-transform: capitalize; }
+}
+
+/* A real catalog input needs editing room on phones, unlike the dialog trigger. */
+@media (max-width: 600px) {
+  html:has(.tbar--catalog) { --sticky-header-height: 122px; }
+  .trnav .tbar--catalog {
+    height: 122px;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-block: 12px;
+  }
+  .trnav .tbar--catalog .brand { margin-right: auto; }
+  .trnav .tbar--catalog .menu { margin-left: 0; }
+  .trnav .tbar--catalog .search {
+    order: 4;
+    flex: none;
+    width: 100%;
+    height: 44px;
+  }
 }
 
 /* Buttons shared with the homepage */

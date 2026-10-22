@@ -42,8 +42,8 @@ class TokenIndexPageTests(unittest.TestCase):
         self.assertIn("Your GPUs. Your brand.", page)
         self.assertIn("token-exchange-neocloud-in-a-box", page)
         self.assertIn("Pre-alpha", page)
-        self.assertIn("NYTE address activation is in progress.", page)
-        self.assertIn("api.confidential.trustedrouter.com/v1", page)
+        self.assertNotIn("NYTE address activation is in progress.", page)
+        self.assertIn("api.confidential.nytokenexchange.com/v1", page)
         self.assertIn("/docs#privacy-filters", page)
         self.assertIn("https://nytokenexchange.com/index", (self.output / "new-york/sitemap.xml").read_text())
         for other in self.output.glob("*/index.html"):
