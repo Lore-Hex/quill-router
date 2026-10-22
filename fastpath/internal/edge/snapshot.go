@@ -247,6 +247,12 @@ func (p *poller) poll(ctx context.Context) time.Duration {
 		retry, ok := retryAfter(resp.Header.Get("Retry-After"), p.clock())
 		if ok {
 			wait = max(retry, p.cfg.MinInterval)
+			if have == nil {
+				// With nothing held, a long Retry-After would leave the edge
+				// with no snapshot for its length: ask again within the
+				// longest wait.
+				wait = min(wait, p.cfg.Interval)
+			}
 		}
 		p.logf("fastpath edge snapshot: poll status=%d outcome=unavailable publisher_status=%s retry_after=%s kept=%s",
 			resp.StatusCode, status, wait, keptOf(have))

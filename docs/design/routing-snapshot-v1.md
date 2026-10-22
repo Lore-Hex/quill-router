@@ -706,7 +706,10 @@ those flags only from instance metadata that `infra/fastpath.tf` does not set:
 | `-edge-shadow` | `fastpath-edge-shadow` (`true`) | false |
 
 The pinned release must take these flags before any of the attributes is set
-(`tests/test_fastpath_p1.py`).
+(`tests/test_fastpath_p1.py`). The startup script refuses a snapshot URL whose
+scheme and host are not the edge upstream's, the refusal `edge.New` would
+make: there it would stop the whole process, admission included, restarted
+into the same refusal.
 
 **The poll.** A goroutine of its own GETs the URL with the internal token,
 which is why the URL must be on the edge's own upstream (scheme and host); it
@@ -719,7 +722,9 @@ and `AllowTestKey` false, and the edge refuses to start with the test key's
 kid or public key. What verifies replaces the copy held; a refusal, a 503, a
 404 or an outage keeps it. The next poll is at `refresh_at`, between 5 s and
 a minute; after a 304 past `refresh_at`, a minute; after a failure, a backoff
-from 5 s to a minute; and never before a `Retry-After`. The copy is read with
+from 5 s to a minute; and never before a `Retry-After`, except that with no
+snapshot held a `Retry-After` longer than a minute waits a minute, so an edge
+without a copy asks again within a minute. The copy is read with
 one atomic load, never outside `[compiled_at, not_after)`, and is dropped at
 `not_after`: memory holds one snapshot (two while a new one is verified).
 Each poll logs its status and outcome with the sha256 and instants, or the
@@ -730,9 +735,14 @@ twin) with the internal token, the shadow on and a snapshot held, the edge
 notes the snapshot, the instant, its boot verdict, and whether the
 `X-Quill-Video-Allowed-Providers` header came and the `Idempotency-Key` header
 names the partner prefix. It keeps a copy of the request body (up to 1 MiB)
-and of Python's answer (up to 4 MiB; gzip is read) as they pass, and when the
-proxy closes Python's answer it queues the comparison, or drops it when 256
-are waiting. One goroutine compares. The body is read as `Evaluate` takes it,
+and of Python's answer (up to 4 MiB; gzip is read) as they pass, each read
+passed on at once (a chunked answer streams, its trailers with it), and when
+the proxy closes Python's answer it queues the comparison, or drops it when 256
+are waiting. A body the edge read whole (a signed request's) past 1 MiB is
+counted as passed at once and not kept, nor is Python's answer copied. All
+copies, in flight and queued, share a budget of 64 MiB: a copy that would
+pass it is not made, and the request is counted as passed; a copy's bytes go
+back to the budget once it is compared or dropped. One goroutine compares. The body is read as `Evaluate` takes it,
 each field's JSON type checked (a value the schema would coerce or refuse
 goes to Python), and the request goes to Python, with the reason, for every
 input `Evaluate` assumes absent: an additional cost reservation, an inference
@@ -759,23 +769,38 @@ one reason, `consistent` when Python's is among those some way gives, and a
 difference when none gives it. The abliterate estimated-usage reason is not
 compared. Go evaluates at the request's arrival and again at the answer's; if
 the two answers differ (a price epoch or an availability instant passed while
-Python decided), the request is counted as passed to Python.
+Python decided), the request is counted as passed to Python. Both readings
+are the edge's clock, and Python reads its own: a skew between the two clocks
+at a price epoch or availability instant can put Python's reading on the
+other side of the boundary from both of the edge's, a rare false difference
+(`estimate`, or `candidates` at an availability instant) for requests within
+the skew of an hour's start or an endpoint's deadline.
 
 The classes, counted per snapshot digest and logged each minute:
 
 - `agree`: the candidates and their order, the estimate
   (`estimated_cost_microdollars` against the model estimate) and the Stage D
   reason; or the refusal's status, type, message and param.
-- `differ`, by field: `candidates`, `estimate`, `stage_d_reason`, `outcome`
-  (one answered, the other refused), `refusal.status`, `refusal.type`,
-  `refusal.message`, `refusal.param`. A key with an OAuth app markup shows as
-  an `estimate` difference: Python adds the markup, which the edge cannot
-  know.
+- `estimate_app_markup`, counted beside the class: Python's estimate is
+  higher than Go's by an OAuth app's markup of some integer basis points in
+  1..10000 (`gateway.py` adds `estimate * bps // 10000` for an app's key,
+  which the edge cannot know). Consistent, not a difference; the request's
+  class is what its other fields make it.
+- `differ`, by field: `candidates`, `estimate` (one no app markup explains),
+  `stage_d_reason`, `outcome` (one answered, the other refused),
+  `refusal.status`, `refusal.type`, `refusal.message`, `refusal.param`.
 - `affinity`: the body names a `cache_affinity_key`, and Python's list is
   Go's with one endpoint moved to the front of its model's run (or of the
   list), as `ROUTING_STATE.rank` orders a session's warm endpoint. With
-  fallbacks off the list is one candidate long, and a moved endpoint is a
-  `candidates` difference.
+  fallbacks off Python re-ranks and then keeps one candidate, so its one
+  endpoint is the warm one and its estimate that endpoint's price: when both
+  lists are one long, there is no `provider.order` (under which Python does
+  not re-rank), and Python's endpoint is of Go's model and among those Go
+  admits for the request with fallbacks on, it is `affinity`, the estimate is
+  not compared, and Stage D is read over Python's candidate. Otherwise both
+  `candidates` and `estimate` differ. Under `sort` partition `none` the warm
+  endpoint may be another model's; with fallbacks off that shows as a
+  difference.
 - `passed_to_python`, by reason: Go's own pass reasons with every request
   value redacted (`<value>`, `provider.<field>`), the inputs above, Python
   refusing outside routing (any status but 400, or a 400 whose type is not a

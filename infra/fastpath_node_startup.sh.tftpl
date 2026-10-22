@@ -103,6 +103,16 @@ if [ -n "$snapshot_url$snapshot_public_key$snapshot_kid$snapshot_plane" ]; then
         exit 1 ;;
     esac
   done
+  # The poll carries the internal token, so the edge polls its own upstream
+  # alone and refuses to start on any other scheme or host; that refusal
+  # would stop the whole process, admission with it, restarted into the same
+  # refusal, so the script refuses first and the unit keeps what it had.
+  snapshot_origin="$(printf '%s' "$snapshot_url" | cut -d/ -f1-3)"
+  upstream_origin="$(printf '%s' "$edge_upstream" | cut -d/ -f1-3)"
+  if [ "$snapshot_origin" != "$upstream_origin" ] || [ -n "$(printf '%s' "$snapshot_url" | cut -d/ -f2)" ]; then
+    echo "fastpath: the routing snapshot's URL is not on the edge's upstream; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
   snapshot_flags="-edge-snapshot-url $snapshot_url -edge-snapshot-public-key $snapshot_public_key -edge-snapshot-kid $snapshot_kid -edge-snapshot-plane $snapshot_plane"
   case "$edge_shadow" in
     true) snapshot_flags="$snapshot_flags -edge-shadow" ;;

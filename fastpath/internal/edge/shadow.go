@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"slices"
@@ -50,6 +51,10 @@ const (
 	maxShadowReasons = 64
 	// maxDifferLogs bounds the per-comparison lines a period logs.
 	maxDifferLogs = 20
+	// maxShadowBytes bounds the copies the comparator holds at once, in
+	// flight and queued: past it a request is not copied, and is counted
+	// as passed.
+	maxShadowBytes = 64 << 20
 )
 
 // authorizeRoutes are the paths Python answers authorize on.
@@ -82,34 +87,53 @@ type shadowCall struct {
 	// constraints); partnerKey: the Idempotency-Key header names the
 	// partner's internal prefix.
 	videoProviders, partnerKey bool
-	// body is the request's when the edge read it; else tap holds what the
-	// proxy sent.
-	body []byte
-	tap  *tap
+	// body is the request's when the edge read it, bodyHeld the bytes of
+	// the comparator's budget it holds; else tap holds what the proxy sent.
+	body     []byte
+	bodyHeld int64
+	tap      *tap
 }
 
-// tap passes a body through unchanged, keeping a copy within a bound.
+// finish gives back the request's share of the comparator's budget.
+func (call *shadowCall) finish() int64 {
+	n := call.bodyHeld
+	call.bodyHeld = 0
+	return n + call.tap.finish()
+}
+
+// tap passes a body through unchanged, keeping a copy within a bound and
+// within the comparator's byte budget. Each Read passes on what the body
+// gave it at once: the copy never holds the bytes back.
 type tap struct {
 	rc      io.ReadCloser
+	sh      *shadow
 	limit   int
 	length  int64
 	onClose func(*tap)
 
-	mu     sync.Mutex
-	buf    []byte
-	over   bool
-	eof    bool
-	closed bool
+	mu       sync.Mutex
+	buf      []byte
+	held     int64
+	over     bool
+	spent    bool
+	finished bool
+	eof      bool
+	closed   bool
 }
 
 func (t *tap) Read(p []byte) (int, error) {
 	n, err := t.rc.Read(p)
 	t.mu.Lock()
 	if n > 0 && !t.over {
-		if len(t.buf)+n > t.limit {
-			t.over, t.buf = true, nil
-		} else {
+		switch {
+		case len(t.buf)+n > t.limit:
+			t.drop()
+		case !t.sh.reserve(int64(n)):
+			t.drop()
+			t.spent = true
+		default:
 			t.buf = append(t.buf, p[:n]...)
+			t.held += int64(n)
 		}
 	}
 	if err == io.EOF {
@@ -131,14 +155,34 @@ func (t *tap) Close() error {
 	return err
 }
 
-// bytes are what passed, when all of it passed within the bound.
-func (t *tap) bytes() ([]byte, bool) {
+// drop stops the copy and gives back its share of the budget; mu is held.
+func (t *tap) drop() {
+	t.sh.release(t.held)
+	t.over, t.buf, t.held = true, nil, 0
+}
+
+// finish ends the copy, whatever still passes, and says how much of the
+// budget it held, for its caller to give back.
+func (t *tap) finish() int64 {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := t.held
+	t.over, t.buf, t.held, t.finished = true, nil, 0, true
+	return n
+}
+
+// bytes are what passed, when all of it passed within the bound; spent says
+// the budget, not the bound, stopped the copy.
+func (t *tap) bytes() (b []byte, complete, spent bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.over || !(t.eof || (t.length >= 0 && int64(len(t.buf)) == t.length)) {
-		return nil, false
+		return nil, false, t.spent
 	}
-	return t.buf, true
+	return t.buf, true, false
 }
 
 // comparison is a call with Python's answer: its status, its encoding, its
@@ -150,6 +194,8 @@ type comparison struct {
 	encoding string
 	response []byte
 	complete bool
+	spent    bool
+	answer   *tap
 	done     time.Time
 	// passed, when set, is why the request is not compared, known before
 	// Python answered (it was not reached, or the body is past the bound).
@@ -166,6 +212,11 @@ type result struct {
 	// changes Go's answer), "consistent" (some value gives Python's), or
 	// "" (not compared).
 	byok, stageD string
+	// estimate is "app_markup" when Python's estimate is Go's with an
+	// integer app markup on it (gateway.py adds estimate*bps//10000 for an
+	// OAuth app's key, which the edge cannot know): consistent, not a
+	// difference.
+	estimate     string
 	goOutcome    string
 	pythonStatus int
 }
@@ -179,6 +230,8 @@ type tally struct {
 	reasons map[string]int
 	byok    map[string]int
 	stageD  map[string]int
+	// appMarkup counts the estimates an app markup explains.
+	appMarkup int
 }
 
 func newTally() *tally {
@@ -196,9 +249,12 @@ type shadow struct {
 	// noSnapshot and dropped are counted on the request path, atomically;
 	// the rest under mu, by the comparator's goroutine.
 	noSnapshot, dropped atomic.Int64
-	mu                  sync.Mutex
-	tallies             map[string]*tally
-	differLogs          int
+	// bytes are the budget's bytes held by copies; budget is its bound.
+	bytes      atomic.Int64
+	budget     int64
+	mu         sync.Mutex
+	tallies    map[string]*tally
+	differLogs int
 }
 
 func newShadow(logf func(string, ...any), clock func() time.Time, every time.Duration) *shadow {
@@ -206,7 +262,28 @@ func newShadow(logf func(string, ...any), clock func() time.Time, every time.Dur
 		every = time.Minute
 	}
 	return &shadow{logf: logf, clock: clock, every: every, queue: make(chan comparison, shadowQueue),
-		tallies: map[string]*tally{}}
+		tallies: map[string]*tally{}, budget: maxShadowBytes}
+}
+
+// reserve takes n bytes of the budget, or none and false when they are not
+// there.
+func (sh *shadow) reserve(n int64) bool {
+	if sh.bytes.Add(n) > sh.budget {
+		sh.bytes.Add(-n)
+		return false
+	}
+	return true
+}
+
+func (sh *shadow) release(n int64) {
+	if n != 0 {
+		sh.bytes.Add(-n)
+	}
+}
+
+// finish gives back what a comparison held of the budget.
+func (sh *shadow) finish(c comparison) {
+	sh.release(c.call.finish() + c.answer.finish())
 }
 
 // begin is the call for an authorize the edge is about to pass on, nil when
@@ -226,20 +303,28 @@ func (e *Edge) begin(r *http.Request) *shadowCall {
 }
 
 // attach puts the call on the request the proxy sends; a body the edge has
-// not read is tapped as it passes.
-func (call *shadowCall) attach(r *http.Request, verdict Verdict, body []byte) *http.Request {
+// not read is tapped as it passes. A body the edge read that is past the
+// comparator's bound, or past what is left of its budget, is not kept: the
+// request is counted as passed at once, and r goes on as it came.
+func (sh *shadow) attach(call *shadowCall, r *http.Request, verdict Verdict, body []byte) *http.Request {
 	call.verdict = verdict
-	out := r.WithContext(context.WithValue(r.Context(), shadowKey{}, call))
-	if body != nil {
-		call.body = body
-		return out
-	}
-	if r.Body == nil || r.Body == http.NoBody {
+	switch {
+	case body != nil && len(body) > maxShadowRequest:
+		sh.submit(comparison{call: call, passed: "the request body is over the comparator's bound"})
+		return r
+	case body != nil && !sh.reserve(int64(len(body))):
+		sh.submit(comparison{call: call, passed: "the comparator's byte budget is spent"})
+		return r
+	case body != nil:
+		call.body, call.bodyHeld = body, int64(len(body))
+	case r.Body == nil || r.Body == http.NoBody:
 		call.body = []byte{}
-		return out
 	}
-	call.tap = &tap{rc: r.Body, limit: maxShadowRequest, length: r.ContentLength}
-	out.Body = call.tap
+	out := r.WithContext(context.WithValue(r.Context(), shadowKey{}, call))
+	if call.body == nil {
+		call.tap = &tap{rc: r.Body, sh: sh, limit: maxShadowRequest, length: r.ContentLength}
+		out.Body = call.tap
+	}
 	return out
 }
 
@@ -248,10 +333,10 @@ func (call *shadowCall) attach(r *http.Request, verdict Verdict, body []byte) *h
 // status, headers and bytes are untouched.
 func (sh *shadow) tapResponse(resp *http.Response, call *shadowCall) {
 	status, encoding := resp.StatusCode, resp.Header.Get("Content-Encoding")
-	resp.Body = &tap{rc: resp.Body, limit: maxShadowResponse, length: resp.ContentLength, onClose: func(t *tap) {
-		bytes, complete := t.bytes()
+	resp.Body = &tap{rc: resp.Body, sh: sh, limit: maxShadowResponse, length: resp.ContentLength, onClose: func(t *tap) {
+		bytes, complete, spent := t.bytes()
 		sh.submit(comparison{call: call, status: status, encoding: encoding, response: bytes, complete: complete,
-			done: sh.clock()})
+			spent: spent, answer: t, done: sh.clock()})
 	}}
 }
 
@@ -262,6 +347,7 @@ func (sh *shadow) submit(c comparison) {
 	case sh.queue <- c:
 	default:
 		sh.dropped.Add(1)
+		sh.finish(c)
 	}
 }
 
@@ -276,11 +362,18 @@ func (sh *shadow) run(ctx context.Context) {
 			sh.flush()
 			return
 		case c := <-sh.queue:
-			sh.record(c.call.held.claims.SHA256, sh.safeCompare(c))
+			sh.process(c)
 		case <-ticker.C:
 			sh.flush()
 		}
 	}
+}
+
+// process compares one comparison, counts it, and gives back its copies'
+// share of the budget.
+func (sh *shadow) process(c comparison) {
+	sh.record(c.call.held.claims.SHA256, sh.safeCompare(c))
+	sh.finish(c)
 }
 
 // safeCompare is compare, a panic in it counted rather than ending the node:
@@ -314,6 +407,9 @@ func (sh *shadow) record(digest string, r result) {
 	}
 	if r.stageD != "" {
 		t.stageD[r.stageD]++
+	}
+	if r.estimate == "app_markup" {
+		t.appMarkup++
 	}
 	if r.class == ClassDiffer && sh.differLogs < maxDifferLogs {
 		sh.differLogs++
@@ -349,9 +445,9 @@ func (sh *shadow) flush() {
 	for _, d := range digests {
 		t := sh.tallies[d]
 		sh.logf("fastpath edge shadow: snapshot=%s agree=%d differ=%d affinity=%d passed_to_python=%d "+
-			"differ_fields=%s passed_reasons=%s byok=%s stage_d=%s", d, t.classes[ClassAgree], t.classes[ClassDiffer],
-			t.classes[ClassAffinity], t.classes[ClassPassed], jsonOf(t.fields), jsonOf(t.reasons), jsonOf(t.byok),
-			jsonOf(t.stageD))
+			"estimate_app_markup=%d differ_fields=%s passed_reasons=%s byok=%s stage_d=%s", d, t.classes[ClassAgree],
+			t.classes[ClassDiffer], t.classes[ClassAffinity], t.classes[ClassPassed], t.appMarkup, jsonOf(t.fields),
+			jsonOf(t.reasons), jsonOf(t.byok), jsonOf(t.stageD))
 	}
 	if noSnapshot, dropped := sh.noSnapshot.Swap(0), sh.dropped.Swap(0); noSnapshot > 0 || dropped > 0 {
 		sh.logf("fastpath edge shadow: no_snapshot=%d dropped=%d", noSnapshot, dropped)
@@ -375,13 +471,18 @@ func (sh *shadow) compare(c comparison) result {
 	if c.passed != "" {
 		return passed(c.passed)
 	}
+	if c.spent {
+		return passed("the comparator's byte budget is spent")
+	}
 	if !c.complete {
 		return passed("python's answer was not read through within the comparator's bound")
 	}
 	body := call.body
 	if body == nil {
-		var ok bool
-		if body, ok = call.tap.bytes(); !ok {
+		var ok, spent bool
+		if body, ok, spent = call.tap.bytes(); spent {
+			return passed("the comparator's byte budget is spent")
+		} else if !ok {
 			return passed("the request body was not read through within the comparator's bound")
 		}
 	}
@@ -445,17 +546,29 @@ func (sh *shadow) compare(c comparison) result {
 	affinity := false
 	switch {
 	case goAnswer.Outcome == routingsnapshot.Answered && py.answered:
+		estimated, stageD := true, goAnswer
 		if !slices.Equal(goAnswer.Candidates, py.candidates) {
-			if affinityKey && h.promotedWithinItsModel(goAnswer.Candidates, py.candidates) {
+			switch {
+			case affinityKey && h.promotedWithinItsModel(goAnswer.Candidates, py.candidates):
 				affinity = true
-			} else {
+			case affinityKey && h.warmInsteadOfFirst(req, goAnswer.Candidates, py.candidates):
+				// Python re-ranked, then kept one: its candidate and its
+				// estimate are the warm endpoint's, which Go cannot price as
+				// Python chose it. Stage D is read over Python's candidate.
+				affinity, estimated = true, false
+				stageD.Candidates = py.candidates
+			default:
 				out.fields = append(out.fields, "candidates")
 			}
 		}
-		if goAnswer.ModelEstimate != py.estimate {
-			out.fields = append(out.fields, "estimate")
+		if estimated && goAnswer.ModelEstimate != py.estimate {
+			if appMarkup(goAnswer.ModelEstimate, py.estimate) {
+				out.estimate = "app_markup"
+			} else {
+				out.fields = append(out.fields, "estimate")
+			}
 		}
-		out.stageD = stageDOf(s, call.verdict, req, goAnswer, py.stageD)
+		out.stageD = stageDOf(s, call.verdict, req, stageD, py.stageD)
 		if out.stageD == "differ" {
 			out.fields = append(out.fields, "stage_d_reason")
 		}
@@ -532,6 +645,57 @@ func (h *held) promotedWithinItsModel(cold, py []string) bool {
 	}
 	model := h.endpointModel[cold[j]]
 	return i == 0 || (h.endpointModel[cold[i-1]] != model && h.endpointModel[cold[i]] == model)
+}
+
+// warmInsteadOfFirst: with fallbacks off Python re-ranks and then keeps
+// one candidate, so a session's warm endpoint replaces Go's first. It is
+// that when both lists are one long and Python's endpoint is one Go admits
+// for the same model with fallbacks on (and no provider.order, under which
+// Python does not re-rank).
+func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string) bool {
+	if len(cold) != 1 || len(py) != 1 || h.endpointModel[py[0]] == "" || h.endpointModel[py[0]] != h.endpointModel[cold[0]] {
+		return false
+	}
+	on, ok := withFallbacks(req)
+	if !ok {
+		return false
+	}
+	r := h.snapshot.Evaluate(on)
+	return r.Outcome == routingsnapshot.Answered && slices.Contains(r.Candidates, py[0])
+}
+
+// withFallbacks is req with allow_fallbacks unset, top-level and in
+// provider; ok is false when provider names an order, or is not an object.
+func withFallbacks(req routingsnapshot.Request) (routingsnapshot.Request, bool) {
+	req.AllowFallbacks = nil
+	if isJSONNull(req.Provider) {
+		return req, true
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(req.Provider, &fields) != nil || fields == nil {
+		return req, false
+	}
+	if order, ok := fields["order"]; ok && !isJSONNull(order) {
+		return req, false
+	}
+	delete(fields, "allow_fallbacks")
+	provider, err := json.Marshal(fields)
+	if err != nil {
+		return req, false
+	}
+	req.Provider = provider
+	return req, true
+}
+
+// appMarkup: py is goEstimate with an app markup of some integer basis
+// points in 1..10000 on it, as gateway.py adds it (estimate*bps//10000).
+func appMarkup(goEstimate, py int64) bool {
+	if goEstimate <= 0 || py <= goEstimate || goEstimate > math.MaxInt64/20_000 {
+		return false
+	}
+	marked := func(bps int64) int64 { return goEstimate + goEstimate*bps/10_000 }
+	bps := sort.Search(10_000, func(i int) bool { return marked(int64(i)+1) >= py }) + 1
+	return bps <= 10_000 && marked(int64(bps)) == py
 }
 
 // stageDOf compares Python's Stage D reason with Go's. The edge knows the

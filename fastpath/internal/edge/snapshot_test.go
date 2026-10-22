@@ -468,7 +468,15 @@ func TestTheTestKeyIsNeverTrustedAndTheSnapshotComesFromTheUpstream(t *testing.T
 		{"two keys of one kid", func(c *Config) {
 			c.Snapshot.Keys = append(slices.Clone(c.Snapshot.Keys), c.Snapshot.Keys[0])
 		}},
-		{"another host", func(c *Config) { c.Snapshot.URL, _ = url.Parse("https://elsewhere.example" + snapshotPath) }},
+		{"another scheme", func(c *Config) { c.Snapshot.URL, _ = url.Parse("https://" + c.Upstream.Host + snapshotPath) }},
+		// The same scheme, so only the host check refuses these two.
+		{"another port", func(c *Config) {
+			c.Snapshot.URL, _ = url.Parse("http://" + c.Upstream.Hostname() + ":1" + snapshotPath)
+		}},
+		{"another host", func(c *Config) {
+			c.Snapshot.URL, _ = url.Parse("http://elsewhere.example:" + c.Upstream.Port() + snapshotPath)
+		}},
+		{"a user in the URL", func(c *Config) { c.Snapshot.URL, _ = url.Parse("http://u@" + c.Upstream.Host + snapshotPath) }},
 		{"no plane", func(c *Config) { c.Snapshot.Plane = "gcp" }},
 		{"no key", func(c *Config) { c.Snapshot.Keys = nil }},
 		{"a short key", func(c *Config) { c.Snapshot.Keys = []SnapshotKey{{Kid: "k", PublicKey: testKey[:31]}} }},
@@ -483,6 +491,66 @@ func TestTheTestKeyIsNeverTrustedAndTheSnapshotComesFromTheUpstream(t *testing.T
 	// Positive control: the configuration the cases change is accepted.
 	if _, err := New(base); err != nil {
 		t.Fatalf("the base configuration: %v", err)
+	}
+}
+
+// TestARedirectNeverCarriesTheToken: the upstream answers the poll with a
+// redirect to another server; the poll does not follow it, so the other
+// server never sees the internal token, and the poll counts as failed.
+func TestARedirectNeverCarriesTheToken(t *testing.T) {
+	h := newSnapshotEdge(t, false, nil)
+	var reached atomic.Int64
+	var tokens atomic.Int64
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		if r.Header.Get(TokenHeader) != "" || strings.Contains(fmt.Sprint(r.Header), token) {
+			tokens.Add(1)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(elsewhere.Close)
+	h.python.onSnapshot(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+snapshotPath, http.StatusFound)
+	})
+	h.poll(t)
+	if reached.Load() != 0 || tokens.Load() != 0 {
+		t.Fatalf("the redirect was followed: reached %d, with the token %d", reached.Load(), tokens.Load())
+	}
+	if h.edge.poller.failures != 1 || !strings.Contains(h.logs.text(), "poll status=302 outcome=unavailable") {
+		t.Fatalf("the redirect did not count as a failed poll (%d):\n%s", h.edge.poller.failures, h.logs.text())
+	}
+	// Positive control: a client that follows redirects would carry the
+	// token there.
+	req, _ := http.NewRequest(http.MethodGet, h.python.server.URL+snapshotPath, nil)
+	req.Header.Set(TokenHeader, token)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+	}
+	if tokens.Load() != 1 {
+		t.Fatalf("the control did not reach the other server with the token: %d", tokens.Load())
+	}
+}
+
+// TestALongRetryAfterWithNothingHeldWaitsTheLongestAtMost: with a snapshot
+// held, Retry-After is honoured whole; with none, the edge asks again within
+// the longest wait rather than going without for the Retry-After.
+func TestALongRetryAfterWithNothingHeldWaitsTheLongestAtMost(t *testing.T) {
+	h := newSnapshotEdge(t, false, nil)
+	h.python.onSnapshot(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	if wait := h.poll(t); wait != time.Minute {
+		t.Fatalf("nothing held: Retry-After 3600 waited %v", wait)
+	}
+	h.serveGolden(t, h.clock.now().Unix()+60)
+	h.poll(t)
+	h.python.onSnapshot(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	if wait := h.poll(t); wait != time.Hour {
+		t.Fatalf("a snapshot held: Retry-After 3600 waited %v", wait)
 	}
 }
 

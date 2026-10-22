@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -263,6 +264,63 @@ def test_the_snapshot_flags_wait_for_metadata_and_a_release_that_takes_them() ->
         assert pinned
         taken = _command_flags(_source_at(pinned.group(1), "fastpath/cmd/fastpath/main.go"))
         assert flags <= taken, sorted(flags - taken)
+
+
+def _run_snapshot_block(script: str, **attributes: str) -> subprocess.CompletedProcess[str]:
+    """The startup script's routing snapshot block, run by bash with the
+    instance's attributes given, the edge's upstream and flags set."""
+    start = script.index('snapshot_url="$(attribute fastpath-edge-snapshot-url)"')
+    block = script[start:script.index("install -d /opt/fastpath", start)]
+    # Rendered as it stands: the block has no template interpolation.
+    assert "${" not in block and "%{" not in block
+    stub = (
+        'attribute() { local name="A_${1//-/_}"; printf "%s" "${!name:-}"; }\n'
+        "systemd-cat() { cat >&2; }\n"
+        'edge_upstream="https://trusted-router-x.a.run.app"\nedge_flags="-edge-address 10.0.0.1:8081"\n'
+    )
+    env = {"PATH": "/usr/bin:/bin", **{"A_" + name.replace("-", "_"): value for name, value in attributes.items()}}
+    bash = shutil.which("bash")
+    assert bash
+    return subprocess.run(  # noqa: S603 - bash on the repository's own script
+        [bash, "-c", "set -euo pipefail\n" + stub + block + 'printf "%s" "$snapshot_flags"'],
+        capture_output=True, text=True, env=env, check=False,
+    )
+
+
+def test_the_script_refuses_a_snapshot_url_off_the_edges_upstream() -> None:
+    """edge.New refuses a snapshot URL on another scheme or host than the
+    upstream, which would end the whole process, admission included; the
+    startup script refuses it first, and passes one on the upstream."""
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    key = "A" * 43
+    given = {
+        "fastpath-edge-snapshot-public-key": key,
+        "fastpath-edge-snapshot-kid": "routing-snapshot-1",
+        "fastpath-edge-snapshot-plane": "gcp/us-central1",
+    }
+    ok = _run_snapshot_block(
+        script, **given, **{"fastpath-edge-snapshot-url": "https://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot"},
+        **{"fastpath-edge-shadow": "true"},
+    )
+    assert ok.returncode == 0, ok.stderr
+    assert ok.stdout == (
+        "-edge-snapshot-url https://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot "
+        f"-edge-snapshot-public-key {key} -edge-snapshot-kid routing-snapshot-1 -edge-snapshot-plane gcp/us-central1 "
+        "-edge-shadow"
+    )
+    for url in (
+        "https://elsewhere.example/internal/fastpath/routing-snapshot",
+        "http://trusted-router-x.a.run.app/internal/fastpath/routing-snapshot",
+        "https://trusted-router-x.a.run.app:8443/internal/fastpath/routing-snapshot",
+        "https://trusted-router-x.a.run.app.elsewhere.example/internal/fastpath/routing-snapshot",
+        "https:/trusted-router-x.a.run.app/x",
+    ):
+        refused = _run_snapshot_block(script, **given, **{"fastpath-edge-snapshot-url": url})
+        assert refused.returncode == 1, url
+        assert "not on the edge's upstream" in refused.stderr, (url, refused.stderr)
+    # None set: nothing passed.
+    none = _run_snapshot_block(script)
+    assert none.returncode == 0 and none.stdout == "", none.stderr
 
 
 def test_the_snapshot_flags_are_found() -> None:

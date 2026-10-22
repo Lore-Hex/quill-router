@@ -321,7 +321,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(headers) == 0 || listedAsHopByHop(r.Header, BootHeader) {
 		out := r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent))
 		if call != nil {
-			out = call.attach(out, Absent, nil)
+			out = e.shadow.attach(call, out, Absent, nil)
 		}
 		e.proxy.ServeHTTP(w, out)
 		return
@@ -356,7 +356,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	out.Body = io.NopCloser(bytes.NewReader(body))
 	out.ContentLength = int64(len(body))
 	if call != nil {
-		out = call.attach(out, verdict, body)
+		out = e.shadow.attach(call, out, verdict, body)
 	}
 	e.proxy.ServeHTTP(w, out)
 }
