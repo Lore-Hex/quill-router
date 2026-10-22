@@ -111,7 +111,7 @@ for (const width of [320, 360, 390, 430, 768, 880]) {
  });
  assert(!layout.overflow,`header must fit at ${width}px`);
  if(width<=600)assert(layout.brandGap>=24,`wordmark needs breathing room at ${width}px`);
- assert(layout.gap<=81,`API hero must follow its content at ${width}px`);
+ assert(layout.gap<=(width<=600?41:81),`API hero must follow its content at ${width}px`);
 }
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
 })().catch(error=>{console.error(error);process.exit(1);});
