@@ -304,6 +304,8 @@ class Reader:
         self.db, self.transaction = database, transaction
         self.mutations = {}
         self.claim = False
+        self.slot = getattr(database.clock.local, "slot", None)
+        self.claim_at_ns = None
         self.started = database.clock.now
         self.ended = None
         self.sequence = len(database.transactions)
@@ -337,6 +339,7 @@ class Reader:
             Timestamp(seconds=ns//10**9, nanos=ns%10**9))
         body = db.rows.get(key)
         if sql == db.storage.CLAIM_SQL:
+            self.claim_at_ns = ns
             rows = [(body, stamp)]
         elif sql == db.storage.UNRESOLVED_SQL:
             rows = []
@@ -456,8 +459,12 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
 
 
 def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=0.,
-                       post_ack_seconds=2., seed=73):
+                       post_ack_seconds=2., seed=73, clock_offsets_ms=None):
     """Execute actual owner/worker admission, not a synthesized busy outcome.
+
+    Clock offsets are server minus each boot's local wall in milliseconds;
+    the boundary timers use local wall, while RPC stamps use the server clock.
+    No artificial transit, post-ack hold or owner rejection is added for skew.
 
     The 40% sensitivity holds publish_cycle *after* ack but before it returns.
     A 2s hold crosses exactly the next boundary; its duration is hypothetical,
@@ -469,16 +476,23 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
 
     storage, publisher = modules(ref)
     clock = Clock()
-    clock.now = START*2.
+    # Offset means server minus local wall time. A negative boot's local
+    # boundary happens before the server boundary. The DB uses one common
+    # server clock; local walls and boundary timers move together per boot.
+    offsets = tuple(value/1000 for value in (clock_offsets_ms or (0,)*8))
+    assert len(offsets) == 8
+    clock.now = START*2. + min(offsets)
     publisher.sleep = clock.sleep
     db = Database(clock, storage, distributed=True)
     boots = [f"boot-{i}" for i in range(8)]
-    traces, services, futures = [], [], []
+    traces, services, futures, replies, releases = [], [], [], [], []
     stalls = random.Random(seed)  # noqa: S311 - reproducible simulation, not secrets
     held = []
     original = publisher.publish_cycle
     def cycle(*args):
+        clock.local.slot = args[4].slot
         result = original(*args)
+        replies.append(result)
         if result.trace["outcome"] == "published" and stalls.random() < post_ack_probability:
             held.append((args[1], args[4].slot))
             clock.sleep(post_ack_seconds)
@@ -514,12 +528,22 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         for index, boot in enumerate(boots):
-            store = storage.ObservationStore(db, clock=lambda: clock.now, wall=lambda: clock.now)
+            clock.now = START*2. + offsets[index]
+            store = storage.ObservationStore(db, clock=lambda: clock.now,
+                wall=lambda offset=offsets[index]: clock.now-offset)
             settings = Settings(environment="test", async_settle_shadow_policy=POLICY,
                 async_settle_shadow_workspaces="ws", source_revision="a"*40)
             settings.async_settle_shadow_health_region = settings.effective_serving_region
             svc = publisher.Service(settings, store)
             svc.journal.boot = boot
+            accept = svc.accept
+            def capture_release(event, *, accept=accept, boot=boot, **kwargs):
+                # Observe real failure events, including on origin/main where
+                # release_reason was not yet retained in the emitted trace.
+                if isinstance(event, publisher.lifecycle.PublisherFailed):
+                    releases.append((boot, event.slot, event.reason))
+                return accept(event, **kwargs)
+            svc.accept = capture_release
             # Evidence sink only: retain/validate every trace without simulating
             # GCS. Admission, counters and lifecycle still execute unchanged.
             svc.traces.append = capture
@@ -527,6 +551,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             svc.publisher_executor = Executor(pool, index)
             svc.loop = Loop()
             services.append(svc)
+        clock.now = START*2. + min(offsets)
         if warm:
             services[0].incumbent_slot = START-1
             db.rows[CLAIM_KIND, "local/publish"] = json.dumps(dict(v=2, policy_version=POLICY,
@@ -537,7 +562,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                 observed_ns=(START-1)*2_000_000_000, age_seconds=(START-1)*2., row_limit=10000))
 
         no_incumbent = set()
-        def tick(slot, boundary):
+        def tick(slot, boundary, indexes):
             if boundary:
                 health = db.rows.get((HEALTH_KIND, "local/fleet"))
                 body = json.loads(health) if health else None
@@ -547,15 +572,21 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                     # Ideal observer installation, as in round 2. Reader cache
                     # transport/session contention is not modeled here.
                     svc.observer.health = {"body": body} if body else None
-            for svc in services:
-                for effect in svc.tick(round(clock.now*1e6)):
+            for index in indexes:
+                svc = services[index]
+                stamp = round(svc.store.wall()*1e6)
+                for effect in svc.tick(stamp):
                     if isinstance(effect, publisher.lifecycle.StartPublisherCycle):
-                        svc.submit_publisher(effect.slot, round(clock.now*1e6))
+                        svc.submit_publisher(effect.slot, stamp)
         for offset in range(slots):
             slot = START+offset
-            clock.schedule(slot*2., lambda slot=slot: tick(slot, True))
-            # Check the prior job's 2.75s watchdog, without moving a boundary.
-            clock.schedule(slot*2.+.750001, lambda slot=slot: tick(slot, False))
+            for clock_offset in sorted(set(offsets)):
+                indexes = tuple(i for i, value in enumerate(offsets) if value == clock_offset)
+                clock.schedule(slot*2.+clock_offset,
+                    lambda slot=slot, indexes=indexes: tick(slot, True, indexes))
+                # Each owner's watchdog also uses that boot's local wall.
+                clock.schedule(slot*2.+clock_offset+.750001,
+                    lambda slot=slot, indexes=indexes: tick(slot, False, indexes))
         clock.run_queue()
         for future in futures:
             future.result()
@@ -574,10 +605,12 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     assert len(winners) == sum(t["outcome"] == "published" for t in traces)
     following = [rows[boot, slot+1] for slot, boot in winners.items()
                  if START+9 <= slot < START+slots-1]
-    claim_txs = [tx for tx in db.transactions if tx.claim and tx.started >= (START+10)*2]
+    claim_txs = [tx for tx in db.transactions if tx.claim and tx.slot >= START+10]
     commits = {slot: sum(tx.final_rpc in ("commit", "empty_commit")
-        and int(tx.started//2) == slot for tx in claim_txs) for slot in range(START+10, START+slots)}
+        and tx.slot == slot for tx in claim_txs) for slot in range(START+10, START+slots)}
     absent = no_incumbent & commits.keys()
+    rejected = {slot for _, slot, reason in releases if reason == "invalid_publisher_reply"}
+    after_rejected = {slot+1 for slot in rejected} & commits.keys()
     streaks, last, length = [], None, 0
     for slot in range(START+10, START+slots):
         boot = winners.get(slot)
@@ -597,6 +630,21 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     return dict(slots=slots, measured_slots=slots-10,
         rate=sum(t["outcome"] == "published" for t in measured)/(slots-10),
         commits_per_slot=sum(commits.values())/(slots-10),
+        clock_offsets_ms=[round(offset*1000) for offset in offsets],
+        invalid_reply_releases=sum(reason == "invalid_publisher_reply" for _, _, reason in releases),
+        invalid_reply_boots=sorted({boot for boot, _, reason in releases if reason == "invalid_publisher_reply"}),
+        slots_after_rejection=len(after_rejected),
+        commits_after_rejection=(sum(commits[slot] for slot in after_rejected)/len(after_rejected)
+            if after_rejected else None),
+        empty_claim_commits=sum(tx.final_rpc == "empty_commit" for tx in claim_txs),
+        rollback_claims=sum(tx.final_rpc == "rollback" for tx in claim_txs),
+        early_claim_reads=sum(tx.claim_at_ns is not None and tx.claim_at_ns < tx.slot*2_000_000_000
+            for tx in db.transactions if tx.claim),
+        out_of_window_worker_claims=sum(r.trace["claim_at_ns"] is not None
+            and not r.trace["slot"]*2_000_000_000 <= r.trace["claim_at_ns"]
+                <= r.trace["slot"]*2_000_000_000+250_000_000 for r in replies),
+        worker_failed_without_claim=sum(r.trace["outcome"] == "failed"
+            and r.trace["claim_at_ns"] is None and r.trace["rpc_count"] > 0 for r in replies),
         no_incumbent_slots=len(absent),
         no_incumbent_commits_per_slot=sum(commits[slot] for slot in absent)/max(1, len(absent)),
         previous_winner_failures=fraction("failed"), previous_winner_missed=fraction("missed"),
@@ -609,7 +657,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         published_claim_at_ms=median((t["claim_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published),
         published_observed_at_ms=median((t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published),
         published_ack_ms=median((t["ack_at_us"]-t["slot"]*2_000_000)/1000 for t in published),
-        max_claim_contenders=max(sum(int(tx.started//2) == slot for tx in claim_txs) for slot in commits),
+        max_claim_contenders=max(sum(tx.slot == slot for tx in claim_txs) for slot in commits),
         post_ack_stalls=len(held),
         released=sum(t["unknown_outcome"] and t["cycle_us"] == t["rpc_count"] == 0 for t in measured),
         release_reasons={reason: sum(t.get("release_reason") == reason for t in measured)
@@ -794,3 +842,59 @@ if __name__ == "__main__":
             if ref:
                 baseline.append(result)
     assert_calibrated(baseline)
+
+
+@pytest.mark.parametrize("ref", ["origin/main", None])
+def test_pre_boundary_server_claim_rolls_back_before_owner_validation(ref):
+    """A -5ms server stamp cannot become a published reply in these sources."""
+    storage, publisher = modules(ref)
+    clock = Clock()
+    clock.now = START*2.-.005
+    publisher.sleep = clock.sleep
+    db = Database(clock, storage)
+    store = storage.ObservationStore(db, clock=lambda: clock.now, wall=lambda: clock.now+.005)
+    job = publisher.lifecycle.PublisherJob(START, 1, clock.now, clock.now+.25)
+    admission = SimpleNamespace(admission_lock=threading.Lock(), generation=1,
+        revocation_epoch=0, admission_job=job, startup_retention=False)
+    reply, = run_workers(clock, lambda: publisher.publish_cycle(store, "boot-skew",
+        "us-central1", "a"*40, job, START*2_000_000, admission, True, True))
+    assert reply.trace["outcome"] == "failed"
+    assert reply.trace["rpc_count"] == 2  # Claim read, then Rollback.
+    assert not reply.claimed and not reply.trace["unknown_outcome"]
+    assert reply.trace["claim_at_ns"] is reply.trace["ack_at_us"] is None
+    assert db.claim_commits == 0 and db.rows == {}
+    assert db.transactions[0].final_rpc == "rollback"
+    assert db.transactions[0].claim_at_ns < START*2_000_000_000
+    PUBLISHER_SLOT_TRACE(reply.trace)  # Owner trace validation accepts this failure.
+
+    published = dict(reply.trace, outcome="published", claim_at_ns=START*2_000_000_000,
+        observed_at_ns=START*2_000_000_000+50_000_000,
+        publisher_heartbeat_ns=START*2_000_000_000+50_000_000,
+        ack_at_us=START*2_000_000+150_000, body_sha256="a"*64)
+    PUBLISHER_SLOT_TRACE(published)
+    published["claim_at_ns"] -= 1_000_000
+    with pytest.raises(ValueError, match="a1-server-slot"):
+        PUBLISHER_SLOT_TRACE(published)
+
+
+def test_clock_skew_production_calibration(capsys):
+    """Keep the requested negative control red when real callbacks contradict it."""
+    import time
+
+    started = time.monotonic()
+    baseline = []
+    with capsys.disabled():
+        for offsets in ((-4, -3, -2, -1, 0, 1, 2, 3), (-3,)*8):
+            for warm in (False, True):
+                result = simulate_lifecycle(ref="origin/main", warm=warm, clock_offsets_ms=offsets)
+                baseline.append(result)
+                print(json.dumps(dict(ref="origin/main", warm=warm, **result)), flush=True)
+        print(f"Four skew scenarios: {time.monotonic()-started:.3f} seconds", flush=True)
+    assert time.monotonic()-started < 20
+    assert all(r["invalid_reply_releases"] > 0 and r["invalid_reply_boots"]
+        and .20 <= r["previous_winner_failures"] <= .50 and r["rate"] <= .60
+        and r["slots_after_rejection"] > 0 and r["commits_after_rejection"] >= 3
+        and r["empty_claim_commits"] > 0 and r["unknown_ratio"] > 0 for r in baseline), (
+        "STOP: clock skew did not reproduce invalid_publisher_reply on origin/main; "
+        "HEALTH_CLAIM rejects the timestamp before claim mutation, not at owner delivery."
+    )
