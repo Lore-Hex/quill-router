@@ -3,7 +3,7 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-10-21T15:08:29Z",
+  "generated_at": "2026-10-21T17:19:58Z",
   "model_count": 43,
   "models": [
     {
@@ -1029,12 +1029,12 @@
         "structured-outputs",
         "reasoning"
       ],
-      "canary_status_code": 404,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "canary_status_code": 200,
+      "routable": true,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000
+      "cached_input_token_price_per_m": 300000,
+      "canary_verified_at": "2026-10-21T17:19:57.539034+00:00"
     },
     {
       "display_name": "Claude Sonnet 5",

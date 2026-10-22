@@ -236,18 +236,25 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
 
 
 @pytest.mark.parametrize("reseller", ["gmi", "lightning", "cloudflare-workers-ai"])
-def test_anthropic_models_credits_route_first_party_only(reseller: str) -> None:
-    # Policy: Anthropic-authored (anthropic/*) models route via Anthropic
-    # directly for Credits, never resellers (which list Claude ids they mostly
-    # don't serve). BYOK survives unless the provider has an explicit all-usage
-    # operator hold, as Lightning and Cloudflare passthroughs now do.
+def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None:
+    # Anthropic-direct and verified Vertex routes are approved for Credits;
+    # unverified resellers remain blocked. BYOK survives unless the provider
+    # has an all-usage hold, as Lightning and Cloudflare passthroughs do.
     built = catalog_vehicles.registry_endpoints()
     credits_providers = {
         e.provider
         for e in built.values()
         if e.model_id.startswith("anthropic/") and e.usage_type == "Credits"
     }
-    assert credits_providers <= {"anthropic"}
+    assert credits_providers <= {"anthropic", "google-vertex"}
+    assert {
+        e.model_id for e in built.values()
+        if e.model_id.startswith("anthropic/")
+        and e.provider == "google-vertex" and e.usage_type == "Credits"
+    } == {
+        model_id for model_id in _authoritative_provider_model_ids("google-vertex")
+        if model_id.startswith("anthropic/")
+    }
     # Anthropic-direct Credits lineup stays fully routable.
     for model_id in _authoritative_provider_model_ids("anthropic"):
         assert f"{model_id}@anthropic/prepaid" in built, model_id

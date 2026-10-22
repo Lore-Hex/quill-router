@@ -10,8 +10,64 @@ import pytest
 from scripts.pricing import vertex_claude
 from scripts.pricing.base import reconcile_manifest_tombstones
 from scripts.pricing.providers import google_vertex as vertex
+from trusted_router import catalog_ingest
+from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 
 FIXTURE = Path(__file__).parent / "fixtures/pricing/vertex_claude.html"
+
+
+def test_sonnet_enablement_recovers_access_and_preserves_billable_rates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_id = "anthropic/claude-sonnet-4.6"
+    native_id = "claude-sonnet-4-6"
+    manifest = tmp_path / "google-vertex.json"
+    manifest.write_text(json.dumps({"provider": "google-vertex", "models": [{
+        "id": model_id, "upstream_id": native_id,
+        "model_type": "chat", "endpoints": ["chat/completions"],
+        "context_length": 1_000_000, "max_output_tokens": 128_000,
+        "routable": False, "routable_reason": "provider-canary-failed",
+        "canary_status_code": 404,
+    }]}))
+    monkeypatch.setattr(vertex, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(vertex, "_authorization", lambda: ({}, "project"))
+    monkeypatch.setattr(vertex, "_live_model_ids", lambda headers: set())
+    monkeypatch.setattr(vertex, "_live_claude_rows", lambda headers: {
+        model_id: {"id": model_id, "upstream_id": native_id},
+    })
+    monkeypatch.setattr(vertex, "fetch_html", lambda url: FIXTURE.read_text())
+    monkeypatch.setattr(vertex, "parse", lambda html: {})
+    probes: list[str] = []
+
+    def probe(headers: dict[str, str], project: str, model: str) -> tuple[bool, int]:
+        probes.append(model)
+        return True, 200
+
+    monkeypatch.setattr(vertex_claude, "probe", probe)
+    result = vertex.fetch()
+    vertex.write_provider_manifest(result)
+    assert probes == [native_id]
+    assert result.price_index_model_ids == frozenset({model_id})
+    row = json.loads(manifest.read_text())["models"][0]
+    assert row["routable"] is True
+    assert "routable_reason" not in row
+    assert row["canary_status_code"] == 200
+    assert row["input_token_price_per_m"] == 3_000_000
+    assert row["output_token_price_per_m"] == 15_000_000
+    assert row["cached_input_token_price_per_m"] == 300_000
+
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    route = endpoints[f"{model_id}@google-vertex/prepaid"]
+    assert route.upstream_id == native_id
+    # The provider rates remain exact; customer billing adds the standard 5.5%.
+    assert route.prompt_price_microdollars_per_million_tokens == 3_165_000
+    assert route.completion_price_microdollars_per_million_tokens == 15_825_000
+    assert _endpoint_cost_microdollars(route, 0, 1_000_000) == 15_825_000
+    assert _endpoint_cost_microdollars(route, 0, 0, cache_read_tokens=1_000_000) == 316_500
+    assert _endpoint_cost_microdollars(route, 0, 0, cache_creation_tokens=1_000_000) == 3_956_250
+    for prompt_tokens, expected in [(200_000, 633_000), (200_001, 633_003), (1_000_000, 3_165_000)]:
+        assert _endpoint_cost_microdollars(route, prompt_tokens, 0) == expected
 
 
 @pytest.mark.parametrize("reason,priced", [
