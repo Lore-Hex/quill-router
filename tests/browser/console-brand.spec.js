@@ -34,6 +34,10 @@ for (const kind of ['api_keys', 'welcome']) for (const width of [390, 1280]) {
     await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(10, 16, 13)');
     expect(await page.evaluate(() => document.fonts.check('16px Archivo'))).toBe(true);
     await page.screenshot({path:testInfo.outputPath(`${kind}-${width}.png`),fullPage:true});
+    if (kind === 'welcome') {
+      await expect(page.locator('[data-rewards-api-keys]')).toHaveCount(0);
+      return;
+    }
     await page.locator('[data-rewards-api-keys]').click();
     await expect(page.locator('[data-rewards-progress]')).toHaveText('0 of 4 rewards claimed');
     await expect(page.locator('#social-rewards-title')).toHaveCSS('font-family','Archivo, Arial, sans-serif');
