@@ -315,14 +315,14 @@ def test_welcome_renders_actual_assigned_treatment(client, cell, label, caplog, 
              'experiment_id': ONBOARDING_EXPERIMENT_ID, 'experiment_cell_id': cell}
     client.cookies.set(ATTRIBUTION_COOKIE_NAME,
         encode_attribution_cookie(AttributionContext('a'*32, touch, touch, now), client.app.state.settings))
-    monkeypatch.setattr(welcome, 'live_credit_summary', lambda _: {'total_credits': 300000})
+    monkeypatch.setattr(welcome, 'live_credit_summary', lambda _: {'total_credits': 300000, 'available': 300000})
     caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
     response = client.get('/console/welcome?first=1')
     assert response.status_code == 200 and label in response.text
     assert 'data-copy-template-target="welcome-agent-message"' in response.text
     assert len([r for r in caplog.records if r.getMessage() == 'acquisition.experiment_exposed']) == 1
     caplog.clear()
-    monkeypatch.setattr(welcome, 'live_credit_summary', lambda _: {'total_credits': 0})
+    monkeypatch.setattr(welcome, 'live_credit_summary', lambda _: {'total_credits': 0, 'available': 0})
     client.cookies.set('tr_pending_reveal', 'sk-tr-test-only')
     unfunded = client.get('/console/welcome?first=1')
     assert unfunded.status_code == 200 and 'data-action="run-first-call"' not in unfunded.text

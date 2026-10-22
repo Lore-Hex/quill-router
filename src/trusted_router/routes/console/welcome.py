@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.acquisition import onboarding_exposure
 from trusted_router.auth import SettingsDep
+from trusted_router.money import format_money_display
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
 from trusted_router.typed_balance import live_credit_summary
+
+logger = logging.getLogger(__name__)
 
 
 def register(app: FastAPI) -> None:
@@ -20,8 +25,16 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         first: int | None = None,
     ) -> Response:
-        summary = live_credit_summary(ctx.workspace.id)
-        trial_microdollars = summary["total_credits"] if summary else 0
+        # Keep the one-time key available even when the optional balance read fails.
+        # Share this snapshot with the header rather than making a second read.
+        balance_known = True
+        try:
+            summary = live_credit_summary(ctx.workspace.id)
+        except Exception as exc:
+            logger.warning("Welcome balance unavailable: %s", type(exc).__name__)
+            summary = None
+            balance_known = False
+        available = summary["available"] if summary else 0
         # `tr_pending_reveal` is the short-lived one-shot cookie set by
         # the OAuth callback right before its 302 here. It carries the
         # raw API key minted during STORE.signup(). We read it ONCE,
@@ -38,7 +51,7 @@ def register(app: FastAPI) -> None:
                 revealed_key = cookie_value
                 clear_pending_reveal = True
         cell = ''
-        if revealed_key and trial_microdollars > 0:
+        if revealed_key and balance_known and available > 0:
             cell = onboarding_exposure(request, user_id=ctx.user.id, workspace_id=ctx.workspace.id, record=False)
         response = HTMLResponse(render(
             "console/welcome.html",
@@ -51,8 +64,11 @@ def register(app: FastAPI) -> None:
             workspace_name=ctx.workspace.name,
             # The raw amount selects the appropriate next step without
             # advertising the account-creation grant.
-            trial_credit_microdollars=trial_microdollars,
-            can_run_first_call=trial_microdollars > 0,
+            trial_credit_microdollars=available,
+            credit_balance_known=balance_known,
+            credits_available=format_money_display(available) if balance_known else None,
+            credits_empty=available <= 0,
+            can_run_first_call=balance_known and available > 0,
             onboarding_cell=cell,
         ), headers={"Cache-Control": "private, no-store"})
         if cell:

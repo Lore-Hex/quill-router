@@ -34,6 +34,7 @@
     </div>
   </section>
 
+  {% if credit_balance_known|default(true) %}
   <section class="panel activation-test-panel" aria-labelledby="first-call-heading">
     <div class="panel-head activation-panel-head">
       <div>
@@ -90,6 +91,8 @@
       </div>
     </div>
   </section>
+
+  {% endif %}
 
   <section class="panel activation-setup-panel" id="connect-your-app" aria-labelledby="connect-heading">
     <div class="panel-head activation-panel-head">
