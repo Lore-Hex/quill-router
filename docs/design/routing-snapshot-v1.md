@@ -78,7 +78,26 @@ looked up in).
 
 **models[]**, catalog order: `id`, `provider`, `supports_chat`,
 `supports_embeddings`, `supports_decide` (the three facts authorize branches
-on).
+on), and `context_length` (`Model.context_length`, the window
+`routing.candidates_fitting_context` holds a chat request to; 0 is unknown,
+and the filter keeps such a model whatever the request's size). The window is
+the model's, not an endpoint's: the filter reads nothing else, and no
+max-output field. It is a registry fact fixed at import, so it needs no epoch.
+
+*Adding `context_length` to v1.* It is an additive field inside v1, not a v2.
+No snapshot has been published or consumed: nothing compiles one on a
+schedule, and the Go reader is not wired. Both decoders take exactly the
+schema's fields, so the change fails closed in both directions: the readers
+before it (`parse_routing_snapshot` with `extra="forbid"`, Go's `Parse`)
+refuse a body that carries `context_length` (an unknown field, checked
+against the merged code: `$.models[0].context_length: unknown field` and
+pydantic's `extra_forbidden`), and the readers after it refuse a body without
+it (a missing field; `TestParseRefusals` holds Go to it). A refused snapshot
+is never evaluated; every request goes to Python. A v2 would rename the
+manifest `typ`, the golden files and every reference for no reader's
+benefit. Once snapshots are published, a shape change bumps `v` and `typ`
+instead, so a reader can tell a newer snapshot from a corrupt one in its
+logs; the fail-closed property does not depend on it.
 
 **endpoints[]**, `MODEL_ENDPOINTS` order: every endpoint the registry built
 at its import instant (`catalog_registry.CATALOG_RESOLVED_AT`), including ones
@@ -363,9 +382,6 @@ are pinned, so the hourly price refresh cannot make it stale.
   `candidate_cost_reporting`, which authorize derives from the stored row.
 - Wiring the Go evaluator into the edge: the cohort predicate, the per-workspace
   cache, the response, the shadow comparator. Until then nothing calls it.
-- `context_length` in the snapshot (see "What Go evaluates"): until it is
-  there, Go passes every request with a prompt estimate or `max_tokens` to
-  Python, which in production is nearly every request.
 - Publishing: hourly compile, key custody (pinned Secret Manager versions,
   rotation), the internal endpoint, the edge's poll and last-good copy.
 - Out of the cohort, so out of v1: OpenAI priority and auto service-tier
@@ -413,8 +429,9 @@ Python.
 **Evaluate** takes the authorize body's routing fields as the enclave sent
 them (`model`, `models`, `provider`, the top-level `allow_fallbacks`,
 `route_type`, `region`, `service_tier`, `requested_parameters`,
-`input_modalities`), the workspace's BYOK provider slugs, the token counts and
-the instant. It first applies what `schemas.GatewayAuthorizeRequest` does to
+`input_modalities`, `estimated_input_tokens`, `max_tokens`,
+`max_completion_tokens`, `max_output_tokens`), the workspace's BYOK provider
+slugs and the instant. It first applies what `schemas.GatewayAuthorizeRequest` does to
 them: `str_strip_whitespace` on every string and list-of-strings field (not on
 `provider` values or the extra `allow_fallbacks`, which the schema keeps as
 sent), and `min_length`/`max_length` on `model` and `service_tier`. Go strips
@@ -432,8 +449,27 @@ chain above, `provider.order`, `only` and `ignore` with their aliases,
 `allow_fallbacks` (top-level and nested, with their type and conflict
 refusals), `sort` (string or object, with `partition`),
 `data_collection` (with the soft `deny`), `usage` (`byok`, `credits`),
-`jurisdiction` (`us`), `zdr`, input modalities, the gateway-region rule, BYOK
-presence, the `default` service tier and the refusals these make.
+`jurisdiction` (`us`), `zdr`, input modalities, the context window, the
+gateway-region rule, BYOK presence, the `default` service tier and the
+refusals these make.
+
+*The context window.* Authorize calls `resolve_candidates` with
+`prompt_tokens` = `estimated_input_tokens` (plus a custom model's hidden
+prompt; custom models are outside the cohort) and `completion_tokens` =
+`max_tokens or max_completion_tokens or 0`. The prompt estimate is a number in
+the authorize body: the enclave counts the messages (chars/4) and sends it.
+Go receives that number and does not reproduce the heuristic; it is the same
+number Python routes and prices on, so there is nothing to derive. Go then
+does what `candidates_fitting_context` does, on the sorted candidates before
+the gateway-region rule: keep a candidate whose model's window is 0 or at
+least prompt plus completion; if none is kept, refuse with OpenAI's
+context-length error (400 `context_length_exceeded`, `param` `messages`)
+naming the largest window among the candidates, in the wording with or
+without the completion as Python's has it. The estimate prices
+`output_estimate`: `max_tokens`, else `max_completion_tokens`, else
+`max_output_tokens`, else 512. A `max_*` below 1 or a negative prompt
+estimate (which the schema refuses) and a prompt plus completion beyond int64
+go to Python.
 
 Evaluate assumes absent the inputs of `authorize_candidates` that are not in
 its request, and whoever wires the cohort predicate must pass a request
@@ -446,12 +482,8 @@ supplies; Go answers as an empty one would).
 
 It passes to Python, with the reason, and never guesses:
 
-- An instant outside `[compiled_at, not_after)`; negative token counts.
-- Any context-window input (`ContextPromptTokens` or
-  `ContextCompletionTokens` positive): `candidates_fitting_context` reads
-  `Model.context_length`, which the snapshot does not carry. The routing
-  cases pass zero for both (the generator calls `resolve_candidates` without
-  them), so they never exercise it.
+- An instant outside `[compiled_at, not_after)`; token counts the schema
+  refuses, or whose sum leaves int64.
 - Other route types (images, videos, audio, fetch, orchestration
   sub-routes), and a requested model that is embeddings-only or
   decision-only (the other resolvers).
@@ -479,9 +511,9 @@ It passes to Python, with the reason, and never guesses:
   to the extent that a 1,000-token priority request is refused as unavailable.
 - An estimate, or a `sort=price` headline sum, outside int64.
 
-Against `routing_cases_v1.json` (184 cases), Go answers 116 and refuses 43
+Against `routing_cases_v1.json` (198 cases), Go answers 124 and refuses 49
 exactly as Python (candidates and order, estimate, service tier and Stage D
-reason; or status, type and message), and passes 25 to Python. The test
+reason; or status, type, message and param), and passes 25 to Python. The test
 lists each passed case with its reason and fails if Go answers one of them or
 passes any other:
 
@@ -505,8 +537,18 @@ is a 400" holds; refusing there needs the fixture made complete first
 (patching `routing.PROVIDERS` in the generator), which changes these eight
 answers.
 
-The generator builds each case's body through `GatewayAuthorizeRequest`, as
-authorize does, so the cases see its stripping and its extra fields; no
+The generator calls `resolve_candidates` with the prompt and completion
+tokens as the gateway does, and prices `output_estimate` (a case's
+`output_tokens` must equal it). Fourteen `context_*` cases cover a request
+that fits, the limit exactly and one over (with and without a completion),
+`max_completion_tokens`, `max_tokens` over it, `max_output_tokens` pricing
+without counting, a window that excludes some models and the first model,
+one that excludes all (the error names the largest), the window of the
+filtered candidates only, an unknown window kept, and the context error
+before the gateway-region rule. The fixture's models now have three windows
+(65,536, 32,768 and 131,072) and Gemini an unknown one (0), so that no
+earlier case's answer changed. The generator also builds each case's body
+through `GatewayAuthorizeRequest`, as authorize does, so the cases see its stripping and its extra fields; no
 earlier case's answer changed. It gained twelve cases for the top-level
 `allow_fallbacks` (false, true, agreeing, conflicting, not a boolean, the
 nested one not a boolean, after a router name), malformed provider lists after

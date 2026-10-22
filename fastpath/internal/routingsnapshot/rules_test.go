@@ -20,7 +20,7 @@ func ptr[T any](v T) *T { return &v }
 func baseRequest() Request {
 	return Request{
 		Model: "deepseek/deepseek-v4-flash", RouteType: ptr("chat.completions"),
-		EstimatedInputTokens: 1000, OutputTokens: 512, At: peak(),
+		EstimatedInputTokens: 1000, At: peak(),
 	}
 }
 
@@ -37,10 +37,15 @@ func TestThePassRules(t *testing.T) {
 		decision Outcome
 	}
 	rules := []rule{
-		{"context window", "context-window fitting",
-			func(r *Request) { r.ContextPromptTokens = 1000 }, func(r *Request) {}, Answered},
-		{"context window (max_tokens)", "context-window fitting",
-			func(r *Request) { r.ContextCompletionTokens = 1 }, func(r *Request) {}, Answered},
+		{"max_tokens below 1", "a max_* token count below 1",
+			func(r *Request) { r.MaxTokens = ptr(int64(0)) }, func(r *Request) { r.MaxTokens = ptr(int64(1)) }, Answered},
+		{"max_output_tokens below 1", "a max_* token count below 1",
+			func(r *Request) { r.MaxOutputTokens = ptr(int64(-1)) }, func(r *Request) { r.MaxOutputTokens = ptr(int64(1)) }, Answered},
+		{"negative prompt estimate", "negative estimated_input_tokens",
+			func(r *Request) { r.EstimatedInputTokens = -1 }, func(r *Request) { r.EstimatedInputTokens = 0 }, Answered},
+		{"window sum beyond int64", "prompt and completion tokens beyond int64",
+			func(r *Request) { r.EstimatedInputTokens, r.MaxTokens = math.MaxInt64, ptr(int64(1)) },
+			func(r *Request) { r.EstimatedInputTokens, r.MaxTokens = math.MaxInt64-1, ptr(int64(1)) }, Refused},
 		{"after the window", "the instant is outside",
 			func(r *Request) { r.At = time.Unix(s.NotAfter, 0) }, func(r *Request) { r.At = time.Unix(s.NotAfter-1, 999_999_999) }, Answered},
 		{"before the window", "the instant is outside",
@@ -97,8 +102,13 @@ func TestThePassRules(t *testing.T) {
 		{"usage spelling", "provider.usage spelling",
 			func(r *Request) { r.Provider = json.RawMessage(`{"usage":"prepaid"}`) }, func(r *Request) { r.Provider = json.RawMessage(`{"usage":"CREDITS"}`) }, Answered},
 		{"priority prompt bound", "OpenAI priority prompt bound",
-			func(r *Request) { r.ServiceTier, r.EstimatedInputTokens = ptr("priority"), 272_001 },
-			func(r *Request) { r.ServiceTier, r.EstimatedInputTokens = ptr("priority"), 272_000 }, Refused},
+			// Gemini's window is unknown (0), so the context filter keeps it.
+			func(r *Request) {
+				r.Model, r.ServiceTier, r.EstimatedInputTokens = "google/gemini-3.1-pro-preview", ptr("priority"), 272_001
+			},
+			func(r *Request) {
+				r.Model, r.ServiceTier, r.EstimatedInputTokens = "google/gemini-3.1-pro-preview", ptr("priority"), 272_000
+			}, Refused},
 		{"estimate beyond int64", "the estimate exceeds int64",
 			func(r *Request) { r.Model, r.EstimatedInputTokens = "google/gemini-3.1-pro-preview", math.MaxInt64 },
 			func(r *Request) { r.Model, r.EstimatedInputTokens = "google/gemini-3.1-pro-preview", 2_000_000_000 }, Answered},

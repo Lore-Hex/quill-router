@@ -165,6 +165,9 @@ class ModelEntry(Frozen):
     supports_chat: Flag
     supports_embeddings: Flag
     supports_decide: Flag
+    # The window routing.candidates_fitting_context holds a chat request to
+    # (0: unknown, and kept).
+    context_length: UInt
 
 
 class Privacy(Frozen):
@@ -812,7 +815,7 @@ def compile_routing_snapshot(
             ModelEntry(
                 id=model.id, provider=model.provider, supports_chat=model.supports_chat,
                 supports_embeddings=model.supports_embeddings,
-                supports_decide=model.supports_decide,
+                supports_decide=model.supports_decide, context_length=model.context_length,
             )
             for model in inputs.models
         ),

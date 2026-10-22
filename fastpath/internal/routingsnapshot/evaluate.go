@@ -47,15 +47,18 @@ type Request struct {
 	// BYOKProviders are the provider slugs whose BYOK credentials the
 	// workspace holds.
 	BYOKProviders []string
-	// EstimatedInputTokens and OutputTokens price the estimate.
+	// EstimatedInputTokens is the body's estimated_input_tokens (the
+	// schema's default, 1, when the body omits it): the enclave's prompt
+	// estimate, a number Go receives, not one it derives from the messages.
+	// It prices the estimate and is the prompt the context window must hold.
 	EstimatedInputTokens int64
-	OutputTokens         int64
-	// ContextPromptTokens and ContextCompletionTokens are what the gateway
-	// passes resolve_candidates for candidates_fitting_context (the prompt
-	// estimate and max_tokens). The snapshot carries no context windows, so a
-	// request with either positive goes to Python.
-	ContextPromptTokens     int64
-	ContextCompletionTokens int64
+	// MaxTokens, MaxCompletionTokens and MaxOutputTokens are the body's
+	// fields (nil when absent). The window must also hold max_tokens, else
+	// max_completion_tokens (max_output_tokens does not count); the estimate
+	// prices the first of the three present, else 512 (output_estimate).
+	MaxTokens           *int64
+	MaxCompletionTokens *int64
+	MaxOutputTokens     *int64
 	// At is the request's instant: it chooses availability, the price epoch
 	// and whether the rank evidence is current.
 	At time.Time
@@ -79,6 +82,8 @@ type Refusal struct {
 	Status  int
 	Type    string
 	Message string
+	// Param is the error's param field, where Python's carries one.
+	Param string
 }
 
 // Result is the evaluator's answer for one request.
@@ -160,11 +165,29 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	if at < s.CompiledAt || at >= s.NotAfter {
 		return pass("the instant is outside the snapshot's window")
 	}
-	if req.EstimatedInputTokens < 0 || req.OutputTokens < 0 {
-		return pass("negative token counts")
+	// The authorize schema: estimated_input_tokens >= 0, each max_* >= 1.
+	if req.EstimatedInputTokens < 0 {
+		return pass("negative estimated_input_tokens")
 	}
-	if req.ContextPromptTokens != 0 || req.ContextCompletionTokens != 0 {
-		return pass("context-window fitting: the snapshot carries no context_length")
+	for _, v := range []*int64{req.MaxTokens, req.MaxCompletionTokens, req.MaxOutputTokens} {
+		if v != nil && *v < 1 {
+			return pass("a max_* token count below 1")
+		}
+	}
+	outputTokens := int64(512)
+	for _, v := range []*int64{req.MaxOutputTokens, req.MaxCompletionTokens, req.MaxTokens} {
+		if v != nil {
+			outputTokens = *v
+		}
+	}
+	completionTokens := int64(0)
+	for _, v := range []*int64{req.MaxCompletionTokens, req.MaxTokens} {
+		if v != nil {
+			completionTokens = *v
+		}
+	}
+	if req.EstimatedInputTokens > math.MaxInt64-completionTokens {
+		return pass("prompt and completion tokens beyond int64")
 	}
 	// The authorize schema (str_strip_whitespace) strips every string field
 	// and every string in a list of strings; provider values and extra fields
@@ -246,6 +269,24 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		return pass("headline prices whose sum exceeds int64")
 	}
 
+	// candidates_fitting_context: the models whose window holds the prompt
+	// and the completion; an unknown window (0) holds anything. When none
+	// does, OpenAI's context-length error names the largest window.
+	needed := req.EstimatedInputTokens + completionTokens
+	fitting := candidates[:0:0]
+	window := int64(0)
+	for _, i := range candidates {
+		length := s.models[s.Endpoints[i].ModelID].ContextLength
+		window = max(window, length)
+		if length <= 0 || needed <= length {
+			fitting = append(fitting, i)
+		}
+	}
+	if len(fitting) == 0 {
+		return contextLengthError(window, req.EstimatedInputTokens, completionTokens)
+	}
+	candidates = fitting
+
 	// resolve_candidates: reachable from the request's gateway region.
 	regional := candidates[:0:0]
 	for _, i := range candidates {
@@ -301,7 +342,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		return refused(400, "provider_not_supported", "No authorized route candidates are available for this workspace")
 	}
 
-	usage := Usage{InputTokens: req.EstimatedInputTokens, OutputTokens: req.OutputTokens}
+	usage := Usage{InputTokens: req.EstimatedInputTokens, OutputTokens: outputTokens}
 	estimate := new(big.Int)
 	out := Result{Outcome: Answered, ServiceTier: tier}
 	for _, i := range admitted {
@@ -734,6 +775,20 @@ func schemaStrip(req Request) (Request, bool) {
 		ok = false
 	}
 	return req, ok
+}
+
+// contextLengthError is routing.context_length_error.
+func contextLengthError(window, prompt, completion int64) Result {
+	message := fmt.Sprintf("This model's maximum context length is %d tokens. However, your "+
+		"messages resulted in %d tokens. Please reduce the length of the messages.", window, prompt)
+	if completion != 0 {
+		message = fmt.Sprintf("This model's maximum context length is %d tokens. However, you "+
+			"requested %d tokens (%d in the messages, %d in the completion). Please reduce the "+
+			"length of the messages or completion.", window, prompt+completion, prompt, completion)
+	}
+	r := refused(400, "context_length_exceeded", message)
+	r.Refusal.Param = "messages"
+	return r
 }
 
 func set(values []string) map[string]bool {
