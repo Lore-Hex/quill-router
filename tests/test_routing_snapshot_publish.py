@@ -393,14 +393,177 @@ def test_a_clock_before_compiled_at_is_not_served_the_cached_window(key) -> None
     assert earlier is not later and earlier.compiled_at == DAY and publisher.compiles == 2
 
 
-def test_concurrent_polls_compile_once(key) -> None:
-    from concurrent.futures import ThreadPoolExecutor
+def test_a_poll_during_a_compile_answers_compiling_at_once(key) -> None:
+    import threading
 
     clock = Clock(DAY + HOUR + 60)
-    publisher = build_publisher(_settings(key), clock=clock, inputs=_fixture_inputs(clock))
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda _: publisher.current(), range(16)))
-    assert publisher.compiles == 1 and all(result is results[0] for result in results)
+    entered, release = threading.Event(), threading.Event()
+    good = _fixture_inputs(clock)
+
+    def slow() -> CatalogInputs:
+        entered.set()
+        assert release.wait(30)
+        return good()
+
+    settings = _settings(key)
+    publisher = build_publisher(settings, clock=clock, inputs=slow)
+    results: list[Any] = []
+    first = threading.Thread(target=lambda: results.append(publisher.current()))
+    first.start()
+    assert entered.wait(30)
+    # A second poll does not wait on the lock: 503 compiling, come back soon.
+    started = time.monotonic()
+    with pytest.raises(SnapshotUnavailable) as busy:
+        publisher.current()
+    assert time.monotonic() - started < 1.0
+    assert busy.value.status == "compiling"
+    assert busy.value.retry_after == publisher_module.COMPILING_RETRY_SECONDS
+    app = _app(settings)
+    app.state.routing_snapshot_publisher = publisher
+    response = _get(TestClient(app))
+    assert response.status_code == 503 and response.json()["status"] == "compiling"
+    assert response.headers["retry-after"] == str(publisher_module.COMPILING_RETRY_SECONDS)
+    release.set()
+    first.join(30)
+    # Positive control: the compile finishes, and later polls get its bytes.
+    assert results and publisher.current() is results[0] and publisher.compiles == 1
+
+
+def test_repeated_failures_back_off_exponentially_up_to_the_window_end(key) -> None:
+    clock = Clock(DAY + HOUR + 60)
+
+    def broken() -> CatalogInputs:
+        raise RuntimeError("deterministic")
+
+    publisher = build_publisher(_settings(key), clock=clock, inputs=broken)
+    window_end = DAY + 2 * HOUR
+    backoffs: list[int] = []
+    while clock.now < window_end:
+        with pytest.raises(SnapshotUnavailable) as failed:
+            publisher.current()
+        assert failed.value.status == "snapshot-error"
+        backoffs.append(failed.value.retry_at - clock.now)
+        # Within the backoff, no attempt.
+        clock.now = failed.value.retry_at - 1
+        with pytest.raises(SnapshotUnavailable):
+            publisher.current()
+        clock.now = failed.value.retry_at
+    assert backoffs[:5] == [5, 10, 20, 40, 80]
+    assert clock.now == window_end and len(backoffs) == 10
+    # A new window starts the backoff again.
+    with pytest.raises(SnapshotUnavailable) as again:
+        publisher.current()
+    assert again.value.retry_at - clock.now == 5
+
+
+# --- the worker's answer, as the serving process checks it ---------------------------------
+
+
+class _Worker:
+    """A stub of the worker process: records the command, returns a canned answer."""
+
+    def __init__(self, stdout: bytes, returncode: int = 0) -> None:
+        self.stdout, self.returncode, self.calls = stdout, returncode, []
+
+    def __call__(self, argv: list[str], **kwargs: Any) -> Any:
+        import subprocess
+
+        self.calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, self.returncode, self.stdout, b"")
+
+
+def _signed_answer(settings: Settings, at: int, *, revision: str | None = None,
+                   signer: Any = None) -> tuple[bytes, str]:
+    from trusted_router.routing_snapshot import canonical_snapshot_bytes, compile_routing_snapshot
+
+    snapshot = compile_routing_snapshot(
+        at=at, horizon=6 * HOUR, settings=VECTORS.fixture_settings(),
+        source_revision=revision or settings.source_revision, plane=plane_of(settings),
+        inputs=replace(VECTORS.fixture_inputs(), expansions_clock=(at, at)),
+    )
+    body = canonical_snapshot_bytes(snapshot)
+    return body, (signer or load_signer(settings)).sign(body)
+
+
+def _answer(body: bytes, manifest: str) -> bytes:
+    return json.dumps({"body": base64.b64encode(body).decode("ascii"), "manifest": manifest}).encode()
+
+
+def _as_of_publisher(settings: Settings, clock: Clock, worker: _Worker) -> RoutingSnapshotPublisher:
+    from trusted_router.routing_snapshot import snapshot_settings_from
+    from trusted_router.services.routing_snapshot_publisher import SnapshotIdentity
+
+    identity = SnapshotIdentity(snapshot_settings=snapshot_settings_from(settings),
+                                plane=plane_of(settings), source_revision=settings.source_revision)
+    source = AsOfSource(identity, auto_model_order="", key_file=settings.routing_snapshot_private_key_file,
+                        runner=worker)
+    return RoutingSnapshotPublisher(signer=load_signer(settings), source=source, clock=clock)
+
+
+def test_the_worker_answer_is_checked_before_it_is_served(key, caplog: pytest.LogCaptureFixture) -> None:
+    from trusted_router.routing_snapshot import publication_window_as_of
+
+    settings = _settings(key)
+    now = DAY + 60
+    start = publication_window_as_of(now)[0]
+    body, manifest = _signed_answer(settings, start)
+    other_key = Ed25519PrivateKey.generate()
+    impostor = publisher_module.RoutingSnapshotSigner(other_key, TrustedKey(
+        KID, PURPOSE, b64encode(other_key.public_key().public_bytes_raw()), ISSUER, AUDIENCE))
+    flipped = body[:100] + bytes([body[100] ^ 1]) + body[101:]
+    cases: dict[str, tuple[_Worker, str]] = {
+        "another window": (_Worker(_answer(*_signed_answer(settings, start + HOUR))), "snapshot-error"),
+        "another revision": (_Worker(_answer(*_signed_answer(settings, start, revision="b" * 40))),
+                             "snapshot-error"),
+        "another key": (_Worker(_answer(*_signed_answer(settings, start, signer=impostor))),
+                        "snapshot-error"),
+        "a changed byte": (_Worker(_answer(flipped, manifest)), "snapshot-error"),
+        "an unsigned manifest": (_Worker(_answer(body, manifest.rsplit(".", 1)[0] + ".")),
+                                 "snapshot-error"),
+        "a non-zero exit": (_Worker(b'{"error":"OSError"}', returncode=1), "snapshot-error"),
+        "a garbled error": (_Worker(b'{"error":"not a class name"}', returncode=1), "snapshot-error"),
+        "malformed stdout": (_Worker(b"not json"), "snapshot-error"),
+        "an empty answer": (_Worker(b""), "snapshot-error"),
+        "a list": (_Worker(b"[]"), "snapshot-error"),
+        "a refusal": (_Worker(b'{"refused":"a catalog deadline falls between 1 and 2"}'),
+                      "snapshot-refused"),
+    }
+    caplog.set_level(logging.WARNING)
+    for name, (worker, status) in cases.items():
+        publisher = _as_of_publisher(settings, Clock(now), worker)
+        with pytest.raises(SnapshotUnavailable) as refused:
+            publisher.current()
+        assert refused.value.status == status, name
+        app = _app(settings)
+        app.state.routing_snapshot_publisher = _as_of_publisher(settings, Clock(now), worker)
+        response = _get(TestClient(app))
+        assert (response.status_code, response.json()["status"]) == (503, status), name
+    messages = [record.getMessage() for record in caplog.records]
+    assert "routing snapshot compile failed: worker:OSError" in messages
+    assert "routing snapshot compile failed: worker:unknown" in messages
+    # Positive control: the right answer is served, from the right command.
+    worker = _Worker(_answer(body, manifest))
+    publication = _as_of_publisher(settings, Clock(now), worker).current()
+    assert publication.body == body and publication.compiled_at == start
+    argv = worker.calls[0][0]
+    assert argv[1:] == ["-P", "-m", publisher_module.WORKER_MODULE]
+    request = json.loads(worker.calls[0][1]["input"])
+    assert request["at"] == start and request["key"]["file"] == str(key[0])
+    assert "BEGIN" not in worker.calls[0][1]["input"].decode()
+
+
+def test_the_worker_prints_only_the_failures_class() -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(  # noqa: S603 - this interpreter and a fixed module
+        [sys.executable, "-P", "-m", publisher_module.WORKER_MODULE],
+        input=b'{"at": -1, "key": {"file": "/secret/path.pem"}}', capture_output=True,
+        timeout=120, check=False,
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout) == {"error": "ValueError"}
+    assert result.stderr == b""
 
 
 # --- key custody ---------------------------------------------------------------------------

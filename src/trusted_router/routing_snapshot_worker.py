@@ -2,7 +2,8 @@
 
 ``python -m trusted_router.routing_snapshot_worker`` reads one request (JSON)
 on stdin and writes one answer (JSON) on stdout: ``{"body": <base64 of the
-canonical bytes>, "manifest": <JWS>}`` or ``{"refused": <reason>}``. The
+canonical bytes>, "manifest": <JWS>}`` or ``{"refused": <reason>}``, or
+``{"error": <exception class>}`` with exit status 1. The
 publisher runs it for each window (services/routing_snapshot_publisher.py) and
 names the mounted signing key's file, kid and public key; the key itself never
 crosses the pipe, and nothing here writes it anywhere.
@@ -96,10 +97,18 @@ def _signer(key: dict[str, str]) -> Any:
 
 
 def main() -> int:
-    answer = compile_as_of(json.loads(sys.stdin.buffer.read()))
+    """Answer on stdout; on failure ``{"error": <exception class>}`` and exit 1.
+
+    Only the class: an exception's message could carry a path, a value or key
+    material, and nothing here prints it, to stdout or stderr.
+    """
+    try:
+        answer, status = compile_as_of(json.loads(sys.stdin.buffer.read())), 0
+    except Exception as exc:  # the publisher logs the class and backs off
+        answer, status = {"error": type(exc).__name__}, 1
     sys.stdout.write(json.dumps(answer, separators=(",", ":")))
     sys.stdout.flush()
-    return 0
+    return status
 
 
 if __name__ == "__main__":

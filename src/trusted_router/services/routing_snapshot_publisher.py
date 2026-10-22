@@ -18,8 +18,11 @@ bytes and an identical manifest (Ed25519 signatures are deterministic), across
 retirements too, and the serving process's catalog is never touched.
 
 A window whose compile the catalog refuses is not compiled again; the next
-window start retries. Any other failure (the worker's exit, a timeout) is
-retried after a few seconds.
+window start retries. Any other failure (the worker's exit, a timeout, an
+answer that does not verify) is retried after a backoff that starts at 5 s and
+doubles with each failure in the window, up to its end. A poll that finds a
+compile in flight answers 503 ``compiling`` at once rather than wait on the
+lock in a threadpool thread authorize shares.
 
 The worker also signs, with the mounted key file; this process checks the
 manifest under its own pinned key and that it binds the bytes received. The
@@ -27,10 +30,10 @@ worker takes about 3 s of CPU (its import, the compile and the signature) and
 150 to 300 MB of memory while it runs; this process about 0.03 s. It runs
 lazily, single-flight under a lock, in the threadpool worker of the first poll
 that finds no current snapshot, which waits on the worker process: the CPU is
-not this process's, so the compile holds no GIL that authorize waits on. Polls
-that arrive meanwhile wait and are then served the same cached bytes. The
-worker's memory sits beside the serving process's within the instance's
-limit: measure both before enabling.
+not this process's, so the compile holds no GIL that authorize waits on, but
+it competes with authorize for the instance's vCPU, and its memory sits
+beside the serving process's within the instance's limit: measure both
+before enabling.
 
 Nothing here logs or returns key material: the signing key is read from its
 mounted file, here at construction and in the worker per window, and never
@@ -44,6 +47,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import subprocess
 import sys
 import threading
@@ -51,7 +55,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -91,9 +95,28 @@ HORIZON_SECONDS = 6 * EPOCH_SECONDS
 RESPONSE_KIND = "tr-routing-snapshot-publication"
 # After a failure other than the catalog's refusal, which may be transient.
 ERROR_BACKOFF_SECONDS = 5
+# A poll that finds a compile in flight is told to come back this soon,
+# rather than wait on the lock in a threadpool thread authorize shares.
+COMPILING_RETRY_SECONDS = 2
 WORKER_MODULE = "trusted_router.routing_snapshot_worker"
 # A compile is a few seconds; a worker past this is killed and retried.
 WORKER_TIMEOUT_SECONDS = 120.0
+
+
+class WorkerFailed(RuntimeError):
+    """The worker exited non-zero; ``error`` is its exception's class, or ``unknown``."""
+
+    def __init__(self, error: str) -> None:
+        super().__init__(error)
+        self.error = error
+
+
+_ERROR_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,79}")
+
+
+def _failure_name(exc: BaseException) -> str:
+    """The class to log for a failure: the worker's own, or this exception's."""
+    return f"worker:{exc.error}" if isinstance(exc, WorkerFailed) else type(exc).__name__
 
 
 class SnapshotUnavailable(Exception):
@@ -239,9 +262,11 @@ class AsOfSource:
     """
 
     def __init__(self, identity: SnapshotIdentity, *, auto_model_order: str, key_file: str,
-                 timeout: float = WORKER_TIMEOUT_SECONDS) -> None:
+                 timeout: float = WORKER_TIMEOUT_SECONDS,
+                 runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+                 ) -> None:
         self._identity, self._auto_model_order = identity, auto_model_order
-        self._key_file, self._timeout = key_file, timeout
+        self._key_file, self._timeout, self._runner = key_file, timeout, runner
 
     def plan(self, now: int) -> WindowPlan:
         start, next_start = publication_window_as_of(now)
@@ -258,15 +283,18 @@ class AsOfSource:
             "key": {"file": self._key_file, "kid": trusted.kid, "public_key": trusted.public_key_b64url,
                     "iss": trusted.iss, "aud": trusted.aud},
         }).encode("ascii")
-        result = subprocess.run(  # noqa: S603 - this interpreter and a fixed module, no shell
-            [sys.executable, "-m", WORKER_MODULE], input=request, capture_output=True,
+        # -P: the working directory is not on the worker's import path.
+        result = self._runner(  # noqa: S603 - this interpreter and a fixed module, no shell
+            [sys.executable, "-P", "-m", WORKER_MODULE], input=request, capture_output=True,
             timeout=self._timeout, check=False,
         )
+        answer = _last_json_object(result.stdout)
         if result.returncode != 0:
-            raise RuntimeError(f"as-of compile exited {result.returncode}")
-        lines = result.stdout.strip().splitlines()
-        answer = json.loads(lines[-1]) if lines else {}
-        if not isinstance(answer, dict):
+            error = answer.get("error") if answer is not None else None
+            raise WorkerFailed(
+                error if isinstance(error, str) and _ERROR_CLASS.fullmatch(error) else "unknown",
+            )
+        if answer is None:
             raise RuntimeError("as-of compile answered no object")
         if "refused" in answer:
             raise SnapshotRefused(str(answer["refused"]))
@@ -278,6 +306,15 @@ class AsOfSource:
         if claims.compiled_at != at or claims.source_revision != identity.source_revision:
             raise RuntimeError("as-of compile answered another snapshot")
         return Signed(body, answer["manifest"], claims.compiled_at, claims.not_after)
+
+
+def _last_json_object(stdout: bytes) -> dict[str, Any] | None:
+    lines = stdout.strip().splitlines()
+    try:
+        answer = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        return None
+    return answer if isinstance(answer, dict) else None
 
 
 class RoutingSnapshotPublisher:
@@ -298,8 +335,10 @@ class RoutingSnapshotPublisher:
         # A refused window's end: no load or compile before the next window
         # start (the window start is constant until then).
         self._refused_until = 0
-        # After an unexpected failure, no compile before this instant.
+        # After an unexpected failure, no compile before this instant; the
+        # backoff doubles with each failure in one window, up to its end.
         self._error_until = 0
+        self._failures: tuple[int, int] = (0, 0)  # (window start or hour, count)
         self.compiles = 0
 
     @property
@@ -311,44 +350,60 @@ class RoutingSnapshotPublisher:
         cached = self._cached
         if cached is not None and cached.current(int(self._clock())):
             return cached
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            # A compile is in flight: come back shortly, without holding a
+            # threadpool thread that authorize shares for its duration.
             now = int(self._clock())
-            cached = self._cached
-            if cached is not None and cached.current(now):
-                return cached
-            if now < self._refused_until:
-                raise SnapshotUnavailable("snapshot-refused", self._refused_until, now)
-            if now < self._error_until:
-                raise SnapshotUnavailable("snapshot-error", self._error_until, now)
-            # Until the source names the window, a refusal holds for the hour.
-            hour = now - now % EPOCH_SECONDS
-            next_start = hour + EPOCH_SECONDS
-            try:
-                plan = self._source.plan(now)
-                next_start = plan.next_start
-                signed = self._compile(plan)
-                if not now < signed.not_after:
-                    raise SnapshotRefused("the window ended before it was published")
-                publication = self._publication(signed, next_start)
-            except SnapshotRefused as exc:
-                # The catalog refuses this window for good: an event between
-                # its start and the compiling process's clocks or import, or a
-                # catalog shape the compiler does not know, facts of this
-                # image that a later attempt would meet again. The next window
-                # start retries.
-                self._cached, self._refused_until = None, next_start
-                # The reason names instants, providers or fields, never secrets.
-                log.warning("routing snapshot compile refused: %s", exc)
-                raise SnapshotUnavailable("snapshot-refused", next_start, now) from None
-            except Exception as exc:
-                # Anything else may be transient: retry after a short backoff,
-                # logged by its class alone.
-                self._cached = None
-                self._error_until = now + ERROR_BACKOFF_SECONDS
-                log.warning("routing snapshot compile failed: %s", type(exc).__name__)
-                raise SnapshotUnavailable("snapshot-error", self._error_until, now) from None
-            self._cached = publication
-            return publication
+            raise SnapshotUnavailable("compiling", now + COMPILING_RETRY_SECONDS, now)
+        try:
+            return self._current_locked()
+        finally:
+            self._lock.release()
+
+    def _current_locked(self) -> Publication:
+        now = int(self._clock())
+        cached = self._cached
+        if cached is not None and cached.current(now):
+            return cached
+        if now < self._refused_until:
+            raise SnapshotUnavailable("snapshot-refused", self._refused_until, now)
+        if now < self._error_until:
+            raise SnapshotUnavailable("snapshot-error", self._error_until, now)
+        # Until the source names the window, a refusal holds for the hour.
+        hour = now - now % EPOCH_SECONDS
+        start, next_start = hour, hour + EPOCH_SECONDS
+        try:
+            plan = self._source.plan(now)
+            start, next_start = plan.start, plan.next_start
+            signed = self._compile(plan)
+            if not now < signed.not_after:
+                raise SnapshotRefused("the window ended before it was published")
+            publication = self._publication(signed, next_start)
+        except SnapshotRefused as exc:
+            # The catalog refuses this window for good: an event between
+            # its start and the compiling process's clocks or import, or a
+            # catalog shape the compiler does not know, facts of this
+            # image that a later attempt would meet again. The next window
+            # start retries.
+            self._cached, self._refused_until = None, next_start
+            # The reason names instants, providers or fields, never secrets.
+            log.warning("routing snapshot compile refused: %s", exc)
+            raise SnapshotUnavailable("snapshot-refused", next_start, now) from None
+        except Exception as exc:
+            # Anything else may be transient: retry after a backoff that
+            # doubles with each failure in this window, up to its end (a
+            # deterministic failure is then tried once a window). Logged by
+            # its class alone, the worker's own for a worker failure.
+            self._cached = None
+            window, count = self._failures
+            count = count + 1 if window == start else 1
+            self._failures = (start, count)
+            backoff = ERROR_BACKOFF_SECONDS << min(count - 1, 16)
+            self._error_until = max(now + 1, min(now + backoff, next_start))
+            log.warning("routing snapshot compile failed: %s", _failure_name(exc))
+            raise SnapshotUnavailable("snapshot-error", self._error_until, now) from None
+        self._cached, self._failures = publication, (0, 0)
+        return publication
 
     def _compile(self, plan: WindowPlan) -> Signed:
         self.compiles += 1

@@ -369,7 +369,7 @@ func publisherStatus(body io.Reader) string {
 	raw, _ := io.ReadAll(io.LimitReader(body, 4096))
 	if json.Unmarshal(raw, &answer) == nil {
 		switch answer.Status {
-		case "signer-unavailable", "snapshot-refused", "not-installed":
+		case "signer-unavailable", "snapshot-refused", "snapshot-error", "compiling", "not-installed":
 			return answer.Status
 		}
 	}

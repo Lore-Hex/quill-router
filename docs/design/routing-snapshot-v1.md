@@ -315,8 +315,9 @@ standard base64 (the verifier hashes the decoded bytes), and when to poll
 again (advisory; the manifest's `not_after` is what binds). `ETag` is the
 body's sha256 and a matching `If-None-Match` is a 304, so a poll between
 windows costs no body. `Cache-Control: no-store`. 503 with `status`
-`signer-unavailable` (no usable key), `snapshot-refused` or `snapshot-error`
-(both with `retry_at` and `Retry-After`) when no window is current; the edge
+`signer-unavailable` (no usable key), `compiling` (another poll's compile is
+in flight), `snapshot-refused` or `snapshot-error` (each but the first with
+`retry_at` and `Retry-After`) when no window is current; the edge
 keeps its last good copy until that copy's `not_after`.
 
 **The window.** `publication_window_as_of(now)` starts a window at the hour,
@@ -377,19 +378,29 @@ binds the bytes received (`verify_manifest_digest`: the sha256 and size,
 without parsing the body; the worker's `RoutingSnapshotSigner.sign` verified
 the body in full before signing). The worker signs with the same mounted key
 file, named in its request with the pinned kid and public key, and refuses a
-file that is not the pinned key; the key never crosses the pipe. It runs
+file that is not the pinned key; the key never crosses the pipe. The worker
+runs with `-P`, so the working directory is not on its import path. It runs
 lazily: the first poll that finds no current publication starts the worker
-under the publisher's lock (single flight; concurrent polls wait and get the
-same bytes), in the threadpool worker of the sync route, never on the event
-loop and never on authorize. Only instances the edge polls compile, once a
+under the publisher's lock (single flight), in the threadpool worker of the
+sync route, never on the event loop and never on authorize. A poll that finds
+a compile in flight does not wait on the lock, which would hold a threadpool
+thread authorize shares for as long as the worker runs: it answers 503
+`compiling` with `Retry-After: 2`. Only instances the edge polls compile, once a
 window. A background refresher would compile on every instance every hour for
 a reader that polls one. The worker's CPU is not the serving process's, so it
-holds no GIL that authorize waits on, but its memory sits beside the serving
-process's within the instance's limit (`--memory 1Gi` today): both must be
-measured on the release image before publishing is turned on
+holds no GIL that authorize waits on, but it shares the instance: its 3 to 6 s
+of CPU compete with authorize for the service's one vCPU (`rollout.sh` passes
+no `--cpu`, so Cloud Run's default of 1 applies), and its memory sits beside
+the serving process's within the instance's limit (2 GiB:
+`TR_CLOUD_RUN_MEMORY` defaults to `2Gi` in `scripts/deploy/_lib.sh`). Both
+must be measured on the release image before publishing is turned on
 (`docs/runbooks/routing-snapshot-key.md`, step 5). A worker that fails, exits
-non-zero or runs past 120 s is a `snapshot-error`, retried after 5 s; a
-refusal waits for the next window.
+non-zero or runs past 120 s is a `snapshot-error`; it prints only its
+exception's class (`{"error": "<class>"}`), which the publisher logs, never a
+message. The retry backs off from 5 s, doubling with each failure in the
+window, up to the window's end, so a deterministic failure costs one worker
+run a window at most once the backoff has grown. A refusal waits for the next
+window.
 
 **Key custody.** The Ed25519 private key is the Secret Manager secret
 `trustedrouter-routing-snapshot-signing-key` (`infra/routing_snapshot_key.tf`),
