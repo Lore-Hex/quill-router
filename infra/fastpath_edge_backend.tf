@@ -26,10 +26,11 @@ locals {
   # Python counted every comparison of the edge's verdict (#1904) on the
   # serving revision, so the share has parity evidence: agree, differ and
   # skipped lines, and no lines at all from an edge whose token is stale.
-  # 0 is the way back. Held at 0 while the 2026-10-22 authorize alerts
-  # (docs/incidents/2026-10-22-authorize-edge-deadline.md) are explained:
-  # a new path is not added during an open incident.
-  fastpath_edge_route_weight = 0
+  # 0 is the way back. Held at 0 from 2026-10-22 05:33Z until the authorize
+  # alerts (docs/incidents/2026-10-22-authorize-edge-deadline.md) were
+  # explained: the route's own timeout, and the enclave's settle retry,
+  # which no longer overlaps the settle it retries.
+  fastpath_edge_route_weight = 1
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
