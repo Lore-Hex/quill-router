@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing.providers import alibaba, deepinfra, novita, scaleway, xiaomi
+from scripts.pricing.providers import alibaba, arcee, deepinfra, novita, scaleway, xiaomi
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -21,6 +21,8 @@ class Case:
 
 
 _CASES = [
+    Case("arcee", "arcee-ai/trinity-large-thinking", "trinity-large-thinking",
+         datetime(2026, 10, 26, tzinfo=UTC), "moonshotai/kimi-k3"),
     Case("novita", "xiaomimimo/mimo-v2.5", "xiaomimimo/mimo-v2.5",
          datetime(2026, 10, 23, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
     Case("novita", "xiaomimimo/mimo-v2.5-pro", "xiaomimimo/mimo-v2.5-pro",
@@ -53,6 +55,7 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "arcee": arcee.MANIFEST_PATH,
     "novita": novita.MANIFEST_PATH,
     "alibaba": alibaba.MANIFEST_PATH,
     "deepinfra": deepinfra.MANIFEST_PATH,
