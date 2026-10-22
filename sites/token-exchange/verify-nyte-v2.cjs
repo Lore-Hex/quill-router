@@ -98,5 +98,18 @@ for (const path of ['/', '/confidential', '/suppliers']) {
   .map(el=>el.textContent.trim()));
  assert.deepEqual(overflowing,[],`${path}: button text must fit at 320px`);
 }
+// The shared mobile header retains its primary CTA, and the API hero follows its content.
+for (const width of [320, 360, 390, 430, 768, 880]) {
+ await page.setViewportSize({width,height:844});await page.goto(base+'/confidential');await page.evaluate(()=>document.fonts.ready);
+ const cta=page.locator('header .btn-sm');assert(await cta.isVisible());
+ assert.equal(await cta.getAttribute('href'),'/confidential#start');
+ const layout=await page.evaluate(()=>{
+  const header=document.querySelector('.hdr'),hero=document.querySelector('.hero-api');
+  return {overflow:document.documentElement.scrollWidth>innerWidth || header.scrollWidth>header.clientWidth,
+   gap:hero.getBoundingClientRect().bottom-hero.querySelector('.btns').getBoundingClientRect().bottom};
+ });
+ assert(!layout.overflow,`header must fit at ${width}px`);
+ assert(layout.gap<=81,`API hero must follow its content at ${width}px`);
+}
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
 })().catch(error=>{console.error(error);process.exit(1);});
