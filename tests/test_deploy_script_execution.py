@@ -462,6 +462,19 @@ def test_secondary_ramp_never_routes_to_job_start_snapshot_after_pin(
     ]
 
 
+def test_secondary_ramp_cannot_retire_an_unprotected_zero_minimum_revision(
+    tmp_path: Path,
+) -> None:
+    run = _run_secondary_ramp(
+        tmp_path, traffic=_default_secondary_traffic(),
+        overrides={"HARNESS_CLOUD_RUN_REVISION_MIN": "0"},
+    )
+    assert run.returncode != 0
+    assert "trusted-router-01302-eunew=100" not in _regional_traffic_updates(run, "europe-west4")
+    assert _regional_traffic_updates(run, "europe-west4")[-1] == "trusted-router-01300-euold=100"
+    assert not _regional_traffic_updates(run, "us-east4")
+
+
 def test_secondary_ramp_refuses_older_new_revision_without_traffic_mutation(
     tmp_path: Path,
 ) -> None:

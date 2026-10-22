@@ -384,7 +384,7 @@ start_final_baseline() {
   local output_file="${TR_STAGED_WATCHDOG_BASELINE_FILE:-}"
   [ -n "$output_file" ] || return 0
   rm -f "$output_file"
-  log "starting final-canary baseline concurrently with 100% traffic shift"
+  log "capturing final-canary baseline before 100% traffic shift"
   if [ "${TR_STAGED_WATCHDOG_SKIP_BASELINE:-0}" = "1" ]; then
     python3 "${SCRIPT_DIR}/watchdog.py" \
       --regions "$REGION" \
@@ -453,11 +453,13 @@ if ! prepare_revision_drain; then
   exit 1
 fi
 start_final_baseline
+# Wait for the baseline while the old revision still serves traffic. Capturing
+# it after cutover could classify a new outage as pre-existing.
+finish_final_baseline
 if ! shift_traffic 100; then
   stop_final_baseline
   exit 1
 fi
-finish_final_baseline
 probe_legacy_surface_or_rollback 100
 finish_revision_drain
 if ! cleanup_probe_tag; then

@@ -76,8 +76,17 @@ Never shorten the grace or suppress the billing alarm to complete a rollout.
 
 ## Other alerts checked
 
-The earlier Spanner API-failure incident resolved at 18:32:52Z; its original
-cause is not established by this investigation. The CIS firewall-change alert
+The earlier Spanner API-failure incident resolved at 18:32:52Z. EU admission
+reads in the experimental shadow observer repeatedly failed at 503-509 ms,
+and the Monitoring API showed streaming-SQL and commit deadline/cancellation
+errors. This does not attribute every RPC error to the observer or establish
+zero customer latency impact. Existing PR #1973 contains the failed canary by
+clearing its three opt-ins. US Central and Europe were verified with those
+opt-ins empty and async settlement/protection disabled; the 20:30-current log
+check returned no recurrence. The separate deploy identity read the metrics;
+the ops identity was not granted additional permissions.
+
+The CIS firewall-change alert
 correlates with deletions of Lightning/BTCPay firewall rules by the signed-in
 operator identity at 12:17-12:18Z. That is separate from billing retirement,
 and the security alert correctly reported the changes.
