@@ -23,8 +23,10 @@ type routingCase struct {
 		RequestedParameters  []string        `json:"requested_parameters"`
 		InputModalities      []string        `json:"input_modalities"`
 		Stream               *bool           `json:"stream"`
-		EstimatedInputTokens int64           `json:"estimated_input_tokens"`
-		OutputTokens         int64           `json:"output_tokens"`
+		EstimatedInputTokens *int64          `json:"estimated_input_tokens"`
+		MaxTokens            *int64          `json:"max_tokens"`
+		MaxCompletionTokens  *int64          `json:"max_completion_tokens"`
+		MaxOutputTokens      *int64          `json:"max_output_tokens"`
 	} `json:"request"`
 	Expect struct {
 		Candidates    []string `json:"candidates"`
@@ -35,6 +37,7 @@ type routingCase struct {
 			Status  int    `json:"status"`
 			Type    string `json:"type"`
 			Message string `json:"message"`
+			Param   string `json:"param"`
 		} `json:"error"`
 	} `json:"expect"`
 }
@@ -109,7 +112,8 @@ func (c routingCase) request(t *testing.T) Request {
 		Model: r.Model, Models: r.Models, Stream: r.Stream, Provider: r.Provider, AllowFallbacks: r.AllowFallbacks, RouteType: r.RouteType,
 		Region: r.Region, ServiceTier: r.ServiceTier, RequestedParameters: r.RequestedParameters,
 		InputModalities: r.InputModalities, BYOKProviders: c.BYOKProviders,
-		EstimatedInputTokens: r.EstimatedInputTokens, OutputTokens: r.OutputTokens, At: at,
+		EstimatedInputTokens: r.EstimatedInputTokens, MaxTokens: r.MaxTokens,
+		MaxCompletionTokens: r.MaxCompletionTokens, MaxOutputTokens: r.MaxOutputTokens, At: at,
 	}
 }
 
@@ -155,7 +159,7 @@ func TestTheEvaluatorReproducesEveryRoutingCase(t *testing.T) {
 		}
 		if e := c.Expect.Error; e != nil {
 			refusedCount++
-			if got.Outcome != Refused || *got.Refusal != (Refusal{Status: e.Status, Type: e.Type, Message: e.Message}) {
+			if got.Outcome != Refused || *got.Refusal != (Refusal{Status: e.Status, Type: e.Type, Message: e.Message, Param: e.Param}) {
 				t.Errorf("%s: want refusal %+v, got %+v %+v", c.Name, *e, got, got.Refusal)
 			}
 			continue

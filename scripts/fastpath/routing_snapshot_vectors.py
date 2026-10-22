@@ -80,8 +80,8 @@ _PROVIDER_SLUGS = (
 )
 
 
-def _model(model_id: str, provider: str) -> Model:
-    return Model(id=model_id, name=model_id, provider=provider, context_length=131_072)
+def _model(model_id: str, provider: str, context_length: int = 131_072) -> Model:
+    return Model(id=model_id, name=model_id, provider=provider, context_length=context_length)
 
 
 def _endpoint(model_id: str, provider: str, usage: str, prompt: int, completion: int,
@@ -141,10 +141,12 @@ def fixture_inputs() -> CatalogInputs:
                   upstream_id="thinkingmachines/Inkling",
                   catalog_valid_until=datetime(2026, 10, 19, 5, 30, tzinfo=UTC)),
     )
+    # Context windows: three sizes for the routing cases' context filter, and
+    # Gemini's unknown (0), which the filter keeps whatever the request's size.
     models = (
-        _model(flash, "deepseek"), _model(tencent_flash, "deepseek"), _model(glm, "zai"),
-        _model(bedrock, "minimax"), _model(fugu, "sakana"), _model(gemini, "google-ai-studio"),
-        _model(inkling, "thinkingmachines"),
+        _model(flash, "deepseek", 65_536), _model(tencent_flash, "deepseek", 32_768),
+        _model(glm, "zai"), _model(bedrock, "minimax"), _model(fugu, "sakana"),
+        _model(gemini, "google-ai-studio", 0), _model(inkling, "thinkingmachines"),
     )
     credits = RequestedOverrides(**{**NO_OVERRIDES.model_dump(), "usage": "Credits"})
     requested = (

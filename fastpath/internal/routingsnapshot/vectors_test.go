@@ -274,8 +274,11 @@ func TestParseRefusals(t *testing.T) {
 		return out
 	}
 	for name, body := range map[string][]byte{
-		"unknown field":     mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600,"extra":1`),
-		"unknown nested":    mutate(`"stores_content":true`, `"stores_content":true,"zdr":true`),
+		"unknown field":  mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600,"extra":1`),
+		"unknown nested": mutate(`"stores_content":true`, `"stores_content":true,"zdr":true`),
+		// A snapshot compiled before models carried context_length.
+		"no context_length": mutate(`"context_length":65536,`, ``),
+		"negative window":   mutate(`"context_length":65536,`, `"context_length":-1,`),
 		"missing field":     mutate(`"epoch_seconds":3600,`, ``),
 		"float":             mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600.0`),
 		"exponent":          mutate(`"epoch_seconds":3600`, `"epoch_seconds":36e2`),

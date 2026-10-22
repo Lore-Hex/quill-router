@@ -292,8 +292,10 @@ def test_providers_and_models(live) -> None:
         assert provider.byok_storage_slugs == byok_storage_provider_candidates(provider.slug)
     for model, source in zip(snapshot.models, inputs.models, strict=True):
         assert (model.id, model.provider, model.supports_chat, model.supports_embeddings,
-                model.supports_decide) == (source.id, source.provider, source.supports_chat,
-                                           source.supports_embeddings, source.supports_decide)
+                model.supports_decide, model.context_length) == (
+            source.id, source.provider, source.supports_chat, source.supports_embeddings,
+            source.supports_decide, source.context_length,
+        )
 
 
 # --- model and provider spellings -------------------------------------------------------------
@@ -632,7 +634,7 @@ ALLOWED_FIELDS = frozenset({
     "providers", "providers.slug", "providers.name", "providers.headquarters_country",
     "providers.byok_storage_slugs",
     "models", "models.id", "models.provider", "models.supports_chat",
-    "models.supports_embeddings", "models.supports_decide",
+    "models.supports_embeddings", "models.supports_decide", "models.context_length",
     "endpoints", "endpoints.id", "endpoints.model_id", "endpoints.provider",
     "endpoints.usage_type", "endpoints.upstream_model", "endpoints.supported_parameters",
     "endpoints.input_modalities", "endpoints.privacy", "endpoints.privacy.stores_content",

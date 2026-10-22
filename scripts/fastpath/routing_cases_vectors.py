@@ -145,10 +145,14 @@ def _authorize_body(request: dict[str, Any]) -> tuple[GatewayAuthorizeRequest, d
 
     GatewayAuthorizeRequest strips every string (str_strip_whitespace) and
     canonicalizes the model ids; extra fields such as allow_fallbacks stay as
-    sent; authorize's body_dict is its dump without None.
+    sent; authorize's body_dict is its dump without None. A case's
+    output_tokens is what the schema derives from its max_* fields
+    (output_estimate), written out so the file shows the number priced.
     """
-    fields = {k: v for k, v in request.items() if k not in ("estimated_input_tokens", "output_tokens")}
+    fields = {k: v for k, v in request.items() if k != "output_tokens"}
     body = GatewayAuthorizeRequest.model_validate({**fields, "api_key_lookup_hash": "routing-cases"})
+    if request["output_tokens"] != body.output_estimate:
+        raise ValueError(f"output_tokens must be the schema's output_estimate: {request}")
     dumped = body.model_dump(exclude_none=True)
     return body, {name: dumped[name] for name in ROUTING_FIELDS if name in dumped}
 
@@ -171,13 +175,19 @@ def evaluate(case: dict[str, Any]) -> dict[str, Any]:
         )
         try:
             plan = plan_route(candidate_request, settings, region=region)
-            resolved = resolve_candidates(plan, candidate_request, region=region, at=at)
+            # As the gateway calls it: the prompt estimate, and max_tokens (or
+            # max_completion_tokens) as the completion the window must hold.
+            resolved = resolve_candidates(
+                plan, candidate_request, region=region, at=at,
+                prompt_tokens=body.estimated_input_tokens,
+                completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
+            )
             outcome = finish_candidates(
                 plan, resolved,
                 route_type=body.route_type,
                 byok_providers=frozenset(case["byok_providers"]),
-                estimated_input_tokens=request["estimated_input_tokens"],
-                output_tokens=request["output_tokens"],
+                estimated_input_tokens=body.estimated_input_tokens,
+                output_tokens=body.output_estimate,
                 service_tier=body.service_tier,
                 additional_cost_reservation=0,
                 video_resolution=None,
@@ -213,7 +223,10 @@ def evaluate(case: dict[str, Any]) -> dict[str, Any]:
 
 def _error(exc: HTTPException) -> dict[str, Any]:
     error: dict[str, Any] = exc.detail["error"] if isinstance(exc.detail, dict) else {}
-    return {"status": exc.status_code, "type": error.get("type"), "message": error.get("message")}
+    out = {"status": exc.status_code, "type": error.get("type"), "message": error.get("message")}
+    if "param" in error:
+        out["param"] = error["param"]
+    return out
 
 
 FLASH, TENCENT_FLASH = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"
@@ -315,6 +328,24 @@ def cases() -> list[dict[str, Any]]:
     # The authorize schema strips every string field (str_strip_whitespace).
     add("spaced_region", {"model": BEDROCK, "region": " us-east4 "})
     add("spaced_region_denied", {"model": FUGU, "region": " europe-west4"})
+    # The context window (candidates_fitting_context): DeepSeek V4 Flash
+    # holds 65,536 tokens, V4.1 Flash 32,768, GLM 5.3 131,072; Gemini's is
+    # unknown (0) and always kept. The window holds the prompt estimate plus
+    # max_tokens (else max_completion_tokens); max_output_tokens only prices.
+    add("context_fits", {"model": FLASH, "estimated_input_tokens": 60_000, "max_tokens": 4_000, "output_tokens": 4_000})
+    add("context_at_the_limit", {"model": FLASH, "estimated_input_tokens": 61_536, "max_tokens": 4_000, "output_tokens": 4_000})
+    add("context_one_over", {"model": FLASH, "estimated_input_tokens": 61_537, "max_tokens": 4_000, "output_tokens": 4_000})
+    add("context_prompt_at_the_limit", {"model": FLASH, "estimated_input_tokens": 65_536})
+    add("context_prompt_one_over", {"model": FLASH, "estimated_input_tokens": 65_537})
+    add("context_max_completion_tokens", {"model": FLASH, "estimated_input_tokens": 65_000, "max_completion_tokens": 537, "output_tokens": 537})
+    add("context_max_tokens_wins", {"model": FLASH, "estimated_input_tokens": 65_000, "max_tokens": 536, "max_completion_tokens": 9_999, "output_tokens": 536})
+    add("context_max_output_tokens_only_prices", {"model": FLASH, "estimated_input_tokens": 65_536, "max_output_tokens": 9_999, "output_tokens": 9_999})
+    add("context_excludes_some_models", {"model": FLASH, "models": [GLM, TENCENT_FLASH], "estimated_input_tokens": 50_000})
+    add("context_excludes_the_first_model", {"model": TENCENT_FLASH, "models": [FLASH], "estimated_input_tokens": 40_000})
+    add("context_excludes_all", {"model": FLASH, "models": [TENCENT_FLASH], "estimated_input_tokens": 70_000, "max_tokens": 1_000, "output_tokens": 1_000})
+    add("context_window_of_the_filtered", {"model": GLM, "models": [FLASH], "provider": {"only": ["deepseek"]}, "estimated_input_tokens": 70_000})
+    add("context_unknown_window_kept", {"model": GEMINI, "models": [FLASH], "estimated_input_tokens": 100_000})
+    add("context_before_region", {"model": BEDROCK, "estimated_input_tokens": 200_000})
     add("spaced_model_and_route", {"model": f"  {GLM} ", "models": [f" {FLASH}"], "route_type": " chat.completions ",
                                    "stream": True})
     return out

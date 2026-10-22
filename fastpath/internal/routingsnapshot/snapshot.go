@@ -105,6 +105,8 @@ type Model struct {
 	SupportsChat       bool   `json:"supports_chat"`
 	SupportsEmbeddings bool   `json:"supports_embeddings"`
 	SupportsDecide     bool   `json:"supports_decide"`
+	// ContextLength is the model's context window; 0 is unknown.
+	ContextLength int64 `json:"context_length"`
 }
 
 type Endpoint struct {
@@ -562,8 +564,8 @@ func (s *Snapshot) validate() error {
 	s.models = make(map[string]*Model, len(s.Models))
 	for i := range s.Models {
 		m := &s.Models[i]
-		if s.models[m.ID] != nil || s.providers[m.Provider] == nil {
-			return fmt.Errorf("model %q: duplicate or unknown provider", m.ID)
+		if s.models[m.ID] != nil || s.providers[m.Provider] == nil || m.ContextLength < 0 {
+			return fmt.Errorf("model %q: duplicate, unknown provider or negative context_length", m.ID)
 		}
 		s.models[m.ID] = m
 	}
