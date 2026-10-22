@@ -87,6 +87,9 @@ CONTROL_PATH_PATTERNS = (
     "/credits/*",
     "/billing",
     "/billing/*",
+    # Retired endpoint: keep the old edge assignment recognizable during
+    # rolling URL-map validation. No application route is mounted anymore.
+    "/lightning/feedback",
     "/broadcast",
     "/broadcast/*",
     "/payouts",

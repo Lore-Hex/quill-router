@@ -213,7 +213,9 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         for method in (route.methods or set())
     }
     assert "/lightning/feedback" not in route_paths(internal)
-    assert "/lightning/feedback" not in URL_MAP.CONTROL_PATH_PATTERNS
+    # Existing URL maps may retain this retired rule; the application returns
+    # 404 rather than making rolling edge validation treat it as ambiguous.
+    assert URL_MAP.route_surface("/lightning/feedback") == "control"
 
     assert actual == expected
     assert {
