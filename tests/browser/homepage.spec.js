@@ -23,10 +23,17 @@ const scenarios = () => {
     await expect(page).toHaveURL(/nytokenexchange\.com\/\?utm_source=trustedrouter.com/);
   });
 
-  test("new homepage searches models and opens the existing sign-in dialog", async ({ page }) => {
+  test("new homepage searches models and opens the existing sign-in dialog", async ({ page }, testInfo) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
-    const search = page.locator("#models [data-open-search]");
+    const browse = page.getByRole("link", { name: "Browse all models", exact: true });
+    await expect(browse).toHaveAttribute("href", "/models");
+    await browse.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("browse-all-models.png") });
+    await browse.click();
+    await expect(page).toHaveURL(/\/models$/);
+    await page.goBack();
+    const search = page.locator(".trnav [data-open-search]");
     await search.click();
     const dialog = page.getByRole("dialog", { name: "Find a model" });
     await expect(dialog).toBeVisible();

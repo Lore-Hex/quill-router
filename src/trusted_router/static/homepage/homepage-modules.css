@@ -184,9 +184,7 @@ details.was[open] summary{margin-bottom:12px}
 /* footer mock */
 .trft{background:#050706;color:#edf8f5;font-family:var(--sans)}
 .trft .cols{display:grid;grid-template-columns:1.6fr repeat(5,1fr);gap:28px;padding:44px 48px 36px}
-.trft .brand{display:flex;flex-direction:column;gap:14px}
-.trft .brand img{height:22px;width:auto;align-self:flex-start}
-.trft .brand p{margin:0;font-size:13.5px;line-height:1.5;color:#98A198;max-width:26ch}
+.trft .cols > .brand{display:flex;flex-direction:column;gap:14px}
 .trft .live{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;font:400 12px/1 var(--mono);color:#C3C9C3;border:1px solid #29332D;padding:7px 9px;align-self:flex-start}
 .trft .live i{width:6px;height:6px;border-radius:50%;background:#cce8d7}
 .trft .col{display:flex;flex-direction:column;gap:9px}
@@ -201,7 +199,7 @@ details.was[open] summary{margin-bottom:12px}
   .trh .hero{grid-template-columns:1fr;gap:40px;padding:48px 24px 56px}
   .trc,.trm,.trv,.trs,.trf{padding-inline:24px}
   .trft .cols{grid-template-columns:repeat(3,1fr);padding-inline:24px}
-  .trft .brand{grid-column:1/-1}
+  .trft .cols > .brand{grid-column:1/-1}
   .trft .base{padding-inline:24px}
 
 }
