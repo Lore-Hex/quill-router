@@ -78,25 +78,16 @@ function formatCents(cents) {
   return `$${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, "0")}`;
 }
 
-const CHECKOUT_RAILS = {
-  auto: "card",
-  card: "card",
-  paypal: "card",
-  ach: "ach",
-  stablecoin: "stablecoin",
-  adyen: "adyen",
-};
-const CHECKOUT_METHOD_ICONS = { ach: "bank", stablecoin: "coin", paypal: "wallet" };
-
 function initCreditsCheckout() {
   const form = document.querySelector("[data-checkout-form]");
   if (!form)
     return;
-  let schedule = {};
+  // {rails: {option: rail}, rates: {rail: processing_fee() inputs}}, from the route.
+  let schedule = { rails: {}, rates: {} };
   try {
-    schedule = JSON.parse(form.dataset.feeSchedule || "{}");
+    schedule = { rails: {}, rates: {}, ...JSON.parse(form.dataset.feeSchedule || "{}") };
   } catch {
-    schedule = {};
+    schedule = { rails: {}, rates: {} };
   }
   const paypalMinimum = Number(form.dataset.paypalMinimum) || 0;
   const presets = Array.from(form.querySelectorAll("[data-checkout-preset]"));
@@ -104,6 +95,8 @@ function initCreditsCheckout() {
   const method = form.querySelector("[data-checkout-payment-method]");
   const fixedMethod = form.querySelector('input[type="hidden"][name="payment_method"]');
   const methodWrap = form.querySelector("[data-checkout-method-wrap]");
+  // Each icon names the payment-method values it stands for.
+  const methodIcons = Array.from(methodWrap?.querySelectorAll("[data-method-icon]") || []);
   const saved = form.querySelector("[data-checkout-saved]");
   const change = form.querySelector("[data-checkout-change]");
   const message = form.querySelector("[data-paypal-minimum-message]");
@@ -159,8 +152,12 @@ function initCreditsCheckout() {
       otherInput.disabled = !other;
       otherInput.required = other;
     }
-    if (methodWrap)
-      methodWrap.dataset.method = CHECKOUT_METHOD_ICONS[selectedMethod()] || "card";
+    if (methodWrap) {
+      const icon = methodIcons.find(
+        (span) => (span.dataset.methods || "").split(" ").includes(selectedMethod()),
+      );
+      methodWrap.dataset.method = icon ? icon.dataset.methodIcon : "card";
+    }
     const cents = amountCents();
     const tooLow = paypal && Number.isFinite(cents) && cents < minimumCents;
     const valid = Number.isFinite(cents) && cents >= 100 && cents <= 1000000 && !tooLow;
@@ -170,7 +167,7 @@ function initCreditsCheckout() {
         ? `PayPal starts at $${paypalMinimum}.`
         : `PayPal starts at $${paypalMinimum}, so $${bumpedTo} is selected.`;
     }
-    const rates = schedule[CHECKOUT_RAILS[selectedMethod()] || "card"];
+    const rates = schedule.rates[schedule.rails[selectedMethod()] || "card"];
     if (valid && rates) {
       const fee = checkoutFeeCents(cents, rates);
       setText(cells[0], formatCents(cents));
@@ -193,16 +190,31 @@ function initCreditsCheckout() {
   });
   otherInput?.addEventListener("input", () => sync("amount"));
   method?.addEventListener("change", () => sync("method"));
-  if (change && methodWrap && saved) {
+  // The chip stands in for the select only while the saved card is the
+  // choice; a method the browser restored on Back stays visible.
+  const syncSavedCard = () => {
+    if (!change || !methodWrap || !saved || !method)
+      return;
+    const savedCardChosen = method.value === method.options[0]?.value;
+    methodWrap.hidden = savedCardChosen;
+    saved.hidden = !savedCardChosen;
+  };
+  if (change && methodWrap && saved && method) {
     change.hidden = false;
-    methodWrap.hidden = true;
     change.addEventListener("click", () => {
       saved.hidden = true;
       methodWrap.hidden = false;
-      method?.focus();
+      method.focus();
     });
   }
-  sync("init");
+  const syncAll = () => {
+    syncSavedCard();
+    sync("init");
+  };
+  syncAll();
+  // Browsers restore form state (a preset, the Other amount, the method)
+  // after this deferred script has run; pageshow follows that restoration.
+  window.addEventListener("pageshow", syncAll);
 }
 
 function initAutoRefill() {
@@ -210,10 +222,16 @@ function initAutoRefill() {
   const toggle = form?.querySelector("[data-auto-refill-switch]");
   if (!form || !toggle)
     return;
-  // Switching on reveals the settings (CSS); switching off saves at once.
+  // Switching on reveals the settings (CSS); switching off saves at once,
+  // after the browser has had its say on the two amount fields.
   toggle.addEventListener("change", () => {
-    if (!toggle.checked)
-      form.submit();
+    if (toggle.checked)
+      return;
+    toggle.checked = true;
+    if (!form.reportValidity())
+      return;
+    toggle.checked = false;
+    form.submit();
   });
 }
 
@@ -262,6 +280,7 @@ async function loadCreditsStripeDetails() {
       history.replaceChildren();
       const message = document.createElement("p");
       message.className = "credits-quiet";
+      message.setAttribute("role", "status");
       message.textContent = "Payment history is temporarily unavailable.";
       history.append(message);
     }

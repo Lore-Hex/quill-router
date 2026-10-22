@@ -1,10 +1,11 @@
-{#- The saved card's label, as one line of text: "visa ····4242" (the brand
-    is capitalised by CSS). Rendered into every [data-credits-saved-card-label]
-    on the Credits page and refreshed by the /stripe-details fragment once
-    Stripe answers. -#}
+{#- The saved card's label, as one line of text: "Visa ····4242" (Stripe
+    reports brands in lower case; one of the targets is an <option>, which CSS
+    cannot re-case). Rendered into every [data-credits-saved-card-label] on
+    the Credits page and refreshed by the /stripe-details fragment once Stripe
+    answers. -#}
 {%- if saved_payment_method -%}
 {%- if saved_payment_method.brand and saved_payment_method.last4 -%}
-{{ saved_payment_method.brand }} ····{{ saved_payment_method.last4 }}
+{{ saved_payment_method.brand|capitalize }} ····{{ saved_payment_method.last4 }}
 {%- elif saved_payment_method.last4 -%}
 Card ····{{ saved_payment_method.last4 }}
 {%- else -%}

@@ -19,7 +19,8 @@ function credits(state = {}) {
     console_next_path: '/console/credits', user_email: 'test@example.test', active: 'credits',
     page_title: 'Credits', provider_mode: false, credits_available: '$0.15', credits_empty: false,
     checkout_presets: [5, 20, 100], checkout_selected_preset: 20,
-    checkout_fee_schedule_json: JSON.stringify(schedule), paypal_minimum_dollars: 20,
+    checkout_fee_schedule_json: JSON.stringify({ rails: { auto: 'card', card: 'card', paypal: 'card', ach: 'ach', stablecoin: 'stablecoin', adyen: 'adyen' }, rates: schedule }),
+    paypal_minimum_dollars: 20,
     checkout_summary: { credit: '$20.00', fee: '$1.37', total: '$21.37' },
     stripe_paypal_minimum_fee_display: '$1.20', stripe_ach_maximum_fee_display: '$7.50',
     paypal_enabled: true, adyen_enabled: false, wallet_only_billing: false,
@@ -28,7 +29,7 @@ function credits(state = {}) {
     auto_refill_amount_dollars: 25, identity_verification_checkout: false, paypal_pending: false,
     ...state,
   };
-  return execFileSync(process.env.TEST_PYTHON || 'python3', ['-c', `
+  return execFileSync(process.env.TEST_PYTHON || path.join(root, '.venv', 'bin', 'python'), ['-c', `
 import json, sys
 from jinja2 import Environment, FileSystemLoader, ChoiceLoader, DictLoader
 env = Environment(loader=ChoiceLoader([DictLoader({'console/_social_rewards.html': '', '_favicon.html': ''}), FileSystemLoader('src/trusted_router/templates')]), autoescape=True)
@@ -170,15 +171,15 @@ for (const width of [390, 1280]) test(`returning customer: saved card, Change, s
   await expect(page.locator('[data-auto-refill-settings]')).toBeVisible();
   await expect(page.getByLabel('When balance is below')).toHaveValue('10');
   await expect(page.getByLabel('Refill with')).toHaveValue('25');
+  await expect(page.getByRole('button', { name: /Social rewards/ })).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.poll(() => posts.length).toBe(1);
   expect(posts[0].path).toBe('/console/credits/auto-refill');
   expect(posts[0].body).toContain('enabled=1');
   expect(posts[0].body).toContain('threshold=10');
   expect(posts[0].body).toContain('amount=25');
-
-  await expect(page.getByRole('button', { name: /Social rewards/ })).toBeHidden();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });
 
 test('switching auto refill off saves without the enabled flag', async ({ page }) => {
@@ -190,6 +191,15 @@ test('switching auto refill off saves without the enabled flag', async ({ page }
   const toggle = page.getByRole('switch', { name: 'Auto refill' });
   await expect(toggle).toBeChecked();
   await expect(page.locator('[data-auto-refill-settings]')).toBeVisible();
+
+  // An out-of-range field keeps the switch on and posts nothing.
+  await page.getByLabel('Refill with').fill('3');
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await page.waitForTimeout(200);
+  expect(posts).toHaveLength(0);
+
+  await page.getByLabel('Refill with').fill('25');
   await toggle.click();
   await expect.poll(() => posts.length).toBe(1);
   expect(posts[0].path).toBe('/console/credits/auto-refill');

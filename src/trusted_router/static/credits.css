@@ -53,20 +53,10 @@ body.console:has(.credits-page) {
   color: var(--tr-color-accent-hover);
 }
 
-.credits-page button,
-.credits-page input,
-.credits-page select {
-  font: inherit;
-}
-
-.credits-page :is(a, button, input, select, summary):focus {
+/* charter.css draws the focus ring on :focus-visible; dashboard.css would
+   also ring plain :focus, which this page does not want. */
+.credits-page :is(a, button, input, select, summary):focus:not(:focus-visible) {
   outline: none;
-}
-
-.credits-page :is(a, button, select, summary):focus-visible,
-.credits-page input:not([type="radio"]):focus-visible {
-  outline: 3px solid var(--tr-color-focus);
-  outline-offset: 4px;
 }
 
 .credits-icon {
@@ -78,7 +68,6 @@ body.console:has(.credits-page) {
 }
 
 /* Stripe reports card brands in lower case ("visa"). */
-[data-credits-saved-card-label],
 .credits-payment-method {
   text-transform: capitalize;
 }
@@ -289,7 +278,6 @@ body.console:has(.credits-page) {
 
 .credits-money-field input {
   width: 100%;
-  box-sizing: border-box;
   min-height: 44px;
   padding: 8px 12px 8px 26px;
   font-size: 15px;
@@ -915,7 +903,6 @@ body.console:has(.credits-page) {
     margin-top: 2px;
   }
 
-  .credits-amounts,
   .credits-segments {
     gap: 8px;
   }
@@ -963,10 +950,6 @@ body.console:has(.credits-page) {
   .credits-select select,
   .credits-chip:not(.credits-saved .credits-chip) {
     width: 100%;
-  }
-
-  .credits-chip {
-    box-sizing: border-box;
   }
 
   .credits-summary {
@@ -1018,27 +1001,9 @@ body.console:has(.credits-page) {
   }
 
   .credits-row-stack .credits-link-button,
-  .credits-row-stack .credits-text-button {
+  .credits-row-stack .credits-text-button,
+  .credits-row-stack .credits-row-link {
     min-height: 24px;
-  }
-
-  .credits-row-rewards {
-    display: grid;
-    grid-template-columns: 40px minmax(0, 1fr);
-    row-gap: 2px;
-  }
-
-  .credits-row-rewards .credits-disc {
-    grid-row: 1 / span 2;
-  }
-
-  .credits-row-rewards .credits-row-controls {
-    grid-column: 2;
-    margin-left: 0;
-  }
-
-  .credits-row-rewards .credits-row-link {
-    min-height: 0;
   }
 
   .credits-refill-settings {

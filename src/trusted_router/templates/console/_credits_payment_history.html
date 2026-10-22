@@ -1,6 +1,6 @@
 {% import "console/_credits_icons.html" as icons %}
 {% if not payments_available %}
-<p class="credits-quiet">Payment history is temporarily unavailable.</p>
+<p class="credits-quiet" role="status">Payment history is temporarily unavailable.</p>
 {% elif payments %}
 <ul class="credits-payments">
   {% for p in payments %}
@@ -45,5 +45,5 @@
   {% endfor %}
 </ul>
 {% else %}
-<p class="credits-quiet">{% if wallet_only_billing %}Stablecoin payments appear after confirmation.{% else %}No payments yet.{% endif %}</p>
+<p class="credits-quiet" role="status">{% if wallet_only_billing %}Stablecoin payments appear after confirmation.{% else %}No payments yet.{% endif %}</p>
 {% endif %}

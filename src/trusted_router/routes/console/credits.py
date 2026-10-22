@@ -38,6 +38,12 @@ from trusted_router.services.adyen_billing import (
     adyen_web_asset_urls,
     create_adyen_checkout_session,
 )
+from trusted_router.services.checkout_fees import (
+    FEE_RAILS,
+    FeeRail,
+    rail_fee_rates,
+    rail_processing_fee,
+)
 from trusted_router.services.paypal_billing import (
     capture_paypal_order_for_workspace,
     create_paypal_checkout_session,
@@ -50,10 +56,7 @@ from trusted_router.services.stripe_billing import (
     list_workspace_payments,
     remove_saved_payment_method,
 )
-from trusted_router.services.stripe_fees import (
-    processing_fee,
-    scale_processing_fee_cents,
-)
+from trusted_router.services.stripe_fees import scale_processing_fee_cents
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.views import render_template
@@ -74,10 +77,9 @@ CHECKOUT_DEFAULT_PRESET_DOLLARS = 20
 # dollar amount then arrives in ``other_amount``.
 CHECKOUT_OTHER_AMOUNT = "other"
 
-# Which fee rail each payment-method option is priced on. PayPal checkouts
-# reuse the card schedule (services/paypal_billing.py); Adyen has its own
-# schedule and no customer surcharge multiplier (services/adyen_billing.py).
-CHECKOUT_METHOD_RAILS: dict[str, str] = {
+# Which fee rail each payment-method option is priced on. The page ships
+# this map with the rates so its preview and the checkout services agree.
+CHECKOUT_METHOD_RAILS: dict[str, FeeRail] = {
     "auto": "card",
     "card": "card",
     "paypal": "card",
@@ -86,61 +88,23 @@ CHECKOUT_METHOD_RAILS: dict[str, str] = {
     "adyen": "adyen",
 }
 
-# One amber line per redirect code the checkout handlers can send back.
+# One amber line per redirect code the checkout handlers send back to the page.
 _CHECKOUT_ERROR_COPY: dict[str, str] = {
+    "invalid_checkout": "Enter a whole-dollar amount from $1 to $10,000; PayPal starts at $20.",
+    "stablecoin_only": "This account adds credits with USDC only.",
     "paypal_missing_order": "PayPal sent you back without an order to confirm.",
     "paypal_capture_failed": "The PayPal payment failed to complete.",
     "checkout_unavailable": "Checkout is temporarily unavailable.",
 }
 
 
-def checkout_fee_schedule(settings: Settings) -> dict[str, dict[str, int | None]]:
-    """Fee inputs per rail, exactly as the checkout services pass them to
-    ``processing_fee()``; the page previews Stripe's line items from these."""
-    surcharge = settings.stripe_paypal_fee_multiplier_basis_points
+def checkout_fee_schedule(settings: Settings) -> dict[str, Any]:
+    """What the page needs to preview a checkout's line items: the option →
+    rail map and each rail's ``processing_fee()`` inputs."""
     return {
-        "card": {
-            "basis_points": settings.stripe_card_fee_basis_points,
-            "fixed_cents": settings.stripe_card_fee_fixed_cents,
-            "minimum_cents": settings.checkout_card_fee_minimum_cents,
-            "max_cents": None,
-            "multiplier_basis_points": surcharge,
-        },
-        "ach": {
-            "basis_points": settings.stripe_ach_fee_basis_points,
-            "fixed_cents": settings.stripe_ach_fee_fixed_cents,
-            "minimum_cents": 0,
-            "max_cents": settings.stripe_ach_fee_max_cents,
-            "multiplier_basis_points": surcharge,
-        },
-        "stablecoin": {
-            "basis_points": settings.stripe_stablecoin_fee_basis_points,
-            "fixed_cents": settings.stripe_stablecoin_fee_fixed_cents,
-            "minimum_cents": 0,
-            "max_cents": None,
-            "multiplier_basis_points": surcharge,
-        },
-        "adyen": {
-            "basis_points": settings.adyen_card_fee_basis_points,
-            "fixed_cents": settings.adyen_card_fee_fixed_cents,
-            "minimum_cents": settings.checkout_card_fee_minimum_cents,
-            "max_cents": None,
-            "multiplier_basis_points": 10_000,
-        },
+        "rails": CHECKOUT_METHOD_RAILS,
+        "rates": {rail: rail_fee_rates(settings, rail).as_dict() for rail in FEE_RAILS},
     }
-
-
-def checkout_fee_cents(credit_cents: int, rail: str, settings: Settings) -> int:
-    """The processing fee the checkout for ``rail`` will add to ``credit_cents``."""
-    rates = checkout_fee_schedule(settings)[rail]
-    return processing_fee(
-        credit_amount_cents=credit_cents,
-        variable_basis_points=rates["basis_points"] or 0,
-        fixed_fee_cents=rates["fixed_cents"] or 0,
-        minimum_fee_cents=rates["minimum_cents"] or 0,
-        max_fee_cents=rates["max_cents"],
-        fee_multiplier_basis_points=rates["multiplier_basis_points"] or 10_000,
-    ).processing_fee_cents
 
 
 def checkout_presets(verification_remaining_microdollars: int | None) -> tuple[list[int], int]:
@@ -149,7 +113,8 @@ def checkout_presets(verification_remaining_microdollars: int | None) -> tuple[l
     Opened from identity verification with ``remaining`` still owed, the
     middle preset becomes that remainder (rounded up to a dollar) and is
     selected, so one tap finishes verification. A remainder within the first
-    preset keeps the normal row with the first preset selected.
+    preset keeps the normal row with the first preset selected; one at or
+    above the last preset keeps the row and selects the last preset.
     """
     presets = list(CHECKOUT_PRESET_DOLLARS)
     selected = CHECKOUT_DEFAULT_PRESET_DOLLARS
@@ -157,9 +122,11 @@ def checkout_presets(verification_remaining_microdollars: int | None) -> tuple[l
         remaining_dollars = -(-verification_remaining_microdollars // MICRODOLLARS_PER_DOLLAR)
         if remaining_dollars <= presets[0]:
             selected = presets[0]
-        else:
+        elif remaining_dollars < presets[-1]:
             presets[1] = remaining_dollars
             selected = remaining_dollars
+        else:
+            selected = presets[-1]
     return presets, selected
 
 
@@ -199,10 +166,10 @@ def register(app: FastAPI) -> None:
         presets, selected_preset = checkout_presets(
             verification_remaining if purpose == "identity_verification" else None
         )
-        default_rail = "stablecoin" if wallet_only_billing else "card"
-        default_fee_cents = checkout_fee_cents(selected_preset * 100, default_rail, settings)
+        default_rail = CHECKOUT_METHOD_RAILS["stablecoin" if wallet_only_billing else "auto"]
+        default_fee = rail_processing_fee(settings, default_rail, selected_preset * 100)
         selected_microdollars = selected_preset * MICRODOLLARS_PER_DOLLAR
-        default_fee_microdollars = default_fee_cents * MICRODOLLARS_PER_CENT
+        default_fee_microdollars = default_fee.processing_fee_microdollars
         return HTMLResponse(
             render(
                 "console/credits.html",

@@ -64,10 +64,10 @@
       {% endif %}
       <span class="credits-select" data-checkout-method-wrap>
         <span class="credits-method-icon" aria-hidden="true">
-          <span data-method-icon="card">{{ icons.svg('card') }}</span>
-          <span data-method-icon="bank">{{ icons.svg('bank') }}</span>
-          <span data-method-icon="coin">{{ icons.svg('coin') }}</span>
-          <span data-method-icon="wallet">{{ icons.svg('paypal') }}</span>
+          <span data-method-icon="card" data-methods="auto card adyen">{{ icons.svg('card') }}</span>
+          <span data-method-icon="bank" data-methods="ach">{{ icons.svg('bank') }}</span>
+          <span data-method-icon="coin" data-methods="stablecoin">{{ icons.svg('coin') }}</span>
+          <span data-method-icon="wallet" data-methods="paypal">{{ icons.svg('paypal') }}</span>
         </span>
         <select name="payment_method" aria-label="Payment method" data-checkout-payment-method>
           {% if has_payment_method %}
@@ -168,7 +168,7 @@
     </form>
     {% endif %}
 
-    <button class="credits-row credits-row-button credits-row-rewards" type="button" data-rewards-open hidden>
+    <button class="credits-row credits-row-button credits-row-stack credits-row-rewards" type="button" data-rewards-open hidden>
       <span class="credits-disc credits-disc-blue" aria-hidden="true">{{ icons.svg('gift') }}</span>
       <strong class="credits-row-title">Social rewards</strong>
       <span class="credits-row-controls"><span class="credits-row-link"><span>Earn API credit for a follow</span>{{ icons.svg('arrow', 16) }}</span></span>
@@ -177,7 +177,7 @@
 
   <section class="credits-history" aria-labelledby="credits-history-title" data-credits-stripe-details-url="/console/credits/stripe-details">
     <h2 id="credits-history-title">Payment history</h2>
-    <div class="credits-history-body" data-credits-payment-history aria-busy="true" aria-live="polite">
+    <div data-credits-payment-history aria-busy="true">
       <noscript><p class="credits-quiet"><a href="/console/credits/stripe-details">Open Stripe payment details</a></p></noscript>
     </div>
   </section>

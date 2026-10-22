@@ -19,17 +19,24 @@ from trusted_router.routes.console.credits import (
     CHECKOUT_DEFAULT_PRESET_DOLLARS,
     CHECKOUT_METHOD_RAILS,
     CHECKOUT_PRESET_DOLLARS,
-    checkout_fee_cents,
     checkout_fee_schedule,
     checkout_presets,
 )
-from trusted_router.services.stripe_fees import processing_fee
+from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.checkout_fees import (
+    FEE_RAILS,
+    FeeRail,
+    rail_fee_rates,
+    rail_processing_fee,
+)
+from trusted_router.services.paypal_billing import create_paypal_checkout_session
+from trusted_router.services.stripe_billing import create_checkout_session
 from trusted_router.storage import STORE
 
 # Fees the design was signed off with (config defaults: card 2.9% + 30c with
 # an 80c floor, ACH 0.8% capped at $5, USDC 1.5%, all x1.5; Adyen 0% + 0c with
 # the 80c floor and no surcharge).
-EXPECTED_FEE_CENTS = {
+EXPECTED_FEE_CENTS: dict[FeeRail, dict[int, int]] = {
     "card": {500: 120, 2000: 137, 2500: 159, 5000: 272, 10000: 495},
     "ach": {500: 8, 2000: 26, 2500: 32, 5000: 62, 10000: 122},
     "stablecoin": {500: 12, 2000: 47, 2500: 59, 5000: 116, 10000: 230},
@@ -62,36 +69,68 @@ def _fee_schedule_from_page(page: str) -> dict[str, Any]:
 
 def test_fee_table_matches_processing_fee_for_every_preset_and_rail() -> None:
     settings = Settings(environment="local")
-    schedule = checkout_fee_schedule(settings)
     for rail, expected in EXPECTED_FEE_CENTS.items():
-        rates = schedule[rail]
+        rates = rail_fee_rates(settings, rail)
         for credit_cents, fee_cents in expected.items():
-            direct = processing_fee(
-                credit_amount_cents=credit_cents,
-                variable_basis_points=rates["basis_points"] or 0,
-                fixed_fee_cents=rates["fixed_cents"] or 0,
-                minimum_fee_cents=rates["minimum_cents"] or 0,
-                max_fee_cents=rates["max_cents"],
-                fee_multiplier_basis_points=rates["multiplier_basis_points"] or 10_000,
-            ).processing_fee_cents
-            assert direct == fee_cents, (rail, credit_cents)
-            assert checkout_fee_cents(credit_cents, rail, settings) == fee_cents
-    assert set(CHECKOUT_METHOD_RAILS.values()) <= set(EXPECTED_FEE_CENTS)
+            assert rates.processing_fee(credit_cents).processing_fee_cents == fee_cents, (
+                rail,
+                credit_cents,
+            )
+            assert rail_processing_fee(settings, rail, credit_cents).processing_fee_cents == fee_cents
+    assert set(FEE_RAILS) == set(EXPECTED_FEE_CENTS)
+    assert set(CHECKOUT_METHOD_RAILS.values()) <= set(FEE_RAILS)
+
+
+def test_checkout_services_charge_the_fee_the_page_previews() -> None:
+    """The Stripe and PayPal checkouts (mock mode: no keys) price from the
+    same rates the page embeds, so the summary equals the line items."""
+    settings = Settings(environment="local")
+    _, user, workspace = _console_client()
+    for dollars in (5, 20, 100):
+        for method in ("auto", "ach", "stablecoin"):
+            data = create_checkout_session(
+                body=CheckoutRequest(amount=dollars, payment_method=method),
+                workspace_id=workspace.id,
+                initiating_user_id=user.id,
+                customer_email=None,
+                customer_id=None,
+                settings=settings,
+            )
+            expected = rail_processing_fee(
+                settings, CHECKOUT_METHOD_RAILS[method], dollars * 100
+            )
+            assert data["processing_fee_microdollars"] == expected.processing_fee_microdollars, (
+                method,
+                dollars,
+            )
+        paypal = create_paypal_checkout_session(
+            body=CheckoutRequest(amount=max(dollars, 20), payment_method="paypal"),
+            workspace_id=workspace.id,
+            initiating_user_id=user.id,
+            customer_email=None,
+            settings=settings,
+        )
+        expected = rail_processing_fee(settings, "card", max(dollars, 20) * 100)
+        assert paypal["processing_fee_microdollars"] == expected.processing_fee_microdollars
 
 
 def test_page_embeds_the_fee_schedule_and_the_default_summary() -> None:
     client, _, _ = _console_client()
     page = client.get("/console/credits").text
 
-    assert _fee_schedule_from_page(page) == checkout_fee_schedule(Settings(environment="local"))
+    schedule = _fee_schedule_from_page(page)
+    assert schedule == checkout_fee_schedule(Settings(environment="local"))
+    assert schedule["rails"] == CHECKOUT_METHOD_RAILS
+    assert set(schedule["rates"]) == set(FEE_RAILS)
     assert 'data-paypal-minimum="20"' in page
     for preset in CHECKOUT_PRESET_DOLLARS:
         assert f'name="amount" value="{preset}"' in page
     assert f'value="{CHECKOUT_DEFAULT_PRESET_DOLLARS}" checked' in page
     assert 'name="amount" value="other"' in page
     assert 'name="other_amount"' in page
+    assert '<option value="ach">Bank account (ACH)</option>' in page
+    assert 'data-method-icon="bank" data-methods="ach"' in page
     # $20 on a card: $1.37 fee, $21.37 at checkout.
-    assert "<dd" in page
     assert ">$20.00</dd>" in page
     assert ">$1.37</dd>" in page
     assert ">$21.37</dd>" in page
@@ -108,6 +147,9 @@ def test_checkout_presets_follow_the_verification_remainder() -> None:
     assert checkout_presets(7 * MICRODOLLARS_PER_DOLLAR + 1) == ([5, 8, 100], 8)
     assert checkout_presets(5 * MICRODOLLARS_PER_DOLLAR) == ([5, 20, 100], 5)
     assert checkout_presets(1) == ([5, 20, 100], 5)
+    # A remainder at or past the last preset keeps the row in order.
+    assert checkout_presets(100 * MICRODOLLARS_PER_DOLLAR) == ([5, 20, 100], 100)
+    assert checkout_presets(150 * MICRODOLLARS_PER_DOLLAR) == ([5, 20, 100], 100)
 
 
 def test_verification_entry_preselects_the_remaining_amount() -> None:
@@ -150,19 +192,21 @@ def test_other_amount_posts_through_the_existing_checkout() -> None:
 def test_status_lines_render_for_redirect_codes_only() -> None:
     client, _, _ = _console_client()
 
-    assert "Checkout is temporarily unavailable." in client.get(
-        "/console/credits?error=checkout_unavailable"
-    ).text
-    assert "The PayPal payment failed to complete." in client.get(
-        "/console/credits?error=paypal_capture_failed"
-    ).text
-    assert "PayPal sent you back without an order to confirm." in client.get(
-        "/console/credits?error=paypal_missing_order"
-    ).text
+    expected = {
+        "invalid_checkout": "Enter a whole-dollar amount from $1 to $10,000; PayPal starts at $20.",
+        "stablecoin_only": "This account adds credits with USDC only.",
+        "checkout_unavailable": "Checkout is temporarily unavailable.",
+        "paypal_capture_failed": "The PayPal payment failed to complete.",
+        "paypal_missing_order": "PayPal sent you back without an order to confirm.",
+    }
+    for code, copy in expected.items():
+        assert copy in client.get(f"/console/credits?error={code}").text, code
+    unknown = client.get("/console/credits?error=something_else").text
     plain = client.get("/console/credits").text
     # Only the PayPal line's empty slot is on a plain visit, and it is hidden.
-    assert plain.count('class="credits-status"') == 1
-    assert 'role="status" data-paypal-minimum-message hidden' in plain
+    for page in (plain, unknown):
+        assert page.count('class="credits-status"') == 1
+        assert 'role="status" data-paypal-minimum-message hidden' in page
 
 
 def test_saved_card_state_offers_change_manage_remove_and_the_switch() -> None:
@@ -185,5 +229,5 @@ def test_saved_card_state_offers_change_manage_remove_and_the_switch() -> None:
     assert "disabled data-auto-refill-switch" not in page
     assert "When balance is below" in page and "Refill with" in page
     assert "pm_mock_f00d1234" not in page
-    assert "test ····1234" in details
+    assert "Test ····1234" in details
     assert "pm_mock_f00d1234" not in details

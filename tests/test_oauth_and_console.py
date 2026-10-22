@@ -1679,7 +1679,7 @@ def test_console_add_payment_method_mock_saves_method(
     assert "data-checkout-change" in page.text
     assert '<option value="card">Another card</option>' in page.text
     assert "Manage in Stripe" in page.text
-    assert "test ····" in details.text
+    assert "Test ····" in details.text
     assert "Remove" in page.text
 
 
@@ -1828,7 +1828,7 @@ def test_console_credits_lists_saved_stripe_card(monkeypatch) -> None:
     assert details.status_code == 200
     assert "Saved card" in page.text
     assert "pm_console_card" not in page.text
-    assert "visa ····4242" in details.text
+    assert "Visa ····4242" in details.text
     assert "pm_console_card" not in details.text
     assert "Remove" in page.text
 

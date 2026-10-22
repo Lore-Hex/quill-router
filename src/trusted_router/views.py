@@ -73,16 +73,18 @@ def _format_datetime_iso(value: int | float | str | None) -> str:
     return dt.datetime.fromtimestamp(ts, tz=dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _timestamp(value: int | float | str | None) -> dt.datetime | None:
-    if value is None or value == "" or isinstance(value, str):
+def _timestamp(value: object) -> dt.datetime | None:
+    """A Unix timestamp (int or float) as an aware datetime; anything else
+    (None, strings, booleans) is "unknown"."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     try:
-        return dt.datetime.fromtimestamp(float(value), tz=dt.UTC)
-    except (TypeError, ValueError, OverflowError, OSError):
+        return dt.datetime.fromtimestamp(value, tz=dt.UTC)
+    except (ValueError, OverflowError, OSError):
         return None
 
 
-def _format_datetime_date(value: int | float | str | None) -> str:
+def _format_datetime_date(value: object) -> str:
     """Render a Unix timestamp as a short date, `May 24, 2026`, for the
     Credits page payment list; the machine-readable form is beside it."""
     moment = _timestamp(value)
@@ -91,7 +93,7 @@ def _format_datetime_date(value: int | float | str | None) -> str:
     return f"{moment.strftime('%b')} {moment.day}, {moment.year}"
 
 
-def _format_datetime_iso8601(value: int | float | str | None) -> str:
+def _format_datetime_iso8601(value: object) -> str:
     """Render a Unix timestamp as a `<time datetime>` value in UTC."""
     moment = _timestamp(value)
     if moment is None:

@@ -130,7 +130,7 @@ def test_stripe_fragment_populates_masked_card_and_payment_history(monkeypatch) 
 
     assert response.status_code == 200
     assert seen_workspaces == [workspace.id]
-    assert "visa ····4242" in response.text
+    assert "Visa ····4242" in response.text
     assert "$10.00 credit" in response.text
     assert "$1.34 fee" in response.text
     assert "2026-05-24" in response.text
@@ -209,7 +209,7 @@ def test_stripe_fragment_loads_card_and_history_concurrently(monkeypatch) -> Non
     response = client.get("/console/credits/stripe-details")
 
     assert response.status_code == 200
-    assert "parallel-card ····0002" in response.text
+    assert "Parallel-card ····0002" in response.text
     assert "parallel-history" in response.text
 
 
