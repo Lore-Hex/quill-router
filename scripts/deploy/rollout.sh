@@ -118,15 +118,15 @@ REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
 # FILE and pinned by its number, never latest, so every instance and every
 # restart signs with one key; the public key beside it is that version's
 # public half, the pin the publisher checks the mounted key against and the
-# trust anchor Go is given. No version exists yet: with the version empty
-# nothing is mounted, and publishing cannot be turned on. The operator steps
-# that add version 1 and turn it on are in docs/runbooks/routing-snapshot-key.md.
+# trust anchor Go is given. Version 1 was created on 2026-10-22 (runbook step
+# 2); it is mounted and pinned here while publishing stays off (step 4), and
+# turned on in its own change (step 5). docs/runbooks/routing-snapshot-key.md.
 ROUTING_SNAPSHOT_PUBLISH_ENABLED=false
 ROUTING_SNAPSHOT_KEY_SECRET="trustedrouter-routing-snapshot-signing-key"
-ROUTING_SNAPSHOT_KEY_VERSION=""
+ROUTING_SNAPSHOT_KEY_VERSION="1"
 ROUTING_SNAPSHOT_KEY_PATH="/secrets/routing-snapshot/signing.pem"
 ROUTING_SNAPSHOT_KID="tr-routing-snapshot-2026-10a"
-ROUTING_SNAPSHOT_PUBLIC_KEY=""
+ROUTING_SNAPSHOT_PUBLIC_KEY="oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
 if [ -n "$ROUTING_SNAPSHOT_KEY_VERSION" ] &&
    [[ ! "$ROUTING_SNAPSHOT_KEY_VERSION" =~ ^[1-9][0-9]*$ ]]; then
   echo "refusing rollout: the routing snapshot key version must be a number, never latest" >&2
