@@ -15,7 +15,6 @@ from . import fastpath_snapshot as fastpath_snapshot
 from . import federation as federation
 from . import fetch_image as fetch_image
 from . import gateway as gateway
-from . import lightning as lightning
 from . import paypal as paypal
 from . import reconcile as reconcile
 from . import routable as routable
@@ -49,7 +48,6 @@ def register_gateway_internal_routes(router: APIRouter) -> None:
     fetch_image.register(router)
     reconcile.register(router)
     federation.register(router)
-    lightning.register(router)
 
 
 def register_routing_snapshot_routes(router: APIRouter) -> None:

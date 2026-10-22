@@ -82,7 +82,6 @@ from trusted_router.routes.internal import (
     register_routing_snapshot_routes,
 )
 from trusted_router.routes.keys import register_key_routes
-from trusted_router.routes.lightning_support import register_lightning_support_routes
 from trusted_router.routes.mcp import register_mcp_routes
 from trusted_router.routes.mcp_advisor import register_advisor_mcp_routes
 from trusted_router.routes.notify import register_notify_public_routes, register_notify_routes
@@ -876,7 +875,6 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_custom_model_routes(router)
         register_user_model_routes(router)
         register_key_routes(router)
-        register_lightning_support_routes(router)
         register_oauth_app_routes(router)
         register_oauth_authorized_app_routes(router)
         register_oauth_key_routes(router)
