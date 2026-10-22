@@ -1375,7 +1375,9 @@ PROVIDERS: dict[str, Provider] = {
             "Confidential AI (Inexorable, Inc.) publishes zero prompt/completion "
             "retention and no training on customer data. Operational and billing "
             "metadata are retained. Inference is served in the US and El Salvador. "
-            "Its public attestation covers launch/admission, not verified GPU state. "
+            "Its newer release provides TLS-bound attestation and measured GPU boot "
+            "checks. Our review of its serving policy and attested transport "
+            "integration is not complete. "
             "TrustedRouter uses its HTTPS API; these routes are ZDR, not verified "
             "end-to-end confidential inference and are excluded from the e2e filter."
         ),
