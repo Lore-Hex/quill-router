@@ -36,15 +36,27 @@ class TokenIndexPageTests(unittest.TestCase):
         self.assertIn('rel="canonical" href="https://nytokenexchange.com/index"', page)
         self.assertFalse((self.output / "index.html").exists())
 
+    def test_index_reuses_nyte_chrome(self):
+        import re
+
+        home = (self.output / "new-york/index.html").read_text()
+        page = (self.output / "index").read_text()
+        for tag in ("header", "footer"):
+            pattern = rf"<{tag}\b.*?</{tag}>"
+            self.assertEqual(re.search(pattern, home.replace("utm_content=home", "utm_content=index"), re.S).group(), re.search(pattern, page, re.S).group())
+        self.assertIn('data-nyte-page="index"', page)
+        self.assertIn('/assets/nyte-v2/app.js', page)
+        self.assertIn('/assets/nyte-v2/styles.css', page)
+        self.assertNotIn('class="index-header', page)
+        self.assertNotIn('class="index-footer', page)
+
     def test_new_york_links_index_and_supplier_stack_only(self):
         page = (self.output / "new-york/index.html").read_text()
         self.assertIn('href="/index">Index</a>', page)
-        self.assertIn("Your GPUs. Your brand.", page)
-        self.assertIn("token-exchange-neocloud-in-a-box", page)
-        self.assertIn("Pre-alpha", page)
-        self.assertNotIn("NYTE address activation is in progress.", page)
-        self.assertIn("api.confidential.nytokenexchange.com/v1", page)
-        self.assertIn("/docs#privacy-filters", page)
+        suppliers = (self.output / "suppliers").read_text()
+        self.assertIn("token-exchange-neocloud-in-a-box", suppliers)
+        self.assertIn('href="/suppliers"', page)
+        self.assertIn('href="/confidential"', page)
         self.assertIn("https://nytokenexchange.com/index", (self.output / "new-york/sitemap.xml").read_text())
         for other in self.output.glob("*/index.html"):
             if other.parent.name != "new-york":

@@ -47,7 +47,7 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ### Spot exchange API
 
-New York's homepage includes `spot-api.html`, a streaming quickstart using
+New York's `/confidential#start` includes the quickstart from `nyte-v2/api.html`, using
 `api.confidential.nytokenexchange.com/v1` with explicit confidential routing.
 `api.nytokenexchange.com/v1` is the general catalog endpoint. Both use the
 existing TrustedRouter key, balance and request semantics; `nyte/*` aliases
@@ -64,12 +64,12 @@ strict TLS-bound attestation, receipt-key evidence, missing/weaker privacy
 rejections and a completed streamed `nyte/auto` request. Certificate issuance
 also requires the enclave's existing TXT-writer role to cover the two delegated
 NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publish
-DNS records to bypass qualification. For a narrow
-release, back up and update only New York's index and the isolated
-`assets/spot-api.css`, preserving concurrent asset versions and unrelated market
-pages. If the live homepage differs from the build, insert only the new
-stylesheet link, navigation link, hero action and spot API section into fresh
-live HTML. Verify reversing these changes reproduces the original bytes.
+DNS records to bypass qualification.
+
+The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
+New York's homepage, `/confidential`, `/suppliers`, and `/index`; its shared
+assets are under `assets/nyte-v2/`. Back up live objects before an authorized
+release and preserve concurrent content and unrelated market pages.
 
 ### NYTE Token Index and open-source supplier stack
 
@@ -80,21 +80,27 @@ assets unchanged. It makes no database or network calls. Keep its snapshot date
 visible; the index is provisional and is not an executable supplier quote.
 `/index.html` remains the homepage; do not publish the index page at that path.
 
-New York's navigation links `/index`. Its `open-stack.html` section invites
+New York's navigation links `/index`. Its `/suppliers#open-stack` section invites
 operators to list spare inference capacity under their provider identity and
 links the Apache-2.0 neocloud stack and existing supplier onboarding.
 The stack is pre-alpha; confidential serving requires independent hardware
 and software qualification, not merely installing the software.
 
 Run `node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089`
-alongside the existing browser checks. For a narrow publish, back up live objects
-and publish only `index` (as `text/html`), `assets/index-page.css`,
-`assets/token-index.css`, `assets/token-index.js`, the five public files in
-`assets/token-index/`, `assets/spot-api.css` and New York's sitemap.
-Insert the new sections, navigation links and stylesheet into fresh live New
-York homepage HTML, preserving concurrent content, CSS/JS versions and other
-markets. Use generation preconditions on every upload and verify the reverse
-patch restores the original homepage bytes before publishing it.
+alongside the existing browser checks. The Index now uses the NYTE shared shell;
+its release also needs the matching `assets/nyte-v2/` and `assets/analytics.js`,
+in addition to `assets/index-page.css`, `assets/token-index.css`,
+`assets/token-index.js` and `assets/token-index/`. Publish extensionless page
+objects (`index`, `confidential`, `suppliers`) as `text/html`. Back up live objects,
+preserve unrelated markets and concurrent content, and use generation
+preconditions on every upload.
+
+Release the public catalogue JSON/CORS support before the redesigned homepage:
+`deploy.py` checks that `/v1/models/count` and `/v1/providers` are readable from
+the NYTE origin before publishing. The `nyte.*` analytics events also require
+the collector and the separately dispatched marketing-worker/source-filter
+update in `.github/workflows/deploy-growth-sync.yml`. Local preview success
+does not verify an authenticated confidential inference request or its attestation.
 
 ### Public New York media kit
 

@@ -133,6 +133,7 @@ _ACQUISITION_CLOUD_FIELDS = (
     "page_path",
     "device_category",
     "reward_action",
+    "cta", "position", "form", "destination_host",
     "reward_placement",
     "observation_id",
     "site_domain",

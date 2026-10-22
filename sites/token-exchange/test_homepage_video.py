@@ -29,6 +29,8 @@ class HomepageVideoTests(unittest.TestCase):
             self.assertGreater((root / "assets/nyte-routing-demo.mp4").stat().st_size, 0)
             self.assertGreater((root / "assets/nyte-routing-demo-poster.jpg").stat().st_size, 0)
             for market in load_markets():
+                if market["slug"] == "new-york":
+                    continue  # Covered by test_nyte_v2 and the v2 browser verifier.
                 page = (root / market["slug"] / "index.html").read_text()
                 parser = MediaParser()
                 parser.feed(page)
