@@ -3922,11 +3922,11 @@ def test_rollout_pins_routing_snapshot_publishing_from_its_literals_without_inhe
     # E2 publishing: on, from the literals only, whatever the caller or the
     # serving revision carries; version 1 of the key, pinned by number.
     hostile = {
-        "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
+        "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
         "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/old/signing.pem",
         "TR_ROUTING_SNAPSHOT_KID": "old-kid",
         "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": _ROUTING_SNAPSHOT_PUBLIC_KEY,
-        "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
+        "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
         "ROUTING_SNAPSHOT_KEY_VERSION": "7",
     }
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
