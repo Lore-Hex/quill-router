@@ -37,10 +37,10 @@ from trusted_router.storage import STORE
 # an 80c floor, ACH 0.8% capped at $5, USDC 1.5%, all x1.5; Adyen 0% + 0c with
 # the 80c floor and no surcharge).
 EXPECTED_FEE_CENTS: dict[FeeRail, dict[int, int]] = {
-    "card": {500: 120, 2000: 137, 2500: 159, 5000: 272, 10000: 495},
-    "ach": {500: 8, 2000: 26, 2500: 32, 5000: 62, 10000: 122},
-    "stablecoin": {500: 12, 2000: 47, 2500: 59, 5000: 116, 10000: 230},
-    "adyen": {500: 80, 2000: 80, 2500: 80, 5000: 80, 10000: 80},
+    "card": {500: 120, 2000: 137, 2500: 159, 5000: 272, 10000: 495, 20000: 944},
+    "ach": {500: 8, 2000: 26, 2500: 32, 5000: 62, 10000: 122, 20000: 243},
+    "stablecoin": {500: 12, 2000: 47, 2500: 59, 5000: 116, 10000: 230, 20000: 458},
+    "adyen": {500: 80, 2000: 80, 2500: 80, 5000: 80, 10000: 80, 20000: 80},
 }
 
 
@@ -130,26 +130,27 @@ def test_page_embeds_the_fee_schedule_and_the_default_summary() -> None:
     assert 'name="other_amount"' in page
     assert '<option value="ach">Bank account (ACH)</option>' in page
     assert 'data-method-icon="bank" data-methods="ach"' in page
-    # $20 on a card: $1.37 fee, $21.37 at checkout.
-    assert ">$20.00</dd>" in page
-    assert ">$1.37</dd>" in page
-    assert ">$21.37</dd>" in page
+    # $25 on a card: $1.59 fee, $26.59 at checkout.
+    assert ">$25.00</dd>" in page
+    assert ">$1.59</dd>" in page
+    assert ">$26.59</dd>" in page
     assert "Top up to keep prepaid routes flowing" not in page
     assert "Lifetime usage" not in page
     assert "Migration credits" not in page
 
 
 def test_checkout_presets_follow_the_verification_remainder() -> None:
-    assert checkout_presets(None) == ([5, 20, 100], 20)
-    assert checkout_presets(0) == ([5, 20, 100], 20)
-    assert checkout_presets(25 * MICRODOLLARS_PER_DOLLAR) == ([5, 25, 100], 25)
+    assert checkout_presets(None) == ([5, 25, 200], 25)
+    assert checkout_presets(0) == ([5, 25, 200], 25)
+    assert checkout_presets(25 * MICRODOLLARS_PER_DOLLAR) == ([5, 25, 200], 25)
+    assert checkout_presets(12 * MICRODOLLARS_PER_DOLLAR) == ([5, 12, 200], 12)
     # Partial cents round up to the next whole dollar.
-    assert checkout_presets(7 * MICRODOLLARS_PER_DOLLAR + 1) == ([5, 8, 100], 8)
-    assert checkout_presets(5 * MICRODOLLARS_PER_DOLLAR) == ([5, 20, 100], 5)
-    assert checkout_presets(1) == ([5, 20, 100], 5)
+    assert checkout_presets(7 * MICRODOLLARS_PER_DOLLAR + 1) == ([5, 8, 200], 8)
+    assert checkout_presets(5 * MICRODOLLARS_PER_DOLLAR) == ([5, 25, 200], 5)
+    assert checkout_presets(1) == ([5, 25, 200], 5)
     # A remainder at or past the last preset keeps the row in order.
-    assert checkout_presets(100 * MICRODOLLARS_PER_DOLLAR) == ([5, 20, 100], 100)
-    assert checkout_presets(150 * MICRODOLLARS_PER_DOLLAR) == ([5, 20, 100], 100)
+    assert checkout_presets(200 * MICRODOLLARS_PER_DOLLAR) == ([5, 25, 200], 200)
+    assert checkout_presets(250 * MICRODOLLARS_PER_DOLLAR) == ([5, 25, 200], 200)
 
 
 def test_verification_entry_preselects_the_remaining_amount() -> None:

@@ -67,11 +67,13 @@ _PRIVATE_CREDITS_HEADERS = {
     "X-Robots-Tag": "noindex, nofollow",
 }
 
-# The Credits page offers three whole-dollar presets plus "Other". When the
-# page is opened from identity verification, the middle preset becomes the
-# remaining lifetime top-up instead (see ``checkout_presets``).
-CHECKOUT_PRESET_DOLLARS: tuple[int, int, int] = (5, 20, 100)
-CHECKOUT_DEFAULT_PRESET_DOLLARS = 20
+# The Credits page offers three whole-dollar presets plus "Other". $25 is the
+# amount people bought most and what identity verification asks for; $200 is
+# what larger buyers pick. When the page is opened from identity verification
+# the middle preset becomes the remaining lifetime top-up (see
+# ``checkout_presets``).
+CHECKOUT_PRESET_DOLLARS: tuple[int, int, int] = (5, 25, 200)
+CHECKOUT_DEFAULT_PRESET_DOLLARS = 25
 
 # Form value for the preset radio that reveals the free-amount field; the
 # dollar amount then arrives in ``other_amount``.

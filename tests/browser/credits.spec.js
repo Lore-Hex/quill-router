@@ -18,10 +18,10 @@ function credits(state = {}) {
     workspaces: [{ id: '0', name: 'Personal workspace' }], current_workspace_id: '0',
     console_next_path: '/console/credits', user_email: 'test@example.test', active: 'credits',
     page_title: 'Credits', provider_mode: false, credits_available: '$0.15', credits_empty: false,
-    checkout_presets: [5, 20, 100], checkout_selected_preset: 20,
+    checkout_presets: [5, 25, 200], checkout_selected_preset: 25,
     checkout_fee_schedule_json: JSON.stringify({ rails: { auto: 'card', card: 'card', paypal: 'card', ach: 'ach', stablecoin: 'stablecoin', adyen: 'adyen' }, rates: schedule }),
     paypal_minimum_dollars: 20,
-    checkout_summary: { credit: '$20.00', fee: '$1.37', total: '$21.37' },
+    checkout_summary: { credit: '$25.00', fee: '$1.59', total: '$26.59' },
     stripe_paypal_minimum_fee_display: '$1.20', stripe_ach_maximum_fee_display: '$7.50',
     paypal_enabled: true, adyen_enabled: false, wallet_only_billing: false,
     has_payment_method: false, payment_method_pending: false, has_stripe_customer: false,
@@ -57,14 +57,14 @@ const preset = (page, label) => page.getByRole('radio', { name: label, exact: tr
 for (const width of [320, 390, 1280]) test(`presets, method and fee summary at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   await load(page);
-  await expect(preset(page, '$20')).toBeChecked();
-  expect(await summary(page)).toEqual(['$20.00', '$1.37', '$21.37']);
+  await expect(preset(page, '$25')).toBeChecked();
+  expect(await summary(page)).toEqual(['$25.00', '$1.59', '$26.59']);
   await expect(page.locator('.credits-other')).toBeHidden();
 
-  await preset(page, '$100').check();
-  expect(await summary(page)).toEqual(['$100.00', '$4.95', '$104.95']);
+  await preset(page, '$200').check();
+  expect(await summary(page)).toEqual(['$200.00', '$9.44', '$209.44']);
   await page.getByLabel('Payment method').selectOption('ach');
-  expect(await summary(page)).toEqual(['$100.00', '$1.22', '$101.22']);
+  expect(await summary(page)).toEqual(['$200.00', '$2.43', '$202.43']);
   await expect(page.locator('.credits-select')).toHaveAttribute('data-method', 'bank');
   await page.getByLabel('Payment method').selectOption('stablecoin');
   await preset(page, '$5').check();
@@ -83,21 +83,21 @@ for (const width of [320, 390, 1280]) test(`presets, method and fee summary at $
   await expect(page.getByRole('button', { name: 'Continue to checkout' })).toBeEnabled();
 
   // Segments share one row at every width and nothing scrolls sideways.
-  const boxes = await Promise.all(['$5', '$20', '$100', 'Other'].map((label) => preset(page, label).boundingBox()));
+  const boxes = await Promise.all(['$5', '$25', '$200', 'Other'].map((label) => preset(page, label).boundingBox()));
   expect(new Set(boxes.map((box) => Math.round(box.y))).size).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });
 
-test('PayPal disables $5, bumps to $20 and names the minimum', async ({ page }) => {
+test('PayPal disables $5, bumps to $25 and names the minimum', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const posts = await load(page);
   await preset(page, '$5').check();
   await page.getByLabel('Payment method').selectOption('paypal');
   await expect(preset(page, '$5')).toBeDisabled();
-  await expect(preset(page, '$20')).toBeChecked();
-  await expect(page.getByRole('status').filter({ hasText: 'PayPal starts at $20, so $20 is selected.' })).toBeVisible();
+  await expect(preset(page, '$25')).toBeChecked();
+  await expect(page.getByRole('status').filter({ hasText: 'PayPal starts at $20, so $25 is selected.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Continue to PayPal' })).toBeEnabled();
-  expect(await summary(page)).toEqual(['$20.00', '$1.37', '$21.37']);
+  expect(await summary(page)).toEqual(['$25.00', '$1.59', '$26.59']);
   await expect(page.locator('.credits-select')).toHaveAttribute('data-method', 'wallet');
 
   await preset(page, 'Other').check();
@@ -123,20 +123,23 @@ test('PayPal disables $5, bumps to $20 and names the minimum', async ({ page }) 
 
 test('verification entry preselects the remaining amount and keeps the purpose', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
+  // $12 still owed: the middle preset becomes $12 and is selected.
   const posts = await load(page, {
-    checkout_presets: [5, 25, 100], checkout_selected_preset: 25, identity_verification_checkout: true,
-    verification_topup_line: true, verification_topup_remaining_display: '$25.00',
-    checkout_summary: { credit: '$25.00', fee: '$1.59', total: '$26.59' },
+    checkout_presets: [5, 12, 200], checkout_selected_preset: 12, identity_verification_checkout: true,
+    verification_topup_line: true, verification_topup_remaining_display: '$12.00',
+    checkout_summary: { credit: '$12.00', fee: '$1.20', total: '$13.20' },
   });
-  await expect(page.getByRole('status').filter({ hasText: 'Verification needs $25.00 more in top-ups.' })).toBeVisible();
-  await expect(preset(page, '$25')).toBeChecked();
-  expect(await summary(page)).toEqual(['$25.00', '$1.59', '$26.59']);
+  await expect(page.getByRole('status').filter({ hasText: 'Verification needs $12.00 more in top-ups.' })).toBeVisible();
+  await expect(preset(page, '$12')).toBeChecked();
+  expect(await summary(page)).toEqual(['$12.00', '$1.20', '$13.20']);
   await page.getByLabel('Payment method').selectOption('paypal');
-  await expect(page.getByRole('status').filter({ hasText: 'PayPal starts at $20' })).toBeHidden();
+  await expect(preset(page, '$12')).toBeDisabled();
+  await expect(preset(page, '$200')).toBeChecked();
+  await expect(page.getByRole('status').filter({ hasText: 'PayPal starts at $20, so $200 is selected.' })).toBeVisible();
   await page.getByRole('button', { name: 'Continue to PayPal' }).click();
   await expect.poll(() => posts.length).toBe(1);
   expect(posts[0].body).toContain('purpose=identity_verification');
-  expect(posts[0].body).toContain('amount=25');
+  expect(posts[0].body).toContain('amount=200');
   expect(posts[0].body).not.toContain('other_amount');
 });
 
@@ -219,11 +222,11 @@ test('keyboard order reaches every control and the fee note opens', async ({ pag
       return `${el.tagName.toLowerCase()}:${el.getAttribute('aria-label') || el.textContent.trim().slice(0, 24) || el.value}`;
     }));
   }
-  // The radio group is one tab stop (the checked $20), then the select, the
+  // The radio group is one tab stop (the checked $25), then the select, the
   // button, Fees, then the first row's control. Without a saved card the
   // switch is disabled and the rewards row stays hidden, so neither stops.
   expect(names).toEqual([
-    'input:20', 'select:Payment method', 'button:Continue to checkout', 'summary:Fees', 'button:Add a card',
+    'input:25', 'select:Payment method', 'button:Continue to checkout', 'summary:Fees', 'button:Add a card',
   ]);
   await expect(page.getByRole('switch', { name: 'Auto refill' })).toBeDisabled();
   await page.getByText('Fees', { exact: true }).click();
