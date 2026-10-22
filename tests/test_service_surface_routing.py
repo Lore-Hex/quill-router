@@ -198,11 +198,6 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/federation/credit-transfer"),
         ("POST", "/internal/federation/credit-transfers"),
         ("POST", "/internal/federation/credit-transfers/recover"),
-        ("POST", "/internal/lightning/resolve"),
-        ("POST", "/internal/lightning/account"),
-        ("POST", "/internal/lightning/balance"),
-        ("POST", "/internal/lightning/credit"),
-        ("POST", "/internal/lightning/health"),
         ("GET", "/internal/synthetic/health"),
         ("POST", "/internal/synthetic/samples"),
         ("POST", "/internal/synthetic/benchmark"),
@@ -218,8 +213,7 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         for method in (route.methods or set())
     }
     assert "/lightning/feedback" not in route_paths(internal)
-    assert URL_MAP.route_surface("/v1/lightning/feedback") == "control"
-    assert URL_MAP.route_surface("/lightning/feedback") == "control"
+    assert "/lightning/feedback" not in URL_MAP.CONTROL_PATH_PATTERNS
 
     assert actual == expected
     assert {
