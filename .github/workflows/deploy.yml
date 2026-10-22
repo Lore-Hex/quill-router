@@ -1485,9 +1485,14 @@ jobs:
           export TR_DEPLOY_OUTCOME=failure
           if jq -e 'all(.[]; .result == "success")' <<< "$RESULTS" >/dev/null; then
             TR_DEPLOY_OUTCOME=success
-          elif jq -e '."confirm-current-main".outputs.proceed == "false" and
+          elif jq -e '."confirm-still-on-main".result == "success" and
+            ."confirm-still-on-main".outputs.on_main == "false" and
             ."migrate-schema".result == "success" and ."sync-runtime-secrets".result == "success" and
             .deploy.result == "skipped"' <<< "$RESULTS" >/dev/null; then
+            # The commit left main during the lease wait and nothing shipped: a
+            # clean skip, so the reservation is released rather than blocked.
+            # (A superseded run never holds the lease: confirm-current-main runs
+            # before admit-cloud.)
             TR_DEPLOY_OUTCOME=success
           fi
           bash scripts/deploy/deploy_mutex.sh release

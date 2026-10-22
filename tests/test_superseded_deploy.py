@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -151,11 +153,14 @@ THIS_RUN = {"databaseId": 1, "status": "in_progress", "headSha": "aaa", "headBra
 WAITING_RUN = json.dumps(
     [{"databaseId": 2, "status": "pending", "headSha": "bbb", "headBranch": "main", "event": "push"}, THIS_RUN]
 )
-# The three lookups a skip needs: has main moved on deploy paths, does the successor descend from BASE, is its CI green.
+# The lookups a skip needs, in order: has main moved on deploy paths, is a main push run waiting, does its
+# commit descend from BASE, is that commit still on main (here: head's parent), is its CI green.
+ON_MAIN = json.dumps({"status": "ahead", "files": [{"filename": "docs/later.md"}]})
 READY = {
     "compare/aaa...ccc": (SOURCE_MOVED, 0),
     "--workflow deploy.yml": (WAITING_RUN, 0),
     "compare/aaa...bbb": (DESCENDS, 0),
+    "compare/bbb...ccc": (ON_MAIN, 0),
     "--workflow ci.yml --commit bbb": ('[{"status": "completed", "conclusion": "success"}]', 0),
 }
 ARGS = ["--repo", "o/r", "--base", "aaa", "--head", "ccc"]
@@ -180,7 +185,15 @@ def test_main_skips_when_the_waiting_main_push_run_has_green_ci(tmp_path: Path, 
     assert calls[0] == "api repos/o/r/compare/aaa...ccc"
     assert "run list --repo o/r --workflow deploy.yml" in calls[1]
     assert calls[2] == "api repos/o/r/compare/aaa...bbb"
-    assert "run list --repo o/r --workflow ci.yml --commit bbb" in calls[3]
+    assert calls[3] == "api repos/o/r/compare/bbb...ccc"
+    assert "run list --repo o/r --workflow ci.yml --commit bbb" in calls[4]
+    assert len(calls) == 5
+
+
+def test_main_skips_when_the_waiting_commit_is_main_itself(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    identical = json.dumps({"status": "identical", "files": []})
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "compare/bbb...ccc": (identical, 0)})
+    assert superseded.main(ARGS) == 1
 
 
 @pytest.mark.parametrize(
@@ -235,10 +248,22 @@ def test_main_deploys_when_the_waiting_commit_does_not_descend_from_base(
     assert "ci.yml" not in log.read_text()
 
 
+@pytest.mark.parametrize("status", ["diverged", "behind"])
+def test_main_deploys_when_the_waiting_commit_has_left_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    # A rerun of a run whose commit a force-push removed: it would refuse at its own ancestry check,
+    # so skipping for it would leave main undeployed.
+    gone = json.dumps({"status": status, "files": []})
+    log = _fake_gh(tmp_path, monkeypatch, responses={**READY, "compare/bbb...ccc": (gone, 0)})
+    assert superseded.main(ARGS) == 0
+    assert "ci.yml" not in log.read_text()
+
+
 @pytest.mark.parametrize(
     "failing",
-    ["--workflow deploy.yml", "compare/aaa...bbb", "--workflow ci.yml --commit bbb"],
-    ids=["run-list-fails", "lineage-fails", "ci-lookup-fails"],
+    ["--workflow deploy.yml", "compare/aaa...bbb", "compare/bbb...ccc", "--workflow ci.yml --commit bbb"],
+    ids=["run-list-fails", "lineage-fails", "on-main-fails", "ci-lookup-fails"],
 )
 def test_main_deploys_when_a_successor_lookup_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
@@ -250,8 +275,8 @@ def test_main_deploys_when_a_successor_lookup_fails(
 
 @pytest.mark.parametrize(
     "hanging",
-    ["--workflow deploy.yml", "compare/aaa...bbb", "--workflow ci.yml --commit bbb"],
-    ids=["run-list-hangs", "lineage-hangs", "ci-lookup-hangs"],
+    ["--workflow deploy.yml", "compare/aaa...bbb", "compare/bbb...ccc", "--workflow ci.yml --commit bbb"],
+    ids=["run-list-hangs", "lineage-hangs", "on-main-hangs", "ci-lookup-hangs"],
 )
 def test_main_deploys_when_a_successor_lookup_times_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hanging: str, capsys: pytest.CaptureFixture[str]
@@ -290,6 +315,70 @@ def test_ancestry_mode_never_deploys_on_an_unknown_answer(
     monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", 0.3)
     _fake_gh(tmp_path, monkeypatch, stdout=stdout, exit_code=exit_code)
     assert superseded.main(["--mode", "ancestry", *ARGS]) == 1
+
+
+def _finalize_outcome(needs: dict) -> tuple[str, int]:
+    """Run finalize-cloud's step with these `needs` results; return (outcome handed to release, exit code)."""
+
+    job = _workflow()["jobs"]["finalize-cloud"]
+    step = next(step for step in job["steps"] if step.get("name") == "Finalize cloud reservation")
+    assert step["env"]["RESULTS"] == "${{ toJSON(needs) }}"
+    script = step["run"].replace(
+        "bash scripts/deploy/deploy_mutex.sh release", 'printf "release outcome=%s\\n" "$TR_DEPLOY_OUTCOME"'
+    )
+    assert "deploy_mutex.sh" not in script
+    bash = shutil.which("bash")
+    assert bash is not None
+    result = subprocess.run(  # noqa: S603 - the workflow's own step, release stubbed
+        [bash, "-c", script], env={**os.environ, "RESULTS": json.dumps(needs)}, capture_output=True, text=True
+    )
+    outcome = result.stdout.split("release outcome=")[1].split()[0]
+    return outcome, result.returncode
+
+
+def _needs(**overrides: dict) -> dict:
+    names = ("admit-cloud", "migrate-schema", "sync-runtime-secrets", "confirm-current-main",
+             "confirm-still-on-main", "deploy", "rollout-secondaries", "public-surface-companion",
+             "verify-cloud-complete")
+    needs = {name: {"result": "success", "outputs": {}} for name in names}
+    needs["confirm-current-main"]["outputs"] = {"proceed": "true"}
+    needs["confirm-still-on-main"]["outputs"] = {"on_main": "true"}
+    needs.update(overrides)
+    return needs
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+def test_finalize_releases_cleanly_after_an_ancestry_refusal() -> None:
+    # Nothing shipped and the lease is not wanted by this run any more: release, do not block.
+    skipped = {"result": "skipped", "outputs": {}}
+    needs = _needs(**{
+        "confirm-still-on-main": {"result": "success", "outputs": {"on_main": "false"}},
+        "deploy": skipped, "rollout-secondaries": skipped, "public-surface-companion": skipped,
+        "verify-cloud-complete": skipped,
+    })
+    assert _finalize_outcome(needs) == ("success", 0)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+def test_finalize_blocks_the_lease_on_any_other_failure() -> None:
+    assert _finalize_outcome(_needs()) == ("success", 0)
+    skipped = {"result": "skipped", "outputs": {}}
+    cases = {
+        "deploy failed": _needs(**{"deploy": {"result": "failure", "outputs": {}}, "rollout-secondaries": skipped,
+                                   "public-surface-companion": skipped, "verify-cloud-complete": skipped}),
+        "ancestry job failed": _needs(**{"confirm-still-on-main": {"result": "failure", "outputs": {}},
+                                         "deploy": skipped, "rollout-secondaries": skipped,
+                                         "public-surface-companion": skipped, "verify-cloud-complete": skipped}),
+        "schema failed": _needs(**{"migrate-schema": {"result": "failure", "outputs": {}},
+                                   "confirm-still-on-main": skipped, "deploy": skipped,
+                                   "rollout-secondaries": skipped, "public-surface-companion": skipped,
+                                   "verify-cloud-complete": skipped}),
+        "deploy skipped while on main": _needs(**{"deploy": skipped, "rollout-secondaries": skipped,
+                                                  "public-surface-companion": skipped,
+                                                  "verify-cloud-complete": skipped}),
+    }
+    for name, needs in cases.items():
+        assert _finalize_outcome(needs) == ("failure", 1), name
 
 
 def test_base_on_main_reads_the_compare_status() -> None:

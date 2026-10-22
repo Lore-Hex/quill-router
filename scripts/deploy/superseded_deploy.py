@@ -26,9 +26,11 @@ Exit 0 to deploy BASE, 1 to skip. A diverged history (BASE no longer on
 main), a truncated file list or a failed compare exits 1: BASE may not be a
 state main ever had, so the newer run deploys instead. A waiting run counts
 as the successor only when it is a push run on main whose commit descends
-from BASE; a manual dispatch or a side-branch run cannot advance main and
-must not make this run skip. A failed, timed-out or empty lookup of the
-waiting run, its lineage or its CI exits 0: the only safe reading of
+from BASE and is still on main (equal to or an ancestor of MAIN_SHA); a
+manual dispatch, a side-branch run or a rerun of a commit that a force-push
+removed cannot advance main and must not make this run skip. A failed,
+timed-out or empty lookup of the waiting run, its lineage or its CI exits 0:
+the only safe reading of
 "unknown" is "not known to be ready", and shipping BASE costs at most one
 extra rollout where skipping can starve main.
 
@@ -131,7 +133,7 @@ def ci_green(runs: object) -> bool:
 
 
 def base_on_main(compare: object) -> bool:
-    """Whether BASE is still on main: the compare BASE...MAIN is `identical` or `ahead`."""
+    """Whether the compare's base is on its head's history: the compare is `identical` or `ahead`."""
 
     return isinstance(compare, dict) and compare.get("status") in ("identical", "ahead")
 
@@ -163,8 +165,13 @@ def _gh_json(args: list[str]) -> object | None:
         return None
 
 
-def successor_ready(repo: str, base: str) -> tuple[bool, str]:
-    """Whether a push run on main for a commit descending from BASE is waiting and can deploy at once, and why."""
+def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
+    """Whether a waiting push run on main can deploy at once, and why.
+
+    Its commit must descend from BASE and still be on main (equal to or an
+    ancestor of HEAD, main's head as observed by the caller), and its CI run
+    must have concluded success.
+    """
 
     runs = _gh_json(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--limit", "10",
                      "--json", "databaseId,status,headSha,headBranch,event"])
@@ -175,6 +182,10 @@ def successor_ready(repo: str, base: str) -> tuple[bool, str]:
     if not (isinstance(lineage, dict) and lineage.get("status") == "ahead"):
         status = lineage.get("status") if isinstance(lineage, dict) else "unknown"
         return False, f"the waiting run's commit {successor[:9]} is not known to descend from {base[:9]} ({status})"
+    on_main = _gh_json(["api", f"repos/{repo}/compare/{successor}...{head}"])
+    if not base_on_main(on_main):
+        status = on_main.get("status") if isinstance(on_main, dict) else "unknown"
+        return False, f"the waiting run's commit {successor[:9]} is not known to be on main {head[:9]} ({status})"
     ci = _gh_json(["run", "list", "--repo", repo, "--workflow", CI_WORKFLOW, "--commit", successor,
                    "--limit", "1", "--json", "status,conclusion"])
     if ci_green(ci):
@@ -211,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     if not deploy_relevant:
         print(f"superseded_deploy: {len(files)} newer file(s), none on a deploy path")
         return 0
-    ready, why = successor_ready(args.repo, args.base)
+    ready, why = successor_ready(args.repo, args.base, args.head)
     changed = ", ".join(deploy_relevant[:10])
     if ready:
         print(f"superseded_deploy: newer commits change deploy paths: {changed}; {why}")
