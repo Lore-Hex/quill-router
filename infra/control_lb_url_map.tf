@@ -119,13 +119,21 @@ resource "google_compute_url_map" "control" {
     # fail over, is retried and lands on the control backend almost surely;
     # the terminals (settle, refund, heartbeat, disposition) are not all
     # retried, and the maintenance drains run longer than the edge
-    # backend's 8 s. The split is global: the share is of every region's
+    # backend's own 8 s timeout, which they would get without a route
+    # timeout. The split is global: the share is of every region's
     # authorize, all of it served by the us-central1 edge and Python, so it
     # stays small while the edge runs in one region. Its weight at 0 is the
     # way back.
     path_rule {
       paths = ["/internal/gateway/authorize"]
       route_action {
+        # Billing has a 20 s work budget and up to 2 s rollback cleanup.
+        # Keep this explicit: the mixed backend route returned 504 at 8 s
+        # even at zero fast-path weight, causing overlapping retries.
+        # Finish before the enclave's 25 s response-header deadline.
+        timeout {
+          seconds = 24
+        }
         weighted_backend_services {
           backend_service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
           weight          = 100 - local.fastpath_edge_route_weight
