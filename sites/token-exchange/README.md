@@ -47,7 +47,7 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ### Spot exchange API
 
-New York's homepage includes `spot-api.html`, a streaming quickstart using
+New York's `/confidential#start` includes the quickstart from `nyte-v2/api.html`, using
 `api.confidential.nytokenexchange.com/v1` with explicit confidential routing.
 `api.nytokenexchange.com/v1` is the general catalog endpoint. Both use the
 existing TrustedRouter key, balance and request semantics; `nyte/*` aliases
@@ -61,12 +61,10 @@ does not create API records or terminate prompt traffic. Preserve the website's
 apex/www routing and Certificate Manager authorization records. Publish the
 quickstart as live only after both API origins pass production tests. Until then,
 retain the activation notice and explicit working TrustedRouter confidential
-alternative. Never publish DNS records to bypass qualification. For a narrow
-release, back up and update only New York's index and the isolated
-`assets/spot-api.css`, preserving concurrent asset versions and unrelated market
-pages. If the live homepage differs from the build, insert only the new
-stylesheet link, navigation link, hero action and spot API section into fresh
-live HTML. Verify reversing these changes reproduces the original bytes.
+alternative. Never publish DNS records to bypass qualification. The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
+New York's homepage, `/confidential`, and `/suppliers`; its assets are under
+`assets/nyte-v2/`. Back up live objects before an authorized release and preserve
+concurrent content and unrelated market pages.
 
 ### NYTE Token Index and open-source supplier stack
 
@@ -77,7 +75,7 @@ assets unchanged. It makes no database or network calls. Keep its snapshot date
 visible; the index is provisional and is not an executable supplier quote.
 `/index.html` remains the homepage; do not publish the index page at that path.
 
-New York's navigation links `/index`. Its `open-stack.html` section invites
+New York's navigation links `/index`. Its `/suppliers#open-stack` section invites
 operators to list spare inference capacity under their provider identity and
 links the Apache-2.0 neocloud stack and existing supplier onboarding.
 The stack is pre-alpha; confidential serving requires independent hardware
@@ -87,7 +85,7 @@ Run `node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089`
 alongside the existing browser checks. For a narrow publish, back up live objects
 and publish only `index` (as `text/html`), `assets/index-page.css`,
 `assets/token-index.css`, `assets/token-index.js`, the five public files in
-`assets/token-index/`, `assets/spot-api.css` and New York's sitemap.
+`assets/token-index/` and New York's sitemap.
 Insert the new sections, navigation links and stylesheet into fresh live New
 York homepage HTML, preserving concurrent content, CSS/JS versions and other
 markets. Use generation preconditions on every upload and verify the reverse

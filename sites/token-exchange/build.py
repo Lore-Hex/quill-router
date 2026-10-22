@@ -96,7 +96,7 @@ def provider_ticker(copies: int = 2) -> str:
 def render(market: dict, markets: list[dict], version: str) -> str:
     if market["slug"] == "new-york":
         return render_nyte()
-    profile = {"new-york": "new-york", "dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
+    profile = {"dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
     catalogue, health = render_evidence(profile)
     headline = html.escape(market["headline"])
     accent = html.escape(market.get("headline_accent", ""))
@@ -110,20 +110,8 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
-            "spot_api_styles": (
-                '<link rel="stylesheet" href="/assets/spot-api.css?v='
-                + hashlib.sha256((HERE / "spot-api.css").read_bytes()).hexdigest()[:12] + '">'
-                if market["slug"] == "new-york" else ""
-            ),
-            "spot_api_link": '<a href="#spot-api">API quick start</a><a href="/index">Index</a>' if market["slug"] == "new-york" else "",
-            "hero_secondary": (
-                '<a class="button secondary" href="#spot-api">Use the spot exchange</a>'
-                if market["slug"] == "new-york" else
-                '<a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a>'
-            ),
-            "spot_api": (HERE / "spot-api.html").read_text() if market["slug"] == "new-york" else "",
-            "open_stack": (HERE / "open-stack.html").read_text() if market["slug"] == "new-york" else "",
-            "media_kit_url": "https://nytokenexchange.com/media-kit" if market["slug"] == "new-york" else "https://trustedrouter.com/media-kit",
+            "hero_secondary": '<a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a>',
+            "media_kit_url": "https://trustedrouter.com/media-kit",
             "hero_headline": headline,
             "provider_ticker": provider_ticker(),
             "buyer_heading": html.escape(market.get("buyer_heading", "Buy capacity. Set your requirements.")).replace("Choose how it is served.", '<br>Choose how it is <span class="headline-accent">served.</span>').replace("Spend it", "Spend<br>it").replace("jurisdiction.", '<span class="headline-accent">jurisdiction.</span>').replace("Set your requirements.", '<br>Set your <span class="headline-accent">requirements.</span>'),

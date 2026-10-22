@@ -29,6 +29,16 @@ await page.route('**/v1/models/count', r=>r.fulfill(catalogueUnavailable?{status
 await page.route('**/v1/providers', r=>r.fulfill(catalogueUnavailable?{status:503,body:''}:{json:{data:providerRows}}));
 await page.clock.install();
 await page.goto(base+'/');
+for (const width of [1440,390]) {
+ await page.setViewportSize({width,height:844});
+ const rows=await page.locator('.r-row.skip').evaluateAll(elements=>elements.map(el=>({position:getComputedStyle(el).position,top:el.getBoundingClientRect().top})));
+ assert.equal(rows.length,2);assert(rows.every(row=>row.position!=='absolute' && row.top>0));
+}
+await page.getByRole('button',{name:'Menu',exact:true}).click();
+await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('href')),'/confidential');
+await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'menuBtn');
+assert.equal(await page.locator('#menuBtn').getAttribute('aria-expanded'),'false');
+
 const played=page.waitForRequest(request=>request.url().endsWith('/token-exchange/events') && request.postDataJSON()?.event==='nyte.video_played');
 await page.getByRole('button',{name:'Play the 90-second walkthrough',exact:true}).click();
 await page.waitForFunction(()=>document.getElementById('film').classList.contains('playing'));
@@ -60,5 +70,10 @@ success=true;const download=page.waitForEvent('download');await page.getByRole('
 await page.keyboard.press('Escape');assert(!(await page.locator('dialog').isVisible()));
 await page.waitForTimeout(200);assert(events.some(e=>e.event==='nyte.form_submitted'&&e.form==='buyer_deck'));assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta==='api_quick_start'));assert(events.every(e=>!('email' in e)));
 evidence={...evidence,generated_at:'2000-01-01T00:00:00Z'};await page.reload();await page.waitForTimeout(200);assert.equal(await page.locator('.build-digest').count(),0);assert.equal(await page.locator('.health-bar').count(),0);assert(await page.getByRole('link',{name:'Published release'}).isVisible());
+
+await page.goto(base+'/index');
+await page.getByRole('link',{name:'API quick start',exact:true}).click();await page.waitForURL('**/confidential#start');assert.equal(await page.locator('#start').count(),1);
+await page.goto(base+'/index');
+await page.getByRole('link',{name:'Explore the open-source inference stack',exact:true}).click();await page.waitForURL('**/suppliers#open-stack');assert.equal(await page.locator('#open-stack').count(),1);
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
 })().catch(error=>{console.error(error);process.exit(1);});

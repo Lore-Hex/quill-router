@@ -45,14 +45,14 @@
   <section id="start">
     <div class="wrap qs">
       <div>
-        <h2>Change one line. <em>Keep your code.</em></h2>
-        <p>Point your OpenAI client at the confidential endpoint. Everything else stays the same.</p>
+        <h2>Keep your SDK. <em>Confidential inference.</em></h2>
+        <p>Use your OpenAI client with the confidential endpoint and set your request to require confidential routing.</p>
         <div class="btns">
           <a class="btn btn-primary" href="https://trustedrouter.com/console/keys" target="_blank" rel="noopener">Get your API key</a>
           <a class="btn btn-secondary" href="https://trustedrouter.com/docs" target="_blank" rel="noopener">Read documentation</a>
         </div>
       </div>
-      <div class="code"><pre><span class="l"><span class="k">from</span> openai <span class="k">import</span> OpenAI</span><span class="l">&nbsp;</span><span class="l">client = OpenAI(</span><span class="l chg">    base_url=<span class="s">"https://api.confidential.nytokenexchange.com/v1"</span>,</span><span class="l">    api_key=TR_API_KEY,</span><span class="l">)</span><span class="l">&nbsp;</span><span class="l">reply = client.chat.completions.create(</span><span class="l">    model=<span class="s">"nyte/auto"</span>,</span><span class="l">    messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"Summarize this deposition."</span>}],</span><span class="l">)</span></pre></div>
+      <div class="code"><pre><span class="l"><span class="k">from</span> openai <span class="k">import</span> OpenAI</span><span class="l">&nbsp;</span><span class="l">client = OpenAI(</span><span class="l chg">    base_url=<span class="s">"https://api.confidential.nytokenexchange.com/v1"</span>,</span><span class="l">    api_key=TR_API_KEY,</span><span class="l">)</span><span class="l">&nbsp;</span><span class="l">reply = client.chat.completions.create(</span><span class="l">    model=<span class="s">"nyte/auto"</span>,</span><span class="l">    messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"Summarize this deposition."</span>}],</span><span class="l chg">    extra_body={<span class="s">"provider"</span>: {<span class="s">"min_privacy"</span>: <span class="s">"confidential"</span>}},</span><span class="l">)</span></pre></div>
     </div>
   </section>
 
