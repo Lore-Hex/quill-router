@@ -1240,7 +1240,7 @@
         "chat/completions"
       ],
       "status": 1,
-      "id": "minimax/minimax-m3-1-flash",
+      "id": "minimax/minimax-m3.1-flash",
       "upstream_id": "minimax-m3-1-flash",
       "features": [
         "function-calling",

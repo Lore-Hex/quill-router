@@ -9,6 +9,10 @@ _OPENROUTER_MODEL_ID_ALIASES = {
     "mistralai/mistral-large-4-0": "mistralai/mistral-large-4",
 }
 
+_ROUTER_MODEL_ID_ALIASES = {
+    "minimax/minimax-m3-1-flash": "minimax/minimax-m3.1-flash",
+}
+
 
 def canonical_openrouter_model_id(model_id: str) -> str:
     """Keep established public IDs when OpenRouter uses a different spelling.
@@ -64,6 +68,7 @@ def merge_openrouter_model_rows(raw_models: Iterable[object]) -> list[dict[str, 
 
 
 def canonical_router_model_id(model_id: str) -> str:
+    model_id = _ROUTER_MODEL_ID_ALIASES.get(model_id, model_id)
     publisher, separator, native_id = model_id.partition("/")
     if publisher in {"system1models", "system1models-eu"} and separator:
         return publisher.replace("system1models", "decisionmodelsio") + "/" + native_id
@@ -76,6 +81,9 @@ def canonical_router_model_id(model_id: str) -> str:
 
 
 def router_model_aliases(model_id: str) -> list[str]:
+    explicit_aliases = [alias for alias, canonical in _ROUTER_MODEL_ID_ALIASES.items() if canonical == model_id]
+    if explicit_aliases:
+        return explicit_aliases
     publisher, separator, native_id = model_id.partition("/")
     if publisher in {"decisionmodelsio", "decisionmodelsio-eu"} and separator:
         return [publisher.replace("decisionmodelsio", "system1models") + "/" + native_id]
