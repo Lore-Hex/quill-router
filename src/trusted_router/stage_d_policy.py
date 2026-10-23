@@ -172,6 +172,21 @@ def parse_stage_d_policy(document: bytes, *, now: datetime | None = None) -> Sta
     )
 
 
+def accepted_image_digests(
+    resolver: StageDPolicyResolver | None, settings: Settings,
+) -> frozenset[str]:
+    """The image digests a boot is accepted under: the verified signed policy's
+    set (kicking a due refresh, never waiting on it) plus the audited
+    break-glass override. Authorize's boot check and the fast path's edge
+    policy (services/edge_policy_publisher.py) both read this."""
+
+    accepted: frozenset[str] = frozenset()
+    if resolver is not None:
+        resolver.kick()
+        accepted = resolver.accepted_image_digests()
+    return accepted | settings.stage_d_accepted_gcp_digests
+
+
 class StageDPolicyResolver:
     """Refresh a signed policy in the background and retain only verified state."""
 

@@ -74,6 +74,7 @@ from trusted_router.routes.identity_verify import register_identity_verify_route
 from trusted_router.routes.inference import register_inference_routes
 from trusted_router.routes.internal import (
     register_control_internal_routes,
+    register_edge_policy_routes,
     register_external_webhook_routes,
     register_gateway_internal_routes,
     register_internal_routes,
@@ -309,6 +310,13 @@ def create_app(
             install as install_routing_snapshot,
         )
         install_routing_snapshot(app, settings)
+    if surface in {"combined", "internal"} and settings.edge_policy_publish_enabled:
+        # E2 P2 publish dark: off means no edge-policy module is imported
+        # (tests/test_edge_policy_publish.py).
+        from trusted_router.services.edge_policy_publisher import (
+            install as install_edge_policy,
+        )
+        install_edge_policy(app, settings)
     if surface in {"combined", "internal"}:
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
@@ -915,6 +923,8 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_operator_internal_routes(router)
     if surface in {"combined", "internal"} and settings.routing_snapshot_publish_enabled:
         register_routing_snapshot_routes(router)
+    if surface in {"combined", "internal"} and settings.edge_policy_publish_enabled:
+        register_edge_policy_routes(router)
     return router
 
 

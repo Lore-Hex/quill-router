@@ -55,6 +55,16 @@ def register_routing_snapshot_routes(router: APIRouter) -> None:
     fastpath_snapshot.register(router)
 
 
+def register_edge_policy_routes(router: APIRouter) -> None:
+    """Register the fast path's edge policy poll; only when publishing is on.
+
+    Imported here, not above: off, the route module is never loaded.
+    """
+    from . import fastpath_edge_policy
+
+    fastpath_edge_policy.register(router)
+
+
 def register_operator_internal_routes(router: APIRouter) -> None:
     """Register operator controls only when their dedicated token is configured."""
     admin.register(router)
@@ -79,6 +89,7 @@ def register_internal_routes(router: APIRouter) -> None:
 
 __all__ = [
     "register_control_internal_routes",
+    "register_edge_policy_routes",
     "register_external_webhook_routes",
     "register_gateway_internal_routes",
     "register_internal_routes",

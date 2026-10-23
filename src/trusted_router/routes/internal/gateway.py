@@ -224,6 +224,7 @@ from trusted_router.stage_d import (
     endpoint_pricing_document,
     parse_pricing_snapshot,
 )
+from trusted_router.stage_d_policy import accepted_image_digests as stage_d_accepted_image_digests
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -496,12 +497,9 @@ def _stage_d_accepted_image_digests(
 ) -> frozenset[str]:
     """Current signed set plus the explicit, audited break-glass override."""
 
-    accepted: frozenset[str] = frozenset()
     app = request.scope.get("app")
     resolver = getattr(getattr(app, "state", None), "stage_d_policy_resolver", None)
-    if resolver is not None:
-        resolver.kick()
-        accepted = resolver.accepted_image_digests()
+    accepted = stage_d_accepted_image_digests(resolver, settings)
 
     override = settings.stage_d_accepted_gcp_digests
     if override:
@@ -513,7 +511,6 @@ def _stage_d_accepted_image_digests(
                     len(override),
                 )
                 _STAGE_D_OVERRIDE_LOGGED = True
-        accepted = accepted | override
     return accepted
 
 
@@ -1700,10 +1697,7 @@ def _authorize_gateway_sync_impl(
             app_markup=app_markup_basis_points > 0,
             # The leased settle writes its records, its resolved intent and
             # its activity row in one commit: it needs the durable outboxes.
-            records_durable=settings.settle_outbox_enabled
-            and callable(
-                getattr(getattr(_typed_store, "_operational_analytics_outbox", None), "activity_insert_statement", None)
-            ),
+            records_durable=_fastpath.records_durable(settings.settle_outbox_enabled, _typed_store),
         )
 
         def release_after_error() -> None:
