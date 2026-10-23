@@ -48,7 +48,7 @@ def test_vibe_coders_landing_is_indexed_and_claude_alias_redirects(
     assert alias.headers["location"] == "/vibe-coders"
 
 
-def test_api_key_reveal_saves_key_before_request_and_app_setup(
+def test_api_key_reveal_exposes_agent_message_and_raw_key_without_setup_steps(
     client: TestClient,
 ) -> None:
     user = STORE.ensure_user("claude-code-landing@example.com")
@@ -66,18 +66,19 @@ def test_api_key_reveal_saves_key_before_request_and_app_setup(
     )
 
     assert response.status_code == 200
-    assert (
-        "Save your key"
-        in response.text
-    )
+    assert "Save this key. It will not be shown again" in response.text
     assert (
         'Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital '
         'of France?"'
         in response.text
     )
-    assert response.text.index("Save your key") < response.text.index(
-        "Try a request"
+    assert 'data-copy-template-target="created-agent-message"' in response.text
+    assert 'data-copy-secret="created-api-key"' in response.text
+    assert response.text.index('id="created-agent-message"') < response.text.index(
+        'id="created-api-key"'
     )
+    assert 'data-action="run-first-call"' not in response.text
+    assert "Try a request" not in response.text
     assert "Call https://api.trustedrouter.com/v1" not in response.text
     assert "stream the answer into this chat as it arrives" not in response.text
     assert "Keep this agent's model" not in response.text
