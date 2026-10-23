@@ -134,11 +134,14 @@ func TestThePassRules(t *testing.T) {
 
 // TestOnlyTheEdgeImportsTheEvaluator: the edge's poll and shadow comparator
 // are the one runtime reader, and nothing decides with the evaluator until
-// the edge's handler PR wires it.
+// the edge's handler PR wires it. gwauth, the edge's authorize request
+// parse, builds the evaluator's Request (decision 16 of
+// docs/design/fast-admission-e2-decide.md) and may import it too.
 func TestOnlyTheEdgeImportsTheEvaluator(t *testing.T) {
 	const self = "github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	root := filepath.Join("..", "..")
 	edgeDir := filepath.Join(root, "internal", "edge")
+	gwauthDir := filepath.Join(root, "internal", "gwauth")
 	files, internalImports, edgeImports := 0, 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
@@ -155,7 +158,7 @@ func TestOnlyTheEdgeImportsTheEvaluator(t *testing.T) {
 				internalImports++
 			}
 			if imported == self {
-				if filepath.Dir(path) == edgeDir {
+				if dir := filepath.Dir(path); dir == edgeDir || dir == gwauthDir {
 					edgeImports++
 					continue
 				}
