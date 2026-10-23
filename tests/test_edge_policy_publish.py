@@ -28,7 +28,12 @@ from pydantic import ValidationError
 
 from trusted_router.config import Settings
 from trusted_router.detached_jws import JWSError, TrustedKey, b64encode
-from trusted_router.edge_policy import canonical_edge_policy_bytes, parse_edge_policy
+from trusted_router.edge_policy import (
+    LIFETIME_SECONDS,
+    REFRESH_SECONDS,
+    canonical_edge_policy_bytes,
+    parse_edge_policy,
+)
 from trusted_router.main import create_app
 from trusted_router.routes.internal.fastpath_edge_policy import PATH
 from trusted_router.routing_snapshot import Plane
@@ -44,8 +49,6 @@ from trusted_router.routing_snapshot_signing import (
 )
 from trusted_router.services import edge_policy_publisher as publisher_module
 from trusted_router.services.edge_policy_publisher import (
-    LIFETIME_SECONDS,
-    REFRESH_SECONDS,
     EdgePolicyPublisher,
     PolicyUnavailable,
     build_publisher,
@@ -153,7 +156,7 @@ def _trusted(public: str) -> TrustedKey:
 
 def _verify(response: Any, settings: Settings, public: str, now: int) -> tuple[bytes, Any]:
     payload = response.json()
-    assert set(payload) == {"v", "kind", "manifest", "body", "refresh_at"}
+    assert set(payload) == {"v", "kind", "manifest", "body"}
     assert (payload["v"], payload["kind"]) == (1, "tr-edge-policy-publication")
     body = base64.b64decode(payload["body"], validate=True)
     claims = verify_edge_policy_manifest(
@@ -299,9 +302,10 @@ def test_the_response_verifies_for_the_planes_edge(key) -> None:
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     body, claims = _verify(response, settings, key[1], now)
-    assert (claims.issued_at, claims.not_after) == (T0, T0 + LIFETIME_SECONDS)
-    assert claims.kind == "tr-edge-policy" and claims.iss == ISSUER
-    assert response.json()["refresh_at"] == T0 + REFRESH_SECONDS
+    # Issued at the publisher's clock.
+    assert (claims.issued_at, claims.not_after) == (now, now + LIFETIME_SECONDS)
+    assert claims.iss == ISSUER
+    assert json.loads(body)["refresh_at"] == now + REFRESH_SECONDS
     assert response.headers["etag"] == f'"{hashlib.sha256(body).hexdigest()}"'
     policy = parse_edge_policy(body)
     assert canonical_edge_policy_bytes(policy) == body
@@ -344,14 +348,16 @@ def test_the_body_carries_every_live_fact(key) -> None:
     assert body["gateway_authorize_max_in_flight_per_key"] == 7
     assert body["monitor_lookup_hash"] == hashlib.sha256(monitor.encode()).hexdigest()
     assert monitor not in publication.body.decode()
-    assert (body["async_settle_enabled"], body["async_settle_shadow_policy"],
-            body["async_settle_shadow_workspaces"]) == (False, "shadow-v2", ["ws-shadow-1"])
+    assert (body["async_settle_shadow_policy"], body["async_settle_shadow_workspaces"]) == (
+        "shadow-v2", ["ws-shadow-1"])
     # The configured order, primary first when it was not listed (regions.configured_regions).
     assert body["configured_regions"] == ["us-central1", "europe-west4", "us-east4"]
     assert (body["primary_region"], body["multi_region_enabled"]) == ("us-central1", False)
-    # Defaults: no monitor key is "", and the settle outbox off is not durable.
-    plain = json.loads(_publisher(_settings(key), Clock(T0), store=DurableStore()).current().body)
-    assert plain["monitor_lookup_hash"] == "" and plain["records_durable"] is False
+    # Defaults: no monitor key is null, and the settle outbox off is not durable.
+    plain_body = _publisher(_settings(key), Clock(T0), store=DurableStore()).current().body
+    plain = json.loads(plain_body)
+    assert plain["monitor_lookup_hash"] is None and plain["records_durable"] is False
+    assert b'"monitor_lookup_hash":null' in plain_body
     assert plain["async_settle_shadow_policy"] == ""
 
 
@@ -380,38 +386,43 @@ def test_the_digests_and_durability_are_what_authorize_reads(key) -> None:
         assert json.loads(publication.body)["records_durable"] is durable
 
 
-def test_each_poll_kicks_the_stage_d_policy_refresh(key) -> None:
+def test_each_signature_kicks_the_stage_d_policy_refresh(key) -> None:
+    clock = Clock(T0)
     resolver = Resolver(frozenset({DIGEST_A}))
-    publisher = _publisher(_settings(key), Clock(T0), resolver)
+    publisher = _publisher(_settings(key), clock, resolver)
     publisher.current()
+    publisher.current()
+    assert resolver.kicks == 1
+    clock.now = T0 + REFRESH_SECONDS
     publisher.current()
     assert resolver.kicks == 2
 
 
-def test_the_cache_holds_for_the_window_and_follows_the_facts(key) -> None:
+def test_one_signature_per_refresh_interval_served_until_refresh_at(key) -> None:
     clock = Clock(T0 + 1)
     resolver = Resolver(frozenset({DIGEST_A}))
     publisher = _publisher(_settings(key), clock, resolver)
     first = publisher.current()
     assert (first.issued_at, first.refresh_at, first.not_after) == (
-        T0, T0 + REFRESH_SECONDS, T0 + LIFETIME_SECONDS)
-    clock.now = T0 + REFRESH_SECONDS - 1
-    assert publisher.current() is first and publisher.signatures == 1
-    # A changed fact is published at the next poll, in the same window.
+        T0 + 1, T0 + 1 + REFRESH_SECONDS, T0 + 1 + LIFETIME_SECONDS)
+    # Every poll until refresh_at gets that publication, even after a fact changed.
     resolver.digests = frozenset({DIGEST_A, DIGEST_B})
-    changed = publisher.current()
-    assert changed is not first and changed.issued_at == T0 and publisher.signatures == 2
-    assert json.loads(changed.body)["accepted_image_digests"] == [DIGEST_A, DIGEST_B]
-    clock.now = T0 + REFRESH_SECONDS
+    clock.now = first.refresh_at - 1
+    assert publisher.current() is first and publisher.signatures == 1
+    # The first poll at refresh_at reads the facts afresh and signs once.
+    clock.now = first.refresh_at
     later = publisher.current()
-    assert later.issued_at == T0 + REFRESH_SECONDS and publisher.signatures == 3
+    assert later.issued_at == first.refresh_at and publisher.signatures == 2
+    assert json.loads(later.body)["accepted_image_digests"] == [DIGEST_A, DIGEST_B]
+    assert publisher.current() is later and publisher.signatures == 2
 
 
-def test_two_instances_in_one_window_serve_identical_bytes(key) -> None:
+def test_two_instances_at_one_instant_serve_identical_bytes(key) -> None:
+    # Ed25519 signatures are deterministic: same facts, same clock, same bytes.
     settings = _settings(key)
-    early = _publisher(settings, Clock(T0), Resolver(frozenset({DIGEST_A})))
-    late = _publisher(settings, Clock(T0 + REFRESH_SECONDS - 1), Resolver(frozenset({DIGEST_A})))
-    assert early.current().response == late.current().response
+    first = _publisher(settings, Clock(T0), Resolver(frozenset({DIGEST_A})))
+    second = _publisher(settings, Clock(T0), Resolver(frozenset({DIGEST_A})))
+    assert first.current().response == second.current().response
 
 
 def test_a_fact_outside_the_schema_answers_503_and_recovers(key, caplog) -> None:
@@ -500,14 +511,14 @@ def test_each_verifier_refuses_the_others_manifest() -> None:
     assert (TYP, EDGE_POLICY_TYP) == ("tr-routing-snapshot-v1", "tr-edge-policy-v1")
 
 
-def test_the_claims_differ_in_kind_too() -> None:
+def test_the_claims_differ_too() -> None:
     """Under the other's typ, the claims still would not validate."""
     from trusted_router.routing_snapshot_signing import EdgePolicyManifestClaims, ManifestClaims
 
     edge_claims = json.loads(base64.urlsafe_b64decode(_golden_manifest()["jws"].split(".")[1] + "=="))
     routing_token = json.loads(ROUTING_VECTORS.OUTPUT_MANIFEST.read_text())["jws"]
     routing_claims = json.loads(base64.urlsafe_b64decode(routing_token.split(".")[1] + "=="))
-    assert edge_claims["kind"] == "tr-edge-policy"
+    assert set(edge_claims) == {"v", "sha256", "size", "issued_at", "not_after", "plane", "iss", "aud"}
     with pytest.raises(ValidationError):
         ManifestClaims.model_validate(edge_claims)
     with pytest.raises(ValidationError):
@@ -558,7 +569,7 @@ def test_the_golden_body_is_canonical_and_covers_every_field() -> None:
         "v", "kind", "plane", "issued_at", "refresh_at", "not_after", "accepted_image_digests",
         "stage_d", "records_durable", "fastpath_pilot_enabled", "fastpath_pilot_workspaces",
         "fastpath_pilot_regions", "gateway_authorize_max_in_flight_per_key", "monitor_lookup_hash",
-        "async_settle_enabled", "async_settle_shadow_policy", "async_settle_shadow_workspaces",
+        "async_settle_shadow_policy", "async_settle_shadow_workspaces",
         "configured_regions", "primary_region", "multi_region_enabled",
     }
     # The union of the resolver's set and the break-glass override, deduplicated.
@@ -568,8 +579,9 @@ def test_the_golden_body_is_canonical_and_covers_every_field() -> None:
     for name in ("fastpath_pilot_workspaces", "async_settle_shadow_workspaces", "configured_regions"):
         assert decoded[name], name
     assert decoded["stage_d"]["pilot_workspaces"] and decoded["monitor_lookup_hash"]
-    flags = [decoded[n] for n in ("records_durable", "fastpath_pilot_enabled", "async_settle_enabled",
-                                  "multi_region_enabled")]
+    flags = [decoded[n] for n in ("records_durable", "fastpath_pilot_enabled", "multi_region_enabled")]
+    flags += [decoded["stage_d"][n] for n in ("eligibility_enabled", "heartbeat_enabled",
+                                              "require_heartbeat_declaration")]
     assert True in flags and False in flags
     # Synthetic workspace ids only.
     for name in ("fastpath_pilot_workspaces", "async_settle_shadow_workspaces"):
@@ -581,7 +593,11 @@ def test_the_golden_manifest_verifies_and_binds_the_body() -> None:
     body, manifest = _golden_body(), _golden_manifest()
     key = TrustedKey(manifest["kid"], manifest["purpose"], manifest["public_key_b64url"],
                      manifest["iss"], manifest["aud"])
-    assert manifest["test_key"] is True and manifest["typ"] == EDGE_POLICY_TYP
+    # Shaped exactly like the routing snapshot's golden manifest.
+    routing = json.loads(ROUTING_VECTORS.OUTPUT_MANIFEST.read_text())
+    assert set(manifest) == set(routing) == {
+        "aud", "generator", "iss", "jws", "kid", "public_key_b64url", "purpose", "test_key"}
+    assert manifest["test_key"] is True
     assert (manifest["kid"], manifest["purpose"]) == (ROUTING_VECTORS.TEST_KEY.kid, PURPOSE)
     header = json.loads(base64.urlsafe_b64decode(manifest["jws"].split(".")[0] + "=="))
     assert header == {"alg": "EdDSA", "kid": manifest["kid"], "typ": "tr-edge-policy-v1"}
@@ -628,7 +644,8 @@ def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
     ("a float", lambda d: {**d, "gateway_authorize_max_in_flight_per_key": 4.0}),
     ("a string integer", lambda d: {**d, "issued_at": str(d["issued_at"])}),
     ("an integer boolean", lambda d: {**d, "records_durable": 1}),
-    ("a null", lambda d: {**d, "monitor_lookup_hash": None}),
+    ("a null where none is allowed", lambda d: {**d, "primary_region": None}),
+    ("an empty monitor hash", lambda d: {**d, "monitor_lookup_hash": ""}),
     ("an unknown field", lambda d: {**d, "extra": 1}),
     ("a missing field", lambda d: {k: v for k, v in d.items() if k != "multi_region_enabled"}),
     ("another version", lambda d: {**d, "v": 2}),
@@ -638,7 +655,8 @@ def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
     ("a malformed digest", lambda d: {**d, "accepted_image_digests": ["sha256:abc"]}),
     ("a primary outside the regions", lambda d: {**d, "primary_region": "us-west1"}),
     ("a window past the lifetime", lambda d: {**d, "not_after": d["issued_at"] + 121}),
-    ("a refresh after not_after", lambda d: {**d, "refresh_at": d["not_after"] + 1}),
+    ("a short window", lambda d: {**d, "not_after": d["issued_at"] + 119}),
+    ("a refresh off by one", lambda d: {**d, "refresh_at": d["issued_at"] + 31}),
     ("a zero in-flight limit", lambda d: {**d, "gateway_authorize_max_in_flight_per_key": 0}),
 ])
 def test_the_body_parser_is_strict(name: str, edit: Any) -> None:
@@ -659,3 +677,9 @@ def test_the_body_parser_refuses_duplicate_keys() -> None:
 def test_the_window_is_code_not_configuration() -> None:
     assert (REFRESH_SECONDS, LIFETIME_SECONDS) == (30, 120)
     assert publisher_module.RESPONSE_KIND == "tr-edge-policy-publication"
+
+
+def test_a_null_monitor_hash_parses() -> None:
+    decoded = {**json.loads(_golden_body()), "monitor_lookup_hash": None}
+    assert parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":"))) \
+        .monitor_lookup_hash is None

@@ -1,5 +1,6 @@
 """Publishes the signed edge policy to the fast path, dark (E2 P2).
 
+docs/design/fast-admission-e2-decide.md section 4 (the contract) and
 docs/design/routing-snapshot-v1.md, "The edge policy". Imported only when
 ``edge_policy_publish_enabled`` is on; nothing else at runtime reads it.
 
@@ -10,24 +11,21 @@ authorize checks a boot against), the Stage D settings, whether the settle
 records are durable, the pilot's gate, the per-key in-flight limit, the
 monitor key's lookup hash, the async-settle shadow cohort and the regions.
 The manifest (routing_snapshot_signing.py, ``EDGE_POLICY_TYP``) is signed
-with the routing snapshot's key under its own ``typ`` and ``kind``.
+with the routing snapshot's key under its own ``typ``.
 
-Windows are 30 s long and start on multiples of 30 s since the epoch: a body
-is issued at its window's start, the edge polls again at ``refresh_at``
-(+30 s) and trusts it until ``not_after`` (+120 s), so three missed polls
-leave the edge on a copy it still trusts and a fourth leaves it on none (it
-then proxies everything to Python). Two instances with the same settings and
-the same verified Stage D policy publish identical bytes in one window
-(Ed25519 signatures are deterministic).
+A body is issued at the publisher's clock and signed at most once per
+refresh interval: every poll until its ``refresh_at`` (+30 s) is served that
+publication, and the first poll at or after it reads the facts afresh and
+signs a new one. The edge polls at ``refresh_at`` and trusts a body until
+its ``not_after`` (+120 s), so three missed polls leave the edge on a copy it
+still trusts and a fourth leaves it on none (it then proxies everything to
+Python). A changed fact therefore reaches a polling edge within 30 s.
 
 Unlike the routing snapshot there is no worker process: every fact is this
 process's own live state (its settings, its Stage D policy resolver, its
 store), which is the point, and the body is a few hundred bytes, so building
-and signing it costs well under a millisecond. Each poll reads the facts
-afresh (kicking a due Stage D policy refresh without waiting on it, as
-authorize does); a poll in the same window that finds the same facts is
-served the cached publication, and a change to any fact is published at the
-next poll rather than at the next window.
+and signing it costs well under a millisecond. Reading the facts kicks a due
+Stage D policy refresh without waiting on it, as authorize does.
 
 Nothing here logs or returns key material: the signing key is read from its
 mounted file at construction and never leaves this process; responses carry
@@ -51,6 +49,8 @@ from pydantic import BaseModel
 
 from trusted_router.edge_policy import (
     KIND,
+    LIFETIME_SECONDS,
+    REFRESH_SECONDS,
     EdgePolicyV1,
     canonical_edge_policy_bytes,
 )
@@ -69,9 +69,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Code, not settings: Go reads the same window from the body.
-REFRESH_SECONDS = 30
-LIFETIME_SECONDS = 120
 RESPONSE_KIND = "tr-edge-policy-publication"
 # After a failure to read the facts or to sign, the edge is told to come back
 # this soon; it keeps its last good copy until that copy's not_after.
@@ -97,7 +94,9 @@ class Publication:
     body: bytes
     manifest: str
     response: bytes
-    facts: dict[str, Any]
+
+    def current(self, now: int) -> bool:
+        return self.issued_at <= now < self.refresh_at
 
 
 def settings_facts(
@@ -118,8 +117,7 @@ def settings_facts(
         "fastpath_pilot_workspaces": sorted(settings.fastpath_pilot_workspace_ids),
         "fastpath_pilot_regions": sorted(settings.fastpath_pilot_region_ids),
         "gateway_authorize_max_in_flight_per_key": settings.gateway_authorize_max_in_flight_per_key,
-        "monitor_lookup_hash": monitor_lookup_hash(settings) or "",
-        "async_settle_enabled": settings.async_settle_enabled,
+        "monitor_lookup_hash": monitor_lookup_hash(settings),
         "async_settle_shadow_policy": settings.async_settle_shadow_policy,
         "async_settle_shadow_workspaces": sorted(settings.async_settle_shadow_workspace_ids),
         "configured_regions": configured_regions(settings),
@@ -176,13 +174,11 @@ class EdgePolicyPublisher:
         """The current window's publication; raises PolicyUnavailable."""
         with self._lock:
             now = int(self._clock())
-            issued_at = now - now % REFRESH_SECONDS
+            cached = self._cached
+            if cached is not None and cached.current(now):
+                return cached
             try:
-                facts = self._facts()
-                cached = self._cached
-                if cached is not None and cached.issued_at == issued_at and cached.facts == facts:
-                    return cached
-                publication = self._publish(issued_at, facts)
+                publication = self._publish(now, self._facts())
             except Exception as exc:
                 # Logged by class alone: a message could carry a setting's value.
                 log.warning("edge policy publication failed: %s", type(exc).__name__)
@@ -202,7 +198,6 @@ class EdgePolicyPublisher:
                 "kind": RESPONSE_KIND,
                 "manifest": manifest,
                 "body": base64.b64encode(body).decode("ascii"),
-                "refresh_at": policy.refresh_at,
             },
             sort_keys=True, separators=(",", ":"),
         ).encode("ascii")
@@ -210,7 +205,7 @@ class EdgePolicyPublisher:
                  sha256, len(body), issued_at)
         return Publication(
             issued_at=issued_at, refresh_at=policy.refresh_at, not_after=policy.not_after,
-            sha256=sha256, body=body, manifest=manifest, response=response, facts=facts,
+            sha256=sha256, body=body, manifest=manifest, response=response,
         )
 
 

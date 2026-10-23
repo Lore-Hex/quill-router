@@ -23,8 +23,9 @@ _NO_STORE = {"Cache-Control": "no-store"}
 def register(router: APIRouter) -> None:
     @router.get(PATH, include_in_schema=False)
     def edge_policy(request: Request, settings: SettingsDep) -> Response:
-        """``{"v", "kind", "manifest", "body", "refresh_at"}``: the manifest JWS,
-        the body's exact bytes in standard base64, and when to poll again.
+        """``{"v", "kind", "manifest", "body"}``: the manifest JWS and the
+        body's exact bytes in standard base64 (``refresh_at``, when to poll
+        again, is inside the signed body).
 
         ``ETag`` is the body's sha256; a matching ``If-None-Match`` is a 304.
         503 while no policy can be built or signed; the edge keeps its last

@@ -34,7 +34,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
 from trusted_router.edge_policy import EdgePolicyV1, canonical_edge_policy_bytes  # noqa: E402
 from trusted_router.routing_snapshot_signing import (  # noqa: E402
-    EDGE_POLICY_TYP,
     EdgePolicySigner,
     RoutingSnapshotSigner,
 )
@@ -88,7 +87,7 @@ def fixture_settings() -> Settings:
         spend_lease_accepted_gcp_image_digests=",".join(BREAK_GLASS_DIGESTS),
         stage_d_eligibility_enabled=True,
         stage_d_heartbeat_enabled=True,
-        stage_d_require_heartbeat_declaration=True,
+        stage_d_require_heartbeat_declaration=False,
         stage_d_pilot_workspace_ids="ws-synthetic-stage-d-b,ws-synthetic-stage-d-a",
         settle_outbox_enabled=True,
         fastpath_pilot_enabled=True,
@@ -96,7 +95,6 @@ def fixture_settings() -> Settings:
         fastpath_pilot_regions="us-central1",
         gateway_authorize_max_in_flight_per_key=4,
         synthetic_monitor_api_key=MONITOR_KEY,
-        async_settle_enabled=False,
         async_settle_shadow_policy="shadow-v2",
         async_settle_shadow_workspaces="ws-synthetic-async-shadow",
     )
@@ -126,7 +124,6 @@ def render_manifest() -> str:
         "test_key": True,
         "kid": TEST_KEY.kid,
         "purpose": TEST_KEY.purpose,
-        "typ": EDGE_POLICY_TYP,
         "iss": TEST_KEY.iss,
         "aud": TEST_KEY.aud,
         "public_key_b64url": TEST_KEY.public_key_b64url,

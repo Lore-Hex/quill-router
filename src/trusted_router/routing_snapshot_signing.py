@@ -9,9 +9,9 @@ Secret Manager version, rotation) is the publisher's
 (services/routing_snapshot_publisher.py, docs/runbooks/routing-snapshot-key.md).
 
 The same key signs the edge policy (``EdgePolicySigner``, E2 P2) under its
-own header ``typ`` (``EDGE_POLICY_TYP``) and claim ``kind``: each verifier
-refuses the other's ``typ`` before it reads a claim, so neither document can
-stand in for the other.
+own header ``typ`` (``EDGE_POLICY_TYP``): each verifier refuses the other's
+``typ`` before it reads a claim, so neither document can stand in for the
+other.
 """
 
 from __future__ import annotations
@@ -39,7 +39,6 @@ TYP = "tr-routing-snapshot-v1"
 TEST_KID = "routing-snapshot-test-key-1"
 TEST_PUBLIC_KEY_B64URL = "U1I1REk6JqeFqKq5ZGH0P8b1b_OEwbFG0lCOkYL-jjY"
 EDGE_POLICY_TYP = "tr-edge-policy-v1"
-EDGE_POLICY_KIND = "tr-edge-policy"
 _KEY_FIELD = re.compile(r"[A-Za-z0-9_./:@+\-]{1,512}")
 
 
@@ -186,7 +185,6 @@ class RoutingSnapshotSigner:
 
 class EdgePolicyManifestClaims(Frozen):
     v: Literal[1]
-    kind: Literal["tr-edge-policy"]
     sha256: Digest
     size: UInt
     issued_at: UInt
@@ -199,19 +197,20 @@ class EdgePolicyManifestClaims(Frozen):
 def edge_policy_manifest_claims(body: bytes, *, iss: str, aud: str) -> dict[str, Any]:
     """The claims an edge-policy manifest must carry for exactly these bytes.
 
-    The manifest is a compact JWS (Ed25519, the routing-snapshot key, purpose
-    ``routing-snapshot``) whose header is exactly
-    ``{"alg":"EdDSA","kid":<kid>,"typ":"tr-edge-policy-v1"}`` and whose
-    payload is exactly these claims, both canonical (sorted keys, compact,
-    ASCII), each base64url without padding:
+    docs/design/fast-admission-e2-decide.md section 4. The manifest is a
+    compact JWS (Ed25519, the routing-snapshot key, purpose
+    ``routing-snapshot``, issuer and audience the key's) whose header is
+    exactly ``{"alg":"EdDSA","kid":<kid>,"typ":"tr-edge-policy-v1"}`` and
+    whose payload is exactly these claims, both canonical (sorted keys,
+    compact, ASCII), each base64url without padding:
 
-        {"aud", "iss", "issued_at", "kind": "tr-edge-policy", "not_after",
+        {"aud", "iss", "issued_at", "not_after",
          "plane": {"cloud", "region"}, "sha256", "size", "v": 1}
 
     ``sha256`` (lowercase hex) and ``size`` bind the body bytes;
     ``issued_at``, ``not_after`` and ``plane`` repeat the body's. The body
-    must parse as an edge policy v1 and be its own canonical encoding
-    (trusted_router/edge_policy.py). A verifier checks the signature, the
+    must parse as an edge policy v1 (``v`` 1, ``kind`` ``tr-edge-policy``)
+    and be its own canonical encoding (trusted_router/edge_policy.py). A verifier checks the signature, the
     ``typ``, the key's purpose, that ``iss`` and ``aud`` are the key's and
     ``aud`` its own, that ``plane`` is its own, that the claims are exactly
     the ones the bytes it received imply, and ``issued_at <= now <
@@ -225,7 +224,6 @@ def edge_policy_manifest_claims(body: bytes, *, iss: str, aud: str) -> dict[str,
         raise ValueError("edge policy body is not canonical")
     claims = {
         "v": 1,
-        "kind": EDGE_POLICY_KIND,
         "sha256": hashlib.sha256(body).hexdigest(),
         "size": len(body),
         "issued_at": policy.issued_at,

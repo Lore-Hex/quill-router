@@ -9,16 +9,17 @@ every 30 s and valid for 120 s. The publisher
 is in routing_snapshot_signing.py (``EDGE_POLICY_TYP``). Imported only when
 ``edge_policy_publish_enabled`` is on.
 
-Byte contract: the body is ``canonical_edge_policy_bytes``: ASCII JSON, keys
-sorted at every level, separators ``,`` and ``:``, no trailing newline, no
-floats, no nulls. Sets are sorted, unique arrays; ``configured_regions`` keeps
+Contract: docs/design/fast-admission-e2-decide.md section 4. Byte contract:
+the body is ``canonical_edge_policy_bytes``: ASCII JSON, keys sorted at every
+level, separators ``,`` and ``:``, no trailing newline, no floats, ``null``
+only for ``monitor_lookup_hash``. Sets are sorted, unique arrays; ``configured_regions`` keeps
 the configured order (``regions.choose_region`` falls back to its first entry).
 Fields, all required:
 
 - ``v``: 1; ``kind``: ``"tr-edge-policy"``.
 - ``plane``: ``{"cloud", "region"}``, the publishing control plane's own.
-- ``issued_at``, ``refresh_at``, ``not_after``: unix seconds,
-  ``issued_at < refresh_at <= not_after <= issued_at + 120``.
+- ``issued_at`` (unix seconds, the publisher's clock), ``refresh_at`` =
+  ``issued_at + 30``, ``not_after`` = ``issued_at + 120``.
 - ``accepted_image_digests``: ``sha256:<64 hex>`` digests, the verified Stage D
   policy's set plus the audited break-glass override, exactly the set authorize
   checks a boot's image digest against.
@@ -32,9 +33,9 @@ Fields, all required:
   ``fastpath_pilot_regions``: the pilot's gate.
 - ``gateway_authorize_max_in_flight_per_key``: positive integer.
 - ``monitor_lookup_hash``: the synthetic monitor key's lookup hash (64 hex),
-  or ``""`` when no monitor key is configured.
-- ``async_settle_enabled``, ``async_settle_shadow_policy`` (``""`` when
-  unset), ``async_settle_shadow_workspaces``.
+  or ``null`` when no monitor key is configured.
+- ``async_settle_shadow_policy`` (``""`` when unset),
+  ``async_settle_shadow_workspaces``.
 - ``configured_regions``, ``primary_region`` (one of them),
   ``multi_region_enabled``.
 """
@@ -45,11 +46,12 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import Field, model_validator
 
-from trusted_router.billing_snapshot import Frozen, Identity, UInt, canonical_bytes
+from trusted_router.billing_snapshot import Digest, Frozen, Identity, UInt, canonical_bytes
 
 KIND: Final = "tr-edge-policy"
-# The longest a body may be trusted after it is issued.
-MAX_LIFETIME_SECONDS: Final = 120
+# Fixed by the contract: Go checks the same offsets.
+REFRESH_SECONDS: Final = 30
+LIFETIME_SECONDS: Final = 120
 
 Flag = Annotated[bool, Field(strict=True)]
 PositiveInt = Annotated[int, Field(strict=True, ge=1, le=(1 << 63) - 1)]
@@ -57,7 +59,6 @@ ImageDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 # The workspace-set settings' own validation (config.parse_fastpath_pilot).
 WorkspaceId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_./:@+\-]{1,64}$")]
 Region = Annotated[str, Field(pattern=r"^[a-z0-9\-]{1,32}$")]
-OptionalDigest = Annotated[str, Field(pattern=r"^([0-9a-f]{64})?$")]
 PolicyName = Annotated[str, Field(pattern=r"^[A-Za-z0-9_.:\-]{0,64}$")]
 
 
@@ -97,8 +98,7 @@ class EdgePolicyV1(Frozen):
     fastpath_pilot_workspaces: tuple[WorkspaceId, ...]
     fastpath_pilot_regions: tuple[Region, ...]
     gateway_authorize_max_in_flight_per_key: PositiveInt
-    monitor_lookup_hash: OptionalDigest
-    async_settle_enabled: Flag
+    monitor_lookup_hash: Digest | None
     async_settle_shadow_policy: PolicyName
     async_settle_shadow_workspaces: tuple[WorkspaceId, ...]
     configured_regions: tuple[Identity, ...] = Field(min_length=1)
@@ -107,13 +107,13 @@ class EdgePolicyV1(Frozen):
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
-        if not self.issued_at < self.refresh_at <= self.not_after <= (
-            self.issued_at + MAX_LIFETIME_SECONDS
-        ):
+        if (self.refresh_at != self.issued_at + REFRESH_SECONDS
+                or self.not_after != self.issued_at + LIFETIME_SECONDS):
             raise ValueError("edge policy window")
-        for name in ("accepted_image_digests", "fastpath_pilot_workspaces",
-                     "fastpath_pilot_regions", "async_settle_shadow_workspaces"):
-            _sorted_unique(getattr(self, name), name)
+        _sorted_unique(self.accepted_image_digests, "accepted_image_digests")
+        _sorted_unique(self.fastpath_pilot_workspaces, "fastpath_pilot_workspaces")
+        _sorted_unique(self.fastpath_pilot_regions, "fastpath_pilot_regions")
+        _sorted_unique(self.async_settle_shadow_workspaces, "async_settle_shadow_workspaces")
         regions = self.configured_regions
         if len(set(regions)) != len(regions) or self.primary_region not in regions:
             raise ValueError("configured_regions must be unique and include primary_region")

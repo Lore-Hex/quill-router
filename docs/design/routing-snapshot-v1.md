@@ -429,19 +429,21 @@ change without a deploy and must not wait an hour. They travel as a second
 signed document, the edge policy, built by
 `services/edge_policy_publisher.py` and specified in
 `trusted_router/edge_policy.py` (body) and `routing_snapshot_signing.py`
-(manifest, `edge_policy_manifest_claims`).
+(manifest, `edge_policy_manifest_claims`). The contract is
+`docs/design/fast-admission-e2-decide.md` section 4.
 
 **Switch.** Off unless `TR_EDGE_POLICY_PUBLISH_ENABLED` is true (default
 false; `rollout.sh` does not set it yet, I1 will). Off, the route is a 404 and
 no edge-policy module is imported (`tests/test_edge_policy_publish.py`).
 
 **Route.** `GET /internal/fastpath/edge-policy`, the same surfaces, token,
-response shape (`{"v": 1, "kind": "tr-edge-policy-publication", "manifest",
-"body", "refresh_at"}`), `ETag`/304 and `Cache-Control: no-store` as the
-snapshot's route; 503 `signer-unavailable` or `policy-error` (with
-`retry_at` and `Retry-After: 5`).
+`ETag`/304 and `Cache-Control: no-store` as the snapshot's route. The answer
+is exactly `{"v": 1, "kind": "tr-edge-policy-publication", "manifest",
+"body"}`; `refresh_at` is inside the signed body. 503 `signer-unavailable`
+or `policy-error` (with `retry_at` and `Retry-After: 5`).
 
-**Body.** Canonical ASCII JSON as the snapshot's, no floats, no nulls:
+**Body.** Canonical ASCII JSON as the snapshot's, no floats, `null` only
+for `monitor_lookup_hash`:
 `v`, `kind: "tr-edge-policy"`, `plane`, `issued_at`, `refresh_at` (+30 s),
 `not_after` (+120 s); `accepted_image_digests` (the verified Stage D policy's
 set plus the break-glass `TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS`, through
@@ -450,24 +452,25 @@ reads); `stage_d` (the four settings `_stage_d_eligibility_reason` reads);
 `records_durable` (`fastpath_frontdoor.records_durable`, the pilot's own);
 `fastpath_pilot_enabled`, `fastpath_pilot_workspaces`,
 `fastpath_pilot_regions`; `gateway_authorize_max_in_flight_per_key`;
-`monitor_lookup_hash` (`""` when unset); `async_settle_enabled`,
-`async_settle_shadow_policy`, `async_settle_shadow_workspaces`;
+`monitor_lookup_hash` (`null` when unset); `async_settle_shadow_policy`,
+`async_settle_shadow_workspaces`;
 `configured_regions` (configured order), `primary_region`,
 `multi_region_enabled`. Sets are sorted and unique.
 
-**Window and cache.** Windows start on multiples of 30 s. Each poll reads the
-facts afresh (kicking a due Stage D policy refresh, never waiting on it); the
-same window with the same facts is served from cache, a changed fact is
-signed at the next poll. Two instances with the same facts publish identical
-bytes in a window. No worker process: every fact is this process's live
-state and signing a few hundred bytes costs well under a millisecond.
+**Cache.** `issued_at` is the publisher's clock when it signs. It signs at
+most once per refresh interval and serves that publication to every poll
+until `refresh_at`; the first poll at or after it reads the facts afresh
+(kicking a due Stage D policy refresh, never waiting on it) and signs again,
+so a changed fact reaches a polling edge within 30 s. No worker process:
+every fact is this process's live state and signing a few hundred bytes
+costs well under a millisecond.
 
 **Signing.** The routing snapshot's key (purpose `routing-snapshot`, the same
-issuer and audience), header `typ` `tr-edge-policy-v1`, claims `{v: 1, kind:
-"tr-edge-policy", sha256, size, issued_at, not_after, plane, iss, aud}`.
+issuer and audience), header `typ` `tr-edge-policy-v1`, claims `{v: 1,
+sha256, size, issued_at, not_after, plane, iss, aud}`.
 `verify_manifest` refuses an edge-policy manifest and
 `verify_edge_policy_manifest` a snapshot manifest, both on the header `typ`
-before any claim is read; the claims' `kind` differs too. Golden files:
+before any claim is read. Golden files:
 `fastpath/testdata/edge_policy_v1.{body,manifest}.json`, written by
 `scripts/fastpath/edge_policy_vectors.py` from synthetic settings under the
 snapshot's public TEST key; G8's Go reader verifies them. The edge treats a
