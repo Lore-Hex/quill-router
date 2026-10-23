@@ -123,9 +123,16 @@ The flow, per request, in this order:
     `spendlease.ReserveBudget`). Python spends at most its 20 s Spanner
     budget and keeps 5 s for the rest (`gateway.py:353-356`), so the worst
     forwarded pass, 3.5 s plus Python's 20 s, leaves 1.5 s of the 25 s
-    rather than Python's 5 s. That is the tightest Go may go: G11 fails a
-    test if any budget here grows, and G12 alerts on forwarded passes that
-    spent more than 1 s at the edge.
+    rather than Python's 5 s. Python's 20 s is a wall-clock Spanner
+    deadline set when `_authorize_gateway_sync` starts (`spanner_rpc_budget`,
+    `storage_gcp_io.py:146-166`, applied at `gateway.py:871-873`); it
+    excludes threadpool queueing before that and work after the last RPC,
+    such as Python's own front-door call (up to 1.5 s,
+    `fastpath_front_door_timeout_seconds`, `config.py:1046`), so a rare
+    forwarded pass can still exceed 25 s. That is the tightest Go may go:
+    G11 fails a test if any budget here grows, and G12 alerts on forwarded
+    passes that spent more than 1 s at the edge and on any forwarded pass
+    past 25 s in all.
 13. **Response encoding.** Identity-encoded JSON, `Content-Type:
     application/json`, `Content-Length`, and the bytes FastAPI's pydantic-core
     fast path writes for the 200 (§6): insertion order, raw UTF-8,
@@ -149,8 +156,10 @@ The flow, per request, in this order:
     facts' maximum age); a digest withdrawn from the accepted set within
     60 s, the same as Python's own resolver
     (`stage_d_policy_refresh_seconds`, 60, `config.py:1049`), because P2
-    refreshes the resolver before every signing (§4), so a body's set is
-    current at `issued_at` and the edge holds it at most until `not_after`. Eviction is sooner when Python answers
+    signs only right after a successful background refresh of the resolver
+    (§4), so a body's set is current at `issued_at` and the edge holds it at
+    most until `not_after`. A release-host outage therefore turns Go's
+    deciding off after 60 s (availability only). Eviction is sooner when Python answers
     the key a 401, 402 or 403, or the workspace a pause 503, on any request
     the edge passes. The cohort is pilot workspaces only, and the operator's
     immediate lever is `fastpathctl decide-off-all` (honoured within one
@@ -168,9 +177,9 @@ The flow, per request, in this order:
     `internal_only` model in `model` or `models` passes: Python answers a
     key other than the monitor or probe key 403 (`gateway.py:1008`,
     `internal_model_access.py:31-48`). Go passes on the union of two sets:
-    the edge policy's `internal_models` (§4), the live catalog's, and a
-    hardcoded set (`trustedrouter/monitor`, `trustedrouter/fortanix-test`
-    today). Python and Go deploy separately, so a Python release that adds
+    the edge policy's `internal_models` (§4, from the live catalog) and
+    Go's hardcoded set (`trustedrouter/monitor`,
+    `trustedrouter/fortanix-test` today). Python and Go deploy separately, so a Python release that adds
     an internal model reaches the snapshot before any new Go binary; the
     policy carries it within one refresh, and a stale policy already passes
     everything. The routing snapshot is published and polled live, so its
@@ -264,16 +273,21 @@ imports the publisher (a dormancy test checks it in a subprocess, as
 **Publication.** Exactly `{"v":1,"kind":"tr-edge-policy-publication","manifest":JWS,"body":B64}`,
 compact JSON; `body` is the body's exact bytes in standard base64. The edge
 hashes the decoded bytes and never re-encodes them. The publisher signs a
-body at most once per `refresh_at` interval, under a lock, and serves that
-publication to every poll until `refresh_at`. Before each signing it calls
-`StageDPolicyResolver.refresh()` synchronously (`stage_d_policy.py:238`:
-two HTTPS fetches with 5 s timeouts, a Sigstore bundle check and the
-watermark, so at most four a minute on an instance the edge polls). If
-the refresh fails it signs nothing new and answers 503 with `status`
-`digest-policy-unavailable`; the edge keeps its last copy until
-`not_after` and then passes every request, a safe failure. With no release
-URL configured there is nothing to refresh, and the set is the break-glass
-override alone, as in Python.
+body at most once per `refresh_at` interval. A poll never waits on a
+refresh or a signing: the first poll past `refresh_at` starts one
+single-flight background job that calls `StageDPolicyResolver.refresh()`
+(`stage_d_policy.py:238`: two HTTPS fetches with 5 s timeouts, a Sigstore
+bundle check and the watermark, so at most four a minute on an instance
+the edge polls) and, if it succeeds, signs a new body whose `issued_at` is
+that instant. Every poll answers at once: the cached publication while
+`now < not_after`, else 503 with `status` `digest-policy-unavailable`. A
+failed refresh signs nothing new; the edge keeps its last copy until
+`not_after` and then passes every request. With no release URL configured
+there is nothing to refresh, and the set is the break-glass override alone,
+as in Python. The expected side effect: an outage of the release host
+(`trust.trustedrouter.com`, `config.py:1899`) turns Go's deciding off
+after 60 s. That costs availability of the fast path only; Python decides
+meanwhile.
 
 **Body.** `json.dumps(obj, sort_keys=True, separators=(",", ":"),
 ensure_ascii=True, allow_nan=False)`, printable ASCII, no trailing newline.
@@ -324,8 +338,8 @@ payload, `iss` and `aud` the key's, `aud` and `plane` the verifier's own,
 <= now < not_after`. A snapshot verifier given a policy manifest refuses it
 on `typ`, and the reverse; both directions are tests in P2 and G8.
 
-**Edge behaviour.** Poll at `refresh_at`; on failure back off from 2 s to
-15 s; keep the last good copy until its `not_after`, then drop it (every
+**Edge behaviour.** Poll at `refresh_at` with an explicit 5 s request
+timeout (G8); on failure back off from 2 s to 15 s; keep the last good copy until its `not_after`, then drop it (every
 request passes with `cache.policy`). The URL must be on the edge upstream's
 scheme and host, as the snapshot URL is.
 
@@ -827,7 +841,7 @@ returns:
 |---|---|---|
 | none | `Inserted` | answer |
 | any, with the callback never run (no session, no transaction began); checked first | retried once within the deadline; still failing, `Failed` | refund, pass: nothing was sent, so this is never a 503 |
-| `AlreadyExists` | `AuthorizationExists(our id)`, strong: true is `Landed`, false is `ScopeTaken`; a read error goes on as `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
+| `AlreadyExists` | `AuthorizationExists(our id)`, strong, with a 0.5 s deadline on a fresh context: true is `Landed`, false is `ScopeTaken`; a read error goes on as `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
 | `Aborted` (retries exhausted), `InvalidArgument`, `FailedPrecondition`, `NotFound`, `PermissionDenied`, `Unauthenticated`, `OutOfRange`, `Unimplemented` | `Failed` | refund, pass: Spanner applied nothing |
 | `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the context ended, any error that is not a gRPC status | `Unknown` | `AuthorizationExists` with a fresh 0.5 s deadline of its own: true answers as after a read-back; false or a read error answers decision 1's 503 and keeps the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
 
@@ -1078,6 +1092,7 @@ staleness.
 
 ```
 {"generator": "scripts/fastpath/pyjson_vectors.py", "python": "3.12",
+ "pydantic_core": "2.46.3",                             // the staleness test fails on an upgrade that changes a float
  "floats":    [{"bits": HEX16, "repr": STR,            // IEEE 754 binary64, big-endian hex; repr(float)
                 "pydantic": STR}],                      // TypeAdapter(float).dump_json(x)
  "money":     [{"microdollars": INT, "repr": STR,      // repr(float(m) / 1_000_000)
