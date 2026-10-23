@@ -8,7 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from scripts.pricing.providers import together, venice
+from scripts.pricing.providers import gmi, novita, together, venice
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.catalog_data import _PROVIDER_UNSERVED_CREDITS_MODELS
 from trusted_router.request_capabilities import endpoint_capabilities
@@ -21,14 +21,25 @@ NATIVE = "MiniMaxAI/MiniMax-M3.1-Flash"
 
 def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
     routes = {e.provider: e for e in endpoints_for_model(MODEL) if e.usage_type == "Credits"}
-    assert set(routes) == {"minimax", "together", "venice"}
+    assert set(routes) == {"gmi", "minimax", "novita", "together", "venice"}
     assert {p: e.upstream_id for p, e in routes.items()} == {
-        "minimax": "MiniMax-M3.1-Flash", "together": NATIVE, "venice": "minimax-m3-1-flash",
+        "gmi": NATIVE, "minimax": "MiniMax-M3.1-Flash", "novita": MODEL,
+        "together": NATIVE, "venice": "minimax-m3-1-flash",
     }
     for endpoint in routes.values():
         assert endpoint_capabilities(MODELS[MODEL], endpoint)["tools"] is True
-    assert "minimax/minimax-m3.1-flash" in _PROVIDER_UNSERVED_CREDITS_MODELS["novita"]
+    assert MODEL not in _PROVIDER_UNSERVED_CREDITS_MODELS["novita"]
+    assert MODEL in gmi._VERIFIED_PREPAID_MODELS
     assert any(e.provider == "gmi" and e.usage_type == "BYOK" for e in endpoints_for_model(MODEL))
+
+
+def test_novita_flash_uses_account_price_units() -> None:
+    row = next(row for row in json.loads(novita.MANIFEST_PATH.read_text())["models"] if row["id"] == MODEL)
+    price = novita._source_price(row)
+    assert price is not None
+    assert (price.prompt_micro_per_m, price.completion_micro_per_m, price.tiers[0].prompt_cached_micro_per_m) == (
+        150000, 600000, 15000,
+    )
 
 
 def test_venice_flash_refresh_and_legacy_requests_share_one_model(client: TestClient) -> None:

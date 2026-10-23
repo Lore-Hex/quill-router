@@ -3689,6 +3689,7 @@ _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
     "gmi": frozenset(
         {
             "deepseek/deepseek-v4-pro",
+            "minimax/minimax-m3.1-flash",
             "moonshotai/kimi-k3",
             "tencent/hy4-preview",
             "z-ai/glm-5",
@@ -3763,9 +3764,6 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     # verified sweep cross-checked each failing route's error class.
     "novita": frozenset(
         {
-            # 2026-10-22: listed, but both JSON and SSE return HTTP 400
-            # "The model is currently unavailable" on the operator key.
-            "minimax/minimax-m3.1-flash",
             "meta-llama/llama-3-8b-instruct",
             "qwen/qwen2.5-vl-72b-instruct",
             "qwen/qwen3-4b-fp8",
