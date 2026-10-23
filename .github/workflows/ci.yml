@@ -657,11 +657,12 @@ jobs:
           exit 1
       - name: The store against the emulator
         run: go test -race -count=1 -p 1 ./internal/store/...
-      # The owner's, the auditor's, the front door's, the service's,
-      # fastpathctl's and loadgen's tests against the store skip without the
-      # emulator, so the fastpath job runs none of them; they run here.
-      - name: The owner, the auditor, the front door, the service, fastpathctl and loadgen against the emulator
-        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/... ./cmd/fastpathctl/... ./cmd/loadgen/...
+      # The owner's, the auditor's, the front door's, the service's, the
+      # gateway state cache's, fastpathctl's and loadgen's tests against the
+      # store skip without the emulator, so the fastpath job runs none of
+      # them; they run here.
+      - name: The owner, the auditor, the front door, the service, the gateway state cache, fastpathctl and loadgen against the emulator
+        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/... ./internal/gwstate/... ./cmd/fastpathctl/... ./cmd/loadgen/...
       # The watch's store sources need the emulator; its other tests run in
       # the fastpath job too.
       - name: The watch against the emulator
