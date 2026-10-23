@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
+import re
 import time
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
@@ -11,7 +14,13 @@ import pytest
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import NOW_US, fake_store
 from trusted_router import async_settle_shadow_lifecycle as m
-from trusted_router.config import SHADOW_CANARY_MAX_SECONDS, Settings, in_v2_cohort
+from trusted_router import config
+from trusted_router.config import (
+    SHADOW_CANARY_MAX_SECONDS,
+    Settings,
+    in_v2_cohort,
+    parse_shadow_expiry,
+)
 from trusted_router.services import async_settle_shadow_health as shell
 
 WORKSPACE = "ws"
@@ -70,13 +79,37 @@ def test_past_expiry_and_z_suffix_are_accepted():
     ("tomorrow", "ISO-8601"),
     (None, "canary maximum"),
 ])
-def test_invalid_or_unbounded_expiry_is_rejected(value, message):
+def test_invalid_or_unbounded_expiry_fails_closed_without_failing_settings(value, message, caplog):
     if value is None:
         value = iso(time.time() + SHADOW_CANARY_MAX_SECONDS + 3600)
+    # Strict for deploy tests and the activation tool ...
     with pytest.raises(ValueError, match=message):
-        pins(async_settle_shadow_expires_at=value)
-    # The longest allowed canary still parses.
-    pins(async_settle_shadow_expires_at=iso(time.time() + SHADOW_CANARY_MAX_SECONDS - 60))
+        parse_shadow_expiry(value)
+    # ... but a shadow-only typo never fails a revision's Settings: it is off.
+    config._LOGGED_SHADOW_EXPIRY_ERRORS.clear()
+    with caplog.at_level(logging.WARNING, logger="trusted_router.config"):
+        for _ in range(3):
+            settings = pins(async_settle_shadow_expires_at=value)
+            assert not settings.async_settle_shadow_live(0)
+            assert settings.effective_async_settle_shadow_policy() == ""
+    logged = [r.getMessage() for r in caplog.records if "shadow expiry invalid" in r.getMessage()]
+    assert len(logged) == 1 and message in logged[0]
+    # The longest allowed canary still parses and is live.
+    assert pins(async_settle_shadow_expires_at=iso(time.time() + SHADOW_CANARY_MAX_SECONDS - 60)).async_settle_shadow_live()
+
+
+def test_rollout_expiry_pin_is_strictly_valid_or_empty():
+    """Deploy-time strictness: rollout.sh may carry only an empty or valid expiry."""
+    source = (Path(__file__).resolve().parents[1]/"scripts/deploy/rollout.sh").read_text()
+    values = re.findall(r'^  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=([^"\n]*)"$', source, re.MULTILINE)
+    assert len(values) == 1
+    if values[0]:
+        assert values[0].endswith("Z")
+        parse_shadow_expiry(values[0])
+    policy = re.findall(r'^  "TR_ASYNC_SETTLE_SHADOW_POLICY=([^"\n]*)"$', source, re.MULTILINE)
+    assert len(policy) == 1
+    # Opt-in pins without an expiry would be a silent no-op in production.
+    assert not policy[0] or values[0]
 
 
 def owner(settings: Settings) -> tuple[shell.Service, list[int]]:

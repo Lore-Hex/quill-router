@@ -51,17 +51,17 @@ def _report_read_failure(operation: _ReadOperation, error: Exception, started: f
 
 
 def _snapshot_rows(database: Any, statement: tuple[str, dict[str, Any], dict[str, Any]],
-                   operation: _ReadOperation) -> list[Any]:
+                   operation: _ReadOperation, deadline_seconds: float = READ_DEADLINE_SECONDS) -> list[Any]:
     started = time.monotonic()
     sql, params, types = statement
     try:
         # retry=None does not disable the SDK's result-stream restarts. Keep
         # one deadline active through iteration, rather than renewing on restart.
-        with spanner_rpc_deadline(started + READ_DEADLINE_SECONDS):
+        with spanner_rpc_deadline(started + deadline_seconds):
             with database.snapshot() as snapshot:
                 return list(snapshot.execute_sql(
                     sql, params=params, param_types=types, retry=None,
-                    timeout=remaining_rpc_budget(READ_DEADLINE_SECONDS),
+                    timeout=remaining_rpc_budget(deadline_seconds),
                     request_options={"priority": "PRIORITY_LOW", "request_tag": "tr_async_" + operation}))
     except Exception as error:
         _report_read_failure(operation, error, started)
@@ -84,8 +84,12 @@ def admission_statement(workspace_id: str) -> tuple[str, dict[str, Any], dict[st
     )
 
 
-def read_admission(database: Any, workspace_id: str) -> Admission:
-    rows = _snapshot_rows(database, admission_statement(workspace_id), "admission")
+def read_admission(database: Any, workspace_id: str, *,
+                   deadline_seconds: float = READ_DEADLINE_SECONDS) -> Admission:
+    """``deadline_seconds`` is the RPC deadline. Money admission keeps 500 ms;
+    the shadow observer passes a generous one and applies its own install
+    cut-off, so its slow tail never ends as a Spanner client deadline error."""
+    rows = _snapshot_rows(database, admission_statement(workspace_id), "admission", deadline_seconds)
     if len(rows) != 1 or rows[0][0] > ROW_LIMIT:
         raise ValueError("admission unavailable")
     count, amount, tier = rows[0]

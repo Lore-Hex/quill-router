@@ -31,6 +31,7 @@ def without_fix(storage, publisher):
         return self.incumbent_slot in (slot-1, slot-2)
     publisher.Service.is_incumbent = is_incumbent
     publisher.takeover_due = lambda boot, slot, claim: True
+    storage.ObservationStore.read_shadow_publication = lambda self, budget: None
 
 
 def run(**kwargs):
@@ -125,3 +126,25 @@ def test_cold_fleet_still_elects_promptly():
     # No claim row and no fleet health: the original immediate election.
     assert result["rate"] >= .95
     assert set(result["claim_transactions_by_slot"]) == {1}
+
+
+def without_storage_renewal(storage, publisher):
+    """Positive control: the holder cannot see its own durable publication."""
+    storage.ObservationStore.read_shadow_publication = lambda self, budget: None
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_degraded_observer_cannot_demote_the_holder(control):
+    # Owners reject every reply (as on 2026-10-23), so incumbency rests on the
+    # holder's observer cache. Freeze that cache for three boundaries (~6 s).
+    result = run(reject_published=True, stale_holder=(30, 3),
+                 patch=without_storage_renewal if control else None)
+    if control:
+        # Demoted: the holder stands down and the fleet loses publications.
+        assert result["durable_publication_rate"] < 1
+        assert 0 in result["claim_transactions_by_slot"]
+    else:
+        # Same-owner renewal from storage keeps exactly one writer every slot.
+        assert set(result["claim_transactions_by_slot"]) == {1}
+        assert result["durable_publication_rate"] == 1
+        assert result["aborts"] == result["claim_lock_wait_seconds"] == 0

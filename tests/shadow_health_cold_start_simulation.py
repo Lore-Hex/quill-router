@@ -526,7 +526,7 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
 
 def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=0.,
                        post_ack_seconds=2., seed=73, clock_offsets_ms=None, n=8,
-                       reject_published=False, stall_from=None, patch=None):
+                       reject_published=False, stall_from=None, patch=None, stale_holder=None):
     """Execute actual owner/worker admission, not a synthesized busy outcome.
 
     Clock offsets are server minus each boot's local wall in milliseconds;
@@ -545,6 +545,8 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     ``stall_from`` is a slot offset after which the current publisher can no
     longer reach Spanner (its session is unavailable), forcing a takeover.
     ``patch(storage, publisher)`` edits the loaded module copies (controls).
+    ``stale_holder=(offset, slots)`` freezes the current publisher's observer
+    cache for that many slot boundaries (a degraded observer on the holder).
     """
     from trusted_router.config import Settings
 
@@ -654,7 +656,13 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                 body = json.loads(health) if health else None
                 if body is None or body["slot"] != slot-1:
                     no_incumbent.add(slot)
+                frozen = None
+                if stale_holder is not None and body is not None and \
+                        START+stale_holder[0] <= slot < START+stale_holder[0]+stale_holder[1]:
+                    frozen = body["publisher_boot_id"]
                 for svc in services:
+                    if svc.journal.boot == frozen:
+                        continue  # This holder's observer misses its installs.
                     # Ideal observer installation, as in round 2. Reader cache
                     # transport/session contention is not modeled here.
                     svc.observer.health = {"body": body} if body else None

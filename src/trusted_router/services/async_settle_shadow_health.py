@@ -66,6 +66,7 @@ from trusted_router.storage_gcp_shadow_io import (
 )
 from trusted_router.storage_gcp_shadow_observation import (
     FLUSH_SECONDS,
+    OBSERVER_READ_RPC_SECONDS,
     Budget,
     ContentionLoss,
     ObservationStore,
@@ -514,6 +515,12 @@ def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
     return slot - claim["slot"] >= TAKEOVER_MIN_AGE + takeover_rank(boot, claim["slot"])
 
 
+def own_publication(body: dict[str, Any] | None, boot: str, slot: int) -> bool:
+    """The fleet health row is this boot's publication for slot-1 or slot-2."""
+    return bool(body is not None and body.get("publisher_boot_id") == boot
+                and body.get("slot") in (slot-1, slot-2))
+
+
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
                   job: lifecycle.PublisherJob, claim_us: int, admission: Service,
                   incumbent: bool = False, incumbent_present: bool = False,
@@ -567,7 +574,12 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 budget = Budget(started + CYCLE_SECONDS, store.clock)
             finally:
                 admission.admission_lock.release()
-            if not incumbent:
+            # This process committed the claim for slot-1/slot-2 (worker-local
+            # fact, independent of reply acceptance and the observer cache):
+            # check storage for a same-owner renewal at once, without a stagger.
+            won = getattr(store, "won", None)
+            holder = not incumbent and won is not None and won[0] == boot and won[1] in (slot-1, slot-2)
+            if not incumbent and not holder:
                 stagger = follower_stagger(boot, slot, incumbent_present)
                 sleep(stagger)
                 # The admitted start and budget include the stagger. Recheck the
@@ -597,7 +609,15 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 # takeover. Followers pay zero Commit RPCs in steady state.
                 # Recheck in claim() too, since this snapshot can race a winner.
                 # A warm takeover waits for this boot's rank (takeover_due).
-                if (incumbent_present or current is not None and current["slot"] > slot-2
+                # Same-owner renewal: storage, not a possibly stale observer
+                # cache, says this boot holds the claim and published within
+                # two slots. A holder that claims but never publishes still
+                # yields (S4), because its publication ages out.
+                renew = (current is not None and current["owner_boot_id"] == boot
+                         and slot-2 <= current["slot"] < slot
+                         and store.clock() <= job.latest_start_mono
+                         and own_publication(store.read_shadow_publication(budget), boot, slot))
+                if not renew and (incumbent_present or current is not None and current["slot"] > slot-2
                         or warm and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
                     outcome = "lost_claims"
@@ -667,7 +687,8 @@ class Service:
         self.bases = Lane("basis", self.journal.boot, transport)
         self.traces = Lane("trace", self.journal.boot, transport)
         self.basis_tokens, self.basis_tick = 10., store.clock()
-        self.observer = HealthObserver(self.workspaces, partial(read_admission, store.workspace_database), store.read_shadow_health,
+        self.observer = HealthObserver(self.workspaces, partial(read_admission, store.workspace_database,
+            deadline_seconds=OBSERVER_READ_RPC_SECONDS), store.read_shadow_health,
             cap=settings.async_settle_pilot_cap_micro, enabled=self.enabled, policy=POLICY,
             clock=store.clock, wall=store.wall)
         cast(Any, self.observer).lock = threading.RLock()
@@ -838,9 +859,7 @@ class Service:
         # publication, which publish() wrote only under this boot's won claim
         # (S2). The owner may have rejected that reply; storage still names the
         # holder, and treating it as a follower let the claim age out.
-        body = self._installed_health_body()
-        return bool(body is not None and body.get("publisher_boot_id") == self.journal.boot
-                    and body.get("slot") in (slot-1, slot-2))
+        return own_publication(self._installed_health_body(), self.journal.boot, slot)
 
     def _installed_health_body(self) -> dict[str, Any] | None:
         health = self.observer.health

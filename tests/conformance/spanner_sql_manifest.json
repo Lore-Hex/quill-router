@@ -4686,7 +4686,7 @@
     "storage_gcp:SpannerStore.update_workspace.txn": "d0d1045d40b6dfbd25458bdace3723b596bba4387581942a1f5876f0b8116cde",
     "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "6a13bf3f98fc189b689c291137614aae25e03db076359d4f5846644d53b41920",
     "storage_gcp_async_admission:_query": "57e467a3381665d4f2c5eb9799af358381851b9b59b2610b7cd051586bc57142",
-    "storage_gcp_async_admission:_snapshot_rows": "616332424f40dcc2fec9a59f2cc70972a01c1c161d5f21f692b7d9e3fb050672",
+    "storage_gcp_async_admission:_snapshot_rows": "36aee785c37c3fda2426050b3fe7e8da518fa09df0df2f6b5e5a831aafe629c4",
     "storage_gcp_async_settle:enqueue.transaction": "cc4cb864d0a571469052713c221b512692993bc35193bb30ff1356954e83cd88",
     "storage_gcp_async_settle_shadow:EvidenceStore.query": "75decf7bf8d830c7da0ecfbcfabe866e73eee0d181b6c9e8b48de1ac1e2c4f35",
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",

@@ -47,6 +47,13 @@ from trusted_router.storage_gcp_shadow_io import (
 WRITE_SECONDS = 2.
 READ_SECONDS = 1.
 FLUSH_SECONDS = 4.
+# Observer reads: the RPC gets a generous gRPC deadline and its stream is fully
+# consumed, so a slow tail completes OK on the server instead of ending in a
+# client DEADLINE_EXCEEDED/CANCELLED (2026-10-23: >1/min of those tripped the
+# Spanner API-failure alert). Freshness is unchanged: the observer's install
+# cut-off (250 ms health, 500 ms workspace) still rejects a late result as a
+# late_install, and health_usable still requires read_elapsed <= 250 ms.
+OBSERVER_READ_RPC_SECONDS = 2.
 T = TypeVar("T")
 Statement = tuple[str, dict[str, Any], dict[str, Any]]
 
@@ -113,6 +120,7 @@ class ObservationStore:
         self.workspace_database = database
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
+        self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
         self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
         self.startup_publication_raw: bytes | None = None
@@ -228,6 +236,11 @@ class ObservationStore:
         row = self.read(CLAIM_KIND, "local/publish", budget.child(CYCLE_SECONDS))
         return row.value() if row is not None else None
 
+    def read_shadow_publication(self, budget: Budget) -> dict[str, Any] | None:
+        """Lock-free point read of the fleet health row (same-owner renewal)."""
+        row = self.read(HEALTH_KIND, "local/fleet", budget.child(CYCLE_SECONDS))
+        return row.value() if row is not None else None
+
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
         original = None
@@ -253,6 +266,8 @@ class ObservationStore:
                 original = row.body
             return True
         landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed:
+            self.won = (boot, slot)
         if landed and self.startup_retention:
             self.startup_claim_raw = original
         return landed
@@ -291,8 +306,8 @@ class ObservationStore:
 
     def read_shadow_health(self) -> dict[str, Any] | None:
         started = self.clock()
-        budget = Budget(started + .25, self.clock)
-        rows, read_ns = self.snapshot_query(read_shadow_health_statement(), budget, .25)
+        budget = Budget(started + OBSERVER_READ_RPC_SECONDS, self.clock)
+        rows, read_ns = self.snapshot_query(read_shadow_health_statement(), budget, OBSERVER_READ_RPC_SECONDS)
         require(len(rows) <= 1, "point_bound")
         if not rows:
             return None
@@ -300,7 +315,8 @@ class ObservationStore:
         value = Row(HEALTH_KIND, "local/fleet", body.encode()).value()
         committed_ns = timestamp_ns(committed)
         ended = self.clock()
-        budget.remaining(.25)
+        # No 250 ms budget check here: the caller's install cut-off classifies
+        # a slow reply as late, and the elapsed time travels with the value.
         return dict(body=value, committed_at_ns=committed_ns, read_at_ns=read_ns,
                     read_elapsed_ns=round((ended-started)*1_000_000_000), reply_at=ended)
 

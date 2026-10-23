@@ -5,6 +5,7 @@ import binascii
 import datetime
 import hmac
 import json
+import logging
 import os
 import re
 import sys
@@ -26,12 +27,35 @@ from trusted_router.trust_ownership import (
     TRUST_REPLICATED_COLUMN_COUNT,
 )
 
-# Target names the synthetic monitor already assigns itself. A configured
-# entry reusing one would quietly merge two different measurements into one
-# status component, so it is rejected instead.
+logger = logging.getLogger(__name__)
+
 # Longest a shadow canary expiry may lie ahead of process start-up: one UTC
 # evidence day plus a day of margin. A typo cannot leave the shadow on for weeks.
 SHADOW_CANARY_MAX_SECONDS = 48 * 3600
+_LOGGED_SHADOW_EXPIRY_ERRORS: set[str] = set()
+
+
+def parse_shadow_expiry(raw: str, now: float | None = None) -> float:
+    """Strictly parse a shadow canary expiry; raises ValueError when invalid.
+
+    Deploy tests and the activation tool use this directly. Settings instead
+    treat an invalid value as already expired, so a shadow-only typo can never
+    fail a production revision's configuration.
+    """
+    try:
+        instant = datetime.datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("async settle shadow expiry must be an ISO-8601 instant") from error
+    if instant.tzinfo is None:
+        raise ValueError("async settle shadow expiry needs an explicit UTC offset")
+    expiry = instant.timestamp()
+    if expiry - (time.time() if now is None else now) > SHADOW_CANARY_MAX_SECONDS:
+        raise ValueError("async settle shadow expiry exceeds the canary maximum")
+    return expiry
+
+# Target names the synthetic monitor already assigns itself. A configured
+# entry reusing one would quietly merge two different measurements into one
+# status component, so it is rejected instead.
 _RESERVED_SYNTHETIC_TARGET_NAMES = frozenset({"canonical", "control-plane"})
 _GATEWAY_REGION_TARGET_NAME_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
 _GATEWAY_REGION_CONNECT_HOST_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-.")
@@ -977,6 +1001,8 @@ class Settings(BaseSettings):
     # UTC offset. Checked on every request and owner tick, so a canary turns
     # itself off without a deploy. Deployed environments treat an absent value
     # as already expired; at most SHADOW_CANARY_MAX_SECONDS ahead of start-up.
+    # An invalid value counts as expired (logged once). It gates shadow v2 only:
+    # v1 still installs when workspaces are set and the raw policy is empty.
     async_settle_shadow_expires_at: str = ""
     _async_settle_shadow_expiry: float | None = PrivateAttr(default=None)
     async_settle_pilot_workspaces: str = ""
@@ -1426,15 +1452,14 @@ class Settings(BaseSettings):
             self._async_settle_shadow_expiry = None
             return self
         try:
-            instant = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            self._async_settle_shadow_expiry = parse_shadow_expiry(raw)
         except ValueError as error:
-            raise ValueError("async settle shadow expiry must be an ISO-8601 instant") from error
-        if instant.tzinfo is None:
-            raise ValueError("async settle shadow expiry needs an explicit UTC offset")
-        expiry = instant.timestamp()
-        if expiry - time.time() > SHADOW_CANARY_MAX_SECONDS:
-            raise ValueError("async settle shadow expiry exceeds the canary maximum")
-        self._async_settle_shadow_expiry = expiry
+            # Fail closed, never fail the revision: an invalid expiry is expired.
+            self._async_settle_shadow_expiry = float("-inf")
+            reason = str(error)
+            if reason not in _LOGGED_SHADOW_EXPIRY_ERRORS:
+                _LOGGED_SHADOW_EXPIRY_ERRORS.add(reason)
+                logger.warning("async settle shadow expiry invalid; shadow pins are off reason=%s", reason)
         return self
 
     def async_settle_shadow_live(self, now: float | None = None) -> bool:
