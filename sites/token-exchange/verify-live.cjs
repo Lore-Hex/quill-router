@@ -148,7 +148,8 @@ const site = http.createServer((req,res) => {
     await retained.goto('http://nytokenexchange.com:8091/');
     await retained.waitForFunction(()=>document.querySelector('.service-history'));
     assert.equal(await retained.locator('.build-digest').count(),1);
-    assert.match(await retained.locator('[data-live-price-unit]').textContent(),/Last checked/);
+    assert.equal(await retained.locator('[data-live-price-unit]').textContent(),
+      `Updated ${retainedBase.toISOString().replace('T',' ').replace(/\.\d+Z$/,' UTC')}`);
     await retained.clock.runFor(61000);
     await quiet(retained);
     assert.equal(await retained.locator('.build-digest').count(),0);
