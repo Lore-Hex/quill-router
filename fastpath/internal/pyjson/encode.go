@@ -4,6 +4,11 @@
 //
 //   - FormatFloat is float.__repr__, the digits json.dumps writes for a
 //     float (money.money_pair's float twin of a microdollar amount).
+//   - FormatFloatPydantic and DumpsPydantic are TypeAdapter.dump_json
+//     (pydantic-core's serializer under pydantic's default config), which
+//     FastAPI writes a route's return value with when the route has a
+//     response model and the default response class: the authorize 200
+//     body. Error bodies are Starlette's JSONResponse, Dumps's.
 //   - Dumps is json.dumps with compact separators, ensure_ascii either way
 //     and sort_keys either way: Canonical is storage_codec.json_body's and
 //     the authorize fingerprint's form (sorted, ASCII), and the insertion
@@ -16,6 +21,11 @@
 //     non-finite number, deep nesting) is refused with its reason, for the
 //     caller to pass to Python rather than guess.
 //   - ISOFormat is datetime.isoformat() with "Z".
+//
+// The edge (G6) composes an authorize 200 body with DumpsPydantic and
+// nothing else. Any error from it means the edge cannot write that body as
+// Python would: it passes the request to Python, never answers 500 itself,
+// and never writes a null of its own in place of a value.
 //
 // fastpath/testdata/pyjson_vectors_v1.json holds the outputs of CPython
 // itself, which scripts/fastpath/pyjson_vectors.py writes and
@@ -52,6 +62,10 @@ type Object []Member
 type Options struct {
 	SortKeys    bool
 	EnsureASCII bool
+
+	// pydantic is DumpsPydantic's: floats by FormatFloatPydantic, a NaN or
+	// an infinity as null.
+	pydantic bool
 }
 
 // maxIntDigits is CPython's int_max_str_digits default: json.loads refuses
@@ -69,6 +83,49 @@ func Dumps(v any, o Options) ([]byte, error) {
 	return appendValue(nil, v, o)
 }
 
+// DumpsPydantic writes v as TypeAdapter.dump_json writes the Python value
+// Dumps would write v from, which is FastAPI's body for a route
+// with a response model (TypeAdapter(dict[str, Any]).dump_json for the
+// authorize route): compact, members in insertion order, non-ASCII as
+// itself, strings escaped as json.dumps escapes them with ensure_ascii
+// off, integers exactly, floats by FormatFloatPydantic, and a NaN or an
+// infinity, which Dumps refuses, as null. A value more than
+// pydanticMaxLevels levels down is refused (ErrTooDeep), as dump_json
+// refuses it and FastAPI answers 500. A caller passes any error to Python.
+func DumpsPydantic(v any) ([]byte, error) {
+	if levels(v) > pydanticMaxLevels {
+		return nil, fmt.Errorf("%w: pydantic-core writes %d levels at most", ErrTooDeep, pydanticMaxLevels)
+	}
+	return appendValue(nil, v, Options{pydantic: true})
+}
+
+// pydanticMaxLevels is how deep pydantic-core's recursion guard lets
+// dump_json go: a value, scalar or container, at most this many levels
+// down, v the first. One deeper raises "Circular reference detected
+// (depth exceeded)".
+const pydanticMaxLevels = 256
+
+// levels is how many levels v spans: 1 for a scalar or an empty
+// container, else 1 more than its deepest member.
+func levels(v any) int {
+	deepest := 0
+	switch v := v.(type) {
+	case []any:
+		for _, item := range v {
+			deepest = max(deepest, levels(item))
+		}
+	case []string:
+		if len(v) > 0 {
+			deepest = 1
+		}
+	case Object:
+		for _, m := range v {
+			deepest = max(deepest, levels(m.Value))
+		}
+	}
+	return 1 + deepest
+}
+
 // Canonical is Dumps sorted and ASCII: json_body(value), and the
 // authorize fingerprint's json.dumps(sort_keys=True, separators=(",", ":")).
 func Canonical(v any) ([]byte, error) {
@@ -84,7 +141,7 @@ func appendValue(dst []byte, v any, o Options) ([]byte, error) {
 	case string:
 		return appendString(dst, v, o.EnsureASCII)
 	case json.Number:
-		return appendNumber(dst, string(v))
+		return appendNumber(dst, string(v), o)
 	case int:
 		return strconv.AppendInt(dst, int64(v), 10), nil
 	case int64:
@@ -95,6 +152,9 @@ func appendValue(dst []byte, v any, o Options) ([]byte, error) {
 		}
 		return v.Append(dst, 10), nil
 	case float64:
+		if o.pydantic {
+			return append(dst, FormatFloatPydantic(v)...), nil
+		}
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, fmt.Errorf("pyjson: %v is not JSON compliant", v)
 		}
@@ -162,8 +222,8 @@ func appendObject(dst []byte, members Object, o Options) ([]byte, error) {
 
 // appendNumber writes a JSON number literal as Python writes what
 // json.loads reads from it: an integer as int, exactly; any other as a
-// float, by repr.
-func appendNumber(dst []byte, literal string) ([]byte, error) {
+// float, by repr (or as pydantic-core writes that float).
+func appendNumber(dst []byte, literal string, o Options) ([]byte, error) {
 	integer, ok := numberLiteral(literal)
 	if !ok {
 		return nil, fmt.Errorf("pyjson: %q is not a JSON number", literal)
@@ -176,11 +236,16 @@ func appendNumber(dst []byte, literal string) ([]byte, error) {
 		return n.Append(dst, 10), nil
 	}
 	f, err := strconv.ParseFloat(literal, 64)
-	if math.IsInf(f, 0) {
-		return nil, fmt.Errorf("pyjson: %s is not JSON compliant once read as a float", literal)
-	}
 	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return nil, err
+	}
+	if o.pydantic {
+		// json.loads reads a literal too large for a double as an
+		// infinity, which dump_json writes as null.
+		return append(dst, FormatFloatPydantic(f)...), nil
+	}
+	if math.IsInf(f, 0) {
+		return nil, fmt.Errorf("pyjson: %s is not JSON compliant once read as a float", literal)
 	}
 	return append(dst, FormatFloat(f)...), nil
 }

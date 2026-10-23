@@ -41,6 +41,33 @@ type vectors struct {
 		UnixMicros int64  `json:"unix_micros"`
 		ISOFormat  string `json:"isoformat"`
 	} `json:"isoformat"`
+	// The pydantic_* sections are the authorize route's 200 bodies, which
+	// FastAPI writes with TypeAdapter.dump_json.
+	PydanticFloats []struct {
+		Bits string `json:"bits"`
+		JSON string `json:"json"`
+	} `json:"pydantic_floats"`
+	PydanticMoney []struct {
+		Microdollars int64  `json:"microdollars"`
+		JSON         string `json:"json"`
+	} `json:"pydantic_money"`
+	PydanticStrings []struct {
+		Codepoints []rune `json:"codepoints"`
+		JSON       string `json:"json"`
+	} `json:"pydantic_strings"`
+	PydanticDocuments []struct {
+		Text string  `json:"text"`
+		JSON *string `json:"json"`
+	} `json:"pydantic_documents"`
+}
+
+func float64FromBits(t *testing.T, bits string) float64 {
+	t.Helper()
+	raw, err := hex.DecodeString(bits)
+	if err != nil || len(raw) != 8 {
+		t.Fatalf("bits %q", bits)
+	}
+	return math.Float64frombits(binary.BigEndian.Uint64(raw))
 }
 
 // golden reads fastpath/testdata/pyjson_vectors_v1.json, which CPython
@@ -72,11 +99,7 @@ func TestFormatFloatIsFloatRepr(t *testing.T) {
 		t.Fatalf("the vectors hold %d floats", len(v.Floats))
 	}
 	for _, c := range v.Floats {
-		raw, err := hex.DecodeString(c.Bits)
-		if err != nil || len(raw) != 8 {
-			t.Fatalf("bits %q", c.Bits)
-		}
-		f := math.Float64frombits(binary.BigEndian.Uint64(raw))
+		f := float64FromBits(t, c.Bits)
 		if got := FormatFloat(f); got != c.Repr {
 			t.Errorf("FormatFloat(%s) = %q, repr %q", c.Bits, got, c.Repr)
 		}
@@ -189,5 +212,98 @@ func TestISOFormatIsDatetimeIsoformat(t *testing.T) {
 		if got := ISOFormat(time.UnixMicro(c.UnixMicros)); got != c.ISOFormat {
 			t.Errorf("ISOFormat(%d µs) = %q, Python %q", c.UnixMicros, got, c.ISOFormat)
 		}
+	}
+}
+
+// TestFormatFloatPydanticIsPydanticCore holds FormatFloatPydantic, and
+// DumpsPydantic of a float, to what the authorize route writes for every
+// double in the vectors (the same doubles as TestFormatFloatIsFloatRepr's),
+// a NaN and the infinities as null.
+func TestFormatFloatPydanticIsPydanticCore(t *testing.T) {
+	v := golden(t)
+	if len(v.PydanticFloats) < 2000 {
+		t.Fatalf("the vectors hold %d floats", len(v.PydanticFloats))
+	}
+	differs := 0
+	for _, c := range v.PydanticFloats {
+		f := float64FromBits(t, c.Bits)
+		if got := FormatFloatPydantic(f); got != c.JSON {
+			t.Errorf("FormatFloatPydantic(%s) = %q, pydantic-core %q", c.Bits, got, c.JSON)
+		}
+		if got, err := DumpsPydantic(f); err != nil || string(got) != c.JSON {
+			t.Errorf("DumpsPydantic(%s) = %q, %v; pydantic-core %q", c.Bits, got, err, c.JSON)
+		}
+		if FormatFloat(f) != c.JSON {
+			differs++
+		}
+	}
+	// The two differ only between 1e-10 and 1e-04 (repr pads the exponent
+	// to two digits and writes 1e-05 where pydantic-core writes 0.00001);
+	// the vectors must hold enough of those to tell them apart.
+	if differs < 40 {
+		t.Fatalf("repr and pydantic-core differ on only %d of %d floats", differs, len(v.PydanticFloats))
+	}
+}
+
+// TestPydanticMoneyIsMoneyPair: money_pair("estimated_cost", m) as the
+// authorize body writes it, the float float64(m) / 1e6.
+func TestPydanticMoneyIsMoneyPair(t *testing.T) {
+	v := golden(t)
+	if len(v.PydanticMoney) < 500 {
+		t.Fatalf("the vectors hold %d amounts", len(v.PydanticMoney))
+	}
+	for _, c := range v.PydanticMoney {
+		got, err := DumpsPydantic(Object{
+			{"estimated_cost", float64(c.Microdollars) / 1_000_000},
+			{"estimated_cost_microdollars", c.Microdollars},
+		})
+		if err != nil || string(got) != c.JSON {
+			t.Errorf("%d microdollars: %q, %v; pydantic-core %q", c.Microdollars, got, err, c.JSON)
+		}
+	}
+}
+
+func TestPydanticStringsArePydanticCore(t *testing.T) {
+	v := golden(t)
+	if len(v.PydanticStrings) < 400 {
+		t.Fatalf("the vectors hold %d strings", len(v.PydanticStrings))
+	}
+	for _, c := range v.PydanticStrings {
+		got, err := DumpsPydantic(string(c.Codepoints))
+		if err != nil || string(got) != c.JSON {
+			t.Errorf("DumpsPydantic(%U) = %q, %v; pydantic-core %q", c.Codepoints, got, err, c.JSON)
+		}
+	}
+}
+
+// TestPydanticDocumentsAreTheAuthorizeBody decodes each document and writes
+// {"data": it} as the authorize route does, or refuses it where the route
+// cannot write it (nested past pydantic-core's bound).
+func TestPydanticDocumentsAreTheAuthorizeBody(t *testing.T) {
+	v := golden(t)
+	if len(v.PydanticDocuments) < 300 {
+		t.Fatalf("the vectors hold %d documents", len(v.PydanticDocuments))
+	}
+	refused := 0
+	for _, c := range v.PydanticDocuments {
+		tree, err := Decode([]byte(c.Text))
+		if err != nil {
+			t.Errorf("Decode(%.60q): %v", c.Text, err)
+			continue
+		}
+		got, err := DumpsPydantic(Object{{"data", tree}})
+		if c.JSON == nil {
+			refused++
+			if !errors.Is(err, ErrTooDeep) {
+				t.Errorf("DumpsPydantic(%.60q) = %.80q, %v; the route answers 500", c.Text, got, err)
+			}
+			continue
+		}
+		if err != nil || string(got) != *c.JSON {
+			t.Errorf("DumpsPydantic(%.60q) = %.80q, %v; the route %.80q", c.Text, got, err, *c.JSON)
+		}
+	}
+	if refused < 10 || refused == len(v.PydanticDocuments) {
+		t.Fatalf("%d of %d documents refused", refused, len(v.PydanticDocuments))
 	}
 }

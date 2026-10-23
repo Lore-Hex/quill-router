@@ -2,6 +2,7 @@ package pyjson
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"math/big"
 	"strings"
@@ -37,6 +38,66 @@ func TestFormatFloatNamedCases(t *testing.T) {
 		if got := FormatFloat(c.f); got != c.want {
 			t.Errorf("FormatFloat(%v) = %q, want %q", c.f, got, c.want)
 		}
+	}
+}
+
+// The cases where pydantic-core's float differs from repr, and where it
+// does not, written out; the vectors hold them too.
+func TestFormatFloatPydanticNamedCases(t *testing.T) {
+	for _, c := range []struct {
+		f    float64
+		want string
+	}{
+		{1e-05, "0.00001"},
+		{1.5e-05, "0.000015"},
+		{9.999999999999999e-06, "9.999999999999999e-6"},
+		{1e-06, "1e-6"},
+		{-2.5e-07, "-2.5e-7"},
+		{1e-10, "1e-10"},
+		{5e-324, "5e-324"},
+		{0.0001, "0.0001"},
+		{1e16, "1e+16"},
+		{9999999999999998.0, "9999999999999998.0"},
+		{1e100, "1e+100"},
+		{1.7976931348623157e308, "1.7976931348623157e+308"},
+		{math.Copysign(0, -1), "-0.0"},
+		{0, "0.0"},
+		{1, "1.0"},
+		{1e15, "1000000000000000.0"},
+		{math.NaN(), "null"},
+		{math.Inf(1), "null"},
+		{math.Inf(-1), "null"},
+	} {
+		if got := FormatFloatPydantic(c.f); got != c.want {
+			t.Errorf("FormatFloatPydantic(%v) = %q, want %q", c.f, got, c.want)
+		}
+	}
+}
+
+// DumpsPydantic writes what Dumps refuses (a non-finite float, a literal
+// past the double range) as null, and refuses past pydantic-core's depth.
+func TestDumpsPydanticNonFiniteAndDepth(t *testing.T) {
+	got, err := DumpsPydantic(Object{{"a", math.NaN()}, {"b", json.Number("1e400")}, {"c", json.Number("-1e400")}, {"d", json.Number("1e-5")}})
+	if want := `{"a":null,"b":null,"c":null,"d":0.00001}`; err != nil || string(got) != want {
+		t.Fatalf("DumpsPydantic = %s, %v; want %s", got, err, want)
+	}
+	nest := func(n int, leaf any) any {
+		v := leaf
+		for range n {
+			v = []any{v}
+		}
+		return v
+	}
+	if _, err := DumpsPydantic(nest(pydanticMaxLevels-1, 1)); err != nil {
+		t.Fatalf("%d levels: %v", pydanticMaxLevels, err)
+	}
+	for _, leaf := range []any{1, []any{}, []string{"s"}, Object{}} {
+		if _, err := DumpsPydantic(nest(pydanticMaxLevels, leaf)); !errors.Is(err, ErrTooDeep) {
+			t.Fatalf("%d levels to %#v: %v", pydanticMaxLevels+1, leaf, err)
+		}
+	}
+	if _, err := DumpsPydantic(nest(pydanticMaxLevels-1, []string{})); err != nil {
+		t.Fatalf("an empty []string at level %d: %v", pydanticMaxLevels, err)
 	}
 }
 
