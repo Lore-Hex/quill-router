@@ -35,6 +35,18 @@ fastpathctl -database projects/P/instances/I/databases/D disable-all
 It turns every enabled workspace off and revokes every open lease, in one
 transaction. The rest of this procedure then holds for each of them.
 
+Deciding at the edge is a separate table, `tr_fastpath_edge_decide`, keyed
+by workspace, cloud and region. It only chooses whether a workspace's edge
+nodes answer its authorizations themselves; nothing reads it yet except
+`fastpathctl`, and with no row a workspace decides nowhere. To stop the edge
+deciding without touching the switch or the leases, run
+`fastpathctl -database D decide off WORKSPACE [-cloud gcp] [-region us-central1]`
+for one workspace, or `fastpathctl -database D decide-off-all` for every
+row. `decide status WORKSPACE` exits 0 while the workspace does not decide
+in that cloud and region, and 3 while it does. `disable` and `disable-all`
+leave the decide rows as they are, so a workspace turned back on decides
+wherever its rows still say on. Turn decide off as well if it should not.
+
 ## 2. Wait for its leases to end
 
 A revoked lease expires within the renewal window, 30 seconds, of its last

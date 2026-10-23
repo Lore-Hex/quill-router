@@ -40,13 +40,25 @@ class NyteV2Tests(unittest.TestCase):
         self.assertEqual(page.count('href="https://trustedrouter.com/console/api-keys?'), 2)
         self.assertNotIn('/console/keys', page)
 
-    def test_supplier_price_panel_is_illustrative(self):
+    def test_supplier_price_panel_uses_published_snapshot(self):
         panel = index_panel()
-        self.assertIn('Illustrative price comparison', panel)
-        self.assertIn('Example USD per billion tokens', panel)
-        self.assertNotIn('<time', panel)
-        self.assertNotIn('7d', panel)
-        self.assertNotIn('%', panel)
+        import runpy
+        from datetime import date
+        from pathlib import Path
+
+        data = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'src/trusted_router/content/token_index.py'))
+        self.assertIn('NYTE Token Index', panel)
+        self.assertIn('USD per billion tokens · As of ', panel)
+        as_of = date.fromisoformat(data["AS_OF_ISO"]).strftime("%m/%d/%y")
+        self.assertIn(f'<time datetime="{data["AS_OF_ISO"]}">{as_of}</time>', panel)
+        for quote in data['QUOTES'].values():
+            self.assertIn(f'${quote["value"]:,}', panel)
+        self.assertNotIn('Illustrative', panel)
+        self.assertEqual(panel.count('class="idx-change '), 5)
+        for quote in data['QUOTES'].values():
+            self.assertIn(f'{quote["change_7d"]:+.1f}% 7d', panel)
+        self.assertIn('idx-change up', panel)
+        self.assertIn('idx-change down', panel)
         page = render_nyte('sup')
         self.assertIn('href="/index">Explore the index</a>', page)
         self.assertNotIn('Index figures are dated published prices', page)

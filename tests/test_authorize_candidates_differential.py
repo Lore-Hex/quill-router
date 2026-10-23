@@ -8,8 +8,10 @@ matrix runs through both, each on a freshly seeded store with the same
 clock, the same ids and a fresh process-local routing state. The responses,
 the refusals (status, body and headers), the stored authorization and the
 log lines must be identical, except for the explicitly checked reservation
-guidance and diagnostic added in #1926. The frozen leg's chat candidate hook
-applies an independent specification of the subsequently approved context
+guidance and diagnostic added in #1926, and the idempotency-key-source
+observation line added in E4 R1 (exactly once, with its exact text, on every
+request that resolved its idempotency key; never otherwise). The frozen leg's
+chat candidate hook applies an independent specification of the subsequently approved context
 limit. Its provider hook independently requires an explicit upgraded origin
 for the new native adapters, without changing the frozen file. Reservation
 quotes are compared too.
@@ -240,8 +242,18 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
         return reserve(*args, **kwargs)
 
     caplog.clear()
+    reached_idempotency_key: list[bool] = []
     with monkeypatch.context() as scope:
         scope.setattr(type(store), method, observe_reservation)
+        if module is gateway:
+            presented_key = module._gateway_idempotency_key
+
+            def observe_presented_key(*args: Any, **kwargs: Any) -> Any:
+                key_value = presented_key(*args, **kwargs)
+                reached_idempotency_key.append(True)
+                return key_value
+
+            scope.setattr(module, "_gateway_idempotency_key", observe_presented_key)
         if module is FROZEN_GATEWAY:
             def reference_search_model(model: str) -> bool:
                 return any(re.match(
@@ -291,6 +303,16 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
         (record.levelname, record.getMessage())
         for record in caplog.records if record.name in GATEWAY_LOGGERS
     ]
+    if module is gateway:
+        # E4 R1's observation: one line per authorize that resolved its
+        # idempotency key, after which nothing about the request differs.
+        # These requests carry no idempotency_key_source and no boot header.
+        assert body.idempotency_key_source is None
+        observation = ("INFO", "gateway.idempotency_key_source source=legacy declared=absent image_digest=-")
+        assert outcome["logs"].count(observation) == len(reached_idempotency_key) <= 1, outcome["logs"]
+        if reached_idempotency_key:
+            outcome["logs"].remove(observation)
+        assert not any("idempotency_key_source" in message for _level, message in outcome["logs"])
     error = outcome.get("detail", {}).get("error", {})
     if module is gateway and error.get("type") == "insufficient_credits":
         assert outcome["status"] == 402 and len(quotes) == 1

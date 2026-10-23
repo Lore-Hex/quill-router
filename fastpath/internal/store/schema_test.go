@@ -34,19 +34,21 @@ func TestSchemaIsAsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"tr_credit_balance":     " |  | ",
-		"tr_reservation":        " |  | ",
-		"tr_entities":           " |  | ",
-		"tr_lease":              " |  | OLDER_THAN(retire_at, INTERVAL 7 DAY)",
-		"tr_lease_donor":        "tr_lease | CASCADE | ",
-		"tr_lease_hold":         "tr_lease | CASCADE | ",
-		"tr_lease_winners":      "tr_lease | CASCADE | ",
-		"tr_lease_drain":        "tr_lease | CASCADE | ",
-		"tr_lease_handoff":      "tr_lease | CASCADE | ",
-		"tr_lease_record":       " |  | ",
-		"tr_lease_staged":       " |  | ",
-		"tr_fastpath_member":    " |  | ",
-		"tr_fastpath_workspace": " |  | ",
+		"tr_credit_balance":        " |  | ",
+		"tr_reservation":           " |  | ",
+		"tr_gateway_authorization": " |  | ",
+		"tr_entities":              " |  | ",
+		"tr_lease":                 " |  | OLDER_THAN(retire_at, INTERVAL 7 DAY)",
+		"tr_lease_donor":           "tr_lease | CASCADE | ",
+		"tr_lease_hold":            "tr_lease | CASCADE | ",
+		"tr_lease_winners":         "tr_lease | CASCADE | ",
+		"tr_lease_drain":           "tr_lease | CASCADE | ",
+		"tr_lease_handoff":         "tr_lease | CASCADE | ",
+		"tr_lease_record":          " |  | ",
+		"tr_lease_staged":          " |  | ",
+		"tr_fastpath_member":       " |  | ",
+		"tr_fastpath_workspace":    " |  | ",
+		"tr_fastpath_edge_decide":  " |  | ",
 	}
 	if len(tables) != len(want) {
 		t.Errorf("the database has tables %v", tables)
@@ -58,7 +60,8 @@ func TestSchemaIsAsWritten(t *testing.T) {
 	}
 	var indexes []string
 	iter = shared.Single().Query(ctx, spanner.Statement{SQL: `
-		SELECT CONCAT(INDEX_NAME, ' ON ', TABLE_NAME, ' IN ', COALESCE(PARENT_TABLE_NAME, ''))
+		SELECT CONCAT(INDEX_NAME, ' ON ', TABLE_NAME, ' IN ', COALESCE(PARENT_TABLE_NAME, ''),
+		              IF(IS_UNIQUE, ' UNIQUE', ''), IF(IS_NULL_FILTERED, ' NULL_FILTERED', ''))
 		  FROM INFORMATION_SCHEMA.INDEXES WHERE TABLE_SCHEMA = '' AND INDEX_TYPE = 'INDEX'`})
 	err = iter.Do(func(row *spanner.Row) error {
 		var index string
@@ -72,10 +75,11 @@ func TestSchemaIsAsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(indexes)
-	wantIndexes := "tr_lease_by_id ON tr_lease IN , tr_lease_by_owner ON tr_lease IN , tr_lease_by_state ON tr_lease IN , " +
+	wantIndexes := "tr_lease_by_id ON tr_lease IN  UNIQUE, tr_lease_by_owner ON tr_lease IN , tr_lease_by_state ON tr_lease IN , " +
 		"tr_lease_drain_by_commit ON tr_lease_drain IN tr_lease, " +
 		"tr_lease_staged_by_lease ON tr_lease_staged IN , tr_lease_winners_by_work ON tr_lease_winners IN , " +
-		"tr_reservation_by_expiry ON tr_reservation IN "
+		"tr_reservation_by_authorization ON tr_reservation IN  NULL_FILTERED, tr_reservation_by_expiry ON tr_reservation IN , " +
+		"tr_reservation_by_idemp ON tr_reservation IN  UNIQUE NULL_FILTERED"
 	if got := strings.Join(indexes, ", "); got != wantIndexes {
 		t.Errorf("the indexes are %s", got)
 	}
@@ -179,6 +183,32 @@ func TestChecksRefuseRowsTheDesignForbids(t *testing.T) {
 	for _, c := range others {
 		if err := insert(c.table, c.row); err == nil || !strings.Contains(err.Error(), c.check) {
 			t.Errorf("%s: want a refusal by %s, got %v", c.name, c.check, err)
+		}
+	}
+}
+
+// TestAnIdempotencyScopeHoldsOneReservation: production's unique index on
+// a reservation's idempotency scope, as fastpath.sql copies it, refuses a
+// second reservation of a scope, naming itself, and takes any number with
+// none.
+func TestAnIdempotencyScopeHoldsOneReservation(t *testing.T) {
+	spikeStore(t)
+	ctx := context.Background()
+	scope := storetest.UniqueID("ws") + "#key#digest"
+	reservation := func(scope any) error {
+		_, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_reservation", map[string]any{
+			"reservation_id": storetest.UniqueID("r"), "idempotency_scope": scope})})
+		return err
+	}
+	if err := reservation(scope); err != nil {
+		t.Fatalf("the first reservation of the scope: %v", err)
+	}
+	if err := reservation(scope); err == nil || !strings.Contains(err.Error(), "tr_reservation_by_idemp") {
+		t.Fatalf("a second reservation of the scope: want a refusal by tr_reservation_by_idemp, got %v", err)
+	}
+	for range 2 {
+		if err := reservation(nil); err != nil {
+			t.Fatalf("a reservation of no scope: %v", err)
 		}
 	}
 }
