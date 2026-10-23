@@ -51,3 +51,30 @@ review. Neither issue should be called resolved by this route change.
 
 A preceding stream had a usage-cap rejection and requires separate diagnosis.
 Do not increase a customer's caps as a substitute for identifying its cause.
+
+## Resolution
+
+The slowdown's cause was the overlap named above. When the enclave's
+two-second wait for a stream's settle ran out, its settlement retry queue
+sent the first retry at once, while the original settle was still running
+at the router. The two settles then contended for the same workspace's
+rows: lock waits, one settle declined with `claim_zero`, the durable
+two-commit fallback, and a 20 s 503. quill-cloud-proxy #571 (eb7f0dcb)
+holds a retry caused by that timeout for 23 s, past the router's settle
+budget, and releases held retries at shutdown.
+
+Checked after its rollout, which replaced enclaves region by region from
+15:45Z (us-central1) to 17:23Z (us-west1), ending at 17:48Z; every enclave
+now attests only that release's digest: the new binary's three timeouts were each held 22,999 ms and
+retried once, as already-settled replays, with no `claim_zero` and no
+fallback at the router. Since the rollout began, settle and authorize
+have had no 5xx, and their latency is unchanged. The old binary had 13
+immediate retries that day, 2 of them duplicates at the router (03:22Z,
+and 17:03Z on a us-west1 enclave not yet replaced). The release-at-shutdown path first runs at the next enclave
+rollout.
+
+With the route's explicit timeout and the retry held, the fast path's
+share returns to 1. Its earlier hour at 1 (04:49Z to 05:34Z) is the
+parity evidence: 46 authorize calls through the edge, all 200, and 46
+verdict lines in Python, 43 agree, 3 skipped (no edge verdict), 0 differ. The usage-cap rejection noted above is still a
+separate open item; it did not cause the slowdown.
