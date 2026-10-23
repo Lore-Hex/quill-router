@@ -85,7 +85,9 @@
     }
     if (priceUnit) {
       priceUnit.hidden = !prices.childElementCount;
-      priceUnit.textContent = `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
+      priceUnit.textContent = prices.dataset.priceLayout === 'table'
+        ? lastCheck(payload.generated_at).replace('Last checked', 'Updated')
+        : `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
     }
     if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();

@@ -252,6 +252,9 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
 .idx-row .d b{font-weight:550;font-size:18px}
 .idx-row .d small{display:block;font-size:15px;line-height:1.6;color:var(--t3);margin-top:6px}
 .idx-row .p{font:550 18px var(--mono);color:var(--t1);text-align:right}
+.idx .idx-change{display:block;margin-top:8px;font:400 13px/1.4 var(--mono);letter-spacing:0;color:var(--t3);white-space:nowrap}
+.idx-change.up{color:var(--up)}
+.idx-change.down{color:#F29B9B}
 
 /* Supplier onboarding status example. */
 .steps-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:72px;align-items:center}
