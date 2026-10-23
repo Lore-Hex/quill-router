@@ -41,18 +41,18 @@ locals {
   fastpath_edge_upstream     = "https://trusted-router-vsjf6qu4la-uc.a.run.app"
   fastpath_edge_token_secret = "projects/${local.gcp_project_id}/secrets/trustedrouter-internal-gateway-token/versions/1"
   # The edge's routing snapshot and its shadow comparator (E2, docs/design/
-  # routing-snapshot-v1.md): the nodes named here poll Python's published
-  # snapshot on the edge's own upstream (the startup script refuses any
-  # other origin), verify its manifest with version 1 of
+  # routing-snapshot-v1.md): every node polls Python's published snapshot
+  # on the edge's own upstream (the startup script refuses any other
+  # origin), verifies its manifest with version 1 of
   # trustedrouter-routing-snapshot-signing-key's public half, under its kid
-  # and plane, and, shadow on, compare Go's verdict with Python's on each
+  # and plane, and, shadow on, compares Go's verdict with Python's on each
   # authorize the edge passes on, logging counts alone: Python still
   # decides. A node reads these when its startup script runs, and only a
-  # script from #1969 on reads them, so they reach the fleet on nodes added
-  # under new names (docs/runbooks/fastpath-deploy.md, "Turning the edge
-  # on"). Until publishing is on (docs/runbooks/routing-snapshot-key.md)
-  # the poll answers 404 and the edge keeps polling, admission unaffected.
-  fastpath_edge_snapshot_nodes = ["tr-fastpath-5", "tr-fastpath-6"]
+  # script from #1969 on reads them; every node runs one, 5 and 6 having
+  # been added under new names for it (docs/runbooks/fastpath-deploy.md,
+  # "Turning the edge on"). Until publishing is on
+  # (docs/runbooks/routing-snapshot-key.md) the poll answers 404 and the
+  # edge keeps polling, admission unaffected.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -285,16 +285,13 @@ resource "google_storage_bucket_iam_member" "fastpath_releases_reader" {
 # names the nodes' service account.
 resource "google_compute_instance" "fastpath_node" {
   # 3 and 4 took the places of 1 and 2 on 2026-10-20, with the edge on
-  # (docs/runbooks/fastpath-deploy.md, "Turning the edge on"); 1 and 2 were
-  # drained, left the edge backend, then were removed. 5 and 6 take the
-  # places of 3 and 4 the same way, with the routing snapshot and the
-  # shadow on (local.fastpath_edge_snapshot_nodes): 3 and 4 run a script
-  # from before #1969, which reads neither. Each of 3 and 4 is then marked
-  # leaving and drained, the other serving, and they leave the edge
-  # backend (local.fastpath_edge_retiring) one apply before their removal.
+  # (docs/runbooks/fastpath-deploy.md, "Turning the edge on"); 5 and 6 took
+  # the places of 3 and 4 the same way, with the routing snapshot and the
+  # shadow on (local.fastpath_edge_snapshot), which the script 3 and 4 ran,
+  # from before #1969, read neither of. Each replaced pair was marked
+  # leaving and drained, left the edge backend (local.fastpath_edge_retiring)
+  # one apply before its removal, then was removed.
   for_each = {
-    "tr-fastpath-3" = "us-central1-a"
-    "tr-fastpath-4" = "us-central1-b"
     "tr-fastpath-5" = "us-central1-a"
     "tr-fastpath-6" = "us-central1-b"
   }
@@ -327,7 +324,7 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-release           = local.fastpath_release
     fastpath-edge-upstream     = local.fastpath_edge_upstream
     fastpath-edge-token-secret = local.fastpath_edge_token_secret
-  }, contains(local.fastpath_edge_snapshot_nodes, each.key) ? local.fastpath_edge_snapshot : tomap({}))
+  }, local.fastpath_edge_snapshot)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
     release_bucket = google_storage_bucket.fastpath_releases.name
@@ -351,7 +348,8 @@ resource "google_compute_instance" "fastpath_node" {
     # reaches the fleet through nodes added under new names and the old
     # ones drained and removed, not through a same-name replacement that
     # takes both down at once. A node keeps the script it was created
-    # with; the pin and the edge attributes are metadata, applied in place.
+    # with; the pin, the edge's attributes and the snapshot's are metadata,
+    # applied in place, read when the script next runs.
     # The cost: a script change is not drift here, so a node created
     # before it runs the old script while the plan is clean and its
     # binary matches the pin; which script a node runs is read from the
