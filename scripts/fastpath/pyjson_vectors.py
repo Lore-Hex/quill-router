@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import os
 import random
 import struct
 import sys
@@ -26,6 +27,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+# Nothing here may depend on the shell that runs it (CI shards set TR_*
+# lifecycle overrides): the settings the imports read start from defaults.
+for _name in [name for name in os.environ if name.startswith("TR_")]:
+    del os.environ[_name]
 
 from starlette.responses import JSONResponse  # noqa: E402
 
@@ -43,6 +48,17 @@ def _bits(value: float) -> str:
     return struct.pack(">d", value).hex()
 
 
+def _pow10(exponent: int) -> float:
+    """10**exponent, correctly rounded on every platform.
+
+    float.__pow__ is the C library's pow, which is not correctly rounded
+    everywhere (glibc 2.36 gives 10.0**23 = 1.0000000000000001e+23, macOS
+    1e+23), so the vectors would differ by machine. Python's decimal reader
+    is exact everywhere.
+    """
+    return float(f"1e{exponent}")
+
+
 def _around(value: float) -> list[float]:
     return [math.nextafter(value, -math.inf), value, math.nextafter(value, math.inf)]
 
@@ -55,7 +71,7 @@ def edge_floats() -> list[float]:
         -1e-05, -0.0001,
         1e16, 9999999999999998.0, 1e17, 1.2345678901234568e16, 1234567890123456.8, 123456789012345680.0,
         -1e16, -9999999999999998.0,
-        2.0**52, 2.0**53, 2.0**53 + 2, 2.0**63, 2.0**64, 2.0**1023,
+        float(2**52), float(2**53), float(2**53) + 2, float(2**63), float(2**64), float(2**1023),
         5e-324, 1e-323, 2.225073858507201e-308, 2.2250738585072014e-308, 1.7976931348623157e308,
         -5e-324, -1.7976931348623157e308,
         1e22, 1e23, 1e-07, 1e-300, 1e300, 0.30000000000000004, 0.7, 1.1, 2.675, 1e21, 1e-06, 4.35,
@@ -63,9 +79,9 @@ def edge_floats() -> list[float]:
         float(10**15 - 1), float(10**16 - 2), 0.01, 0.07, 1.23e-04, 9.99e-05,
     ]
     for exponent in range(-8, 0):
-        values += _around(10.0**exponent)
+        values += _around(_pow10(exponent))
     for exponent in range(13, 19):
-        values += _around(10.0**exponent)
+        values += _around(_pow10(exponent))
     return values
 
 
@@ -80,7 +96,7 @@ def float_vectors() -> list[dict[str, str]]:
     for _ in range(400):
         values.append(round(rng.uniform(-1e6, 1e6), rng.randint(0, 12)))
     for _ in range(400):
-        values.append(rng.random() * 10.0 ** rng.randint(-30, 30))
+        values.append(rng.random() * _pow10(rng.randint(-30, 30)))
     seen: set[str] = set()
     out = []
     for value in values:
@@ -199,7 +215,7 @@ def random_value(rng: random.Random, depth: int) -> Any:
         value = struct.unpack(">d", rng.getrandbits(64).to_bytes(8, "big"))[0]
         if not math.isfinite(value):
             value = 0.0
-        return rng.choice([value, rng.random() * 10.0 ** rng.randint(-8, 20), float(rng.randint(-99, 99))])
+        return rng.choice([value, rng.random() * _pow10(rng.randint(-8, 20)), float(rng.randint(-99, 99))])
     if kind in (3, 4, 5):
         return random_string(rng)
     if kind in (6, 7):
@@ -276,5 +292,8 @@ def render() -> str:
 
 
 if __name__ == "__main__":
-    OUTPUT.write_text(render())
-    print(f"wrote {OUTPUT.relative_to(ROOT)}")
+    if sys.argv[1:] == ["--print"]:
+        sys.stdout.write(render())
+    else:
+        OUTPUT.write_text(render())
+        print(f"wrote {OUTPUT.relative_to(ROOT)}")

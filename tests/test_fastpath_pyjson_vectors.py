@@ -9,32 +9,33 @@ interpreter) fails here until the vectors, and with them the port, follow.
 
 from __future__ import annotations
 
-import importlib.util
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _generator():
-    path = ROOT / "scripts" / "fastpath" / "pyjson_vectors.py"
-    spec = importlib.util.spec_from_file_location("pyjson_vectors", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+GENERATOR = ROOT / "scripts" / "fastpath" / "pyjson_vectors.py"
+VECTORS = ROOT / "fastpath" / "testdata" / "pyjson_vectors_v1.json"
 
 
 def test_the_vectors_are_what_cpython_writes_now() -> None:
-    generator = _generator()
-    assert generator.OUTPUT.read_text() == generator.render(), (
+    # In a subprocess: the generator clears TR_* from its environment, which
+    # must not leak into this process's later tests.
+    result = subprocess.run(  # noqa: S603 - fixed repository generator, no shell or caller input
+        [sys.executable, str(GENERATOR), "--print"],
+        env=os.environ.copy(), cwd=ROOT, capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert VECTORS.read_text() == result.stdout, (
         "fastpath/testdata/pyjson_vectors_v1.json is stale: run "
         "`uv run python scripts/fastpath/pyjson_vectors.py` and check the Go port against it"
     )
 
 
 def test_the_vectors_hold_the_cases_the_port_must_get_right() -> None:
-    vectors = json.loads(_generator().OUTPUT.read_text())
+    vectors = json.loads(VECTORS.read_text())
     reprs = {v["repr"] for v in vectors["floats"]}
     for named in ("1e-05", "0.0001", "1e+16", "9999999999999998.0", "5e-324", "1.7976931348623157e+308",
                   "0.30000000000000004", "-0.0", "1.0", "1000000000000000.0"):
