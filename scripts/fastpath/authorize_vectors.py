@@ -77,7 +77,7 @@ from trusted_router.auth import is_api_key_expired  # noqa: E402
 from trusted_router.catalog_data import MONITOR_MODEL_ID, Model, ModelEndpoint  # noqa: E402
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
-from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, boot_auth_digest  # noqa: E402
+from trusted_router.gateway_boot import BOOT_AUTH_DOMAIN, GATEWAY_BOOT_KIND, boot_auth_digest  # noqa: E402
 from trusted_router.main import create_app  # noqa: E402
 from trusted_router.model_aliases import canonical_router_model_id  # noqa: E402
 from trusted_router.pricing import PriceTier  # noqa: E402
@@ -119,7 +119,8 @@ COHORT_WS, OTHER_WS, FINGERPRINT_WS = "ws_e2_cohort", "ws_e2_other", "ws_e2_fing
 DIGEST = "sha256:" + hashlib.sha256(b"e2 p1 synthetic accepted image").hexdigest()
 OTHER_DIGEST = "sha256:" + hashlib.sha256(b"e2 p1 synthetic other image").hexdigest()
 # A TEST boot key, public by construction: the seed is this repository's text.
-BOOT_SEED = hashlib.sha256(b"trustedrouter authorize vectors v1 boot TEST key; not a secret").digest()
+BOOT_SEED_PREIMAGE = b"trustedrouter authorize vectors v1 boot TEST key; not a secret"
+BOOT_SEED = hashlib.sha256(BOOT_SEED_PREIMAGE).digest()
 BOOT_KEY = Ed25519PrivateKey.from_private_bytes(BOOT_SEED)
 BOOT_JWK = normalize_receipt_jwk(
     {"kty": "OKP", "crv": "Ed25519", "x": b64url_encode(BOOT_KEY.public_key().public_bytes_raw())},
@@ -1118,7 +1119,11 @@ PASS_REQUIRED = frozenset({
     "idempotency_key_too_long", "idempotency_header_repeated", "idempotency_header_non_ascii",
     "content_type", "deep_nesting", "int_over_4000_digits", "bom",
     "lone_surrogate",
+    # Beyond §10.2: Python wrote an estimate past int64, which the fake store
+    # keeps and a real Spanner INT64 column refuses (evaluate.estimate_overflow).
+    "estimate_overflow",
 })
+INT64_MAX = 2**63 - 1
 STRICT_REFERER = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?([/?#][\x21-\x7e]*)?$")
 JSON_CONTENT_TYPE = re.compile(r"^application/json(;\s*charset=utf-8)?$", re.IGNORECASE)
 # Declared str and list[str] fields (str_strip_whitespace); input_modalities
@@ -1531,11 +1536,14 @@ def fingerprint_vectors() -> list[dict[str, Any]]:
                           "idempotency_scope": reservation["idempotency_scope"] if presented else None}
                 if presented and reservation["idempotency_scope"] != scope_of(FINGERPRINT_WS, key_hash, presented):
                     raise AssertionError(f"{name}: the scope is not the presented key's")
+                overflow = authorization["estimated_microdollars"] > INT64_MAX
             else:
+                overflow = False
                 expect = {"outcome": "refused", "status": response.status_code,
                           "type": _error(response.text).get("type")}
+            labels = body_labels(entry["body"], entry["headers"])
             entries.append({
-                "name": name, "labels": body_labels(entry["body"], entry["headers"]),
+                "name": name, "labels": sorted([*labels, "estimate_overflow"]) if overflow else labels,
                 "workspace_id": FINGERPRINT_WS, "key_hash": key_hash,
                 "headers": entry["headers"], "body": entry["body"], "expect": expect,
             })
@@ -1550,6 +1558,24 @@ def _lines(header: dict[str, Any], rows: list[dict[str, Any]]) -> str:
     head = json.dumps(header, sort_keys=True, separators=(",", ":"), ensure_ascii=False)[:-1]
     lines = [json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False) for row in rows]
     return head + ',\n "cases": [\n  ' + ",\n  ".join(lines) + "\n ]}\n"
+
+
+# The TEST boot key and the signature every signed request carries, so Go
+# can make the same bytes (src/trusted_router/gateway_boot.py:53-58).
+BOOT_TEST_KEY = {
+    "kid": BOOT_KID, "jwk": BOOT_JWK,
+    "seed_hex": BOOT_SEED.hex(), "seed": "sha256 of seed_preimage (UTF-8): the Ed25519 private key's 32-byte seed",
+    "seed_preimage": BOOT_SEED_PREIMAGE.decode(),
+}
+BOOT_AUTH_RULE = {
+    "source": "src/trusted_router/gateway_boot.py:53-58 (boot_auth_digest)",
+    "digest": "sha256(domain || method || path || sha256(body)): domain the ASCII bytes of domain, method "
+              "\"POST\", path the request path, both UTF-8, sha256(body) the 32 raw bytes of the body's "
+              "digest; concatenated with no separators",
+    "domain": BOOT_AUTH_DOMAIN.decode(), "method": "POST", "path": PATH,
+    "signature": "Ed25519 (RFC 8032, deterministic) over the 32-byte digest, as base64url without padding",
+    "header": "x-tr-boot-auth: kid=<kid>,sig=<signature>",
+}
 
 
 def internal_models() -> list[str]:
@@ -1576,8 +1602,11 @@ def render_cases() -> str:
     snapshot = (ROOT / SNAPSHOT).read_bytes()
     return _lines({
         "generator": GENERATOR, "snapshot": SNAPSHOT, "snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
-        "plane": PLANE, "policy": header_policy, "boot_test_key": {"kid": BOOT_KID, "jwk": BOOT_JWK},
+        "plane": PLANE, "policy": header_policy, "boot_test_key": BOOT_TEST_KEY, "boot_auth": BOOT_AUTH_RULE,
         "internal_token": INTERNAL_TOKEN,
+        "body_expand": ("a request with body_expand is sent with its body's marker, which occurs exactly "
+                        "once, replaced by repeat written count times; the boot signature and the "
+                        "request are over those expanded bytes"),
         "internal_models": internal_models(),
         "estimated_usage_models": sorted(ESTIMATED_USAGE_SNAPSHOT_MODELS),
         # @timed_gateway_async ends every answer's data, and the 503's
@@ -1591,9 +1620,11 @@ def render_cases() -> str:
 def render_fingerprints() -> str:
     return _lines({
         "generator": GENERATOR,
+        # Sent in this order: the case's headers, then these three.
         "sent_with_every_body": [*(list(pair) for pair in _SENT_WITH_EVERY_BODY),
-                                 ["x-tr-boot-auth", "kid=<boot_test_key.kid>,sig=<the TEST boot key's signature over the body>"]],
-        "boot_test_key": {"kid": BOOT_KID, "jwk": BOOT_JWK},
+                                 ["x-tr-boot-auth", "kid=<boot_test_key.kid>,sig=<boot_auth.signature>"]],
+        "boot_test_key": BOOT_TEST_KEY,
+        "boot_auth": BOOT_AUTH_RULE,
         "policy": edge_policy_body(FINGERPRINT_POLICY, FINGERPRINT_KEY, ROUTING._instant(INSTANTS["peak"])),
     }, fingerprint_vectors())
 

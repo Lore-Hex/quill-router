@@ -26,10 +26,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import TypeAdapter
 
 from trusted_router.catalog_data import MONITOR_MODEL_ID
 from trusted_router.catalog_registry import MODELS
+from trusted_router.gateway_boot import BOOT_AUTH_DOMAIN
+from trusted_router.receipt_keys import b64url_encode
 from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +82,10 @@ PASS_REQUIRED = {
     "idempotency_key_too_long", "idempotency_header_repeated", "idempotency_header_non_ascii",
     "content_type", "deep_nesting", "int_over_4000_digits", "bom",
 }
-PASS_REQUIRED_TOO = {"lone_surrogate"}
+# The generator's additions: lone_surrogate (§10.4 has Go refuse one) and
+# estimate_overflow (Python wrote an estimate past int64, which a real
+# Spanner INT64 column refuses: the cases' evaluate.estimate_overflow).
+PASS_REQUIRED_TOO = {"lone_surrogate", "estimate_overflow"}
 DESCRIPTIVE = {
     "null_extra", "null_nested", "app_categories_empty", "input_modalities", "extras", "nested_provider",
     "nested_trace", "nested_metadata", "unicode_extra", "int_near_2_63", "int_beyond_2_63", "attribution",
@@ -316,3 +322,39 @@ def test_the_fingerprint_bodies_cover_what_go_must_pass() -> None:
         if body["expect"]["outcome"] == "fingerprint" and not (PASS_REQUIRED | PASS_REQUIRED_TOO) & set(body["labels"]):
             by_fingerprint.setdefault(body["expect"]["fingerprint"], set()).add(body["body"])
     assert sum(len(texts) > 1 for texts in by_fingerprint.values()) > 50
+
+
+def _signature(vectors: dict[str, Any], body: bytes) -> str:
+    """The boot signature as the file's header says to make it, from its seed alone."""
+    key, rule = vectors["boot_test_key"], vectors["boot_auth"]
+    seed = bytes.fromhex(key["seed_hex"])
+    assert seed == hashlib.sha256(key["seed_preimage"].encode()).digest()
+    digest = hashlib.sha256(
+        rule["domain"].encode() + rule["method"].encode() + rule["path"].encode() + hashlib.sha256(body).digest(),
+    ).digest()
+    return b64url_encode(Ed25519PrivateKey.from_private_bytes(seed).sign(digest))
+
+
+def test_the_headers_say_how_to_sign_and_expand_a_request() -> None:
+    """Go can remake every boot signature from the header alone, and
+    expand a body_expand body to what was sent."""
+    vectors = _load(CASES)
+    assert vectors["boot_auth"]["domain"].encode() == BOOT_AUTH_DOMAIN
+    assert vectors["boot_auth"] == _load(FINGERPRINTS)["boot_auth"]
+    assert vectors["boot_test_key"] == _load(FINGERPRINTS)["boot_test_key"]
+    kid = vectors["boot_test_key"]["kid"]
+    signed = expanded = 0
+    for case in vectors["cases"]:
+        request = case["request"]
+        body = request["body"]
+        if "body_expand" in request:
+            expand = request["body_expand"]
+            assert body.count(expand["marker"]) == 1, case["name"]
+            body = body.replace(expand["marker"], expand["repeat"] * expand["count"])
+            assert len(body.encode()) > 4 * 1024 * 1024, case["name"]
+            expanded += 1
+        auth = [value for name, value in request["headers"] if name == "x-tr-boot-auth"]
+        if case["boot"] is not None and case["boot"]["signature_ok"]:
+            assert auth == [f"kid={kid},sig={_signature(vectors, body.encode())}"], case["name"]
+            signed += 1
+    assert expanded == 1 and signed > 200
