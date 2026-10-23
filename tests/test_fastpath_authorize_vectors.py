@@ -59,15 +59,17 @@ SECTION_3 = {
     "insert.scope_taken", "insert.failed",
 }
 # Not in §3: a boot E1 refuses (no signature, a bad or repeated one) or
-# whose row is unverified or missing. Python answers without the pilot.
-BEYOND_SECTION_3 = {"boot.signature", "boot.unverified", "boot.missing"}
+# whose row is unverified or missing, which Python answers without the
+# pilot; and an estimate past int64, which the contract is to gain (the fake
+# store keeps it, where a real Spanner INT64 column refuses the commit).
+BEYOND_SECTION_3 = {"boot.signature", "boot.unverified", "boot.missing", "evaluate.estimate_overflow"}
 # The reasons Python's own pilot shares (pilot_reason, the boot, the owner's
 # non-admit answers): Python never leases a request tripping one.
 PYTHON_PASSES = {
     "policy.pilot_off", "policy.not_pilot_workspace", "policy.pilot_region", "policy.records_not_durable",
     "policy.digest_not_accepted", "body.stream", "candidates.byok", "key.key_cap", "key.key_window",
     "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
-    "insert.failed", *BEYOND_SECTION_3,
+    "insert.failed", "boot.signature", "boot.unverified", "boot.missing",
 }
 # §10.2: Go passes a body carrying any of these (and lone_surrogate, which
 # the generator adds: §10.4 has Go refuse one).
@@ -130,7 +132,8 @@ def test_the_cases_name_their_snapshot_and_policy() -> None:
     assert vectors["snapshot_sha256"] == hashlib.sha256(SNAPSHOT.read_bytes()).hexdigest()
     policy = vectors["policy"]
     assert (policy["v"], policy["kind"], policy["plane"]) == (1, "tr-edge-policy", vectors["plane"])
-    assert policy["not_after"] - policy["issued_at"] == 120 and policy["refresh_at"] - policy["issued_at"] == 30
+    assert policy["not_after"] - policy["issued_at"] == 60 and policy["refresh_at"] - policy["issued_at"] == 15
+    assert policy["internal_models"] == vectors["internal_models"]
     names = [case["name"] for case in vectors["cases"]]
     assert names == sorted(names) and len(set(names)) == len(names)
     for case in vectors["cases"]:

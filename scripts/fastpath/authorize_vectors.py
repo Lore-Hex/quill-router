@@ -18,7 +18,8 @@ use, and the request's exact headers and body. A case expects Go's
 Python then answered.
 
 fastpath/testdata/authorize_fingerprint_v1.json, one request a line (its
-headers and body), each sent through the app in a fresh world: the
+headers and body), each sent through the app in a fresh world on the
+cohort path (a pilot workspace, a signed boot, the owner admitting): the
 fingerprint and scope from the reservation row it wrote (§7), or Python's
 refusal, and labelled with what it carries; §10.2's pass-required labels
 are the ones on which Go passes.
@@ -342,7 +343,7 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
     issued_at = int(at.timestamp()) - 10
     return {
         "v": 1, "kind": "tr-edge-policy", "plane": dict(PLANE),
-        "issued_at": issued_at, "not_after": issued_at + 120, "refresh_at": issued_at + 30,
+        "issued_at": issued_at, "not_after": issued_at + 60, "refresh_at": issued_at + 15,
         "accepted_image_digests": sorted(settings.stage_d_accepted_gcp_digests),
         "stage_d": {
             "eligibility_enabled": settings.stage_d_eligibility_enabled,
@@ -361,6 +362,7 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "configured_regions": list(configured_regions(settings)),
         "primary_region": settings.primary_region,
         "multi_region_enabled": settings.multi_region_enabled,
+        "internal_models": internal_models(),
     }
 
 
@@ -534,8 +536,17 @@ def _client(settings: Settings) -> _App:
     return _APPS[cache_key]
 
 
+def request_body(request: dict[str, Any]) -> str:
+    """The body as sent: a body_expand replaces its marker, once, with
+    count repeats of repeat (so a 4 MiB body is a line, not 4 MiB)."""
+    expand = request.get("body_expand")
+    if expand is None:
+        return request["body"]
+    return request["body"].replace(expand["marker"], expand["repeat"] * expand["count"], 1)
+
+
 def send(client: _App, request: dict[str, Any]) -> Any:
-    return client.post(request["path"], content=request["body"].encode(),
+    return client.post(request["path"], content=request_body(request).encode(),
                        headers=[(name.encode(), value.encode()) for name, value in request["headers"]])
 
 
@@ -737,19 +748,17 @@ def _merge(base: dict[str, Any], overrides: dict[str, Any] | None) -> dict[str, 
 
 
 def _request(world: dict[str, Any], body: Any, *, boot: str = "signed",
-             headers: tuple[tuple[str, str], ...] = (), content_type: str | None = "application/json") -> dict[str, Any]:
+             headers: tuple[tuple[str, str], ...] = (), content_type: str | None = "application/json",
+             body_expand: dict[str, Any] | None = None) -> dict[str, Any]:
     if isinstance(body, dict):
         body = {"api_key_lookup_hash": lookup_hash(world["key"]["hash"]), **body}
         body = json.dumps({k: v for k, v in body.items() if v is not None}, separators=(",", ":"), ensure_ascii=False)
-    return {
-        "path": PATH,
-        # Identity: the bytes before Python's GZip middleware, which Go
-        # never applies.
-        "headers": [*([["content-type", content_type]] if content_type is not None else []),
-                    ["accept-encoding", "identity"], ["x-trustedrouter-internal-token", INTERNAL_TOKEN],
-                    *boot_headers(boot, body.encode()), *[[k, v] for k, v in headers]],
-        "body": body,
-    }
+    request = {"path": PATH, "body": body, **({"body_expand": body_expand} if body_expand else {})}
+    # Identity: the bytes before Python's GZip middleware, which Go never applies.
+    request["headers"] = [*([["content-type", content_type]] if content_type is not None else []),
+                          ["accept-encoding", "identity"], ["x-trustedrouter-internal-token", INTERNAL_TOKEN],
+                          *boot_headers(boot, request_body(request).encode()), *[[k, v] for k, v in headers]]
+    return request
 
 
 PLAIN_TAIL = '"max_output_tokens":512,"stream":false,"route_type":"chat.completions"'
@@ -776,7 +785,8 @@ def cases() -> list[dict[str, Any]]:
             door: dict[str, Any] | None = ADMIT, insert: str = "inserted",
             prior: tuple[tuple[dict[str, Any], dict[str, Any]], ...] = (),
             catalog: tuple[str, ...] = (), content_type: str | None = "application/json",
-            stored_key_tags: Any = None, workspace_row: bool = True) -> None:
+            stored_key_tags: Any = None, workspace_row: bool = True,
+            body_expand: dict[str, Any] | None = None) -> None:
         case_world = _merge(DEFAULT_WORLD, world)
         admitted = door if door is not None and "Envelope" in door else ADMIT
         request_body = body if isinstance(body, str) else {**BASE_BODY, **(body or {})}
@@ -787,7 +797,8 @@ def cases() -> list[dict[str, Any]]:
             # time.Time), which Python parses and writes back (§5).
             "admitted": {"envelope": admitted["Envelope"], "end_of_life_us": _us(_eol(admitted)),
                          "end_of_life": admitted["EndOfLife"]},
-            "request": _request(case_world, request_body, boot=boot, headers=headers, content_type=content_type),
+            "request": _request(case_world, request_body, boot=boot, headers=headers, content_type=content_type,
+                                body_expand=body_expand),
             "boot": None if boot_record is None else {**boot_record, "signature_ok": boot == "signed"},
             "_at": INSTANTS[at], "_world": case_world, "_policy": _merge(DEFAULT_POLICY, policy),
             "_front_door": door, "_reason": reason, "_catalog": catalog,
@@ -1034,7 +1045,12 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.unparseable:int_4301_digits", "body.unparseable", raw_body(lookup, *plain, '"x_big":' + "9" * 4301))
     add("answer:int_4000_digits", None, raw_body(lookup, *plain, '"x_big":' + "9" * 4000))
     add("pass:body.unparseable:over_4_mib", "body.unparseable",
-        raw_body(lookup, *plain, '"x_pad":"' + "p" * (4 * 1024 * 1024) + '"'))
+        raw_body(lookup, *plain, '"x_pad":"@@PAD@@"'),
+        body_expand={"marker": "@@PAD@@", "repeat": "p", "count": 4 * 1024 * 1024})
+    # An estimate past int64: the fake store keeps it (a real Spanner INT64
+    # column would refuse the commit), so Python's answer here is the fake's.
+    add("pass:evaluate.estimate_overflow", "evaluate.estimate_overflow",
+        body={"model": GEMINI, "max_output_tokens": 2**63 - 1})
     # The schema strips the top-level keys of dict fields (str_strip_whitespace
     # on dict[str, Any]); keys that collide after the strip keep the last
     # value. Go passes on any such key, or one outside printable ASCII.
@@ -1089,7 +1105,7 @@ def cases() -> list[dict[str, Any]]:
 # ---------------------------------------------------------- fingerprints --
 
 FINGERPRINT_KEY = {**DEFAULT_KEY, "hash": "key_e2_fingerprint", "name": "fingerprint", "tags": {"team": "e2"}}
-FINGERPRINT_WORLD = _merge(DEFAULT_WORLD, {"workspace": {"id": FINGERPRINT_WS}, "key": FINGERPRINT_KEY, "boot": None})
+FINGERPRINT_WORLD = _merge(DEFAULT_WORLD, {"workspace": {"id": FINGERPRINT_WS}, "key": FINGERPRINT_KEY})
 FINGERPRINT_POLICY = _merge(DEFAULT_POLICY, {"fastpath_pilot_workspaces": [FINGERPRINT_WS]})
 # §10.2 asks about 20,000 under 10 MB; at these bodies' size (an enclave
 # body with a 64-hex lookup hash, about 280 bytes) the size bounds it first.
@@ -1500,8 +1516,11 @@ def fingerprint_vectors() -> list[dict[str, Any]]:
             _store, database = build_world(FINGERPRINT_WORLD, FINGERPRINT_POLICY)
             gateway._BROADCAST_EMPTY_CACHE.clear()
             with given_ids(ids):
+                # The cohort path (§10.2: sent as §10.1's are): every body
+                # carries the TEST boot's signature over its exact bytes.
                 response = client.post(PATH, content=entry["body"].encode(), headers=[
-                    (k.encode(), v.encode()) for k, v in [*entry["headers"], *_SENT_WITH_EVERY_BODY]])
+                    (k.encode(), v.encode())
+                    for k, v in [*entry["headers"], *_SENT_WITH_EVERY_BODY, *boot_headers("signed", entry["body"].encode())]])
             if response.status_code == 200:
                 (reservation,) = database.reservations.values()
                 (authorization,) = database.gateway_authorizations.values()
@@ -1572,7 +1591,10 @@ def render_cases() -> str:
 def render_fingerprints() -> str:
     return _lines({
         "generator": GENERATOR,
-        "sent_with_every_body": [list(pair) for pair in _SENT_WITH_EVERY_BODY],
+        "sent_with_every_body": [*(list(pair) for pair in _SENT_WITH_EVERY_BODY),
+                                 ["x-tr-boot-auth", "kid=<boot_test_key.kid>,sig=<the TEST boot key's signature over the body>"]],
+        "boot_test_key": {"kid": BOOT_KID, "jwk": BOOT_JWK},
+        "policy": edge_policy_body(FINGERPRINT_POLICY, FINGERPRINT_KEY, ROUTING._instant(INSTANTS["peak"])),
     }, fingerprint_vectors())
 
 
