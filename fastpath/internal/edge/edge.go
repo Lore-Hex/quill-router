@@ -136,6 +136,9 @@ type Config struct {
 	// when nil). Both log metadata alone.
 	ShadowEvery time.Duration
 	Logf        func(format string, args ...any)
+	// Admitter holds the node's front door once its admission node has
+	// made it (admit.go); nil, or unbound, is none. Nothing calls it yet.
+	Admitter *LateAdmitter
 }
 
 // Edge serves the enclave's control-plane paths.

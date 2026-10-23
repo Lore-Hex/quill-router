@@ -115,6 +115,10 @@ type Config struct {
 	// one. The front door reads its clock only for spans of time, which an
 	// offset leaves as they were, and an auditor's parts keep a true clock.
 	ClockOffset time.Duration
+
+	// edgeMade, when set, is given the edge once it is made: the tests'
+	// view of it.
+	edgeMade func(*edge.Edge)
 }
 
 // Defaults is the spike's configuration, but for what a deployment names:
@@ -332,10 +336,13 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		return err
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport, Serving: p.serving, Snapshot: snapshot})
+		Transport: transport, Serving: p.serving, Snapshot: snapshot, Admitter: &p.admitter})
 	if err != nil {
 		_ = ln.Close()
 		return err
+	}
+	if cfg.edgeMade != nil {
+		cfg.edgeMade(e)
 	}
 	// The snapshot's poll and the shadow comparator, beside the server and
 	// never in its way; with no snapshot configured this returns at once.
@@ -459,6 +466,9 @@ type parts struct {
 	leaving []func()
 	// retiring also follows Leave, which keeps the parts running.
 	retiring atomic.Bool
+	// admitter is the edge's: the admission node's front door, bound once
+	// it is made, and none on a process without one.
+	admitter edge.LateAdmitter
 
 	mu  sync.Mutex
 	err error
@@ -618,6 +628,8 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		return err
 	}
 	p.run("front door", door.Run)
+	// The edge, made before the node, admits through its front door.
+	p.admitter.Bind(door)
 
 	handlers := &inFlight{}
 	requests, endRequests := context.WithCancel(context.Background())
