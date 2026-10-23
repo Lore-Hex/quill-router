@@ -25,6 +25,11 @@ Public model IDs prepend `abliteration/`. Vision is declared only for the base
 and Large Flash models. Billing uses actual provider usage, including cache
 reads, without Abliterate's estimated-billing exception.
 
+A repeated Large Flash synthetic prompt reported 4,480 cached tokens out of
+4,518 input tokens. The first request cost $0.004524 upstream; the repeated
+request cost $0.000492 at the declared cache rate. These are probe observations,
+not cache-hit guarantees. Callers can use a stable opaque `prompt_cache_key`.
+
 Ordinary chat is ZDR under https://abliteration.ai/data-handling; operational
 metadata is retained. Native paid web tools are excluded and rejected by the
 gateway because their billing and retention differ. No E2EE/confidential-compute
