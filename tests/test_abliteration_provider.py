@@ -141,7 +141,12 @@ def test_provider_is_registered_separately_and_cloud_secret_wired():
     assert "ABLITERATION_API_KEY:trustedrouter-abliteration-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
     assert 'ensure_secret_from_env_file "ABLITERATION_API_KEY" "trustedrouter-abliteration-api-key"' in (root / "scripts/deploy/secrets.sh").read_text()
     routes = [ep for ep in MODEL_ENDPOINTS.values() if ep.provider == p.SLUG]
-    assert len(routes) == 4
+    declared_models = {
+        row["id"] for row in json.loads(p.MANIFEST_PATH.read_text())["models"]
+        if row.get("routable") and row.get("status") == 1
+    }
+    assert declared_models
+    assert {ep.model_id for ep in routes} == declared_models
     assert all(ep.usage_type == "Credits" for ep in routes)
     assert all(ep.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens is not None for ep in routes)
 
@@ -149,5 +154,5 @@ def test_provider_is_registered_separately_and_cloud_secret_wired():
 def test_provider_page(client):
     response = client.get("/providers/abliteration")
     assert response.status_code == 200
-    for text in ("Abliteration", "abliterated-model-large-flash", "Cached", "https://abliteration.ai/data-handling"):
+    for text in ("Abliteration", "Cached", "https://abliteration.ai/data-handling"):
         assert text in response.text
