@@ -3,8 +3,24 @@
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
   "generated_at": "2026-10-20T12:05:14Z",
-  "model_count": 24,
+  "model_count": 25,
   "models": [
+    {
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "display_name": "MiniMax M3.1 Flash",
+      "title": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "context_length": 1048576,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 15000,
+      "model_type": "chat",
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "features": ["serverless", "function-calling", "reasoning"],
+      "status": 1
+    },
     {
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai-org/GLM-5.2",

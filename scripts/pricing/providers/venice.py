@@ -27,6 +27,7 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = ["z-ai/glm-5.2"]
 
 UPSTREAM_ID_MAP = {
+    "minimax/minimax-m3.1-flash": "minimax-m3-1-flash",
     "z-ai/glm-5.2": "zai-org-glm-5-2",
     "z-ai/glm-5.1": "zai-org-glm-5-1",
     "z-ai/glm-5": "zai-org-glm-5",
