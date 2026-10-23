@@ -40,6 +40,7 @@ CASES = ROOT / "fastpath" / "testdata" / "authorize_cases_v1.json"
 FINGERPRINTS = ROOT / "fastpath" / "testdata" / "authorize_fingerprint_v1.json"
 SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v1.body.json"
 GENERATOR = ROOT / "scripts" / "fastpath" / "authorize_vectors.py"
+CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
 
 # §3's pass reasons that have a Python counterpart: each needs a case
 # recording what Python answers. The rest of §3 is the edge's own state
@@ -60,12 +61,10 @@ SECTION_3 = {
     "evaluate.refused", "candidates.byok", "candidates.estimated_usage", "candidates.private_proxy",
     "owner.off", "owner.busy", "owner.invalid", "owner.failed", "owner.unreachable",
     "insert.scope_taken", "insert.failed",
+    # An estimate past int64 (the fake store keeps it, where a real Spanner
+    # INT64 column refuses the commit), and the boot E1 or decision 8 refuses.
+    "evaluate.estimate_overflow", "boot.signature", "boot.unverified", "boot.missing",
 }
-# Not in §3: a boot E1 refuses (no signature, a bad or repeated one) or
-# whose row is unverified or missing, which Python answers without the
-# pilot; and an estimate past int64, which the contract is to gain (the fake
-# store keeps it, where a real Spanner INT64 column refuses the commit).
-BEYOND_SECTION_3 = {"boot.signature", "boot.unverified", "boot.missing", "evaluate.estimate_overflow"}
 # The reasons Python's own pilot shares (pilot_reason, the boot, the owner's
 # non-admit answers): Python never leases a request tripping one.
 PYTHON_PASSES = {
@@ -74,18 +73,13 @@ PYTHON_PASSES = {
     "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
     "insert.failed", "boot.signature", "boot.unverified", "boot.missing",
 }
-# §10.2: Go passes a body carrying any of these (and lone_surrogate, which
-# the generator adds: §10.4 has Go refuse one).
+# §10.2: Go passes a body carrying any of these.
 PASS_REQUIRED = {
     "float_present", "lax_coercion", "duplicate_key", "strip_ambiguous", "dict_key_strip", "non_ascii_tag",
     "referer_not_strict", "canonical_model_rewrite", "native_batch_key", "partner_key",
     "idempotency_key_too_long", "idempotency_header_repeated", "idempotency_header_non_ascii",
-    "content_type", "deep_nesting", "int_over_4000_digits", "bom",
+    "content_type", "deep_nesting", "int_over_4000_digits", "bom", "lone_surrogate", "estimate_overflow",
 }
-# The generator's additions: lone_surrogate (§10.4 has Go refuse one) and
-# estimate_overflow (Python wrote an estimate past int64, which a real
-# Spanner INT64 column refuses: the cases' evaluate.estimate_overflow).
-PASS_REQUIRED_TOO = {"lone_surrogate", "estimate_overflow"}
 DESCRIPTIVE = {
     "null_extra", "null_nested", "app_categories_empty", "input_modalities", "extras", "nested_provider",
     "nested_trace", "nested_metadata", "unicode_extra", "int_near_2_63", "int_beyond_2_63", "attribution",
@@ -256,8 +250,7 @@ def test_the_answers_cover_every_label_section_10_1_names() -> None:
 def test_every_section_3_reason_records_pythons_answer() -> None:
     passes = _cases("pass")
     reasons = Counter(case["expect"]["reason"] for case in passes)
-    assert set(reasons) - BEYOND_SECTION_3 == SECTION_3, (
-        sorted(SECTION_3 - set(reasons)), sorted(set(reasons) - SECTION_3 - BEYOND_SECTION_3))
+    assert set(reasons) == SECTION_3, (sorted(SECTION_3 - set(reasons)), sorted(set(reasons) - SECTION_3))
     for case in passes:
         expect = case["expect"]
         assert case["labels"] == [f"pass.{expect['reason']}"], case["name"]
@@ -300,8 +293,10 @@ def test_the_fingerprint_bodies_cover_what_go_must_pass() -> None:
     bodies = _load(FINGERPRINTS)["cases"]
     assert len(bodies) >= 14_000 and FINGERPRINTS.stat().st_size < 10_000_000
     labels = Counter(label for body in bodies for label in body["labels"])
-    assert set(labels) <= PASS_REQUIRED | PASS_REQUIRED_TOO | DESCRIPTIVE, set(labels) - PASS_REQUIRED - DESCRIPTIVE
-    assert all(labels[label] >= 3 for label in PASS_REQUIRED | DESCRIPTIVE), labels
+    assert set(labels) <= PASS_REQUIRED | DESCRIPTIVE, set(labels) - PASS_REQUIRED - DESCRIPTIVE
+    # Two hand-written bodies carry a lone surrogate; every other label is
+    # drawn at least three times.
+    assert all(labels[label] >= 2 for label in PASS_REQUIRED | DESCRIPTIVE), labels
     outcomes = Counter(body["expect"]["outcome"] for body in bodies)
     assert outcomes["fingerprint"] > 5_000 and outcomes["refused"] > 2_000
     for body in bodies:
@@ -319,7 +314,7 @@ def test_the_fingerprint_bodies_cover_what_go_must_pass() -> None:
     # is shared by bodies whose text differs, among bodies Go answers.
     by_fingerprint: dict[str, set[str]] = {}
     for body in bodies:
-        if body["expect"]["outcome"] == "fingerprint" and not (PASS_REQUIRED | PASS_REQUIRED_TOO) & set(body["labels"]):
+        if body["expect"]["outcome"] == "fingerprint" and not PASS_REQUIRED & set(body["labels"]):
             by_fingerprint.setdefault(body["expect"]["fingerprint"], set()).add(body["body"])
     assert sum(len(texts) > 1 for texts in by_fingerprint.values()) > 50
 
@@ -333,6 +328,22 @@ def _signature(vectors: dict[str, Any], body: bytes) -> str:
         rule["domain"].encode() + rule["method"].encode() + rule["path"].encode() + hashlib.sha256(body).digest(),
     ).digest()
     return b64url_encode(Ed25519PrivateKey.from_private_bytes(seed).sign(digest))
+
+
+def test_the_contract_names_every_reason_and_label_the_vectors_use() -> None:
+    """Every pass reason and fingerprint label here is one the contract
+    names (§3, §8.1, §10.2), so the vectors and the doc cannot drift."""
+    contract = CONTRACT.read_text(encoding="utf-8")
+    named = set(re.findall(r"`([a-z0-9_.<>]+)`", contract))
+    for reason in SECTION_3:
+        group, _, name = reason.partition(".")
+        if group == "key":  # `key.<reason>` for §8.1's reasons
+            assert {"key.<reason>", name} <= named, reason
+        elif reason == "evaluate.refused":  # `evaluate.<outcome>`
+            assert "evaluate.<outcome>" in named, reason
+        else:
+            assert reason in named, reason
+    assert PASS_REQUIRED | DESCRIPTIVE <= named, sorted((PASS_REQUIRED | DESCRIPTIVE) - named)
 
 
 def test_the_headers_say_how_to_sign_and_expand_a_request() -> None:
