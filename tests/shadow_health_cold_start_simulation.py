@@ -784,9 +784,9 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         injected_gap_max_ms=max(db.injected_gaps_ns, default=0)/1e6,
         bound_wait_max_ms=max(db.bound_waits_ns, default=0)/1e6,
         bound_wait_mean_ms=sum(db.bound_waits_ns)/max(1, len(db.bound_waits_ns))/1e6,
-        max_published_observation_ms=max((t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6
-            for t in published),
-        max_published_cycle_ms=max(t["cycle_us"]/1000 for t in published),
+        max_published_observation_ms=max(((t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6
+            for t in published), default=None),
+        max_published_cycle_ms=max((t["cycle_us"]/1000 for t in published), default=None),
         empty_claim_commits=sum(tx.final_rpc == "empty_commit" for tx in claim_txs),
         rollback_claims=sum(tx.final_rpc == "rollback" for tx in claim_txs),
         early_claim_reads=sum(tx.claim_at_ns is not None and tx.claim_at_ns < tx.slot*2_000_000_000
