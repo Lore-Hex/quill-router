@@ -90,6 +90,7 @@ EXPECTED_MODELS = [
     "moonshotai/kimi-k2.7-code",
     "minimax/minimax-m2.5",
     "minimax/minimax-m3",
+    "minimax/minimax-m3.1-flash",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     "thedrummer/cydonia-24b-v4.1",
@@ -182,6 +183,8 @@ _NATIVE_TO_OR_ID = {
     "parasail-minimax-m3": "minimax/minimax-m3",
     "MiniMaxAI/MiniMax-M3": "minimax/minimax-m3",
     "MiniMaxAI/Minimax-M3": "minimax/minimax-m3",
+    "parasail-minimax-m31-flash": "minimax/minimax-m3.1-flash",
+    "MiniMaxAI/MiniMax-M3.1-Flash": "minimax/minimax-m3.1-flash",
     # gpt-oss
     "parasail-gpt-oss-120b": "openai/gpt-oss-120b",
     "openai/gpt-oss-120b": "openai/gpt-oss-120b",
@@ -235,6 +238,7 @@ _DISPLAY_TO_OR_ID = {
     "GLM-5": "z-ai/glm-5",
     "GLM-4.7": "z-ai/glm-4.7",
     "MiniMax M3": "minimax/minimax-m3",
+    "MiniMax M3.1 Flash": "minimax/minimax-m3.1-flash",
     "MiniMax M2.5": "minimax/minimax-m2.5",
     "DeepSeek V4 Pro": "deepseek/deepseek-v4-pro",
     "DeepSeek V4 Flash": "deepseek/deepseek-v4-flash",
@@ -452,6 +456,19 @@ def fetch() -> ProviderPricingResult:
 # Metadata (context/modalities) mirrors the OR snapshot entries for
 # the same checkpoints served by other providers.
 _MANIFEST_ROW_TEMPLATES: dict[str, dict[str, Any]] = {
+    "minimax/minimax-m3.1-flash": {
+        "id": "minimax/minimax-m3.1-flash",
+        "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
+        "display_name": "Parasail MiniMax M3.1 Flash",
+        "title": "minimax/minimax-m3.1-flash",
+        "context_length": 1000000,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
     "z-ai/glm-5.3": {
         "id": "z-ai/glm-5.3",
         "upstream_id": "parasail-glm-53",

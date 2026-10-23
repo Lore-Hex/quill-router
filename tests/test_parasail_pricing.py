@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -161,6 +162,44 @@ def test_fetch_case_variant_native_ids_map_to_one_model(monkeypatch) -> None:  #
     _fake_clients(monkeypatch, html, models_payload)
     result = parasail.fetch()
     assert list(result.prices) == ["minimax/minimax-m3"]
+
+
+@pytest.mark.parametrize("native", ["MiniMaxAI/MiniMax-M3.1-Flash", "parasail-minimax-m31-flash"])
+@pytest.mark.parametrize("priced,live", [(True, True), (True, False), (False, True)])
+def test_flash_refresh_requires_price_and_liveness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, native: str, priced: bool, live: bool,
+) -> None:
+    model = "minimax/minimax-m3.1-flash"
+    monkeypatch.setattr(parasail, "_LIVE_MODEL_IDS", set())
+    monkeypatch.setattr(parasail, "UPSTREAM_ID_MAP", dict(parasail.UPSTREAM_ID_MAP))
+    rows = [("MiniMax M3", "0.30", "1.20", "0.06")]
+    if priced:
+        rows.append(("MiniMax M3.1 Flash", "0.15", "0.60", "0.015"))
+    _fake_clients(monkeypatch, _table_page(*rows), {"data": [{"id": native}] if live else []})
+
+    result = parasail.fetch()
+
+    assert (model in result.prices) is (priced and live)
+    if not (priced and live):
+        return
+    assert list(result.prices) == [model]
+    price = result.prices[model].tiers[0]
+    assert (price.prompt_micro_per_m, price.completion_micro_per_m,
+            price.prompt_cached_micro_per_m) == (150000, 600000, 15000)
+    manifest = tmp_path / "parasail.json"
+    manifest.write_text(json.dumps({"provider": "parasail", "models": []}), encoding="utf-8")
+    monkeypatch.setattr(parasail, "MANIFEST_PATH", manifest)
+    parasail.write_provider_manifest(result)
+    saved = json.loads(manifest.read_text(encoding="utf-8"))
+    assert saved["model_count"] == 1
+    row = saved["models"][0]
+    assert row["id"] == model
+    assert row["upstream_id"] == "MiniMaxAI/MiniMax-M3.1-Flash"
+    assert row["input_token_price_per_m"] == 150000
+    assert row["output_token_price_per_m"] == 600000
+    assert row["cached_input_token_price_per_m"] == 15000
+    assert row.get("routable", True) is True
+    assert "function-calling" in row["features"]
 
 
 def test_fetch_skips_mistral_priced_on_page_but_missing_from_live_api(

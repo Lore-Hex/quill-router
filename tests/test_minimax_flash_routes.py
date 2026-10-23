@@ -21,10 +21,10 @@ NATIVE = "MiniMaxAI/MiniMax-M3.1-Flash"
 
 def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
     routes = {e.provider: e for e in endpoints_for_model(MODEL) if e.usage_type == "Credits"}
-    assert set(routes) == {"gmi", "minimax", "novita", "together", "venice"}
+    assert set(routes) == {"gmi", "minimax", "novita", "parasail", "together", "venice"}
     assert {p: e.upstream_id for p, e in routes.items()} == {
         "gmi": NATIVE, "minimax": "MiniMax-M3.1-Flash", "novita": MODEL,
-        "together": NATIVE, "venice": "minimax-m3-1-flash",
+        "parasail": NATIVE, "together": NATIVE, "venice": "minimax-m3-1-flash",
     }
     for endpoint in routes.values():
         assert endpoint_capabilities(MODELS[MODEL], endpoint)["tools"] is True
