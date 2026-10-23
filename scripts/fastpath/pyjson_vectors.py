@@ -6,6 +6,14 @@ writes); json.dumps of strings with ensure_ascii on and off; for JSON
 documents, storage_codec.json_body (sorted, ASCII) and Starlette's
 JSONResponse body (insertion order, ensure_ascii off) of json.loads of the
 text, or json.loads's refusal; and storage_gcp._iso_timestamp of instants.
+
+The pydantic_* sections are the authorize route's 200 body: FastAPI writes a
+route with a response model (authorize's is its return annotation,
+dict[str, Any]) and the default response class through pydantic-core's
+dump_json, not json.dumps. Each is the body a request reads back from an
+endpoint declared with the real route's response settings that returns the
+value: of floats, of money_pair amounts, of strings, and of
+{"data": json.loads(text)} for documents.
 The Go tests hold the package to fastpath/testdata/pyjson_vectors_v1.json;
 tests/test_fastpath_pyjson_vectors.py fails when the file is not what this
 script writes now.
@@ -32,9 +40,13 @@ sys.path.insert(0, str(ROOT / "src"))
 for _name in [name for name in os.environ if name.startswith("TR_")]:
     del os.environ[_name]
 
+from fastapi import APIRouter, FastAPI  # noqa: E402
+from fastapi.routing import APIRoute  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 from starlette.responses import JSONResponse  # noqa: E402
 
-from trusted_router.money import microdollars_to_float  # noqa: E402
+from trusted_router.money import microdollars_to_float, money_pair  # noqa: E402
+from trusted_router.routes.internal import register_gateway_internal_routes  # noqa: E402
 from trusted_router.storage_codec import json_body  # noqa: E402
 from trusted_router.storage_gcp import _iso_timestamp  # noqa: E402
 
@@ -85,7 +97,7 @@ def edge_floats() -> list[float]:
     return values
 
 
-def float_vectors() -> list[dict[str, str]]:
+def float_values() -> list[float]:
     values = edge_floats() + [math.nan, math.inf, -math.inf]
     rng = random.Random(17140)  # noqa: S311 - reproducible test vectors, not secrets.
     while len(values) < 1600:
@@ -97,17 +109,24 @@ def float_vectors() -> list[dict[str, str]]:
         values.append(round(rng.uniform(-1e6, 1e6), rng.randint(0, 12)))
     for _ in range(400):
         values.append(rng.random() * _pow10(rng.randint(-30, 30)))
+    # Where pydantic-core's unpadded exponent gains a digit.
+    for power in (1e-10, 1e-100, 1e100, 1e-99, 1e99):
+        values += _around(power)
     seen: set[str] = set()
     out = []
     for value in values:
-        bits = _bits(value)
-        if bits not in seen:
-            seen.add(bits)
-            out.append({"bits": bits, "repr": repr(value)})
+        key = _bits(value)
+        if key not in seen:
+            seen.add(key)
+            out.append(value)
     return out
 
 
-def money_vectors() -> list[dict[str, Any]]:
+def float_vectors() -> list[dict[str, str]]:
+    return [{"bits": _bits(value), "repr": repr(value)} for value in float_values()]
+
+
+def money_amounts() -> list[int]:
     amounts = [
         0, 1, 5, 9, 10, 15, 99, 100, 101, 999, 1000, 1234, 9999, 10_000, 99_999, 100_000, 123_456,
         999_999, 1_000_000, 1_000_001, 1_500_000, 10**9, 123_456_789, 10**12, 10**15, 10**16,
@@ -116,7 +135,11 @@ def money_vectors() -> list[dict[str, Any]]:
     rng = random.Random(26)  # noqa: S311 - reproducible test vectors, not secrets.
     for scale in (100, 10_000, 1_000_000, 10**9, 10**13):
         amounts += [rng.randint(0, scale) for _ in range(120)]
-    return [{"microdollars": m, "repr": repr(microdollars_to_float(m))} for m in dict.fromkeys(amounts)]
+    return list(dict.fromkeys(amounts))
+
+
+def money_vectors() -> list[dict[str, Any]]:
+    return [{"microdollars": m, "repr": repr(microdollars_to_float(m))} for m in money_amounts()]
 
 
 EDGE_STRINGS = [
@@ -137,16 +160,19 @@ def random_string(rng: random.Random) -> str:
     return "".join(chr(rng.choice(rng.choice(STRING_ALPHABET))) for _ in range(rng.randint(0, 12)))
 
 
-def string_vectors() -> list[dict[str, Any]]:
+def string_values() -> list[str]:
     rng = random.Random(2028)  # noqa: S311 - reproducible test vectors, not secrets.
-    strings = EDGE_STRINGS + [random_string(rng) for _ in range(400)]
+    return list(dict.fromkeys(EDGE_STRINGS + [random_string(rng) for _ in range(400)]))
+
+
+def string_vectors() -> list[dict[str, Any]]:
     return [
         {
             "codepoints": [ord(c) for c in s],
             "ascii": json.dumps(s, ensure_ascii=True),
             "unicode": json.dumps(s, ensure_ascii=False),
         }
-        for s in dict.fromkeys(strings)
+        for s in string_values()
     ]
 
 
@@ -273,9 +299,156 @@ def isoformat_vectors() -> list[dict[str, Any]]:
     ]
 
 
+AUTHORIZE_PATH = "/internal/gateway/authorize"
+
+# The settings of a route that decide how FastAPI writes what it returns.
+RESPONSE_SETTINGS = (
+    "response_model", "response_class", "response_model_include", "response_model_exclude",
+    "response_model_by_alias", "response_model_exclude_unset", "response_model_exclude_defaults",
+    "response_model_exclude_none", "status_code",
+)
+
+
+def authorize_route() -> APIRoute:
+    """The authorize route as gateway.register declares it."""
+    router = APIRouter()
+    register_gateway_internal_routes(router)
+    (route,) = (r for r in router.routes if isinstance(r, APIRoute) and r.path == AUTHORIZE_PATH)
+    return route
+
+
+class AuthorizeBody:
+    """The body FastAPI sends for a value the authorize endpoint returns: an
+    endpoint declared with the real route's response settings (for authorize,
+    the response model its return annotation gives, dict[str, Any], and the
+    default response class) returns the value, on an app with FastAPI's
+    defaults as main.create_app builds it, and the body is what a request to
+    it reads back. FastAPI's own request handler writes it."""
+
+    def __init__(self) -> None:
+        real = authorize_route()
+        self.settings = {name: getattr(real, name) for name in RESPONSE_SETTINGS}
+        self.value: dict[str, Any] = {}
+
+        async def endpoint() -> Any:
+            return self.value
+
+        router = APIRouter()
+        router.add_api_route(AUTHORIZE_PATH, endpoint, methods=["POST"], **self.settings)
+        (copy,) = router.routes
+        assert {name: getattr(copy, name) for name in RESPONSE_SETTINGS} == self.settings
+        app = FastAPI()
+        app.include_router(router)
+        self.client = TestClient(app, raise_server_exceptions=False)
+
+    def __call__(self, value: dict[str, Any]) -> str | None:
+        """The body, or None where FastAPI cannot write the value and answers 500."""
+        self.value = value
+        response = self.client.post(AUTHORIZE_PATH)
+        if response.status_code == 500:
+            # pydantic-core refuses a value nested deeper than its recursion
+            # guard allows; nothing else here fails to serialize.
+            assert _levels(value) > PYDANTIC_MAX_LEVELS, value
+            return None
+        assert _levels(value) <= PYDANTIC_MAX_LEVELS, value
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"] == "application/json", response.headers
+        return response.content.decode("utf-8")
+
+
+# pydantic-core writes a value at most this many levels down, the returned
+# dict the first; one deeper, scalar or container, raises "Circular reference
+# detected (depth exceeded)".
+PYDANTIC_MAX_LEVELS = 256
+
+
+def _levels(value: Any) -> int:
+    if isinstance(value, dict):
+        return 1 + max(map(_levels, value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max(map(_levels, value), default=0)
+    return 1
+
+
+def _member(body: str, key: str) -> str:
+    """The value text of a one-member object body: {"key":<value>}."""
+    prefix = json.dumps({key: None}, separators=(",", ":"))[: -len("null}")]
+    assert body.startswith(prefix) and body.endswith("}"), body
+    return body[len(prefix) : -1]
+
+
+def _required(text: str | None) -> str:
+    assert text is not None
+    return text
+
+
+def pydantic_float_vectors(body: AuthorizeBody) -> list[dict[str, str]]:
+    return [{"bits": _bits(value), "json": _member(_required(body({"v": value})), "v")} for value in float_values()]
+
+
+def pydantic_money_vectors(body: AuthorizeBody) -> list[dict[str, Any]]:
+    """money_pair("estimated_cost", m), as the authorize body carries it."""
+    return [{"microdollars": m, "json": body(money_pair("estimated_cost", m))} for m in money_amounts()]
+
+
+def pydantic_string_vectors(body: AuthorizeBody) -> list[dict[str, Any]]:
+    return [{"codepoints": [ord(c) for c in s], "json": _member(_required(body({"v": s})), "v")} for s in string_values()]
+
+
+def _authorize_like(rng: random.Random) -> dict[str, Any]:
+    """A body shaped as _gateway_authorize_response's, its amounts drawn."""
+    estimate = rng.choice([0, 1, 9, 10, 99, 100, 1234, 10_000, 99_999, rng.randint(0, 10**9)])
+    return {
+        "data": {
+            "authorization_id": f"auth_{rng.getrandbits(64):016x}",
+            "workspace_id": "ws_é😀",
+            "model": "openai/gpt-4o-mini",
+            "response_model": None,
+            "hide_public_metadata": False,
+            **money_pair("estimated_cost", estimate),
+            "regions": [{"id": "us-central1", "weight": rng.random()}],
+            "additional_cost_reservation_microdollars": rng.randint(0, 10**6),
+            "receipt_fee_basis_points": rng.randint(0, 500),
+            "tags": {random_string(rng): random_string(rng) for _ in range(rng.randint(0, 3))},
+            "timing": {"total_ms": rng.randint(0, 5000), "spanner_rpcs": rng.randint(0, 9)},
+            "route_candidates": [
+                {"endpoint_id": f"e{i}", **money_pair("prompt_price", rng.randint(0, 10**7))}
+                for i in range(rng.randint(0, 3))
+            ],
+        }
+    }
+
+
+def _nested_value(levels: int, leaf: str, kind: str) -> str:
+    """A document whose leaf sits levels down inside {"data": ...}."""
+    containers = levels - 2
+    if kind == "list":
+        return "[" * containers + leaf + "]" * containers
+    return '{"k":' * containers + leaf + "}" * containers
+
+
+def pydantic_document_vectors(body: AuthorizeBody) -> list[dict[str, str | None]]:
+    """{"data": json.loads(text)} through the authorize route: the decoder's
+    documents, values on both sides of pydantic-core's depth bound, random
+    values, and bodies shaped as authorize's. "json" is None where FastAPI
+    cannot write the value (a 500)."""
+    rng = random.Random(4615)  # noqa: S311 - reproducible test vectors, not secrets.
+    texts = list(DOCUMENTS)
+    for levels in (PYDANTIC_MAX_LEVELS - 1, PYDANTIC_MAX_LEVELS, PYDANTIC_MAX_LEVELS + 1):
+        for leaf in ("1", '"s"', "null", "1.5e-7", "[]", "{}"):
+            for kind in ("list", "object"):
+                texts.append(_nested_value(levels, leaf, kind))
+    for _ in range(250):
+        texts.append(json.dumps(random_value(rng, 0), ensure_ascii=rng.random() < 0.5))
+    for _ in range(60):
+        texts.append(json.dumps(_authorize_like(rng), ensure_ascii=rng.random() < 0.5))
+    return [{"text": text, "json": body({"data": json.loads(text)})} for text in dict.fromkeys(texts)]
+
+
 def render() -> str:
     """The file's text: one vector a line, so a change shows as the vectors it changes."""
     documents, refused = document_vectors()
+    body = AuthorizeBody()
     sections = {
         "floats": float_vectors(),
         "money": money_vectors(),
@@ -283,6 +456,10 @@ def render() -> str:
         "documents": documents,
         "refused": refused,
         "isoformat": isoformat_vectors(),
+        "pydantic_floats": pydantic_float_vectors(body),
+        "pydantic_money": pydantic_money_vectors(body),
+        "pydantic_strings": pydantic_string_vectors(body),
+        "pydantic_documents": pydantic_document_vectors(body),
     }
     parts = ['{"generator": "scripts/fastpath/pyjson_vectors.py"']
     for name, vectors in sections.items():
