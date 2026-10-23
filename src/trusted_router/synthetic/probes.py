@@ -2907,7 +2907,14 @@ def _warm_path_served(
     if target.attested:
         content_type = headers.get("content-type", "").casefold()
         return status == 200 and content_type.startswith("application/cbor") and bool(body)
-    return status == 200 and body == b'{"status":"ok"}'
+    if status != 200:
+        return False
+    try:
+        health = json.loads(body)
+    except ValueError:
+        return False
+    # Provider diagnostics are independent of the gateway's health status.
+    return isinstance(health, dict) and health.get("status") == "ok"
 
 
 def _warm_path_reachable(
