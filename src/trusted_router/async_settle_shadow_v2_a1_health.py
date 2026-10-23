@@ -157,11 +157,12 @@ PUBLISHER_SLOT_TRACE = versioned({"contract_revision": literal("a1"), "day": day
     "slot": integer, **{k: nullable(integer) for k in "claim_start_us claim_at_ns observed_at_ns publisher_heartbeat_ns ack_at_us cycle_us".split()},
     "body_sha256": nullable(digest), "outcome": literal("missed", "lost_claim", "published", "failed"),
     "unknown_outcome": boolean, "late_cycle": boolean, "rpc_count": integer, "rpc_elapsed_us": integer}, 1024, _trace)
-# Historical traces retain their exact bytes. Only released-job records carry
-# this optional diagnostic; no reader freshness or publication rule changes.
+# Historical traces retain their exact bytes. Diagnostics are additive; the
+# observation failure has a fixed vocabulary and does not use release_reason.
 PUBLISHER_SLOT_TRACE = Schema(
     PUBLISHER_SLOT_TRACE.fields, PUBLISHER_SLOT_TRACE.limit, PUBLISHER_SLOT_TRACE.invariant,
-    optional_fields={"release_reason": text(64)})
+    optional_fields={"release_reason": text(64),
+                     "observation_failure": literal("claim_observed_order")})
 
 
 def _trace_page(v: Any) -> None:

@@ -286,9 +286,11 @@ class ObservationStore:
             self.startup_publication_raw = row.body
         return landed
 
-    def snapshot_query(self, statement: Statement, budget: Budget, cap: float) -> tuple[list[Any], int]:
+    def snapshot_query(self, statement: Statement, budget: Budget, cap: float,
+                       *, min_read_timestamp: Any = None) -> tuple[list[Any], int]:
         with rpc_scope(budget.deadline, cap, budget.clock):
-            with self.database.snapshot() as snapshot:
+            options = {} if min_read_timestamp is None else {"min_read_timestamp": min_read_timestamp}
+            with self.database.snapshot(**options) as snapshot:
                 sql, params, types = statement
                 require(sql in (HEALTH_SQL, UNRESOLVED_SQL), "unregistered_statement")
                 stream = snapshot.execute_sql(HEALTH_SQL if sql == HEALTH_SQL else UNRESOLVED_SQL, params=params, param_types=types, retry=None,
@@ -298,8 +300,17 @@ class ObservationStore:
             budget.remaining(cap)
             return rows, stamp
 
-    def observe(self, boot: str, region: str, revision: str, slot: int, budget: Budget) -> dict[str, Any]:
-        rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS)
+    def observe(self, boot: str, region: str, revision: str, slot: int, budget: Budget,
+                *, claim_at_ns: int) -> dict[str, Any]:
+        from google.protobuf.timestamp_pb2 import Timestamp
+        from proto.datetime_helpers import DatetimeWithNanoseconds
+
+        # proto-plus preserves nanos on the wire; api_core's similarly named
+        # datetime is marshalled as ordinary datetime and loses sub-microseconds.
+        seconds, nanos = divmod(claim_at_ns, 1_000_000_000)
+        bound = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=seconds, nanos=nanos))
+        rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS,
+                                               min_read_timestamp=bound)
         require(len(rows) <= HEALTH_ROW_LIMIT + 1, "unresolved_bound")
         return summarize(rows, boot=boot, region=region, revision=revision, slot=slot,
             observed_ns=observed_ns, age_seconds=self.wall(), row_limit=HEALTH_ROW_LIMIT)

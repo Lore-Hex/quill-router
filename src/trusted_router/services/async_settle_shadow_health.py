@@ -626,8 +626,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 outcome = "lost_claims"
                 return
             claimed = True
+            assert store.last_claim is not None
             value = store.observe(boot, region,
-                                       revision, slot, budget)
+                revision, slot, budget, claim_at_ns=store.last_claim["claim_at_ns"])
             if not store.publish(value, budget):
                 return
             budget.remaining(CYCLE_SECONDS)
@@ -646,6 +647,12 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     if late:
         outcome = "failures"
     claim = store.last_claim
+    observation_failure = (value is not None and claim is not None
+                           and value["observed_at_ns"] < claim["claim_at_ns"])
+    if observation_failure:
+        # A refused observation is not valid trace evidence. Preserve the real
+        # claim and measurements; the owner/lifecycle accounts an ordinary failure.
+        value, ack_us, outcome = None, None, "failures"
     trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=boot,
         slot=slot, claim_start_us=actual_us if attempted else None,
         claim_at_ns=claim["claim_at_ns"] if claim else None,
@@ -655,6 +662,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         cycle_us=elapsed if attempted else None,
         outcome={"missed_slots": "missed", "lost_claims": "lost_claim", "publications": "published", "failures": "failed"}[outcome],
         unknown_outcome=unknown, late_cycle=late, rpc_count=len(rpc_durations), rpc_elapsed_us=sum(rpc_durations))
+    if observation_failure:
+        trace["observation_failure"] = "claim_observed_order"
     originals = None
     if admission.startup_retention and outcome == "publications" and claim is not None:
         claim_raw = store.startup_claim_raw

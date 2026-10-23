@@ -4784,7 +4784,7 @@
     "storage_gcp_settle_outbox:SpannerSettleOutbox.has_intent": "7a6549fdde5a2e87166452242a2391abd4819357e26f9c44ab7a8d08fac61812",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.get": "ebb7838c00289dedefc07e829ef6efc6529b25500a77330c5c865a86812ec6a9",
     "storage_gcp_shadow_observation:ObservationStore.query": "7a64376cfaee40e9817cc7879b005a23239dd9cd5ff66197843bad652c8d90bc",
-    "storage_gcp_shadow_observation:ObservationStore.snapshot_query": "ced4af8f1ee3698c8a3dafcc793bb1cf193d246899bc6b00bf99abecd8d8d7ca",
+    "storage_gcp_shadow_observation:ObservationStore.snapshot_query": "3ba01c37908cd1a6cb113ac4bb5302961cc207a7d9b0c1ea8a4405999e1988b5",
     "storage_gcp_shadow_v2_export:open_page": "9f96c5fe6fb1fa21be6fe58d56f4c8dffed10a376870b43a940086010b0773e1",
     "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
     "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
