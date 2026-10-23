@@ -17,7 +17,7 @@ const lookup = `"api_key_lookup_hash":"b57b533cfd309e134fe4b62ad6f0a17741de686ef
 
 var jsonHeaders = Headers{ContentType: []string{"application/json"}}
 
-func body(fields ...string) []byte {
+func bodyOf(fields ...string) []byte {
 	return bodyModel("z-ai/glm-5.3", fields...)
 }
 
@@ -44,82 +44,86 @@ func TestTheReasons(t *testing.T) {
 		body         []byte
 		headers      Headers
 	}{
-		{"plain", "", body(), jsonHeaders},
-		{"charset", "", body(), Headers{ContentType: []string{"Application/JSON; charset=UTF-8"}}},
-		{"no content type", ReasonContentType, body(), Headers{}},
-		{"text", ReasonContentType, body(), Headers{ContentType: []string{"text/plain"}}},
-		{"bom", ReasonUnparseable, append([]byte("\xef\xbb\xbf"), body()...), jsonHeaders},
+		{"plain", "", bodyOf(), jsonHeaders},
+		{"charset", "", bodyOf(), Headers{ContentType: []string{"Application/JSON; charset=UTF-8"}}},
+		{"no content type", ReasonContentType, bodyOf(), Headers{}},
+		{"text", ReasonContentType, bodyOf(), Headers{ContentType: []string{"text/plain"}}},
+		{"bom", ReasonUnparseable, append([]byte("\xef\xbb\xbf"), bodyOf()...), jsonHeaders},
 		{"not an object", ReasonUnparseable, []byte(`[1]`), jsonHeaders},
-		{"not UTF-8", ReasonUnparseable, body(`"x":"` + "\xff" + `"`), jsonHeaders},
-		{"depth 128", "", body(deep(127)), jsonHeaders},
-		{"depth 129", ReasonUnparseable, body(deep(128)), jsonHeaders},
-		{"4000 digits", "", body(`"x":` + strings.Repeat("9", 4000)), jsonHeaders},
-		{"4001 digits", ReasonUnparseable, body(`"x":` + strings.Repeat("9", 4001)), jsonHeaders},
-		{"digits in a string", "", body(`"x":"` + strings.Repeat("9", 5000) + `"`), jsonHeaders},
-		{"over 4 MiB", ReasonUnparseable, body(`"x":"` + strings.Repeat("a", maxBodyBytes) + `"`), jsonHeaders},
-		{"lone surrogate", ReasonUnparseable, body(`"x":"\ud800"`), jsonHeaders},
-		{"NaN", ReasonFloat, body(`"x":NaN`), jsonHeaders},
-		{"exponent", ReasonFloat, body(`"max_tokens":1e3`), jsonHeaders},
-		{"nested float", ReasonFloat, body(`"metadata":{"a":[0.5]}`), jsonHeaders},
-		{"duplicate", ReasonDuplicateKey, body(`"metadata":{"a":1,"a":2}`), jsonHeaders},
-		{"int as string", ReasonLaxType, body(`"max_tokens":"64"`), jsonHeaders},
-		{"bool as int", ReasonLaxType, body(`"stream":0`), jsonHeaders},
-		{"strict int as string", ReasonRefused, body(`"transcription_duration_ms":"5"`), jsonHeaders},
-		{"int as str field", ReasonRefused, body(`"region":5`), jsonHeaders},
-		{"null estimate", ReasonRefused, body(`"estimated_input_tokens":null`), jsonHeaders},
-		{"tab", ReasonStripAmbiguous, body(`"user":"\tu"`), jsonHeaders},
-		{"unicode", ReasonStripAmbiguous, body(`"models":["é"]`), jsonHeaders},
-		{"literal not stripped", ReasonRefused, body(`"input_modalities":[" text"]`), jsonHeaders},
-		{"dict key", ReasonDictKeyStrip, body(`"provider":{" sort":"price"}`), jsonHeaders},
-		{"nested dict key kept", "", body(`"metadata":{"k":{" inner ":1}}`), jsonHeaders},
+		{"not UTF-8", ReasonUnparseable, bodyOf(`"x":"` + "\xff" + `"`), jsonHeaders},
+		{"depth 128", "", bodyOf(deep(127)), jsonHeaders},
+		{"depth 129", ReasonUnparseable, bodyOf(deep(128)), jsonHeaders},
+		{"4000 digits", "", bodyOf(`"x":` + strings.Repeat("9", 4000)), jsonHeaders},
+		{"4001 digits", ReasonUnparseable, bodyOf(`"x":` + strings.Repeat("9", 4001)), jsonHeaders},
+		{"digits in a string", "", bodyOf(`"x":"` + strings.Repeat("9", 5000) + `"`), jsonHeaders},
+		{"over 4 MiB", ReasonUnparseable, bodyOf(`"x":"` + strings.Repeat("a", maxBodyBytes) + `"`), jsonHeaders},
+		{"lone surrogate", ReasonUnparseable, bodyOf(`"x":"\ud800"`), jsonHeaders},
+		{"NaN", ReasonFloat, bodyOf(`"x":NaN`), jsonHeaders},
+		{"exponent", ReasonFloat, bodyOf(`"max_tokens":1e3`), jsonHeaders},
+		{"nested float", ReasonFloat, bodyOf(`"metadata":{"a":[0.5]}`), jsonHeaders},
+		{"duplicate", ReasonDuplicateKey, bodyOf(`"metadata":{"a":1,"a":2}`), jsonHeaders},
+		{"int as string", ReasonLaxType, bodyOf(`"max_tokens":"64"`), jsonHeaders},
+		{"bool as int", ReasonLaxType, bodyOf(`"stream":0`), jsonHeaders},
+		{"strict int as string", ReasonRefused, bodyOf(`"transcription_duration_ms":"5"`), jsonHeaders},
+		{"int as str field", ReasonRefused, bodyOf(`"region":5`), jsonHeaders},
+		{"null estimate", ReasonRefused, bodyOf(`"estimated_input_tokens":null`), jsonHeaders},
+		{"lax before refused", ReasonLaxType, bodyOf(`"max_tokens":"64"`, `"region":5`), jsonHeaders},
+		{"strip before refused", ReasonStripAmbiguous, bodyOf(`"user":"\tu"`, `"region":5`), jsonHeaders},
+		{"dict key before refused", ReasonDictKeyStrip, bodyOf(`"tags":{" k":"v"}`, `"region":5`), jsonHeaders},
+		{"lax before strip", ReasonLaxType, bodyOf(`"stream":"yes"`, `"user":"é"`), jsonHeaders},
+		{"tab", ReasonStripAmbiguous, bodyOf(`"user":"\tu"`), jsonHeaders},
+		{"unicode", ReasonStripAmbiguous, bodyOf(`"models":["é"]`), jsonHeaders},
+		{"literal not stripped", ReasonRefused, bodyOf(`"input_modalities":[" text"]`), jsonHeaders},
+		{"dict key", ReasonDictKeyStrip, bodyOf(`"provider":{" sort":"price"}`), jsonHeaders},
+		{"nested dict key kept", "", bodyOf(`"metadata":{"k":{" inner ":1}}`), jsonHeaders},
 		{"no key", ReasonRefused, []byte(`{"model":"z-ai/glm-5.3"}`), jsonHeaders},
 		{"empty model", ReasonRefused, bodyModel("  "), jsonHeaders},
-		{"trace 8 deep", "", body(trace(7)), jsonHeaders},
-		{"trace 9 deep", ReasonRefused, body(trace(8)), jsonHeaders},
-		{"trace 256 items", "", body(`"trace":{` + strings.Join(items, ",") + `}`), jsonHeaders},
-		{"trace 257 items", ReasonRefused, body(`"trace":{` + strings.Join(items, ",") + `,"x":[]}`), jsonHeaders},
-		{"trace bytes", ReasonRefused, body(`"trace":{"a":"` + strings.Repeat("é", 4100) + `"}`), jsonHeaders},
-		{"referer ftp", ReasonRefused, body(`"http_referer":"ftp://example.com"`), jsonHeaders},
-		{"referer no host", ReasonRefused, body(`"app":"a","http_referer":"https://user@:80/"`), jsonHeaders},
-		{"referer userinfo, app", "", body(`"app":"a","http_referer":"https://user@example.com/"`), jsonHeaders},
-		{"referer userinfo", ReasonReferer, body(`"http_referer":"https://user@example.com/"`), jsonHeaders},
-		{"referer upper scheme, app", "", body(`"app":"a","http_referer":"HTTPS://example.com"`), jsonHeaders},
-		{"referer bracket", ReasonReferer, body(`"app":"a","http_referer":"https://[::1]/"`), jsonHeaders},
-		{"categories", ReasonRefused, body(`"app_categories":["a","b","c"]`), jsonHeaders},
-		{"tag value", ReasonRefused, body(`"tags":{"k":1}`), jsonHeaders},
-		{"tag unicode", ReasonTags, body(`"tags":{"k":"é"}`), jsonHeaders},
-		{"tag reserved", ReasonRefused, body(`"tags":{"AWS:x":"y"}`), jsonHeaders},
-		{"key hash", ReasonAPIKeyHash, body(`"api_key_hash":"h"`), jsonHeaders},
-		{"stream", ReasonStream, body(`"stream":true`), jsonHeaders},
-		{"stream false", "", body(`"stream":false`), jsonHeaders},
-		{"tier", ReasonServiceTier, body(`"service_tier":"auto"`), jsonHeaders},
-		{"affinity", ReasonCacheAffinity, body(`"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`), jsonHeaders},
-		{"affinity explicit only", "", body(`"cache_affinity_explicit":true`), jsonHeaders},
-		{"receipt", ReasonPricedExtra, body(`"inference_receipt":true`), jsonHeaders},
-		{"zero cost", "", body(`"additional_cost_reservation_microdollars":0`), jsonHeaders},
-		{"cost", ReasonPricedExtra, body(`"additional_cost_reservation_microdollars":5`), jsonHeaders},
-		{"video", ReasonPricedExtra, body(`"video_resolution":"720p"`), jsonHeaders},
-		{"alias", ReasonCanonicalModel, body(`"models":["minimax/minimax-m3-1-flash"]`), jsonHeaders},
+		{"trace 8 deep", "", bodyOf(trace(7)), jsonHeaders},
+		{"trace 9 deep", ReasonRefused, bodyOf(trace(8)), jsonHeaders},
+		{"trace 256 items", "", bodyOf(`"trace":{` + strings.Join(items, ",") + `}`), jsonHeaders},
+		{"trace 257 items", ReasonRefused, bodyOf(`"trace":{` + strings.Join(items, ",") + `,"x":[]}`), jsonHeaders},
+		{"trace bytes", ReasonRefused, bodyOf(`"trace":{"a":"` + strings.Repeat("é", 4100) + `"}`), jsonHeaders},
+		{"referer ftp", ReasonRefused, bodyOf(`"http_referer":"ftp://example.com"`), jsonHeaders},
+		{"referer no host", ReasonRefused, bodyOf(`"app":"a","http_referer":"https://user@:80/"`), jsonHeaders},
+		{"referer userinfo, app", "", bodyOf(`"app":"a","http_referer":"https://user@example.com/"`), jsonHeaders},
+		{"referer userinfo", ReasonReferer, bodyOf(`"http_referer":"https://user@example.com/"`), jsonHeaders},
+		{"referer upper scheme, app", "", bodyOf(`"app":"a","http_referer":"HTTPS://example.com"`), jsonHeaders},
+		{"referer bracket", ReasonReferer, bodyOf(`"app":"a","http_referer":"https://[::1]/"`), jsonHeaders},
+		{"categories", ReasonRefused, bodyOf(`"app_categories":["a","b","c"]`), jsonHeaders},
+		{"tag value", ReasonRefused, bodyOf(`"tags":{"k":1}`), jsonHeaders},
+		{"tag unicode", ReasonTags, bodyOf(`"tags":{"k":"é"}`), jsonHeaders},
+		{"tag reserved", ReasonRefused, bodyOf(`"tags":{"AWS:x":"y"}`), jsonHeaders},
+		{"key hash", ReasonAPIKeyHash, bodyOf(`"api_key_hash":"h"`), jsonHeaders},
+		{"stream", ReasonStream, bodyOf(`"stream":true`), jsonHeaders},
+		{"stream false", "", bodyOf(`"stream":false`), jsonHeaders},
+		{"tier", ReasonServiceTier, bodyOf(`"service_tier":"auto"`), jsonHeaders},
+		{"affinity", ReasonCacheAffinity, bodyOf(`"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`), jsonHeaders},
+		{"affinity explicit only", "", bodyOf(`"cache_affinity_explicit":true`), jsonHeaders},
+		{"receipt", ReasonPricedExtra, bodyOf(`"inference_receipt":true`), jsonHeaders},
+		{"zero cost", "", bodyOf(`"additional_cost_reservation_microdollars":0`), jsonHeaders},
+		{"cost", ReasonPricedExtra, bodyOf(`"additional_cost_reservation_microdollars":5`), jsonHeaders},
+		{"video", ReasonPricedExtra, bodyOf(`"video_resolution":"720p"`), jsonHeaders},
+		{"alias", ReasonCanonicalModel, bodyOf(`"models":["minimax/minimax-m3-1-flash"]`), jsonHeaders},
 		{"nyte", ReasonCanonicalModel, bodyModel("nyte/auto"), jsonHeaders},
-		{"custom", ReasonCustomModel, body(`"models":["TR-Custom-Model/x"]`), jsonHeaders},
-		{"internal", ReasonInternalModel, body(`"models":[" trustedrouter/monitor "]`), jsonHeaders},
-		{"route type", ReasonEvaluatorInput, body(`"route_type":"videos"`), jsonHeaders},
-		{"route type spaced", "", body(`"route_type":" responses "`), jsonHeaders},
-		{"huge tokens", ReasonEvaluatorInput, body(`"max_tokens":9223372036854775808`), jsonHeaders},
-		{"header twice", ReasonIdempotencyKey, body(),
+		{"custom", ReasonCustomModel, bodyOf(`"models":["TR-Custom-Model/x"]`), jsonHeaders},
+		{"internal", ReasonInternalModel, bodyOf(`"models":[" trustedrouter/monitor "]`), jsonHeaders},
+		{"route type", ReasonEvaluatorInput, bodyOf(`"route_type":"videos"`), jsonHeaders},
+		{"route type spaced", "", bodyOf(`"route_type":" responses "`), jsonHeaders},
+		{"huge tokens", ReasonEvaluatorInput, bodyOf(`"max_tokens":9223372036854775808`), jsonHeaders},
+		{"header twice", ReasonIdempotencyKey, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{"a", "b"}}},
-		{"header latin-1", ReasonIdempotencyKey, body(),
+		{"header latin-1", ReasonIdempotencyKey, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{"cl\xe9"}}},
-		{"header too long", ReasonIdempotencyKey, body(),
+		{"header too long", ReasonIdempotencyKey, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{strings.Repeat("k", 257)}}},
-		{"header 256 spaced", "", body(),
+		{"header 256 spaced", "", bodyOf(),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{" " + strings.Repeat("k", 256) + " "}}},
-		{"body native batch", ReasonIdempotencyKey, body(`"idempotency_key":"tr-native-batch:x"`), jsonHeaders},
-		{"header partner", ReasonIdempotencyKey, body(`"idempotency_key":"k"`),
+		{"body native batch", ReasonIdempotencyKey, bodyOf(`"idempotency_key":"tr-native-batch:x"`), jsonHeaders},
+		{"header partner", ReasonIdempotencyKey, bodyOf(`"idempotency_key":"k"`),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{"partner:x"}}},
-		{"settlement", ReasonSettlementAsync, body(),
+		{"settlement", ReasonSettlementAsync, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}},
-		{"video header", ReasonVideoProviders, body(),
+		{"video header", ReasonVideoProviders, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, VideoAllowedProviders: true}},
 	} {
 		if _, p := ParseRequest(c.body, c.headers); p.Reason != c.reason {
@@ -133,7 +137,7 @@ func TestTheReasons(t *testing.T) {
 // the hostname default, an empty app_categories dropped, and the
 // workspace and key hash over an extra of the same name.
 func TestTheMaterial(t *testing.T) {
-	b := body(`"x_null":null`, `"metadata":{"n":null}`, `"invocation_nonce":"n"`, `"tags":{}`,
+	b := bodyOf(`"x_null":null`, `"metadata":{"n":null}`, `"invocation_nonce":"n"`, `"tags":{}`,
 		`"http_referer":"https://Example.COM:8443/p?q=1"`, `"app_categories":[]`, `"user":"  u  "`,
 		`"key_hash":"spoof"`, `"spend_lease_admission":{"x":1}`, `"idempotency_key":" k "`)
 	r, p := ParseRequest(b, jsonHeaders)
@@ -159,7 +163,7 @@ func TestTheMaterial(t *testing.T) {
 	if id, _ := IdentityOf(r, h, "ws", "kh", nil); id.IdempotencyKey != "k" {
 		t.Fatalf("body key lost to the header: %q", id.IdempotencyKey)
 	}
-	plain, _ := ParseRequest(body(), h)
+	plain, _ := ParseRequest(bodyOf(), h)
 	if id, _ := IdentityOf(plain, h, "ws", "kh", nil); id.IdempotencyKey != "hdr" || !id.Presented {
 		t.Fatalf("header key: %+v", id)
 	}
@@ -175,7 +179,7 @@ func TestTheMaterial(t *testing.T) {
 // TestMergeTags: the key's tags in stored order, the request's after, a
 // request key overwriting in place; the merged map validated whole.
 func TestMergeTags(t *testing.T) {
-	r, p := ParseRequest(body(`"tags":{"env":"dev","app":"cli"}`), jsonHeaders)
+	r, p := ParseRequest(bodyOf(`"tags":{"env":"dev","app":"cli"}`), jsonHeaders)
 	if p.Passed() {
 		t.Fatal(p.Reason)
 	}

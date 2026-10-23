@@ -142,7 +142,7 @@ func TestOnlyTheEdgeImportsTheEvaluator(t *testing.T) {
 	root := filepath.Join("..", "..")
 	edgeDir := filepath.Join(root, "internal", "edge")
 	gwauthDir := filepath.Join(root, "internal", "gwauth")
-	files, internalImports, edgeImports := 0, 0, 0
+	files, internalImports, edgeImports, gwauthImports := 0, 0, 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
@@ -158,8 +158,12 @@ func TestOnlyTheEdgeImportsTheEvaluator(t *testing.T) {
 				internalImports++
 			}
 			if imported == self {
-				if dir := filepath.Dir(path); dir == edgeDir || dir == gwauthDir {
+				switch filepath.Dir(path) {
+				case edgeDir:
 					edgeImports++
+					continue
+				case gwauthDir:
+					gwauthImports++
 					continue
 				}
 				t.Errorf("%s imports the routing snapshot evaluator", path)
@@ -170,10 +174,11 @@ func TestOnlyTheEdgeImportsTheEvaluator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Positive control: the walk sees the module's code and its internal imports.
-	if files < 50 || internalImports < 10 || edgeImports == 0 {
-		t.Fatalf("scanned %d files with %d internal imports, %d of the evaluator by the edge", files, internalImports,
-			edgeImports)
+	// Positive control: the walk sees the module's code and its internal
+	// imports, and each allowed importer's import of the evaluator.
+	if files < 50 || internalImports < 10 || edgeImports == 0 || gwauthImports == 0 {
+		t.Fatalf("scanned %d files with %d internal imports, %d of the evaluator by the edge, %d by gwauth", files,
+			internalImports, edgeImports, gwauthImports)
 	}
 }
 

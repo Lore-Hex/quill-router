@@ -2,8 +2,8 @@ package gwauth
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -21,6 +21,7 @@ const (
 	fingerprintFile = "../../testdata/authorize_fingerprint_v1.json"
 	casesFile       = "../../testdata/authorize_cases_v1.json"
 	snapshotFile    = "../../testdata/routing_snapshot_v1.body.json"
+	aliasFile       = "../../testdata/model_alias_vectors_v1.json"
 )
 
 // passRequired are §10.2's labels on which Go must pass.
@@ -409,37 +410,35 @@ func TestTheInternalModelsArePythons(t *testing.T) {
 	}
 }
 
-// TestTheModelAliasesArePythons holds routerModelIDAliases to
-// model_aliases._ROUTER_MODEL_ID_ALIASES as written: the dict literal's
-// "key": "value" lines, which the Python source keeps one a line.
+// TestTheModelAliasesArePythons holds canonicalRouterModelID to Python's
+// canonical_router_model_id over every id of
+// fastpath/testdata/model_alias_vectors_v1.json (every catalog model, every
+// alias, the system1models, nyte/ and auto-routing spellings), which
+// scripts/fastpath/model_alias_vectors.py writes and
+// tests/test_fastpath_model_alias_vectors.py keeps current.
 func TestTheModelAliasesArePythons(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "src", "trusted_router", "model_aliases.py"))
-	if err != nil {
-		t.Fatal(err)
+	var file struct {
+		Aliases map[string]string `json:"aliases"`
+		Cases   []struct {
+			ID        string `json:"id"`
+			Canonical string `json:"canonical"`
+		} `json:"cases"`
 	}
-	text := string(raw)
-	start := strings.Index(text, "_ROUTER_MODEL_ID_ALIASES = {\n")
-	if start < 0 {
-		t.Fatal("_ROUTER_MODEL_ID_ALIASES is not a dict literal at the top level")
+	readJSON(t, aliasFile, &file)
+	if !maps.Equal(file.Aliases, routerModelIDAliases) {
+		t.Errorf("Python's aliases %v, Go's %v", file.Aliases, routerModelIDAliases)
 	}
-	block := text[start+len("_ROUTER_MODEL_ID_ALIASES = {\n"):]
-	block = block[:strings.Index(block, "\n}\n")]
-	got := map[string]string{}
-	for _, line := range strings.Split(block, "\n") {
-		var key, value string
-		line = strings.TrimSuffix(strings.TrimSpace(line), ",")
-		k, v, ok := strings.Cut(line, ": ")
-		if !ok || json.Unmarshal([]byte(k), &key) != nil || json.Unmarshal([]byte(v), &value) != nil {
-			t.Fatalf("an alias line Go does not read: %q", line)
+	rewritten := 0
+	for _, c := range file.Cases {
+		if got := canonicalRouterModelID(c.ID); got != c.Canonical {
+			t.Errorf("%q: Go %q, Python %q", c.ID, got, c.Canonical)
 		}
-		got[key] = value
-	}
-	if len(got) == 0 || len(got) != len(routerModelIDAliases) {
-		t.Fatalf("Python's aliases %v, Go's %v", got, routerModelIDAliases)
-	}
-	for k, v := range got {
-		if routerModelIDAliases[k] != v {
-			t.Errorf("alias %q: Python %q, Go %q", k, v, routerModelIDAliases[k])
+		if c.ID != c.Canonical {
+			rewritten++
 		}
+	}
+	// Positive control: the file holds the catalog and every rule rewrites.
+	if len(file.Cases) < 1000 || rewritten < 100 {
+		t.Fatalf("%d cases, %d rewritten", len(file.Cases), rewritten)
 	}
 }

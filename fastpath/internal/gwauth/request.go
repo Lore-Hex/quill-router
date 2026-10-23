@@ -372,44 +372,45 @@ func parseSchema(object pyjson.Object) (Request, Pass) {
 	for _, m := range object {
 		values[m.Key] = m.Value
 	}
-	worst := exact
+	// Each reason is checked over the whole body before the next, so a
+	// body tripping several is counted under the first in §3's order.
+	anyLax, anyRefused := false, false
 	for name, f := range declared {
 		v, present := values[name]
-		if !present {
-			if f.required {
-				worst = max(worst, refused)
-			}
-			continue
+		switch {
+		case !present:
+			anyRefused = anyRefused || f.required
+		case typeOf(f, v) == lax:
+			anyLax = true
+		case typeOf(f, v) == refused:
+			anyRefused = true
 		}
-		worst = max(worst, typeOf(f, v))
 	}
-	if worst == lax {
+	if anyLax {
 		return Request{}, passFor(ReasonLaxType)
 	}
-	if worst == exact {
-		// Every declared string and list-of-strings entry must strip as Go
-		// strips; input_modalities is a Literal list and is not stripped.
-		for name, f := range declared {
-			if !stripped(f.kind) {
-				continue
-			}
-			for _, s := range stringsOf(values[name]) {
-				if !printableASCII(s) {
-					return Request{}, passFor(ReasonStripAmbiguous)
-				}
+	// Every declared string and list-of-strings entry must strip as Go
+	// strips; input_modalities is a Literal list and is not stripped.
+	for name, f := range declared {
+		if !stripped(f.kind) {
+			continue
+		}
+		for _, s := range stringsOf(values[name]) {
+			if !printableASCII(s) {
+				return Request{}, passFor(ReasonStripAmbiguous)
 			}
 		}
-		for _, name := range []string{"provider", "trace", "metadata", "tags"} {
-			if o, ok := values[name].(pyjson.Object); ok {
-				for _, m := range o {
-					if !printableASCII(m.Key) || strip(m.Key) != m.Key {
-						return Request{}, passFor(ReasonDictKeyStrip)
-					}
+	}
+	for _, name := range []string{"provider", "trace", "metadata", "tags"} {
+		if o, ok := values[name].(pyjson.Object); ok {
+			for _, m := range o {
+				if !printableASCII(m.Key) || strip(m.Key) != m.Key {
+					return Request{}, passFor(ReasonDictKeyStrip)
 				}
 			}
 		}
 	}
-	if worst == refused {
+	if anyRefused {
 		return Request{}, passFor(ReasonRefused)
 	}
 	return build(object, values)
