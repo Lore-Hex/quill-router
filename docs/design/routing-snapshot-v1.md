@@ -421,6 +421,82 @@ secret: the edge's nodes have no access to it. The operator steps are in
 compiler's reason, which names instants, providers or fields; any other
 failure by its exception class alone). Never the key, the token or the body.
 
+## The edge policy
+
+E2 P2, published dark. The snapshot carries the catalog, compiled hourly; the
+edge also needs the live control-plane facts authorize decides with, which
+change without a deploy and must not wait an hour. They travel as a second
+signed document, the edge policy, built by
+`services/edge_policy_publisher.py` and specified in
+`trusted_router/edge_policy.py` (body) and `routing_snapshot_signing.py`
+(manifest, `edge_policy_manifest_claims`). The contract is
+`docs/design/fast-admission-e2-decide.md` section 4.
+
+**Switch.** Off unless `TR_EDGE_POLICY_PUBLISH_ENABLED` is true (default
+false; `rollout.sh` does not set it yet, I1 will). Off, the route is a 404 and
+no edge-policy module is imported (`tests/test_edge_policy_publish.py`).
+
+**Route.** `GET /internal/fastpath/edge-policy`, the same surfaces, token,
+`ETag`/304 and `Cache-Control: no-store` as the snapshot's route. The answer
+is exactly `{"v": 1, "kind": "tr-edge-policy-publication", "manifest",
+"body"}`; `refresh_at` is inside the signed body. 503 with `status`
+`signer-unavailable` (no usable key), `digest-policy-unavailable` (the
+Stage D policy refresh before signing failed), `policy-error` (a fact
+outside the schema) or `compiling` (no valid copy yet and the background
+signing is in flight), each but the first with `retry_at` and `Retry-After`
+(5 s, or 2 s for `compiling`).
+
+**Body.** Canonical ASCII JSON as the snapshot's, no floats, `null` only
+for `monitor_lookup_hash`:
+`v`, `kind: "tr-edge-policy"`, `plane`, `issued_at`, `refresh_at` (+15 s),
+`not_after` (+60 s); `accepted_image_digests` (the Stage D resolver's
+verified set read right after a synchronous refresh, plus the break-glass
+`TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS`: the union authorize's boot
+check reads); `stage_d` (the four settings `_stage_d_eligibility_reason` reads);
+`records_durable` (`fastpath_frontdoor.records_durable`, the pilot's own);
+`fastpath_pilot_enabled`, `fastpath_pilot_workspaces`,
+`fastpath_pilot_regions`; `gateway_authorize_max_in_flight_per_key`;
+`monitor_lookup_hash` (`null` when unset); `async_settle_shadow_policy`,
+`async_settle_shadow_workspaces`;
+`configured_regions` (configured order), `primary_region`,
+`multi_region_enabled`; `internal_models` (the monitor model and every
+`internal_only` catalog model, the set `require_internal_model_key`
+protects, read from the serving process's catalog when signing). Sets are
+sorted and unique.
+
+**Cache and refresh.** Signing runs in one background worker at a time,
+never on a poll. The first poll at or after the cached copy's `refresh_at`
+(or with no copy) starts it; it calls `StageDPolicyResolver.refresh_now()`
+(serialized with the resolver's own kick worker, so refreshes never
+overlap)
+(two HTTPS fetches with 5 s timeouts per release URL, a Sigstore bundle
+check, the watermark: at most four a minute, only on an instance the edge
+polls), reads the other facts afresh and signs, with `issued_at` the clock
+after the refresh. So a body's digest set is the release's at `issued_at`
+and a changed setting reaches a polling edge within about 15 s. Polls are
+served the cached copy while it is within its `not_after`, else 503 at
+once, so none holds a threadpool token authorize shares while a refresh
+runs. A failed refresh signs nothing (no new worker for 5 s); the cached
+copy is served until `not_after`, then polls answer 503
+`digest-policy-unavailable` and the edge passes everything. A worker still
+running after 30 s is abandoned (logged; its late outcome is discarded) and
+the next poll starts a fresh one. With no
+release URL configured there is nothing to refresh and the set is the
+override alone, as in authorize. No worker process: every fact is this
+process's live state and signing a few hundred bytes costs well under a
+millisecond.
+
+**Signing.** The routing snapshot's key (purpose `routing-snapshot`, the same
+issuer and audience), header `typ` `tr-edge-policy-v1`, claims `{v: 1,
+sha256, size, issued_at, not_after, plane, iss, aud}`.
+`verify_manifest` refuses an edge-policy manifest and
+`verify_edge_policy_manifest` a snapshot manifest, both on the header `typ`
+before any claim is read. Golden files:
+`fastpath/testdata/edge_policy_v1.{body,manifest}.json`, written by
+`scripts/fastpath/edge_policy_vectors.py` from synthetic settings under the
+snapshot's public TEST key; G8's Go reader verifies them. The edge treats a
+policy past `not_after`, or none, as "pass every request to Python".
+
 ## What the compiler reads
 
 `CatalogInputs` carries the catalog lists, the expansions, the alias tables,

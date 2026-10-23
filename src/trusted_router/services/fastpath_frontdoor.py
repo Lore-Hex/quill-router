@@ -376,6 +376,16 @@ def _parse_time(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
+def records_durable(settle_outbox_enabled: bool, typed_store: Any) -> bool:
+    """The leased settle writes its records, its resolved intent and its
+    activity row in one commit: it needs the settle outbox and a store that
+    builds activity rows in that commit. The pilot's ``records_durable`` and
+    the fast path's edge policy both read this."""
+    return settle_outbox_enabled and callable(
+        getattr(getattr(typed_store, "_operational_analytics_outbox", None), "activity_insert_statement", None)
+    )
+
+
 def pilot_reason(
     *,
     enabled: bool,

@@ -1703,10 +1703,7 @@ def _authorize_gateway_sync_impl(
             app_markup=app_markup_basis_points > 0,
             # The leased settle writes its records, its resolved intent and
             # its activity row in one commit: it needs the durable outboxes.
-            records_durable=settings.settle_outbox_enabled
-            and callable(
-                getattr(getattr(_typed_store, "_operational_analytics_outbox", None), "activity_insert_statement", None)
-            ),
+            records_durable=_fastpath.records_durable(settings.settle_outbox_enabled, _typed_store),
         )
 
         def release_after_error() -> None:

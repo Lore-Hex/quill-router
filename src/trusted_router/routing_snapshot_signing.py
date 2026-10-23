@@ -7,6 +7,11 @@ received and never re-serializes them. Ed25519, not HMAC: a shared key would
 let every node that verifies a snapshot also forge one. Key custody (a pinned
 Secret Manager version, rotation) is the publisher's
 (services/routing_snapshot_publisher.py, docs/runbooks/routing-snapshot-key.md).
+
+The same key signs the edge policy (``EdgePolicySigner``, E2 P2) under its
+own header ``typ`` (``EDGE_POLICY_TYP``): each verifier refuses the other's
+``typ`` before it reads a claim, so neither document can stand in for the
+other.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ TYP = "tr-routing-snapshot-v1"
 # signing and verification refuse it unless the caller asks for test mode.
 TEST_KID = "routing-snapshot-test-key-1"
 TEST_PUBLIC_KEY_B64URL = "U1I1REk6JqeFqKq5ZGH0P8b1b_OEwbFG0lCOkYL-jjY"
+EDGE_POLICY_TYP = "tr-edge-policy-v1"
 _KEY_FIELD = re.compile(r"[A-Za-z0-9_./:@+\-]{1,512}")
 
 
@@ -168,6 +174,113 @@ class RoutingSnapshotSigner:
         token = material + "." + b64encode(self.private.sign(material.encode("ascii")))
         verify_manifest(
             token, [self.trusted], body, now=claims["compiled_at"],
+            expected_plane=Plane.model_validate(claims["plane"]),
+            expected_aud=self.trusted.aud, allow_test_key=self.allow_test_key,
+        )
+        return token
+
+
+# --- the edge policy (E2 P2) -------------------------------------------------------------------
+
+
+class EdgePolicyManifestClaims(Frozen):
+    v: Literal[1]
+    sha256: Digest
+    size: UInt
+    issued_at: UInt
+    not_after: UInt
+    plane: Plane
+    iss: Identity
+    aud: Identity
+
+
+def edge_policy_manifest_claims(body: bytes, *, iss: str, aud: str) -> dict[str, Any]:
+    """The claims an edge-policy manifest must carry for exactly these bytes.
+
+    docs/design/fast-admission-e2-decide.md section 4. The manifest is a
+    compact JWS (Ed25519, the routing-snapshot key, purpose
+    ``routing-snapshot``, issuer and audience the key's) whose header is
+    exactly ``{"alg":"EdDSA","kid":<kid>,"typ":"tr-edge-policy-v1"}`` and
+    whose payload is exactly these claims, both canonical (sorted keys,
+    compact, ASCII), each base64url without padding:
+
+        {"aud", "iss", "issued_at", "not_after",
+         "plane": {"cloud", "region"}, "sha256", "size", "v": 1}
+
+    ``sha256`` (lowercase hex) and ``size`` bind the body bytes;
+    ``issued_at``, ``not_after`` and ``plane`` repeat the body's. The body
+    must parse as an edge policy v1 (``v`` 1, ``kind`` ``tr-edge-policy``)
+    and be its own canonical encoding (trusted_router/edge_policy.py). A verifier checks the signature, the
+    ``typ``, the key's purpose, that ``iss`` and ``aud`` are the key's and
+    ``aud`` its own, that ``plane`` is its own, that the claims are exactly
+    the ones the bytes it received imply, and ``issued_at <= now <
+    not_after``.
+    """
+    # Imported here: the routing snapshot's signer loads no edge-policy module.
+    from trusted_router.edge_policy import canonical_edge_policy_bytes, parse_edge_policy
+
+    policy = parse_edge_policy(body)
+    if canonical_edge_policy_bytes(policy) != body:
+        raise ValueError("edge policy body is not canonical")
+    claims = {
+        "v": 1,
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "size": len(body),
+        "issued_at": policy.issued_at,
+        "not_after": policy.not_after,
+        "plane": policy.plane.model_dump(mode="json"),
+        "iss": iss,
+        "aud": aud,
+    }
+    EdgePolicyManifestClaims.model_validate(claims)
+    return claims
+
+
+def verify_edge_policy_manifest(
+    token: str, keys: Sequence[TrustedKey], body: bytes, *, now: int,
+    expected_plane: Plane, expected_aud: str, allow_test_key: bool = False,
+) -> EdgePolicyManifestClaims:
+    """``verify_manifest`` for the edge policy: its own ``typ``, claims and body.
+
+    A routing-snapshot manifest is refused here (``type``), as an edge-policy
+    manifest is refused by ``verify_manifest``.
+    """
+    claims, key, payload = verify(token, keys, EDGE_POLICY_TYP, PURPOSE)
+    if _is_test_key(key) and not allow_test_key:
+        raise ValueError("test key outside test mode")
+    parsed = EdgePolicyManifestClaims.model_validate(claims)
+    if payload != canonical(claims) or parsed.iss != key.iss or parsed.aud != key.aud:
+        raise ValueError("manifest issuer or encoding")
+    if parsed.aud != expected_aud:
+        raise ValueError("manifest audience")
+    if parsed.plane != expected_plane:
+        raise ValueError("manifest plane")
+    if canonical(edge_policy_manifest_claims(body, iss=key.iss, aud=key.aud)) != payload:
+        raise ValueError("manifest binding")
+    if not parsed.issued_at <= now < parsed.not_after:
+        raise ValueError("edge policy freshness")
+    return parsed
+
+
+class EdgePolicySigner:
+    """Signs edge-policy manifests with the routing snapshot's key.
+
+    Built from a ``RoutingSnapshotSigner``, so the key carries every check that
+    signer makes (pinned purpose, separate from every other purpose's key,
+    the test key only in test mode); only the ``typ`` and the claims differ.
+    """
+
+    def __init__(self, signer: RoutingSnapshotSigner) -> None:
+        self.private, self.trusted = signer.private, signer.trusted
+        self.allow_test_key = signer.allow_test_key
+
+    def sign(self, body: bytes) -> str:
+        claims = edge_policy_manifest_claims(body, iss=self.trusted.iss, aud=self.trusted.aud)
+        header = {"alg": "EdDSA", "kid": self.trusted.kid, "typ": EDGE_POLICY_TYP}
+        material = b64encode(canonical(header)) + "." + b64encode(canonical(claims))
+        token = material + "." + b64encode(self.private.sign(material.encode("ascii")))
+        verify_edge_policy_manifest(
+            token, [self.trusted], body, now=claims["issued_at"],
             expected_plane=Plane.model_validate(claims["plane"]),
             expected_aud=self.trusted.aud, allow_test_key=self.allow_test_key,
         )

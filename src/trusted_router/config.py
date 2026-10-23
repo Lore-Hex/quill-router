@@ -994,6 +994,11 @@ class Settings(BaseSettings):
     routing_snapshot_private_key_file: str = ""
     routing_snapshot_public_key: str = ""
     routing_snapshot_kid: str = ""
+    # E2 edge policy publication (docs/design/routing-snapshot-v1.md, "The
+    # edge policy"): the live settings and accepted image digests the edge
+    # gates on, signed with the routing snapshot's key above. Off by default:
+    # the route is not registered and no edge-policy module is imported.
+    edge_policy_publish_enabled: bool = False
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
