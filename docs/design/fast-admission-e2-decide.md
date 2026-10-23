@@ -677,6 +677,7 @@ package gwauth
 
 // Headers are the headers authorize reads, every value as received.
 type Headers struct {
+	ContentType           []string // every Content-Type value (body.content_type)
 	IdempotencyKey        []string
 	SettlementMode        []string // X-TR-Settlement-Mode
 	VideoAllowedProviders bool     // X-Quill-Video-Allowed-Providers present
@@ -714,10 +715,29 @@ type Identity struct {
 }
 
 func IdentityOf(r Request, h Headers, workspaceID, keyHash string, mint func() string) (Identity, Pass)
+
+type Tag struct{ Key, Value string }
+
+// MergeTags is merge_tags(key.tags, body.tags) validated whole (§6);
+// any failure, or stored tags Go cannot read (keyTagsUsable false), is
+// tags.merged_invalid.
+func MergeTags(keyTags []Tag, keyTagsUsable bool, r Request) ([]Tag, Pass)
+
+// NamesInternalModel: model or a models entry in Go's hardcoded set or the
+// policy's internal_models (decision 19). ParseRequest applies the
+// hardcoded set; G10 calls this with the policy's.
+func (r Request) NamesInternalModel(policy []string) bool
 ```
 
 `pyjson.Object` is G1's insertion-ordered decoded object. `gwauth` imports
-`routingsnapshot` and `pyjson`, nothing from `edge`.
+`routingsnapshot` and `pyjson`, nothing from `edge`, and not `gwstate`
+(which stays dark until G10): G10 converts `gwstate.Pair` to `gwauth.Tag`.
+`ParseRequest` answers every §3 request reason; `body.referer` also passes
+a bracketed (IPv6) netloc, whose `urlsplit` checks Go does not port, and
+`body.evaluator_input` any route type outside the evaluator's chat arm and
+any token count beyond int64. `evaluate.estimate_overflow` needs no code of
+its own: `Snapshot.Evaluate` passes an estimate beyond int64 ("the estimate
+exceeds int64"), and G10 counts that pass under this reason.
 
 ### 8.3 `gwauth` compose (G6) and rows (G2)
 
