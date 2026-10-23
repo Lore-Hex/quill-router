@@ -95,6 +95,10 @@ func run() error {
 		"the routing snapshot manifest key's kid, or a rotation's two in the public keys' order")
 	flag.StringVar(&cfg.Edge.SnapshotPlane, "edge-snapshot-plane", "",
 		"the plane the routing snapshot is signed for, as cloud/region (gcp/us-central1)")
+	flag.StringVar(&cfg.Edge.PolicyURL, "edge-policy-url", "",
+		"the signed edge policy the edge polls on its upstream, GET /internal/fastpath/edge-policy "+
+			"(docs/design/fast-admission-e2-decide.md section 4), verified with the routing snapshot's public key, kid "+
+			"and plane; empty polls none")
 	flag.BoolVar(&cfg.Edge.Shadow, "edge-shadow", false,
 		"compare Go's answer from the routing snapshot with Python's on each authorize the edge passes on, "+
 			"logging counts alone; Python still decides")

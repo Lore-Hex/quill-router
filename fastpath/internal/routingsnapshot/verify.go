@@ -132,61 +132,9 @@ func isTestKey(k TrustedKey) bool {
 // The body is then decoded strictly (Parse).
 func Verify(token string, keys []TrustedKey, body []byte, opts VerifyOptions) (*Snapshot, Claims, error) {
 	var claims Claims
-	if len(token) > maxToken || strings.Count(token, ".") != 2 {
-		return nil, claims, refuse("compact")
-	}
-	parts := strings.Split(token, ".")
-	headerBytes, err := b64decode(parts[0])
+	payload, key, err := verifyJWS(token, keys, Typ, opts.AllowTestKey)
 	if err != nil {
 		return nil, claims, err
-	}
-	if err := wireCheck(headerBytes, maxClaimDepth, false); err != nil {
-		return nil, claims, refuse("json")
-	}
-	var header jwsHeader
-	if err := exact(headerBytes, &header); err != nil || !jwsString(header.Alg) ||
-		!jwsString(header.Kid) || !jwsString(header.Typ) {
-		return nil, claims, refuse("fields")
-	}
-	if !bytes.Equal(headerBytes, canonical(header)) {
-		return nil, claims, refuse("canonical_header")
-	}
-	if header.Alg != "EdDSA" {
-		return nil, claims, refuse("algorithm")
-	}
-	if header.Typ != Typ {
-		return nil, claims, refuse("type")
-	}
-	var matches []TrustedKey
-	for _, k := range keys {
-		if k.Kid == header.Kid {
-			matches = append(matches, k)
-		}
-	}
-	if len(matches) != 1 {
-		return nil, claims, refuse("key")
-	}
-	key := matches[0]
-	if key.Purpose != Purpose {
-		return nil, claims, refuse("purpose")
-	}
-	payload, err := b64decode(parts[1])
-	if err != nil {
-		return nil, claims, err
-	}
-	if err := wireCheck(payload, maxClaimDepth, false); err != nil {
-		return nil, claims, refuse("json")
-	}
-	signature, err := b64decode(parts[2])
-	if err != nil {
-		return nil, claims, err
-	}
-	if len(key.PublicKey) != ed25519.PublicKeySize ||
-		!ed25519.Verify(key.PublicKey, []byte(parts[0]+"."+parts[1]), signature) {
-		return nil, claims, refuse("signature")
-	}
-	if isTestKey(key) && !opts.AllowTestKey {
-		return nil, claims, refuse("test key outside test mode")
 	}
 	if err := exact(payload, &claims); err != nil || !validClaims(claims) {
 		return nil, claims, refuse("claims")
@@ -216,6 +164,73 @@ func Verify(token string, keys []TrustedKey, body []byte, opts VerifyOptions) (*
 		return nil, claims, refuse("snapshot freshness")
 	}
 	return snapshot, claims, nil
+}
+
+// verifyJWS checks a compact JWS of this typ, signed by the routing-snapshot
+// key (detached_jws.verify): the canonical header {alg EdDSA, kid, typ}, the
+// typ before anything else is read (so neither the snapshot's nor the edge
+// policy's manifest can stand in for the other), the one key of that kid
+// with this purpose, its Ed25519 signature, and the public test key refused
+// unless allowed. It returns the signed payload, wire-checked, and the key.
+func verifyJWS(token string, keys []TrustedKey, typ string, allowTestKey bool) ([]byte, TrustedKey, error) {
+	var none TrustedKey
+	if len(token) > maxToken || strings.Count(token, ".") != 2 {
+		return nil, none, refuse("compact")
+	}
+	parts := strings.Split(token, ".")
+	headerBytes, err := b64decode(parts[0])
+	if err != nil {
+		return nil, none, err
+	}
+	if err := wireCheck(headerBytes, maxClaimDepth, false); err != nil {
+		return nil, none, refuse("json")
+	}
+	var header jwsHeader
+	if err := exact(headerBytes, &header); err != nil || !jwsString(header.Alg) ||
+		!jwsString(header.Kid) || !jwsString(header.Typ) {
+		return nil, none, refuse("fields")
+	}
+	if !bytes.Equal(headerBytes, canonical(header)) {
+		return nil, none, refuse("canonical_header")
+	}
+	if header.Alg != "EdDSA" {
+		return nil, none, refuse("algorithm")
+	}
+	if header.Typ != typ {
+		return nil, none, refuse("type")
+	}
+	var matches []TrustedKey
+	for _, k := range keys {
+		if k.Kid == header.Kid {
+			matches = append(matches, k)
+		}
+	}
+	if len(matches) != 1 {
+		return nil, none, refuse("key")
+	}
+	key := matches[0]
+	if key.Purpose != Purpose {
+		return nil, none, refuse("purpose")
+	}
+	payload, err := b64decode(parts[1])
+	if err != nil {
+		return nil, none, err
+	}
+	if err := wireCheck(payload, maxClaimDepth, false); err != nil {
+		return nil, none, refuse("json")
+	}
+	signature, err := b64decode(parts[2])
+	if err != nil {
+		return nil, none, err
+	}
+	if len(key.PublicKey) != ed25519.PublicKeySize ||
+		!ed25519.Verify(key.PublicKey, []byte(parts[0]+"."+parts[1]), signature) {
+		return nil, none, refuse("signature")
+	}
+	if isTestKey(key) && !allowTestKey {
+		return nil, none, refuse("test key outside test mode")
+	}
+	return payload, key, nil
 }
 
 // exact decodes JSON that wireCheck has accepted into v, refusing missing

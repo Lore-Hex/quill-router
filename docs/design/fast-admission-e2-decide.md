@@ -341,7 +341,19 @@ on `typ`, and the reverse; both directions are tests in P2 and G8.
 **Edge behaviour.** Poll at `refresh_at` with an explicit 5 s request
 timeout (G8); on failure back off from 2 s to 15 s; keep the last good copy until its `not_after`, then drop it (every
 request passes with `cache.policy`). The URL must be on the edge upstream's
-scheme and host, as the snapshot URL is.
+scheme and host, as the snapshot URL is. Each Cloud Run instance signs and
+caches its own copy and polls are balanced across them, so a poll can
+answer an older body than one already seen: the edge keeps the newest
+`issued_at` and ignores a verified body issued at or before it. Any 503
+(`compiling`, `digest-policy-unavailable`, `signer-unavailable`,
+`policy-error`) keeps the copy held, its `Retry-After` honoured within 2 s
+to 15 s; a 304 or an unchanged body past `refresh_at` (the instance still
+signing) backs off from 2 s too. `issued_at` is the publisher's clock
+floored to seconds, so the edge accepts a body issued up to 1 s ahead of
+its own clock (`issued_at <= now + 1`); `not_after` is not stretched. The
+edge reuses the snapshot's pinned key, kid and plane flags; a node polls
+the policy only with `-edge-policy-url` set (`fastpath/internal/edge/policy.go`,
+`routingsnapshot.VerifyEdgePolicy`).
 
 **Golden files** (P2): `fastpath/testdata/edge_policy_v1.body.json` (exact
 canonical bytes, no trailing newline, synthetic workspace ids and digests)
