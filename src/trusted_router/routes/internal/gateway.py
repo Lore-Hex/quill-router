@@ -224,7 +224,6 @@ from trusted_router.stage_d import (
     endpoint_pricing_document,
     parse_pricing_snapshot,
 )
-from trusted_router.stage_d_policy import accepted_image_digests as stage_d_accepted_image_digests
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -497,9 +496,12 @@ def _stage_d_accepted_image_digests(
 ) -> frozenset[str]:
     """Current signed set plus the explicit, audited break-glass override."""
 
+    accepted: frozenset[str] = frozenset()
     app = request.scope.get("app")
     resolver = getattr(getattr(app, "state", None), "stage_d_policy_resolver", None)
-    accepted = stage_d_accepted_image_digests(resolver, settings)
+    if resolver is not None:
+        resolver.kick()
+        accepted = resolver.accepted_image_digests()
 
     override = settings.stage_d_accepted_gcp_digests
     if override:
@@ -511,6 +513,7 @@ def _stage_d_accepted_image_digests(
                     len(override),
                 )
                 _STAGE_D_OVERRIDE_LOGGED = True
+        accepted = accepted | override
     return accepted
 
 

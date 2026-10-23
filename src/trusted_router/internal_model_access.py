@@ -20,6 +20,16 @@ def _requested_ids(body: dict[str, Any]) -> list[str]:
     return [canonical_router_model_id(str(value or "").strip()) for value in ids]
 
 
+def internal_model_ids() -> frozenset[str]:
+    """Every catalog model id ``requests_internal_model`` refuses to a key
+    that is not an internal probe key: the monitor model and every
+    ``internal_only`` model, read from the catalog now. The fast path's edge
+    policy publishes this set (services/edge_policy_publisher.py)."""
+    return frozenset(
+        {MONITOR_MODEL_ID} | {model_id for model_id, model in MODELS.items() if model.internal_only}
+    )
+
+
 def requests_internal_model(body: dict[str, Any]) -> bool:
     for model_id in _requested_ids(body):
         model = MODELS.get(model_id)

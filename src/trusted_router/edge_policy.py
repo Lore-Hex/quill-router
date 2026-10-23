@@ -4,7 +4,7 @@ gates on before it answers an authorize itself (E2 P2, dark).
 docs/design/routing-snapshot-v1.md, "The edge policy". The routing snapshot
 carries the catalog, compiled hourly; this carries the settings and the signed
 Stage D image policy a running control plane decides with *now*, refreshed
-every 30 s and valid for 120 s. The publisher
+every 15 s and valid for 60 s. The publisher
 (services/edge_policy_publisher.py) builds and signs it; the manifest format
 is in routing_snapshot_signing.py (``EDGE_POLICY_TYP``). Imported only when
 ``edge_policy_publish_enabled`` is on.
@@ -19,10 +19,11 @@ Fields, all required:
 - ``v``: 1; ``kind``: ``"tr-edge-policy"``.
 - ``plane``: ``{"cloud", "region"}``, the publishing control plane's own.
 - ``issued_at`` (unix seconds, the publisher's clock), ``refresh_at`` =
-  ``issued_at + 30``, ``not_after`` = ``issued_at + 120``.
+  ``issued_at + 15``, ``not_after`` = ``issued_at + 60``.
 - ``accepted_image_digests``: ``sha256:<64 hex>`` digests, the verified Stage D
   policy's set plus the audited break-glass override, exactly the set authorize
-  checks a boot's image digest against.
+  checks a boot's image digest against, read right after a synchronous
+  resolver refresh.
 - ``stage_d``: ``{"eligibility_enabled", "heartbeat_enabled",
   "require_heartbeat_declaration", "pilot_workspaces"}``, the settings
   ``_stage_d_eligibility_reason`` reads (the routing snapshot's ``stage_d``
@@ -38,6 +39,9 @@ Fields, all required:
   ``async_settle_shadow_workspaces``.
 - ``configured_regions``, ``primary_region`` (one of them),
   ``multi_region_enabled``.
+- ``internal_models``: the model ids only an internal probe key may request
+  (``internal_model_access.internal_model_ids``: the monitor model and every
+  ``internal_only`` catalog model), read from the catalog when signing.
 """
 
 from __future__ import annotations
@@ -50,8 +54,8 @@ from trusted_router.billing_snapshot import Digest, Frozen, Identity, UInt, cano
 
 KIND: Final = "tr-edge-policy"
 # Fixed by the contract: Go checks the same offsets.
-REFRESH_SECONDS: Final = 30
-LIFETIME_SECONDS: Final = 120
+REFRESH_SECONDS: Final = 15
+LIFETIME_SECONDS: Final = 60
 
 Flag = Annotated[bool, Field(strict=True)]
 PositiveInt = Annotated[int, Field(strict=True, ge=1, le=(1 << 63) - 1)]
@@ -104,6 +108,7 @@ class EdgePolicyV1(Frozen):
     configured_regions: tuple[Identity, ...] = Field(min_length=1)
     primary_region: Identity
     multi_region_enabled: Flag
+    internal_models: tuple[Identity, ...]
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
@@ -114,6 +119,7 @@ class EdgePolicyV1(Frozen):
         _sorted_unique(self.fastpath_pilot_workspaces, "fastpath_pilot_workspaces")
         _sorted_unique(self.fastpath_pilot_regions, "fastpath_pilot_regions")
         _sorted_unique(self.async_settle_shadow_workspaces, "async_settle_shadow_workspaces")
+        _sorted_unique(self.internal_models, "internal_models")
         regions = self.configured_regions
         if len(set(regions)) != len(regions) or self.primary_region not in regions:
             raise ValueError("configured_regions must be unique and include primary_region")

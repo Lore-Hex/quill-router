@@ -73,6 +73,9 @@ def _digest(label: str) -> str:
 RESOLVER_DIGESTS = frozenset({_digest("synthetic enclave image 1"), _digest("synthetic enclave image 2")})
 BREAK_GLASS_DIGESTS = (_digest("synthetic enclave image 2"), _digest("synthetic enclave image 3"))
 MONITOR_KEY = "sk-tr-v1-synthetic-monitor-key-for-golden-files"  # noqa: S105 - synthetic
+# Fixed here, not read from the catalog, so a catalog change does not move
+# the files; the publisher reads internal_model_access.internal_model_ids().
+INTERNAL_MODELS = frozenset({"trustedrouter/monitor", "trustedrouter/fortanix-test"})
 
 
 def fixture_settings() -> Settings:
@@ -104,6 +107,7 @@ def policy() -> EdgePolicyV1:
     settings = fixture_settings()
     facts = settings_facts(
         settings, accepted=RESOLVER_DIGESTS | settings.stage_d_accepted_gcp_digests, durable=True,
+        internal=INTERNAL_MODELS,
     )
     return build_policy(plane_of(settings), ISSUED_AT, facts)
 

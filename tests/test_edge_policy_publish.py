@@ -87,13 +87,25 @@ class Clock:
 
 
 class Resolver:
-    """The Stage D policy resolver's surface the publisher reads."""
+    """The Stage D policy resolver's surface the publisher and authorize read."""
 
-    def __init__(self, digests: frozenset[str]) -> None:
-        self.digests, self.kicks = digests, 0
+    def __init__(self, digests: frozenset[str], *, release: bool = True) -> None:
+        self.digests, self.release = digests, release
+        self.kicks = self.refreshes = 0
+        self.refresh_ok = True
+        self.on_refresh: Any = None
 
     def kick(self) -> None:
         self.kicks += 1
+
+    def release_configured(self) -> bool:
+        return self.release
+
+    def refresh(self) -> bool:
+        self.refreshes += 1
+        if self.on_refresh is not None:
+            self.on_refresh()
+        return self.refresh_ok
 
     def accepted_image_digests(self) -> frozenset[str]:
         return self.digests
@@ -133,10 +145,25 @@ def _settings(key: tuple[Path, str, str], **overrides: Any) -> Settings:
     return Settings(**values)
 
 
+class _Finished:
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout: float | None = None) -> None:
+        return None
+
+
+def _inline(run: Any) -> _Finished:
+    """Runs the background worker inside the poll that starts it: deterministic tests."""
+    run()
+    return _Finished()
+
+
 def _publisher(settings: Settings, clock: Clock, resolver: Resolver | None = None,
-               store: Any = None) -> EdgePolicyPublisher:
+               store: Any = None, *, background: bool = False) -> EdgePolicyPublisher:
+    extra: dict[str, Any] = {} if background else {"spawn": _inline}
     return build_publisher(settings, clock=clock, resolver=lambda: resolver,
-                           typed_store=lambda: store)
+                           typed_store=lambda: store, **extra)
 
 
 def _app(settings: Settings, publisher: EdgePolicyPublisher | None = None) -> Any:
@@ -361,9 +388,34 @@ def test_the_body_carries_every_live_fact(key) -> None:
     assert plain["async_settle_shadow_policy"] == ""
 
 
+def test_internal_models_are_the_catalogs_internal_only_set(key) -> None:
+    """The set require_internal_model_key protects, from the live catalog, sorted."""
+    from trusted_router.catalog import MODELS, MONITOR_MODEL_ID
+    from trusted_router.internal_model_access import internal_model_ids, requests_internal_model
+
+    published = json.loads(_publisher(_settings(key), Clock(T0)).current().body)["internal_models"]
+    assert published == sorted(published) == sorted(internal_model_ids())
+    assert published == sorted({MONITOR_MODEL_ID} | {m for m, model in MODELS.items() if model.internal_only})
+    assert {"trustedrouter/monitor", "trustedrouter/fortanix-test"} <= set(published)
+    # Parity with the admission check itself: exactly the ids it refuses to a public key.
+    for model_id in {*MODELS, MONITOR_MODEL_ID}:
+        assert requests_internal_model({"model": model_id}) is (model_id in published), model_id
+
+
+def test_internal_models_are_read_at_signing_time(key, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock(T0)
+    publisher = _publisher(_settings(key), clock)
+    first = json.loads(publisher.current().body)["internal_models"]
+    monkeypatch.setattr(publisher_module, "internal_model_ids",
+                        lambda: frozenset({*first, "trustedrouter/new-internal-probe"}))
+    clock.now = T0 + REFRESH_SECONDS
+    later = json.loads(publisher.current().body)["internal_models"]
+    assert later == sorted({*first, "trustedrouter/new-internal-probe"})
+
+
 def test_the_digests_and_durability_are_what_authorize_reads(key) -> None:
-    """Parity with gateway.py: the same set its boot check reads, the same
-    records_durable its pilot reads, through the shared helpers."""
+    """Parity with gateway.py: the same union its boot check reads (here,
+    after a successful refresh), the same records_durable its pilot reads."""
     from starlette.requests import Request
 
     from trusted_router.routes.internal import gateway
@@ -386,16 +438,164 @@ def test_the_digests_and_durability_are_what_authorize_reads(key) -> None:
         assert json.loads(publication.body)["records_durable"] is durable
 
 
-def test_each_signature_kicks_the_stage_d_policy_refresh(key) -> None:
+def test_each_signing_refreshes_the_stage_d_policy_first(key) -> None:
     clock = Clock(T0)
     resolver = Resolver(frozenset({DIGEST_A}))
     publisher = _publisher(_settings(key), clock, resolver)
-    publisher.current()
-    publisher.current()
-    assert resolver.kicks == 1
+    # The refresh lands a new set: the body signed after it carries that set.
+    resolver.on_refresh = lambda: setattr(resolver, "digests", frozenset({DIGEST_A, DIGEST_B}))
+    first = publisher.current()
+    assert json.loads(first.body)["accepted_image_digests"] == [DIGEST_A, DIGEST_B]
+    # Bounded by the interval cache: polls before refresh_at neither refresh nor sign.
+    for instant in (T0 + 1, T0 + REFRESH_SECONDS - 1):
+        clock.now = instant
+        assert publisher.current() is first
+    assert (resolver.refreshes, publisher.signatures, resolver.kicks) == (1, 1, 0)
     clock.now = T0 + REFRESH_SECONDS
     publisher.current()
-    assert resolver.kicks == 2
+    assert (resolver.refreshes, publisher.signatures) == (2, 2)
+
+
+def test_a_failed_refresh_signs_nothing_and_answers_503_after_not_after(key, caplog) -> None:
+    settings = _settings(key)
+    clock = Clock(T0)
+    resolver = Resolver(frozenset({DIGEST_A}))
+    publisher = _publisher(settings, clock, resolver)
+    first = publisher.current()
+    resolver.refresh_ok = False
+    caplog.set_level(logging.WARNING)
+    # Past refresh_at the refresh fails: nothing new is signed, and the last
+    # copy is served while it is within its not_after.
+    clock.now = T0 + REFRESH_SECONDS
+    assert publisher.current() is first
+    assert (resolver.refreshes, publisher.signatures) == (2, 1)
+    assert "edge policy unavailable: digest-policy-unavailable" in [r.getMessage() for r in caplog.records]
+    # Within the backoff, no second refresh.
+    clock.now = T0 + REFRESH_SECONDS + publisher_module.ERROR_RETRY_SECONDS - 1
+    assert publisher.current() is first and resolver.refreshes == 2
+    # At not_after the copy is gone: 503 digest-policy-unavailable.
+    clock.now = T0 + LIFETIME_SECONDS
+    client = TestClient(_app(settings, publisher))
+    response = _get(client)
+    assert response.status_code == 503
+    assert response.json() == {"status": "digest-policy-unavailable",
+                               "retry_at": clock.now + publisher_module.ERROR_RETRY_SECONDS}
+    assert response.headers["retry-after"] == str(publisher_module.ERROR_RETRY_SECONDS)
+    assert (resolver.refreshes, publisher.signatures) == (3, 1)
+    clock.now += publisher_module.ERROR_RETRY_SECONDS - 1
+    assert _get(client).json()["status"] == "digest-policy-unavailable"
+    assert resolver.refreshes == 3
+    # Positive control: the refresh succeeds again, and a new body is signed.
+    resolver.refresh_ok = True
+    clock.now += 1
+    assert _get(client).status_code == 200
+    assert (resolver.refreshes, publisher.signatures) == (4, 2)
+
+
+def test_without_a_release_the_set_is_the_break_glass_override_alone(key) -> None:
+    settings = _settings(key, spend_lease_accepted_gcp_image_digests=DIGEST_C)
+    resolver = Resolver(frozenset({DIGEST_A}), release=False)
+    body = json.loads(_publisher(settings, Clock(T0), resolver).current().body)
+    assert body["accepted_image_digests"] == [DIGEST_C] and resolver.refreshes == 0
+    # No resolver at all: the same.
+    body = json.loads(_publisher(settings, Clock(T0), None).current().body)
+    assert body["accepted_image_digests"] == [DIGEST_C]
+    # Positive control: with a release, the refreshed set joins the override.
+    resolver.release = True
+    body = json.loads(_publisher(settings, Clock(T0), resolver).current().body)
+    assert body["accepted_image_digests"] == [DIGEST_A, DIGEST_C] and resolver.refreshes == 1
+
+
+def test_the_real_resolver_refreshes_and_its_failure_is_a_503(key) -> None:
+    import httpx
+
+    from trusted_router.stage_d_policy import StageDPolicyResolver
+
+    fetches: list[Any] = []
+
+    def unreachable(**kwargs: Any) -> Any:
+        fetches.append(kwargs)
+        raise httpx.ConnectError("unreachable")
+
+    settings = _settings(key, spend_lease_accepted_gcp_image_digests=DIGEST_C)
+    failing = StageDPolicyResolver(settings, object(), verifier=object(),  # type: ignore[arg-type]
+                                   release_urls=["https://release.invalid/trust"],
+                                   client_factory=unreachable)
+    assert failing.release_configured() is True
+    with pytest.raises(PolicyUnavailable) as refused:
+        _publisher(settings, Clock(T0), failing).current()  # type: ignore[arg-type]
+    assert refused.value.status == "digest-policy-unavailable" and len(fetches) == 1
+    # Positive control: no release configured, no fetch, the override alone.
+    idle = StageDPolicyResolver(settings, object(), verifier=object(),  # type: ignore[arg-type]
+                                release_urls=[], client_factory=unreachable)
+    assert idle.release_configured() is False
+    body = json.loads(_publisher(settings, Clock(T0), idle).current().body)  # type: ignore[arg-type]
+    assert body["accepted_image_digests"] == [DIGEST_C] and len(fetches) == 1
+
+
+def test_a_hanging_refresh_never_delays_a_poll_and_runs_once(key) -> None:
+    """The refresh and signing run in one background worker: polls neither
+    wait on it nor start a second one."""
+    import threading
+    import time
+
+    entered, release = threading.Event(), threading.Event()
+    resolver = Resolver(frozenset({DIGEST_A}))
+    resolver.on_refresh = lambda: (entered.set(), release.wait(60))
+    settings = _settings(key)
+    clock = Clock(T0)
+    publisher = _publisher(settings, clock, resolver, background=True)
+    client = TestClient(_app(settings, publisher))
+    try:
+        # No copy yet: 503 compiling at once, while the worker hangs.
+        started = time.monotonic()
+        response = _get(client)
+        assert time.monotonic() - started < 2.0
+        assert response.status_code == 503 and response.json()["status"] == "compiling"
+        assert response.headers["retry-after"] == str(publisher_module.COMPILING_RETRY_SECONDS)
+        assert entered.wait(30)
+        # Concurrent polls: every one answers at once, and none starts a second refresh.
+        answers: list[int] = []
+        durations: list[float] = []
+
+        def poll() -> None:
+            began = time.monotonic()
+            try:
+                publisher.current()
+                answers.append(200)
+            except PolicyUnavailable as exc:
+                answers.append(503 if exc.status == "compiling" else 0)
+            durations.append(time.monotonic() - began)
+
+        threads = [threading.Thread(target=poll) for _ in range(16)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        assert answers == [503] * 16 and max(durations) < 1.0
+        assert resolver.refreshes == 1 and publisher.attempts == 1
+    finally:
+        release.set()
+    assert publisher.idle(30)
+    first = publisher.current()
+    assert resolver.refreshes == 1 and publisher.signatures == 1
+    # Past refresh_at, a hanging refresh: the cached copy is served at once.
+    entered.clear()
+    release.clear()
+    clock.now = first.refresh_at
+    try:
+        for _ in range(8):
+            started = time.monotonic()
+            assert publisher.current() is first
+            assert time.monotonic() - started < 1.0
+        assert entered.wait(30)
+        assert resolver.refreshes == 2 and publisher.attempts == 2
+    finally:
+        release.set()
+    assert publisher.idle(30)
+    # Positive control: the background signing landed and is now served.
+    later = publisher.current()
+    assert later is not first and later.issued_at == first.refresh_at
 
 
 def test_one_signature_per_refresh_interval_served_until_refresh_at(key) -> None:
@@ -404,7 +604,7 @@ def test_one_signature_per_refresh_interval_served_until_refresh_at(key) -> None
     publisher = _publisher(_settings(key), clock, resolver)
     first = publisher.current()
     assert (first.issued_at, first.refresh_at, first.not_after) == (
-        T0 + 1, T0 + 1 + REFRESH_SECONDS, T0 + 1 + LIFETIME_SECONDS)
+        T0 + 1, T0 + 16, T0 + 61)
     # Every poll until refresh_at gets that publication, even after a fact changed.
     resolver.digests = frozenset({DIGEST_A, DIGEST_B})
     clock.now = first.refresh_at - 1
@@ -440,8 +640,12 @@ def test_a_fact_outside_the_schema_answers_503_and_recovers(key, caplog) -> None
     assert response.json() == {"status": "policy-error", "retry_at": T0 + publisher_module.ERROR_RETRY_SECONDS}
     assert response.headers["retry-after"] == str(publisher_module.ERROR_RETRY_SECONDS)
     assert "edge policy publication failed: ValidationError" in [r.getMessage() for r in caplog.records]
-    # Positive control: a valid set publishes.
+    # Within the backoff, no second attempt even with a valid set; after it, a valid set publishes.
     resolver.digests = frozenset({DIGEST_A})
+    clock.now += publisher_module.ERROR_RETRY_SECONDS - 1
+    assert _get(TestClient(_app(settings, publisher))).status_code == 503
+    assert resolver.refreshes == 1
+    clock.now += 1
     assert _get(TestClient(_app(settings, publisher))).status_code == 200
 
 
@@ -451,10 +655,18 @@ def test_an_unusable_key_leaves_the_route_answering_signer_unavailable(key) -> N
     assert app.state.edge_policy_publisher is None
     response = _get(TestClient(app))
     assert response.status_code == 503 and response.json() == {"status": "signer-unavailable"}
-    # Positive control: the pinned key installs a publisher that serves.
+    # Positive control: the pinned key installs a publisher that signs in the
+    # background (the first poll finds it compiling) and then serves.
     app = create_app(_settings(key), init_observability=False)
-    assert isinstance(app.state.edge_policy_publisher, EdgePolicyPublisher)
-    assert _get(TestClient(app)).status_code == 200
+    publisher = app.state.edge_policy_publisher
+    assert isinstance(publisher, EdgePolicyPublisher)
+    client = TestClient(app)
+    first = _get(client)
+    assert first.status_code in {200, 503}
+    if first.status_code == 503:
+        assert first.json()["status"] == "compiling"
+    assert publisher.idle(30)
+    assert _get(client).status_code == 200
 
 
 def test_no_secret_appears_in_responses_or_logs(key, caplog: pytest.LogCaptureFixture) -> None:
@@ -570,13 +782,14 @@ def test_the_golden_body_is_canonical_and_covers_every_field() -> None:
         "stage_d", "records_durable", "fastpath_pilot_enabled", "fastpath_pilot_workspaces",
         "fastpath_pilot_regions", "gateway_authorize_max_in_flight_per_key", "monitor_lookup_hash",
         "async_settle_shadow_policy", "async_settle_shadow_workspaces",
-        "configured_regions", "primary_region", "multi_region_enabled",
+        "configured_regions", "primary_region", "multi_region_enabled", "internal_models",
     }
     # The union of the resolver's set and the break-glass override, deduplicated.
     assert len(decoded["accepted_image_digests"]) == 3
     # Every set non-empty and the booleans not all one value, so the Go reader
     # is exercised on each shape.
-    for name in ("fastpath_pilot_workspaces", "async_settle_shadow_workspaces", "configured_regions"):
+    for name in ("fastpath_pilot_workspaces", "async_settle_shadow_workspaces", "configured_regions",
+                 "internal_models"):
         assert decoded[name], name
     assert decoded["stage_d"]["pilot_workspaces"] and decoded["monitor_lookup_hash"]
     flags = [decoded[n] for n in ("records_durable", "fastpath_pilot_enabled", "multi_region_enabled")]
@@ -654,10 +867,12 @@ def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
     ("a duplicate set member", lambda d: {**d, "fastpath_pilot_workspaces": ["ws-a", "ws-a"]}),
     ("a malformed digest", lambda d: {**d, "accepted_image_digests": ["sha256:abc"]}),
     ("a primary outside the regions", lambda d: {**d, "primary_region": "us-west1"}),
-    ("a window past the lifetime", lambda d: {**d, "not_after": d["issued_at"] + 121}),
-    ("a short window", lambda d: {**d, "not_after": d["issued_at"] + 119}),
-    ("a refresh off by one", lambda d: {**d, "refresh_at": d["issued_at"] + 31}),
+    ("a window past the lifetime", lambda d: {**d, "not_after": d["issued_at"] + 61}),
+    ("a short window", lambda d: {**d, "not_after": d["issued_at"] + 59}),
+    ("a refresh off by one", lambda d: {**d, "refresh_at": d["issued_at"] + 16}),
     ("a zero in-flight limit", lambda d: {**d, "gateway_authorize_max_in_flight_per_key": 0}),
+    ("unsorted internal models", lambda d: {**d, "internal_models": d["internal_models"][::-1]}),
+    ("no internal models field", lambda d: {k: v for k, v in d.items() if k != "internal_models"}),
 ])
 def test_the_body_parser_is_strict(name: str, edit: Any) -> None:
     decoded = json.loads(_golden_body())
@@ -675,7 +890,7 @@ def test_the_body_parser_refuses_duplicate_keys() -> None:
 
 
 def test_the_window_is_code_not_configuration() -> None:
-    assert (REFRESH_SECONDS, LIFETIME_SECONDS) == (30, 120)
+    assert (REFRESH_SECONDS, LIFETIME_SECONDS) == (15, 60)
     assert publisher_module.RESPONSE_KIND == "tr-edge-policy-publication"
 
 

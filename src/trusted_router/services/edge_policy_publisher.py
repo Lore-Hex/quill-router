@@ -9,23 +9,41 @@ edge gates on before it would answer an authorize itself: the accepted image
 digests (the verified Stage D policy plus the break-glass override, the set
 authorize checks a boot against), the Stage D settings, whether the settle
 records are durable, the pilot's gate, the per-key in-flight limit, the
-monitor key's lookup hash, the async-settle shadow cohort and the regions.
-The manifest (routing_snapshot_signing.py, ``EDGE_POLICY_TYP``) is signed
-with the routing snapshot's key under its own ``typ``.
+monitor key's lookup hash, the async-settle shadow cohort, the regions and
+the internal-only models. The manifest (routing_snapshot_signing.py,
+``EDGE_POLICY_TYP``) is signed with the routing snapshot's key under its own
+``typ``.
 
-A body is issued at the publisher's clock and signed at most once per
-refresh interval: every poll until its ``refresh_at`` (+30 s) is served that
-publication, and the first poll at or after it reads the facts afresh and
-signs a new one. The edge polls at ``refresh_at`` and trusts a body until
-its ``not_after`` (+120 s), so three missed polls leave the edge on a copy it
-still trusts and a fourth leaves it on none (it then proxies everything to
-Python). A changed fact therefore reaches a polling edge within 30 s.
+A body is issued at the publisher's clock and signed in the background, by
+one worker at a time, never on a poll: the first poll at or after the cached
+copy's ``refresh_at`` (+15 s), or the first poll with no copy, starts the
+worker, which refreshes the Stage D policy, reads the other facts and signs.
+Meanwhile every poll is served the cached copy while it is within its
+``not_after`` (+60 s), or answered 503 at once: ``compiling`` while the
+worker runs, ``digest-policy-unavailable`` or ``policy-error`` after it
+failed (no new worker for 5 s). So a signing happens at most once per
+refresh interval and a poll never waits on a network round trip, holding no
+threadpool token that authorize shares. The edge polls at ``refresh_at``
+and trusts a body until its ``not_after``, then proxies everything to
+Python. A changed setting therefore reaches a polling edge within about
+15 s.
 
 Unlike the routing snapshot there is no worker process: every fact is this
 process's own live state (its settings, its Stage D policy resolver, its
-store), which is the point, and the body is a few hundred bytes, so building
-and signing it costs well under a millisecond. Reading the facts kicks a due
-Stage D policy refresh without waiting on it, as authorize does.
+store, its catalog), which is the point, and the body is a few hundred
+bytes, so building and signing it costs well under a millisecond.
+
+Except for ``accepted_image_digests``: before each signing the publisher
+calls ``StageDPolicyResolver.refresh()`` synchronously (two HTTPS fetches
+with 5 s timeouts, a Sigstore bundle check and the watermark), so a body's
+set is the release's at ``issued_at`` (decide contract decision 17). That
+is at most four refreshes a minute, and only on an instance the edge polls.
+The refresh can take about 10 s per release URL (two fetches, 5 s
+timeouts), which is why it runs in the worker. If it fails nothing new is
+signed; the cached copy is served until its ``not_after``, then polls
+answer 503 ``digest-policy-unavailable`` and the edge passes every request.
+With no release URL configured there is nothing to refresh and the set is
+the break-glass override alone, as in authorize.
 
 Nothing here logs or returns key material: the signing key is read from its
 mounted file at construction and never leaves this process; responses carry
@@ -54,11 +72,11 @@ from trusted_router.edge_policy import (
     EdgePolicyV1,
     canonical_edge_policy_bytes,
 )
+from trusted_router.internal_model_access import internal_model_ids
 from trusted_router.regions import configured_regions
 from trusted_router.routing_snapshot_signing import EdgePolicySigner
 from trusted_router.services.fastpath_frontdoor import records_durable
 from trusted_router.services.routing_snapshot_publisher import load_signer, plane_of
-from trusted_router.stage_d_policy import accepted_image_digests
 from trusted_router.synthetic.funding import monitor_lookup_hash
 
 if TYPE_CHECKING:
@@ -70,9 +88,16 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 RESPONSE_KIND = "tr-edge-policy-publication"
-# After a failure to read the facts or to sign, the edge is told to come back
-# this soon; it keeps its last good copy until that copy's not_after.
+# After a failure to refresh, read the facts or sign, no attempt before this
+# many seconds; the edge keeps its last good copy until that copy's not_after.
 ERROR_RETRY_SECONDS = 5
+# A poll that finds no valid copy while the background signing is in flight
+# comes back this soon.
+COMPILING_RETRY_SECONDS = 2
+
+
+class DigestPolicyUnavailable(Exception):
+    """The Stage D policy refresh before a signing failed: sign nothing."""
 
 
 class PolicyUnavailable(Exception):
@@ -100,10 +125,10 @@ class Publication:
 
 
 def settings_facts(
-    settings: Settings, *, accepted: frozenset[str], durable: bool,
+    settings: Settings, *, accepted: frozenset[str], durable: bool, internal: frozenset[str],
 ) -> dict[str, Any]:
     """Every body field but the version, kind, plane and window, from these
-    settings and the two live facts that are not settings."""
+    settings and the three live facts that are not settings."""
     return {
         "accepted_image_digests": sorted(accepted),
         "stage_d": {
@@ -123,6 +148,7 @@ def settings_facts(
         "configured_regions": configured_regions(settings),
         "primary_region": settings.primary_region,
         "multi_region_enabled": settings.multi_region_enabled,
+        "internal_models": sorted(internal),
     }
 
 
@@ -139,8 +165,23 @@ def build_policy(plane: BaseModel, issued_at: int, facts: dict[str, Any]) -> Edg
     })
 
 
+def refreshed_accepted_image_digests(
+    resolver: StageDPolicyResolver | None, settings: Settings,
+) -> frozenset[str]:
+    """The verified Stage D set right after a synchronous refresh, plus the
+    break-glass override (``gateway._stage_d_accepted_image_digests``'s
+    union). Raises DigestPolicyUnavailable when the refresh fails. With no
+    resolver, or no release to refresh from, the override alone."""
+    accepted: frozenset[str] = frozenset()
+    if resolver is not None and resolver.release_configured():
+        if not resolver.refresh():
+            raise DigestPolicyUnavailable
+        accepted = resolver.accepted_image_digests()
+    return accepted | settings.stage_d_accepted_gcp_digests
+
+
 class LiveFacts:
-    """This process's facts, read afresh at every call."""
+    """This process's facts, read afresh at every call (each signing)."""
 
     def __init__(
         self, settings: Settings, *,
@@ -153,38 +194,102 @@ class LiveFacts:
         settings = self._settings
         return settings_facts(
             settings,
-            accepted=accepted_image_digests(self._resolver(), settings),
+            accepted=refreshed_accepted_image_digests(self._resolver(), settings),
             durable=records_durable(settings.settle_outbox_enabled, self._typed_store()),
+            internal=internal_model_ids(),
         )
 
 
+def _spawn_thread(run: Callable[[], None]) -> threading.Thread:
+    thread = threading.Thread(target=run, name="edge-policy-sign", daemon=True)
+    thread.start()
+    return thread
+
+
 class EdgePolicyPublisher:
-    """Builds, signs and caches the edge policy for the current window."""
+    """Signs the edge policy in the background and serves the last signed copy.
+
+    A poll never waits on a refresh or a signature: it holds the state lock
+    only to read the cache and, when the cached copy is past its
+    ``refresh_at`` (or there is none), to start the single background worker.
+    ``spawn`` runs the worker (a daemon thread; tests may run it inline).
+    """
 
     def __init__(
         self, *, signer: EdgePolicySigner, plane: BaseModel,
         facts: Callable[[], dict[str, Any]], clock: Callable[[], float] = time.time,
+        spawn: Callable[[Callable[[], None]], Any] = _spawn_thread,
     ) -> None:
         self._signer, self._plane, self._facts, self._clock = signer, plane, facts, clock
-        self._lock = threading.Lock()
+        self._spawn = spawn
+        # Re-entrant: an inline worker (tests) records its outcome under the
+        # lock the poll that started it holds.
+        self._lock = threading.RLock()
         self._cached: Publication | None = None
+        self._worker: Any = None
+        # After a failure, (status, until): no new worker before then.
+        self._failed: tuple[str, int] = ("", 0)
         self.signatures = 0
+        self.attempts = 0
 
     def current(self) -> Publication:
-        """The current window's publication; raises PolicyUnavailable."""
+        """The cached publication while it is within its not_after; raises
+        PolicyUnavailable at once when there is none."""
         with self._lock:
             now = int(self._clock())
             cached = self._cached
             if cached is not None and cached.current(now):
                 return cached
-            try:
-                publication = self._publish(now, self._facts())
-            except Exception as exc:
-                # Logged by class alone: a message could carry a setting's value.
-                log.warning("edge policy publication failed: %s", type(exc).__name__)
-                raise PolicyUnavailable("policy-error", now + ERROR_RETRY_SECONDS, now) from None
-            self._cached = publication
-            return publication
+            self._start_locked(now)
+            cached = self._cached
+            if cached is not None and cached.issued_at <= now < cached.not_after:
+                return cached
+            if self._in_flight():
+                raise PolicyUnavailable("compiling", now + COMPILING_RETRY_SECONDS, now)
+            status, until = self._failed
+            if status:
+                raise PolicyUnavailable(status, max(until, now + 1), now)
+            raise PolicyUnavailable("compiling", now + COMPILING_RETRY_SECONDS, now)
+
+    def idle(self, timeout: float) -> bool:
+        """Wait for the background worker, if any (tests and shutdown)."""
+        with self._lock:
+            worker = self._worker
+        if worker is not None and hasattr(worker, "join"):
+            worker.join(timeout)
+        return not self._in_flight()
+
+    def _in_flight(self) -> bool:
+        worker = self._worker
+        return worker is not None and bool(worker.is_alive())
+
+    def _start_locked(self, now: int) -> None:
+        if self._in_flight() or now < self._failed[1]:
+            return
+        self.attempts += 1
+        self._worker = self._spawn(self._sign_in_background)
+
+    def _sign_in_background(self) -> None:
+        try:
+            # The facts first: the Stage D refresh is a network round trip,
+            # and issued_at is the clock after it.
+            facts = self._facts()
+            publication = self._publish(int(self._clock()), facts)
+        except DigestPolicyUnavailable:
+            # The resolver logged its failure's class.
+            status = "digest-policy-unavailable"
+        except Exception as exc:
+            # Logged by class alone: a message could carry a setting's value.
+            log.warning("edge policy publication failed: %s", type(exc).__name__)
+            status = "policy-error"
+        else:
+            with self._lock:
+                self._cached, self._failed = publication, ("", 0)
+            return
+        now = int(self._clock())
+        with self._lock:
+            self._failed = (status, now + ERROR_RETRY_SECONDS)
+        log.warning("edge policy unavailable: %s", status)
 
     def _publish(self, issued_at: int, facts: dict[str, Any]) -> Publication:
         policy = build_policy(self._plane, issued_at, facts)
@@ -221,6 +326,7 @@ def build_publisher(
     typed_store: Callable[[], Any] = _typed_store,
     facts: Callable[[], dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.time,
+    spawn: Callable[[Callable[[], None]], Any] = _spawn_thread,
 ) -> EdgePolicyPublisher:
     """The publisher for this process; raises ValueError when the routing key is unusable.
 
@@ -230,7 +336,7 @@ def build_publisher(
     return EdgePolicyPublisher(
         signer=signer, plane=plane_of(settings),
         facts=facts or LiveFacts(settings, resolver=resolver, typed_store=typed_store),
-        clock=clock,
+        clock=clock, spawn=spawn,
     )
 
 
