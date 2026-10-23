@@ -201,6 +201,23 @@ func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 	}
 }
 
+// TestTheIdempotencyKeySourceChangesNoComparison: the enclave's
+// idempotency_key_source (E4) is not a routing input, so a request carrying
+// it, with any value, is compared exactly as the same request without it.
+func TestTheIdempotencyKeySourceChangesNoComparison(t *testing.T) {
+	h := goldenHeld(t)
+	for _, c := range routingCases(t) {
+		without := withFields(t, c.Request, map[string]any{})
+		want := fmt.Sprintf("%+v", compareCase(t, h, c, Verified, without, pythonOf(c)))
+		for _, source := range []any{"gateway", "client", "a-future-value", strings.Repeat("x", 99), 7} {
+			with := withFields(t, c.Request, map[string]any{"idempotency_key_source": source})
+			if got := fmt.Sprintf("%+v", compareCase(t, h, c, Verified, with, pythonOf(c))); got != want {
+				t.Errorf("%s with idempotency_key_source %v: got %s, want %s", c.Name, source, got, want)
+			}
+		}
+	}
+}
+
 // TestADifferenceIsCountedByItsField: one field changed in Python's answer
 // differs in that field alone.
 func TestADifferenceIsCountedByItsField(t *testing.T) {
