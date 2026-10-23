@@ -28,7 +28,7 @@ from datetime import datetime
 from functools import lru_cache
 from itertools import product
 from time import perf_counter
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -889,6 +889,7 @@ def _authorize_gateway_sync(
         "boot_auth": boot_auth,
         "boot_verified": False,
         "heartbeat_declared": False,
+        "image_digest": "",
     }
     return _authorize_gateway_sync_impl(request, body, settings, boot_context)
 
@@ -948,6 +949,7 @@ def _authorize_gateway_sync_impl(
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
         )
+        boot_context["image_digest"] = boot.image_digest if boot is not None else ""
         # Over the path as the server decoded it, which is what the edge
         # signs over too; request.url.path is that path after URL parsing
         # (control characters removed, a '?' or '#' it contains ending it).
@@ -1117,6 +1119,7 @@ def _authorize_gateway_sync_impl(
     if not catalog_video_request:
         prepare_model()
     presented_idempotency_key = _gateway_idempotency_key(request, body)
+    _observe_idempotency_key_source(request, body, presented_idempotency_key, boot_context)
     request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
     _require_native_batch_route_binding(body.route_type, request_idempotency_key)
     partner_mode = _partner_billing_mode_or_error(
@@ -2644,6 +2647,80 @@ def _gateway_idempotency_key(request: Request, body: GatewayAuthorizeRequest) ->
     return key
 
 
+# The shape of the key the enclave mints when the caller sent none
+# (enclave-go internal/trustedrouter authorizationIdempotencyKey).
+_GATEWAY_MINTED_IDEMPOTENCY_KEY = re.compile(r"tr-gateway-[0-9a-f]{32}")
+
+
+def idempotency_key_source(
+    body: GatewayAuthorizeRequest,
+    presented_key: str | None,
+    *,
+    boot_verified: bool,
+) -> Literal["gateway", "client", "legacy"]:
+    """Who chose this authorize's idempotency key, as far as the router can tell.
+
+    ``gateway`` only when the enclave says it minted the key, the presented
+    key has the minted shape, and the request's boot signature verified; R2
+    adds the boot's capability declaration as a further requirement.
+    ``client`` when the enclave says the caller sent the key. Anything else
+    (absent, a value this router does not know, or a ``gateway`` claim that
+    fails a check) is ``legacy``: today's treatment. Only ``gateway`` may ever
+    be treated as unkeyed, and nothing consumes the result yet. The field is
+    outside the idempotency fingerprint, so this never changes a replay.
+    """
+    raw = body.idempotency_key_source
+    if raw == "gateway":
+        if (
+            boot_verified
+            and presented_key is not None
+            and _GATEWAY_MINTED_IDEMPOTENCY_KEY.fullmatch(presented_key) is not None
+        ):
+            return "gateway"
+        return "legacy"
+    if raw == "client":
+        return "client"
+    return "legacy"
+
+
+def _observe_idempotency_key_source(
+    request: Request,
+    body: GatewayAuthorizeRequest,
+    presented_key: str | None,
+    boot_context: dict[str, Any],
+) -> None:
+    """An observation: the source split per boot image, nothing it does
+    reaches the response. Logs categories and the image digest only, never
+    the key, its raw source value, or any request content."""
+    try:
+        boot_verified = bool(boot_context.get("boot_verified"))
+        source = idempotency_key_source(body, presented_key, boot_verified=boot_verified)
+        raw = body.idempotency_key_source
+        declared = "absent" if raw is None else raw if raw in {"gateway", "client"} else "other"
+        image_digest = str(boot_context.get("image_digest") or "") if boot_verified else ""
+        logger.info(
+            "gateway.idempotency_key_source source=%s declared=%s image_digest=%s",
+            source,
+            declared,
+            _log_value(image_digest or "-"),
+        )
+        if declared == "gateway" and source != "gateway":
+            reason = (
+                "boot_unverified"
+                if presented_key is not None
+                and _GATEWAY_MINTED_IDEMPOTENCY_KEY.fullmatch(presented_key) is not None
+                else "key_shape"
+            )
+            logger.warning(
+                "gateway.idempotency_key_source_mismatch reason=%s image_digest=%s request_id=%s",
+                reason,
+                _log_value(image_digest or "-"),
+                getattr(request.state, "request_id", None),
+            )
+    except Exception:  # noqa: BLE001 - an observation must not change the response
+        return
+
+
 def _video_allowed_providers_header(
     request: Request, route_type: str | None, *, validate_catalog: bool = True,
 ) -> frozenset[str] | None:
@@ -2722,6 +2799,9 @@ def _gateway_authorize_fingerprint(
             "api_key_hash",
             "api_key_lookup_hash",
             "idempotency_key",
+            # Excluded from model_dump already; a backstop so a dump path
+            # that forgets exclude=True still cannot fork a fingerprint.
+            "idempotency_key_source",
             "spend_lease_admission",
         }
     }

@@ -396,8 +396,10 @@ def pilot_reason(
     """Why an authorize stays on today's path, or None when the pilot takes
     it. The cohort is the design's §4.11 at its narrowest: a credit-funded
     key on a standard route, not streaming, with a verified boot, no
-    idempotency key, no service tier, no key cap, no markup, for a pilot
-    workspace, from a pilot region. A speculation descriptor never reaches
+    service tier, no key cap, no markup, for a pilot workspace, from a pilot
+    region. An idempotency key does not exclude a request (the enclave sends
+    one on every authorize; docs/design/fast-admission-pilot.md), and neither
+    does its idempotency_key_source. A speculation descriptor never reaches
     an authorize body (it has a route of its own)."""
     if not enabled:
         return "disabled"
