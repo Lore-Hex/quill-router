@@ -159,7 +159,8 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "verified; the supplied credential is rejected. Excluded from jurisdiction filters."
     ),
     "abliteration": (
-        "Abliteration.ai declares US inference by default, but its operating entity's "
+        "Checked abliteration.ai/data-handling and docs.abliteration.ai. They declare "
+        "US inference by default, but the operating entity's "
         "headquarters country has not been independently verified. Excluded from jurisdiction filters."
     ),
     "abliterate": (

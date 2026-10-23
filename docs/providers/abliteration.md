@@ -1,6 +1,7 @@
 # Abliteration.ai
 
 Provider slug: `abliteration`. This is not `abliterate` (Abliterate.ai).
+The vendored provider mark comes from `https://abliteration.ai/apple-icon.png`.
 The upstream is `https://api.abliteration.ai/v1`, authenticated with the dedicated
 `ABLITERATION_API_KEY`. No credential values belong in this repository.
 
