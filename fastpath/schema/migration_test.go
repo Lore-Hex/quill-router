@@ -17,7 +17,7 @@ import (
 var migration = filepath.Join("..", "..", "scripts", "deploy", "migrate_fastpath.sh")
 
 // created names what a statement creates.
-var created = regexp.MustCompile(`^CREATE (TABLE|INDEX|UNIQUE INDEX) (\w+)`)
+var created = regexp.MustCompile(`^CREATE (TABLE|(?:UNIQUE )?(?:NULL_FILTERED )?INDEX) (\w+)`)
 
 // words is a statement with its whitespace made single spaces.
 func words(s string) string { return strings.Join(strings.Fields(s), " ") }
@@ -25,7 +25,8 @@ func words(s string) string { return strings.Join(strings.Fields(s), " ") }
 // production names fastpath.sql's copies of production's own tables and
 // index, which the migration leaves alone.
 var production = map[string]bool{"tr_credit_balance": true, "tr_reservation": true, "tr_reservation_by_expiry": true,
-	"tr_entities": true}
+	"tr_reservation_by_idemp": true, "tr_reservation_by_authorization": true, "tr_entities": true,
+	"tr_gateway_authorization": true}
 
 // ownStatements are fastpath.sql's statements but production's, and what
 // each creates, and whether it is an index.
