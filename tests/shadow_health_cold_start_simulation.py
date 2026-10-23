@@ -1009,7 +1009,7 @@ def test_pre_boundary_server_claim_rolls_back_before_owner_validation(ref):
 
 
 def test_clock_skew_production_calibration(capsys):
-    """Record that clock skew does not explain owner rejection."""
+    """Modelled offsets within ±5 ms with ≥15 ms commit latency do not reproduce rejection."""
     import time
 
     ref = baseline_ref()
