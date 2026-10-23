@@ -8,7 +8,8 @@ record topics, the auditor's and stager's subscriptions, an archive
 subscription and bucket for each topic, the nodes' service account and its
 roles, the envelope key's secret, the releases bucket, and the two nodes,
 `tr-fastpath-1` (us-central1-a) and `tr-fastpath-2` (us-central1-b) at P0,
-replaced on 2026-10-20 by `tr-fastpath-3` and `tr-fastpath-4` in the same zones, on the
+replaced on 2026-10-20 by `tr-fastpath-3` and `tr-fastpath-4` in the same zones,
+and those in turn by `tr-fastpath-5` and `tr-fastpath-6` (E2), on the
 default network behind the project's NAT with no external address.
 
 ## What is done by hand, once
@@ -29,8 +30,8 @@ default network behind the project's NAT with no external address.
    checks the release its process runs, not the file that names it:
 
    ```bash
-   gcloud compute instances reset tr-fastpath-3 --zone=us-central1-a --project=quill-cloud-proxy
-   gcloud compute instances reset tr-fastpath-4 --zone=us-central1-b --project=quill-cloud-proxy
+   gcloud compute instances reset tr-fastpath-5 --zone=us-central1-a --project=quill-cloud-proxy
+   gcloud compute instances reset tr-fastpath-6 --zone=us-central1-b --project=quill-cloud-proxy
    ```
 
    A node with no release pinned stays stopped and says so in its journal.

@@ -338,7 +338,7 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
     as Terraform renders them, pass the startup script's own checks (all
     four, on the edge's upstream, characters the unit can carry) and turn
     the shadow on; a value the script refused would leave a new node
-    stopped. The nodes named are nodes Terraform declares."""
+    stopped. Every node Terraform declares is given them."""
     tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
     script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
     upstream = re.search(r'^\s*fastpath_edge_upstream\s*=\s*"([^"]+)"', tf, re.M)
@@ -373,13 +373,15 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
         f"-edge-snapshot-public-key {rendered['fastpath-edge-snapshot-public-key']} "
         f"-edge-snapshot-kid {rendered['fastpath-edge-snapshot-kid']} -edge-snapshot-plane gcp/us-central1 -edge-shadow"
     )
-    nodes = re.search(r"fastpath_edge_snapshot_nodes\s*=\s*\[([^\]]*)\]", tf)
-    assert nodes
-    named = re.findall(r'"([^"]+)"', nodes.group(1))
-    assert named
-    declared = tf[tf.index('resource "google_compute_instance" "fastpath_node"'):]
-    for node in named:
-        assert re.search(rf'^\s*"{node}"\s*=\s*"us-central1-[a-z]"', declared, re.M), node
+    # Every node: the for_each declares at least one, and the metadata merges
+    # the snapshot's attributes in with no condition on the node's name.
+    resource = tf[tf.index('resource "google_compute_instance" "fastpath_node"'):]
+    resource = resource[:resource.index("\n}\n")]
+    for_each = re.search(r"^\s*for_each\s*=\s*\{([^}]*)\}", resource, re.M)
+    assert for_each
+    assert re.findall(r'^\s*"tr-fastpath-\d+"\s*=\s*"us-central1-[a-z]"$', for_each.group(1), re.M)
+    metadata = re.search(r"^\s*metadata\s*=\s*merge\(\{[^}]*\},\s*([^\n]*)\)$", resource, re.M)
+    assert metadata and metadata.group(1) == "local.fastpath_edge_snapshot", metadata
 
 
 def test_the_snapshot_flags_are_found() -> None:
