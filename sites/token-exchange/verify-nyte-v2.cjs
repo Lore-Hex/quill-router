@@ -60,7 +60,7 @@ modelCount=813;providerRows=[{id:'restored',routing_status:'active'}];await page
 await page.waitForFunction(()=>document.querySelector('[data-catalog-models]').textContent==='813');
 await page.clock.resume();
 await page.getByRole('button',{name:'Menu',exact:true}).click();await page.locator('nav').getByRole('link',{name:'Confidential API',exact:true}).click();await page.waitForURL('**/confidential');
-await page.locator('.privacy-price').first().waitFor();assert.equal(await page.locator('.health-bar').count(),24);assert.equal(await page.locator('.build-digest').count(),1);
+await page.locator('.privacy-price').first().waitFor();assert.match(await page.locator('[data-live-price-unit]').textContent(),/^Updated .* UTC$/);assert.equal(await page.locator('.tbl-foot').count(),0);assert.equal(await page.locator('.health-bar').count(),24);assert.equal(await page.locator('.build-digest').count(),1);
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 await page.locator('.hero-api a',{hasText:'Start building'}).click();await page.waitForURL('**/confidential#start');
 await page.getByRole('button',{name:'Get the buyer deck',exact:true}).click();assert(await page.locator('dialog').isVisible());
@@ -112,6 +112,22 @@ for (const width of [320, 360, 390, 430, 768, 880]) {
  assert(!layout.overflow,`header must fit at ${width}px`);
  if(width<=600)assert(layout.brandGap>=24,`wordmark needs breathing room at ${width}px`);
  assert(layout.gap<=(width<=600?41:81),`API hero must follow its content at ${width}px`);
+}
+// Published index dates and movements remain readable on phones and desktop.
+for (const width of [320,390,768,1440]) {
+ await page.setViewportSize({width,height:900});await page.goto(base+'/suppliers');await page.evaluate(()=>document.fonts.ready);
+ const card=page.locator('.idx');
+ const iso=await card.locator('time').getAttribute('datetime');
+ assert.equal(await card.locator('time').textContent(),`${iso.slice(5,7)}/${iso.slice(8,10)}/${iso.slice(2,4)}`);
+ assert.equal(await card.locator('.idx-change').count(),5);
+ assert(await card.locator('.idx-change').evaluateAll(elements=>elements.every(el=>{
+  const r=el.getBoundingClientRect();return r.width>0 && el.scrollWidth<=el.clientWidth && r.right<=innerWidth;
+ })),`index changes must fit at ${width}px`);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.goto(base+'/');await page.evaluate(()=>document.fonts.ready);
+ assert(await page.locator('.stat .v').evaluateAll(elements=>elements.every(el=>el.scrollWidth<=el.clientWidth)),`stats must fit at ${width}px`);
+ const fee=page.locator('.stat .v span');assert.equal(await fee.textContent(),'max fee');
+ assert.equal(await fee.evaluate(el=>el.getClientRects().length),1);
 }
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
 })().catch(error=>{console.error(error);process.exit(1);});

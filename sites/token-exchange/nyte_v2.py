@@ -26,7 +26,7 @@ def index_panel() -> str:
         label = f"{value:+.1f}%" if abs(value) > 0.05 else "0.0%"
         return f'<span class="idx-change {direction}" aria-label="{label} over seven days">{label} 7d</span>'
 
-    examples = (
+    grades = (
         ("AAA", "Frontier", "Frontier research, the hardest reasoning"),
         ("A", "Advanced", "Coding agents, complex analysis"),
         ("B", "Professional", "Production assistants, structured work"),
@@ -38,7 +38,7 @@ def index_panel() -> str:
         f'<time datetime="{html.escape(data["AS_OF_ISO"])}">{as_of}</time>'
         f'</small></div><span class="idx-value">${quotes["ALL"]["value"]:,}{movement("ALL")}</span></div>'
     )
-    for code, name, description in examples:
+    for code, name, description in grades:
         value = quotes[code]["value"]
         result += f'<div class="idx-row"><span class="g">{code}</span><div class="d"><b>{name}</b><small>{description}</small></div><span class="p">${value:,}{movement(code)}</span></div>'
     return result + '</div>'

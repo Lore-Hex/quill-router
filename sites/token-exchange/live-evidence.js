@@ -29,9 +29,9 @@
   };
   const dated = value => age(value) !== Infinity;
   const fresh = value => age(value) <= staleMs;
-  const lastCheck = value => {
+  const lastCheck = (value, label = 'Last checked') => {
     if (!dated(value)) return '';
-    return `Last checked ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
+    return `${label} ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
   };
   const link = (label, url) => {
     const el = node('a', label);
@@ -86,7 +86,7 @@
     if (priceUnit) {
       priceUnit.hidden = !prices.childElementCount;
       priceUnit.textContent = prices.dataset.priceLayout === 'table'
-        ? lastCheck(payload.generated_at).replace('Last checked', 'Updated')
+        ? lastCheck(payload.generated_at, 'Updated')
         : `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
     }
     if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));

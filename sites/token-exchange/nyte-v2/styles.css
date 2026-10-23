@@ -184,7 +184,6 @@ header{position:sticky;top:0;z-index:30;height:var(--header);background:rgba(5,7
 .ev-sec{padding:24px 26px;border-bottom:1px solid var(--rule)}
 .ev-sec:last-child{border-bottom:0}
 
-.tbl-foot{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-top:20px;color:var(--t3);font-size:15px;flex-wrap:wrap}
 
 .qs{display:grid;grid-template-columns:minmax(0,.75fr) minmax(0,1.25fr);gap:64px;align-items:center}
 .qs h2{margin-bottom:18px}

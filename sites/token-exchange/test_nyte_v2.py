@@ -125,7 +125,6 @@ class NyteV2Tests(unittest.TestCase):
 
     def test_index_uses_the_shared_published_snapshot(self):
         import runpy
-        from datetime import date
 
         from nyte_v2 import HERE
         data = runpy.run_path(str(HERE.parents[1] / "src/trusted_router/content/token_index.py"))["token_index_context"]()
