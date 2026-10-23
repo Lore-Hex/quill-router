@@ -97,7 +97,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
     prepared = None
     finalized = False
     try:
-        if not in_v2_cohort(settings.async_settle_shadow_policy, inputs.identity["workspace_id"],
+        if not in_v2_cohort(settings.effective_async_settle_shadow_policy(), inputs.identity["workspace_id"],
                             settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
             return {}
         inputs.started = True

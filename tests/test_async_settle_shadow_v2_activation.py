@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ from trusted_router.async_settle_shadow_v2_native_reads import NativeClient, Rea
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / 'release/first-window-plan.json'
+# A canary opt-in must carry its runtime stop (TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT).
+EXPIRY = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 1800))
 
 
 @pytest.fixture
@@ -161,7 +164,7 @@ def test_duplicate_keys_and_review(plan, tmp_path):
 
 @pytest.mark.parametrize('phase', ['shadow-opt-in', 'shadow-opt-out'])
 def test_exact_phase_pins(plan, phase):
-    expected = pins(plan, phase)
+    expected = pins(plan, phase, expires_at=EXPIRY)
     assert {k: expected['router'][k] for k in MONEY_OFF} == {
         'TR_ASYNC_SETTLE_ENABLED': 'false', 'TR_ASYNC_SETTLE_PROTECTION': 'false',
         'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED': 'false'}
@@ -169,6 +172,7 @@ def test_exact_phase_pins(plan, phase):
     assert expected['router']['TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET'] == plan.attachment_bucket
     assert expected['enclave']['TR_ASYNC_SETTLE_SHADOW'] == ('on' if phase == 'shadow-opt-in' else 'off')
     assert expected['router']['TR_ASYNC_SETTLE_SHADOW_WORKSPACES'] == (plan.workspace if phase == 'shadow-opt-in' else '')
+    assert expected['router']['TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT'] == (EXPIRY if phase == 'shadow-opt-in' else '')
     original = (ROOT / 'scripts/deploy/rollout.sh').read_text()
 
     def assert_phase_patch(source):
@@ -196,7 +200,7 @@ def test_exact_phase_pins(plan, phase):
 
     other_phase = 'shadow-opt-out' if phase == 'shadow-opt-in' else 'shadow-opt-in'
     other = original
-    for name, value in pins(plan, other_phase)['router'].items():
+    for name, value in pins(plan, other_phase, expires_at=EXPIRY)['router'].items():
         if name not in MONEY_OFF:
             other, count = re.subn(rf'^  "{name}=[^"\n]*"$', f'  "{name}={value}"', other, flags=re.MULTILINE)
             assert count == 1
@@ -207,20 +211,22 @@ def test_exact_phase_pins(plan, phase):
 def test_bad_source_money_pin(plan):
     original = (ROOT / 'scripts/deploy/rollout.sh').read_text().replace('TR_ASYNC_SETTLE_ENABLED=false', 'TR_ASYNC_SETTLE_ENABLED=true')
     with pytest.raises(ValueError, match='money-off'):
-        patch(original, 'rollout.sh', pins(plan, 'shadow-opt-in')['router'])
+        patch(original, 'rollout.sh', pins(plan, 'shadow-opt-in', expires_at=EXPIRY)['router'])
 
 
 def test_release_cli_records_without_dispatch(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(cli, 'command', lambda args: calls.append(args))
     out = tmp_path / 'release'
-    assert window_main(['release', '--plan', str(EXAMPLE), '--phase', 'shadow-opt-in', '--out', str(out)]) == 1
+    assert window_main(['release', '--plan', str(EXAMPLE), '--phase', 'shadow-opt-in', '--expires-at', EXPIRY,
+                        '--out', str(out)]) == 1
     assert (out / 'router.patch').is_file()
     assert 'gh pr create' in (out / 'operator-commands.txt').read_text()
     result = json.loads((out / 'result.json').read_text())
     assert 'P6EnclavePinSource' in result['missing']
     assert calls == []
-    assert window_main(['release', '--plan', str(EXAMPLE), '--phase', 'shadow-opt-in', '--out', str(out)]) == 1
+    assert window_main(['release', '--plan', str(EXAMPLE), '--phase', 'shadow-opt-in', '--expires-at', EXPIRY,
+                        '--out', str(out)]) == 1
 
 
 @pytest.mark.parametrize(('service', 'code', 'absent'), [
@@ -287,7 +293,7 @@ def test_attestation_never_skipped(plan, tmp_path):
     for workflow in plan.workflows:
         values.extend([run_record(plan, workflow), dict(total_count=1, jobs=[job_record(plan, workflow)])])
     port = Recorded(*values)
-    result = cli.observe_release(plan, 'shadow-opt-in', tmp_path, port)
+    result = cli.observe_release(plan, 'shadow-opt-in', tmp_path, port, expires_at=EXPIRY)
     assert result['complete'] is False
     assert 'P6AttestedRegionVerification' in result['missing']
     assert all(call[0] == 'GET' for call in port.calls)
@@ -296,7 +302,7 @@ def test_attestation_never_skipped(plan, tmp_path):
 def test_wait_pending_bounded(plan, tmp_path):
     values = [dict(run_record(plan, w), status='queued') for w in plan.workflows]
     port = Recorded(*values)
-    result = cli.observe_release(plan, 'shadow-opt-in', tmp_path, port)
+    result = cli.observe_release(plan, 'shadow-opt-in', tmp_path, port, expires_at=EXPIRY)
     assert result['missing'] == ['ExistingWorkflowPending']
     assert len(port.calls) == len(plan.workflows)
 
@@ -470,7 +476,7 @@ def test_enclave_patch_requires_exact_source(plan, tmp_path):
     original = target.read_bytes()
     out = tmp_path / 'out'
     out.mkdir()
-    result = prepare(plan, 'shadow-opt-in', ROOT, enclave, out)
+    result = prepare(plan, 'shadow-opt-in', ROOT, enclave, out, expires_at=EXPIRY)
     assert not result['missing']
     assert '+ "TR_ASYNC_SETTLE_SHADOW=on"' in (out / 'enclave.patch').read_text()
     assert target.read_bytes() == original
@@ -478,7 +484,7 @@ def test_enclave_patch_requires_exact_source(plan, tmp_path):
 
 def test_enclave_native_gcp_metadata_patch(plan):
     original = '  --metadata="^|^image=reviewed|tee-env-TR_ASYNC_SETTLE_SHADOW=off|tee-env-TR_ASYNC_SETTLE_NEGOTIATE=off|tail=retained"\n'
-    desired = pins(plan, 'shadow-opt-in')['enclave']
+    desired = pins(plan, 'shadow-opt-in', expires_at=EXPIRY)['enclave']
     diff = patch(original, 'tools/deploy-gcp-mig.sh', desired)
     expected = original.replace('SHADOW=off|', 'SHADOW=on|')
     assert '+' + expected in diff
@@ -586,7 +592,7 @@ def test_failed_attestation_workflow_cannot_be_omitted(plan, tmp_path):
                     value['conclusion'] = 'failure'
             return Response(json.dumps(value).encode(), 200, {}, 10)
     with pytest.raises(ValueError, match='released workflow'):
-        cli.observe_release(plan, 'shadow-opt-in', tmp_path, Workflows())
+        cli.observe_release(plan, 'shadow-opt-in', tmp_path, Workflows(), expires_at=EXPIRY)
 
 
 @pytest.mark.parametrize('phase', ['shadow-opt-in', 'shadow-opt-out'])
@@ -600,6 +606,7 @@ def test_round2_ruled_rollout_patch(plan, tmp_path, phase):
     # Independent ruled values: do not build this expectation from pins() or plan fields.
     expected = {
         'TR_ASYNC_SETTLE_SHADOW_POLICY': 'shadow-v2' if active else '',
+        'TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT': EXPIRY if active else '',
         'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': '162e441a-5d13-414f-92bd-7c6cd805faa3' if active else '',
         'TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION': 'us-central1' if active else '',
         'TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET': 'tr-async-settle-shadow-attachments-quill-cloud-proxy',
@@ -614,7 +621,7 @@ def test_round2_ruled_rollout_patch(plan, tmp_path, phase):
         assert count == 1
     wanted = ''.join(difflib.unified_diff(original.splitlines(keepends=True), changed.splitlines(keepends=True),
         fromfile='a/scripts/deploy/rollout.sh', tofile='b/scripts/deploy/rollout.sh')).encode()
-    prepare(plan, phase, ROOT, None, tmp_path)
+    prepare(plan, phase, ROOT, None, tmp_path, expires_at=EXPIRY)
     assert (tmp_path / 'router.patch').read_bytes() == wanted
     for name in ('TR_ASYNC_SETTLE_ENABLED', 'TR_ASYNC_SETTLE_PROTECTION', 'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED'):
         line = f'  "{name}=false"\n'
@@ -727,13 +734,13 @@ def test_round2_observer_population(plan, tmp_path, issue):
             dict(total_count=3 if issue == 'changed_total' else 2, jobs=[second])])
     port = Recorded(*values)
     if issue == 'correct':
-        result = cli.observe_release(plan, 'shadow-opt-in', tmp_path, port)
+        result = cli.observe_release(plan, 'shadow-opt-in', tmp_path, port, expires_at=EXPIRY)
         assert 'P6LivePinProjection' in result['missing']
         assert len(port.calls) == 3 * len(plan.workflows)
     else:
         diagnostic = 'GitHub repeated record id' if issue == 'duplicate' else 'GitHub population changed'
         with pytest.raises(ValueError, match=diagnostic):
-            cli.observe_release(plan, 'shadow-opt-in', tmp_path, port)
+            cli.observe_release(plan, 'shadow-opt-in', tmp_path, port, expires_at=EXPIRY)
         assert len(port.calls) == 3
 
 
@@ -762,7 +769,7 @@ def test_round2_pin_source_containment(plan, tmp_path, role):
     selected = Plan.model_validate(value)
     with pytest.raises(ValueError, match='outside plan workspace'):
         prepare(selected, 'shadow-opt-in', inside if role == 'router' else ROOT,
-            inside if role == 'enclave' else None, out)
+            inside if role == 'enclave' else None, out, expires_at=EXPIRY)
     assert not (out / (role + '.patch')).exists()
     assert (outside / 'rollout.sh').read_text() == original
 
@@ -776,7 +783,7 @@ def test_round2_default_output_containment(plan, tmp_path):
     value['artifacts']['release'] = 'link/new-output'
     path = inside / 'plan.json'
     path.write_text(json.dumps(value))
-    assert cli.main(['release', '--plan', str(path), '--phase', 'shadow-opt-in']) == 1
+    assert cli.main(['release', '--plan', str(path), '--phase', 'shadow-opt-in', '--expires-at', EXPIRY]) == 1
     assert not list(outside.iterdir())
 
 
@@ -797,3 +804,34 @@ def test_round2_archive_output_containment(plan, tmp_path):
     with pytest.raises(ValueError, match='outside plan workspace'):
         capture_archive(plan, spec, Files(inside), port, Download(), ReadBudget())
     assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize(('value', 'message'), [
+    ('', 'expiry required'),
+    ('2026-10-23T11:00:00Z', 'already passed'),
+    ('2026-10-23T11:00:00+00:00', 'ending in Z'),
+    (None, 'canary maximum'),  # 49 h ahead, computed at run time (stable test ids).
+])
+def test_opt_in_requires_a_valid_future_expiry(plan, value, message):
+    if value is None:
+        value = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 49 * 3600))
+    with pytest.raises(ValueError, match=message):
+        pins(plan, 'shadow-opt-in', expires_at=value)
+    # Opt-out ignores and clears it.
+    assert pins(plan, 'shadow-opt-out', expires_at=value)['router']['TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT'] == ''
+
+
+def test_release_cli_opt_in_without_expiry_writes_no_patch(tmp_path):
+    out = tmp_path / 'release'
+    assert window_main(['release', '--plan', str(EXAMPLE), '--phase', 'shadow-opt-in', '--out', str(out)]) == 1
+    result = json.loads((out / 'result.json').read_text())
+    assert result['missing'] == ['P6ActionIncomplete:ValueError']
+    assert not (out / 'router.patch').exists()
+
+
+def test_tool_and_router_share_the_canary_maximum():
+    from trusted_router.async_settle_shadow_v2_activation_release import CANARY_MAX_SECONDS
+    from trusted_router.config import SHADOW_CANARY_MAX_SECONDS, parse_shadow_expiry
+    assert CANARY_MAX_SECONDS == SHADOW_CANARY_MAX_SECONDS
+    # Whatever the tool writes, the router parses strictly and accepts.
+    assert parse_shadow_expiry(EXPIRY) > time.time() and EXPIRY.endswith('Z')

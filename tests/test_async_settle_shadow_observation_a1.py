@@ -25,7 +25,12 @@ from trusted_router.async_settle_shadow_journal import (
     RESERVATION_BLOCK,
 )
 from trusted_router.async_settle_shadow_v2_a1_health import validate_publisher_final
-from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore, UnknownCommit
+from trusted_router.storage_gcp_shadow_observation import (
+    OBSERVER_READ_RPC_SECONDS,
+    Budget,
+    ObservationStore,
+    UnknownCommit,
+)
 
 
 def test_selected_v2_does_not_mutate_shared_adapter(tmp_path):
@@ -437,7 +442,9 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
     db.sessions_manager = Sessions(db)
     db.snapshot = lambda **options: SnapshotCheckout(db, **options)
     store = ObservationStore(db, clock=clock.monotonic, wall=lambda: NOW_US/1e6)
-    cap = .25 if consumer == "health" else .5 if consumer == "observe" else 1.
+    # The fleet-health read's RPC deadline is the generous observer deadline
+    # (2026-10-23 API-failure alerts); its 250 ms limit is the install cut-off.
+    cap = OBSERVER_READ_RPC_SECONDS if consumer == "health" else .5 if consumer == "observe" else 1.
     if checkout == "expired_session":
         db._sessions_manager = db.sessions_manager
         db.sessions_manager.session = db.session
