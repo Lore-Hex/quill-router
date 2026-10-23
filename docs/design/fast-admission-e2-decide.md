@@ -244,10 +244,18 @@ require, `gateway.py:2985-3000`), `policy.monitor_key`,
 snapshot's `settings`), `decide.off`.
 
 **Evaluation:** `evaluate.<outcome>` for any result but `Answered`
-(Python's refusals included), `candidates.byok`,
+(Python's refusals included), `evaluate.estimate_overflow` (the estimate
+in microdollars is beyond int64: Python's leased path would write a value
+the `INT64` columns cannot store, so Spanner refuses the commit; Go
+passes), `candidates.byok`,
 `candidates.estimated_usage`, `candidates.private_proxy` (the requested
 model is a private proxy: Python's `response_model` would not be null),
 `clock.window` (decision 15).
+
+**Boot** (E1's check and decision 8, where Python answers without the
+pilot): `boot.signature` (no `X-TR-Boot-Auth`, or one that does not parse
+or verify, or more than one), `boot.unverified` (the boot row is not
+verified), `boot.missing` (no boot row for the kid).
 
 **Admission and insert:** `inflight.key`, `owner.off`, `owner.busy`,
 `owner.invalid`, `owner.failed`, `owner.unreachable`, `budget.spent`,
@@ -937,15 +945,32 @@ fake counted it. About 300 cases.
  "policy": EDGE_POLICY_BODY,            // §4 body, as an object
  "internal_models": [STR],              // sorted: MONITOR_MODEL_ID and every internal_only model
  "estimated_usage_models": [STR],       // sorted ESTIMATED_USAGE_SNAPSHOT_MODELS
+ "internal_token": STR,                 // the TEST internal token every request carries
+ "boot_test_key": BOOT_TEST_KEY,        // below
+ "boot_auth": BOOT_AUTH,                // below
+ "body_expand": STR,                    // the body_expand rule, in words (below)
+ "volatile": ["data.timing"],           // compared by shape, not value
  "cases": [CASE, ...]}
+
+BOOT_TEST_KEY = {"kid": STR, "jwk": {...},
+                 "seed_hex": HEX,       // the Ed25519 private key's 32-byte seed
+                 "seed_preimage": STR,  // seed_hex is sha256 of these UTF-8 bytes
+                 "seed": STR}           // that rule, in words
+BOOT_AUTH = {"source": STR,             // gateway_boot.py:53-58, boot_auth_digest
+             "domain": "tr-authorize-v1", "method": "POST",
+             "path": "/internal/gateway/authorize",
+             "digest": STR, "signature": STR, "header": STR}   // the rule, in words
 
 CASE = {
  "name": STR, "labels": [STR],
  "at_us": INT,
  "ids": {"authorization_id": STR, "reservation_id": STR, "minted_idempotency_key": STR},
- "admitted": {"envelope": STR, "end_of_life_us": INT},
- "insert": "inserted" | "unknown_landed" | "unknown_not_landed",
- "request": {"path": STR, "headers": [[STR, STR]], "body": STR},
+ "admitted": {"envelope": STR, "end_of_life_us": INT,
+              "end_of_life": STR},      // the owner's text as it answered (§5's offset rule)
+ "insert": "inserted" | "unknown_landed" | "unknown_not_landed"
+         | "failed_precondition" | "aborted",   // the last two: insert.failed passes
+ "request": {"path": STR, "headers": [[STR, STR]], "body": STR,
+             "body_expand": {"marker": STR, "repeat": STR, "count": INT}},   // optional
  "boot": {"kid": STR, "verified": BOOL, "image_digest": STR,
           "declares_usage_heartbeat": BOOL, "signature_ok": BOOL},
  "key": {"lookup_body": STR | null, "key_body": STR | null},
@@ -966,6 +991,7 @@ EXPECT =
     "response": STR,                    // pre-gzip body
     "generation_id": STR, "estimate_microdollars": INT, "decide_region": STR,
     "fingerprint": HEX, "idempotency_scope": STR,
+    "fingerprint_material": STR,        // the exact JSON Python hashed (§7)
     "timing": TIMING,                   // the values inside "response"
     "authorization_row": {               // every column of the table
       "authorization_id": STR, "workspace_id": STR, "key_hash": STR,
@@ -988,8 +1014,25 @@ EXPECT =
  | {"outcome": "unavailable", "status": 503,
     "headers": [["retry-after", "1"]], "response": STR, "timing": TIMING}
  | {"outcome": "pass", "reason": STR,   // §3 vocabulary
-    "python": {"status": INT, "type": STR | null}}
+    "python": {"status": INT, "type": STR | null,
+               "leased": BOOL}}         // whether Python took the pilot's lease
 ```
+
+**Signatures.** Every request whose `boot.signature_ok` is true carries
+`x-tr-boot-auth: kid=<kid>,sig=<signature>`, made from the header alone:
+the digest is `sha256(domain || method || path || sha256(body))`
+(`gateway_boot.py:53-58`, `boot_auth_digest`): `domain` and `method` as
+their ASCII bytes, `path` UTF-8, `sha256(body)` the 32 raw bytes of the
+digest of the exact body sent, concatenated with no separators; the
+signature is deterministic Ed25519 (RFC 8032) over those 32 bytes with
+the key whose seed is `seed_hex`, written base64url without padding. The
+test key is public by construction and refused outside test mode.
+
+**`body_expand`.** A body too large to keep (the 4 MiB cause of
+`body.unparseable`) is stored as a skeleton holding `marker` exactly once,
+with `body_expand`; the body sent, signed and hashed is the skeleton with
+that one marker replaced by `repeat` written `count` times. A Go test
+expands it before use; the Python test sends the expanded bytes.
 
 `"unknown_landed"` expects `answer`, with `tags` in sorted order (§6,
 after a read-back); `"unknown_not_landed"` expects `unavailable`. Go's
@@ -1007,15 +1050,27 @@ every pass reason has at least one case, `body.content_type`,
 `end_of_life.offset` (an owner end of life with a non-UTC offset),
 `pass.<reason>`.
 
+The test fake keeps any integer, so a case whose estimate is beyond int64
+(`evaluate.estimate_overflow`) records Python's 200 from the fake, where
+real Spanner refuses the commit.
+
 ### 10.2 `fastpath/testdata/authorize_fingerprint_v1.json` (P1)
 
-About 20,000 bodies, kept under 10 MB. Each is sent through the ASGI app
-as §10.1's are; the fingerprint and scope are read from the reservation row
-the request wrote, and a refusal is the status and `error.type` the app
-answered.
+As many bodies as fit under 10 MB (about 14,000 at an enclave body's
+size, a 64-hex lookup hash included). Each is sent through the ASGI app as
+§10.1's are, on the cohort path: a pilot workspace, the owner admitting,
+and every body signed by the TEST boot as §10.1's **Signatures** says. The
+fingerprint and scope are read from the reservation row the request
+wrote, and a refusal is the status and `error.type` the app answered.
 
 ```
-{"generator": "scripts/fastpath/authorize_vectors.py", "cases": [CASE, ...]}
+{"generator": "scripts/fastpath/authorize_vectors.py",
+ "sent_with_every_body": [[STR, STR]], // after the case's headers, in this order:
+                                       // x-trustedrouter-internal-token, accept-encoding: identity,
+                                       // x-tr-boot-auth (kid=<kid>,sig=<signature over the body>)
+ "boot_test_key": BOOT_TEST_KEY, "boot_auth": BOOT_AUTH,   // §10.1's
+ "policy": EDGE_POLICY_BODY,
+ "cases": [CASE, ...]}
 
 CASE = {
  "name": STR, "labels": [STR],
@@ -1033,7 +1088,10 @@ Labels that require Go to pass (decision 4 and §3): `float_present`,
 `non_ascii_tag`, `referer_not_strict`, `canonical_model_rewrite`,
 `native_batch_key`, `partner_key`, `idempotency_key_too_long`,
 `idempotency_header_repeated`, `idempotency_header_non_ascii`,
-`content_type`, `deep_nesting`, `int_over_4000_digits`, `bom`.
+`content_type`, `deep_nesting`, `int_over_4000_digits`, `bom`,
+`lone_surrogate` (a lone surrogate escape anywhere: §10.4 has Go refuse
+one), `estimate_overflow` (the `estimated_microdollars` Python wrote is
+beyond int64: `evaluate.estimate_overflow`).
 Descriptive labels: `null_extra` (a top-level extra `null`, dropped),
 `null_nested`, `app_categories_empty`, `input_modalities`, `extras`,
 `nested_provider`, `nested_trace`, `nested_metadata`, `unicode_extra`,
