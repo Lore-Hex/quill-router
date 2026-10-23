@@ -1,8 +1,10 @@
 """Golden authorize vectors for the Go edge's decide path (E2 P1,
 docs/design/fast-admission-e2-decide.md §10.1 and §10.2).
 
-Both files are computed by the real authorize route (FastAPI's app over
-`_authorize_gateway_sync_impl`) over the routing-snapshot fixture catalog
+Both files are what the ASGI app answers (FastAPI's body read and
+content-type rule, the validation handler, the timing decorator, the
+exception handlers, `_authorize_gateway_sync_impl`), over httpx's ASGI
+transport with the internal token, over the routing-snapshot fixture catalog
 (scripts/fastpath/routing_snapshot_vectors.py), the Spanner fake
 (tests/fakes/spanner.make_fake_store, typed request records) and the
 pilot's front-door fake (tests/test_fastpath_frontdoor._Door):
@@ -15,9 +17,10 @@ use, and the request's exact headers and body. A case expects Go's
 `unavailable` 503, or a `pass` with the §3 reason the case trips and what
 Python then answered.
 
-fastpath/testdata/authorize_fingerprint_v1.json, one request body a line,
-each taken by the route as far as the idempotency fingerprint (§7) or its
-refusal, and labelled with what it contains; the labels decision 4 names
+fastpath/testdata/authorize_fingerprint_v1.json, one request a line (its
+headers and body), each sent through the app in a fresh world: the
+fingerprint and scope from the reservation row it wrote (§7), or Python's
+refusal, and labelled with what it carries; §10.2's pass-required labels
 are the ones on which Go passes.
 
 Everything is pinned: the clock (each case's instant, inside the snapshot's
@@ -35,6 +38,7 @@ run it as a script, never import it.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import dataclasses
 import datetime as real_dt
@@ -60,18 +64,16 @@ for _name in [name for name in os.environ if name.startswith("TR_")]:
 os.environ["TR_ENVIRONMENT"] = "test"
 os.environ["TR_STORAGE_BACKEND"] = "memory"
 
+import httpx  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
-from fastapi import HTTPException  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from google.api_core.exceptions import DeadlineExceeded  # noqa: E402
+from google.api_core.exceptions import Aborted, DeadlineExceeded, FailedPrecondition  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
-from starlette.requests import Request  # noqa: E402
 
 from tests.fakes.spanner import make_fake_store  # noqa: E402
 from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
-from trusted_router.catalog_data import Model, ModelEndpoint  # noqa: E402
+from trusted_router.catalog_data import MONITOR_MODEL_ID, Model, ModelEndpoint  # noqa: E402
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
 from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, boot_auth_digest  # noqa: E402
@@ -381,6 +383,7 @@ def build_world(world: dict[str, Any], policy: dict[str, Any]) -> tuple[Any, Any
         "workspace_id": workspace.id, "shard": 0, "total_credits": world["credit_micro"],
         "total_usage": 0, "reserved": 0, "in_debt": False, "trust_tier": 3, "trust_latched_at": None,
         "billing_pause_causes": [], "source_updated_at": None, "updated_at": None,
+        **world.get("credit_row", {}),
     }
     key = world["key"]
     with patched(storage_gcp_keys, "new_key_id", lambda: key["hash"]), \
@@ -502,18 +505,36 @@ def boot_headers(mode: str, body: bytes) -> list[list[str]]:
 
 # ------------------------------------------------------------------- run --
 
-_APPS: dict[str, Any] = {}
+class _App:
+    """The app over httpx's ASGI transport, driven by one event loop: no
+    lifespan (so no background loop touches the store) and no thread hop
+    per request beyond the route's own. An unhandled error is the app's
+    500, as a server answers it."""
+
+    _loop = asyncio.new_event_loop()
+
+    def __init__(self, settings: Settings) -> None:
+        app = create_app(settings, configure_store_arg=False, init_observability=False)
+        self._client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://testserver",
+        )
+
+    def post(self, path: str, *, content: bytes, headers: list[tuple[bytes, bytes]]) -> httpx.Response:
+        return self._loop.run_until_complete(self._client.post(path, content=content, headers=headers))
 
 
-def _client(settings: Settings) -> TestClient:
+_APPS: dict[str, _App] = {}
+
+
+def _client(settings: Settings) -> _App:
     """One app per distinct settings (an app is built over its settings)."""
     cache_key = settings.model_dump_json()
     if cache_key not in _APPS:
-        _APPS[cache_key] = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
+        _APPS[cache_key] = _App(settings)
     return _APPS[cache_key]
 
 
-def send(client: TestClient, request: dict[str, Any]) -> Any:
+def send(client: _App, request: dict[str, Any]) -> Any:
     return client.post(request["path"], content=request["body"].encode(),
                        headers=[(name.encode(), value.encode()) for name, value in request["headers"]])
 
@@ -532,8 +553,9 @@ def front_door(answers: dict[str, Any] | None) -> Iterator[_Door]:
 
 @contextlib.contextmanager
 def leased_insert(insert: str) -> Iterator[None]:
-    """The leased insert's commit: as it is, or applied (or not) with its
-    answer lost to a deadline, which Python resolves by reading back."""
+    """The leased insert's commit: as it is; applied, or not, with its answer
+    lost to a deadline, which Python resolves by reading back; or refused
+    with nothing applied (failed_precondition, aborted: §8.4's `Failed`)."""
     if insert == "inserted":
         yield
         return
@@ -541,12 +563,30 @@ def leased_insert(insert: str) -> Iterator[None]:
     def lost(database: Any, txn: Any, **kwargs: Any) -> Any:
         if kwargs.get("transaction_tag") != "tr_authorize_leased":
             return _REAL_TRANSACTION(database, txn, **kwargs)
+        if insert == "failed_precondition":
+            raise FailedPrecondition("the commit was refused; nothing applied")
+        if insert == "aborted":
+            raise Aborted("the commit lost its retries; nothing applied")
         if insert == "unknown_landed":
             _REAL_TRANSACTION(database, txn, **kwargs)
         raise DeadlineExceeded("the commit's answer was lost")
 
     with patched(storage_gcp, "run_in_transaction_with_retry", lost):
         yield
+
+
+def _error(body: str) -> dict[str, Any]:
+    """An error body's error object; {} for one that is not JSON (a bare 500)."""
+    try:
+        return json.loads(body).get("error") or {}
+    except ValueError:
+        return {}
+
+
+def _eol(answer: dict[str, Any]) -> str:
+    """An owner end of life as Python reads it: at most microseconds."""
+    text = answer.get("EndOfLife", END_OF_LIFE)
+    return re.sub(r"(\.\d{6})\d+", r"\1", text)
 
 
 def _row_timestamps(row: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
@@ -591,7 +631,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     leased = bool(authorizations and json.loads(authorizations[0]["payload"]).get("fastpath_envelope"))
     reason = case["_reason"]
     if reason is not None:
-        error = (json.loads(body).get("error") or {}) if response.status_code != 200 else {}
+        error = _error(body) if response.status_code != 200 else {}
         return {**world_rows, "expect": {"outcome": "pass", "reason": reason, "python": {
             "status": response.status_code, "type": error.get("type"), "leased": leased}}}
     if response.status_code == 503:
@@ -599,7 +639,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             raise AssertionError(f"{case['name']}: a 503 that wrote or refunded")
         return {**world_rows, "expect": {"outcome": "unavailable", "status": 503,
                                          "headers": [["retry-after", response.headers["retry-after"]]],
-                                         "response": body}}
+                                         "response": body, "timing": json.loads(body)["data"]["timing"]}}
     if not (response.status_code == 200 and leased):
         raise AssertionError(f"{case['name']}: an answer case Python did not lease: {response.status_code} {body}")
     (authorization,), (reservation,) = authorizations, reservations
@@ -616,6 +656,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         "fingerprint": fingerprint,
         "fingerprint_material": material,
         "idempotency_scope": reservation["idempotency_scope"],
+        "timing": data["timing"],
         "authorization_row": _row_timestamps(authorization, ("created_at", "terminal_at", "started_at", "heartbeat_at")),
         "reservation_row": _row_timestamps(
             {k: v for k, v in reservation.items() if k not in {"settled", "settled_usage_type", "actual_micro", "terminal_at"}},
@@ -676,6 +717,10 @@ def case_labels(case: dict[str, Any], expect: dict[str, Any]) -> list[str]:
     if body.get("invocation_nonce"):
         labels.add("invocation_nonce")
     labels.add("region.requested" if (body.get("region") or "").strip() in REGIONS else "region.default")
+    if case["insert"] == "unknown_landed" and data["tags"]:
+        labels.add("read_back.sorted_tags")
+    if not case["admitted"]["end_of_life"].endswith("Z"):
+        labels.add("end_of_life.offset")
     return sorted(labels)
 
 
@@ -733,11 +778,15 @@ def cases() -> list[dict[str, Any]]:
             catalog: tuple[str, ...] = (), content_type: str | None = "application/json",
             stored_key_tags: Any = None, workspace_row: bool = True) -> None:
         case_world = _merge(DEFAULT_WORLD, world)
+        admitted = door if door is not None and "Envelope" in door else ADMIT
         request_body = body if isinstance(body, str) else {**BASE_BODY, **(body or {})}
         boot_record = case_world["boot"]
         out.append({
             "name": name, "ids": case_ids(name), "insert": insert,
-            "admitted": {"envelope": ENVELOPE, "end_of_life_us": _us(END_OF_LIFE)},
+            # end_of_life: the owner's text as it answered (Go's JSON for a
+            # time.Time), which Python parses and writes back (§5).
+            "admitted": {"envelope": admitted["Envelope"], "end_of_life_us": _us(_eol(admitted)),
+                         "end_of_life": admitted["EndOfLife"]},
             "request": _request(case_world, request_body, boot=boot, headers=headers, content_type=content_type),
             "boot": None if boot_record is None else {**boot_record, "signature_ok": boot == "signed"},
             "_at": INSTANTS[at], "_world": case_world, "_policy": _merge(DEFAULT_POLICY, policy),
@@ -880,7 +929,7 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.canonical_model:fallback", "body.canonical_model",
         body={"model": GLM, "models": ["trustedrouter/auto-routing"]})
     add("pass:body.custom_model", "body.custom_model", body={"model": "tr-custom-model/e2-missing"})
-    add("pass:body.tags", "body.tags", body={"tags": {"équipe": "café"}})
+    add("pass:body.tags", "body.tags", body={"tags": {"k": "café"}})
     add("pass:body.referer", "body.referer", body={"http_referer": "https://user@example.com/x"})
     add("pass:body.referer:space", "body.referer", body={"http_referer": "https://example.com/a b"})
     add("pass:body.evaluator_input", "body.evaluator_input", body={"route_type": "x.unknown"})
@@ -960,44 +1009,80 @@ def cases() -> list[dict[str, Any]]:
     add("pass:insert.scope_taken:todays_path_different_body", "insert.scope_taken",
         body={"idempotency_key": "replayed", "max_output_tokens": 7}, prior=todays_first)
 
-    # The parser's edges, each with Python's answer.
-    add("pass:body.unparseable:content_type_missing", "body.unparseable", content_type=None)
+    # §3's content-type rule: exactly one application/json, optionally
+    # charset=utf-8.
     add("answer:content_type_json_charset", content_type="application/json; charset=utf-8")
-    add("pass:body.unparseable:content_type_text", "body.unparseable", content_type="text/plain")
-    # Python's json refuses an integer over 4300 digits and nesting past its
-    # recursion limit (FastAPI answers 400 http_error); 5000 levels it takes.
-    add("pass:body.unparseable:int_over_4300_digits", "body.unparseable",
-        raw_body(lookup, f'"model":"{GLM}"', '"x_big":' + "9" * 4301, PLAIN_TAIL))
-    add("answer:deep_nesting_5000", None,
-        raw_body(lookup, f'"model":"{GLM}"', '"x_deep":' + "[" * 5000 + "1" + "]" * 5000,
-                 '"estimated_input_tokens":1000', PLAIN_TAIL))
-    add("pass:body.unparseable:deep_nesting_100000", "body.unparseable",
-        raw_body(lookup, f'"model":"{GLM}"', '"x_deep":' + "[" * 100_000 + "1" + "]" * 100_000, PLAIN_TAIL))
-    # The schema strips the keys of dict fields too (str_strip_whitespace on
-    # dict[str, Any]); keys that collide after the strip keep the last.
-    add("answer:dict_keys_stripped", body={"metadata": {" k ": "v"}, "trace": {" id": "t"},
-                                           "provider": {" sort": "price"}})
-    add("answer:dict_keys_collide", body={"metadata": {"k": "first", " k": "last"}})
-    add("answer:tags_keys_stripped", body={"tags": {" env ": "dev"}})
-    add("answer:tags_keys_collide", body={"tags": {"env": "a", "env ": "b"}})
-    add("answer:extra_null_dropped", None,
-        raw_body(lookup, f'"model":"{GLM}"', '"estimated_input_tokens":1000', PLAIN_TAIL, '"x_null":null,"x_kept":"v"'))
+    add("pass:body.content_type:missing", "body.content_type", content_type=None)
+    add("pass:body.content_type:text", "body.content_type", content_type="text/plain")
+    add("pass:body.content_type:latin1", "body.content_type", content_type="application/json; charset=latin-1")
+    add("pass:body.content_type:repeated", "body.content_type", headers=(("content-type", "application/json"),))
+    # body.unparseable, each cause: not an object (above), a UTF-8 BOM,
+    # nesting past 128, an integer over 4,000 digits, a body over 4 MiB.
+    # Python's json refuses an integer over 4,300 digits and nesting past
+    # its recursion limit (400 http_error); 5,000 levels and 4,001 digits it
+    # takes.
+    plain = (f'"model":"{GLM}"', '"estimated_input_tokens":1000', PLAIN_TAIL)
+    add("pass:body.unparseable:bom", "body.unparseable", "\ufeff" + raw_body(lookup, *plain))
+    add("pass:body.unparseable:depth_129", "body.unparseable",
+        raw_body(lookup, *plain, '"x_deep":' + "[" * 128 + "1" + "]" * 128))
+    add("pass:body.unparseable:depth_5000", "body.unparseable",
+        raw_body(lookup, *plain, '"x_deep":' + "[" * 5000 + "1" + "]" * 5000))
+    add("pass:body.unparseable:depth_100000", "body.unparseable",
+        raw_body(lookup, *plain, '"x_deep":' + "[" * 100_000 + "1" + "]" * 100_000))
+    add("answer:depth_128", None, raw_body(lookup, *plain, '"x_deep":' + "[" * 127 + "1" + "]" * 127))
+    add("pass:body.unparseable:int_4001_digits", "body.unparseable", raw_body(lookup, *plain, '"x_big":' + "9" * 4001))
+    add("pass:body.unparseable:int_4301_digits", "body.unparseable", raw_body(lookup, *plain, '"x_big":' + "9" * 4301))
+    add("answer:int_4000_digits", None, raw_body(lookup, *plain, '"x_big":' + "9" * 4000))
+    add("pass:body.unparseable:over_4_mib", "body.unparseable",
+        raw_body(lookup, *plain, '"x_pad":"' + "p" * (4 * 1024 * 1024) + '"'))
+    # The schema strips the top-level keys of dict fields (str_strip_whitespace
+    # on dict[str, Any]); keys that collide after the strip keep the last
+    # value. Go passes on any such key, or one outside printable ASCII.
+    add("pass:body.dict_key_strip:metadata", "body.dict_key_strip", body={"metadata": {" k ": "v"}})
+    add("pass:body.dict_key_strip:trace", "body.dict_key_strip", body={"trace": {" id": "t"}})
+    add("pass:body.dict_key_strip:provider", "body.dict_key_strip", body={"provider": {" sort": "price"}})
+    add("pass:body.dict_key_strip:collide", "body.dict_key_strip", body={"metadata": {"k": "first", " k": "last"}})
+    add("pass:body.dict_key_strip:non_ascii_key", "body.dict_key_strip", body={"metadata": {"clé": "v"}})
+    add("pass:body.dict_key_strip:tags", "body.dict_key_strip", body={"tags": {" env ": "dev"}})
+    add("pass:body.dict_key_strip:tags_collide", "body.dict_key_strip", body={"tags": {"env": "a", "env ": "b"}})
+    add("answer:extra_null_dropped", None, raw_body(lookup, *plain, '"x_null":null,"x_kept":"v"'))
+    add("answer:nested_null_kept", body={"metadata": {"k": None}, "x_list": [None]})
     add("answer:app_categories_empty", body={"app_categories": []})
-    # Idempotency-Key header edges: non-ASCII bytes (Starlette decodes the
-    # header as latin-1) and the header repeated.
+    # Idempotency-Key header edges: a byte outside ASCII (Starlette decodes
+    # the header as latin-1) and the header sent twice (Starlette reads the first).
     add("pass:header.idempotency_key:non_ascii", "header.idempotency_key", headers=(("idempotency-key", "clé-1"),))
     add("pass:header.idempotency_key:repeated", "header.idempotency_key",
         headers=(("idempotency-key", "first-key"), ("idempotency-key", "second-key")))
-    # Internal-only models with an ordinary key, and merged tags.
-    add("pass:evaluate.refused:monitor_model", "evaluate.refused", body={"model": "trustedrouter/monitor"})
-    add("pass:evaluate.refused:fortanix_test_model", "evaluate.refused", body={"model": "trustedrouter/fortanix-test"})
+    # Internal-only models with an ordinary key (decision 19).
+    add("pass:body.internal_model:monitor", "body.internal_model", body={"model": "trustedrouter/monitor"})
+    add("pass:body.internal_model:fortanix_test", "body.internal_model", body={"model": "trustedrouter/fortanix-test"})
+    add("pass:body.internal_model:fallback", "body.internal_model", body={"models": ["trustedrouter/monitor"]})
+    # Merged tags Python refuses: count, bytes, corrupt stored tags.
     add("pass:tags.merged_invalid:over_50", "tags.merged_invalid", body={"tags": {f"r{i}": "v" for i in range(25)}},
         world={"key": {"tags": {f"k{i}": "v" for i in range(30)}}})
     add("pass:tags.merged_invalid:over_4096_bytes", "tags.merged_invalid",
         body={"tags": {f"r{i}": "v" * 250 for i in range(9)}},
         world={"key": {"tags": {f"k{i}": "v" * 250 for i in range(9)}}})
     add("pass:tags.merged_invalid:corrupt_stored", "tags.merged_invalid", stored_key_tags={"bad!": "x"})
+    # Facts Python reads strongly and the leased path does not refuse on.
     add("pass:workspace.missing", "workspace.missing", workspace_row=False)
+    add("pass:workspace.in_debt", "workspace.in_debt", world={"credit_row": {"in_debt": True}})
+    add("pass:workspace.tier:low", "workspace.tier", world={"credit_row": {"trust_tier": 0}})
+    add("pass:workspace.tier:latched", "workspace.tier",
+        world={"credit_row": {"trust_latched_at": "2026-10-18T00:00:00Z"}})
+    # A federated key, served from its local shadow: this plane has no home
+    # configured, so Python makes no home-plane call (_federated_key_still_valid).
+    add("pass:key.federated", "key.federated", world={"key": {"federated_home": "https://home.example.invalid"}})
+    # The leased insert refused with nothing applied (§8.4's Failed).
+    add("pass:insert.failed:failed_precondition", "insert.failed", insert="failed_precondition")
+    add("pass:insert.failed:aborted", "insert.failed", insert="aborted")
+    # A read-back answers from the stored authorization: tags sorted (§6).
+    add("answer:insert_unknown_landed_tags", insert="unknown_landed", body={"tags": {"zeta": "1", "alpha": "2"}},
+        world={"key": {"tags": {"mid": "k", "beta": "k"}}})
+    # The owner's end of life: another offset, and a fraction past microseconds.
+    add("answer:end_of_life_offset", door={**ADMIT, "EndOfLife": "2026-10-19T07:00:00+02:00"})
+    add("answer:end_of_life_nanoseconds", door={**ADMIT, "EndOfLife": "2026-10-19T05:00:00.123456789Z"})
+    add("answer:end_of_life_offset_nanoseconds", door={**ADMIT, "EndOfLife": "2026-10-18T23:30:00.987654321-05:30"})
     return out
 
 
@@ -1009,26 +1094,24 @@ FINGERPRINT_POLICY = _merge(DEFAULT_POLICY, {"fastpath_pilot_workspaces": [FINGE
 # §10.2 asks about 20,000 under 10 MB; at these bodies' size (an enclave
 # body with a 64-hex lookup hash, about 280 bytes) the size bounds it first.
 FINGERPRINT_COUNT = 14_000
-ROUTE_CHECK_EVERY = 40
-# Decision 4 and §3's request reasons: Go passes a body carrying any of these.
+# §10.2's labels on which Go passes (decision 4 and §3), and one more: a
+# lone surrogate escape, which Go's decoder cannot keep (§10.4 refuses it).
 PASS_REQUIRED = frozenset({
-    "float_present", "lax_coercion", "duplicate_key", "strip_ambiguous", "non_ascii_tag",
-    "referer_not_strict", "canonical_model_rewrite", "native_batch_key", "partner_key",
-    "idempotency_key_too_long",
-    # Beyond §10.2's list: a lone surrogate escape (Go's decoder replaces
-    # it) and an Idempotency-Key header outside ASCII (Starlette decodes it
-    # as latin-1).
-    "lone_surrogate", "idempotency_key_non_ascii",
+    "float_present", "lax_coercion", "duplicate_key", "strip_ambiguous", "dict_key_strip",
+    "non_ascii_tag", "referer_not_strict", "canonical_model_rewrite", "native_batch_key", "partner_key",
+    "idempotency_key_too_long", "idempotency_header_repeated", "idempotency_header_non_ascii",
+    "content_type", "deep_nesting", "int_over_4000_digits", "bom",
+    "lone_surrogate",
 })
 STRICT_REFERER = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?([/?#][\x21-\x7e]*)?$")
+JSON_CONTENT_TYPE = re.compile(r"^application/json(;\s*charset=utf-8)?$", re.IGNORECASE)
+# Declared str and list[str] fields (str_strip_whitespace); input_modalities
+# is a Literal list, not stripped.
 _DECLARED_STRINGS = ("model", "models", "region", "service_tier", "route_type", "user", "session_id", "app",
-                     "http_referer", "app_categories", "requested_parameters", "input_modalities",
-                     "idempotency_key", "invocation_nonce", "video_resolution", "api_key_hash",
-                     "api_key_lookup_hash", "request_fingerprint", "cache_affinity_key")
-
-
-class _Fingerprinted(Exception):  # noqa: N818 - a stop signal, not an error
-    pass
+                     "http_referer", "app_categories", "requested_parameters", "idempotency_key",
+                     "invocation_nonce", "video_resolution", "api_key_hash", "api_key_lookup_hash",
+                     "request_fingerprint", "cache_affinity_key")
+_SENT_WITH_EVERY_BODY = [("x-trustedrouter-internal-token", INTERNAL_TOKEN), ("accept-encoding", "identity")]
 
 
 def _decoded(raw: str) -> tuple[Any, set[str]]:
@@ -1045,6 +1128,8 @@ def _decoded(raw: str) -> tuple[Any, set[str]]:
         return float(token)
 
     def parse_int(token: str) -> int:
+        if len(token.lstrip("-")) > 4_000:
+            found.add("int_over_4000_digits")
         value = int(token)
         if abs(value) >= 1 << 63:
             found.add("int_beyond_2_63")
@@ -1056,9 +1141,29 @@ def _decoded(raw: str) -> tuple[Any, set[str]]:
         found.add("float_present")  # NaN, Infinity: a float, and no JSON Go parses
         return float(token)
 
+    if raw.startswith("\ufeff"):
+        found.add("bom")
+        raw = raw[1:]
     value = json.loads(raw, object_pairs_hook=pairs, parse_float=parse_float, parse_int=parse_int,
                        parse_constant=parse_constant)
     return value, found
+
+
+def _depth(raw: str) -> int:
+    """The deepest nesting in the text, strings skipped."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for ch in raw:
+        if in_string:
+            escaped, in_string = (False, True) if escaped else (ch == "\\", ch != '"')
+        elif ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        elif ch in "]}":
+            depth -= 1
+    return deepest
 
 
 def _strings(value: Any) -> Iterator[str]:
@@ -1073,29 +1178,59 @@ def _strings(value: Any) -> Iterator[str]:
             yield from _strings(item)
 
 
+def _has_nested_null(value: Any) -> bool:
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
+        for child in children:
+            if child is None:
+                return True
+            stack.append(child)
+    return False
+
+
 def _printable_ascii(text: str) -> bool:
     return all(" " <= ch <= "~" for ch in text)
 
 
-def body_labels(raw: str, headers: dict[str, str]) -> list[str]:
-    """§10.2's labels for one body, and the two PASS_REQUIRED adds."""
+def body_labels(raw: str, headers: list[list[str]]) -> list[str]:
+    """§10.2's labels for one request's headers and body."""
+    labels: set[str] = set()
+    content_types = [v for k, v in headers if k == "content-type"]
+    if len(content_types) != 1 or not JSON_CONTENT_TYPE.match(content_types[0].strip()):
+        labels.add("content_type")
+    header_keys = [v for k, v in headers if k == "idempotency-key"]
+    if header_keys:
+        labels.add("idempotency_header")
+    if len(header_keys) > 1:
+        labels.add("idempotency_header_repeated")
+    if any(not _printable_ascii(v) for v in header_keys):
+        labels.add("idempotency_header_non_ascii")
+    if _depth(raw) > 128:
+        labels.add("deep_nesting")
     try:
-        value, labels = _decoded(raw)
+        value, found = _decoded(raw)
     except (ValueError, RecursionError):
-        return []
+        # Undecodable as Python decodes it: what the text shows is all there is.
+        if raw.startswith("\ufeff"):
+            labels.add("bom")
+        if re.search(r"\d{4001}", raw):
+            labels.add("int_over_4000_digits")
+        return sorted(labels)
+    labels |= found
     if not isinstance(value, dict):
         return sorted(labels)
     fields = GatewayAuthorizeRequest.model_fields
     extras = [k for k in value if k not in fields]
-    if any(value[k] is None for k in extras):
-        labels.add("extra_null")
-    if any(isinstance(value.get(name), dict) and any(k != k.strip() for k in value[name])
-           for name in ("provider", "trace", "metadata", "tags")):
-        labels.add("dict_key_whitespace")
     if extras:
         labels.add("extras")
         if any(not _printable_ascii(s) for k in extras for s in [k, *_strings(value[k])]):
             labels.add("unicode_extra")
+    if any(value[k] is None for k in extras):
+        labels.add("null_extra")
+    if any(isinstance(v, dict | list) and _has_nested_null(v) for v in value.values()):
+        labels.add("null_nested")
     if any(0xD800 <= ord(ch) <= 0xDFFF for s in _strings(value) for ch in s):
         labels.add("lone_surrogate")
     declared = [s for name in _DECLARED_STRINGS for s in _strings(value.get(name))]
@@ -1103,11 +1238,18 @@ def body_labels(raw: str, headers: dict[str, str]) -> list[str]:
         labels.add("strip_ambiguous")
     if any(s != s.strip() for s in declared):
         labels.add("whitespace")
+    if any(isinstance(value.get(name), dict) and any(k != k.strip() or not _printable_ascii(k) for k in value[name])
+           for name in ("provider", "trace", "metadata", "tags")):
+        labels.add("dict_key_strip")
     for name, label in (("provider", "nested_provider"), ("trace", "nested_trace"), ("metadata", "nested_metadata")):
         if isinstance(value.get(name), dict) and value[name]:
             labels.add(label)
     if any(value.get(name) is not None for name in ("user", "session_id", "trace", "app", "http_referer", "app_categories")):
         labels.add("attribution")
+    if value.get("app_categories") == []:
+        labels.add("app_categories_empty")
+    if value.get("input_modalities") is not None:
+        labels.add("input_modalities")
     if value.get("tags") is not None:
         labels.add("tags" if value["tags"] != {} else "tags_empty")
         if any(not _printable_ascii(s) for s in _strings(value["tags"])):
@@ -1126,19 +1268,15 @@ def body_labels(raw: str, headers: dict[str, str]) -> list[str]:
     models = [value.get("model"), *(value["models"] if isinstance(value.get("models"), list) else [])]
     if any(isinstance(m, str) and canonical_router_model_id(m.strip()) != m.strip() for m in models):
         labels.add("canonical_model_rewrite")
-    if "idempotency-key" in headers:
-        labels.add("idempotency_header")
     if value.get("idempotency_key") is not None:
         labels.add("idempotency_body")
-    presented = [k.strip() for k in (value.get("idempotency_key"), headers.get("idempotency-key")) if isinstance(k, str)]
+    presented = [k.strip() for k in (value.get("idempotency_key"), *header_keys[:1]) if isinstance(k, str)]
     if any(k.startswith("tr-native-batch:") for k in presented):
         labels.add("native_batch_key")
     if any(k.startswith("partner:") for k in presented):
         labels.add("partner_key")
     if any(len(k) > 256 for k in presented):
         labels.add("idempotency_key_too_long")
-    if not _printable_ascii(headers.get("idempotency-key", "")):
-        labels.add("idempotency_key_non_ascii")
     try:
         GatewayAuthorizeRequest.model_validate(value, strict=True)
     except ValidationError:
@@ -1151,61 +1289,13 @@ def body_labels(raw: str, headers: dict[str, str]) -> list[str]:
     return sorted(labels)
 
 
-def fingerprint_expect(raw: str, headers: dict[str, str], key_hash: str) -> dict[str, Any]:
-    """Run the authorize route on one body until it computes the fingerprint.
-
-    The body is decoded and validated as the route's parser does (json.loads,
-    then the schema; main.py's validation handler answers a refusal 400
-    bad_request) and the route runs up to the fingerprint, which stops it
-    before any row is written. A refusal on the way is recorded instead.
-    """
-    refused = {"outcome": "refused", "status": 400, "type": "bad_request"}
-    if not raw:
-        return refused
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        return refused
-    except (ValueError, RecursionError):
-        # A decode the parser cannot finish (an integer over Python's 4300
-        # digits, nesting past the recursion limit): FastAPI's 400 http_error.
-        return {"outcome": "refused", "status": 400, "type": "http_error"}
-    try:
-        # As FastAPI validates a body model: from attributes allowed.
-        body = GatewayAuthorizeRequest.model_validate(value, from_attributes=True)
-    except ValidationError:
-        return refused
-
-    def stop() -> None:
-        raise _Fingerprinted
-
-    recorder = _Recorder(then=stop)
-    request = Request({"type": "http", "method": "POST", "path": PATH,
-                       "headers": [(k.encode(), v.encode()) for k, v in {**headers, **_TOKEN}.items()]})
-    try:
-        with patched(gateway, "_gateway_authorize_fingerprint", recorder):
-            gateway._authorize_gateway_sync(request, body, _FINGERPRINT_SETTINGS, raw.encode())
-    except _Fingerprinted:
-        presented = gateway._gateway_idempotency_key(request, body)
-        return {
-            "outcome": "fingerprint", "fingerprint": recorder.seen[-1][0], "idempotency_key": presented,
-            "idempotency_scope": scope_of(FINGERPRINT_WS, key_hash, presented) if presented else None,
-        }
-    except HTTPException as exc:
-        error = exc.detail.get("error", {}) if isinstance(exc.detail, dict) else {}
-        return {"outcome": "refused", "status": exc.status_code, "type": error.get("type")}
-    raise AssertionError(f"the route answered without a fingerprint: {raw}")
-
-
 _FINGERPRINT_SETTINGS = settings_for(FINGERPRINT_POLICY, FINGERPRINT_KEY)
-# Each body reaches the route with the internal token, as through the edge.
-_TOKEN = {"x-trustedrouter-internal-token": INTERNAL_TOKEN}
 
 # Building blocks for the bodies. A few fields of a plain enclave body are
 # drawn from these per body (a fixed seed); each body is then written one
-# of several ways.
-_UNICODE = ("café", "日本語", "emoji 😀", "zero\u0000width", "line sep", "tab\tquote\"", "slash/\\back",
-            "\u007f del", "ñ", "Ω≈ç√", "﻿bom")
+# of several ways and sent with one of several header sets.
+_UNICODE = ("café", "日本語", "emoji 😀", "zero\u0000width", "line\u2028sep", "tab\tquote\"", "slash/\\back",
+            "\u007f del", "ñ", "Ω≈ç√", "\ufeffbom")
 _INTS = (0, 1, 7, 512, 1_000, 65_536, 2**31 - 1, 2**31, 2**53 - 1, 2**53, 2**53 + 1, 2**62,
          2**63 - 1, 2**63, 2**64, -1, -(2**63))
 _FLOATS = (0.0, 1.0, 0.5, 0.1, 1e-05, 1.5e-7, 2.5, 100.0, 1e16, 1.7976931348623157e308, -0.0, 123456.789)
@@ -1253,15 +1343,16 @@ def _field_options() -> dict[str, tuple[Any, ...]]:
                      {"allow_fallbacks": "false"}, {"allow_fallbacks": 0},
                      {"max_price": {"prompt": 0.5, "completion": 2}},
                      {"only": ["wafer"], "note": "é"}, {"big": 2**63}, {"zdr": True}, {" sort": "price"},
-                     {"sort": "price", " sort ": "latency"}),
+                     {"sort": "price", " sort ": "latency"}, {"sort": None}),
         "allow_fallbacks": (True, False, "false", 0, 1, None),
         "requested_parameters": (["tools"], [], [" tools "]),
-        "input_modalities": (["text"], ["text", "image"], ["sound"]),
+        "input_modalities": (["text"], ["text", "image"], ["sound"], [" text"]),
         "user": ("user-1", "  user-2  ", "ü", "u" * 257),
         "session_id": ("s-1", " s-2 "),
-        "trace": ({"trace_id": "t"}, {"n": 1.25}, {"deep": {"a": {"b": [1, "é"]}}}, {"x": 2**63}, {" id ": "t"}),
+        "trace": ({"trace_id": "t"}, {"n": 1.25}, {"deep": {"a": {"b": [1, "é"]}}}, {"x": 2**63}, {" id ": "t"},
+                  {"span": None}),
         "metadata": ({"k": "v"}, {"temperature": 0.7}, {"u": "日本"}, {"big": -(2**63)}, {},
-                     {"k": "first", " k": "last"}, {" k ": {" inner ": 1}}),
+                     {"k": "first", " k": "last"}, {" k ": {" inner ": 1}}, {"clé": "v"}, {"n": [None]}),
         "tags": (None, {}, {"team": "a"}, {"env": "prod", "team": "b"}, {"équipe": "x"},
                  {"k": "café"}, {"bad!": "x"}, {"k": 1}, {"aws:x": "y"}, {"sp ace": "v v"},
                  {f"t{i}": "v" for i in range(50)}, {" env ": "x"}, {"env": "a", "env ": "b"}),
@@ -1313,11 +1404,36 @@ def _write(value: dict[str, Any], rng: random.Random) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
+_CONTENT_TYPES = (("application/json",) * 24 + (None, "text/plain", "application/json; charset=utf-8",
+                                                 "application/json; charset=latin-1", "APPLICATION/JSON"))
+_IDEMPOTENCY_HEADERS: tuple[tuple[str, ...], ...] = (
+    ((),) * 22 + (("hdr-key",), (" hdr-spaced ",), ("k" * 257,), ("tr-native-batch:h",), ("",), ("\t",),
+                  ("first", "second"), ("clé",), ("日本",))
+)
+
+
+def _headers(rng: random.Random) -> list[list[str]]:
+    content_type = rng.choice(_CONTENT_TYPES)
+    headers = [] if content_type is None else [["content-type", content_type]]
+    if rng.random() < 0.01:
+        headers.append(["content-type", "application/json"])  # sent twice
+    headers += [["idempotency-key", value] for value in rng.choice(_IDEMPOTENCY_HEADERS)]
+    return headers
+
+
+def _nested(depth: int) -> Any:
+    value: Any = 1
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
 def fingerprint_bodies() -> list[dict[str, Any]]:
     rng = random.Random(20261019)  # noqa: S311 - fixed: the file is a function of this text
     lookup = lookup_hash(FINGERPRINT_KEY["hash"])
     options = _field_options()
     fields = list(options)
+    json_only = [["content-type", "application/json"]]
     out: list[dict[str, Any]] = []
     while len(out) < FINGERPRINT_COUNT:
         value: dict[str, Any] = {"api_key_lookup_hash": lookup, "model": GLM, "estimated_input_tokens": 1_000,
@@ -1333,10 +1449,19 @@ def fingerprint_bodies() -> list[dict[str, Any]]:
         if rng.random() < 0.03:
             value = {"api_key_hash": FINGERPRINT_KEY["hash"],
                      **{k: v for k, v in value.items() if k != "api_key_lookup_hash"}}
-        header_key = rng.choice((None,) * 14 + ("hdr-key", " hdr-spaced ", "k" * 257, "tr-native-batch:h", "", "\t"))
-        out.append({"body": _write(value, rng), "idempotency_key_header": header_key})
-    # Bodies no draw spells: non-finite numbers, lone surrogates, a body
-    # that is not an object, invalid JSON, nothing.
+        draw = rng.random()
+        if draw < 0.002:
+            # Nesting around §3's 128 levels, and integers around 4,000 digits.
+            value["x_deep"] = _nested(rng.randrange(120, 200))
+        elif draw < 0.004:
+            value["x_digits"] = int("9" * rng.randrange(3_990, 4_100))
+        body = _write(value, rng)
+        if rng.random() < 0.005:
+            body = "\ufeff" + body
+        out.append({"body": body, "headers": _headers(rng)})
+    # Bodies no draw spells: non-finite numbers, lone surrogates, integers
+    # around Python's digit limit, nesting around 128 levels and past the
+    # recursion limit, a body that is not an object, invalid JSON, nothing.
     for raw in (
         raw_body(lookup, f'"model":"{GLM}"', '"metadata":{"x":NaN}'),
         raw_body(lookup, f'"model":"{GLM}"', '"metadata":{"x":Infinity}'),
@@ -1346,74 +1471,56 @@ def fingerprint_bodies() -> list[dict[str, Any]]:
         raw_body(lookup, f'"model":"{GLM}"', '"estimated_input_tokens":1e400'),
         raw_body(lookup, f'"model":"{GLM}"', '"max_output_tokens":1.0000000000000001'),
         raw_body(lookup, f'"model":"{GLM}"', '"x":12345678901234567890123'),
+        raw_body(lookup, f'"model":"{GLM}"', '"x":' + "9" * 4000),
+        raw_body(lookup, f'"model":"{GLM}"', '"x":' + "9" * 4001),
         raw_body(lookup, f'"model":"{GLM}"', '"x":' + "9" * 4300),
         raw_body(lookup, f'"model":"{GLM}"', '"x":' + "9" * 4301),
+        raw_body(lookup, f'"model":"{GLM}"', '"x":' + "[" * 127 + "1" + "]" * 127),
+        raw_body(lookup, f'"model":"{GLM}"', '"x":' + "[" * 128 + "1" + "]" * 128),
         raw_body(lookup, f'"model":"{GLM}"', '"x":' + "[" * 900 + "1" + "]" * 900),
         raw_body(lookup, f'"model":"{GLM}"', '"x":' + "[" * 100_000 + "1" + "]" * 100_000),
         raw_body(lookup, f'"model":"{GLM}"', '"x_null":null,"tags":{" a ":"1","a":"2"}'),
+        "\ufeff" + raw_body(lookup, f'"model":"{GLM}"'),
         '["not", "an", "object"]', '"text"', "null", '{"api_key_lookup_hash":', "",
     ):
-        out.append({"body": raw, "idempotency_key_header": None})
-    # Idempotency-Key bytes outside ASCII: Starlette decodes a header as latin-1.
-    for header_key in ("clé", "日本"):
-        out.append({"body": raw_body(lookup, f'"model":"{GLM}"'), "idempotency_key_header": header_key})
+        out.append({"body": raw, "headers": json_only})
     return out
 
 
-def _fingerprint_headers(entry: dict[str, Any]) -> dict[str, str]:
-    headers = {"content-type": "application/json"}
-    if entry["idempotency_key_header"] is not None:
-        headers["idempotency-key"] = entry["idempotency_key_header"]
-    return headers
-
-
 def fingerprint_vectors() -> list[dict[str, Any]]:
+    """Every body through the app, each in a fresh world: the fingerprint
+    and scope from the reservation row it wrote, or the refusal."""
     key_hash = FINGERPRINT_KEY["hash"]
-    entries = []
-    with pinned(ROUTING._instant(INSTANTS["peak"]), "fingerprints"):
-        build_world(FINGERPRINT_WORLD, FINGERPRINT_POLICY)
+    entries: list[dict[str, Any]] = []
+    with pinned(ROUTING._instant(INSTANTS["peak"]), "fingerprints"), front_door(ADMIT):
+        client = _client(_FINGERPRINT_SETTINGS)
         for index, entry in enumerate(fingerprint_bodies()):
-            headers = _fingerprint_headers(entry)
-            entries.append({
-                "name": f"fp-{index:05d}", "labels": body_labels(entry["body"], headers),
-                "workspace_id": FINGERPRINT_WS, "key_hash": key_hash,
-                "headers": [[k, v] for k, v in headers.items()], "body": entry["body"],
-                "expect": fingerprint_expect(entry["body"], headers, key_hash),
-            })
-    route_check(entries)
-    return entries
-
-
-def route_check(entries: list[dict[str, Any]]) -> None:
-    """The full route, over HTTP, agrees on a sample of the bodies: one in
-    ROUTE_CHECK_EVERY, the first to carry each label, and the hand-written ones."""
-    first: dict[str, int] = {}
-    for index, entry in enumerate(entries):
-        for label in entry["labels"]:
-            first.setdefault(label, index)
-    sample = sorted(set(range(0, len(entries), ROUTE_CHECK_EVERY)) | set(first.values())
-                    | set(range(FINGERPRINT_COUNT, len(entries))))
-    at = ROUTING._instant(INSTANTS["peak"])
-    for index in sample:
-        entry, expect = entries[index], entries[index]["expect"]
-        with pinned(at, f"route-check-{index}"), contextlib.ExitStack() as stack:
-            build_world(FINGERPRINT_WORLD, FINGERPRINT_POLICY)
+            name = f"fp-{index:05d}"
+            ids = case_ids(name)
+            _store, database = build_world(FINGERPRINT_WORLD, FINGERPRINT_POLICY)
             gateway._BROADCAST_EMPTY_CACHE.clear()
-            stack.enter_context(front_door(ADMIT))
-            recorder = _Recorder()
-            stack.enter_context(patched(gateway, "_gateway_authorize_fingerprint", recorder))
-            response = _client(_FINGERPRINT_SETTINGS).post(
-                PATH, content=entry["body"].encode(),
-                headers=[*((k.encode(), v.encode()) for k, v in [*entry["headers"], *_TOKEN.items()]),
-                         (b"accept-encoding", b"identity")])
-        if expect["outcome"] == "fingerprint":
-            if not recorder.seen or recorder.seen[0][0] != expect["fingerprint"]:
-                raise AssertionError(f"{entry['name']}: the route hashed otherwise: {response.text}")
-            continue
-        said = {"outcome": "refused", "status": response.status_code,
-                "type": response.json().get("error", {}).get("type")}
-        if recorder.seen or said != expect:
-            raise AssertionError(f"{entry['name']}: expected {expect}, the route said {said}")
+            with given_ids(ids):
+                response = client.post(PATH, content=entry["body"].encode(), headers=[
+                    (k.encode(), v.encode()) for k, v in [*entry["headers"], *_SENT_WITH_EVERY_BODY]])
+            if response.status_code == 200:
+                (reservation,) = database.reservations.values()
+                (authorization,) = database.gateway_authorizations.values()
+                key = json.loads(authorization["payload"])["idempotency_key"]
+                presented = None if key == ids["minted_idempotency_key"] else key
+                expect = {"outcome": "fingerprint", "fingerprint": reservation["idempotency_fingerprint"],
+                          "idempotency_key": presented,
+                          "idempotency_scope": reservation["idempotency_scope"] if presented else None}
+                if presented and reservation["idempotency_scope"] != scope_of(FINGERPRINT_WS, key_hash, presented):
+                    raise AssertionError(f"{name}: the scope is not the presented key's")
+            else:
+                expect = {"outcome": "refused", "status": response.status_code,
+                          "type": _error(response.text).get("type")}
+            entries.append({
+                "name": name, "labels": body_labels(entry["body"], entry["headers"]),
+                "workspace_id": FINGERPRINT_WS, "key_hash": key_hash,
+                "headers": entry["headers"], "body": entry["body"], "expect": expect,
+            })
+    return entries
 
 
 # ---------------------------------------------------------------- render --
@@ -1424,6 +1531,11 @@ def _lines(header: dict[str, Any], rows: list[dict[str, Any]]) -> str:
     head = json.dumps(header, sort_keys=True, separators=(",", ":"), ensure_ascii=False)[:-1]
     lines = [json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False) for row in rows]
     return head + ',\n "cases": [\n  ' + ",\n  ".join(lines) + "\n ]}\n"
+
+
+def internal_models() -> list[str]:
+    """Decision 19: the monitor model and every internal_only catalog model."""
+    return sorted({MONITOR_MODEL_ID, *(m.id for m in MODELS.values() if m.internal_only)})
 
 
 def render_cases() -> str:
@@ -1447,6 +1559,8 @@ def render_cases() -> str:
         "generator": GENERATOR, "snapshot": SNAPSHOT, "snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
         "plane": PLANE, "policy": header_policy, "boot_test_key": {"kid": BOOT_KID, "jwk": BOOT_JWK},
         "internal_token": INTERNAL_TOKEN,
+        "internal_models": internal_models(),
+        "estimated_usage_models": sorted(ESTIMATED_USAGE_SNAPSHOT_MODELS),
         # @timed_gateway_async ends every answer's data, and the 503's
         # top-level data, with timing: its shape is fixed, its values are
         # Python's own measurements (pinned here to 0 ms; spanner_rpcs is the
@@ -1456,7 +1570,10 @@ def render_cases() -> str:
 
 
 def render_fingerprints() -> str:
-    return _lines({"generator": GENERATOR}, fingerprint_vectors())
+    return _lines({
+        "generator": GENERATOR,
+        "sent_with_every_body": [list(pair) for pair in _SENT_WITH_EVERY_BODY],
+    }, fingerprint_vectors())
 
 
 RENDERS = {"cases": (CASES_OUTPUT, render_cases), "fingerprints": (FINGERPRINT_OUTPUT, render_fingerprints)}
