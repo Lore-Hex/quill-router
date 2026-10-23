@@ -119,9 +119,11 @@ REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
 # restart signs with one key; the public key beside it is that version's
 # public half, the pin the publisher checks the mounted key against and the
 # trust anchor Go is given. Version 1 was created on 2026-10-22 (runbook step
-# 2); it is mounted and pinned here while publishing stays off (step 4), and
-# turned on in its own change (step 5). docs/runbooks/routing-snapshot-key.md.
-ROUTING_SNAPSHOT_PUBLISH_ENABLED=false
+# 2), mounted and pinned here (step 4), and publishing is on (step 5): the
+# route answers the edge's token on the combined/internal surfaces; nothing
+# consumes it until the fast path nodes carry the snapshot attributes.
+# docs/runbooks/routing-snapshot-key.md.
+ROUTING_SNAPSHOT_PUBLISH_ENABLED=true
 ROUTING_SNAPSHOT_KEY_SECRET="trustedrouter-routing-snapshot-signing-key"
 ROUTING_SNAPSHOT_KEY_VERSION="1"
 ROUTING_SNAPSHOT_KEY_PATH="/secrets/routing-snapshot/signing.pem"

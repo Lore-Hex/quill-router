@@ -93,9 +93,12 @@ then answers 503 `{"status": "signer-unavailable"}`.
 
 6. Check it where the edge will poll it: the us-central1 service's run.app
    address, whose ingress admits only the project's network and the load
-   balancer (`trustedrouter.com/internal/*` goes to the internal surface,
-   which does not publish). On a fast path node, whose identity reads the
-   internal token:
+   balancer. The load balancer also reaches this route: no region deploys a
+   separate internal surface, so `trustedrouter.com/internal/*` goes to the
+   combined service in every region, behind the internal gateway token. A
+   poll there compiles on that region's instance (at most once per window per
+   instance), so only the edge should poll, and only here. On a fast path
+   node, whose identity reads the internal token:
 
    ```bash
    gcloud compute ssh tr-fastpath-3 --zone us-central1-a --project quill-cloud-proxy \
