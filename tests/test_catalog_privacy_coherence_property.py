@@ -49,6 +49,7 @@ from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
+    PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
     ModelEndpoint,
     ModelProviderPrivacyOverride,
@@ -110,8 +111,7 @@ def test_zero_data_retention_is_exactly_the_zdr_tier() -> None:
 
 
 def test_confidential_tier_requires_all_three_flags() -> None:
-    """CONFIDENTIAL is the strongest claim the catalog makes. It must never be
-    reachable without all three underlying flags actually being set."""
+    """Confidential and its Trusted subset require all three underlying flags."""
     for endpoint in ALL_ENDPOINTS:
         expected = (
             endpoint_confidential_compute(endpoint) is True
@@ -120,7 +120,7 @@ def test_confidential_tier_requires_all_three_flags() -> None:
             and not served_by_model_vendor(endpoint.model_id, endpoint.provider)
         )
         assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) is expected
-        assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_CONFIDENTIAL) is expected
+        assert (endpoint_privacy_tier(endpoint) in {PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_TRUSTED}) is expected
         if not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL):
             continue
         provider = PROVIDERS[endpoint.provider]
@@ -178,6 +178,7 @@ def test_every_endpoint_provider_exists_and_tiers_are_in_range() -> None:
         PRIVACY_TIER_NO_STORE,
         PRIVACY_TIER_ZERO_RETENTION,
         PRIVACY_TIER_CONFIDENTIAL,
+        PRIVACY_TIER_TRUSTED,
     }
     for endpoint in ALL_ENDPOINTS:
         assert endpoint.provider in PROVIDERS, f"{_describe(endpoint)}: unknown provider"
@@ -392,7 +393,7 @@ def test_no_shipped_provider_has_confidential_tier_without_zdr() -> None:
     offenders = [
         slug
         for slug, provider in PROVIDERS.items()
-        if provider_privacy_tier(provider) == PRIVACY_TIER_CONFIDENTIAL
+        if provider_privacy_tier(provider) in {PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_TRUSTED}
         and provider.provider_zero_data_retention is not True
     ]
     assert not offenders, (
@@ -412,7 +413,7 @@ def test_confidential_prepaid_zdr_is_credential_scoped(
     endpoint = ModelEndpoint(id="test", model_id="test/model", provider="tinfoil", usage_type=usage)
     expected = zdr is True or usage == "Credits"
     assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) is expected
-    assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_CONFIDENTIAL) is expected
+    assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_TRUSTED) is expected
 
 
 @pytest.mark.parametrize("zdr", [False, True])
@@ -426,5 +427,5 @@ def test_confidential_override_cannot_bypass_retention_gate(
         ))
     endpoint = ModelEndpoint(id="test", model_id="test/model", provider="tinfoil", usage_type="Credits")
     assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) is zdr
-    assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_CONFIDENTIAL) is zdr
-    assert (model_provider_privacy_tier("test/model", "tinfoil") == PRIVACY_TIER_CONFIDENTIAL) is zdr
+    assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_TRUSTED) is zdr
+    assert (model_provider_privacy_tier("test/model", "tinfoil") == PRIVACY_TIER_TRUSTED) is zdr

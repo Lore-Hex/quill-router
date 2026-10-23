@@ -5,7 +5,9 @@ implication ladder for raw technical flags: confidential compute describes
 where plaintext is processed, while ZDR describes retention. The Confidential
 product tier requires verified compute, E2EE and explicit ZDR together, from a
 host that is not the model's own vendor. The TR gateway hop is always attested;
-these values describe the upstream provider.
+these values describe the upstream provider. Trusted additionally requires
+membership in TrustedRouter's reviewed operator allowlist; it never replaces
+any of the Confidential prerequisites.
 Split out of the catalog.py god-module (#38); this module
 depends only on the catalog_data leaf and therefore cannot create a cycle.
 """
@@ -18,8 +20,10 @@ from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
+    PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
+    TRUSTED_PROVIDER_SLUGS,
     ModelEndpoint,
     ModelProviderPrivacyOverride,
     Provider,
@@ -47,6 +51,8 @@ def provider_privacy_tier(provider: Provider) -> int:
     comparing this value numerically.
     """
     if provider_confidential_inference(provider):
+        if provider.slug in TRUSTED_PROVIDER_SLUGS:
+            return PRIVACY_TIER_TRUSTED
         return PRIVACY_TIER_CONFIDENTIAL
     if provider.provider_zero_data_retention:
         return PRIVACY_TIER_ZERO_RETENTION
@@ -109,7 +115,7 @@ def served_by_model_vendor(model_id: str, provider_slug: str) -> bool:
 
 def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
     tier = _model_provider_privacy_tier(model_id, provider_slug)
-    if tier == PRIVACY_TIER_CONFIDENTIAL and served_by_model_vendor(model_id, provider_slug):
+    if tier in {PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_TRUSTED} and served_by_model_vendor(model_id, provider_slug):
         # Confidential already required ZDR from this route.
         return PRIVACY_TIER_ZERO_RETENTION
     return tier
@@ -122,9 +128,11 @@ def _model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
         and model_provider_e2ee(model_id, provider_slug) is True
         and model_provider_zero_data_retention(model_id, provider_slug) is True
     ):
+        if provider_slug in TRUSTED_PROVIDER_SLUGS:
+            return PRIVACY_TIER_TRUSTED
         return PRIVACY_TIER_CONFIDENTIAL
     if override is not None:
-        if override.privacy_tier != PRIVACY_TIER_CONFIDENTIAL:
+        if override.privacy_tier not in {PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_TRUSTED}:
             return override.privacy_tier
         if model_provider_zero_data_retention(model_id, provider_slug) is True:
             return PRIVACY_TIER_ZERO_RETENTION
@@ -133,6 +141,8 @@ def _model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
 
 
 def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
+    if endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED):
+        return PRIVACY_TIER_TRUSTED
     if endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL):
         return PRIVACY_TIER_CONFIDENTIAL
     if endpoint_zero_data_retention(endpoint) is True:
@@ -241,9 +251,10 @@ def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int
         return not endpoint_stores_content(endpoint)
     if requirement == PRIVACY_TIER_ZERO_RETENTION:
         return endpoint_zero_data_retention(endpoint) is True
-    if requirement == PRIVACY_TIER_CONFIDENTIAL:
+    if requirement in {PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_TRUSTED}:
         return (
-            endpoint_confidential_compute(endpoint) is True
+            (requirement != PRIVACY_TIER_TRUSTED or endpoint.provider in TRUSTED_PROVIDER_SLUGS)
+            and endpoint_confidential_compute(endpoint) is True
             and endpoint_e2ee(endpoint) is True
             and endpoint_zero_data_retention(endpoint) is True
             and not served_by_model_vendor(endpoint.model_id, endpoint.provider)

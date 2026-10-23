@@ -4,17 +4,15 @@ const nav=document.getElementById('nav'), menu=document.getElementById('menuBtn'
 menu.addEventListener('click',()=>{const open=nav.classList.toggle('open');menu.setAttribute('aria-expanded',String(open));});
 document.addEventListener('keydown',e=>{if(e.key==='Escape' && nav.classList.contains('open')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');menu.focus();}});
 document.addEventListener('click',e=>{if(!e.target.closest('header')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');}});
-const active={home:'/',api:'/confidential',sup:'/suppliers',index:'/index'}[document.body.dataset.nytePage];
+const active={home:'/',api:'/confidential',sup:'/suppliers',providers:'/providers',index:'/index'}[document.body.dataset.nytePage];
 document.querySelectorAll('nav a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');}});
 const dialog=document.getElementById('m-deck');
 document.querySelectorAll('[data-open="deck"]').forEach(b=>b.addEventListener('click',()=>dialog.showModal()));
-dialog.querySelector('[data-close]').addEventListener('click',()=>dialog.close());
-dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
+dialog?.querySelector('[data-close]')?.addEventListener('click',()=>dialog.close());
+dialog?.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
 const video=document.getElementById('filmVid');
 document.getElementById('filmPlay')?.addEventListener('click',()=>{video.controls=true;video.play().catch(()=>{document.getElementById('film').classList.remove('playing');});});
 video?.addEventListener('playing',()=>{document.getElementById('film').classList.add('playing');window.TokenExchangeAnalytics?.track('nyte.video_played');},{once:true});
-const art=document.querySelector('.supplier-art');
-if(art && 'IntersectionObserver' in window)new IntersectionObserver(entries=>entries.forEach(e=>art.classList.toggle('is-animating',e.isIntersecting)),{threshold:.3}).observe(art);
 const ctas={'Start building':'api_quick_start','Get the buyer deck':'buyer_deck','Get the provider deck':'provider_deck','Get your API key':'api_key','Read documentation':'documentation','Apply as a provider':'apply_provider','List spare capacity':'spare_capacity','Get the open-source stack':'open_source_stack','Operator guide':'operator_guide','Explore the index':'index'};
 document.addEventListener('click',e=>{
  const el=e.target.closest('a,button');if(!el)return;

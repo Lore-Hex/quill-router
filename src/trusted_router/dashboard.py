@@ -40,7 +40,10 @@ from trusted_router.catalog import (
     MONITOR_MODEL_ID,
     NATIVE_DECISION_MODEL_IDS,
     PRIVACY_TIER_CONFIDENTIAL,
+    PRIVACY_TIER_TRUSTED,
     PROVIDERS,
+    TRUSTED_MODEL_ID,
+    TRUSTED_PROVIDER_SLUGS,
     Model,
     ModelEndpoint,
     Provider,
@@ -3744,6 +3747,8 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
         models = [model for model in models if model.get("eu_focused_provider_available")]
     elif normalized_filter == "zdr":
         models = [model for model in models if model.get("zdr_available")]
+    elif normalized_filter == "trusted":
+        models = [model for model in models if model.get("trusted_available")]
     elif normalized_filter in {"e2e", "confidential"}:
         normalized_filter = "e2e"
         models = [model for model in models if model.get("e2e_available")]
@@ -3781,6 +3786,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             active_filter=normalized_filter,
             model_filters=[
                 {"id": "all", "label": "All", "href": "/models"},
+                {"id": "trusted", "label": "Trusted", "href": "/models?filter=trusted"},
                 {"id": "e2e", "label": "Confidential", "href": "/models?filter=e2e"},
                 {"id": "zdr", "label": "ZDR", "href": "/models?filter=zdr"},
                 {"id": "open", "label": "Open weights", "href": "/models?filter=open"},
@@ -5251,6 +5257,10 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
             for endpoint in route_endpoints
         ),
+        "trusted_available": any(
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED)
+            for endpoint in route_endpoints
+        ),
         "e2e_available": any(
             endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
             for endpoint in route_endpoints
@@ -5310,6 +5320,8 @@ def _model_route_endpoints(
         endpoint
         for candidate in meta_candidate_models(model.id)
         for endpoint in _model_route_endpoints(candidate, _seen=next_seen)
+        if model.id != TRUSTED_MODEL_ID
+        or endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED)
     ]
 
 
@@ -5370,6 +5382,7 @@ class _EndpointProviderView(TypedDict):
     slug: str
     logo_url: str
     confidential_available: bool
+    trusted_available: bool
     zdr_available: bool
 
 
@@ -5397,6 +5410,10 @@ def _endpoint_provider_views(
                 "logo_url": provider_logo_url(slug),
                 "confidential_available": any(
                     endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+                    for endpoint in provider_endpoints
+                ),
+                "trusted_available": any(
+                    endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED)
                     for endpoint in provider_endpoints
                 ),
                 "zdr_available": any(
@@ -5453,6 +5470,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "confidential_compute_label": _policy_label(provider.provider_confidential_compute),
         "provider_e2ee_label": _policy_label(provider.provider_e2ee),
         "confidential_inference_verified": confidential_verified,
+        "trusted_provider": confidential_verified and provider.slug in TRUSTED_PROVIDER_SLUGS,
         "confidential_inference_label": "Verified" if confidential_verified else "Not verified",
         "policy": provider.provider_policy,
         "policy_url": provider.provider_policy_url,
@@ -5556,6 +5574,8 @@ def _provider_privacy_tier(provider: Provider) -> str:
     if provider.slug == "trustedrouter":
         return "TR gateway"
     if provider_confidential_inference(provider, prepaid=True):
+        if provider.slug in TRUSTED_PROVIDER_SLUGS:
+            return "Trusted"
         return "Confidential"
     if provider.provider_zero_data_retention:
         return "ZDR"

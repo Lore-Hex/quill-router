@@ -40,7 +40,9 @@ REFLECTION_EXCEPTIONS = {('trusted_router/async_settle_shadow_v2_retained.py', '
  ('trusted_router/axiom_config.py', '_resolve_level', 'dynamic getattr'): 1,
  ('trusted_router/billing_snapshot.py', '_validate_strings', 'dynamic getattr'): 1,
  ('trusted_router/billing_snapshot.py', 'exclusion', 'dynamic getattr'): 1,
- ('trusted_router/catalog.py', '_meta_price_range', 'dynamic getattr'): 6,
+    # Trusted pool prices use the same four caller-selected price attributes,
+    # restricted to qualifying endpoints; no request-controlled import/name.
+    ('trusted_router/catalog.py', '_meta_price_range', 'dynamic getattr'): 7,
  ('trusted_router/config.py', 'production_is_fail_closed', 'dynamic getattr'): 5,
  ('trusted_router/config.py', 'validate_shadow_probe_key', 'dynamic getattr'): 1,
  ('trusted_router/credit_transfer.py', '_field', 'dynamic getattr'): 1,

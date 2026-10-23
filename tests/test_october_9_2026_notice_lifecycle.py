@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing.providers import alibaba, deepinfra, scaleway, xiaomi
+from scripts.pricing.providers import alibaba, arcee, deepinfra, novita, scaleway, xiaomi
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -21,6 +21,14 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "gryphe/mythomax-l2-13b", "Gryphe/MythoMax-L2-13b",
+         datetime(2026, 10, 29, tzinfo=UTC), "sao10k/l3-8b-lunaris-v1-turbo"),
+    Case("arcee", "arcee-ai/trinity-large-thinking", "trinity-large-thinking",
+         datetime(2026, 10, 26, tzinfo=UTC), "moonshotai/kimi-k3"),
+    Case("novita", "xiaomimimo/mimo-v2.5", "xiaomimimo/mimo-v2.5",
+         datetime(2026, 10, 23, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
+    Case("novita", "xiaomimimo/mimo-v2.5-pro", "xiaomimimo/mimo-v2.5-pro",
+         datetime(2026, 10, 23, tzinfo=UTC), "xiaomi/mimo-v2.6-pro"),
     Case("deepinfra", "nousresearch/hermes-3-llama-3.1-405b", "NousResearch/Hermes-3-Llama-3.1-405B",
          datetime(2026, 11, 2, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("alibaba", "qwen/qwen3.5-plus", "qwen3.5-plus",
@@ -49,6 +57,8 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "arcee": arcee.MANIFEST_PATH,
+    "novita": novita.MANIFEST_PATH,
     "alibaba": alibaba.MANIFEST_PATH,
     "deepinfra": deepinfra.MANIFEST_PATH,
     "scaleway": scaleway.MANIFEST_PATH,

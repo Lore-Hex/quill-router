@@ -2845,6 +2845,8 @@
       ],
       "status": 1,
       "upstream_id": "xiaomimimo/mimo-v2.5-pro",
+      "retirement_at": "2026-10-23T00:00:00Z",
+      "replacement_model_id": "xiaomi/mimo-v2.6-pro",
       "cached_input_token_price_per_m": 43
     },
     {
@@ -3885,6 +3887,8 @@
     {
       "id": "xiaomimimo/mimo-v2.5",
       "upstream_id": "xiaomimimo/mimo-v2.5",
+      "retirement_at": "2026-10-23T00:00:00Z",
+      "replacement_model_id": "xiaomi/mimo-v2.6-flash",
       "display_name": "Xiaomi MiMo V2.5",
       "title": "xiaomimimo/mimo-v2.5",
       "model_type": "chat",

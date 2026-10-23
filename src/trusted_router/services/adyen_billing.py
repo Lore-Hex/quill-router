@@ -25,7 +25,8 @@ from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
-from trusted_router.services.stripe_fees import ProcessingFee, processing_fee
+from trusted_router.services.checkout_fees import rail_processing_fee
+from trusted_router.services.stripe_fees import ProcessingFee
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AdverseTrustEvent, CreditProvenance
 from trusted_router.types import ErrorType
@@ -99,12 +100,7 @@ def create_adyen_checkout_session(
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)
 
     credit_amount_cents = dollars_to_cents(body.amount)
-    fee = processing_fee(
-        credit_amount_cents=credit_amount_cents,
-        variable_basis_points=settings.adyen_card_fee_basis_points,
-        fixed_fee_cents=settings.adyen_card_fee_fixed_cents,
-        minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
-    )
+    fee = rail_processing_fee(settings, "adyen", credit_amount_cents)
     merchant_reference = _new_checkout_reference(
         workspace_id=workspace_id,
         credit_amount_cents=fee.credit_amount_cents,

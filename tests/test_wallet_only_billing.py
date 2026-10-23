@@ -122,7 +122,7 @@ def test_wallet_only_console_offers_stablecoin_without_card_controls() -> None:
 
     assert response.status_code == 200
     assert 'name="payment_method" value="stablecoin"' in response.text
-    assert 'value="Stablecoin (USDC)"' in response.text
+    assert "<span>USDC</span>" in response.text
     assert '<option value="auto">' not in response.text
     assert '<option value="ach">' not in response.text
     assert '<option value="paypal">' not in response.text
@@ -130,7 +130,7 @@ def test_wallet_only_console_offers_stablecoin_without_card_controls() -> None:
     assert 'action="/console/credits/payment-methods/add"' not in response.text
     assert 'action="/console/credits/payment-methods/manage"' not in response.text
     assert 'action="/console/credits/auto-refill"' not in response.text
-    assert "Wallet-only accounts can fund with stablecoin" in response.text
+    assert "Auto refill" not in response.text
 
 
 def test_wallet_only_console_rejects_direct_card_and_auto_refill_posts() -> None:
@@ -236,6 +236,6 @@ def test_verified_wallet_email_unlocks_standard_billing_options() -> None:
         page = client.get("/console/credits")
 
     assert checkout.status_code == 201, checkout.text
-    assert '<option value="auto">Stripe card</option>' in page.text
+    assert '<option value="auto">Card</option>' in page.text
     assert 'action="/console/credits/payment-methods/add"' in page.text
     assert 'action="/console/credits/auto-refill"' in page.text

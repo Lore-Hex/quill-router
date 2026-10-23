@@ -1,7 +1,7 @@
 """Approved v2 routes, real download contract and source-backed evidence."""
 import unittest
 
-from nyte_v2 import render_nyte
+from nyte_v2 import index_panel, render_nyte
 
 
 class NyteV2Tests(unittest.TestCase):
@@ -14,11 +14,49 @@ class NyteV2Tests(unittest.TestCase):
             self.assertNotIn('/confidential-api', page)
             self.assertIn('href="/confidential#start">Start building</a>', page)
             self.assertNotIn('data-open="pdeck"', page)
-            self.assertIn('name="website"', page)
-            self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)
-            self.assertIn('id="m-deck"', page)
+            if name in ('home', 'api'):
+                self.assertIn('name="website"', page)
+                self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)
+                self.assertIn('id="m-deck"', page)
+            else:
+                self.assertNotIn('id="m-deck"', page)
             self.assertNotIn('Send the deck', page)
         self.assertEqual(render_nyte('sup').count('href="/providers">Get the provider deck</a>'), 2)
+
+    def test_api_hero_keeps_full_lede_with_phone_copy_span(self):
+        import re
+
+        page = render_nyte('api')
+        lede = re.search(r'<p class="lede">(.*?)</p>', page).group(1)
+        full_copy = ('For prompts that carry client material, regulated records or your own '
+                     'source code. Every request runs on verified confidential hardware, '
+                     'encrypted end to end, and is never stored.')
+        self.assertEqual(re.sub(r'<[^>]+>', '', lede), full_copy)
+        self.assertEqual(re.sub(r'<[^>]+>', '', page).count(full_copy), 1)
+        self.assertEqual(lede.count('<span class="d">'), 1)
+
+    def test_api_key_links_use_console_route(self):
+        page = render_nyte('api')
+        self.assertEqual(page.count('href="https://trustedrouter.com/console/api-keys?'), 2)
+        self.assertNotIn('/console/keys', page)
+
+    def test_supplier_price_panel_is_illustrative(self):
+        panel = index_panel()
+        self.assertIn('Illustrative price comparison', panel)
+        self.assertIn('Example USD per billion tokens', panel)
+        self.assertNotIn('<time', panel)
+        self.assertNotIn('7d', panel)
+        self.assertNotIn('%', panel)
+        page = render_nyte('sup')
+        self.assertIn('href="/index">Explore the index</a>', page)
+        self.assertNotIn('Index figures are dated published prices', page)
+
+    def test_supplier_listing_steps(self):
+        page = render_nyte('sup')
+        for title in ('Listing status', 'Show your service', 'Make it verifiable', 'Serve real workloads'):
+            self.assertEqual(page.count(title), 1)
+        self.assertNotIn('supplier-art', page)
+        self.assertNotIn('vsteps', page)
 
     def test_supplier_stack_panel(self):
         page = render_nyte('sup')

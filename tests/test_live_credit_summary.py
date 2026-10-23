@@ -150,10 +150,11 @@ def test_console_credits_page_renders_typed_money(fake_spanner_client: tuple[Any
     response = client.get("/console/credits")
 
     assert response.status_code == 200, response.text[:300]
-    assert '<div class="value">$2.00</div>' in response.text
-    assert '<div class="value">$7.00</div>' in response.text
-    assert '<div class="value">$8.50</div>' not in response.text
-    assert '<div class="value">$1.00</div>' not in response.text
+    # The live typed read wins over the stale JSON body: $2.00 available, and
+    # neither the stale $8.50 balance nor the stale $1.00 usage appears.
+    assert '<p class="credits-balance-amount">$2.00</p>' in response.text
+    assert "$8.50" not in response.text
+    assert "$1.00" not in response.text
 
 
 def _seed_stale_json_live_typed(store: Any, db: Any, workspace_id: str) -> None:

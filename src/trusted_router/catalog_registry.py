@@ -139,6 +139,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
     TIER_MODEL_ORDERS,
+    TRUSTED_MODEL_ID,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
@@ -293,6 +294,15 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
+    ),
+    TRUSTED_MODEL_ID: Model(
+        id=TRUSTED_MODEL_ID,
+        name="TrustedRouter Trusted",
+        provider="trustedrouter",
+        context_length=128_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
     ),
     CONFIDENTIAL_MODEL_ID: Model(
         id=CONFIDENTIAL_MODEL_ID,

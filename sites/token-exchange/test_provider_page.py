@@ -43,17 +43,18 @@ class ProviderPageTests(unittest.TestCase):
         for resource in self.parser.links + self.parser.resources:
             self.assertNotIn(".pdf", resource.lower())
             self.assertNotIn("slide-", resource.lower())
-        self.assertIn("Shared privately on request", self.page)
-        self.assertIn("No public download", self.page)
         self.assertIn("not guarantees", self.page)
-        self.assertIn("Updated seven-page PDF", self.page)
+        self.assertIn("For inference platforms and GPU clouds", self.page)
+        self.assertIn("What’s in the deck", self.page)
+        self.assertIn("not live products or guaranteed revenue", self.page)
         self.assertNotIn("13-page", self.page)
         self.assertNotIn('href="/badge"', self.page)
         self.assertFalse(self.parser.forms)
 
     def test_mailto_request_contains_correct_recipient_and_context(self):
         requests = [urlparse(href) for href in self.parser.links if "?subject=" in href]
-        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
         request = requests[0]
         self.assertEqual(request.scheme, "mailto")
         self.assertEqual(request.path, "providers@trustedrouter.com")
@@ -61,6 +62,17 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn("provider deck request", query["subject"][0])
         self.assertIn("Company:", query["body"][0])
         self.assertIn("My role:", query["body"][0])
+
+    def test_shared_design_preserves_request_only_flow(self):
+        self.assertIn('/assets/nyte-v2/styles.css?', self.page)
+        self.assertIn('/assets/nyte-v2/providers.css?', self.page)
+        self.assertIn('class="site-footer"', self.page)
+        self.assertIn('class="ph ph-cableway"', self.page)
+        self.assertIn('class="pv-deck"', self.page)
+        self.assertTrue((self.root / 'assets/nyte-v2/photos/cableway-mist-2400.webp').is_file())
+        self.assertNotIn('id="m-deck"', self.page)
+        self.assertIn('>Trust center</a>', self.page)
+        self.assertIn('<a href="/providers" data-nav="providers">Providers</a>', self.page)
 
     def test_metadata_and_new_york_only_sitemap(self):
         url = "https://nytokenexchange.com/providers"

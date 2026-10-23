@@ -462,6 +462,19 @@ def test_secondary_ramp_never_routes_to_job_start_snapshot_after_pin(
     ]
 
 
+def test_secondary_ramp_cannot_retire_an_unprotected_zero_minimum_revision(
+    tmp_path: Path,
+) -> None:
+    run = _run_secondary_ramp(
+        tmp_path, traffic=_default_secondary_traffic(),
+        overrides={"HARNESS_CLOUD_RUN_REVISION_MIN": "0"},
+    )
+    assert run.returncode != 0
+    assert "trusted-router-01302-eunew=100" not in _regional_traffic_updates(run, "europe-west4")
+    assert _regional_traffic_updates(run, "europe-west4")[-1] == "trusted-router-01300-euold=100"
+    assert not _regional_traffic_updates(run, "us-east4")
+
+
 def test_secondary_ramp_refuses_older_new_revision_without_traffic_mutation(
     tmp_path: Path,
 ) -> None:
@@ -672,7 +685,7 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
-def test_rollout_opts_failed_shadow_canary_out_without_enabling_money_paths(
+def test_rollout_opts_the_probe_workspace_into_shadow_v2_without_enabling_money_paths(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from unittest.mock import Mock
@@ -695,9 +708,9 @@ def test_rollout_opts_failed_shadow_canary_out_without_enabling_money_paths(
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     assert rendered["TR_SERVING_REGION"] == region
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == "162e441a-5d13-414f-92bd-7c6cd805faa3"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == "shadow-v2"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == "us-central1"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
     assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
     assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"
@@ -731,14 +744,14 @@ def test_rollout_opts_failed_shadow_canary_out_without_enabling_money_paths(
 
     app = main.create_app(config, configure_store_arg=False, init_observability=False)
     v1_install.assert_not_called()
-    health_install.assert_not_called()
-    cohort_install.assert_not_called()
+    health_install.assert_called_once_with(app, config, backend)
+    cohort_install.assert_called_once_with(app, config, backend)
     assert not hasattr(app.state, "async_settle_shadow")
     assert not config.async_settle_enabled
     assert not config.async_settle_protection
     assert not config.settle_outbox_fast_drain_enabled
-    assert not config.async_settle_shadow_workspace_ids
-    assert not in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
+    assert config.async_settle_shadow_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
                        config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
     assert not in_v2_cohort(config.async_settle_shadow_policy, "stale-opt-in",
                            config.async_settle_enabled, config.async_settle_shadow_workspace_ids)

@@ -308,6 +308,14 @@ def _run_staged_probe(
     traffic_shift_failure_pct: int | None = None,
     watchdog_exit: int = 0,
     service_ingress: str = "all",
+    drain_revision: str = "old-rev",
+    drain_watchdog_exit: int = 0,
+    old_min_instances: str = "2",
+    drain_minutes: str = "15",
+    existing_drain_revision: str = "",
+    interrupt_drain: bool = False,
+    drain_remove_fails: bool = False,
+    rollback_fails: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
@@ -315,6 +323,8 @@ def _run_staged_probe(
     call_log.write_text("")
     tag_state = tmp_path / "tag-state"
     tag_state.write_text("")
+    drain_state = tmp_path / "drain-state"
+    drain_state.write_text(existing_drain_revision)
     remove_failures_state = tmp_path / "remove-failures"
     remove_failures_state.write_text(f"{remove_failures}\n")
     gcloud = stub_bin / "gcloud"
@@ -322,10 +332,19 @@ def _run_staged_probe(
         """#!/usr/bin/env bash
 printf 'gcloud %s\\n' "$*" >>"$STAGED_CALL_LOG"
 if [ -n "$STAGED_TRAFFIC_SHIFT_FAILURE_PCT" ] \
-    && [[ " $* " == *" --to-revisions=new-rev=${STAGED_TRAFFIC_SHIFT_FAILURE_PCT},"* ]]; then
+    && { [[ " $* " == *" --to-revisions=new-rev=${STAGED_TRAFFIC_SHIFT_FAILURE_PCT},"* ]] \
+      || [[ " $* " == *" --to-revisions=new-rev=${STAGED_TRAFFIC_SHIFT_FAILURE_PCT} "* ]]; }; then
+  exit 1
+fi
+if [ "$STAGED_ROLLBACK_FAILS" = "1" ] && [[ " $* " == *" --to-revisions=old-rev=100 "* ]]; then
   exit 1
 fi
 case " $* " in
+  *" --update-tags=staged-drain="*)
+    printf '%s\\n' "$STAGED_DRAIN_REVISION" >"$STAGED_DRAIN_STATE" ;;
+  *" --remove-tags=staged-drain "*)
+    if [ "$STAGED_DRAIN_REMOVE_FAILS" = "1" ]; then exit 1; fi
+    : >"$STAGED_DRAIN_STATE" ;;
   *" --update-tags="*) printf '%s\\n' "$STAGED_RESOLVED_TAG_REV" >"$STAGED_TAG_STATE" ;;
   *" --remove-tags="*)
     remaining="$(cat "$STAGED_REMOVE_FAILURES_STATE")"
@@ -344,11 +363,20 @@ case " $* " in
     exit 64
     ;;
   *" --format=json"*)
+    if [[ " $* " == *" run revisions describe "* ]]; then
+      printf '{"metadata":{"annotations":{"autoscaling.knative.dev/minScale":"%s"}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}\\n' "$STAGED_OLD_MIN_INSTANCES"
+      exit 0
+    fi
     tagged_revision="$(cat "$STAGED_TAG_STATE")"
+    drain_revision="$(cat "$STAGED_DRAIN_STATE")"
+    drain_entry=""
+    if [ -n "$drain_revision" ]; then
+      drain_entry=",{\\"percent\\":0,\\"revisionName\\":\\"${drain_revision}\\",\\"tag\\":\\"staged-drain\\"}"
+    fi
     if [ -n "$tagged_revision" ]; then
-      printf '{"metadata":{"annotations":{"run.googleapis.com/ingress":"%s"}},"status":{"traffic":[{"percent":100,"revisionName":"old-rev"},{"percent":0,"revisionName":"%s","tag":"staged-probe"}]}}\\n' "$STAGED_SERVICE_INGRESS" "$tagged_revision"
+      printf '{"metadata":{"annotations":{"run.googleapis.com/ingress":"%s"}},"status":{"traffic":[{"percent":100,"revisionName":"old-rev"},{"percent":0,"revisionName":"%s","tag":"staged-probe"}%s]}}\\n' "$STAGED_SERVICE_INGRESS" "$tagged_revision" "$drain_entry"
     else
-      printf '{"metadata":{"annotations":{"run.googleapis.com/ingress":"%s"}},"status":{"traffic":[{"percent":100,"revisionName":"old-rev"}]}}\\n' "$STAGED_SERVICE_INGRESS"
+      printf '{"metadata":{"annotations":{"run.googleapis.com/ingress":"%s"}},"status":{"traffic":[{"percent":100,"revisionName":"old-rev"}%s]}}\\n' "$STAGED_SERVICE_INGRESS" "$drain_entry"
     fi
     ;;
   *"status.url"*) printf '%s\\n' 'https://trusted-router-hash-uc.a.run.app' ;;
@@ -378,6 +406,14 @@ printf '%s' "$code"
         """#!/usr/bin/env bash
 if [ "$1" = "-c" ]; then
   exec "$STAGED_REAL_PYTHON" "$@"
+fi
+printf 'python3 %s\\n' "$*" >>"$STAGED_CALL_LOG"
+if [[ " $* " == *" --duration-min 15 "* ]]; then
+  if [ "$STAGED_INTERRUPT_DRAIN" = "1" ]; then
+    kill -TERM "$PPID"
+    exit 143
+  fi
+  exit "$STAGED_DRAIN_WATCHDOG_EXIT"
 fi
 previous=""
 gate_file=""
@@ -436,6 +472,14 @@ exit 0
         "STAGED_SESSION_CODE": session_code,
         "STAGED_RESOLVED_TAG_REV": resolved_tag_revision,
         "STAGED_TAG_STATE": str(tag_state),
+        "STAGED_DRAIN_STATE": str(drain_state),
+        "STAGED_DRAIN_REVISION": drain_revision,
+        "STAGED_DRAIN_WATCHDOG_EXIT": str(drain_watchdog_exit),
+        "STAGED_OLD_MIN_INSTANCES": old_min_instances,
+        "TR_REVISION_DRAIN_MINUTES": drain_minutes,
+        "STAGED_INTERRUPT_DRAIN": "1" if interrupt_drain else "0",
+        "STAGED_DRAIN_REMOVE_FAILS": "1" if drain_remove_fails else "0",
+        "STAGED_ROLLBACK_FAILS": "1" if rollback_fails else "0",
         "STAGED_REMOVE_FAILURES_STATE": str(remove_failures_state),
         "STAGED_REMOVE_ALWAYS_FAILS": "1" if remove_always_fails else "0",
         "STAGED_REMOVE_LEAVES_TAG": "1" if remove_leaves_tag else "0",
@@ -462,6 +506,99 @@ exit 0
         timeout=20,
     )
     return run, call_log.read_text().splitlines()
+
+
+def test_old_revision_stays_tagged_through_post_cutover_drain(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(tmp_path, console_code="302", session_code="401")
+    assert run.returncode == 0, run.stderr
+    tagged = next(i for i, c in enumerate(calls) if "--update-tags=staged-drain=old-rev" in c)
+    switched = next(i for i, c in enumerate(calls) if "--to-revisions=new-rev=100 " in c)
+    watched = next(i for i, c in enumerate(calls) if "--duration-min 15 " in c)
+    removed = next(i for i, c in enumerate(calls) if "--remove-tags=staged-drain " in c)
+    assert tagged < switched < watched < removed
+    assert "--baseline-input " in calls[watched]
+    assert any("run revisions describe old-rev" in c for c in calls[:switched])
+    assert any("run services describe" in c for c in calls[removed + 1 :])
+
+
+@pytest.mark.parametrize("old_min_instances", ["0", "", "bad"])
+def test_retirement_guard_refuses_an_unprotected_old_revision(
+    tmp_path: Path, old_min_instances: str,
+) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401", old_min_instances=old_min_instances,
+    )
+    assert run.returncode != 0
+    assert not any("--to-revisions=new-rev=100 " in c for c in calls)
+    assert any("--to-revisions=old-rev=100 " in c for c in calls)
+
+
+def test_retirement_guard_fails_closed_when_tag_readback_is_wrong(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401", drain_revision="unrelated-rev",
+    )
+    assert run.returncode != 0
+    assert not any("--to-revisions=new-rev=100 " in c for c in calls)
+    assert any("--to-revisions=old-rev=100 " in c for c in calls)
+
+
+def test_drain_health_failure_restores_old_traffic_before_untagging(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401", drain_watchdog_exit=3,
+    )
+    assert run.returncode != 0
+    rollback = next(i for i, c in enumerate(calls) if "--to-revisions=old-rev=100 " in c)
+    removed = next(i for i, c in enumerate(calls) if "--remove-tags=staged-drain " in c)
+    assert rollback < removed
+
+
+@pytest.mark.parametrize("drain_minutes", ["0", "14", "21", "bad"])
+def test_invalid_drain_window_cannot_silently_disable_protection(
+    tmp_path: Path, drain_minutes: str,
+) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401", drain_minutes=drain_minutes,
+    )
+    assert run.returncode != 0
+    assert not any("update-traffic" in c for c in calls)
+
+
+def test_interrupted_drain_keeps_old_revision_warm_and_reports_it(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401", interrupt_drain=True,
+    )
+    assert run.returncode != 0
+    assert any("--to-revisions=new-rev=100 " in c for c in calls)
+    assert not any("--remove-tags=staged-drain " in c for c in calls)
+    assert "routing drain interrupted; retaining staged-drain=old-rev" in run.stdout
+
+
+def test_unrelated_outstanding_drain_is_not_replaced_or_removed(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401", existing_drain_revision="other-rev",
+    )
+    assert run.returncode != 0
+    assert not any("--update-tags=staged-drain=" in c for c in calls)
+    assert not any("--remove-tags=staged-drain " in c for c in calls)
+    assert not any("--to-revisions=new-rev=100 " in c for c in calls)
+
+
+def test_failed_drain_cleanup_cannot_report_success(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401", drain_remove_fails=True,
+    )
+    assert run.returncode != 0
+    assert sum("--remove-tags=staged-drain " in c for c in calls) == 6
+
+
+def test_ambiguous_final_shift_and_failed_rollback_keep_old_revision_warm(tmp_path: Path) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401",
+        traffic_shift_failure_pct=100, rollback_fails=True,
+    )
+    assert run.returncode != 0
+    assert any("--to-revisions=old-rev=100 " in c for c in calls)
+    assert not any("--remove-tags=staged-drain " in c for c in calls)
 
 
 def test_private_ingress_skips_runapp_probe_and_keeps_watchdog_gate(

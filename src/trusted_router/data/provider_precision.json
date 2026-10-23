@@ -302,15 +302,15 @@
     "kv_cache_dtype": "fp8",
     "model_repository": "openai/gpt-oss-120b",
     "model_revision": "b5c939de8f754692c1647ca79fbf85e8c1e70f8a",
-    "reviewed_on": "2026-09-27",
+    "reviewed_on": "2026-10-22",
     "sources": [
       {
         "title": "Published model revisions and root hashes",
-        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/models.yaml"
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/317d813671769c16238b8e93245e5e2e06060a92/models.yaml"
       },
       {
         "title": "Published serving configuration",
-        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/deployment.yaml"
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/317d813671769c16238b8e93245e5e2e06060a92/deployment.yaml"
       },
       {
         "title": "Pinned weight configuration",
@@ -324,29 +324,30 @@
     "model_id": "z-ai/glm-5.3",
     "upstream_id": "glm-5.3",
     "quantization": "nvfp4",
-    "label": "NVFP4",
+    "label": "NVFP4 + FP8",
     "weight_formats": [
-      "nvfp4"
+      "nvfp4",
+      "fp8"
     ],
     "kv_cache_dtype": "fp8_e4m3",
-    "model_repository": "LibertAIDAI/GLM-5.3-NVFP4",
-    "model_revision": "653d98214a487d78c1b2a37167b56764b6240080",
-    "reviewed_on": "2026-09-27",
+    "model_repository": "nvidia/GLM-5.3-NVFP4",
+    "model_revision": "e3b8f9f2fad29727dfa95e766c5cac18ea1414bf",
+    "reviewed_on": "2026-10-22",
     "sources": [
       {
         "title": "Published model revisions and root hashes",
-        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/models.yaml"
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/317d813671769c16238b8e93245e5e2e06060a92/models.yaml"
       },
       {
         "title": "Published serving configuration",
-        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/deployment.yaml"
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/317d813671769c16238b8e93245e5e2e06060a92/deployment.yaml"
       },
       {
         "title": "Pinned weight configuration",
-        "url": "https://huggingface.co/LibertAIDAI/GLM-5.3-NVFP4/resolve/653d98214a487d78c1b2a37167b56764b6240080/config.json"
+        "url": "https://huggingface.co/nvidia/GLM-5.3-NVFP4/resolve/e3b8f9f2fad29727dfa95e766c5cac18ea1414bf/config.json"
       }
     ],
-    "notes": "NVFP4 quantized weight groups; exclusions retain higher precision."
+    "notes": "NVIDIA ModelOpt mixed-precision weights: NVFP4 expert groups and FP8 dense gate/up projections. Excluded modules retain higher precision. Deployment v1.60 pins the corresponding model-volume verity root."
   },
   {
     "provider": "privatemode",
@@ -360,15 +361,15 @@
     "kv_cache_dtype": "fp8",
     "model_repository": "zai-org/GLM-5.3-Flash",
     "model_revision": "04c4e9e95c5da8862dced7e5056455116f83a7e0",
-    "reviewed_on": "2026-09-27",
+    "reviewed_on": "2026-10-22",
     "sources": [
       {
         "title": "Published model revisions and root hashes",
-        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/models.yaml"
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/317d813671769c16238b8e93245e5e2e06060a92/models.yaml"
       },
       {
         "title": "Published serving configuration",
-        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/deployment.yaml"
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/317d813671769c16238b8e93245e5e2e06060a92/deployment.yaml"
       },
       {
         "title": "Pinned weight configuration",

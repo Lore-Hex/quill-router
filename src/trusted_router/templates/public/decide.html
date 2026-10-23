@@ -110,7 +110,7 @@
         <table>
           <thead><tr><th>Model</th><th>Pick it for</th><th>Median model latency</th><th>Eval accuracy</th><th>About one decision costs</th></tr></thead>
           <tbody>
-            <tr><td><span class="mono">typesafe-ai/jev</span></td><td>A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API with automatic failover to Vercel AI Gateway.</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">typesafe-ai/jev</span></td><td>A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API.</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
             <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>The default. An open-weight 120B reasoning model on the fastest hardware we could measure, with automatic failover across four hosts.</td><td>about 300 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
             <tr><td><span class="mono">trustedrouter/mev-1.0</span></td><td>Speed at half the price. Mercury 2, a diffusion model, answering without deliberating. It over-rates the urgency of one eval ticket; pass <code>reasoning_effort: "low"</code> for 29 / 29 at about 600 ms.</td><td>about 290 ms</td><td>28 / 29</td><td>$0.00017</td></tr>
             <tr><td><span class="mono">trustedrouter/lev-1.0</span></td><td>The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer in the eval took 565 ms. Fails over across three hosts.</td><td>about 390 ms</td><td>29 / 29</td><td>$0.00036</td></tr>
@@ -249,7 +249,7 @@ else:
     <div class="marketing-card">
       <span class="card-label">Privacy</span>
       <h3>Your state never reaches our control plane.</h3>
-      <p>As with chat, <code>state</code> and <code>questions</code> terminate inside the <a href="/security">attested gateway</a> and go only to the model host. Authorization and billing see token counts, not content. <code>typesafe-ai/jev</code> is called at TypeSafe's own API. Only if TypeSafe is down or rate limiting does the request fail over to Vercel AI Gateway, and only then does it cross two third parties.</p>
+      <p>As with chat, <code>state</code> and <code>questions</code> terminate inside the <a href="/security">attested gateway</a> and go only to the model host. Authorization and billing see token counts, not content. <code>typesafe-ai/jev</code> is called at TypeSafe's own API and at no other host.</p>
     </div>
     <div class="marketing-card">
       <span class="card-label">Limits</span>

@@ -16,6 +16,9 @@
   </div>
   <div class="panel-body">
     <p><a href="/models">All models</a></p>
+    {% if model.id == 'trustedrouter/trusted' %}
+    <p><strong>Trusted.</strong> Confidential inference through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a> only, selected by TrustedRouter for operator physical security and reliability history. Every fallback remains in this tier. Also available as <code>nyte/trusted</code>. <a href="/docs#trusted-tier">API and qualification details</a></p>
+    {% endif %}
     <nav class="section-tabs" aria-label="{{ model.name }} sections">
       {% for link in model.section_links %}
       <a href="{{ link.href }}" class="{% if link.active %}active{% endif %}">{{ link.label }}</a>

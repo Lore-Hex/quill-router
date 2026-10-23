@@ -32,6 +32,18 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "muna": InferenceLocations(
+        locations=("United States",),
+        scope="Provider-declared US inference on rented dedicated GPUs operated by Muna; no downstream model APIs.",
+        routing="Dynamic per-request placement across US nodes; provider declares no failover outside the US.",
+        provider_pinning="No per-request region pin or actual serving-region response field.",
+        trustedrouter_pinning="Select provider.only=[muna] with allow_fallbacks=false; no finer regional pin is available.",
+        declaration="United States (provider-declared), dynamically placed; specific datacenter region is not exposed.",
+        evidence="Marketplace application reviewed 2026-10-15 and authenticated catalog declaring us; not attested location.",
+        reviewed_on="2026-10-22",
+        sources=(("Inference catalog", "https://inference.muna.ai/integrations/trustedrouter/catalog"),
+                 ("Infrastructure and subprocessors", "https://muna.ai/zdr")),
+    ),
     "nextbit-eu": InferenceLocations(
         locations=("Spain (EU)",),
         scope="The EU API's DPA commits to inference exclusively on NextBit infrastructure in Spain.",

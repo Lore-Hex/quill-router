@@ -127,6 +127,19 @@ def test_mixed_experts_and_nested_text_quantization_are_preserved() -> None:
     assert k3["kv_cache_dtype"] == "fp8"
 
 
+def test_privatemode_v160_pins_nvidia_glm_mixed_precision() -> None:
+    record = endpoint_precision_metadata(_reviewed_endpoint("privatemode", "z-ai/glm-5.3"))
+    assert record["model_repository"] == "nvidia/GLM-5.3-NVFP4"
+    assert record["model_revision"] == "e3b8f9f2fad29727dfa95e766c5cac18ea1414bf"
+    assert record["weight_formats"] == ["nvfp4", "fp8"]
+    assert record["label"] == "NVFP4 + FP8"
+    assert record["kv_cache_dtype"] == "fp8_e4m3"
+    assert record["reviewed_on"] == "2026-10-22"
+    assert record["runtime_verified"] is False
+    assert all("317d813671769c16238b8e93245e5e2e06060a92" in source["url"]
+               for source in record["sources"][:2])
+
+
 def test_metadata_is_a_copy_and_lookup_has_no_io_after_first_load(monkeypatch) -> None:
     provider_precision._precision_index.cache_clear()
     endpoint = _reviewed_endpoint("tinfoil", "openai/gpt-oss-120b")

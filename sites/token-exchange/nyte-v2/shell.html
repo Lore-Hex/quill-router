@@ -1,30 +1,23 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{title}}</title><meta name="description" content="{{description}}"><link rel="canonical" href="https://nytokenexchange.com{{path}}">
 <meta property="og:title" content="{{title}}"><meta property="og:description" content="{{description}}"><meta property="og:url" content="https://nytokenexchange.com{{path}}"><meta property="og:type" content="website"><meta property="og:image" content="{{image_url}}"><meta name="twitter:card" content="summary_large_image">
-<link rel="stylesheet" href="/assets/nyte-v2/styles.css?v={{version}}">{{extra_head}}<noscript><style>@media(max-width:880px){header{height:auto;min-height:var(--header)}.hdr{min-height:var(--header)}.nav{display:flex;position:static;padding:12px 0}.hdr{flex-wrap:wrap}.nav{order:3;width:100%;flex-direction:row;flex-wrap:wrap}.menu-btn{display:none}}</style></noscript></head><body id="top" data-market="new-york" data-nyte-page="{{page}}"><a class="skip" href="#main">Skip to content</a><header>
+<link rel="stylesheet" href="/assets/nyte-v2/styles.css?v={{version}}">{{extra_head}}<noscript><style>@media(max-width:1000px){header{height:auto;min-height:var(--header)}.hdr{min-height:var(--header)}.nav{display:flex;position:static;padding:12px 0}.hdr{flex-wrap:wrap}.nav{order:3;width:100%;flex-direction:row;flex-wrap:wrap}.menu-btn{display:none}}</style></noscript></head><body id="top" data-market="new-york" data-nyte-page="{{page}}"><a class="skip" href="#main">Skip to content</a><header>
   <div class="wrap hdr">
     <a class="brand" href="/" aria-label="New York Token Exchange home">
       <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"> <g fill="none" stroke-linecap="round" stroke-linejoin="round"> <path d="M1.4 7.5 H6.5 L11 12 M1.4 16.5 H4 L8.5 12 M1.4 12 H15.5" stroke="#ede8db" stroke-width="2"></path> <circle cx="15.5" cy="12" r="1.9" fill="#a9cdb9"></circle> <path d="M17.4 12 H22.6" stroke="#a9cdb9" stroke-width="2"></path> </g> </svg>
-      <span>New York Token Exchange</span>
+      <span><span class="brand-place">New York</span> <span class="brand-line">Token Exchange</span></span>
     </a>
-    <button class="menu-btn" id="menuBtn" aria-expanded="false" aria-controls="nav">Menu</button>
+    <a class="btn btn-primary btn-sm" href="/confidential#start">Start building</a>
+    <button class="menu-btn" id="menuBtn" aria-label="Menu" aria-expanded="false" aria-controls="nav"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     <nav class="nav" id="nav" aria-label="Main">
       <a href="/confidential" data-nav="api">Confidential API</a>
       <a href="/index">Index</a>
       <a href="/suppliers" data-nav="sup">Suppliers</a>
+      <a href="/providers" data-nav="providers">Providers</a>
     </nav>
-    <a class="btn btn-primary btn-sm" href="/confidential#start">Start building</a>
   </div>
 </header>
 
 <main id="main">{{content}}</main><footer class="site-footer"><div class="footer-top"><div class="brand"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>New York Token Exchange<small>Powered by <a href="https://trustedrouter.com/">TrustedRouter</a></small></span></div><a class="back-to-top" href="#top" aria-label="Back to top"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></a><div class="footer-contact"><a href="mailto:help@trustedrouter.com" aria-label="Email us at help@trustedrouter.com"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg><span>Email us</span></a></div></div><div class="geo-scroll footer-markets"><svg class="market-pin" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg><nav class="market-links" aria-label="Exchange markets">{{markets}}</nav><button class="geo-prev" type="button" aria-label="Scroll footer markets left" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg></button><button class="geo-next" type="button" aria-label="Scroll footer markets right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div><div class="legal"><a href="/media-kit">Media kit</a><a href="https://trustedrouter.com/privacy">Privacy</a><a href="https://trustedrouter.com/terms">Terms</a><a href="https://trustedrouter.com/token-exchange">Exchange overview</a></div></footer>
 
-<dialog id="m-deck" aria-labelledby="deckT"><div class="mbox">
-<button class="x" data-close aria-label="Close">×</button>
-<form id="brochure-form" action="https://trustedrouter.com/token-exchange/brief" method="post">
-<h2 id="deckT">Get the buyer deck</h2><p class="intro">Security, legal and pricing answers in one document.</p>
-<label class="fld"><span>Work email</span><input name="email" type="email" required maxlength="254" placeholder="you@company.com" autocomplete="email"></label>
-<div class="honeypot" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
-<button class="btn btn-primary" type="submit" disabled>Download the deck</button>
-<p id="brochure-status" role="status" aria-live="polite"></p>
-</form></div></dialog><noscript><p class="wrap">To request the buyer deck, email <a href="mailto:enterprise@trustedrouter.com">enterprise@trustedrouter.com</a>.</p></noscript><script src="/assets/analytics.js?v={{version}}" defer></script><script src="/assets/nyte-v2/app.js?v={{version}}" defer></script>{{evidence_script}}</body></html>
+{{buyer_deck}}<script src="/assets/analytics.js?v={{version}}" defer></script><script src="/assets/nyte-v2/app.js?v={{version}}" defer></script>{{evidence_script}}</body></html>
