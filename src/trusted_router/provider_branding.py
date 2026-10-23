@@ -95,6 +95,15 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
     "greenference": ProviderBrand("https://greenference.com/"),
+    "muna": ProviderBrand(
+        "https://muna.ai/",
+        description="Open-weight chat, vision and reasoning models served on Muna's own inference stack.",
+        resources=(("API documentation", "https://docs.muna.ai/"),
+                   ("Models and pricing", "https://inference.muna.ai/integrations/trustedrouter/catalog"),
+                   ("Retention policy and exceptions", "https://muna.ai/zdr"),
+                   ("Data processing agreement", "https://muna.ai/dpa"),
+                   ("Service status", "https://status.muna.ai/")),
+    ),
     "coralbricks": ProviderBrand("https://www.coralbricks.ai/", resources=(
         ("API documentation", "https://www.coralbricks.ai/docs"),
         ("Privacy policy", "https://www.coralbricks.ai/privacy"),

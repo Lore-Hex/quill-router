@@ -40,6 +40,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "lyceum",
         "amazon-bedrock",
         "greenference",
+        "muna",
         "coralbricks",
         "boundless",
         "zro",

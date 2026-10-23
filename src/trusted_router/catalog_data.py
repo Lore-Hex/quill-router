@@ -2040,6 +2040,24 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://trust.coralbricks.ai/",
     ),
+    "muna": Provider(
+        slug="muna", name="Muna", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_headquarters_country="US", renewable_energy_inference=False,
+        provider_policy=(
+            "Muna (NatML Inc.) operates its own serving stack on rented US GPUs, "
+            "without reselling downstream model APIs. No training on customer content. "
+            "Its published zero-retention policy permits incidental content fragments "
+            "in diagnostic logs for up to 30 days, so these routes remain Standard, "
+            "not strict ZDR or confidential/E2EE. Shared prefix and decoded-image "
+            "caches are memory-only; prefix caching is not account-isolated. "
+            "Request and edge metadata remain for 30 days, billing records for seven years. "
+            "Renewable electricity coverage is unknown. Tools support auto/none selection; "
+            "required tool selection is not currently supported."
+        ),
+        provider_policy_url="https://muna.ai/zdr",
+    ),
     "greenference": Provider(
         slug="greenference",
         name="Greenference",
@@ -2379,6 +2397,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "lyceum",
         "amazon-bedrock",
         "greenference",
+        "muna",
         "coralbricks",
         "boundless",
         "zro",
