@@ -863,20 +863,33 @@ returns:
 | Error | Outcome | Then |
 |---|---|---|
 | none | `Inserted` | answer |
-| any, with the callback never run (no session, no transaction began); checked first | retried once within the deadline; still failing, `Failed` | refund, pass: nothing was sent, so this is never a 503 |
-| `AlreadyExists` | `AuthorizationExists(our id)`, strong, with a 0.5 s deadline on a fresh context: true is `Landed`, false is `ScopeTaken`; a read error goes on as `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
-| `Aborted` (retries exhausted), `InvalidArgument`, `FailedPrecondition`, `NotFound`, `PermissionDenied`, `Unauthenticated`, `OutOfRange`, `Unimplemented` | `Failed` | refund, pass: Spanner applied nothing |
-| `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the context ended, any error that is not a gRPC status | `Unknown` | `AuthorizationExists` with a fresh 0.5 s deadline of its own: true answers as after a read-back; false or a read error answers decision 1's 503 and keeps the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
+| any, with the callback never run before the deadline (no session, no transaction began); checked first | retried once within the deadline; still failing, or the deadline reached first, `Failed` | refund, pass: nothing was sent, and the transaction left behind runs on a context that has ended, on which gRPC sends nothing; so this is never a 503 |
+| `AlreadyExists` | read our id back, strong, with a 0.5 s deadline on a fresh context: a row naming our reservation is `Landed`; no row, or one naming another reservation, is `ScopeTaken`; a read error goes on as `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
+| `Aborted`, `InvalidArgument`, `OutOfRange`, `Unimplemented`, with the callback run exactly once | `Failed` | refund, pass: Spanner applied nothing, and these codes are the request's own, so a re-sent commit is answered as the first was |
+| `NotFound`, `FailedPrecondition`, `PermissionDenied`, `Unauthenticated`, once the callback has run | `Unknown` | as below: the client re-sends a commit that met `Unavailable` or `ResourceExhausted`, of the same transaction, and returns the re-send's answer. Spanner answers a re-sent commit with the first one's outcome while it remembers the transaction, but nothing guarantees that a re-send refused as a forgotten transaction or for its credentials followed a first commit that did not apply |
+| any code but `AlreadyExists`, with the callback run more than once | `Unknown` | as below: the client re-runs the whole transaction after `Aborted`, `ResourceExhausted` with a retry delay, or `Internal` of a broken stream (`retry.go`, `runWithRetryOnAbortedOrFailedInlineBegin`), each of which can be the lost answer to a first commit that applied; the re-run's error proves nothing about it |
+| `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the deadline reached with the callback run, any error that is not a gRPC status | `Unknown` | `AuthorizationExists` with a fresh 0.5 s deadline of its own: true answers as after a read-back; false or a read error answers decision 1's 503 and keeps the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
+
+So `Failed` is only an error before the callback ran, or, with the callback
+run exactly once, a code the request alone determines. The insert ends at
+its 1.5 s deadline with no grace: the client waits for a session without
+the context (up to its own 30 s), so the transaction runs in a goroutine
+and the insert returns at the deadline whatever it is doing, `Failed` if
+the callback never ran by then and `Unknown` if it did. A Spanner client
+must not be closed while such a transaction still waits for its session:
+the client library panics (a send on its closed session-request channel).
 
 A refund after an `Unknown` would let an enclave retry replay, through
 Python, a row whose hold was given back; so nothing that can follow an
 applied commit refunds. Every read is by primary key on
 `tr_gateway_authorization`, so no extra index is needed.
 
-**Where Go differs from Python on purpose.** An `Aborted` left after the
-client's retries is `Failed` in Go (refund, pass); Python counts it
-transient and answers 503 after an empty read-back. `ABORTED` never
-applies a commit, so the refund is safe and the pass serves the request.
+**Where Go differs from Python on purpose.** An `Aborted` from a
+transaction whose callback ran once is `Failed` in Go (refund, pass);
+Python counts it transient and answers 503 after an empty read-back.
+`ABORTED` never applies a commit, so the refund is safe and the pass serves
+the request. In practice the client retries `Aborted` until the deadline,
+which then ends the insert as `Unknown`.
 An `AlreadyExists` whose row is our own authorization is `Landed` in Go;
 Python's `replay()` answers it as a `REPLAY` and the route then releases
 the hold even though the row is its own (`gateway.py:1920-1926`), a latent Python bug, harmless
