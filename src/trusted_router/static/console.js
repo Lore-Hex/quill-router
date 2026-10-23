@@ -586,7 +586,7 @@ function initConsole() {
   initAutoRefill();
   loadCreditsStripeDetails();
   const createKeyPanel = document.getElementById("new-api-key");
-  if (createKeyPanel) {
+  if (createKeyPanel instanceof HTMLDetailsElement) {
     createKeyPanel.addEventListener("toggle", () => {
       if (!createKeyPanel.open) createKeyPanel.hidden = true;
     });
