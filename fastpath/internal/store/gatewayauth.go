@@ -32,18 +32,22 @@ const (
 	// Inserted: the transaction committed.
 	Inserted InsertOutcome = iota
 	// Landed: the commit reported AlreadyExists, and the row under our
-	// authorization id is there, so it is ours: a commit the client library
-	// retried after losing the first answer. It answers as after a read-back.
+	// authorization id is there and names our reservation, so it is ours: a
+	// commit the client library re-ran after losing the first answer. It
+	// answers as after a read-back.
 	Landed
 	// ScopeTaken: the commit reported AlreadyExists, and our authorization
-	// id has no row: another authorization of the idempotency scope landed
-	// first (tr_reservation_by_idemp). Nothing of ours applied; the caller
-	// refunds and passes, and Python replays or answers 409.
+	// id has no row of ours: another authorization of the idempotency scope
+	// landed first (tr_reservation_by_idemp). Nothing of ours applied, or
+	// ever can; the caller refunds and passes, and Python replays or answers
+	// 409.
 	ScopeTaken
 	// Unknown: the commit may have applied. The caller reads the
 	// authorization back and never refunds.
 	Unknown
-	// Failed: proven not applied. The caller refunds and passes.
+	// Failed: proven not applied: the callback never ran, or it ran once
+	// and the code is one only a commit that did not apply is answered with
+	// (classifyInsert). The caller refunds and passes.
 	Failed
 )
 
@@ -150,10 +154,8 @@ func checkLeasedRows(a gwauth.AuthorizationRow, r gwauth.ReservationRow) error {
 
 // InsertLeasedAuthorization inserts an authorization's two rows in one
 // read-write transaction tagged LeasedEdgeTag, and reports what its error
-// proves (§8.4). The callback only buffers the two inserts: the client
-// commits once and retries Aborted itself, re-running the callback, within
-// InsertDeadline. Never Apply and never ApplyAtLeastOnce, which may replay a
-// commit that applied.
+// proves (§8.4). The callback only buffers the two inserts. Never Apply and
+// never ApplyAtLeastOnce, which may replay a commit that applied.
 //
 // The transaction runs on context.WithoutCancel(ctx) with InsertDeadline
 // alone, so an enclave that hangs up mid-commit, cancelling the request's
@@ -170,77 +172,92 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 	insertCtx, cancel := context.WithTimeout(detachedCtx, InsertDeadline)
 	defer cancel()
 	mutations := leasedMutations(a, r)
-	// ran is whether the callback ever ran: until it has, no commit can have
-	// been sent (no session, or no transaction began), and the error proves
-	// nothing applied, whatever its code.
-	var ran atomic.Bool
-	done := make(chan error, 1)
+	// runs counts the callback's runs. Until it has run no commit can have
+	// been sent (no session, or no transaction began). The client re-runs
+	// it after an attempt that ended Aborted, ResourceExhausted with a
+	// retry delay, or Internal of a broken stream (retry.go,
+	// runWithRetryOnAbortedOrFailedInlineBegin), each of which can be a lost
+	// answer to a commit that applied; so after a second run, no error
+	// proves nothing applied.
+	var runs atomic.Int32
+	type result struct {
+		err  error
+		runs int32
+	}
+	done := make(chan result, 1)
 	go func() {
 		var err error
 		for attempt := 0; attempt < 2; attempt++ {
 			_, err = s.client.ReadWriteTransactionWithOptions(insertCtx,
 				func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-					ran.Store(true)
+					runs.Add(1)
 					return txn.BufferWrite(mutations)
 				}, spanner.TransactionOptions{TransactionTag: LeasedEdgeTag})
-			if err == nil || ran.Load() {
+			if err == nil || runs.Load() > 0 {
 				break
 			}
 		}
-		done <- err
+		done <- result{err, runs.Load()}
 	}()
 	// The client bounds every RPC by the deadline, but waits for its session
 	// without it: a session it cannot create holds the transaction past the
-	// deadline, up to the client's own 30 s, before the callback runs. So at
-	// the deadline, a transaction whose callback has not run is over, Failed:
-	// it is left on a context that has ended, on which gRPC sends nothing,
-	// so no commit was or will be sent. One whose callback ran is past its
-	// session, every RPC it has left ends with the deadline, and its error
-	// says what the commit's answer was; it is waited for, a little.
-	var err error
+	// deadline, up to the client's own 30 s, before the callback runs. So the
+	// insert ends at its deadline whatever the client is doing. If the
+	// callback never ran before the deadline, nothing was sent, and nothing
+	// will be: the transaction is left on a context that has ended, on which
+	// gRPC sends nothing; that is Failed. If it ran, a commit may be in
+	// flight: Unknown. runs is read once, here, and the outcome follows from
+	// that reading alone.
+	var res result
 	select {
-	case err = <-done:
+	case res = <-done:
 	case <-insertCtx.Done():
-		if !ran.Load() {
-			select {
-			case err = <-done:
-			default:
-				err = insertCtx.Err()
-			}
-			break
-		}
 		select {
-		case err = <-done:
-		case <-time.After(ReadBackDeadline):
-			err = insertCtx.Err()
+		case res = <-done:
+		default:
+			res = result{insertCtx.Err(), runs.Load()}
 		}
 	}
-	outcome, alreadyExists := classifyInsert(err, ran.Load())
+	outcome, alreadyExists := classifyInsert(res.err, res.runs)
 	if !alreadyExists {
 		return outcome
 	}
-	// AlreadyExists: ours, landed by a commit the client retried after
-	// losing the first answer, or the scope's, landed first by another
-	// authorization. Python re-reads the scope the same way.
-	mine, readErr := s.AuthorizationExists(detachedCtx, a.AuthorizationID)
+	// AlreadyExists: ours, landed by a commit the client re-ran after losing
+	// the first answer, or the scope's, landed first by another
+	// authorization. Python re-reads the scope the same way. The row under
+	// our id is ours only if it names our reservation; one that names
+	// another is not ours, and with it there our insert can never apply.
+	reservationID, found, readErr := s.readAuthorizationReservation(detachedCtx, a.AuthorizationID)
 	switch {
 	case readErr != nil:
 		return Unknown
-	case mine:
+	case found && reservationID.Valid && reservationID.StringVal == a.ReservationID:
 		return Landed
 	}
 	return ScopeTaken
 }
 
 // classifyInsert is §8.4's table: the outcome the transaction's error
-// proves, ran being whether its callback ever ran. An AlreadyExists is no
-// outcome yet: alreadyExists says so, for the caller to read its own id
+// proves, runs being how many times its callback ran. An AlreadyExists is
+// no outcome yet: alreadyExists says so, for the caller to read its own id
 // back.
-func classifyInsert(err error, ran bool) (outcome InsertOutcome, alreadyExists bool) {
+//
+// Failed after the callback ran needs a code that the request alone
+// determines, and one run: InvalidArgument, OutOfRange and Unimplemented
+// would answer the first commit as they answer any re-send of it, and
+// Aborted is Spanner's own "not committed". NotFound, FailedPrecondition,
+// PermissionDenied and Unauthenticated are Unknown once a commit may have
+// been sent: the client re-sends a commit that met Unavailable or
+// ResourceExhausted, of the same transaction, and the answer it returns is
+// the re-send's. Spanner answers a re-sent commit with the first one's
+// outcome while it remembers the transaction, but no guarantee covers one
+// it has forgotten (NotFound, FailedPrecondition) or a re-send refused its
+// credentials, after a first commit that applied.
+func classifyInsert(err error, runs int32) (outcome InsertOutcome, alreadyExists bool) {
 	if err == nil {
 		return Inserted, false
 	}
-	if !ran {
+	if runs == 0 {
 		return Failed, false
 	}
 	// The context's own end is Unknown whatever the client wrapped it in: a
@@ -253,14 +270,16 @@ func classifyInsert(err error, ran bool) (outcome InsertOutcome, alreadyExists b
 	switch spanner.ErrCode(err) {
 	case codes.AlreadyExists:
 		return Unknown, true
-	case codes.Aborted, codes.InvalidArgument, codes.FailedPrecondition, codes.NotFound,
-		codes.PermissionDenied, codes.Unauthenticated, codes.OutOfRange, codes.Unimplemented:
-		// Spanner applied nothing.
-		return Failed, false
+	case codes.Aborted, codes.InvalidArgument, codes.OutOfRange, codes.Unimplemented:
+		if runs == 1 {
+			// Spanner applied nothing.
+			return Failed, false
+		}
 	}
-	// DeadlineExceeded, Canceled, Unavailable, Internal, Unknown,
-	// ResourceExhausted, DataLoss, OK on an error, and any code not named:
-	// the commit may have applied.
+	// A second run, or DeadlineExceeded, Canceled, Unavailable, Internal,
+	// Unknown, ResourceExhausted, DataLoss, NotFound, FailedPrecondition,
+	// PermissionDenied, Unauthenticated, OK on an error, and any code not
+	// named: the commit may have applied.
 	return Unknown, false
 }
 
@@ -269,21 +288,32 @@ func classifyInsert(err error, ran bool) (outcome InsertOutcome, alreadyExists b
 // context.WithoutCancel(ctx) with ReadBackDeadline alone: it is the
 // read-back of an insert whose context may be spent or cancelled.
 func (s *Store) AuthorizationExists(ctx context.Context, authorizationID string) (bool, error) {
+	_, found, err := s.readAuthorizationReservation(ctx, authorizationID)
+	return found, err
+}
+
+// readAuthorizationReservation reads the reservation id of the
+// authorization's row, as AuthorizationExists reads the row.
+func (s *Store) readAuthorizationReservation(ctx context.Context, authorizationID string) (spanner.NullString, bool, error) {
 	if authorizationID == "" {
-		return false, errors.New("store: no authorization id")
+		return spanner.NullString{}, false, errors.New("store: no authorization id")
 	}
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ReadBackDeadline)
 	defer cancel()
-	_, err := s.client.Single().ReadRowWithOptions(readCtx, "tr_gateway_authorization",
-		spanner.Key{authorizationID}, []string{"authorization_id"},
+	row, err := s.client.Single().ReadRowWithOptions(readCtx, "tr_gateway_authorization",
+		spanner.Key{authorizationID}, []string{"reservation_id"},
 		&spanner.ReadOptions{RequestTag: LeasedEdgeTag})
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, spanner.ErrRowNotFound):
-		return false, nil
+	if errors.Is(err, spanner.ErrRowNotFound) {
+		return spanner.NullString{}, false, nil
 	}
-	return false, err
+	var reservationID spanner.NullString
+	if err == nil {
+		err = row.Columns(&reservationID)
+	}
+	if err != nil {
+		return spanner.NullString{}, false, err
+	}
+	return reservationID, true, nil
 }
 
 // StoredAuthorization is every column of an authorization's row but the

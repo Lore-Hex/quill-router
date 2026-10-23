@@ -31,31 +31,34 @@ import (
 // --- the table, without the emulator -------------------------------------
 
 // insertTable is §8.4's table, code by code, for an error after the
-// callback ran. AlreadyExists is not an outcome yet: it is read back.
+// callback ran once. AlreadyExists is not an outcome yet: it is read back.
+// Only codes the request alone determines are Failed; after a second run
+// nothing is.
 var insertTable = map[codes.Code]InsertOutcome{
 	codes.Canceled:           Unknown,
 	codes.Unknown:            Unknown,
 	codes.InvalidArgument:    Failed,
 	codes.DeadlineExceeded:   Unknown,
-	codes.NotFound:           Failed,
-	codes.PermissionDenied:   Failed,
+	codes.NotFound:           Unknown, // a re-sent commit of a forgotten transaction
+	codes.PermissionDenied:   Unknown, // a re-sent commit refused its credentials
 	codes.ResourceExhausted:  Unknown,
-	codes.FailedPrecondition: Failed,
+	codes.FailedPrecondition: Unknown, // a re-sent commit of a forgotten transaction
 	codes.Aborted:            Failed,
 	codes.OutOfRange:         Failed,
 	codes.Unimplemented:      Failed,
 	codes.Internal:           Unknown,
 	codes.Unavailable:        Unknown,
 	codes.DataLoss:           Unknown,
-	codes.Unauthenticated:    Failed,
+	codes.Unauthenticated:    Unknown, // a re-sent commit refused its credentials
 }
 
 // TestClassifyInsertIsTheContractTable: every gRPC code, raw, as the
-// client's own error type and wrapped again, maps as §8.4 says; the
-// context's end and an error with no status are Unknown; any error before
-// the callback ran is Failed; no error is Inserted.
+// client's own error type and wrapped again, maps as §8.4 says after one
+// run of the callback; after two, nothing is Failed; the context's end and
+// an error with no status are Unknown; any error before the callback ran is
+// Failed; no error is Inserted.
 func TestClassifyInsertIsTheContractTable(t *testing.T) {
-	if got, ae := classifyInsert(nil, true); got != Inserted || ae {
+	if got, ae := classifyInsert(nil, 1); got != Inserted || ae {
 		t.Errorf("no error: %v %v", got, ae)
 	}
 	for code := codes.Canceled; code <= codes.Unauthenticated; code++ {
@@ -65,17 +68,23 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 			"spanner": spanner.ToSpannerError(raw),
 			"wrapped": fmt.Errorf("commit: %w", spanner.ToSpannerError(raw)),
 		} {
-			got, alreadyExists := classifyInsert(err, true)
-			if code == codes.AlreadyExists {
-				if !alreadyExists {
-					t.Errorf("%v %s: not read back", code, name)
+			for _, runs := range []int32{1, 2, 3} {
+				got, alreadyExists := classifyInsert(err, runs)
+				if code == codes.AlreadyExists {
+					if !alreadyExists {
+						t.Errorf("%v %s, %d runs: not read back", code, name, runs)
+					}
+					continue
 				}
-				continue
+				want := insertTable[code]
+				if runs > 1 {
+					want = Unknown
+				}
+				if alreadyExists || got != want {
+					t.Errorf("%v %s, %d runs: %v (read back %v), want %v", code, name, runs, got, alreadyExists, want)
+				}
 			}
-			if alreadyExists || got != insertTable[code] {
-				t.Errorf("%v %s: %v (read back %v), want %v", code, name, got, alreadyExists, insertTable[code])
-			}
-			if got, _ := classifyInsert(err, false); got != Failed {
+			if got, _ := classifyInsert(err, 0); got != Failed {
 				t.Errorf("%v %s before the callback ran: %v, want failed", code, name, got)
 			}
 		}
@@ -87,7 +96,7 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 		"client deadline":  spanner.ToSpannerError(context.DeadlineExceeded),
 		"no status":        errors.New("connection reset"),
 	} {
-		if got, ae := classifyInsert(err, true); got != Unknown || ae {
+		if got, ae := classifyInsert(err, 1); got != Unknown || ae {
 			t.Errorf("%s: %v %v, want unknown", name, got, ae)
 		}
 	}
@@ -552,9 +561,10 @@ func TestRowsThatAreNotOneAuthorizationsSendNothing(t *testing.T) {
 // --- fault injection ---------------------------------------------------------
 
 const (
-	commitMethod        = "/google.spanner.v1.Spanner/Commit"
-	createSessionMethod = "/google.spanner.v1.Spanner/CreateSession"
-	streamingReadMethod = "/google.spanner.v1.Spanner/StreamingRead"
+	commitMethod           = "/google.spanner.v1.Spanner/Commit"
+	createSessionMethod    = "/google.spanner.v1.Spanner/CreateSession"
+	beginTransactionMethod = "/google.spanner.v1.Spanner/BeginTransaction"
+	streamingReadMethod    = "/google.spanner.v1.Spanner/StreamingRead"
 )
 
 // fault decides, for each call a client makes, what happens: it may
@@ -696,14 +706,16 @@ func TestTheRetriedCommitReportsAlreadyExists(t *testing.T) {
 	if spanner.ErrCode(err) != codes.AlreadyExists || !landed(t, a) {
 		t.Fatalf("the client's own answer: %v, landed %v", err, landed(t, a))
 	}
-	if out, alreadyExists := classifyInsert(err, true); !alreadyExists {
+	if out, alreadyExists := classifyInsert(err, 2); !alreadyExists {
 		t.Fatalf("the error is not read back: %v", out)
 	}
 }
 
 // TestEachRefusedCommitsOutcome: the commit is answered with each code and
 // never applied. The codes §8.4 says prove nothing applied are Failed; the
-// rest are Unknown; AlreadyExists with no row of ours is ScopeTaken. The
+// rest are Unknown, NotFound, FailedPrecondition and the credential codes
+// among them (a commit had been sent); AlreadyExists with no row of ours is
+// ScopeTaken. The
 // client retries Unavailable and Aborted itself until the deadline, which
 // then ends them as Unknown: within a deadline, an Aborted never reaches the
 // store, so its Failed row of the table is the classifier's alone
@@ -711,10 +723,10 @@ func TestTheRetriedCommitReportsAlreadyExists(t *testing.T) {
 func TestEachRefusedCommitsOutcome(t *testing.T) {
 	cases := map[codes.Code]InsertOutcome{
 		codes.InvalidArgument:    Failed,
-		codes.FailedPrecondition: Failed,
-		codes.NotFound:           Failed,
-		codes.PermissionDenied:   Failed,
-		codes.Unauthenticated:    Failed,
+		codes.FailedPrecondition: Unknown,
+		codes.NotFound:           Unknown,
+		codes.PermissionDenied:   Unknown,
+		codes.Unauthenticated:    Unknown,
 		codes.OutOfRange:         Failed,
 		codes.Unimplemented:      Failed,
 		codes.AlreadyExists:      ScopeTaken,
@@ -844,14 +856,20 @@ func TestTheInsertOutlivesTheRequest(t *testing.T) {
 }
 
 // TestTheDeadlinesAreTheInsertsOwn: a commit that never answers is Unknown
-// at the insert's deadline, not before and not long after; a read that never
-// answers ends at the read-back's; and the read-back after an AlreadyExists
-// that arrives as the insert's deadline passes has a deadline of its own, so
-// it still finds our row.
+// at the insert's deadline, not before and not long after, and so is one
+// whose call ignores the deadline (no grace past it, decision 12); a read
+// that never answers ends at the read-back's; and the read-back after an
+// AlreadyExists that arrives just before the insert's deadline has a
+// deadline of its own, so it still finds our row though it takes longer
+// than the insert has left.
 func TestTheDeadlinesAreTheInsertsOwn(t *testing.T) {
 	ctx := context.Background()
-	var hold atomic.Bool
+	var hold, ignore atomic.Bool
 	s, _ := faultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
+		if ignore.Load() && method == commitMethod {
+			time.Sleep(InsertDeadline + time.Second)
+			return status.Error(codes.Unavailable, "late")
+		}
 		if hold.Load() && (method == commitMethod || method == streamingReadMethod) {
 			<-ctx.Done()
 			return status.FromContextError(ctx.Err()).Err()
@@ -863,13 +881,13 @@ func TestTheDeadlinesAreTheInsertsOwn(t *testing.T) {
 	start := time.Now()
 	out := s.InsertLeasedAuthorization(ctx, a, r)
 	took := time.Since(start)
-	if out != Unknown || took < InsertDeadline || took > InsertDeadline+500*time.Millisecond {
+	if out != Unknown || took < InsertDeadline || took > InsertDeadline+250*time.Millisecond {
 		t.Errorf("a commit that never answers: %v in %v", out, took)
 	}
 	start = time.Now()
 	_, err := s.AuthorizationExists(ctx, a.AuthorizationID)
 	took = time.Since(start)
-	if err == nil || took < ReadBackDeadline || took > ReadBackDeadline+500*time.Millisecond {
+	if err == nil || took < ReadBackDeadline || took > ReadBackDeadline+250*time.Millisecond {
 		t.Errorf("a read that never answers: %v in %v", err, took)
 	}
 	hold.Store(false)
@@ -877,19 +895,200 @@ func TestTheDeadlinesAreTheInsertsOwn(t *testing.T) {
 		t.Error("the held commit applied")
 	}
 
-	// AlreadyExists at the insert's deadline, of rows that are ours.
+	ignore.Store(true)
+	a, r = leasedRows("")
+	start = time.Now()
+	out = s.InsertLeasedAuthorization(ctx, a, r)
+	took = time.Since(start)
+	if out != Unknown || took > InsertDeadline+250*time.Millisecond {
+		t.Errorf("a commit that ignores the deadline: %v in %v", out, took)
+	}
+	ignore.Store(false)
+
+	// AlreadyExists just before the insert's deadline, of rows that are
+	// ours, and a read-back slower than what the insert has left.
 	a, r = leasedRows("")
 	if out := s.InsertLeasedAuthorization(ctx, a, r); out != Inserted {
 		t.Fatal(out)
 	}
 	late, _ := faultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
-		if method == commitMethod {
-			<-ctx.Done()
+		switch method {
+		case commitMethod:
+			if d, ok := ctx.Deadline(); ok {
+				time.Sleep(time.Until(d) - 150*time.Millisecond)
+			}
 			return status.Error(codes.AlreadyExists, "row already exists")
+		case streamingReadMethod:
+			time.Sleep(300 * time.Millisecond)
 		}
 		return invoke()
 	})
 	if out := late.InsertLeasedAuthorization(ctx, a, r); out != Landed {
-		t.Errorf("AlreadyExists as the deadline passes: %v, want landed", out)
+		t.Errorf("AlreadyExists just before the deadline: %v, want landed", out)
+	}
+}
+
+// TestALostAnswerThenARefusalIsNeverFailed: the first commit applies and
+// its answer is lost as an error after which the client re-runs the
+// transaction (Aborted, or Internal of a reset stream); the re-run's
+// BeginTransaction or Commit is then refused with each code that, after one
+// run, would be Failed or proves nothing about the first commit. The rows
+// landed, so the outcome must not refund: it is Unknown, and the caller's
+// read-back finds the row. (The review of #2019 reproduced Failed here.)
+func TestALostAnswerThenARefusalIsNeverFailed(t *testing.T) {
+	for _, lost := range []struct {
+		code    codes.Code
+		message string
+	}{{codes.Aborted, "lost"}, {codes.Internal, "stream terminated by RST_STREAM"}} {
+		for _, second := range []string{beginTransactionMethod, commitMethod} {
+			for _, code := range []codes.Code{codes.Unauthenticated, codes.PermissionDenied,
+				codes.FailedPrecondition, codes.NotFound, codes.InvalidArgument, codes.OutOfRange,
+				codes.Unimplemented} {
+				name := fmt.Sprintf("lost as %v, then %s %v", lost.code, second, code)
+				var committed atomic.Bool
+				s, _ := faultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
+					if method == commitMethod && !committed.Load() {
+						committed.Store(true)
+						if err := invoke(); err != nil {
+							return err
+						}
+						return status.Error(lost.code, lost.message)
+					}
+					if method == second && committed.Load() {
+						return status.Error(code, "refused")
+					}
+					return invoke()
+				})
+				a, r := leasedRows("")
+				out := s.InsertLeasedAuthorization(context.Background(), a, r)
+				applied := landed(t, a)
+				if !applied {
+					t.Errorf("%s: the first commit did not apply", name)
+				}
+				moneySafe(t, name, out, applied)
+				if out != Unknown {
+					t.Errorf("%s: %v, want unknown", name, out)
+				}
+				if mine, err := s.AuthorizationExists(context.Background(), a.AuthorizationID); err != nil || !mine {
+					t.Errorf("%s: the caller's read-back: %v %v", name, mine, err)
+				}
+			}
+		}
+	}
+}
+
+// TestAReSentCommitsRefusalIsUnknown: the first commit applies and its
+// answer is lost as Unavailable, so the client re-sends the commit of the
+// same transaction, and the re-send is refused: as a transaction Spanner
+// has forgotten (NotFound, FailedPrecondition) or as credentials refused.
+// No guarantee says the first did not apply, and it did: Unknown.
+func TestAReSentCommitsRefusalIsUnknown(t *testing.T) {
+	for _, code := range []codes.Code{codes.NotFound, codes.FailedPrecondition, codes.PermissionDenied,
+		codes.Unauthenticated} {
+		s, _ := faultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
+			if method != commitMethod {
+				return invoke()
+			}
+			if call == 1 {
+				if err := invoke(); err != nil {
+					return err
+				}
+				return status.Error(codes.Unavailable, "lost")
+			}
+			return status.Error(code, "transaction not found")
+		})
+		a, r := leasedRows("")
+		out := s.InsertLeasedAuthorization(context.Background(), a, r)
+		applied := landed(t, a)
+		moneySafe(t, code.String(), out, applied)
+		if !applied || out != Unknown {
+			t.Errorf("%v: %v, applied %v; want unknown, applied", code, out, applied)
+		}
+	}
+}
+
+// TestARowUnderOurIDNamingAnotherReservationIsNotOurs: a row already under
+// our authorization id that names another reservation is not ours: the
+// insert's AlreadyExists is ScopeTaken, not Landed, and nothing of ours
+// lands, nor can it.
+func TestARowUnderOurIDNamingAnotherReservationIsNotOurs(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	theirs, theirReservation := leasedRows("")
+	a, r := leasedRows("")
+	theirs.AuthorizationID, theirReservation.AuthorizationID = a.AuthorizationID, a.AuthorizationID
+	if err := pythonInsert(ctx, shared, theirs, theirReservation); err != nil {
+		t.Fatal(err)
+	}
+	if out := s.InsertLeasedAuthorization(ctx, a, r); out != ScopeTaken {
+		t.Fatalf("%v, want scope_taken", out)
+	}
+	if _, err := shared.Single().ReadRow(ctx, "tr_reservation", spanner.Key{r.ReservationID},
+		[]string{"reservation_id"}); !errors.Is(err, spanner.ErrRowNotFound) {
+		t.Errorf("our reservation: %v", err)
+	}
+	got, _, err := s.ReadAuthorizationForCompare(ctx, a.AuthorizationID)
+	if err != nil || got.Authorization.ReservationID.StringVal != theirReservation.ReservationID {
+		t.Errorf("the row under our id: %+v %v", got.Authorization, err)
+	}
+}
+
+// TestASessionAfterTheDeadlineSendsNothing: the client cannot make a
+// session until after the insert's deadline, so the insert is Failed at the
+// deadline with its transaction still waiting; when the session comes, the
+// transaction runs on a context that has ended, and nothing reaches Spanner
+// that could commit: no BeginTransaction or Commit on a live context, and
+// no row.
+func TestASessionAfterTheDeadlineSendsNothing(t *testing.T) {
+	var mu sync.Mutex
+	var sessionOK bool
+	var live []string
+	opened := time.Now()
+	s, _ := openFaultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
+		switch method {
+		case createSessionMethod:
+			if time.Since(opened) < InsertDeadline+time.Second {
+				return status.Error(codes.Unavailable, "no session yet")
+			}
+			err := invoke()
+			mu.Lock()
+			sessionOK = sessionOK || err == nil
+			mu.Unlock()
+			return err
+		case beginTransactionMethod, commitMethod:
+			if ctx.Err() == nil {
+				mu.Lock()
+				live = append(live, method)
+				mu.Unlock()
+			}
+		}
+		return invoke()
+	})
+	a, r := leasedRows("")
+	if out := s.InsertLeasedAuthorization(context.Background(), a, r); out != Failed {
+		t.Fatalf("%v, want failed", out)
+	}
+	deadline := time.Now().Add(40 * time.Second)
+	for {
+		mu.Lock()
+		ok := sessionOK
+		mu.Unlock()
+		if ok || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// What the waiting transaction does with its session, it does at once.
+	time.Sleep(time.Second)
+	mu.Lock()
+	defer mu.Unlock()
+	if !sessionOK {
+		t.Fatal("the client never made a session: the test saw nothing late")
+	}
+	if len(live) != 0 {
+		t.Errorf("sent on a live context after Failed: %v", live)
+	}
+	if landed(t, a) {
+		t.Error("the rows of a Failed insert landed")
 	}
 }
