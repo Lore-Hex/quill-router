@@ -1074,22 +1074,24 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     assert resp.status_code == 200
     assert resp.headers["cache-control"] == "private, no-store"
     assert resp.text.count(fake_raw_key) == 2, (
-        "the raw API key must appear in the direct reveal and the optional "
+        "the raw API key must appear in the direct reveal and the visible "
         "Claude Code / Codex message"
     )
-    assert 'id="onboarding-key"' in resp.text
-    assert 'aria-label="Copy API key"' in resp.text
-    agent_message = re.search(r'<pre id="setup-code".*?</pre>', resp.text, re.DOTALL)
+    assert 'data-copy-secret="welcome-api-key"' in resp.text
+    assert 'data-copy-template-target="welcome-agent-message"' in resp.text
+    assert 'data-secret-source="welcome-api-key"' in resp.text
+    assert 'id="welcome-agent-message" data-copy-lines' in resp.text
+    agent_message = re.search(r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert fake_raw_key in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert resp.text.index('id="onboarding-key"') < resp.text.index('id="setup-code"')
-    assert 'id="try-tab"' in resp.text
-    assert 'Uses your API credit' in resp.text
-    assert "data-rewards-key-card" in resp.text
+    assert resp.text.index('id="welcome-agent-message"') < resp.text.index('id="welcome-api-key"')
+    assert "Run my first API request" in resp.text
+    assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
+    assert "Claude Code, Codex" in resp.text
     assert "Python" in resp.text
     assert "JavaScript" in resp.text
-    assert "cURL" in resp.text
+    assert "curl" in resp.text
     assert "https://trust.trustedrouter.com" in resp.text
     assert "already been displayed" not in resp.text
     # One-shot: cookie must be cleared on the response so a refresh
@@ -1106,6 +1108,7 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     refreshed = client.get("/console/welcome?first=1")
     assert fake_raw_key not in refreshed.text
     assert "already been displayed" in refreshed.text
+    assert "data-rewards-key-card" not in resp.text
 
 
 def test_console_specific_styles_load_after_shared_charter_styles() -> None:
@@ -1132,7 +1135,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     # The page renders the fallback message; the cookie is left for a
     # later legitimate `?first=1` request to consume.
     assert fake_raw_key not in resp.text
-    assert 'data-key-onboarding' not in resp.text
+    assert 'id="welcome-agent-message"' not in resp.text
     assert "already been displayed" in resp.text
     # Cookie not cleared — the response should NOT include a delete-cookie
     # header for tr_pending_reveal.
@@ -1175,7 +1178,7 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert keys[0].limit_microdollars == 1
 
 
-def test_console_welcome_without_credits_keeps_key_and_funding_access(
+def test_console_welcome_without_credits_routes_to_funding(
     console_session: tuple[TestClient, str],
 ) -> None:
     client, _ = console_session
@@ -1188,12 +1191,14 @@ def test_console_welcome_without_credits_keeps_key_and_funding_access(
 
     assert response.status_code == 200
     assert fake_raw_key in response.text
-    assert 'id="onboarding-key"' in response.text
-    assert 'aria-label="Copy API key"' in response.text
+    assert 'data-copy-secret="welcome-api-key"' in response.text
+    assert "Add credits before the live check" in response.text
+    assert 'class="console-balance is-empty"' in response.text
+    assert "data-rewards-key-card" not in response.text
+    assert "data-key-onboarding" not in response.text
+    assert "key-list-panel" not in response.text
     assert 'href="/console/credits"' in response.text
     assert 'data-action="run-first-call"' not in response.text
-    credits = client.get("/console/credits")
-    assert 'class="console-balance is-empty"' in credits.text
 
 
 def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(

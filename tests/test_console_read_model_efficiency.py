@@ -505,3 +505,64 @@ def test_console_remains_available_when_header_balance_read_fails(
     assert response.status_code == 200
     assert 'class="console-balance' not in response.text
     assert "sensitive backend detail" not in response.text
+
+
+def test_welcome_preserves_key_reveal_when_balance_is_unavailable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    user = STORE.ensure_user("welcome-balance-unavailable@example.com")
+    token, _ = STORE.create_auth_session(
+        user_id=user.id, provider="google", label=user.email, ttl_seconds=3600, state="active",
+    )
+    client.cookies.set("tr_session", token)
+    client.cookies.set("tr_pending_reveal", "sk-tr-demo-not-a-real-key", domain="testserver.local", path="/console/welcome")
+    reads = 0
+
+    def unavailable(*args: object, **kwargs: object) -> None:
+        nonlocal reads
+        reads += 1
+        raise RuntimeError("sensitive backend detail")
+
+    def reject_exposure(*args: object, **kwargs: object) -> str:
+        raise AssertionError("an unavailable balance must not expose the first-call experiment")
+
+    monkeypatch.setattr("trusted_router.routes.console.welcome.onboarding_exposure", reject_exposure)
+    monkeypatch.setattr(InMemoryStore, "credit_money_snapshot", unavailable)
+    response = client.get("/console/welcome?first=1")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    assert reads == 1
+    assert "sk-tr-demo-not-a-real-key" in response.text
+    assert 'data-copy-template-target="welcome-agent-message"' in response.text
+    assert 'data-action="run-first-call"' not in response.text
+    assert "Add credits before the live check" not in response.text
+    assert 'class="console-balance' not in response.text
+    assert "sensitive backend detail" not in response.text + caplog.text
+    assert "acquisition.experiment_exposed" not in caplog.text
+    assert "already been displayed" in client.get("/console/welcome?first=1").text
+
+
+@pytest.mark.parametrize("usage,reserved,can_run", [(300_000, 0, False), (0, 300_000, False), (100_000, 100_000, True)])
+def test_welcome_uses_one_spendable_balance_for_header_and_first_call(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, usage: int, reserved: int, can_run: bool,
+) -> None:
+    user = STORE.ensure_user("welcome-spendable@example.com")
+    token, _ = STORE.create_auth_session(
+        user_id=user.id, provider="google", label=user.email, ttl_seconds=3600, state="active",
+    )
+    client.cookies.set("tr_session", token)
+    client.cookies.set("tr_pending_reveal", "sk-tr-demo-not-a-real-key", domain="testserver.local", path="/console/welcome")
+    reads = 0
+
+    def snapshot(*args: object, **kwargs: object) -> tuple[int, int, int]:
+        nonlocal reads
+        reads += 1
+        return (300_000, usage, reserved)
+
+    monkeypatch.setattr(InMemoryStore, "credit_money_snapshot", snapshot)
+    response = client.get("/console/welcome?first=1")
+    assert response.status_code == 200
+    assert reads == 1
+    assert ('data-action="run-first-call"' in response.text) is can_run
+    assert ('class="console-balance is-empty"' in response.text) is not can_run
+    assert ("Add credits before the live check" in response.text) is not can_run
