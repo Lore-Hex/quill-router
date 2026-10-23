@@ -184,7 +184,6 @@ header{position:sticky;top:0;z-index:30;height:var(--header);background:rgba(5,7
 .ev-sec{padding:24px 26px;border-bottom:1px solid var(--rule)}
 .ev-sec:last-child{border-bottom:0}
 
-.tbl-foot{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-top:20px;color:var(--t3);font-size:15px;flex-wrap:wrap}
 
 .qs{display:grid;grid-template-columns:minmax(0,.75fr) minmax(0,1.25fr);gap:64px;align-items:center}
 .qs h2{margin-bottom:18px}
@@ -252,6 +251,9 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
 .idx-row .d b{font-weight:550;font-size:18px}
 .idx-row .d small{display:block;font-size:15px;line-height:1.6;color:var(--t3);margin-top:6px}
 .idx-row .p{font:550 18px var(--mono);color:var(--t1);text-align:right}
+.idx .idx-change{display:block;margin-top:8px;font:400 13px/1.4 var(--mono);letter-spacing:0;color:var(--t3);white-space:nowrap}
+.idx-change.up{color:var(--up)}
+.idx-change.down{color:#F29B9B}
 
 /* Supplier onboarding status example. */
 .steps-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:72px;align-items:center}

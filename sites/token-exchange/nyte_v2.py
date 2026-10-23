@@ -5,7 +5,9 @@ import hashlib
 import html
 import json
 import re
+import runpy
 import shutil
+from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -13,16 +15,32 @@ HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "nyte-v2"
 
 def index_panel() -> str:
-    """Fixed illustrative prices, separate from the published dated index."""
-    examples = (
-        ("AAA", "Frontier", "Frontier research, the hardest reasoning", 1799),
-        ("A", "Advanced", "Coding agents, complex analysis", 890),
-        ("B", "Professional", "Production assistants, structured work", 166),
-        ("C", "Efficient", "Extraction, summarization, routing", 28),
+    """Use the same dated public snapshot as the full index page."""
+    data = runpy.run_path(str(HERE.parents[1] / "src/trusted_router/content/token_index.py"))
+    quotes = data["QUOTES"]
+    as_of = date.fromisoformat(data["AS_OF_ISO"]).strftime("%m/%d/%y")
+
+    def movement(code: str) -> str:
+        value = quotes[code]["change_7d"]
+        direction = "up" if value > 0.05 else "down" if value < -0.05 else "flat"
+        label = f"{value:+.1f}%" if abs(value) > 0.05 else "0.0%"
+        return f'<span class="idx-change {direction}" aria-label="{label} over seven days">{label} 7d</span>'
+
+    grades = (
+        ("AAA", "Frontier", "Frontier research, the hardest reasoning"),
+        ("A", "Advanced", "Coding agents, complex analysis"),
+        ("B", "Professional", "Production assistants, structured work"),
+        ("C", "Efficient", "Extraction, summarization, routing"),
     )
-    result = '<div class="idx" aria-label="Illustrative price comparison"><div class="idx-hd"><div><b>Illustrative price comparison</b><small>Example USD per billion tokens</small></div><span class="idx-value">$385</span></div>'
-    for code, name, description, value in examples:
-        result += f'<div class="idx-row"><span class="g">{code}</span><div class="d"><b>{name}</b><small>{description}</small></div><span class="p">${value:,}</span></div>'
+    result = (
+        '<div class="idx" aria-label="NYTE Token Index"><div class="idx-hd"><div>'
+        '<b>NYTE Token Index</b><small>USD per billion tokens · As of '
+        f'<time datetime="{html.escape(data["AS_OF_ISO"])}">{as_of}</time>'
+        f'</small></div><span class="idx-value">${quotes["ALL"]["value"]:,}{movement("ALL")}</span></div>'
+    )
+    for code, name, description in grades:
+        value = quotes[code]["value"]
+        result += f'<div class="idx-row"><span class="g">{code}</span><div class="d"><b>{name}</b><small>{description}</small></div><span class="p">${value:,}{movement(code)}</span></div>'
     return result + '</div>'
 
 def render_nyte(
