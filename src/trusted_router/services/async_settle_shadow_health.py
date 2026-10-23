@@ -469,10 +469,60 @@ def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> fl
     return (60 + 30 * (hashed % 3) if incumbent_present else 30 * (hashed % 8)) / 1000
 
 
+# Claim-row protocol (one row: CLAIM_KIND "local/publish"; one health row:
+# HEALTH_KIND "local/fleet"). The semantics the publisher must keep:
+#   S1 one winner per slot: a claim lands only over a claim for an earlier slot,
+#      and a non-owner never replaces a claim newer than slot-2 (claim()).
+#   S2 publication is fenced by the won claim of the same slot and boot, with
+#      strictly increasing slots and observations (publish()).
+#   S3 the observation lies in [boundary, boundary+250 ms] and after the claim.
+#   S4 liveness: when the holder stops publishing, some follower claims within a
+#      bounded number of slots.
+#   S5 an aborted or lost claim is never retried within its slot.
+# Only the holder may write the claim row every slot. Followers read it with a
+# lock-free snapshot and stand down; they open a read-write transaction only for
+# a takeover. Two rules keep that row from becoming hot (2026-10-23 incident:
+# 1,915 s/h of lock wait on it):
+#   * Durable incumbency (Service.is_incumbent): a boot whose publication is the
+#     installed fleet health for slot-1/slot-2 is the holder, even when its owner
+#     never accepted that reply. Before this, a rejected reply made the actual
+#     holder a follower; the claim then aged out every third slot and every
+#     contender raced read-write transactions on the row.
+#   * Spread takeover (takeover_due): once a follower has seen fleet health, a
+#     stale claim is taken over by at most a hash-selected quarter of followers
+#     per slot, widening by one quarter each slot, so a holder's death costs one
+#     small race instead of a fleet-wide one. Cold starts (no health seen, or no
+#     claim row) keep the original immediate behaviour.
+TAKEOVER_SPREAD = 4
+TAKEOVER_MIN_AGE = 3  # Fleet health protects its publisher for two slots.
+
+
+def takeover_rank(boot: str, claim_slot: int) -> int:
+    hashed = hashlib.sha256(f"takeover:{boot}:{claim_slot}".encode()).digest()[:8]
+    return int.from_bytes(hashed, "big") % TAKEOVER_SPREAD
+
+
+def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
+    """Warm followers take over a stale claim in hash-ranked waves, one per slot.
+
+    Every follower reads the same stale claim, so ranks are fixed for the whole
+    takeover. Rank r becomes eligible at age TAKEOVER_MIN_AGE+r; from age
+    TAKEOVER_MIN_AGE+TAKEOVER_SPREAD-1 every follower is eligible (S4).
+    """
+    if claim is None:
+        return True
+    return slot - claim["slot"] >= TAKEOVER_MIN_AGE + takeover_rank(boot, claim["slot"])
+
+
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
                   job: lifecycle.PublisherJob, claim_us: int, admission: Service,
-                  incumbent: bool = False, incumbent_present: bool = False) -> PublisherReply:
-    """Worker I/O only. All inputs are captured by the owner before submission."""
+                  incumbent: bool = False, incumbent_present: bool = False,
+                  warm: bool = False) -> PublisherReply:
+    """Worker I/O only. All inputs are captured by the owner before submission.
+
+    ``warm`` means this boot has installed fleet health at least once, so a
+    stale claim is a takeover (spread across slots), not a cold start.
+    """
     started = store.clock()
     slot = job.slot
     day = day_at(slot*SLOT_US)
@@ -546,7 +596,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 # Even without that cache, a claim newer than slot-2 forbids
                 # takeover. Followers pay zero Commit RPCs in steady state.
                 # Recheck in claim() too, since this snapshot can race a winner.
+                # A warm takeover waits for this boot's rank (takeover_due).
                 if (incumbent_present or current is not None and current["slot"] > slot-2
+                        or warm and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
                     outcome = "lost_claims"
                     return
@@ -628,6 +680,7 @@ class Service:
         self.admission_job: lifecycle.PublisherJob | None = None
         self.incumbent_slot: int | None = None
         self.seen_claim_slot: int | None = None
+        self.fleet_seen = False
         # Terminal epoch: every publisher job is issued in epoch zero. Once a
         # signal revokes it, no later owner transition can reopen admission.
         self.revocation_epoch = 0
@@ -676,7 +729,10 @@ class Service:
         self.ensure_day(int(store.wall()*1_000_000))
 
     def pin(self) -> tuple[Any, ...]:
-        return (self.settings.async_settle_shadow_policy, self.settings.async_settle_shadow_workspace_ids,
+        # The effective policy includes the canary expiry: when it passes, the
+        # pin changes, the generation is revoked and run() closes as opt_out.
+        return (self.settings.effective_async_settle_shadow_policy(self.store.wall()),
+                self.settings.async_settle_shadow_workspace_ids,
                 self.settings.async_settle_enabled, self.settings.async_settle_shadow_health_region,
                 self.settings.effective_serving_region)
 
@@ -690,7 +746,7 @@ class Service:
 
     def policy_enabled(self) -> bool:
         """Request-side pin check: owner lifecycle alone publishes revocations."""
-        return (self.settings.async_settle_shadow_policy == POLICY
+        return (self.settings.effective_async_settle_shadow_policy(self.store.wall()) == POLICY
                 and self.settings.async_settle_shadow_workspace_ids == self.workspaces
                 and bool(self.workspaces) and not self.settings.async_settle_enabled)
 
@@ -767,7 +823,8 @@ class Service:
         if job is None or job.slot != slot:
             return
         reply = publish_cycle(self.store, self.journal.boot, self.settings.effective_serving_region,
-            self.settings.source_revision, job, claim_us, self, self.is_incumbent(slot), self.has_incumbent(slot))
+            self.settings.source_revision, job, claim_us, self, self.is_incumbent(slot), self.has_incumbent(slot),
+            self.warm())
         self.publisher_reply(reply)
 
     def is_incumbent(self, slot: int) -> bool:
@@ -775,7 +832,26 @@ class Service:
         # without follower discovery or re-election. S1 and RPC budgets remain
         # unchanged; the storage fence still permits only one winner per slot.
         self.assert_owner()
-        return self.incumbent_slot in (slot-1, slot-2)
+        if self.incumbent_slot in (slot-1, slot-2):
+            return True
+        # Durable incumbency: the installed fleet health is this boot's own
+        # publication, which publish() wrote only under this boot's won claim
+        # (S2). The owner may have rejected that reply; storage still names the
+        # holder, and treating it as a follower let the claim age out.
+        body = self._installed_health_body()
+        return bool(body is not None and body.get("publisher_boot_id") == self.journal.boot
+                    and body.get("slot") in (slot-1, slot-2))
+
+    def _installed_health_body(self) -> dict[str, Any] | None:
+        health = self.observer.health
+        body = health.get("body") if isinstance(health, dict) else None
+        return body if isinstance(body, dict) else None
+
+    def warm(self) -> bool:
+        """This boot has installed fleet health, so a stale claim is a takeover."""
+        self.assert_owner()
+        self.fleet_seen = self.fleet_seen or self._installed_health_body() is not None
+        return self.fleet_seen
 
     def has_incumbent(self, slot: int) -> bool:
         """Recent health or a fresh claim snapshot protects the incumbent."""
@@ -1442,7 +1518,8 @@ class Service:
         if job is None or job.slot != slot:
             return
         args = (self.store, self.journal.boot, self.settings.effective_serving_region,
-                self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot))
+                self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot),
+                self.warm())
         if (self.publisher_worker is not None and not self.publisher_worker.cancelled()
                 and self.publisher_worker_active.is_set()):
             # A watchdog cannot stop a running thread. Keep the one-worker
@@ -1625,7 +1702,7 @@ class Service:
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
-    if (settings.async_settle_shadow_policy != POLICY or not settings.async_settle_shadow_workspace_ids
+    if (settings.effective_async_settle_shadow_policy() != POLICY or not settings.async_settle_shadow_workspace_ids
             or settings.async_settle_enabled or backend is None or not hasattr(backend, "_database")):
         return
     store = ObservationStore(backend._database)

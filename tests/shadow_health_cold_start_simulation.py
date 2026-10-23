@@ -525,7 +525,8 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
 
 
 def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=0.,
-                       post_ack_seconds=2., seed=73, clock_offsets_ms=None):
+                       post_ack_seconds=2., seed=73, clock_offsets_ms=None, n=8,
+                       reject_published=False, stall_from=None, patch=None):
     """Execute actual owner/worker admission, not a synthesized busy outcome.
 
     Clock offsets are server minus each boot's local wall in milliseconds;
@@ -537,27 +538,46 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     selected only to test the operator's allowed post-ack-busy hypothesis.
     Nothing forces a release: tick/submit/reply/watchdog decide all outcomes.
     No bookkeeping delay is injected into claims or their row locks.
+
+    ``n`` sizes the contender fleet. ``reject_published`` reproduces the
+    2026-10-23 canaries: every owner rejected its publisher reply
+    (trace_claim_observed_order) although the claim and publication committed.
+    ``stall_from`` is a slot offset after which the current publisher can no
+    longer reach Spanner (its session is unavailable), forcing a takeover.
+    ``patch(storage, publisher)`` edits the loaded module copies (controls).
     """
     from trusted_router.config import Settings
 
     storage, publisher = modules(ref)
+    if patch is not None:
+        patch(storage, publisher)
     clock = Clock()
     # Offset means server minus local wall time. A negative boot's local
     # boundary happens before the server boundary. The DB uses one common
     # server clock; local walls and boundary timers move together per boot.
-    offsets = tuple(value/1000 for value in (clock_offsets_ms or (0,)*8))
-    assert len(offsets) == 8
+    offsets = tuple(value/1000 for value in (clock_offsets_ms or (0,)*n))
+    assert len(offsets) == n
     clock.now = START*2. + min(offsets)
     publisher.sleep = clock.sleep
     db = Database(clock, storage, distributed=True)
-    boots = [f"boot-{i}" for i in range(8)]
+    boots = [f"boot-{i}" for i in range(n)]
     traces, services, futures, replies, releases = [], [], [], [], []
     stalls = random.Random(seed)  # noqa: S311 - reproducible simulation, not secrets
     held = []
+    stalled = set()
     original = publisher.publish_cycle
     def cycle(*args):
         clock.local.slot = args[4].slot
+        if stall_from is not None and not stalled and args[4].slot >= START+stall_from:
+            health = db.rows.get((HEALTH_KIND, "local/fleet"))
+            if health:
+                stalled.add(json.loads(health)["publisher_boot_id"])
+        if args[1] in stalled:
+            args[0].session_ready = lambda: False
         result = original(*args)
+        if reject_published and result.trace["outcome"] == "published":
+            # The owner's contract check fails exactly as in production.
+            result.trace["claim_at_ns"] = result.trace["observed_at_ns"]+1000
         replies.append(result)
         if result.trace["outcome"] == "published" and stalls.random() < post_ack_probability:
             held.append((args[1], args[4].slot))
@@ -592,7 +612,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         PUBLISHER_SLOT_TRACE(trace)
         traces.append(dict(trace))
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=n) as pool:
         for index, boot in enumerate(boots):
             clock.now = START*2. + offsets[index]
             store = storage.ObservationStore(db, clock=lambda: clock.now,
@@ -665,7 +685,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             svc.session_executor.shutdown(wait=True)
 
     rows = {(t["boot"], t["slot"]): t for t in traces}
-    assert len(rows) == len(traces) == slots*8
+    assert len(rows) == len(traces) == slots*n
     measured = [t for t in traces if t["slot"] >= START+10]
     winners = {t["slot"]: t["boot"] for t in traces if t["outcome"] == "published"}
     assert len(winners) == sum(t["outcome"] == "published" for t in traces)
@@ -675,6 +695,8 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     commits = {slot: sum(tx.final_rpc in ("commit", "empty_commit")
         and tx.slot == slot for tx in claim_txs) for slot in range(START+10, START+slots)}
     absent = no_incumbent & commits.keys()
+    durable = {tx.slot for tx in db.transactions if tx.final_rpc == "commit" and not tx.aborted
+               and any(kind == HEALTH_KIND for kind, _ in tx.mutations)}
     rejected = {slot for _, slot, reason in releases if reason == "invalid_publisher_reply"}
     after_rejected = {slot+1 for slot in rejected} & commits.keys()
     streaks, last, length = [], None, 0
@@ -720,10 +742,18 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             for slot in range(START+10, START+slots-59)),
         average_claim_transaction_ms=sum(tx.ended-tx.started for tx in claim_txs)*1000/max(1, len(claim_txs)),
         claim_lock_wait_seconds=sum(tx.lock_wait for tx in claim_txs), aborts=db.aborts,
-        published_claim_at_ms=median((t["claim_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published),
-        published_observed_at_ms=median((t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published),
-        published_ack_ms=median((t["ack_at_us"]-t["slot"]*2_000_000)/1000 for t in published),
+        published_claim_at_ms=median((t["claim_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published)
+            if published else None,
+        published_observed_at_ms=median((t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published)
+            if published else None,
+        published_ack_ms=median((t["ack_at_us"]-t["slot"]*2_000_000)/1000 for t in published)
+            if published else None,
         max_claim_contenders=max(sum(tx.slot == slot for tx in claim_txs) for slot in commits),
+        # Storage-side facts, independent of whether an owner accepted a reply.
+        claim_transactions_by_slot=[sum(tx.slot == slot for tx in claim_txs) for slot in sorted(commits)],
+        durable_publication_slots=sorted(durable),
+        durable_publication_rate=len(durable & commits.keys())/(slots-10),
+        stalled_boots=sorted(stalled),
         post_ack_stalls=len(held),
         released=sum(t["unknown_outcome"] and t["cycle_us"] == t["rpc_count"] == 0 for t in measured),
         release_reasons={reason: sum(t.get("release_reason") == reason for t in measured)

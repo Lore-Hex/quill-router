@@ -711,6 +711,7 @@ def test_rollout_opts_failed_shadow_canary_out_without_enabling_money_paths(
     assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
     assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
     assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"

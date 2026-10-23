@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime
 import hmac
 import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
@@ -27,6 +29,9 @@ from trusted_router.trust_ownership import (
 # Target names the synthetic monitor already assigns itself. A configured
 # entry reusing one would quietly merge two different measurements into one
 # status component, so it is rejected instead.
+# Longest a shadow canary expiry may lie ahead of process start-up: one UTC
+# evidence day plus a day of margin. A typo cannot leave the shadow on for weeks.
+SHADOW_CANARY_MAX_SECONDS = 48 * 3600
 _RESERVED_SYNTHETIC_TARGET_NAMES = frozenset({"canonical", "control-plane"})
 _GATEWAY_REGION_TARGET_NAME_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
 _GATEWAY_REGION_CONNECT_HOST_CHARACTERS = set("abcdefghijklmnopqrstuvwxyz0123456789-.")
@@ -968,6 +973,12 @@ class Settings(BaseSettings):
     async_settle_shadow_health_region: str = ""
     async_settle_shadow_workspaces: str = ""
     _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Runtime stop for a shadow v2 canary: an ISO-8601 instant with an explicit
+    # UTC offset. Checked on every request and owner tick, so a canary turns
+    # itself off without a deploy. Deployed environments treat an absent value
+    # as already expired; at most SHADOW_CANARY_MAX_SECONDS ahead of start-up.
+    async_settle_shadow_expires_at: str = ""
+    _async_settle_shadow_expiry: float | None = PrivateAttr(default=None)
     async_settle_pilot_workspaces: str = ""
     _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
@@ -1407,6 +1418,39 @@ class Settings(BaseSettings):
     @property
     def async_settle_shadow_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_shadow_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_shadow_expiry(self) -> Settings:
+        raw = self.async_settle_shadow_expires_at.strip()
+        if not raw:
+            self._async_settle_shadow_expiry = None
+            return self
+        try:
+            instant = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("async settle shadow expiry must be an ISO-8601 instant") from error
+        if instant.tzinfo is None:
+            raise ValueError("async settle shadow expiry needs an explicit UTC offset")
+        expiry = instant.timestamp()
+        if expiry - time.time() > SHADOW_CANARY_MAX_SECONDS:
+            raise ValueError("async settle shadow expiry exceeds the canary maximum")
+        self._async_settle_shadow_expiry = expiry
+        return self
+
+    def async_settle_shadow_live(self, now: float | None = None) -> bool:
+        """Whether shadow pins may act now. Monotone: once False, never True again.
+
+        Local and test environments without an expiry run unbounded; every
+        deployed environment needs an unexpired ``async_settle_shadow_expires_at``.
+        """
+        expiry = self._async_settle_shadow_expiry
+        if expiry is None:
+            return self.environment.lower() in {"local", "test"}
+        return (time.time() if now is None else now) < expiry
+
+    def effective_async_settle_shadow_policy(self, now: float | None = None) -> str:
+        """The shadow policy pin, or "" once the canary expiry has passed."""
+        return self.async_settle_shadow_policy if self.async_settle_shadow_live(now) else ""
 
     @model_validator(mode="after")
     def parse_fastpath_pilot(self) -> Settings:

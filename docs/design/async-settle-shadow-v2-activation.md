@@ -81,12 +81,20 @@ owner must consume/compare this schedule before removing its finite-window seam.
 | Router `TR_ASYNC_SETTLE_SHADOW_POLICY` | `shadow-v2` | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_WORKSPACES` | `162e441a-5d13-414f-92bd-7c6cd805faa3` | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION` | `us-central1` | empty |
+| Router `TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT` | ISO-8601 UTC instant, at most 48 h after start-up | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET` | `tr-async-settle-shadow-attachments-quill-cloud-proxy` | Same retained bucket |
 | Router `TR_ASYNC_SETTLE_ENABLED` | `false` | `false` |
 | Router `TR_ASYNC_SETTLE_PROTECTION` | `false` | `false` |
 | Router `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED` | `false` | `false` |
 | Enclave `TR_ASYNC_SETTLE_SHADOW` | `on` | `off` |
 | Enclave `TR_ASYNC_SETTLE_NEGOTIATE` | `off` | `off` |
+
+The expiry is the canary's stop. Every request and owner tick checks it; at the
+instant it passes, the publisher's generation is revoked, the service closes as
+`opt_out` and the request path goes dormant, with no deploy. Deployed
+environments treat an empty expiry as already expired, so policy pins without
+one do nothing. Leaving expired pins in `rollout.sh` is harmless, but clear
+them in the next change.
 
 Opt-out records must also prove actual close/result/export and retained losses;
 a pin patch alone does not prove closure. Never clear the attachment destination
