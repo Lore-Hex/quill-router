@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
@@ -467,5 +469,127 @@ func TestAnEdgeThatCannotListenFailsBeforeTheNodeJoins(t *testing.T) {
 	}
 	if _, err := edgeLn.Accept(); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("the supplied listener was not closed: %v", err)
+	}
+}
+
+// TestTheEdgeAdmitsThroughTheNodesFrontDoorOnceItIsMade: the edge is made
+// before the admission node and holds no admitter then; once the node has
+// started, the edge's admitter is the node's own front door, which answers
+// from the node's switch (no workspace is on, so Off) and checks what it is
+// asked (Invalid).
+func TestTheEdgeAdmitsThroughTheNodesFrontDoorOnceItIsMade(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ln, edgeLn := listen(t), listen(t)
+	cfg := config(ln)
+	cfg.Auditor = false
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: "http://python.invalid",
+		Token: "token-1"}
+	made := make(chan *edge.Edge, 1)
+	var before edge.Admitter
+	cfg.edgeMade = func(e *edge.Edge) {
+		before = e.Admitter()
+		made <- e
+	}
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	var e *edge.Edge
+	select {
+	case e = <-made:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the edge was not made")
+	}
+	if before != nil {
+		t.Fatalf("the edge held an admitter before the admission node started: %T", before)
+	}
+	var door *frontdoor.FrontDoor
+	eventually(t, 20*time.Second, "the edge's admitter", func() (bool, error) {
+		a := e.Admitter()
+		if a == nil {
+			return false, nil
+		}
+		d, ok := a.(*frontdoor.FrontDoor)
+		if !ok {
+			return false, fmt.Errorf("the edge's admitter is a %T, not the front door", a)
+		}
+		door = d
+		return true, nil
+	})
+	ctx := context.Background()
+	if got := door.Authorize(ctx, frontdoor.AuthorizeOf{Workspace: storetest.UniqueID("ws"), Request: "r", Estimate: 1,
+		Boot: []byte("boot")}); got.Status != frontdoor.Off {
+		t.Fatalf("a workspace the switch has off: %+v", got)
+	}
+	if got := door.Authorize(ctx, frontdoor.AuthorizeOf{}); got.Status != frontdoor.Invalid {
+		t.Fatalf("an empty authorize: %+v", got)
+	}
+	if got := door.Refund(ctx, frontdoor.RefundOf{Envelope: "not-an-envelope", Money: []byte("{}")}); got.Status !=
+		frontdoor.Invalid {
+		t.Fatalf("a refund of no envelope: %+v", got)
+	}
+}
+
+// TestAnEdgeWithNoAdmissionNodeHoldsNoAdmitter: the edge's parts alone, with
+// no admission node beside them (which Run refuses, so the parts run here
+// as Run runs them), serve with no admitter bound, and the edge answers
+// none rather than failing.
+func TestAnEdgeWithNoAdmissionNodeHoldsNoAdmitter(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ln, edgeLn := listen(t), listen(t)
+	defer ln.Close()
+	cfg := config(ln)
+	cfg.Admission = false
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: "http://python.invalid",
+		Token: "token-1"}
+	made := make(chan *edge.Edge, 1)
+	cfg.edgeMade = func(e *edge.Edge) { made <- e }
+	s, err := store.New(shared, cfg.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan *parts, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- lifecycle(ctx, func(p *parts) {
+			if err := p.edge(cfg, s); err != nil {
+				p.startFailed(ctx, err)
+			}
+			started <- p
+		})
+	}()
+	p := <-started
+	<-p.armed
+	var e *edge.Edge
+	select {
+	case e = <-made:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the edge was not made")
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	eventually(t, 20*time.Second, "the edge serving", func() (bool, error) {
+		resp, err := client.Get("http://" + edgeLn.Addr().String() + "/internal/gateway/edge/health")
+		if err != nil {
+			return false, nil
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK, nil
+	})
+	if a := e.Admitter(); a != nil {
+		t.Fatalf("an edge with no admission node holds a %T", a)
+	}
+	if a := p.admitter.Load(); a != nil {
+		t.Fatalf("the process's holder holds a %T", a)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the process did not stop")
 	}
 }
