@@ -196,6 +196,11 @@ class StageDPolicyResolver:
         self._state_lock = threading.Lock()
         self._worker_lock = threading.Lock()
         self._worker: threading.Thread | None = None
+        # Serializes refresh_now() callers, kick's worker among them, so two
+        # refreshes never overlap and an older verified policy cannot be
+        # assigned after a newer one. Separate from _worker_lock, which
+        # kick() takes on the request path and must never wait on a fetch.
+        self._refresh_lock = threading.Lock()
         self._next_refresh_at = 0.0
         self._policy: StageDPolicy | None = None
 
@@ -234,14 +239,26 @@ class StageDPolicyResolver:
                 self._monotonic() + self._settings.stage_d_policy_refresh_seconds
             )
             self._worker = threading.Thread(
-                target=self.refresh,
+                target=self.refresh_now,
                 name="stage-d-policy-refresh",
                 daemon=True,
             )
             self._worker.start()
 
+    def refresh_now(self) -> bool:
+        """``refresh()``, serialized with every other ``refresh_now()``: kick's
+        background worker and a caller that needs the set current now (the
+        fast path's edge policy publisher). A caller waits for an in-flight
+        refresh to finish, then fetches again."""
+
+        with self._refresh_lock:
+            return self.refresh()
+
     def refresh(self) -> bool:
-        """Fetch, verify, validate, and watermark one policy publication."""
+        """Fetch, verify, validate, and watermark one policy publication.
+
+        Not serialized: call ``refresh_now()`` where another refresh may run.
+        """
 
         last_error: Exception | None = None
         for release_url in self._release_urls():

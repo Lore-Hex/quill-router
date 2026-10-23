@@ -466,7 +466,9 @@ sorted and unique.
 
 **Cache and refresh.** Signing runs in one background worker at a time,
 never on a poll. The first poll at or after the cached copy's `refresh_at`
-(or with no copy) starts it; it calls `StageDPolicyResolver.refresh()`
+(or with no copy) starts it; it calls `StageDPolicyResolver.refresh_now()`
+(serialized with the resolver's own kick worker, so refreshes never
+overlap)
 (two HTTPS fetches with 5 s timeouts per release URL, a Sigstore bundle
 check, the watermark: at most four a minute, only on an instance the edge
 polls), reads the other facts afresh and signs, with `issued_at` the clock
@@ -476,7 +478,9 @@ served the cached copy while it is within its `not_after`, else 503 at
 once, so none holds a threadpool token authorize shares while a refresh
 runs. A failed refresh signs nothing (no new worker for 5 s); the cached
 copy is served until `not_after`, then polls answer 503
-`digest-policy-unavailable` and the edge passes everything. With no
+`digest-policy-unavailable` and the edge passes everything. A worker still
+running after 30 s is abandoned (logged; its late outcome is discarded) and
+the next poll starts a fresh one. With no
 release URL configured there is nothing to refresh and the set is the
 override alone, as in authorize. No worker process: every fact is this
 process's live state and signing a few hundred bytes costs well under a

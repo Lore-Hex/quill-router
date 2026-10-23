@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -106,6 +107,9 @@ class Resolver:
         if self.on_refresh is not None:
             self.on_refresh()
         return self.refresh_ok
+
+    def refresh_now(self) -> bool:
+        return self.refresh()
 
     def accepted_image_digests(self) -> frozenset[str]:
         return self.digests
@@ -596,6 +600,106 @@ def test_a_hanging_refresh_never_delays_a_poll_and_runs_once(key) -> None:
     # Positive control: the background signing landed and is now served.
     later = publisher.current()
     assert later is not first and later.issued_at == first.refresh_at
+
+
+def test_a_hung_worker_is_abandoned_after_its_deadline(key, caplog) -> None:
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    resolver = Resolver(frozenset({DIGEST_A}))
+    hang = {"on": True}
+
+    def maybe_hang() -> None:
+        entered.set()
+        if hang["on"]:
+            release.wait(60)
+
+    resolver.on_refresh = maybe_hang
+    settings = _settings(key)
+    ticks = Clock(1_000)
+    publisher = build_publisher(settings, clock=Clock(T0), resolver=lambda: resolver,
+                                typed_store=lambda: None, monotonic=ticks)
+    caplog.set_level(logging.WARNING)
+    try:
+        with pytest.raises(PolicyUnavailable) as busy:
+            publisher.current()
+        assert busy.value.status == "compiling" and entered.wait(30)
+        # Within the deadline: still in flight, no second worker.
+        ticks.now += int(publisher_module.WORKER_DEADLINE_SECONDS)
+        with pytest.raises(PolicyUnavailable):
+            publisher.current()
+        assert (publisher.attempts, publisher.abandoned) == (1, 0)
+        # Past it: the hung worker is abandoned and a fresh one starts.
+        hang["on"] = False
+        ticks.now += 1
+        try:
+            publisher.current()
+        except PolicyUnavailable as exc:
+            assert exc.status == "compiling"
+        assert (publisher.attempts, publisher.abandoned) == (2, 1)
+        assert "edge policy signing worker abandoned after 30 s" in [
+            r.getMessage() for r in caplog.records]
+        assert publisher.idle(30)
+        fresh = publisher.current()
+        assert publisher.signatures == 1
+    finally:
+        release.set()
+    # The abandoned worker finishes late: its outcome is discarded.
+    deadline = time.monotonic() + 30
+    while publisher.signatures < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert publisher.signatures == 2
+    time.sleep(0.05)
+    assert publisher.current() is fresh
+
+
+def test_resolver_refreshes_are_serialized_with_kicks_worker(key) -> None:
+    """refresh_now() waits for an in-flight kick refresh: two refreshes never
+    overlap, so an older verified policy cannot land after a newer one."""
+    import threading
+
+    from trusted_router.stage_d_policy import StageDPolicyResolver
+
+    settings = _settings(key)
+    resolver = StageDPolicyResolver(settings, object(), verifier=object(),  # type: ignore[arg-type]
+                                    release_urls=["https://release.invalid/trust"])
+    gate, entered = threading.Event(), threading.Semaphore(0)
+    state = {"active": 0, "peak": 0, "calls": 0}
+    lock = threading.Lock()
+
+    def slow_refresh() -> bool:
+        with lock:
+            state["active"] += 1
+            state["calls"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        entered.release()
+        gate.wait(30)
+        with lock:
+            state["active"] -= 1
+        return True
+
+    resolver.refresh = slow_refresh  # type: ignore[method-assign]
+    resolver.kick()
+    assert entered.acquire(timeout=30)
+    publisher_refresh = threading.Thread(target=resolver.refresh_now)
+    publisher_refresh.start()
+    # It waits on the kick worker's refresh rather than overlapping it.
+    assert not entered.acquire(timeout=0.3)
+    assert state["calls"] == 1
+    gate.set()
+    publisher_refresh.join(30)
+    assert state["calls"] == 2 and state["peak"] == 1
+    # Positive control: the unserialized refresh() would overlap.
+    gate.clear()
+    state.update(active=0, peak=0, calls=0)
+    overlapping = [threading.Thread(target=resolver.refresh) for _ in range(2)]
+    for thread in overlapping:
+        thread.start()
+    assert entered.acquire(timeout=30) and entered.acquire(timeout=30)
+    gate.set()
+    for thread in overlapping:
+        thread.join(30)
+    assert state["peak"] == 2
 
 
 def test_one_signature_per_refresh_interval_served_until_refresh_at(key) -> None:

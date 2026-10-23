@@ -34,7 +34,7 @@ store, its catalog), which is the point, and the body is a few hundred
 bytes, so building and signing it costs well under a millisecond.
 
 Except for ``accepted_image_digests``: before each signing the publisher
-calls ``StageDPolicyResolver.refresh()`` synchronously (two HTTPS fetches
+calls ``StageDPolicyResolver.refresh_now()`` (two HTTPS fetches
 with 5 s timeouts, a Sigstore bundle check and the watermark), so a body's
 set is the release's at ``issued_at`` (decide contract decision 17). That
 is at most four refreshes a minute, and only on an instance the edge polls.
@@ -94,6 +94,11 @@ ERROR_RETRY_SECONDS = 5
 # A poll that finds no valid copy while the background signing is in flight
 # comes back this soon.
 COMPILING_RETRY_SECONDS = 2
+# A signing worker running longer than this is abandoned: polls stop
+# reporting it as in flight and the next one starts a fresh worker. Its late
+# outcome, if any, is discarded. Above one release URL's worst case (two
+# fetches with 5 s timeouts), below the body's 60 s lifetime.
+WORKER_DEADLINE_SECONDS = 30.0
 
 
 class DigestPolicyUnavailable(Exception):
@@ -174,7 +179,7 @@ def refreshed_accepted_image_digests(
     resolver, or no release to refresh from, the override alone."""
     accepted: frozenset[str] = frozenset()
     if resolver is not None and resolver.release_configured():
-        if not resolver.refresh():
+        if not resolver.refresh_now():
             raise DigestPolicyUnavailable
         accepted = resolver.accepted_image_digests()
     return accepted | settings.stage_d_accepted_gcp_digests
@@ -219,14 +224,19 @@ class EdgePolicyPublisher:
         self, *, signer: EdgePolicySigner, plane: BaseModel,
         facts: Callable[[], dict[str, Any]], clock: Callable[[], float] = time.time,
         spawn: Callable[[Callable[[], None]], Any] = _spawn_thread,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._signer, self._plane, self._facts, self._clock = signer, plane, facts, clock
-        self._spawn = spawn
+        self._spawn, self._monotonic = spawn, monotonic
         # Re-entrant: an inline worker (tests) records its outcome under the
         # lock the poll that started it holds.
         self._lock = threading.RLock()
         self._cached: Publication | None = None
         self._worker: Any = None
+        self._worker_started = 0.0
+        # Bumped per worker: only the latest worker's outcome is recorded.
+        self._generation = 0
+        self.abandoned = 0
         # After a failure, (status, until): no new worker before then.
         self._failed: tuple[str, int] = ("", 0)
         self.signatures = 0
@@ -261,15 +271,31 @@ class EdgePolicyPublisher:
 
     def _in_flight(self) -> bool:
         worker = self._worker
-        return worker is not None and bool(worker.is_alive())
+        if worker is None or not worker.is_alive():
+            return False
+        if self._monotonic() - self._worker_started <= WORKER_DEADLINE_SECONDS:
+            return True
+        with self._lock:
+            if self._worker is worker:
+                # Hung (a fetch past its timeouts, a stuck verifier): abandon
+                # it. The daemon thread is left to finish or not; its outcome
+                # carries a stale generation and is discarded.
+                self._worker, self._generation = None, self._generation + 1
+                self.abandoned += 1
+                log.warning("edge policy signing worker abandoned after %d s",
+                            int(WORKER_DEADLINE_SECONDS))
+        return False
 
     def _start_locked(self, now: int) -> None:
         if self._in_flight() or now < self._failed[1]:
             return
         self.attempts += 1
-        self._worker = self._spawn(self._sign_in_background)
+        self._generation += 1
+        generation = self._generation
+        self._worker_started = self._monotonic()
+        self._worker = self._spawn(lambda: self._sign_in_background(generation))
 
-    def _sign_in_background(self) -> None:
+    def _sign_in_background(self, generation: int) -> None:
         try:
             # The facts first: the Stage D refresh is a network round trip,
             # and issued_at is the clock after it.
@@ -284,10 +310,13 @@ class EdgePolicyPublisher:
             status = "policy-error"
         else:
             with self._lock:
-                self._cached, self._failed = publication, ("", 0)
+                if generation == self._generation:
+                    self._cached, self._failed = publication, ("", 0)
             return
         now = int(self._clock())
         with self._lock:
+            if generation != self._generation:
+                return
             self._failed = (status, now + ERROR_RETRY_SECONDS)
         log.warning("edge policy unavailable: %s", status)
 
@@ -327,6 +356,7 @@ def build_publisher(
     facts: Callable[[], dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.time,
     spawn: Callable[[Callable[[], None]], Any] = _spawn_thread,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> EdgePolicyPublisher:
     """The publisher for this process; raises ValueError when the routing key is unusable.
 
@@ -336,7 +366,7 @@ def build_publisher(
     return EdgePolicyPublisher(
         signer=signer, plane=plane_of(settings),
         facts=facts or LiveFacts(settings, resolver=resolver, typed_store=typed_store),
-        clock=clock, spawn=spawn,
+        clock=clock, spawn=spawn, monotonic=monotonic,
     )
 
 

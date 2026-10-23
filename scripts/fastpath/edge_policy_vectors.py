@@ -16,11 +16,11 @@ script writes now.
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import importlib.util
 import json
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -47,7 +47,7 @@ OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_v1.body.json"
 OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_v1.manifest.json"
 GENERATOR = "scripts/fastpath/edge_policy_vectors.py"
 
-ISSUED_AT = int(datetime(2026, 10, 19, tzinfo=UTC).timestamp())
+ISSUED_AT = calendar.timegm((2026, 10, 19, 0, 0, 0))  # 2026-10-19T00:00Z
 
 
 def _routing_vectors() -> ModuleType:
