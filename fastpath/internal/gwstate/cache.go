@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,8 +49,19 @@ type CacheConfig struct {
 	// NegativeFor no more than MaxAge.
 	RefreshEvery, UsedWithin, MaxAge, NegativeFor time.Duration
 	// ReadTimeout bounds one read; Reads how many run at once. A miss
-	// that finds every read busy is not filled (Counters.Dropped); the
-	// refresh waits for one.
+	// that finds every read busy is not filled (Counters.Dropped). The
+	// refresh takes at most three quarters of the reads (one at least),
+	// waiting for one when they are busy, so a quarter is always left to
+	// the misses.
+	//
+	// What the defaults hold fresh: a refresh pass makes about 24 reads at
+	// once, so with a strong read's 5 to 10 ms it reads some 2,400 to
+	// 4,800 entries a second, 12,000 to 24,000 in a pass of 5 s, and keeps
+	// some 36,000 to 72,000 keys and credit entries in use within 15 s.
+	// Run ends each pass at RefreshEvery, and every pass reads the entries
+	// read longest ago first; past that capacity the entries it does not
+	// reach go stale and pass, and a lookup of one reads it with the
+	// misses' reads (Counters.Unrefreshed counts the reads a pass gave up).
 	ReadTimeout time.Duration
 	Reads       int
 }
@@ -108,6 +120,17 @@ type Read struct {
 	CreditReadAt time.Time
 }
 
+// Usable is whether the cache lets the request be decided: the key fresh
+// and found, its facts and its workspace's eligible, and its workspace's
+// credit entry fresh with complete rows. It is necessary, not sufficient:
+// the key's expiry at the request's instant (KeyFacts.At) and what the
+// credit rows say (CreditState's pause, latch, debt, tier and refusal) are
+// the gate's to read.
+func (r Read) Usable() bool {
+	return r.Key == Fresh && r.Found && r.Facts.Key.Eligible && r.Facts.Workspace.Eligible &&
+		r.Credit == Fresh && r.CreditRows
+}
+
 // Counters are a cache's counts since it was made.
 type Counters struct {
 	// Lookups of keys and of credit entries, by what they found. KeyMissing
@@ -120,8 +143,9 @@ type Counters struct {
 	// answer an eviction made while they ran discarded.
 	Reads, ReadFailures, Dropped, Voided int64
 	// Evictions by Evict and EvictWorkspace; Displaced the keys the size
-	// bound dropped.
-	Evictions, Displaced int64
+	// bound dropped; Unrefreshed the reads a refresh pass gave up when its
+	// context ended.
+	Evictions, Displaced, Unrefreshed int64
 }
 
 // Cache holds the facts of the keys the edge has seen, by lookup hash, and
@@ -137,11 +161,12 @@ type Counters struct {
 // read already running when it does is discarded, as it may have read
 // before the change Python saw.
 type Cache struct {
-	cfg   CacheConfig
-	reads chan struct{}
-	ctx   context.Context
-	stop  context.CancelFunc
-	wg    sync.WaitGroup
+	cfg CacheConfig
+	// reads are every read's turn; refreshes the refresh's share of them.
+	reads, refreshes chan struct{}
+	ctx              context.Context
+	stop             context.CancelFunc
+	wg               sync.WaitGroup
 
 	mu sync.Mutex
 	// keys are held by lookup hash; order their uses, the most recent at
@@ -155,7 +180,7 @@ type Cache struct {
 	credits map[string]*creditEntry
 	members map[string]map[string]struct{}
 	// keyReads and creditReads are the reads running, one per lookup hash
-	// or workspace.
+	// or workspace; a refresh registers a read when it begins it.
 	keyReads    map[string]*flight
 	creditReads map[string]*flight
 
@@ -163,6 +188,7 @@ type Cache struct {
 	creditHits, creditCold, creditStale    atomic.Int64
 	readCount, readFailures, dropped       atomic.Int64
 	voided, evictions, displaced           atomic.Int64
+	unrefreshed                            atomic.Int64
 }
 
 type keyEntry struct {
@@ -199,9 +225,12 @@ type creditEntry struct {
 
 // flight is a read running. Void is set when an eviction discards its
 // answer; refresh is a read of an entry held, whose answer is dropped if the
-// entry has gone meanwhile.
+// entry has gone meanwhile. Evicted are the workspaces evicted while a key's
+// read ran: its answer is discarded if it names one of them, as it may have
+// read before the change Python saw.
 type flight struct {
 	void, refresh bool
+	evicted       []string
 }
 
 // NewCache makes a cache; Run refreshes it, and Close stops its reads.
@@ -237,7 +266,8 @@ func NewCache(cfg CacheConfig) (*Cache, error) {
 		return nil, errors.New("gwstate: a cache's maximum age must be past its refresh interval and its negative time")
 	}
 	ctx, stop := context.WithCancel(context.Background())
-	return &Cache{cfg: cfg, reads: make(chan struct{}, cfg.Reads), ctx: ctx, stop: stop,
+	return &Cache{cfg: cfg, reads: make(chan struct{}, cfg.Reads),
+		refreshes: make(chan struct{}, max(1, cfg.Reads-cfg.Reads/4)), ctx: ctx, stop: stop,
 		keys: map[string]*keyEntry{}, order: list.New(), credits: map[string]*creditEntry{},
 		members: map[string]map[string]struct{}{}, keyReads: map[string]*flight{},
 		creditReads: map[string]*flight{}}, nil
@@ -297,6 +327,9 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 		c.startCredit(ws)
 		return r
 	}
+	// Whether the entry is fresh is judged here, at now, and only here:
+	// startCredit reads it unless a read is running, whatever the cache's
+	// own clock says.
 	if now.After(ce.usedAt) {
 		ce.usedAt = now
 	}
@@ -332,9 +365,9 @@ func (c *Cache) Evict(lookupHash string) {
 }
 
 // EvictWorkspace drops a workspace's credit entry and every key held whose
-// facts name it. Every read running of a key, of whatever workspace, is
-// discarded, as its workspace is not known until it answers, and the
-// workspace's credit read too.
+// facts name it. The workspace's credit read running is discarded, and so
+// is any read of a key running now whose answer names the workspace (its
+// workspace is not known until it answers).
 func (c *Cache) EvictWorkspace(workspace string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -351,8 +384,8 @@ func (c *Cache) evictWorkspace(workspace string) {
 	for hash := range c.members[workspace] {
 		c.remove(c.keys[hash])
 	}
-	for hash := range c.keyReads {
-		c.voidKey(hash)
+	for _, f := range c.keyReads {
+		f.evicted = append(f.evicted, workspace)
 	}
 }
 
@@ -408,9 +441,9 @@ func (c *Cache) startKey(lookupHash string) {
 	go func() {
 		defer c.wg.Done()
 		defer c.releaseRead()
-		if ws := c.readKey(lookupHash, f); ws != "" {
+		if ws, at := c.readKey(lookupHash, f); ws != "" {
 			c.mu.Lock()
-			cf := c.beginCredit(ws)
+			cf := c.beginCredit(ws, at)
 			c.mu.Unlock()
 			if cf != nil {
 				c.readCredit(ws, cf)
@@ -419,13 +452,15 @@ func (c *Cache) startKey(lookupHash string) {
 	}()
 }
 
-// startCredit starts a read of a workspace's credit rows unless one is
-// running or every read is busy; c.mu is held.
+// startCredit starts a read of a workspace's credit rows, which a lookup
+// found cold or stale, unless one is running or every read is busy; c.mu is
+// held.
 func (c *Cache) startCredit(workspace string) {
 	if c.creditReads[workspace] != nil || !c.takeRead() {
 		return
 	}
-	f := c.beginCredit(workspace)
+	f := &flight{}
+	c.creditReads[workspace] = f
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -434,14 +469,15 @@ func (c *Cache) startCredit(workspace string) {
 	}()
 }
 
-// beginCredit registers a read of a workspace's credit rows unless one is
-// running or the entry is fresh; c.mu is held.
-func (c *Cache) beginCredit(workspace string) *flight {
+// beginCredit registers a read of a workspace's credit rows, after its
+// key's read that began at, unless one is running or the entry is fresh
+// at; c.mu is held.
+func (c *Cache) beginCredit(workspace string, at time.Time) *flight {
 	if c.creditReads[workspace] != nil {
 		return nil
 	}
 	if ce := c.credits[workspace]; ce != nil {
-		age := c.cfg.Clock().Sub(ce.readAt)
+		age := at.Sub(ce.readAt)
 		if age <= c.cfg.MaxAge && (ce.rows || age <= c.cfg.NegativeFor) {
 			return nil
 		}
@@ -464,9 +500,10 @@ func (c *Cache) takeRead() bool {
 func (c *Cache) releaseRead() { <-c.reads }
 
 // readKey reads a key and holds what it finds, unless the read was voided,
-// failed, or refreshed an entry gone meanwhile. It returns the workspace
-// whose credit entry the key's facts need, if it held them.
-func (c *Cache) readKey(lookupHash string, f *flight) string {
+// failed, named a workspace evicted while it ran, or refreshed an entry
+// gone meanwhile. It returns the workspace whose credit entry the key's
+// facts need, if it held them, and when the read began.
+func (c *Cache) readKey(lookupHash string, f *flight) (string, time.Time) {
 	at := c.cfg.Clock()
 	ctx, cancel := context.WithTimeout(c.ctx, c.cfg.ReadTimeout)
 	kc, found, err := c.cfg.Reader.ReadKeyContext(ctx, lookupHash)
@@ -477,22 +514,23 @@ func (c *Cache) readKey(lookupHash string, f *flight) string {
 	if c.keyReads[lookupHash] == f {
 		delete(c.keyReads, lookupHash)
 	}
-	switch {
-	case f.void:
-		c.voided.Add(1)
-		return ""
-	case err != nil:
-		c.readFailures.Add(1)
-		return ""
-	}
 	var facts Facts
 	if found {
 		facts = FromContext(kc)
 	}
+	switch {
+	case f.void || found && (slices.Contains(f.evicted, facts.Key.WorkspaceID) ||
+		slices.Contains(f.evicted, kc.RangeWorkspaceID)):
+		c.voided.Add(1)
+		return "", at
+	case err != nil:
+		c.readFailures.Add(1)
+		return "", at
+	}
 	e := c.keys[lookupHash]
 	if e == nil {
 		if f.refresh {
-			return ""
+			return "", at
 		}
 		if len(c.keys) >= c.cfg.Size {
 			c.remove(c.order.Back().Value.(*keyEntry))
@@ -508,7 +546,7 @@ func (c *Cache) readKey(lookupHash string, f *flight) string {
 		c.unmember(lookupHash, was)
 		c.member(lookupHash, ws)
 	}
-	return e.credit()
+	return e.credit(), at
 }
 
 // readCredit reads a workspace's credit rows and holds what they say,
@@ -549,7 +587,9 @@ func (c *Cache) readCredit(workspace string, f *flight) {
 	ce.rows, ce.state, ce.readAt = rows, state, at
 }
 
-// Run refreshes the cache every RefreshEvery until ctx ends.
+// Run refreshes the cache every RefreshEvery until ctx ends, each pass
+// given up at RefreshEvery so the next begins with the entries read longest
+// ago.
 func (c *Cache) Run(ctx context.Context) {
 	tick := time.NewTicker(c.cfg.RefreshEvery)
 	defer tick.Stop()
@@ -558,15 +598,24 @@ func (c *Cache) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			c.Refresh(ctx)
+			pass, cancel := context.WithTimeout(ctx, c.cfg.RefreshEvery)
+			c.Refresh(pass)
+			cancel()
 		}
 	}
 }
 
 // Refresh reads again, strongly, every key and credit entry used within
 // UsedWithin and not read within half of RefreshEvery (a miss just filled),
-// and returns when the reads have answered. A negative entry is not
+// those read longest ago first, and returns when the reads have answered or
+// ctx ends; the reads not begun then are given up. A negative entry is not
 // refreshed: it lapses after NegativeFor, and the next lookup reads again.
+//
+// The entries due are found under the lock by walking the uses from the
+// most recent, to the first unused for UsedWithin and RefreshEvery more (a
+// request's instant may trail another's by the decide budget, never by
+// seconds); each read is registered when it begins, so a lookup is never
+// kept waiting for a read the pass has yet to make.
 func (c *Cache) Refresh(ctx context.Context) {
 	now := c.cfg.Clock()
 	due := func(readAt, usedAt time.Time) bool {
@@ -574,57 +623,86 @@ func (c *Cache) Refresh(ctx context.Context) {
 	}
 	type job struct {
 		key, workspace string
-		f              *flight
+		readAt         time.Time
 	}
 	var jobs []job
+	workspaces := map[string]bool{}
 	c.mu.Lock()
-	for hash, e := range c.keys {
-		if e.found && c.keyReads[hash] == nil && due(e.readAt, e.usedAt) {
-			f := &flight{refresh: true}
-			c.keyReads[hash] = f
-			jobs = append(jobs, job{key: hash, f: f})
+	for el := c.order.Front(); el != nil; el = el.Next() {
+		e := el.Value.(*keyEntry)
+		if now.Sub(e.usedAt) > c.cfg.UsedWithin+c.cfg.RefreshEvery {
+			break
 		}
-	}
-	for ws, ce := range c.credits {
-		if ce.rows && c.creditReads[ws] == nil && due(ce.readAt, ce.usedAt) {
-			f := &flight{refresh: true}
-			c.creditReads[ws] = f
-			jobs = append(jobs, job{workspace: ws, f: f})
+		if e.found && due(e.readAt, e.usedAt) {
+			jobs = append(jobs, job{key: e.lookupHash, readAt: e.readAt})
+		}
+		if ws := e.credit(); ws != "" && !workspaces[ws] {
+			workspaces[ws] = true
+			if ce := c.credits[ws]; ce != nil && ce.rows && due(ce.readAt, ce.usedAt) {
+				jobs = append(jobs, job{workspace: ws, readAt: ce.readAt})
+			}
 		}
 	}
 	c.mu.Unlock()
+	slices.SortStableFunc(jobs, func(a, b job) int { return a.readAt.Compare(b.readAt) })
 	var pass sync.WaitGroup
+	defer pass.Wait()
 	for i, j := range jobs {
-		select {
-		case c.reads <- struct{}{}:
-		case <-ctx.Done():
-			// The reads not begun are given up, so a lookup may start them.
-			c.mu.Lock()
-			for _, j := range jobs[i:] {
-				if j.key != "" && c.keyReads[j.key] == j.f {
-					delete(c.keyReads, j.key)
-				} else if j.workspace != "" && c.creditReads[j.workspace] == j.f {
-					delete(c.creditReads, j.workspace)
-				}
-			}
-			c.mu.Unlock()
-			pass.Wait()
+		if !c.takeRefresh(ctx) {
+			c.unrefreshed.Add(int64(len(jobs) - i))
 			return
+		}
+		c.mu.Lock()
+		f := &flight{refresh: true}
+		switch {
+		case j.key != "" && c.keyReads[j.key] == nil && c.keys[j.key] != nil:
+			c.keyReads[j.key] = f
+		case j.workspace != "" && c.creditReads[j.workspace] == nil && c.credits[j.workspace] != nil:
+			c.creditReads[j.workspace] = f
+		default:
+			// Read meanwhile by a lookup, or gone.
+			f = nil
+		}
+		c.mu.Unlock()
+		if f == nil {
+			c.releaseRefresh()
+			continue
 		}
 		pass.Add(1)
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
 			defer pass.Done()
-			defer c.releaseRead()
+			defer c.releaseRefresh()
 			if j.key != "" {
-				c.readKey(j.key, j.f)
+				c.readKey(j.key, f)
 			} else {
-				c.readCredit(j.workspace, j.f)
+				c.readCredit(j.workspace, f)
 			}
 		}()
 	}
-	pass.Wait()
+}
+
+// takeRefresh waits for a turn of the refresh's share of the reads, and of
+// the reads, until ctx ends.
+func (c *Cache) takeRefresh(ctx context.Context) bool {
+	select {
+	case c.refreshes <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+	select {
+	case c.reads <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		<-c.refreshes
+		return false
+	}
+}
+
+func (c *Cache) releaseRefresh() {
+	<-c.reads
+	<-c.refreshes
 }
 
 // Counters are the cache's counts now.
@@ -634,7 +712,7 @@ func (c *Cache) Counters() Counters {
 		KeyMissing: c.keyMissing.Load(), CreditHits: c.creditHits.Load(), CreditCold: c.creditCold.Load(),
 		CreditStale: c.creditStale.Load(), Reads: c.readCount.Load(), ReadFailures: c.readFailures.Load(),
 		Dropped: c.dropped.Load(), Voided: c.voided.Load(), Evictions: c.evictions.Load(),
-		Displaced: c.displaced.Load(),
+		Displaced: c.displaced.Load(), Unrefreshed: c.unrefreshed.Load(),
 	}
 }
 

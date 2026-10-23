@@ -44,6 +44,8 @@ type fakeReader struct {
 	started  chan string
 	keyReads map[string]int
 	creditN  map[string]int
+	// delay lengthens every read, widening the windows reads run across.
+	delay time.Duration
 }
 
 func newFakeReader() *fakeReader {
@@ -53,8 +55,11 @@ func newFakeReader() *fakeReader {
 
 func (r *fakeReader) wait(ctx context.Context, what string) error {
 	r.mu.Lock()
-	gate, started := r.gate, r.started
+	gate, started, delay := r.gate, r.started, r.delay
 	r.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(time.Duration(rand.Int64N(int64(delay))))
+	}
 	if started != nil {
 		started <- what
 	}
@@ -431,12 +436,11 @@ func TestEvictDropsTheKeyAndItsWorkspace(t *testing.T) {
 // TestAnEvictionDiscardsAReadRunning: a read that began before an eviction
 // may have read before the change Python saw, so its answer is discarded
 // and the entry stays cold; a key read running when another workspace is
-// evicted is discarded too, as its workspace was not known.
+// evicted is kept, its answer naming a workspace not evicted.
 func TestAnEvictionDiscardsAReadRunning(t *testing.T) {
 	for _, evict := range []func(*Cache){
 		func(c *Cache) { c.Evict("lh") },
 		func(c *Cache) { c.EvictWorkspace("ws") },
-		func(c *Cache) { c.EvictWorkspace("elsewhere") },
 	} {
 		r, c := newFakeReader(), start()
 		r.keys["lh"] = keyContext("lh", "ws", "")
@@ -457,6 +461,25 @@ func TestAnEvictionDiscardsAReadRunning(t *testing.T) {
 			t.Fatalf("the counters: %+v", got)
 		}
 	}
+	{
+		r, c := newFakeReader(), start()
+		r.keys["lh"] = keyContext("lh", "ws", "")
+		r.credits["ws"] = funded
+		gate, started := make(chan struct{}), make(chan string, 4)
+		r.gate, r.started = gate, started
+		cache := newTestCache(t, r, c)
+		cache.Lookup("lh", c.Now())
+		receive(t, started)
+		cache.EvictWorkspace("elsewhere")
+		close(gate)
+		cache.settle()
+		if got := cache.Lookup("lh", c.Now()); !got.Usable() {
+			t.Fatalf("a read another workspace's eviction ran beside: %+v", got)
+		}
+		if got := cache.Counters(); got.Voided != 0 || got.Reads != 2 {
+			t.Fatalf("the counters: %+v", got)
+		}
+	}
 	// A workspace's credit read running when it is evicted.
 	r, c := newFakeReader(), start()
 	r.keys["lh"] = keyContext("lh", "ws", "")
@@ -466,7 +489,7 @@ func TestAnEvictionDiscardsAReadRunning(t *testing.T) {
 	cache.settle()
 	c.advance(DefaultMaxAge + time.Second)
 	gate, started := make(chan struct{}), make(chan string, 4)
-	r.set(func(r *fakeReader) { r.keys = map[string]store.KeyContext{}; r.gate, r.started = gate, started })
+	r.set(func(r *fakeReader) { r.gate, r.started = gate, started })
 	cache.Lookup("lh", c.Now())
 	receive(t, started)
 	receive(t, started)
@@ -555,6 +578,215 @@ func TestARefreshEndsWithItsContext(t *testing.T) {
 	cache.mu.Unlock()
 	if running != 0 {
 		t.Fatalf("%d reads left registered", running)
+	}
+	// Three reads due (a, b and ws's credit rows): one begun, two given up.
+	if got := cache.Counters(); got.Unrefreshed != 2 {
+		t.Fatalf("the counters: %+v", got)
+	}
+}
+
+// TestARefreshLeavesTheMissesAQuarterOfTheReads: a refresh with more due
+// than it can read at once takes three quarters of the reads, and a miss
+// meanwhile still finds one.
+func TestARefreshLeavesTheMissesAQuarterOfTheReads(t *testing.T) {
+	r, c := newFakeReader(), start()
+	for i := range 10 {
+		hash := fmt.Sprint("k", i)
+		r.keys[hash] = keyContext(hash, "ws", "")
+	}
+	r.keys["new"] = keyContext("new", "ws", "")
+	r.credits["ws"] = funded
+	cache := newTestCache(t, r, c, func(cfg *CacheConfig) { cfg.Reads = 4 })
+	for i := range 10 {
+		cache.Lookup(fmt.Sprint("k", i), c.Now())
+		cache.settle()
+	}
+	c.advance(DefaultRefreshEvery)
+	gate, started := make(chan struct{}), make(chan string, 32)
+	r.set(func(r *fakeReader) { r.gate, r.started = gate, started })
+	done := make(chan struct{})
+	go func() { cache.Refresh(context.Background()); close(done) }()
+	for range 3 {
+		receive(t, started)
+	}
+	cache.Lookup("new", c.Now())
+	if what := <-started; what != "key new" {
+		t.Fatalf("the read begun: %q", what)
+	}
+	close(gate)
+	<-done
+	cache.settle()
+	if got := cache.Counters(); got.Dropped != 0 {
+		t.Fatalf("the counters: %+v", got)
+	}
+}
+
+// TestTheRequestsInstantJudgesFreshness: a lookup judges an entry at its
+// request's instant, which need not be the cache's clock's, ahead of it or
+// behind it; a read it starts never trips on the two disagreeing.
+func TestTheRequestsInstantJudgesFreshness(t *testing.T) {
+	r, c := newFakeReader(), start()
+	r.keys["lh"] = keyContext("lh", "ws", "")
+	r.credits["ws"] = funded
+	cache := newTestCache(t, r, c)
+	cache.Lookup("lh", c.Now())
+	cache.settle()
+	// Ahead: stale at the request's instant, fresh at the clock's.
+	ahead := c.Now().Add(DefaultMaxAge + time.Second)
+	if got := cache.Lookup("lh", ahead); got.Key != Stale || got.Credit != Stale || got.Usable() {
+		t.Fatalf("ahead of the clock: %+v", got)
+	}
+	cache.settle()
+	if r.reads("lh") != 2 || r.creditReads("ws") != 2 {
+		t.Fatalf("ahead of the clock, reads: %d %d", r.reads("lh"), r.creditReads("ws"))
+	}
+	// Behind: fresh at the request's instant though the clock has moved
+	// past the maximum age.
+	behind := c.Now()
+	c.advance(DefaultMaxAge + time.Second)
+	if got := cache.Lookup("lh", behind); got.Key != Fresh || !got.Usable() {
+		t.Fatalf("behind the clock: %+v", got)
+	}
+	// The negative credit entry too: lapsed at the request's instant only.
+	r.set(func(r *fakeReader) { delete(r.credits, "ws") })
+	cache.Lookup("lh", c.Now())
+	cache.settle()
+	if got := cache.Lookup("lh", c.Now()); got.Credit != Fresh || got.CreditRows {
+		t.Fatalf("no credit rows: %+v", got)
+	}
+	if got := cache.Lookup("lh", c.Now().Add(DefaultNegativeFor+time.Second)); got.Credit != Cold {
+		t.Fatalf("no credit rows, ahead of the clock: %+v", got)
+	}
+	cache.settle()
+}
+
+// TestUsable: the cache lets a request be decided only with the key fresh,
+// found and eligible and its workspace's credit entry fresh with complete
+// rows.
+func TestUsable(t *testing.T) {
+	usable := Read{Key: Fresh, Found: true, Facts: Facts{Key: KeyFacts{Eligible: true},
+		Workspace: WorkspaceFacts{Eligible: true}}, Credit: Fresh, CreditRows: true}
+	if !usable.Usable() {
+		t.Fatal("a usable read")
+	}
+	for name, change := range map[string]func(*Read){
+		"key stale":            func(r *Read) { r.Key = Stale },
+		"key cold":             func(r *Read) { r.Key = Cold },
+		"no key":               func(r *Read) { r.Found = false },
+		"key ineligible":       func(r *Read) { r.Facts.Key.Eligible = false },
+		"workspace ineligible": func(r *Read) { r.Facts.Workspace.Eligible = false },
+		"credit stale":         func(r *Read) { r.Credit = Stale },
+		"credit cold":          func(r *Read) { r.Credit = Cold },
+		"credit unneeded":      func(r *Read) { r.Credit = Unneeded },
+		"no credit rows":       func(r *Read) { r.CreditRows = false },
+	} {
+		r := usable
+		change(&r)
+		if r.Usable() {
+			t.Errorf("%s: usable", name)
+		}
+	}
+}
+
+// TestNoEvictionIsUndone: a key's version is moved in the store, then the
+// key or its workspace evicted; from then on no fresh lookup returns an
+// older version, whatever reads ran across the eviction, with lookups,
+// evictions and refreshes at once.
+func TestNoEvictionIsUndone(t *testing.T) {
+	r, c := newFakeReader(), start()
+	r.delay = 200 * time.Microsecond
+	const keys, workspaces = 24, 4
+	versions := make([]int, keys)
+	floors := make([]atomic.Int64, keys)
+	body := func(i int) store.KeyContext {
+		return keyContext(fmt.Sprint("k", i), fmt.Sprint("ws", i%workspaces), fmt.Sprintf(`,"tags":{"v":"%d"}`, versions[i]))
+	}
+	for i := range keys {
+		r.keys[fmt.Sprint("k", i)] = body(i)
+		r.credits[fmt.Sprint("ws", i%workspaces)] = funded
+	}
+	cache := newTestCache(t, r, c, func(cfg *CacheConfig) { cfg.Reads = 6 })
+	version := func(got Read) int64 {
+		for _, tag := range got.Facts.Key.Tags {
+			if tag.Key == "v" {
+				var v int64
+				fmt.Sscan(tag.Value, &v)
+				return v
+			}
+		}
+		t.Errorf("no version: %+v", got)
+		return -1
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ctx.Err() == nil {
+			c.advance(time.Second)
+			cache.Refresh(ctx)
+		}
+	}()
+	// One evictor, so a key's floor only rises.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rng := rand.New(rand.NewPCG(1, 2))
+		for ctx.Err() == nil {
+			var moved []int
+			if rng.IntN(2) == 0 {
+				moved = []int{rng.IntN(keys)}
+			} else {
+				ws := rng.IntN(workspaces)
+				for i := ws; i < keys; i += workspaces {
+					moved = append(moved, i)
+				}
+			}
+			r.set(func(r *fakeReader) {
+				for _, i := range moved {
+					versions[i]++
+					r.keys[fmt.Sprint("k", i)] = body(i)
+				}
+			})
+			if len(moved) == 1 {
+				cache.Evict(fmt.Sprint("k", moved[0]))
+			} else {
+				cache.EvictWorkspace(fmt.Sprint("ws", moved[0]%workspaces))
+			}
+			r.set(func(*fakeReader) {
+				for _, i := range moved {
+					floors[i].Store(int64(versions[i]))
+				}
+			})
+			time.Sleep(100 * time.Microsecond)
+		}
+	}()
+	var fresh atomic.Int64
+	for g := range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rng := rand.New(rand.NewPCG(uint64(g), 9))
+			for ctx.Err() == nil {
+				i := rng.IntN(keys)
+				floor := floors[i].Load()
+				got := cache.Lookup(fmt.Sprint("k", i), c.Now())
+				if got.Key == Fresh && got.Found {
+					fresh.Add(1)
+					if v := version(got); v < floor {
+						t.Errorf("k%d fresh at version %d after its eviction at %d", i, v, floor)
+					}
+				}
+			}
+		}()
+	}
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	wg.Wait()
+	cache.settle()
+	cache.checkIndexes(t)
+	if fresh.Load() == 0 || cache.Counters().Evictions == 0 {
+		t.Fatalf("nothing tried: %d fresh, %+v", fresh.Load(), cache.Counters())
 	}
 }
 
