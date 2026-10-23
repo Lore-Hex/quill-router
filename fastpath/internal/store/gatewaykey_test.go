@@ -57,7 +57,7 @@ func TestTheKeyContextIsOneReadOfTheKeyItsWorkspaceAndTheirIds(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("the key context: %v %v", found, err)
 	}
-	if got.KeyBody != keyBody || got.WorkspaceBody != workspaceBody || !got.WorkspaceFound {
+	if got.KeyBody != keyBody || got.RangeWorkspaceID != ws || got.WorkspaceBody != workspaceBody || !got.WorkspaceFound {
 		t.Fatalf("the bodies: %+v", got)
 	}
 	if want := []string{ws + "#anthropic", ws + "#openai", ws + "#x#mistral"}; !slices.Equal(got.BYOKIDs, want) {
@@ -83,7 +83,7 @@ func TestTheKeyContextIsOneReadOfTheKeyItsWorkspaceAndTheirIds(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("the other key: %v %v", found, err)
 	}
-	if got.WorkspaceFound || got.WorkspaceBody != "" || got.BroadcastDestination ||
+	if got.WorkspaceFound || got.WorkspaceBody != "" || got.BroadcastDestination || got.RangeWorkspaceID != other ||
 		!slices.Equal(got.BYOKIDs, []string{other + "#openai"}) {
 		t.Fatalf("a key whose workspace has no row and a neighbour's pointer: %+v", got)
 	}

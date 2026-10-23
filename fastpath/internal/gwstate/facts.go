@@ -64,7 +64,12 @@ type Pair struct{ Key, Value string }
 type KeyFacts struct {
 	// Eligible is whether every fact but expiry keeps the key in the
 	// cohort; Reason is the first that does not ("" when Eligible). At
-	// adds expiry, which depends on the time.
+	// adds expiry, which depends on the time. It is necessary, not
+	// sufficient: what turns on the request or the edge policy rather than
+	// the key's body is gated where those are known (G10): the monitor key
+	// (the policy's monitor_lookup_hash), a request that names its key by
+	// api_key_hash, _require_monitor_model_key, and the boot binding of
+	// LookupHash.
 	Eligible bool
 	Reason   string
 	// Hash is the key's hash (the authorization's key_hash), LookupHash the
@@ -141,6 +146,15 @@ func ParseKey(body string) KeyFacts {
 	if !ok {
 		return keyShape("budget_strict")
 	}
+	// storage_gcp_counters.key_usage_shard_count, which the route calls on
+	// every authorize: absent is 1, and what it cannot read as 1 to 64 is a
+	// raise (500). Go reads a JSON integer 1 to 64 and passes the rest.
+	if raw, present := f["usage_shard_count"]; present {
+		n, err := strconv.ParseInt(string(bytes.TrimSpace(raw)), 10, 64)
+		if err != nil || n < 1 || n > maxKeyUsageShards {
+			return keyShape("usage_shard_count")
+		}
+	}
 	expires, readable := "", true
 	if raw, present := f["expires_at"]; present && !isNull(raw) {
 		if err := json.Unmarshal(raw, &expires); err != nil {
@@ -180,6 +194,42 @@ func ParseKey(body string) KeyFacts {
 
 func keyShape(field string) KeyFacts {
 	return KeyFacts{Reason: ReasonKeyShape + ":" + field}
+}
+
+// maxKeyUsageShards is storage_gcp_counters.MAX_KEY_USAGE_SHARDS.
+const maxKeyUsageShards = 64
+
+// consultedKeyFields and consultedWorkspaceFields are every ApiKey and
+// Workspace field the authorize route's checks consult on the leased path
+// (the vector file's consulted_fields, which the generator records while it
+// runs them): each is read here, or needs no reading, as each says. A field
+// the route starts to consult fails the vector test until it is listed.
+var consultedKeyFields = map[string]string{
+	"app_id":                     "key_app",
+	"budget_alert_only":          "not read: any configured window is key_window_limit, alert-only or not",
+	"budget_strict":              "key_budget_strict",
+	"disabled":                   "key_disabled",
+	"expires_at":                 "ExpiresAt, key_expired",
+	"federated_home":             "key_federated",
+	"hash":                       "Hash",
+	"include_byok_in_limit":      "not read: truthiness never raises, and only a BYOK request, never Go's, uses it",
+	"limit_daily_microdollars":   "key_window_limit",
+	"limit_microdollars":         "key_limit",
+	"limit_monthly_microdollars": "key_window_limit",
+	"limit_weekly_microdollars":  "key_window_limit",
+	"lookup_hash":                "LookupHash",
+	"scopes":                     "key_scope",
+	"tags":                       "Tags, key_tags",
+	"usage_shard_count":          "key_shape:usage_shard_count unless an integer 1 to 64",
+	"workspace_id":               "WorkspaceID",
+}
+
+var consultedWorkspaceFields = map[string]string{
+	"billing_pause_causes": "PauseCauses, workspace_paused",
+	"billing_paused":       "PauseCauses (the legacy flag)",
+	"deleted":              "Deleted, workspace_unavailable",
+	"federated_home":       "Federated, workspace_federated",
+	"id":                   "must be the key's workspace_id (workspace_shape:id_mismatch)",
 }
 
 // Tag rules, request_tags.py's.
@@ -286,8 +336,11 @@ type WorkspaceFacts struct {
 
 var workspaceRequired = []string{"id", "name", "owner_user_id"}
 
-// ParseWorkspace reads a stored workspace body; found false is no row.
-func ParseWorkspace(body string, found bool) WorkspaceFacts {
+// ParseWorkspace reads a stored workspace body for a key whose workspace_id
+// is keyWorkspace; found false is no row. Python bills the body's id and Go
+// the key's workspace_id, so a body whose id is not the key's (a repeated
+// "id" counts as Python reads it, the last) is not Go's to answer.
+func ParseWorkspace(body string, found bool, keyWorkspace string) WorkspaceFacts {
 	if !found {
 		return WorkspaceFacts{Reason: ReasonWorkspaceGone}
 	}
@@ -299,6 +352,9 @@ func ParseWorkspace(body string, found bool) WorkspaceFacts {
 		if _, present := f[name]; !present {
 			return workspaceShape(name)
 		}
+	}
+	if id, ok := f.str("id"); !ok || id == "" || id != keyWorkspace {
+		return workspaceShape("id_mismatch")
 	}
 	var w WorkspaceFacts
 	if w.Deleted, ok = f.boolean("deleted"); !ok {
@@ -355,8 +411,17 @@ type Facts struct {
 
 // FromContext reads the facts of a key context.
 func FromContext(c store.KeyContext) Facts {
-	out := Facts{Key: ParseKey(c.KeyBody), Workspace: ParseWorkspace(c.WorkspaceBody, c.WorkspaceFound),
+	key := ParseKey(c.KeyBody)
+	out := Facts{Key: key, Workspace: ParseWorkspace(c.WorkspaceBody, c.WorkspaceFound, key.WorkspaceID),
 		BroadcastDestination: c.BroadcastDestination}
+	// The query joined the workspace and took the BYOK and broadcast ranges
+	// by Spanner's JSON_VALUE of the key's workspace_id; Go's reading of the
+	// body must be the same id (a repeated field could be read otherwise),
+	// or none of them is the key's workspace.
+	if c.RangeWorkspaceID != key.WorkspaceID {
+		out.Workspace = workspaceShape("id_mismatch")
+		return out
+	}
 	if ws := out.Key.WorkspaceID; ws != "" {
 		for _, id := range c.BYOKIDs {
 			slug, ok := strings.CutPrefix(id, ws+"#")

@@ -28,7 +28,8 @@ import (
 // broadcast EXISTS answers true for such a neighbour's pointer, which is
 // the cautious answer (a workspace with a destination is passed to Python).
 const keyContextSQL = `/* fastpath_key_context */
-SELECT key_record.body, workspace_record.body,
+SELECT key_record.body, JSON_VALUE(key_record.body, '$.workspace_id') AS range_workspace_id,
+  workspace_record.body,
   ARRAY(
     SELECT byok_record.id
     FROM tr_entities AS byok_record
@@ -61,6 +62,11 @@ WHERE lookup_record.kind = 'api_key_lookup'
 // gwstate reads them.
 type KeyContext struct {
 	KeyBody string
+	// RangeWorkspaceID is the workspace id the query read from the key's
+	// body (JSON_VALUE) and joined the workspace and took the ranges by: a
+	// reader of KeyBody must find the same id, or the rest is not the
+	// key's workspace's.
+	RangeWorkspaceID string
 	// WorkspaceBody is "" and WorkspaceFound false when the key names no
 	// workspace row (Python answers 403 for it, as for a deleted one).
 	WorkspaceBody  string
@@ -91,10 +97,12 @@ func (s *Store) ReadKeyContext(ctx context.Context, lookupHash string) (KeyConte
 	rows := 0
 	err := iter.Do(func(row *spanner.Row) error {
 		rows++
-		var workspace spanner.NullString
-		if err := row.Columns(&out.KeyBody, &workspace, &out.BYOKIDs, &out.BroadcastDestination); err != nil {
+		var rangeWorkspace, workspace spanner.NullString
+		if err := row.Columns(&out.KeyBody, &rangeWorkspace, &workspace, &out.BYOKIDs,
+			&out.BroadcastDestination); err != nil {
 			return err
 		}
+		out.RangeWorkspaceID = rangeWorkspace.StringVal
 		out.WorkspaceBody, out.WorkspaceFound = workspace.StringVal, workspace.Valid
 		return nil
 	})

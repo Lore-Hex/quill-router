@@ -12,12 +12,22 @@ uses:
 * scope: ``gateway._assert_gateway_key_scope`` (403);
 * federated: ``getattr(api_key, "federated_home", "")``, the federated branch;
 * tags: ``request_tags.merge_tags(api_key.tags, None)`` (400 on InvalidTags);
-* app: ``api_key.app_id``, the guard of ``_oauth_app_terms_for_key``;
+* app: ``gateway._oauth_app_terms_for_key`` called, an app key being one
+  that reaches the app's provenance;
+* the reads that decide nothing but can raise (the route's 500):
+  ``enforced_window_limits`` and ``storage_gcp_counters.key_usage_shard_count``;
 * limit / window / strict: the pilot's ``key_capped`` and ``budget_strict``
   (``limit_microdollars is not None``, ``spend_windows.key_window_limits``,
   ``budget_strict``);
-* workspace: absent or ``deleted`` (403), ``workspace_billing_paused`` (402),
-  ``federated_home``.
+* workspace: absent or ``deleted`` (403), ``workspace_billing_paused`` and
+  ``assert_workspace_billing_active`` (403/503), ``federated_home``, and the
+  id Python bills (the body's), which must be the key's workspace_id.
+
+ROUTE_READS lists every key and workspace read the route makes from the key
+read to ``_fastpath_admission``; the Python test extracts the same set from
+the route's source and fails when they differ. The checks run over recording
+subclasses of ApiKey/Workspace, and the file's ``consulted_fields`` lists the
+fields they read, which the Go facts must each account for.
 
 A case's ``reason`` is the first fact that keeps the key out of the edge's
 cohort, in the order FACT_ORDER (the Go facts' order), or null when none
@@ -53,10 +63,16 @@ for _name in [name for name in os.environ if name.startswith("TR_")]:
 
 from trusted_router import auth  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
+from trusted_router.errors import assert_workspace_billing_active  # noqa: E402
 from trusted_router.request_tags import InvalidTags, merge_tags  # noqa: E402
-from trusted_router.routes.internal.gateway import _assert_gateway_key_scope  # noqa: E402
-from trusted_router.spend_windows import key_window_limits  # noqa: E402
+from trusted_router.routes.internal import gateway  # noqa: E402
+from trusted_router.routes.internal.gateway import (  # noqa: E402
+    _assert_gateway_key_scope,
+    _oauth_app_terms_for_key,
+)
+from trusted_router.spend_windows import enforced_window_limits, key_window_limits  # noqa: E402
 from trusted_router.storage_codec import json_body  # noqa: E402
+from trusted_router.storage_gcp_counters import key_usage_shard_count  # noqa: E402
 from trusted_router.storage_models import (  # noqa: E402
     ApiKey,
     Workspace,
@@ -71,6 +87,36 @@ FACT_ORDER = (
     "key_limit", "key_window_limit", "key_budget_strict",
 )
 WORKSPACE_ORDER = ("workspace_unavailable", "workspace_paused", "workspace_federated")
+
+# Every read of the key or the workspace that gateway._authorize_gateway_sync_impl
+# makes from the key read to its _fastpath_admission call: an attribute read
+# (``api_key.x``, ``getattr(api_key, "x", ...)``) or a call given the key or
+# the workspace. tests/test_fastpath_gateway_key_vectors.py extracts the same
+# set from the route's source and fails when the two differ, so a key or
+# workspace field the route starts to consult cannot be left out of the
+# oracle. Each says how key_facts / workspace_facts covers it.
+ROUTE_READS: dict[str, str] = {
+    "api_key.disabled": "key_disabled",
+    "api_key.expires_at": "key_expired (is_api_key_expired at the case instant)",
+    "_assert_gateway_key_scope": "key_scope (called)",
+    "api_key.workspace_id": "the key's workspace; returned, and the workspace body's id must equal it",
+    "api_key.lookup_hash": "returned; the boot binding and the monitor key are the edge policy's (G10)",
+    "api_key.federated_home": "key_federated",
+    "workspace.id": "returned (billed_workspace_id): Go bills the key's workspace_id, so they must agree",
+    "workspace_billing_paused": "workspace_paused (called)",
+    "assert_workspace_billing_active": "workspace_paused (called)",
+    "api_key.tags": "key_tags (merge_tags called with no request tags)",
+    "_oauth_app_terms_for_key": "key_app (called; reaching the app's provenance is an app key)",
+    "api_key.budget_strict": "key_budget_strict; also read by Stage D eligibility (called as truthiness)",
+    "api_key.include_byok_in_limit": "read as the route reads it; it never raises, and only a BYOK request uses it",
+    "enforced_window_limits": "called; a raise is an error",
+    "key_usage_shard_count": "called; a raise is an error",
+    "api_key.limit_microdollars": "key_limit",
+    "key_window_limits": "key_window_limit (called)",
+    "api_key.hash": "returned (the authorization's key_hash)",
+    "workspace.federated_home": "workspace_federated",
+    "speculation_shadow.resolved": "not a check: an isolated shadow observation",
+}
 
 AT = dt.datetime(2026, 10, 23, 12, 0, 0, 250000, tzinfo=dt.UTC)
 AT_WHOLE = dt.datetime(2026, 10, 23, 12, 0, 0, tzinfo=dt.UTC)
@@ -91,14 +137,54 @@ def clock(at: dt.datetime) -> Iterator[None]:
         yield
 
 
-def _scope_ok(key: Any) -> bool:
+class _AppKey(Exception):
+    """_oauth_app_terms_for_key went past its no-app guard to the app's provenance."""
+
+
+def _raise_app_key(_api_key: Any) -> tuple[bool, int, str]:
+    raise _AppKey
+
+
+# Which dataclass fields the checks read, over every case: the Go facts must
+# read each one or say why it need not (gwstate's consultedKeyFields /
+# consultedWorkspaceFields hold the file's lists).
+_CONSULTED: dict[str, set[str]] = {"api_key": set(), "workspace": set()}
+
+
+def _recording(cls: type[Any], kind: str) -> type[Any]:
+    names = {f.name for f in dataclasses.fields(cls)}
+
+    class Recording(cls):  # type: ignore[misc, valid-type]
+        def __getattribute__(self, name: str) -> Any:
+            if name in names:
+                _CONSULTED[kind].add(name)
+            return super().__getattribute__(name)
+
+    Recording.__name__ = cls.__name__
+    return Recording
+
+
+_RecordingApiKey = _recording(ApiKey, "api_key")
+_RecordingWorkspace = _recording(Workspace, "workspace")
+
+
+def _refuses(check: Callable[[Any], Any], value: Any, *statuses: int) -> bool:
     try:
-        _assert_gateway_key_scope(key)
+        check(value)
     except Exception as exc:
-        if getattr(exc, "status_code", None) == 403:
-            return False
+        if getattr(exc, "status_code", None) in statuses:
+            return True
         raise
-    return True
+    return False
+
+
+def _app_key(key: Any) -> bool:
+    with mock.patch.object(gateway, "_oauth_app_provenance", _raise_app_key):
+        try:
+            assert _oauth_app_terms_for_key(key) == (0, "")
+        except _AppKey:
+            return True
+    return False
 
 
 def _tags(key: Any) -> dict[str, str] | None:
@@ -108,54 +194,88 @@ def _tags(key: Any) -> dict[str, str] | None:
         return None
 
 
+def _read(value: Any) -> bool:
+    """A route read that decides nothing for the cohort; it may still raise."""
+    return False
+
+
 def key_facts(body: str, at: dt.datetime) -> dict[str, Any]:
-    """Python's verdict on a stored key body at an instant."""
+    """Python's verdict on a stored key body at an instant.
+
+    The checks run in the route's order, each the route's own expression or
+    function; a check that raises is the route's 500 (``error``)."""
+    failure = {"error": None, "reason": "error", "tags": None, "hash": None, "workspace_id": None,
+               "lookup_hash": None}
     try:
-        key = decode_auth_record(body, ApiKey)
+        key = decode_auth_record(body, _RecordingApiKey)
     except Exception as exc:
-        return {"error": type(exc).__name__, "reason": "error", "tags": None}
-    checks: list[tuple[str, Callable[[], bool]]] = [
+        return {**failure, "error": type(exc).__name__}
+    checks: list[tuple[str | None, Callable[[], bool]]] = [
+        # api_key.disabled or is_api_key_expired(api_key.expires_at): 401.
         ("key_disabled", lambda: bool(key.disabled)),
         ("key_expired", lambda: is_api_key_expired(key.expires_at)),
-        ("key_scope", lambda: not _scope_ok(key)),
+        ("key_scope", lambda: _refuses(_assert_gateway_key_scope, key, 403)),
+        # _gateway_authorize_metadata's federated branch; the route reads it
+        # again for async settlement.
         ("key_federated", lambda: bool(getattr(key, "federated_home", ""))),
+        # merge_tags(api_key.tags, body.tags): 400 on InvalidTags.
         ("key_tags", lambda: _tags(key) is None),
-        ("key_app", lambda: bool(key.app_id)),
+        ("key_app", lambda: _app_key(key)),
+        # Stage D eligibility: `not api_key.budget_strict`.
+        (None, lambda: _read(not key.budget_strict)),
+        # `{} if is_byok_request and not api_key.include_byok_in_limit else
+        # enforced_window_limits(api_key)`, then key_usage_shard_count.
+        (None, lambda: _read(not key.include_byok_in_limit)),
+        (None, lambda: _read(enforced_window_limits(key))),
+        (None, lambda: _read(key_usage_shard_count(key))),
+        # The pilot's key_capped and budget_strict.
         ("key_limit", lambda: key.limit_microdollars is not None),
         ("key_window_limit", lambda: bool(key_window_limits(key))),
         ("key_budget_strict", lambda: bool(key.budget_strict)),
     ]
-    assert tuple(name for name, _ in checks) == FACT_ORDER
+    assert tuple(name for name, _ in checks if name is not None) == FACT_ORDER
     with clock(at):
         for name, check in checks:
             try:
                 failed = check()
             except Exception as exc:
-                return {"error": type(exc).__name__, "reason": "error", "tags": None}
+                return {**failure, "error": type(exc).__name__}
             if failed:
-                return {"error": None, "reason": name, "tags": None}
+                return {**failure, "reason": name}
         tags = _tags(key)
     assert tags is not None
-    return {"error": None, "reason": None, "tags": [[k, v] for k, v in tags.items()]}
+    def text(value: Any) -> str | None:
+        return value if isinstance(value, str) else None
+
+    return {"error": None, "reason": None, "tags": [[k, v] for k, v in tags.items()], "hash": text(key.hash),
+            "workspace_id": text(key.workspace_id), "lookup_hash": text(key.lookup_hash)}
 
 
 def workspace_facts(body: str | None) -> dict[str, Any]:
-    """Python's verdict on a stored workspace body (None: no row)."""
+    """Python's verdict on a stored workspace body (None: no row), in the route's order."""
+    failure = {"error": None, "reason": "error", "pause_causes": None, "billed_workspace_id": None}
     try:
-        workspace = decode_auth_record(body, Workspace) if body is not None else None
+        workspace = decode_auth_record(body, _RecordingWorkspace) if body is not None else None
     except Exception as exc:
-        return {"error": type(exc).__name__, "reason": "error", "pause_causes": None}
-    # storage_gcp.gateway_api_key_auth_context: a deleted workspace is none.
+        return {**failure, "error": type(exc).__name__}
+    # storage_gcp.gateway_api_key_auth_context: a deleted workspace is none (403).
     if workspace is not None and workspace.deleted:
         workspace = None
     if workspace is None:
-        return {"error": None, "reason": "workspace_unavailable", "pause_causes": None}
-    causes = list(workspace.billing_pause_causes)
-    if workspace_billing_paused(workspace):
-        return {"error": None, "reason": "workspace_paused", "pause_causes": causes}
-    if workspace.federated_home:
-        return {"error": None, "reason": "workspace_federated", "pause_causes": causes}
-    return {"error": None, "reason": None, "pause_causes": causes}
+        return {**failure, "reason": "workspace_unavailable"}
+    try:
+        causes = list(workspace.billing_pause_causes)
+        paused = workspace_billing_paused(workspace)
+        # 403 for an abuse pause, 503 for the others.
+        refused = _refuses(assert_workspace_billing_active, workspace, 403, 503)
+        assert paused == refused
+        federated = bool(workspace.federated_home)
+        billed = workspace.id
+    except Exception as exc:
+        return {**failure, "error": type(exc).__name__}
+    reason = "workspace_paused" if paused else "workspace_federated" if federated else None
+    return {"error": None, "reason": reason, "pause_causes": causes,
+            "billed_workspace_id": billed if isinstance(billed, str) else None}
 
 
 def _iso(at: dt.datetime) -> str:
@@ -267,7 +387,23 @@ def key_cases() -> list[dict[str, Any]]:
     add("alert_only_no_window", _stored(budget_alert_only=True))
     add("budget_strict", _stored(budget_strict=True))
     add("budget_strict_false", _raw(budget_strict=False))
-    add("usage_and_shards_irrelevant", _stored(usage_microdollars=99, usage_shard_count=8, reserved_microdollars=3))
+    add("usage_counters_not_consulted", _stored(usage_microdollars=99, byok_usage_microdollars=4, reserved_microdollars=3))
+    # key_usage_shard_count(api_key): absent is 1; 1 to 64 pass, anything it
+    # cannot read as that raises (the route's 500).
+    for count in (1, 2, 8, 63, 64):
+        add(f"usage_shard_count_{count}", _stored(usage_shard_count=count))
+    add("usage_shard_count_absent", _raw(drop=("usage_shard_count",)))
+    for value in [0, -1, 65, 1000, True, False, None, [], {}, "abc", "", "5", 2.5, 1.0, "1"]:
+        add(f"usage_shard_count_bad_{json.dumps(value)}", _raw(usage_shard_count=value), exact=False)
+    add("usage_shard_count_8_strict", _stored(usage_shard_count=8, budget_strict=True), exact=False)
+    add("usage_shard_count_1_strict", _stored(usage_shard_count=1, budget_strict=True))
+    add("usage_shard_count_0_disabled", _raw(usage_shard_count=0, disabled=True), exact=False)
+    # Repeated fields: Python's json.loads keeps the last value.
+    stored = _stored()
+    add("duplicate_workspace_id_last_wins", '{"workspace_id":"ws_synthetic_other",' + stored[1:])
+    add("duplicate_hash_last_wins", '{"hash":"kh_synthetic_other",' + stored[1:])
+    add("duplicate_workspace_id_other_last", stored[:-1] + ',"workspace_id":"ws_synthetic_other"}')
+    add("duplicate_disabled_last_wins", stored[:-1] + ',"disabled":true}')
     add("management_irrelevant", _stored(management=True))
 
     # Tags, valid.
@@ -385,7 +521,11 @@ def _workspace_raw(drop: tuple[str, ...] = (), **changes: Any) -> str:
     return json.dumps(data, separators=(",", ":"))
 
 
+KEY_WORKSPACE = "ws_synthetic_0001"
+
+
 def workspace_cases() -> list[dict[str, Any]]:
+    workspace = _workspace()
     cases: list[tuple[str, str | None, bool]] = [
         ("eligible", _workspace(), True),
         ("absent", None, True),
@@ -423,19 +563,36 @@ def workspace_cases() -> list[dict[str, Any]]:
         ("body_list", "[]", False),
         ("body_not_json", "{", False),
         ("causes_non_ascii", _workspace(billing_pause_causes=["causé"]), False),
+        # The workspace Python bills is the body's id; Go bills the key's
+        # workspace_id, so a body whose id is another is not Go's to answer.
+        ("id_mismatch", _workspace(id="ws_synthetic_other"), False),
+        ("id_mismatch_case", _workspace(id=KEY_WORKSPACE.upper()), False),
+        ("id_mismatch_prefix", _workspace(id=KEY_WORKSPACE + "#x"), False),
+        ("id_empty", _workspace_raw(id=""), False),
+        ("id_number", _workspace_raw(id=5), False),
+        ("id_null", _workspace_raw(id=None), False),
+        ("id_duplicate_last_matches", '{"id":"ws_synthetic_other",' + workspace[1:], True),
+        ("id_duplicate_last_differs", workspace[:-1] + ',"id":"ws_synthetic_other"}', False),
+        ("id_duplicate_both_match", workspace[:-1] + ',"id":"' + KEY_WORKSPACE + '"}', True),
+        ("id_mismatch_and_paused", _workspace(id="ws_synthetic_other", billing_pause_causes=["manual"]), False),
+        ("deleted_duplicate_last_wins", workspace[:-1] + ',"deleted":true}', True),
     ]
-    return [{"name": name, "body": body, "exact": exact, "python": workspace_facts(body)}
-            for name, body, exact in cases]
+    return [{"name": name, "body": body, "key_workspace_id": KEY_WORKSPACE, "exact": exact,
+             "python": workspace_facts(body)} for name, body, exact in cases]
 
 
 def render() -> str:
     """The file's text: one case a line, so a change shows as the cases it changes."""
     keys = [json.dumps(c, sort_keys=True, separators=(",", ":")) for c in key_cases()]
     workspaces = [json.dumps(c, sort_keys=True, separators=(",", ":")) for c in workspace_cases()]
+    # Read after every case has run: the fields the route's checks consulted.
+    consulted = {kind: sorted(names) for kind, names in _CONSULTED.items()}
     return (
         "{\"generator\": \"scripts/fastpath/gateway_key_vectors.py\",\n"
         + " \"fact_order\": " + json.dumps(list(FACT_ORDER)) + ",\n"
         + " \"workspace_order\": " + json.dumps(list(WORKSPACE_ORDER)) + ",\n"
+        + " \"route_reads\": " + json.dumps(ROUTE_READS, sort_keys=True) + ",\n"
+        + " \"consulted_fields\": " + json.dumps(consulted, sort_keys=True) + ",\n"
         + " \"key_cases\": [\n  " + ",\n  ".join(keys) + "\n ],\n"
         + " \"workspace_cases\": [\n  " + ",\n  ".join(workspaces) + "\n ]}\n"
     )

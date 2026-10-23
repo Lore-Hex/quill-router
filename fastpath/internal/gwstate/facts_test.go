@@ -20,6 +20,10 @@ type pythonKey struct {
 	Error  *string     `json:"error"`
 	Reason *string     `json:"reason"`
 	Tags   [][2]string `json:"tags"`
+	// The ids Python's key carries when it is eligible.
+	Hash        *string `json:"hash"`
+	WorkspaceID *string `json:"workspace_id"`
+	LookupHash  *string `json:"lookup_hash"`
 }
 
 type pythonWorkspace struct {
@@ -27,12 +31,15 @@ type pythonWorkspace struct {
 	Reason *string `json:"reason"`
 	// PauseCauses is raw: a malformed body's causes need not be strings.
 	PauseCauses json.RawMessage `json:"pause_causes"`
+	// BilledWorkspaceID is the workspace id Python bills: the body's.
+	BilledWorkspaceID *string `json:"billed_workspace_id"`
 }
 
 type vectors struct {
-	FactOrder      []string `json:"fact_order"`
-	WorkspaceOrder []string `json:"workspace_order"`
-	KeyCases       []struct {
+	FactOrder       []string            `json:"fact_order"`
+	WorkspaceOrder  []string            `json:"workspace_order"`
+	ConsultedFields map[string][]string `json:"consulted_fields"`
+	KeyCases        []struct {
 		Name   string    `json:"name"`
 		Body   string    `json:"body"`
 		At     string    `json:"at"`
@@ -40,10 +47,11 @@ type vectors struct {
 		Python pythonKey `json:"python"`
 	} `json:"key_cases"`
 	WorkspaceCases []struct {
-		Name   string          `json:"name"`
-		Body   *string         `json:"body"`
-		Exact  bool            `json:"exact"`
-		Python pythonWorkspace `json:"python"`
+		Name           string          `json:"name"`
+		Body           *string         `json:"body"`
+		KeyWorkspaceID string          `json:"key_workspace_id"`
+		Exact          bool            `json:"exact"`
+		Python         pythonWorkspace `json:"python"`
 	} `json:"workspace_cases"`
 }
 
@@ -100,6 +108,11 @@ func TestTheKeyFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 		if ok {
 			if python != "" || !slices.Equal(facts.Tags, pairsOf(c.Python.Tags)) {
 				t.Errorf("%s: Go admits (tags %q); Python: %q, tags %q", c.Name, facts.Tags, python, c.Python.Tags)
+			} else if facts.Hash != reasonOf(c.Python.Hash) || facts.WorkspaceID != reasonOf(c.Python.WorkspaceID) ||
+				facts.LookupHash != reasonOf(c.Python.LookupHash) {
+				t.Errorf("%s: Go reads key %s of workspace %s (lookup %s); Python %v %v %v", c.Name, facts.Hash,
+					facts.WorkspaceID, facts.LookupHash, reasonOf(c.Python.Hash), reasonOf(c.Python.WorkspaceID),
+					reasonOf(c.Python.LookupHash))
 			}
 		} else if reason == "" {
 			t.Errorf("%s: not eligible without a reason", c.Name)
@@ -142,10 +155,16 @@ func TestTheWorkspaceFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 		if found {
 			body = *c.Body
 		}
-		facts := ParseWorkspace(body, found)
+		facts := ParseWorkspace(body, found, c.KeyWorkspaceID)
 		python := reasonOf(c.Python.Reason)
 		if facts.Eligible && python != "" {
 			t.Errorf("%s: Go admits; Python %q", c.Name, python)
+		}
+		// Go bills the key's workspace: it answers only where Python bills
+		// the same one.
+		if facts.Eligible && reasonOf(c.Python.BilledWorkspaceID) != c.KeyWorkspaceID {
+			t.Errorf("%s: Go admits for %s; Python bills %v", c.Name, c.KeyWorkspaceID,
+				reasonOf(c.Python.BilledWorkspaceID))
 		}
 		if c.Exact {
 			exact++
@@ -166,11 +185,31 @@ func TestTheWorkspaceFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 	}
 }
 
+// TestEveryFieldPythonConsultsIsAccountedFor: the generator records each
+// ApiKey and Workspace field the route's checks read; each is in the facts'
+// lists, so a field Python starts to consult fails here until Go reads it or
+// says why it need not.
+func TestEveryFieldPythonConsultsIsAccountedFor(t *testing.T) {
+	v := readVectors(t)
+	for kind, listed := range map[string]map[string]string{"api_key": consultedKeyFields,
+		"workspace": consultedWorkspaceFields} {
+		consulted := v.ConsultedFields[kind]
+		if len(consulted) < 5 {
+			t.Fatalf("%s: only %d consulted fields recorded", kind, len(consulted))
+		}
+		for _, field := range consulted {
+			if _, ok := listed[field]; !ok {
+				t.Errorf("%s.%s: Python consults it and the facts do not account for it", kind, field)
+			}
+		}
+	}
+}
+
 func TestBYOKProvidersAreMatchedOnCompleteIds(t *testing.T) {
 	key := `{"hash":"kh","salt":"","secret_hash":"","lookup_hash":"lh","name":"","label":"","workspace_id":"ws",` +
 		`"creator_user_id":null}`
-	got := FromContext(store.KeyContext{KeyBody: key, WorkspaceBody: `{"id":"ws","name":"","owner_user_id":""}`,
-		WorkspaceFound: true, BYOKIDs: []string{"ws#anthropic", "ws#openai", "ws#x#mistral", "ws#", "wsz#google"},
+	got := FromContext(store.KeyContext{KeyBody: key, RangeWorkspaceID: "ws",
+		WorkspaceBody: `{"id":"ws","name":"","owner_user_id":""}`, WorkspaceFound: true, BYOKIDs: []string{"ws#anthropic", "ws#openai", "ws#x#mistral", "ws#", "wsz#google"},
 		BroadcastDestination: true})
 	if !slices.Equal(got.BYOKProviders, []string{"anthropic", "openai"}) || !got.BroadcastDestination ||
 		!got.Key.Eligible || !got.Workspace.Eligible {
@@ -179,6 +218,14 @@ func TestBYOKProvidersAreMatchedOnCompleteIds(t *testing.T) {
 	if got := FromContext(store.KeyContext{KeyBody: "[]", BYOKIDs: []string{"#openai"}}); got.BYOKProviders != nil ||
 		got.Key.Eligible || got.Workspace.Reason != ReasonWorkspaceGone {
 		t.Fatalf("a body that is not a key: %+v", got)
+	}
+	// Spanner's JSON_VALUE took another workspace id than Go's reading of
+	// the key body (a repeated workspace_id): the workspace, BYOK and
+	// broadcast reads are not the key's workspace's.
+	got = FromContext(store.KeyContext{KeyBody: key, RangeWorkspaceID: "ws-first",
+		WorkspaceBody: `{"id":"ws","name":"","owner_user_id":""}`, WorkspaceFound: true})
+	if got.Workspace.Eligible || got.Workspace.Reason != ReasonWorkspaceShape+":id_mismatch" {
+		t.Fatalf("a range taken for another workspace: %+v", got.Workspace)
 	}
 }
 
