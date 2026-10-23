@@ -106,13 +106,13 @@
     <main class="console-main">
       <header class="console-page-head">
         <h1>{{ page_title }}</h1>
-        {% if page_subtitle and active != "api-keys" %}<p>{{ page_subtitle }}</p>{% endif %}
+        {% if page_subtitle and (active != "api-keys" or api_keys_classic|default(false)) %}<p>{{ page_subtitle }}</p>{% endif %}
       </header>
       <div class="console-page-body">
         {% block body %}{% endblock %}
       </div>
     </main>
   </div>
-  {% if not provider_mode %}{% include "console/_social_rewards.html" %}{% endif %}
+  {% if not provider_mode and not api_keys_classic|default(false) %}{% include "console/_social_rewards.html" %}{% endif %}
 </body>
 </html>

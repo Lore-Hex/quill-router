@@ -64,15 +64,17 @@ def test_claim_before_first_call_is_committed_once():
     assert live_credit_summary(result.workspace.id)["total_credits"] == 180_000
 
 
-def test_console_renders_account_scoped_dismissal_and_api_keys_invitation():
+def test_console_keeps_rewards_in_credits_without_api_keys_invitation():
     client, result, _ = _account(activated=False)
-    for path in ("/console/api-keys", "/console/credits", "/console/welcome"):
+    for path in ("/console/credits", "/console/welcome"):
         response = client.get(path)
         assert response.status_code == 200
         assert f'data-rewards-user="{result.user.id}"' in response.text
     page = client.get("/console/api-keys").text
-    assert "data-rewards-key-card" in page
-    assert "Earn API credit for a follow" in page
+    assert "data-rewards-user" not in page
+    assert "data-rewards-key-card" not in page
+    assert "Earn API credit for a follow" not in page
+    assert "data-rewards-open" in client.get("/console/credits").text
 
 
 def test_claims_concurrent_fixed_total_and_destination():

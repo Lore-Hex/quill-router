@@ -1160,13 +1160,13 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
     assert resp.text.count(match.group(0)) == 2
-    assert 'id="onboarding-key"' in resp.text
+    assert 'id="created-api-key"' in resp.text
     assert 'aria-label="Copy API key"' in resp.text
-    agent_message = re.search(r'<pre id="setup-code".*?</pre>', resp.text, re.DOTALL)
+    agent_message = re.search(r'<div class="agent-message" id="created-agent-message".*?</div>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert resp.text.index('id="onboarding-key"') < resp.text.index('id="setup-code"')
+    assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
     assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
     assert "Use it in memory for this request" not in resp.text
