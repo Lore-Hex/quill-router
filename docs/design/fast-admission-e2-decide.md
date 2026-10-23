@@ -39,7 +39,7 @@ The flow, per request, in this order:
    estimated-usage model.
 6. Compose everything but the envelope (§5, §6).
 7. `FrontDoor.Authorize` in process. Anything but `Admitted` passes.
-8. Insert the two rows in one read-write transaction with a 2 s deadline
+8. Insert the two rows in one read-write transaction with a 1.5 s deadline
    (§8.4): `Inserted` and `Landed` answer 200; `ScopeTaken` and `Failed`
    refund and pass; `Unknown` reads the authorization back by id, answering 200 if it
    landed and Python's 503 (hold kept) if not.
@@ -62,8 +62,9 @@ The flow, per request, in this order:
    workspace. No per-key publisher and no new signing key.
 3. **Flow.** Gate on cached cohort facts, then the evaluator (`Answered`,
    all candidates Credits, no estimated-usage model), then compose, then
-   `FrontDoor.Authorize` (non-`Admitted` passes), then the insert with a 2 s
-   deadline: `Inserted` answers; `ScopeTaken` refunds and passes; `Failed`
+   `FrontDoor.Authorize` (non-`Admitted` passes), then the insert with a
+   1.5 s deadline: `Inserted` and `Landed` answer; `ScopeTaken` refunds and
+   passes; `Failed`
    refunds and passes; `Unknown` reads back by id (landed: 200, else 503
    with the hold kept). Which commit errors are which is §8.4: only an
    error that proves nothing applied is `Failed`. No scope pre-read: the
@@ -106,12 +107,30 @@ The flow, per request, in this order:
     `fastpath_pilot_regions`, and `records_durable`. Initial decide rows are
     us-central1 only; `rollout.sh` must render `settle_outbox_enabled` the
     same in every region before any other region gets a row.
-12. **Busy is a pass.** `Busy` or an owner timeout passes, never a 503.
-    `OwnerWait` 1 s. The decide budget, about 2.5 s, bounds everything
-    before the admit; once admitted, the insert has its own 2 s.
+12. **Busy is a pass, and the budgets fit the enclave's timeout.** `Busy`
+    or an owner timeout passes, never a 503. The decide budget, 1.5 s, is
+    the deadline of the context `FrontDoor.Authorize` gets, so it cuts
+    each owner's `OwnerWait` short; past it the request passes. Once
+    admitted, the insert has its own 1.5 s and a read-back 0.5 s (§8.4); a
+    refund runs asynchronously with its own 1 s and never delays the pass
+    (a refund not sent ends with the lease, as Python's does). Worst case:
+    an answer 3.5 s after arrival (1.5 + 1.5 + 0.5); a pass forwarded 3.5 s
+    after arrival (an `AlreadyExists` check after a full insert). The
+    enclave allows 25 s for response headers per attempt
+    (`ResponseHeaderTimeout`, quill-cloud-proxy
+    `enclave-go/internal/trustedrouter/http_client_direct.go:37`) and 28 s
+    for three attempts (`authorization_retry.go:22-28`,
+    `spendlease.ReserveBudget`). Python spends at most its 20 s Spanner
+    budget and keeps 5 s for the rest (`gateway.py:353-356`), so the worst
+    forwarded pass, 3.5 s plus Python's 20 s, leaves 1.5 s of the 25 s
+    rather than Python's 5 s. That is the tightest Go may go: G11 fails a
+    test if any budget here grows, and G12 alerts on forwarded passes that
+    spent more than 1 s at the edge.
 13. **Response encoding.** Identity-encoded JSON, `Content-Type:
-    application/json`, `Content-Length`, Python's `ensure_ascii=False`
-    insertion-ordered bytes. Python's GZip middleware (`middleware.py:132`,
+    application/json`, `Content-Length`, and the bytes FastAPI's pydantic-core
+    fast path writes for the 200 (§6): insertion order, raw UTF-8,
+    pydantic-core's float format. Error bodies (the 503) are Starlette's
+    `JSONResponse`, `json.dumps`. Python's GZip middleware (`middleware.py:132`,
     `minimum_size=1_000`) compresses only for a caller that accepts gzip;
     Go never compresses.
 14. **Per-key in-flight limit** at the edge, from the policy's
@@ -128,8 +147,10 @@ The flow, per request, in this order:
     caches. The bound: a disabled, expired or rescoped key, a paused or
     abuse-latched workspace, or a debt mark is honoured within 15 s (the
     facts' maximum age); a digest withdrawn from the accepted set within
-    60 s (the policy's `not_after`), which is no worse than Python's own
-    resolver (`stage_d_policy_refresh_seconds`, 60, `config.py:1049`). Eviction is sooner when Python answers
+    60 s, the same as Python's own resolver
+    (`stage_d_policy_refresh_seconds`, 60, `config.py:1049`), because P2
+    refreshes the resolver before every signing (§4), so a body's set is
+    current at `issued_at` and the edge holds it at most until `not_after`. Eviction is sooner when Python answers
     the key a 401, 402 or 403, or the workspace a pause 503, on any request
     the edge passes. The cohort is pilot workspaces only, and the operator's
     immediate lever is `fastpathctl decide-off-all` (honoured within one
@@ -146,14 +167,17 @@ The flow, per request, in this order:
 19. **Internal models.** A request naming `trustedrouter/monitor` or an
     `internal_only` model in `model` or `models` passes: Python answers a
     key other than the monitor or probe key 403 (`gateway.py:1008`,
-    `internal_model_access.py:31-48`). Go hardcodes the set
-    (`trustedrouter/monitor`, `trustedrouter/fortanix-test` today). The
-    routing snapshot is published and polled live, so adding a field to its
-    v1 shape would stop every edge's poll; instead P1's header carries
-    Python's set (`MONITOR_MODEL_ID` and every `internal_only` model,
-    `catalog_registry.py:1867-1883`), its staleness test fails when the
-    catalog gains one, and a Go test holds Go's set equal to the header's,
-    so the same change must update both.
+    `internal_model_access.py:31-48`). Go passes on the union of two sets:
+    the edge policy's `internal_models` (§4), the live catalog's, and a
+    hardcoded set (`trustedrouter/monitor`, `trustedrouter/fortanix-test`
+    today). Python and Go deploy separately, so a Python release that adds
+    an internal model reaches the snapshot before any new Go binary; the
+    policy carries it within one refresh, and a stale policy already passes
+    everything. The routing snapshot is published and polled live, so its
+    v1 shape stays as it is. P1's header carries Python's set
+    (`MONITOR_MODEL_ID` and every `internal_only` model,
+    `catalog_registry.py:1867-1883`); a Go test holds the hardcoded set
+    equal to it, so the fallback stays current too.
 
 ## 3. The cohort
 
@@ -166,14 +190,14 @@ which reason a request tripping several is counted under.
 
 | Reason | Passes when |
 |---|---|
-| `body.content_type` | not exactly one `Content-Type` whose media type is `application/json`, optionally with `charset=utf-8`; a missing header is FastAPI's 422 under `strict_content_type` |
+| `body.content_type` | not exactly one `Content-Type` whose media type is `application/json`, optionally with `charset=utf-8`; a missing header fails FastAPI's `strict_content_type`, which the app's `RequestValidationError` handler answers 400 `bad_request` (`main.py:632-639`) |
 | `body.unparseable` | not one JSON object; not UTF-8, or a UTF-8 BOM (Python's `json.loads` accepts one); nesting deeper than 128 (Python's decoder or validation recursion is a 400); an integer literal over 4,000 digits (Python refuses over 4,300, a 400); over 4 MiB (Python's `max_request_body_bytes`, `config.py:1353`, a 413; the edge reads up to its own 16 MiB `maxBody`, `edge.go:58`) |
 | `body.duplicate_key` | any object with a repeated key, at any depth |
 | `body.float` | any number with a fraction or exponent, at any depth |
 | `body.lax_type` | a declared field whose JSON type is not the schema's exact type (`"5"` for an int, `1` for a bool, a non-list for a list) |
-| `body.strip_ambiguous` | a declared string (or list-of-strings entry) with any byte outside printable ASCII, where Python's and Go's whitespace could differ (`input_modalities` is a `Literal` list and is not stripped: `" text"` is a 422, so `body.refused`) |
+| `body.strip_ambiguous` | a declared string (or list-of-strings entry) with any byte outside printable ASCII, where Python's and Go's whitespace could differ (`input_modalities` is a `Literal` list and is not stripped: `" text"` is a validation error, a 400, so `body.refused`) |
 | `body.dict_key_strip` | a top-level key of `provider`, `trace`, `metadata` or `tags` that `str_strip_whitespace` would change (leading or trailing whitespace) or that has a byte outside printable ASCII. Pydantic strips those keys, last value winning on a collision (§7); Go passes rather than reproduce it |
-| `body.refused` | anything the schema or `_gateway_authorize_body` refuses (Go never answers what Python would 400 or 422) |
+| `body.refused` | anything the schema or `_gateway_authorize_body` refuses (Go never answers what Python would refuse; every validation error is a 400 through `main.py:632-639`) |
 | `body.api_key_hash` | `api_key_hash` present (the lookup hash alone identifies the key in the cohort) |
 | `body.stream` | `stream` true |
 | `body.service_tier` | `service_tier` present |
@@ -181,7 +205,7 @@ which reason a request tripping several is counted under.
 | `body.priced_extra` | `additional_cost_reservation_microdollars` nonzero, `inference_receipt` true, `video_resolution`, `speech_input_characters` or `transcription_duration_ms` present |
 | `body.canonical_model` | `model` or a `models` entry not identity under `canonical_router_model_id` (`model_aliases.py:70-80`, applied by the schema at `schemas.py:440`) |
 | `body.custom_model` | a custom or user-provided model in `model` or `models` |
-| `body.internal_model` | `model` or a `models` entry, stripped, is in the internal set (decision 19) |
+| `body.internal_model` | `model` or a `models` entry, stripped, is in the policy's `internal_models` or Go's hardcoded set (decision 19) |
 | `body.tags` | a tag key or value outside printable ASCII |
 | `body.referer` | `http_referer` with no `app` that fails the strict ASCII URL rule (§7) |
 | `body.evaluator_input` | anything `routing-snapshot-v1.md` "What Go evaluates" sends to Python (`shadow.go:927`, `requestOf`) |
@@ -240,8 +264,16 @@ imports the publisher (a dormancy test checks it in a subprocess, as
 **Publication.** Exactly `{"v":1,"kind":"tr-edge-policy-publication","manifest":JWS,"body":B64}`,
 compact JSON; `body` is the body's exact bytes in standard base64. The edge
 hashes the decoded bytes and never re-encodes them. The publisher signs a
-body at most once per `refresh_at` interval and serves that publication to
-every poll until `refresh_at`.
+body at most once per `refresh_at` interval, under a lock, and serves that
+publication to every poll until `refresh_at`. Before each signing it calls
+`StageDPolicyResolver.refresh()` synchronously (`stage_d_policy.py:238`:
+two HTTPS fetches with 5 s timeouts, a Sigstore bundle check and the
+watermark, so at most four a minute on an instance the edge polls). If
+the refresh fails it signs nothing new and answers 503 with `status`
+`digest-policy-unavailable`; the edge keeps its last copy until
+`not_after` and then passes every request, a safe failure. With no release
+URL configured there is nothing to refresh, and the set is the break-glass
+override alone, as in Python.
 
 **Body.** `json.dumps(obj, sort_keys=True, separators=(",", ":"),
 ensure_ascii=True, allow_nan=False)`, printable ASCII, no trailing newline.
@@ -256,7 +288,7 @@ table says, sets as sorted lists.
 | `issued_at` | int, Unix s | the publisher's clock |
 | `not_after` | int | `issued_at + 60` |
 | `refresh_at` | int | `issued_at + 15` |
-| `accepted_image_digests` | sorted strings | `StageDPolicyResolver.accepted_image_digests()` union `stage_d_accepted_gcp_digests` (`gateway.py:493-517`); empty with no resolver |
+| `accepted_image_digests` | sorted strings | `StageDPolicyResolver.accepted_image_digests()` union `stage_d_accepted_gcp_digests` (`gateway.py:493-517`), read right after a synchronous `resolver.refresh()` (below); empty with no resolver |
 | `stage_d` | object | `eligibility_enabled`, `heartbeat_enabled`, `require_heartbeat_declaration` (bools), `pilot_workspaces` (sorted): the live Settings, field names as the snapshot's `settings.stage_d` |
 | `records_durable` | bool | `settle_outbox_enabled` and the activity outbox present, exactly `gateway.py:1703-1706` |
 | `fastpath_pilot_enabled` | bool | Settings |
@@ -269,6 +301,7 @@ table says, sets as sorted lists.
 | `configured_regions` | strings, configured order | `regions.configured_regions` |
 | `primary_region` | string | Settings |
 | `multi_region_enabled` | bool | Settings |
+| `internal_models` | sorted strings | `MONITOR_MODEL_ID` and every `MODELS` entry with `internal_only`, from the serving process's catalog (`internal_model_access.requests_internal_model`'s rule) |
 
 The edge reads Stage D from the policy, not from the snapshot's
 `settings.stage_d`, which is the compile instant's: the kill switch must
@@ -397,10 +430,24 @@ is not copied.
 
 ## 6. The response
 
-`_gateway_authorize_response` (`gateway.py:2923-3066`) as FastAPI renders a
-returned dict: `json.dumps(content, ensure_ascii=False, allow_nan=False,
-separators=(",", ":"))`, insertion order, UTF-8. One object, `{"data":
-{...}}`, with these keys in this order for the cohort:
+`_gateway_authorize_response` (`gateway.py:2923-3066`) as FastAPI 0.146
+renders it. The route returns a `dict` and declares `-> dict[str, Any]`
+(`gateway.py:2421-2427`); FastAPI infers that as the response model, and
+with the default response class it takes its fast path: the dict is
+validated by `TypeAdapter(dict[str, Any])` and written by its `dump_json`
+in pydantic-core (`fastapi/routing.py` `serialize_response`,
+`dump_json=True`; `fastapi/_compat/v2.py` `serialize_json`), not by
+Starlette's `JSONResponse`. Checked against `json.dumps(content,
+ensure_ascii=False, separators=(",", ":"))` on this content: the same
+compact separators, the same insertion order (the `Any` validation keeps
+the dict's order), the same raw UTF-8 for non-ASCII (`\u2028` and
+`\u007f` raw), the same escapes (`\"`, `\\`, `\b`, `\f`, `\n`,
+`\r`, `\t`, other controls as `\u00XX`), integers of any size as
+digits, no trailing newline; only floats differ (below). The headers are
+`content-type: application/json` and `content-length`. The 503 and every
+other error go through the exception handlers' `JSONResponse` instead
+(`json.dumps`, `ensure_ascii=False`, `allow_nan=False`). One object,
+`{"data": {...}}`, with these keys in this order for the cohort:
 
 1. `authorization_id`
 2. `generation_id`: `"gen-" + uuid5(NAMESPACE_URL, "trustedrouter:" + authorization_id).hex` (`storage_models.py:1440-1448`)
@@ -411,7 +458,7 @@ separators=(",", ":"))`, insertion order, UTF-8. One object, `{"data":
 5. `requested_model`, `response_model` (`null`), `hide_public_metadata`
    (`false`)
 6. `usage_type`, `limit_usage_type`: `"Credits"`
-7. `estimated_cost` (Python float repr of `microdollars / 1e6`, `money.py:26-33`, `64-66`), `estimated_cost_microdollars`
+7. `estimated_cost` (`microdollars / 1e6` in pydantic-core's float format, `money.py:26-33`, `64-66`), `estimated_cost_microdollars`
 8. `credit_reservation_id`
 9. `byok_secret_ref`, `byok_encrypted_secret`, `byok_cache_key`,
    `byok_key_hint`, `byok_provider`: all `null` (`gateway.py:5471-5479`)
@@ -477,15 +524,21 @@ with the policy's settings: `stage_d_disabled`, `workspace_not_pilot`
 the boot does not declare), else `not_streaming`. `boot_not_accepted`
 cannot occur: the cohort requires an accepted boot.
 
-**The float twin.** `estimated_cost` is `repr(float(m) / 1_000_000)`:
-shortest round-trip digits, exponent form below `1e-4` and at or above
-`1e16`, `.0` on an integral value (`5e-06`, `0.000482`, `1.0`, `0.0`). G1's
-`pyjson` writes it; `pyjson_vectors_v1.json` holds it.
+**The float twin.** `estimated_cost` is `float(m) / 1_000_000` as
+pydantic-core writes it in the 200: the shortest round-trip digits, as
+`repr`, but plain decimal from `1e-5` (not `1e-4`) up to `1e16`, and an
+exponent with no zero padding: `1e-6`, `9e-6`, `0.00001`, `0.000099`,
+`0.000482`, `1.0`, `0.0`, `1e+16`, where `repr` gives `1e-06`, `9e-06`,
+`1e-05`, `9.9e-05`. For whole microdollars the two differ only for 1 to 99
+(checked for every `m` below 2,000 and 20,000 random ones up to 10^15
+with pydantic-core 2.46.3). G1's `pyjson` has both: `FormatFloatRepr`
+(error bodies and fingerprints) and `FormatFloatPydantic` (the 200), a
+follow-up to G1 (G1b, §11); `pyjson_vectors_v1.json` holds both.
 
 ## 7. Fingerprint and idempotency
 
 **Idempotency key** (`gateway.py:2635-2644`): `body.idempotency_key` (after
-the schema's strip and its 1 to 256 length check, a 422 otherwise) or else
+the schema's strip and its 1 to 256 length check, a 400 otherwise) or else
 the first `Idempotency-Key` header value as Starlette decodes it (latin-1),
 then `str.strip()`; empty is none; over 256 characters is Python's 400.
 Go reads the header only when it is sent once with every byte in 0x20 to
@@ -765,9 +818,9 @@ The insert is one `client.ReadWriteTransactionWithOptions` (tag
 `tr_authorize_leased_edge`) whose callback only buffers the two
 `spanner.Insert` mutations and sets a flag; never `Apply`, and never
 `ApplyAtLeastOnce`, which may replay a commit that applied. The client
-retries `Aborted` itself within the 2 s deadline, as Python's
+retries `Aborted` itself within the deadline, as Python's
 `run_in_transaction_with_retry` retries it within its budget
-(`storage_gcp_io.py:338`). The outcome, by the error the transaction
+(`storage_gcp_io.py:338`). The deadline is 1.5 s (decision 12). The outcome, by the error the transaction
 returns:
 
 | Error | Outcome | Then |
@@ -776,12 +829,32 @@ returns:
 | any, with the callback never run (no session, no transaction began); checked first | retried once within the deadline; still failing, `Failed` | refund, pass: nothing was sent, so this is never a 503 |
 | `AlreadyExists` | `AuthorizationExists(our id)`, strong: true is `Landed`, false is `ScopeTaken`; a read error goes on as `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
 | `Aborted` (retries exhausted), `InvalidArgument`, `FailedPrecondition`, `NotFound`, `PermissionDenied`, `Unauthenticated`, `OutOfRange`, `Unimplemented` | `Failed` | refund, pass: Spanner applied nothing |
-| `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the context ended, any error that is not a gRPC status | `Unknown` | `AuthorizationExists` with a fresh 1 s deadline of its own: true answers as after a read-back; false or a read error answers decision 1's 503 and keeps the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
+| `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the context ended, any error that is not a gRPC status | `Unknown` | `AuthorizationExists` with a fresh 0.5 s deadline of its own: true answers as after a read-back; false or a read error answers decision 1's 503 and keeps the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
 
 A refund after an `Unknown` would let an enclave retry replay, through
 Python, a row whose hold was given back; so nothing that can follow an
 applied commit refunds. Every read is by primary key on
 `tr_gateway_authorization`, so no extra index is needed.
+
+**Where Go differs from Python on purpose.** An `Aborted` left after the
+client's retries is `Failed` in Go (refund, pass); Python counts it
+transient and answers 503 after an empty read-back. `ABORTED` never
+applies a commit, so the refund is safe and the pass serves the request.
+An `AlreadyExists` whose row is our own authorization is `Landed` in Go;
+Python's `replay()` answers it as a `REPLAY` and the route then releases
+the hold even though the row is its own (`gateway.py:1920-1926`), a latent Python bug, harmless
+only because Python's ids make the case near impossible (noted for a
+separate fix). The residual risk is a commit the client library retries
+by itself after losing the first answer: Spanner then reports the
+second attempt's `AlreadyExists`, which the own-id check turns into
+`Landed`; G9 holds it with a fault-injection test that drops the first
+commit's answer.
+
+**G9 notes.** Classify with `spanner.ErrCode(err)`, which unwraps the
+client's error types, not a raw `status.FromError`. Run the insert and
+its read-back on `context.WithoutCancel(r.Context())` with only the
+deadlines above, so an enclave that hangs up mid-commit cannot turn a
+commit into `Canceled`.
 
 ## 9. The decide table (G2)
 
@@ -832,7 +905,7 @@ clock and envelope is pinned. No workspace, key or digest is real.
 checks staleness. Every case is an HTTP request through the ASGI app
 (`trusted_router.main`, the internal surface, a test client), so the
 goldens carry what the route function alone does not: FastAPI's body read
-and content-type rule, its 400 and 422 mapping, the timing decorator, the
+and content-type rule, the validation handler's 400, the timing decorator, the
 exception handlers. The store is
 `tests/fakes/spanner.make_fake_store(request_record_write_mode="typed", ...)`
 (as `tests/test_fastpath_pilot_store.py:19-25`) and the front door the
@@ -1005,18 +1078,21 @@ staleness.
 
 ```
 {"generator": "scripts/fastpath/pyjson_vectors.py", "python": "3.12",
- "floats":    [{"bits": HEX16, "repr": STR}],          // IEEE 754 binary64, big-endian hex; repr(float)
- "money":     [{"microdollars": INT, "repr": STR}],    // repr(float(m) / 1_000_000)
+ "floats":    [{"bits": HEX16, "repr": STR,            // IEEE 754 binary64, big-endian hex; repr(float)
+                "pydantic": STR}],                      // TypeAdapter(float).dump_json(x)
+ "money":     [{"microdollars": INT, "repr": STR,      // repr(float(m) / 1_000_000)
+                "pydantic": STR}],                      // as the 200 writes it
  "strings":   [{"name": STR, "labels": [STR], "source": STR,   // an ASCII JSON string literal
                 "ascii": STR, "unicode": STR}],        // json.dumps(s), json.dumps(s, ensure_ascii=False)
  "canonical": [{"name": STR, "labels": [STR], "source": STR,
                 "sorted": STR}],                        // json.dumps(json.loads(src), sort_keys=True, separators=(",", ":"), default=str)
  "ordered":   [{"name": STR, "labels": [STR], "source": STR,
-                "unicode": STR}],                       // json.dumps(json.loads(src), ensure_ascii=False, separators=(",", ":"))
+                "unicode": STR,                         // json.dumps(json.loads(src), ensure_ascii=False, separators=(",", ":"))
+                "pydantic": STR}],                      // TypeAdapter(dict[str, Any]).dump_json(json.loads(src)), objects only
  "isoformat": [{"us": INT, "text": STR}]}               // (EPOCH + timedelta(microseconds=us)).isoformat() with +00:00 as Z
 ```
 
-Coverage: shortest repr around every exponent switch, subnormals, `-0.0`,
+Coverage: shortest repr around every exponent switch of both formats (`1e-5`, `1e-4`, `1e16`), subnormals, `-0.0`,
 integral floats, `5e-324`, `1.7976931348623157e+308`; escapes (`\"`, `\\`,
 `\b`, `\f`, `\n`, `\r`, `\t`, other controls as `\u00XX`, `\u007f` kept
 literal by Python, non-BMP as surrogate pairs); integers past 2^63 and
@@ -1043,11 +1119,12 @@ letter: disjoint files, built in parallel.
 | P1 | 1a | Python authorize goldens: §10.1, §10.2 | PR0 |
 | P2 | 1b | Python edge-policy publisher and route, dark: §4, §10.5; a short section in `routing-snapshot-v1.md` | PR0 |
 | G1 | 1c | `fastpath/internal/pyjson`: float repr, escaping, canonical and ordered encoders, isoformat; §10.4 | PR0 |
+| G1b | 2 | `pyjson.FormatFloatPydantic` and the ordered encoder's pydantic-core mode for the 200; the `pydantic` fields of §10.4 | G1 |
 | G2 | 1d | Schema copies, `tr_fastpath_edge_decide`, `store/decide.go`, `fastpathctl decide`, `gwauth/rows.go`; a paragraph in `docs/runbooks/fastpath-turn-off.md` | PR0 |
 | G3 | 1e | `store/gatewaykey.go` (`ReadKeyContext`, one strong single-use read mirroring `storage_gcp.py:327-350`, BYOK ids only), `ReadCreditState`, `BootRecord.DeclaresUsageHeartbeat`, `gwstate/facts.go`; §10.3 | PR0 |
 | G4 | 1f | `edge/admit.go`, `Config.Admitter`, the holder set in `admission()` | PR0 |
 | G5 | 2 | `gwauth` request side: §7, §8.2, the request half of §3; widen the import rule | G1, P1 |
-| G6 | 2 | `gwauth` compose: §5, §6, §8.3 | G1, G2, P1 |
+| G6 | 2 | `gwauth` compose: §5, §6, §8.3 | G1, G1b, G2, P1 |
 | G7 | 2 | `gwstate/cache.go`: 100k LRU by lookup hash, per-workspace facts, single-flight background fill, strong refresh every 5 s of entries used in the last minute, stale past 15 s, negative 5 s, eviction on Python's 401, 402, 403 or pause 503, `Evict`, `EvictWorkspace` | G3 |
 | G8 | 2 | `edge/policy.go` poller, `-edge-policy-url` | P2 |
 | G9 | 2 | `store/gatewayauth.go`: §8.4 | G2 |
