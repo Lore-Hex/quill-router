@@ -69,6 +69,61 @@ def next_cycle(svc, wall, mono, *, offset=4_000_000):
     return job
 
 
+def test_reversed_observation_is_measured_failure_accepted_by_owner(monkeypatch, caplog):
+    from trusted_router.async_settle_shadow_health_state import publish_allowed
+    from trusted_router.storage_gcp_shadow_io import _RECORDER
+
+    svc, wall, mono, job = owner()
+    svc.incumbent_slot = job.slot-1
+    svc.store.database.server_ns = NOW_US*1000+40_000_123
+    original = svc.store.observe
+    rejected = []
+    def observe(*args, **kwargs):
+        assert kwargs["claim_at_ns"] == svc.store.last_claim["claim_at_ns"]
+        value = original(*args, **kwargs)
+        bound = svc.store.database.snapshot_calls[-1]["min_read_timestamp"].timestamp_pb()
+        assert bound.seconds*10**9+bound.nanos == kwargs["claim_at_ns"]
+        # Deliberately violate the service guarantee to exercise the fallback.
+        value["observed_at_ns"] = value["publisher_heartbeat_ns"] = kwargs["claim_at_ns"]-1
+        assert not publish_allowed(svc.store.last_claim, None, value)
+        rejected.append(value)
+        # Fake transport measurements must survive the real worker/owner path.
+        _RECORDER.get()(12_345)
+        _RECORDER.get()(23_456)
+        mono[0] += .035801
+        return value
+    monkeypatch.setattr(svc.store, "observe", observe)
+    reply = shell.publish_cycle(svc.store, svc.journal.boot, svc.settings.effective_serving_region,
+        svc.settings.source_revision, job, wall[0], svc, True, True)
+    trace = reply.trace
+    assert len(rejected) == 1 and reply.claimed
+    assert trace["outcome"] == "failed" and not trace["unknown_outcome"]
+    assert trace["claim_at_ns"] == NOW_US*1000+40_000_123
+    assert all(trace[k] is None for k in (
+        "observed_at_ns", "publisher_heartbeat_ns", "body_sha256", "ack_at_us"))
+    assert trace["observation_failure"] == "claim_observed_order" and "release_reason" not in trace
+    assert trace["rpc_count"] == 2
+    assert trace["rpc_elapsed_us"] == trace["cycle_us"] == 35_801
+    assert reply.rpc_durations == (12_345, 23_456)
+    PUBLISHER_SLOT_TRACE(trace)
+    with pytest.raises(ValueError):
+        PUBLISHER_SLOT_TRACE(dict(trace, observation_failure="arbitrary"))
+    # The unchanged invariant still rejects the original reversed evidence.
+    with pytest.raises(ValueError, match="trace_claim_observed_order"):
+        PUBLISHER_SLOT_TRACE(dict(trace, observed_at_ns=rejected[0]["observed_at_ns"],
+            publisher_heartbeat_ns=rejected[0]["publisher_heartbeat_ns"]))
+    effects = svc.publisher_reply(reply, job=job)
+    assert not any(isinstance(e, m.Fault) for e in effects)
+    assert svc.state.job is None and entries(svc)[-1] == trace
+    assert svc.publisher_faults == 0
+    assert svc.incumbent_slot == job.slot-1
+    assert svc.is_incumbent(job.slot+1) and not svc.is_incumbent(job.slot+2)
+    assert svc.counters[trace["day"]]["publisher"]["failures"] == 1
+    assert svc.counters[trace["day"]]["publisher"]["unknown_outcomes"] == 0
+    accounting(svc)
+    assert not any(r.msg.startswith("shadow_v2_publisher_reply_rejected") for r in caplog.records)
+
+
 @pytest.mark.parametrize("reason", ["unknown_slot", "invalid_start", "gone_day", "frozen_day"])
 def test_rejected_current_reply_releases_and_schedules(reason):
     svc, wall, mono, job = owner(NOW_US+m.DAY_US-m.SLOT_US if reason == "frozen_day" else NOW_US)

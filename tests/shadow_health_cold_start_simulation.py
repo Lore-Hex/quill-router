@@ -11,6 +11,11 @@ The small lock witnesses use fixed costs. Production calibration uses seeded
 service distributions and the real Service owner, including dispatch, delivery,
 cadence, watchdog and released replies. Post-ack stalls are an explicitly
 hypothetical sensitivity input, not a measured explanation for released jobs.
+The injected ordering-fault scenario uses a synthetic 27ms claim-to-observation
+gap (10ms claim read + 17ms commit), not the production calibration distribution.
+It reverses 40% of sub-30ms observations by up to 40ms. No clock mechanism is
+inferred. A bound is honored with max(read stamp, bound); we conservatively
+charge the timestamp correction as extra RPC latency, not a Spanner prediction.
 """
 from __future__ import annotations
 
@@ -258,7 +263,8 @@ class Lock:
 
 
 class Database:
-    def __init__(self, clock, storage, *, publish_commit_seconds=.033, distributed=False):
+    def __init__(self, clock, storage, *, publish_commit_seconds=.033, distributed=False,
+                 injected_ordering_fault=False):
         self.clock, self.storage = clock, storage
         self.rows = {}
         self.locks = {}
@@ -272,6 +278,11 @@ class Database:
         self.backoffs = []
         self.distributed = distributed
         self.random = random.Random(20261022)  # noqa: S311 - reproducible simulation, not secrets
+        self.injected_ordering_fault = injected_ordering_fault
+        self.observation_gaps_ns = []
+        self.injected_reversals = 0
+        self.injected_gaps_ns = []
+        self.bound_waits_ns = []
 
     def duration(self, kind):
         median, tail = {"read": (.020, .060), "snapshot": (.020, .030),
@@ -310,8 +321,8 @@ class Database:
             self.clock.wake(tx)
 
     @contextmanager
-    def snapshot(self):
-        yield Reader(self)
+    def snapshot(self, *, min_read_timestamp=None):
+        yield Reader(self, min_read_timestamp=min_read_timestamp)
 
     def run_in_transaction(self, callback, **options):
         deadline = self.clock.now + options.get("timeout_secs", 1.)
@@ -338,6 +349,8 @@ class Database:
                     for key in sorted(tx.mutations):
                         self.lock(key).acquire(tx, "X")
                     seconds = self.duration("commit" if tx.mutations else "empty_commit")
+                    if self.injected_ordering_fault and tx.claim and tx.mutations:
+                        seconds = .017  # Synthetic short-gap fault fixture, not calibration.
                     if tx.mutations and not tx.claim and not self.distributed:
                         seconds = self.publish_commit_seconds
                     self.clock.sleep(seconds)
@@ -366,7 +379,7 @@ class Database:
 
 
 class Reader:
-    def __init__(self, database, transaction=False):
+    def __init__(self, database, transaction=False, min_read_timestamp=None):
         self.db, self.transaction = database, transaction
         self.mutations = {}
         self.claim = False
@@ -382,6 +395,7 @@ class Reader:
         self.final_rpc = None
         self.lock_wait = 0.
         self.reads = 0
+        self.min_read_timestamp = min_read_timestamp
 
     def check(self):
         if self.aborted:
@@ -401,6 +415,25 @@ class Reader:
         if self.transaction:
             db.lock(key).acquire(self, "S")
         ns = round(db.clock.now*1e9)
+        if sql == db.storage.UNRESOLVED_SQL and db.injected_ordering_fault:
+            claim = json.loads(db.rows[CLAIM_KIND, "local/publish"])
+            gap = ns-claim["claim_at_ns"]
+            db.observation_gaps_ns.append(gap)
+            # Keyed by slot so both revisions see the same injected fault
+            # schedule even when a rejection changes subsequent contenders.
+            fault = random.Random(claim["slot"])  # noqa: S311 - deterministic injected fault
+            if 0 <= gap < 30_000_000 and fault.random() < .4:
+                ns = claim["claim_at_ns"]-fault.randint(1, 40_000_000)
+                db.injected_reversals += 1
+                db.injected_gaps_ns.append(gap)
+        if self.min_read_timestamp is not None:
+            bound = self.min_read_timestamp.timestamp_pb()
+            bound_ns = bound.seconds*10**9+bound.nanos
+            wait_ns = max(0, bound_ns-ns)
+            ns = max(ns, bound_ns)
+            db.bound_waits_ns.append(wait_ns)
+            if wait_ns:
+                db.clock.sleep(wait_ns/1e9)
         stamp = DatetimeWithNanoseconds.from_timestamp_pb(
             Timestamp(seconds=ns//10**9, nanos=ns%10**9))
         body = db.rows.get(key)
@@ -411,8 +444,11 @@ class Reader:
             rows = []
         else:
             rows = [] if body is None else [(body,)]
-        db.clock.sleep(db.duration("observe" if sql == db.storage.UNRESOLVED_SQL
-                                   else "read" if self.transaction else "snapshot"))
+        duration = db.duration("observe" if sql == db.storage.UNRESOLVED_SQL
+                               else "read" if self.transaction else "snapshot")
+        if db.injected_ordering_fault and sql == db.storage.CLAIM_SQL:
+            duration = .010
+        db.clock.sleep(duration)
         self.check()
         class Stream(list):
             metadata = SimpleNamespace(transaction=SimpleNamespace(read_timestamp=stamp))
@@ -525,7 +561,8 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
 
 
 def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=0.,
-                       post_ack_seconds=2., seed=73, clock_offsets_ms=None):
+                       post_ack_seconds=2., seed=73, clock_offsets_ms=None,
+                       injected_ordering_fault=False):
     """Execute actual owner/worker admission, not a synthesized busy outcome.
 
     Clock offsets are server minus each boot's local wall in milliseconds;
@@ -549,7 +586,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     assert len(offsets) == 8
     clock.now = START*2. + min(offsets)
     publisher.sleep = clock.sleep
-    db = Database(clock, storage, distributed=True)
+    db = Database(clock, storage, distributed=True, injected_ordering_fault=injected_ordering_fault)
     boots = [f"boot-{i}" for i in range(8)]
     traces, services, futures, replies, releases = [], [], [], [], []
     stalls = random.Random(seed)  # noqa: S311 - reproducible simulation, not secrets
@@ -674,9 +711,15 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     claim_txs = [tx for tx in db.transactions if tx.claim and tx.slot >= START+10]
     commits = {slot: sum(tx.final_rpc in ("commit", "empty_commit")
         and tx.slot == slot for tx in claim_txs) for slot in range(START+10, START+slots)}
+    all_commits = {slot: sum(tx.claim and tx.final_rpc in ("commit", "empty_commit")
+        and tx.slot == slot for tx in db.transactions) for slot in range(START, START+slots)}
     absent = no_incumbent & commits.keys()
     rejected = {slot for _, slot, reason in releases if reason == "invalid_publisher_reply"}
     after_rejected = {slot+1 for slot in rejected} & commits.keys()
+    # A rejected owner loses incumbency, but the durable claim still protects
+    # slot+1. Followers can compete only in slot+2 under the unchanged fence.
+    recovery_slots = {slot+2 for slot in rejected} & commits.keys()
+    after_published = {slot+1 for slot in winners} & commits.keys()
     streaks, last, length = [], None, 0
     for slot in range(START+10, START+slots):
         boot = winners.get(slot)
@@ -702,6 +745,18 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         slots_after_rejection=len(after_rejected),
         commits_after_rejection=(sum(commits[slot] for slot in after_rejected)/len(after_rejected)
             if after_rejected else None),
+        commits_after_publication=(sum(commits[slot] for slot in after_published)/len(after_published)
+            if after_published else None),
+        commits_in_recovery_slot=(sum(commits[slot] for slot in recovery_slots)/len(recovery_slots)
+            if recovery_slots else None),
+        injected_reversals=db.injected_reversals,
+        injected_observations=len(db.observation_gaps_ns),
+        injected_gap_max_ms=max(db.injected_gaps_ns, default=0)/1e6,
+        bound_wait_max_ms=max(db.bound_waits_ns, default=0)/1e6,
+        bound_wait_mean_ms=sum(db.bound_waits_ns)/max(1, len(db.bound_waits_ns))/1e6,
+        max_published_observation_ms=max((t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6
+            for t in published),
+        max_published_cycle_ms=max(t["cycle_us"]/1000 for t in published),
         empty_claim_commits=sum(tx.final_rpc == "empty_commit" for tx in claim_txs),
         rollback_claims=sum(tx.final_rpc == "rollback" for tx in claim_txs),
         early_claim_reads=sum(tx.claim_at_ns is not None and tx.claim_at_ns < tx.slot*2_000_000_000
@@ -718,6 +773,8 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         attempts=attempts, median_incumbency_streak=median(streaks) if streaks else 0,
         max_60_slot_commits=max(sum(commits[s] for s in range(slot, slot+60))/60
             for slot in range(START+10, START+slots-59)),
+        max_60_slot_commits_including_warmup=max(sum(all_commits[s] for s in range(slot, slot+60))/60
+            for slot in range(START, START+slots-59)),
         average_claim_transaction_ms=sum(tx.ended-tx.started for tx in claim_txs)*1000/max(1, len(claim_txs)),
         claim_lock_wait_seconds=sum(tx.lock_wait for tx in claim_txs), aborts=db.aborts,
         published_claim_at_ms=median((t["claim_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in published),
@@ -981,6 +1038,40 @@ async def test_real_threads_asyncio_owner_sixty_slots(capsys, caplog):
     await real_threads_asyncio_owner(capsys, caplog, slots=60)
 
 
+@pytest.mark.parametrize("warm", [False, True], ids=["cold", "warm"])
+@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
+def test_injected_observation_ordering_fault(capsys, caplog, ref, warm):
+    """Injected negative control, NOT a derivation of the production reversal."""
+    result = simulate_lifecycle(ref=ref, warm=warm, injected_ordering_fault=True)
+    diagnostics = [r.getMessage() for r in caplog.records
+                   if r.msg.startswith("shadow_v2_publisher_reply_rejected")]
+    rules = {message.split("exception_message=", 1)[1].split(" ", 1)[0]
+             for message in diagnostics}
+    with capsys.disabled():
+        print(json.dumps(dict(scenario="injected_observation_ordering_fault",
+            ref=baseline_ref() if ref else "worktree", warm=warm,
+            rejection_rules=sorted(rules), **result)), flush=True)
+    assert result["injected_reversals"] > 0
+    assert result["injected_gap_max_ms"] < 30
+    if ref:
+        assert rules == {"trace_claim_observed_order"}
+        assert len(diagnostics) == result["invalid_reply_releases"] > 0
+        assert result["rate"] < .60
+        assert .30 <= result["previous_winner_failures"] <= .50
+        assert result["commits_in_recovery_slot"] > result["commits_after_publication"]
+        assert result["bound_wait_max_ms"] == 0
+    else:
+        assert not diagnostics and result["invalid_reply_releases"] == 0
+        assert result["rate"] >= .95
+        assert result["unknown_ratio"] <= .01
+        assert result["max_60_slot_commits"] <= 1.1
+        assert result["max_60_slot_commits_including_warmup"] <= 1.1
+        assert result["median_incumbency_streak"] >= 50
+        assert 0 <= result["max_published_observation_ms"] <= 250
+        assert 0 < result["bound_wait_max_ms"] <= 40
+        assert result["max_published_cycle_ms"] <= 500
+
+
 @pytest.mark.asyncio
 async def test_real_threads_asyncio_owner_smoke(capsys, caplog):
     # One slot suffices: three real workers can claim, publish, lose and deliver
@@ -1035,10 +1126,10 @@ async def real_threads_asyncio_owner(capsys, caplog, *, slots):
             return SerialLock()
 
         @contextmanager
-        def snapshot(self):
+        def snapshot(self, *, min_read_timestamp=None):
             with self.mutex:
                 self.worker_threads.add(threading.get_ident())
-                yield Reader(self)
+                yield Reader(self, min_read_timestamp=min_read_timestamp)
 
         def run_in_transaction(self, callback, **options):
             with self.mutex:
