@@ -2,9 +2,35 @@
   "_about": "Provider-native supplement for Parasail models live ahead of the shared snapshot. Prices refreshed hourly from the public pricing page (www.parasail.io/pricing); model liveness gated on api.parasail.io/v1/models.",
   "provider": "parasail",
   "source": "https://www.parasail.io/pricing",
-  "generated_at": "2026-10-20T12:05:14Z",
-  "model_count": 6,
+  "generated_at": "2026-10-23T17:52:00Z",
+  "model_count": 7,
   "models": [
+    {
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "display_name": "Parasail MiniMax M3.1 Flash",
+      "title": "minimax/minimax-m3.1-flash",
+      "context_length": 1000000,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 15000,
+      "model_type": "chat",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
     {
       "id": "z-ai/glm-5.2",
       "upstream_id": "parasail-glm-52",
