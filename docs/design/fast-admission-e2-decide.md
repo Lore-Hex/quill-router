@@ -39,31 +39,36 @@ The flow, per request, in this order:
    estimated-usage model.
 6. Compose everything but the envelope (§5, §6).
 7. `FrontDoor.Authorize` in process. Anything but `Admitted` passes.
-8. Insert the two rows in one read-write transaction with a 2 s deadline:
-   `Inserted` answers 200; `ScopeTaken` and `Failed` refund and pass;
-   `Unknown` reads the authorization back by id, answering 200 if it
+8. Insert the two rows in one read-write transaction with a 2 s deadline
+   (§8.4): `Inserted` and `Landed` answer 200; `ScopeTaken` and `Failed`
+   refund and pass; `Unknown` reads the authorization back by id, answering 200 if it
    landed and Python's 503 (hold kept) if not.
+9. Render: append `timing` (§6) and write the bytes.
 
 ## 2. Decisions
 
 1. **What Go answers.** Only 200 admissions, plus Python's exact 503 for an
    unknown insert outcome: status 503, `Retry-After: 1`, body
-   `{"error":{"code":503,"message":"Authorization unavailable; retry","type":"service_unavailable","source":...}}`
-   as `api_error` renders it (`gateway.py:1794-1807`; the exact bytes are
-   P1's `unavailable` golden case). Every refusal and every owner non-admit
+   `{"error":{"code":503,"message":"Authorization unavailable; retry","type":"service_unavailable","source":...},"data":{"timing":{...}}}`
+   as `api_error` renders it (`gateway.py:1794-1807`) and the timing
+   decorator's `_scope` extends it with a top-level `data.timing` beside
+   `error` (`gateway_timing.py:86-107`); the exact bytes, timing aside, are
+   P1's `unavailable` golden case. Every refusal and every owner non-admit
    is proxied to Python unchanged.
 2. **Key snapshot.** Go reads Spanner itself (the same `tr_entities` it
-   reads boots from): strong refresh every 10 s, 30 s maximum age, a cold
-   miss passes, and a Python 401 or 403 for a cached lookup hash evicts it.
-   No per-key publisher and no new signing key.
+   reads boots from): a strong refresh every 5 s of each entry used in the
+   last minute, 15 s maximum age, a cold miss passes, and a Python 401, 402
+   or 403 (or a pause 503) for a cached lookup hash evicts the key and its
+   workspace. No per-key publisher and no new signing key.
 3. **Flow.** Gate on cached cohort facts, then the evaluator (`Answered`,
    all candidates Credits, no estimated-usage model), then compose, then
    `FrontDoor.Authorize` (non-`Admitted` passes), then the insert with a 2 s
    deadline: `Inserted` answers; `ScopeTaken` refunds and passes; `Failed`
    refunds and passes; `Unknown` reads back by id (landed: 200, else 503
-   with the hold kept). No scope pre-read: the unique index
-   `tr_reservation_by_idemp` arbitrates. No key presented: mint a uuid4, as
-   Python does (`gateway.py:1119-1120`).
+   with the hold kept). Which commit errors are which is §8.4: only an
+   error that proves nothing applied is `Failed`. No scope pre-read: the
+   unique index `tr_reservation_by_idemp` arbitrates. No key presented:
+   mint a uuid4, as Python does (`gateway.py:1119-1120`).
 4. **Fingerprint.** Pass any body with a JSON float or exponent anywhere, a
    declared field whose JSON type pydantic would coerce, duplicate keys,
    non-ASCII tags, an `http_referer` without `app` that fails the strict
@@ -79,11 +84,11 @@ The flow, per request, in this order:
 7. **Stage D.** Streams stay out. The reason comes from the edge policy's
    live Stage D settings and the boot's `declares_usage_heartbeat`. Any
    candidate whose model is in `ESTIMATED_USAGE_SNAPSHOT_MODELS`
-   (`stage_d.py:31-34`, three ids) passes; Go hardcodes the three and a
-   Python test asserts the set.
+   (`stage_d.py:31-34`, three ids) passes; Go hardcodes the three, P1's
+   header carries Python's set, and a Go test holds the two equal.
 8. **Accepted digests.** From P2's signed edge policy (the resolver's set
    union the break-glass override, `gateway.py:493-517`), maximum age
-   120 s, stale passes. A boot is accepted iff its signature verified (E1),
+   60 s, stale passes. A boot is accepted iff its signature verified (E1),
    `body.api_key_lookup_hash` equals the resolved key's lookup hash, and its
    image digest is in the set (`gateway_boot.py:117-147`).
 9. **Signing the policy.** With the routing-snapshot key, under a distinct
@@ -118,6 +123,37 @@ The flow, per request, in this order:
 16. **Imports.** `gwauth` may import `routingsnapshot`; the import rule
     (`routingsnapshot/rules_test.go:138`, `TestOnlyTheEdgeImportsTheEvaluator`)
     widens to the edge and `gwauth` only.
+17. **Revocation lag is bounded, not zero.** Python reads the key, the
+    workspace and the boot strongly on every request; Go reads them from
+    caches. The bound: a disabled, expired or rescoped key, a paused or
+    abuse-latched workspace, or a debt mark is honoured within 15 s (the
+    facts' maximum age); a digest withdrawn from the accepted set within
+    60 s (the policy's `not_after`), which is no worse than Python's own
+    resolver (`stage_d_policy_refresh_seconds`, 60, `config.py:1049`). Eviction is sooner when Python answers
+    the key a 401, 402 or 403, or the workspace a pause 503, on any request
+    the edge passes. The cohort is pilot workspaces only, and the operator's
+    immediate lever is `fastpathctl decide-off-all` (honoured within one
+    5 s copy interval). Before I2, `docs/runbooks/fastpath-turn-off.md`
+    (G2's paragraph) makes `fastpathctl decide off` the first step of any
+    abuse pause or key revocation for a decided workspace. A revocation feed
+    (a change stream or a Python-published epoch) is E4's, with capped keys.
+18. **Timing.** Every Python 200 ends `data` with `timing`
+    (`@timed_gateway_async`, `gateway.py:573`; `gateway_timing.py:257-279`;
+    required by `GatewayAuthorizeData`, `schemas.py:365`). Go emits the same
+    six keys in the same order with its own integer milliseconds and RPC
+    count (§6). The comparator checks the keys and their order and ignores
+    the values.
+19. **Internal models.** A request naming `trustedrouter/monitor` or an
+    `internal_only` model in `model` or `models` passes: Python answers a
+    key other than the monitor or probe key 403 (`gateway.py:1008`,
+    `internal_model_access.py:31-48`). Go hardcodes the set
+    (`trustedrouter/monitor`, `trustedrouter/fortanix-test` today). The
+    routing snapshot is published and polled live, so adding a field to its
+    v1 shape would stop every edge's poll; instead P1's header carries
+    Python's set (`MONITOR_MODEL_ID` and every `internal_only` model,
+    `catalog_registry.py:1867-1883`), its staleness test fails when the
+    catalog gains one, and a Go test holds Go's set equal to the header's,
+    so the same change must update both.
 
 ## 3. The cohort
 
@@ -130,11 +166,13 @@ which reason a request tripping several is counted under.
 
 | Reason | Passes when |
 |---|---|
-| `body.unparseable` | not one JSON object, not UTF-8, over the edge's 1 MiB bound |
+| `body.content_type` | not exactly one `Content-Type` whose media type is `application/json`, optionally with `charset=utf-8`; a missing header is FastAPI's 422 under `strict_content_type` |
+| `body.unparseable` | not one JSON object; not UTF-8, or a UTF-8 BOM (Python's `json.loads` accepts one); nesting deeper than 128 (Python's decoder or validation recursion is a 400); an integer literal over 4,000 digits (Python refuses over 4,300, a 400); over 4 MiB (Python's `max_request_body_bytes`, `config.py:1353`, a 413; the edge reads up to its own 16 MiB `maxBody`, `edge.go:58`) |
 | `body.duplicate_key` | any object with a repeated key, at any depth |
 | `body.float` | any number with a fraction or exponent, at any depth |
 | `body.lax_type` | a declared field whose JSON type is not the schema's exact type (`"5"` for an int, `1` for a bool, a non-list for a list) |
-| `body.strip_ambiguous` | a declared string (or list-of-strings entry) with any byte outside printable ASCII, where Python's and Go's whitespace could differ |
+| `body.strip_ambiguous` | a declared string (or list-of-strings entry) with any byte outside printable ASCII, where Python's and Go's whitespace could differ (`input_modalities` is a `Literal` list and is not stripped: `" text"` is a 422, so `body.refused`) |
+| `body.dict_key_strip` | a top-level key of `provider`, `trace`, `metadata` or `tags` that `str_strip_whitespace` would change (leading or trailing whitespace) or that has a byte outside printable ASCII. Pydantic strips those keys, last value winning on a collision (§7); Go passes rather than reproduce it |
 | `body.refused` | anything the schema or `_gateway_authorize_body` refuses (Go never answers what Python would 400 or 422) |
 | `body.api_key_hash` | `api_key_hash` present (the lookup hash alone identifies the key in the cohort) |
 | `body.stream` | `stream` true |
@@ -143,10 +181,11 @@ which reason a request tripping several is counted under.
 | `body.priced_extra` | `additional_cost_reservation_microdollars` nonzero, `inference_receipt` true, `video_resolution`, `speech_input_characters` or `transcription_duration_ms` present |
 | `body.canonical_model` | `model` or a `models` entry not identity under `canonical_router_model_id` (`model_aliases.py:70-80`, applied by the schema at `schemas.py:440`) |
 | `body.custom_model` | a custom or user-provided model in `model` or `models` |
+| `body.internal_model` | `model` or a `models` entry, stripped, is in the internal set (decision 19) |
 | `body.tags` | a tag key or value outside printable ASCII |
 | `body.referer` | `http_referer` with no `app` that fails the strict ASCII URL rule (§7) |
 | `body.evaluator_input` | anything `routing-snapshot-v1.md` "What Go evaluates" sends to Python (`shadow.go:927`, `requestOf`) |
-| `header.idempotency_key` | an idempotency key (body or header) over 256 characters after strip, or with a native-batch or partner prefix |
+| `header.idempotency_key` | an idempotency key (body or header) over 256 characters after strip, or with a native-batch or partner prefix; an `Idempotency-Key` header sent more than once (Starlette reads the first) or with a byte outside 0x20 to 0x7E (Starlette decodes latin-1 and `str.strip` strips Unicode whitespace) |
 | `header.settlement_async` | `X-TR-Settlement-Mode: async-v1` (`gateway.py:2976`) |
 | `header.video_providers` | `X-Quill-Video-Allowed-Providers` present |
 
@@ -154,10 +193,13 @@ which reason a request tripping several is counted under.
 `cache.workspace`, `cache.decide` (cold or past its maximum age).
 
 **Key and workspace facts** (G3, G7): `key.<reason>` for an ineligible key
-(§8.1 reasons), `workspace.paused` (any pause cause on the entity or a
-credit row), `workspace.in_debt`, `workspace.tier` (latched or below the
-grant's tier: the grant would refuse it anyway), `workspace.federated`,
-`workspace.deleted`, `workspace.broadcast` (any destination pointer).
+(§8.1 reasons), `workspace.missing` (no workspace row: Python's 403,
+`gateway.py:971-972`), `workspace.paused` (any pause cause on the entity
+or a credit row), `workspace.in_debt`, `workspace.tier` (latched or below
+the grant's tier: the grant would refuse it anyway),
+`workspace.federated`, `workspace.deleted`, `workspace.broadcast` (any
+destination pointer), `tags.merged_invalid` (the merged tag map fails
+`validate_tags`, or the key's stored tags are unusable: §6).
 
 **Policy and decide** (G8, G2): `policy.pilot_off`,
 `policy.not_pilot_workspace`, `policy.pilot_region`,
@@ -212,8 +254,8 @@ table says, sets as sorted lists.
 | `kind` | string | `"tr-edge-policy"` |
 | `plane` | `{cloud, region}` | the publisher's plane, as the snapshot's `plane` |
 | `issued_at` | int, Unix s | the publisher's clock |
-| `not_after` | int | `issued_at + 120` |
-| `refresh_at` | int | `issued_at + 30` |
+| `not_after` | int | `issued_at + 60` |
+| `refresh_at` | int | `issued_at + 15` |
 | `accepted_image_digests` | sorted strings | `StageDPolicyResolver.accepted_image_digests()` union `stage_d_accepted_gcp_digests` (`gateway.py:493-517`); empty with no resolver |
 | `stage_d` | object | `eligibility_enabled`, `heartbeat_enabled`, `require_heartbeat_declaration` (bools), `pilot_workspaces` (sorted): the live Settings, field names as the snapshot's `settings.stage_d` |
 | `records_durable` | bool | `settle_outbox_enabled` and the activity outbox present, exactly `gateway.py:1703-1706` |
@@ -249,8 +291,8 @@ payload, `iss` and `aud` the key's, `aud` and `plane` the verifier's own,
 <= now < not_after`. A snapshot verifier given a policy manifest refuses it
 on `typ`, and the reverse; both directions are tests in P2 and G8.
 
-**Edge behaviour.** Poll at `refresh_at`; on failure back off from 5 s to
-30 s; keep the last good copy until its `not_after`, then drop it (every
+**Edge behaviour.** Poll at `refresh_at`; on failure back off from 2 s to
+15 s; keep the last good copy until its `not_after`, then drop it (every
 request passes with `cache.policy`). The URL must be on the edge upstream's
 scheme and host, as the snapshot URL is.
 
@@ -268,8 +310,8 @@ public_key_b64url, purpose, test_key: true}`, signed with the same test key
 Exactly what `_authorize_gateway_leased` writes (`storage_gcp.py:5018-5147`),
 in one read-write transaction (Python tags it `tr_authorize_leased`,
 `storage_gcp.py:5121`; Go tags it `tr_authorize_leased_edge`). Go writes
-two `spanner.Insert` mutations; a violation of `tr_reservation_by_idemp`
-is `AlreadyExists`, which is `ScopeTaken`.
+two `spanner.Insert` mutations; how each commit error maps to an outcome
+is §8.4.
 
 **`tr_reservation`** (`storage_gcp_counter_dml.py:680-685` columns,
 `756-778` insert):
@@ -284,7 +326,7 @@ is `AlreadyExists`, which is `ScopeTaken`.
 | `authorization_id` | the authorization's |
 | `idempotency_scope` | `f"{workspace_id}#{key_hash}#{sha256_hex(idempotency_key)}"` (`storage_gcp_keys.py:596-600`), never null in the cohort (a key is always presented or minted) |
 | `idempotency_fingerprint` | §7 |
-| `expires_at` | the clock reading plus 7200 s (`GATEWAY_RESERVATION_TTL_SECONDS`, `user_model_rules.py:17`) |
+| `expires_at` | the clock reading plus 7200 s (`GATEWAY_RESERVATION_TTL_SECONDS`, `user_model_rules.py:17`). Python takes a second clock reading for it (`gateway.py:1668`), a few milliseconds after `created_at`; Go uses its one reading (decision 15), P1 pins both of Python's to the case's instant, and G10 compares `expires_at - created_at` as exactly 7200 s for Go and at least 7200 s for Python |
 | `created_at` | the clock reading |
 
 `settled` takes its default (false); `actual_micro`, `settled_usage_type`,
@@ -331,20 +373,25 @@ always written. For the cohort (`storage_models.py:887-990`), every key:
 | `stage_d_boot_kid` | the boot's kid |
 | `invocation_nonce` | when the body sends one |
 | `fastpath_envelope` | `Authorized.Envelope` |
-| `fastpath_end_of_life` | `Authorized.EndOfLife` in UTC, truncated to microseconds, written as `created_at` is (what Python's `_parse_time` and `isoformat` make of the owner's JSON today) |
+| `fastpath_end_of_life` | `Authorized.EndOfLife` truncated to microseconds and written with its own UTC offset, exactly what Python's `_parse_time` and `isoformat` make of Go's JSON for that value today (`fastpath_frontdoor.py:359-376`): `+00:00` becomes `Z`, any other offset stays `±HH:MM`; no fraction when the microseconds are 0 |
 
 Absent, because `None` with a `None` default: `key_reserved_microdollars`,
-`custom_model_id` and revision, every `user_*` field, `video_pricing_snapshot`,
-`expires_at`, every heartbeat and `finalized_*` field, `pricing_snapshot`,
-`gateway_request_id`.
+`custom_model_id`, `custom_model_revision`, `user_provided_model_id`,
+`user_provided_model_revision`, `user_model_prompt_price_microdollars_per_m`,
+`user_model_completion_price_microdollars_per_m`, `user_model_owner_user_id`,
+`video_pricing_snapshot`, `expires_at`, `started_at`, `heartbeat_seq`,
+`heartbeat_at`, `heartbeat_hash`, `selected_endpoint_id`,
+`delivered_usage`, `pricing_snapshot`, `gateway_request_id`,
+`finalization_outcome`, every `finalized_*` field, and `invocation_nonce`
+when the body sends none.
 
 **Schema copies** (G2): `fastpath/schema/fastpath.sql` gains verbatim
 copies of production's `tr_gateway_authorization` (the `CREATE TABLE` at
 `migrate_request_retention.sh:92-106` with the columns
 `migrate_spend_lease.sh:97-138` adds, retired spend-lease columns included)
-and `tr_reservation_by_idemp` (`migrate_typed_counters.sh:148-151`), plus
-`tr_reservation_by_authorization` (`159-162`) for G9's read-back.
-`fastpath/schema/schema_test.go` holds each copy equal to the production
+and `tr_reservation_by_idemp` (`migrate_typed_counters.sh:148-151`). Every
+read Go makes of these rows is by primary key (§8.4, G10), so no other
+index is copied. `fastpath/schema/schema_test.go` holds each copy equal to the production
 script, as `TestCreditBalanceIsProductions` does. The row-deletion policy
 is not copied.
 
@@ -383,6 +430,15 @@ separators=(",", ":"))`, insertion order, UTF-8. One object, `{"data":
     `endpoint_id`, `model`, `upstream_model`, `provider`, `provider_name`,
     `inference_location`, optional `wafer_zdr_required`, `usage_type`, the
     five `byok_*` (`null`), `region`
+15. `timing`: `total_ms`, `spanner_rpcs`, `key_lookup_ms`, `routing_ms`,
+    `store_ms`, `post_commit_ms`, non-negative integers, in that order
+    (`GatewayTiming.snapshot`, `gateway_timing.py:54-60`), appended last by
+    the decorator. Go's values: `total_ms` from the request's arrival at the
+    edge to the render; `spanner_rpcs` the Spanner RPCs this request issued
+    (the commit, and the read-back if any); `key_lookup_ms` the cache
+    lookups (0 on a hit); `routing_ms` the gate, evaluation and compose;
+    `store_ms` the admit and the insert; `post_commit_ms` the commit to the
+    render. Values are diagnostics: the comparator ignores them.
 
 `inference_location` is the snapshot endpoint's `response.inference_location`
 re-emitted in Python's literal key order (`provider_locations.py:419-429`):
@@ -392,10 +448,27 @@ re-emitted in Python's literal key order (`provider_locations.py:419-429`):
 `documentation_url`. The snapshot body is sorted, so the order is Go's to
 restore; P1's goldens catch drift.
 
-**`tags`** is `merge_tags(key.tags, body.tags)` (`request_tags.py:65-82`):
-the key's stored tags in stored order, then the request's in body order,
-a request key overwriting in place (a Python dict update keeps the first
-position).
+**`tags`** is `merge_tags(key.tags, body.tags)` (`request_tags.py:65-82`,
+called at `gateway.py:998-1001`): the key's stored tags in stored order,
+then the request's in body order, a request key overwriting in place (a
+Python dict update keeps the first position). Go runs `validate_tags` over
+the merged map exactly and passes with `tags.merged_invalid` on any
+failure, which Python answers 400 `invalid_tags`: more than 50 entries; a
+key outside 1 to 128 characters or with a reserved prefix (`aws:`,
+`trustedrouter:`, case-folded); a value over 256 characters; a character
+outside letters, digits, space and `+-=._:/@` (Go accepts only their ASCII
+members and passes on anything else); more than 4096 bytes as
+`json.dumps(merged, ensure_ascii=False, separators=(",", ":"))`. Stored
+tags that are not an object count as absent, as `merge_tags` treats them;
+an object with a non-string or non-ASCII entry is unusable
+(`KeyFacts.TagsUsable` false) and passes.
+
+**After a read-back** (an `Unknown` insert whose row landed, or an
+`AlreadyExists` on our own authorization id, §8.4) the canonical bytes are
+Python's for that case: Python answers from the authorization it read
+back, whose `tags` decode from the sorted payload, so `tags` is emitted in
+sorted key order; every other byte is as for `Inserted`. P1's
+`unknown_landed` cases are the goldens.
 
 **Stage D reason** R is `_stage_d_eligibility_reason` (`gateway.py:3069-3115`)
 with the policy's settings: `stage_d_disabled`, `workspace_not_pilot`
@@ -412,9 +485,12 @@ shortest round-trip digits, exponent form below `1e-4` and at or above
 ## 7. Fingerprint and idempotency
 
 **Idempotency key** (`gateway.py:2635-2644`): `body.idempotency_key` (after
-the schema's strip) or else the `Idempotency-Key` header, then stripped;
-empty is none; over 256 characters is Python's 400 (Go passes). None
-presented: Go mints `str(uuid4())`, hyphenated.
+the schema's strip and its 1 to 256 length check, a 422 otherwise) or else
+the first `Idempotency-Key` header value as Starlette decodes it (latin-1),
+then `str.strip()`; empty is none; over 256 characters is Python's 400.
+Go reads the header only when it is sent once with every byte in 0x20 to
+0x7E, and strips spaces; anything else passes (`header.idempotency_key`).
+None presented: Go mints `str(uuid4())`, hyphenated.
 
 **Material** (`_gateway_authorize_body`, `gateway.py:2667-2702`, as
 `prepare_fingerprint` uses it for a non-media request, `1214-1235`):
@@ -424,14 +500,23 @@ presented: Go mints `str(uuid4())`, hyphenated.
    `str_strip_whitespace`): declared fields present and non-null, defaults
    included (`estimated_input_tokens: 1`, `inference_receipt: false`,
    `additional_cost_reservation_microdollars: 0`), `cache_affinity_key` and
-   `cache_affinity_explicit` excluded, extras as decoded.
+   `cache_affinity_explicit` excluded. Declared `str` and `list[str]` fields
+   are stripped; `input_modalities` (a `Literal` list) is not. The
+   top-level keys of the declared `dict[str, Any]` fields (`provider`,
+   `trace`, `metadata`, `tags`) are stripped too, a collision keeping the
+   first key's position and the last value; their values and anything
+   nested are untouched (Go passes on any such key a strip would change:
+   `body.dict_key_strip`). Extras keep their keys unstripped and their
+   values as decoded, but `exclude_none` drops a top-level extra whose value
+   is `null` (a nested `null` stays).
 2. Remove `invocation_nonce`; remove `additional_cost_reservation_microdollars`
    when zero and `inference_receipt` when false.
 3. `tags`: `validate_tags(body.tags)` when present (an empty object stays
    `{}`), removed when absent.
 4. Attribution (`request_attribution.py:53-77`): remove `user`,
    `session_id`, `trace`, `app`, `http_referer`, `app_categories`, then
-   add back the validated non-null ones; `app` defaults to
+   add back the validated non-null ones, and `app_categories` only when
+   non-empty (`request_attribution.py:48-49`: `[]` is removed); `app` defaults to
    `urlparse(http_referer).hostname` when absent. Go applies that default
    only when the referer matches `^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?([/?#][\x21-\x7e]*)?$`
    (lower-casing the host as `hostname` does); any other referer without
@@ -465,13 +550,15 @@ type KeyFacts struct {
 	Hash        string // ApiKey.hash: key_hash everywhere
 	WorkspaceID string
 	ExpiresAt   time.Time // zero when the key has none
-	Tags        []Tag     // stored order
+	Tags        []Tag     // stored order; empty when the stored tags are not an object
+	TagsUsable  bool      // false: an object with a non-string or non-ASCII entry
 	ReadAt      time.Time
 }
 
 // WorkspaceFacts is the workspace's entity and credit rows, read only.
 type WorkspaceFacts struct {
 	WorkspaceID      string
+	Missing          bool     // no workspace row: Python's 403
 	PauseCauses      []string // the entity's and every credit row's, sorted, deduplicated
 	InDebt           bool
 	TrustTier        int64 // least over rows, a latched row counting 0
@@ -580,15 +667,25 @@ type Candidate struct {
 }
 
 type Composed struct {
-	Response      []byte // §6 bytes
 	GenerationID  string
 	Authorization AuthorizationRow
 	Reservation   ReservationRow
 }
 
+// Timing is §6 item 15, in that key order.
+type Timing struct {
+	TotalMS, SpannerRPCs, KeyLookupMS, RoutingMS, StoreMS, PostCommitMS int64
+}
+
 // Stage builds everything but the envelope before the admit; Finish adds it.
 func Stage(in ComposeInput) (Staged, error)
 func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error)
+
+// Render is the 200's bytes, timing last; readBack sorts tags (§6).
+func (c Composed) Render(t Timing, readBack bool) []byte
+
+// Unavailable is decision 1's 503 body, timing in the top-level data.
+func Unavailable(t Timing) []byte
 ```
 
 G2 adds the row types to `fastpath/internal/gwauth/rows.go` (types only,
@@ -653,15 +750,38 @@ package store
 type InsertOutcome int
 
 const (
-	Inserted InsertOutcome = iota
-	ScopeTaken // tr_reservation_by_idemp AlreadyExists
-	Unknown    // deadline or transport error: the commit may have applied
-	Failed     // anything else
+	Inserted   InsertOutcome = iota
+	Landed     // AlreadyExists, and the row under our authorization id is ours
+	ScopeTaken // AlreadyExists, and our authorization id has no row
+	Unknown    // the commit may have applied
+	Failed     // proven not applied
 )
 
 func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow, r gwauth.ReservationRow) InsertOutcome
 func (s *Store) AuthorizationExists(ctx context.Context, authorizationID string) (bool, error)
 ```
+
+The insert is one `client.ReadWriteTransactionWithOptions` (tag
+`tr_authorize_leased_edge`) whose callback only buffers the two
+`spanner.Insert` mutations and sets a flag; never `Apply`, and never
+`ApplyAtLeastOnce`, which may replay a commit that applied. The client
+retries `Aborted` itself within the 2 s deadline, as Python's
+`run_in_transaction_with_retry` retries it within its budget
+(`storage_gcp_io.py:338`). The outcome, by the error the transaction
+returns:
+
+| Error | Outcome | Then |
+|---|---|---|
+| none | `Inserted` | answer |
+| any, with the callback never run (no session, no transaction began); checked first | retried once within the deadline; still failing, `Failed` | refund, pass: nothing was sent, so this is never a 503 |
+| `AlreadyExists` | `AuthorizationExists(our id)`, strong: true is `Landed`, false is `ScopeTaken`; a read error goes on as `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
+| `Aborted` (retries exhausted), `InvalidArgument`, `FailedPrecondition`, `NotFound`, `PermissionDenied`, `Unauthenticated`, `OutOfRange`, `Unimplemented` | `Failed` | refund, pass: Spanner applied nothing |
+| `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the context ended, any error that is not a gRPC status | `Unknown` | `AuthorizationExists` with a fresh 1 s deadline of its own: true answers as after a read-back; false or a read error answers decision 1's 503 and keeps the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
+
+A refund after an `Unknown` would let an enclave retry replay, through
+Python, a row whose hold was given back; so nothing that can follow an
+applied commit refunds. Every read is by primary key on
+`tr_gateway_authorization`, so no extra index is needed.
 
 ## 9. The decide table (G2)
 
@@ -709,11 +829,18 @@ clock and envelope is pinned. No workspace, key or digest is real.
 ### 10.1 `fastpath/testdata/authorize_cases_v1.json` (P1)
 
 `scripts/fastpath/authorize_vectors.py`; `tests/test_fastpath_authorize_vectors.py`
-runs every case through the real `_authorize_gateway_sync_impl` with
+checks staleness. Every case is an HTTP request through the ASGI app
+(`trusted_router.main`, the internal surface, a test client), so the
+goldens carry what the route function alone does not: FastAPI's body read
+and content-type rule, its 400 and 422 mapping, the timing decorator, the
+exception handlers. The store is
 `tests/fakes/spanner.make_fake_store(request_record_write_mode="typed", ...)`
-(as `tests/test_fastpath_pilot_store.py:19-25`) and the `_Door` front door
-fake (`tests/test_fastpath_frontdoor.py`, as
-`tests/test_fastpath_pilot_route.py` uses it). About 300 cases.
+(as `tests/test_fastpath_pilot_store.py:19-25`) and the front door the
+`_Door` fake (`tests/test_fastpath_frontdoor.py`, as
+`tests/test_fastpath_pilot_route.py` uses it). The generator pins
+`uuid4`, both of Python's clock readings, and `perf_counter` in
+`gateway_timing` (so every `_ms` is 0), and records `spanner_rpcs` as the
+fake counted it. About 300 cases.
 
 ```
 {"generator": "scripts/fastpath/authorize_vectors.py",
@@ -721,6 +848,8 @@ fake (`tests/test_fastpath_frontdoor.py`, as
  "snapshot_sha256": HEX,
  "plane": {"cloud": "gcp", "region": "us-central1"},
  "policy": EDGE_POLICY_BODY,            // §4 body, as an object
+ "internal_models": [STR],              // sorted: MONITOR_MODEL_ID and every internal_only model
+ "estimated_usage_models": [STR],       // sorted ESTIMATED_USAGE_SNAPSHOT_MODELS
  "cases": [CASE, ...]}
 
 CASE = {
@@ -742,11 +871,15 @@ CASE = {
 CREDIT_ROW = {"shard": INT, "in_debt": BOOL, "trust_tier": INT,
               "trust_latched": BOOL, "billing_pause_causes": [STR]}
 
+TIMING = {"total_ms": INT, "spanner_rpcs": INT, "key_lookup_ms": INT,
+          "routing_ms": INT, "store_ms": INT, "post_commit_ms": INT}
+
 EXPECT =
    {"outcome": "answer", "status": 200,
     "response": STR,                    // pre-gzip body
     "generation_id": STR, "estimate_microdollars": INT, "decide_region": STR,
     "fingerprint": HEX, "idempotency_scope": STR,
+    "timing": TIMING,                   // the values inside "response"
     "authorization_row": {               // every column of the table
       "authorization_id": STR, "workspace_id": STR, "key_hash": STR,
       "reservation_id": STR, "model_id": STR, "provider": STR,
@@ -766,24 +899,33 @@ EXPECT =
       "idempotency_scope": STR, "idempotency_fingerprint": STR,
       "expires_at_us": INT, "created_at_us": INT}}
  | {"outcome": "unavailable", "status": 503,
-    "headers": [["retry-after", "1"]], "response": STR}
+    "headers": [["retry-after", "1"]], "response": STR, "timing": TIMING}
  | {"outcome": "pass", "reason": STR,   // §3 vocabulary
     "python": {"status": INT, "type": STR | null}}
 ```
 
-`"unknown_landed"` expects `answer`; `"unknown_not_landed"` expects
-`unavailable`. A pass case trips exactly one §3 reason and records what
-Python then answered. Labels: `stage_d.<reason>` (every cohort reason),
+`"unknown_landed"` expects `answer`, with `tags` in sorted order (§6,
+after a read-back); `"unknown_not_landed"` expects `unavailable`. Go's
+tests render with the case's `timing` and compare bytes exactly. A pass
+case trips exactly one §3 reason and records what Python then answered;
+every pass reason has at least one case, `body.content_type`,
+`body.unparseable` (each of its causes), `body.internal_model`,
+`body.dict_key_strip`, `header.idempotency_key` (repeated, non-ASCII) and
+`tags.merged_invalid` (count, bytes, corrupt stored tags) included. Labels: `stage_d.<reason>` (every cohort reason),
 `wafer_zdr`, `multi_candidate`, `tags.key_only`, `tags.request_only`,
 `tags.merge_overwrite`, `float.exponent`, `float.integral`,
 `idempotency.presented_body`, `idempotency.presented_header`,
 `idempotency.minted`, `invocation_nonce`, `region.requested`,
-`region.default`, `insert.<insert>`, `pass.<reason>`.
+`region.default`, `insert.<insert>`, `read_back.sorted_tags`,
+`end_of_life.offset` (an owner end of life with a non-UTC offset),
+`pass.<reason>`.
 
 ### 10.2 `fastpath/testdata/authorize_fingerprint_v1.json` (P1)
 
-About 20,000 bodies, kept under 10 MB, each parsed as the route parses it
-(FastAPI's body read, then `GatewayAuthorizeRequest`), then §7.
+About 20,000 bodies, kept under 10 MB. Each is sent through the ASGI app
+as §10.1's are; the fingerprint and scope are read from the reservation row
+the request wrote, and a refusal is the status and `error.type` the app
+answered.
 
 ```
 {"generator": "scripts/fastpath/authorize_vectors.py", "cases": [CASE, ...]}
@@ -799,10 +941,14 @@ CASE = {
   | {"outcome": "refused", "status": INT, "type": STR}}
 ```
 
-Labels that require Go to pass (decision 4): `float_present`,
-`lax_coercion`, `duplicate_key`, `strip_ambiguous`, `non_ascii_tag`,
-`referer_not_strict`, `canonical_model_rewrite`, `native_batch_key`,
-`partner_key`, `idempotency_key_too_long`. Descriptive labels: `extras`,
+Labels that require Go to pass (decision 4 and §3): `float_present`,
+`lax_coercion`, `duplicate_key`, `strip_ambiguous`, `dict_key_strip`,
+`non_ascii_tag`, `referer_not_strict`, `canonical_model_rewrite`,
+`native_batch_key`, `partner_key`, `idempotency_key_too_long`,
+`idempotency_header_repeated`, `idempotency_header_non_ascii`,
+`content_type`, `deep_nesting`, `int_over_4000_digits`, `bom`.
+Descriptive labels: `null_extra` (a top-level extra `null`, dropped),
+`null_nested`, `app_categories_empty`, `input_modalities`, `extras`,
 `nested_provider`, `nested_trace`, `nested_metadata`, `unicode_extra`,
 `int_near_2_63`, `int_beyond_2_63`, `attribution`, `tags`, `tags_empty`,
 `whitespace`, `models_list`, `allow_fallbacks_spelling`,
@@ -837,8 +983,9 @@ CASE = {
 
 KEY_FACTS = {"lookup_hash": STR, "eligible": BOOL, "reason": STR,
              "hash": STR, "workspace_id": STR, "expires_at_us": INT | null,
-             "tags": [[STR, STR]]}
-WORKSPACE_FACTS = {"workspace_id": STR, "pause_causes": [STR], "in_debt": BOOL,
+             "tags": [[STR, STR]], "tags_usable": BOOL}
+WORKSPACE_FACTS = {"workspace_id": STR, "missing": BOOL,
+                   "pause_causes": [STR], "in_debt": BOOL,
                    "trust_tier": INT, "federated": BOOL, "deleted": BOOL,
                    "byok_slugs": [STR], "broadcast_pointer": BOOL}
 ```
@@ -846,7 +993,8 @@ WORKSPACE_FACTS = {"workspace_id": STR, "pause_causes": [STR], "in_debt": BOOL,
 `ReadAt` is not in the vectors. Labels name the predicate a case exercises
 (`disabled`, `expired.past`, `expired.unparseable`, `scope.inference`,
 `scope.other`, `federated`, `app`, `key_cap`, `key_window.alert_only`,
-`budget_strict`, `tags.order`, `pause.entity`, `pause.credit_row`,
+`budget_strict`, `tags.order`, `tags.not_object`, `tags.non_string`,
+`tags.non_ascii`, `workspace.missing`, `pause.entity`, `pause.credit_row`,
 `debt`, `tier.latched`, ...).
 
 ### 10.4 `fastpath/testdata/pyjson_vectors_v1.json` (G1)
@@ -874,7 +1022,8 @@ integral floats, `5e-324`, `1.7976931348623157e+308`; escapes (`\"`, `\\`,
 literal by Python, non-BMP as surrogate pairs); integers past 2^63 and
 2^64; `-0` as `0`; nested objects and arrays; insertion order kept by
 `ordered`. Labels Go must refuse rather than encode: `lone_surrogate`,
-`duplicate_key`, `non_finite` (a literal Python decodes to infinity).
+`duplicate_key`, `non_finite` (a literal Python decodes to infinity),
+`int_over_4000_digits`, `deep_nesting` (past 128 levels).
 
 ### 10.5 `fastpath/testdata/edge_policy_v1.{body,manifest}.json` (P2)
 
@@ -899,7 +1048,7 @@ letter: disjoint files, built in parallel.
 | G4 | 1f | `edge/admit.go`, `Config.Admitter`, the holder set in `admission()` | PR0 |
 | G5 | 2 | `gwauth` request side: §7, §8.2, the request half of §3; widen the import rule | G1, P1 |
 | G6 | 2 | `gwauth` compose: §5, §6, §8.3 | G1, G2, P1 |
-| G7 | 2 | `gwstate/cache.go`: 100k LRU by lookup hash, per-workspace facts, single-flight background fill, strong refresh 10 s, stale past 30 s, negative 5 s, `Evict`, `EvictWorkspace` | G3 |
+| G7 | 2 | `gwstate/cache.go`: 100k LRU by lookup hash, per-workspace facts, single-flight background fill, strong refresh every 5 s of entries used in the last minute, stale past 15 s, negative 5 s, eviction on Python's 401, 402, 403 or pause 503, `Evict`, `EvictWorkspace` | G3 |
 | G8 | 2 | `edge/policy.go` poller, `-edge-policy-url` | P2 |
 | G9 | 2 | `store/gatewayauth.go`: §8.4 | G2 |
 | P3 | 2 | Python settles Go-shaped rows (test only): settle, refund, disposition, reaper, replay (same key and fingerprint replays, another body 409s), drain | P1 |
@@ -908,17 +1057,19 @@ letter: disjoint files, built in parallel.
 | G11 | 4 | Decide path: admit, insert, answer; per-lookup-hash in-flight limit; `-edge-decide` (false); emulator end-to-end test | G10 |
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
-| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md` | G12, soak |
+| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, soak |
 
 **The shadow (G10)** counts, per snapshot and policy digest:
 `agree_full` (candidates and order, estimate in microdollars and its float
 bytes, `stage_d`, the decoded response equal after substituting Go's ids
-for Python's, the generation id by rule from Python's `authorization_id`),
+for Python's and ignoring `timing`'s values (its keys and their order are
+compared), the generation id by rule from Python's `authorization_id`),
 `differ.<field>`, `would_admit_python_refused.<status>.<type>` (critical),
 `python_answered_go_passed.<reason>`, `row.<field>` (Python's rows read
 back for one request in 20, at most 5 reads a second, against Go's
-would-be rows), `stale.<cache>`. A Python 401 or 403 for a cached lookup
-hash evicts it.
+would-be rows; `expires_at` as §5 says), `stale.<cache>`. A Python 401,
+402 or 403, or a pause 503, for a cached lookup hash evicts the key and its
+workspace.
 
 **I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
 cohort-eligible requests with every difference explained; zero
