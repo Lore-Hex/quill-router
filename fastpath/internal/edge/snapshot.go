@@ -8,11 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -83,45 +81,23 @@ type held struct {
 // what it gets with the pinned key, and swaps it in; a refusal, an outage
 // or a 503 keeps the copy it has, which is dropped at its not_after.
 type poller struct {
+	fetcher
 	cfg     SnapshotConfig
 	plane   routingsnapshot.Plane
-	token   string
-	client  *http.Client
-	clock   func() time.Time
-	logf    func(string, ...any)
 	keys    []routingsnapshot.TrustedKey
 	current atomic.Pointer[held]
-	// failures and refreshAt are the poll loop's own.
-	failures  int
+	// refreshAt is the poll loop's own.
 	refreshAt int64
 }
 
+// snapshotStatuses are the snapshot publisher's 503 words.
+var snapshotStatuses = []string{"signer-unavailable", "snapshot-refused", "snapshot-error", "compiling", "not-installed"}
+
 func newPoller(cfg SnapshotConfig, upstream *url.URL, token string, transport http.RoundTripper,
 	clock func() time.Time, logf func(string, ...any)) (*poller, error) {
-	u := cfg.URL
-	if u.Scheme != upstream.Scheme || u.Host != upstream.Host || u.User != nil || upstream.User != nil {
-		return nil, errors.New("edge: the routing snapshot is polled from the edge's own upstream")
-	}
-	if len(cfg.Keys) == 0 || len(cfg.Keys) > 2 {
-		return nil, errors.New("edge: the routing snapshot needs one or two pinned keys")
-	}
-	var keys []routingsnapshot.TrustedKey
-	for _, k := range cfg.Keys {
-		if len(k.PublicKey) != ed25519.PublicKeySize || k.Kid == "" {
-			return nil, errors.New("edge: a routing snapshot key needs its Ed25519 public key and kid")
-		}
-		if k.Kid == routingsnapshot.TestKID || base64.RawURLEncoding.EncodeToString(k.PublicKey) == routingsnapshot.TestPublicKey {
-			return nil, errors.New("edge: the routing snapshot's test key is never trusted")
-		}
-		if slices.ContainsFunc(keys, func(t routingsnapshot.TrustedKey) bool { return t.Kid == k.Kid }) {
-			return nil, errors.New("edge: two routing snapshot keys share a kid")
-		}
-		keys = append(keys, routingsnapshot.TrustedKey{Kid: k.Kid, Purpose: routingsnapshot.Purpose, PublicKey: k.PublicKey,
-			Iss: SnapshotIssuer, Aud: SnapshotAudience})
-	}
-	cloud, region, found := strings.Cut(cfg.Plane, "/")
-	if !found || cloud == "" || region == "" || strings.Contains(region, "/") {
-		return nil, errors.New("edge: the routing snapshot needs the plane it is signed for, as cloud/region")
+	keys, plane, err := pinnedKeys("routing snapshot", cfg.Keys, cfg.Plane)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.Interval <= 0 {
 		cfg.Interval = time.Minute
@@ -132,11 +108,41 @@ func newPoller(cfg SnapshotConfig, upstream *url.URL, token string, transport ht
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 30 * time.Second
 	}
-	return &poller{cfg: cfg, plane: routingsnapshot.Plane{Cloud: cloud, Region: region}, token: token, clock: clock, logf: logf, keys: keys,
-		client: &http.Client{Transport: transport,
-			// A redirect would carry the token elsewhere: the answer is the
-			// redirect, which is not a publication.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	f, err := newFetcher("snapshot", cfg.URL, upstream, token, transport, clock, logf, cfg.Interval, cfg.MinInterval, cfg.Timeout)
+	if err != nil {
+		return nil, errors.New("edge: the routing snapshot is polled from the edge's own upstream")
+	}
+	return &poller{fetcher: f, cfg: cfg, plane: plane, keys: keys}, nil
+}
+
+// pinnedKeys are the verifier's keys and plane from the node's
+// configuration: one key, or two during a rotation, never the test key;
+// the plane as cloud/region. The routing snapshot and the edge policy pin
+// the same key, kid and plane.
+func pinnedKeys(what string, pinned []SnapshotKey, planeName string) ([]routingsnapshot.TrustedKey, routingsnapshot.Plane, error) {
+	var none routingsnapshot.Plane
+	if len(pinned) == 0 || len(pinned) > 2 {
+		return nil, none, errors.New("edge: the " + what + " needs one or two pinned keys")
+	}
+	var keys []routingsnapshot.TrustedKey
+	for _, k := range pinned {
+		if len(k.PublicKey) != ed25519.PublicKeySize || k.Kid == "" {
+			return nil, none, errors.New("edge: a " + what + " key needs its Ed25519 public key and kid")
+		}
+		if k.Kid == routingsnapshot.TestKID || base64.RawURLEncoding.EncodeToString(k.PublicKey) == routingsnapshot.TestPublicKey {
+			return nil, none, errors.New("edge: the " + what + "'s test key is never trusted")
+		}
+		if slices.ContainsFunc(keys, func(t routingsnapshot.TrustedKey) bool { return t.Kid == k.Kid }) {
+			return nil, none, errors.New("edge: two " + what + " keys share a kid")
+		}
+		keys = append(keys, routingsnapshot.TrustedKey{Kid: k.Kid, Purpose: routingsnapshot.Purpose, PublicKey: k.PublicKey,
+			Iss: SnapshotIssuer, Aud: SnapshotAudience})
+	}
+	cloud, region, found := strings.Cut(planeName, "/")
+	if !found || cloud == "" || region == "" || strings.Contains(region, "/") {
+		return nil, none, errors.New("edge: the " + what + " needs the plane it is signed for, as cloud/region")
+	}
+	return keys, routingsnapshot.Plane{Cloud: cloud, Region: region}, nil
 }
 
 // snapshot is the snapshot held, nil when there is none or it has passed its
@@ -164,46 +170,30 @@ func (p *poller) expire() {
 // run polls until ctx ends, in its own goroutine: nothing on the proxy path
 // waits for it.
 func (p *poller) run(ctx context.Context) {
-	for {
-		p.expire()
-		wait := p.poll(ctx)
+	p.loop(ctx, p.expire, p.poll, func() (int64, bool) {
 		if h := p.current.Load(); h != nil {
-			// Wake at not_after to drop it, even when the next poll is later.
-			wait = min(wait, max(time.Unix(h.claims.NotAfter, 0).Sub(p.clock()), 0))
+			return h.claims.NotAfter, true
 		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-	}
+		return 0, false
+	})
 }
 
 // poll asks Python once and says how long to wait before the next poll.
 func (p *poller) poll(ctx context.Context) time.Duration {
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.URL.String(), nil)
-	if err != nil {
-		return p.failed("request", err)
-	}
-	req.Header.Set(TokenHeader, p.token)
 	have := p.snapshot()
+	etag := ""
 	if have != nil {
-		req.Header.Set("If-None-Match", have.etag)
+		etag = have.etag
 	}
-	resp, err := p.client.Do(req)
+	resp, stage, err := p.get(ctx, etag, maxPublication)
+	if errors.Is(err, errStopped) {
+		return p.cfg.Interval
+	}
 	if err != nil {
-		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
-			return p.cfg.Interval
-		}
-		return p.failed("transport", err)
+		return p.failed(stage, err, keptOf(p.snapshot()))
 	}
-	defer resp.Body.Close()
 	switch {
-	case resp.StatusCode == http.StatusNotModified && have != nil:
+	case resp.status == http.StatusNotModified && have != nil:
 		p.failures = 0
 		p.logf("fastpath edge snapshot: poll status=304 outcome=unchanged sha256=%s", have.claims.SHA256)
 		if !p.clock().Before(time.Unix(p.refreshAt, 0)) {
@@ -211,16 +201,12 @@ func (p *poller) poll(ctx context.Context) time.Duration {
 			// newer yet, so the next poll waits the longest.
 			return p.cfg.Interval
 		}
-		return p.next()
-	case resp.StatusCode == http.StatusOK:
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPublication+1))
-		if err != nil {
-			return p.failed("read", err)
+		return p.until(p.refreshAt)
+	case resp.status == http.StatusOK:
+		if len(resp.body) > maxPublication {
+			return p.failed("read", errors.New("the publication is over the edge's bound"), keptOf(p.snapshot()))
 		}
-		if len(raw) > maxPublication {
-			return p.failed("read", errors.New("the publication is over the edge's bound"))
-		}
-		h, refreshAt, err := p.verify(raw)
+		h, refreshAt, err := p.verify(resp.body)
 		if err != nil {
 			p.failures++
 			p.logf("fastpath edge snapshot: poll status=200 outcome=refused reason=%q kept=%s", reasonOf(err), keptOf(have))
@@ -231,23 +217,23 @@ func (p *poller) poll(ctx context.Context) time.Duration {
 			// The same body: keep the one held, and its memory.
 			p.refreshAt = refreshAt
 			p.logf("fastpath edge snapshot: poll status=200 outcome=unchanged sha256=%s", have.claims.SHA256)
-			return p.next()
+			return p.until(p.refreshAt)
 		}
 		p.current.Store(h)
 		p.refreshAt = refreshAt
 		p.logf("fastpath edge snapshot: poll status=200 outcome=installed sha256=%s size=%d compiled_at=%d not_after=%d "+
 			"source_revision=%s", h.claims.SHA256, h.claims.Size, h.claims.CompiledAt, h.claims.NotAfter, h.claims.SourceRevision)
-		return p.next()
+		return p.until(p.refreshAt)
 	default:
 		// 503 (no window is current, or no signer), 404 (publishing off),
 		// or anything else: the copy held stays until its not_after.
 		status := ""
-		if resp.StatusCode == http.StatusServiceUnavailable {
-			status = publisherStatus(resp.Body)
+		if resp.status == http.StatusServiceUnavailable {
+			status = publisherStatus(resp.body, snapshotStatuses)
 		}
 		p.failures++
 		wait := p.backoff()
-		retry, ok := retryAfter(resp.Header.Get("Retry-After"), p.clock())
+		retry, ok := retryAfter(resp.header.Get("Retry-After"), p.clock())
 		if ok {
 			wait = max(retry, p.cfg.MinInterval)
 			if have == nil {
@@ -258,30 +244,9 @@ func (p *poller) poll(ctx context.Context) time.Duration {
 			}
 		}
 		p.logf("fastpath edge snapshot: poll status=%d outcome=unavailable publisher_status=%s retry_after=%s kept=%s",
-			resp.StatusCode, status, wait, keptOf(have))
+			resp.status, status, wait, keptOf(have))
 		return wait
 	}
-}
-
-// next is the wait after a publication: until its refresh_at, between the
-// shortest and longest waits.
-func (p *poller) next() time.Duration {
-	wait := time.Unix(p.refreshAt, 0).Sub(p.clock())
-	return min(max(wait, p.cfg.MinInterval), p.cfg.Interval)
-}
-
-func (p *poller) backoff() time.Duration {
-	wait := p.cfg.MinInterval
-	for i := 1; i < p.failures && wait < p.cfg.Interval; i++ {
-		wait *= 2
-	}
-	return min(wait, p.cfg.Interval)
-}
-
-func (p *poller) failed(stage string, err error) time.Duration {
-	p.failures++
-	p.logf("fastpath edge snapshot: poll outcome=failed stage=%s error=%q kept=%s", stage, err.Error(), keptOf(p.snapshot()))
-	return p.backoff()
 }
 
 func keptOf(h *held) string {
@@ -358,37 +323,4 @@ func hold(s *routingsnapshot.Snapshot, claims routingsnapshot.Claims) *held {
 		h.providers = append(h.providers, provider.Slug)
 	}
 	return h
-}
-
-// publisherStatus is the 503's status, one of the publisher's own words;
-// anything else is "other".
-func publisherStatus(body io.Reader) string {
-	var answer struct {
-		Status string `json:"status"`
-	}
-	raw, _ := io.ReadAll(io.LimitReader(body, 4096))
-	if json.Unmarshal(raw, &answer) == nil {
-		switch answer.Status {
-		case "signer-unavailable", "snapshot-refused", "snapshot-error", "compiling", "not-installed":
-			return answer.Status
-		}
-	}
-	return "other"
-}
-
-// retryAfter reads Retry-After: seconds, or an HTTP date. A longest wait of
-// a day keeps a wrong date from stopping the poll.
-func retryAfter(value string, now time.Time) (time.Duration, bool) {
-	if value == "" {
-		return 0, false
-	}
-	var wait time.Duration
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		wait = time.Duration(min(seconds, int64(24*time.Hour/time.Second))) * time.Second
-	} else if at, err := http.ParseTime(value); err == nil {
-		wait = max(at.Sub(now), 0)
-	} else {
-		return 0, false
-	}
-	return min(wait, 24*time.Hour), true
 }

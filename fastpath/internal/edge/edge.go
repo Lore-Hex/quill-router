@@ -19,6 +19,11 @@
 // copy, off the request path, and counts how Go's answer compares with
 // Python's (shadow.go). Python still decides, and its answer still reaches
 // the enclave byte for byte.
+//
+// With an edge policy configured (PolicyConfig, E2 G8), the edge also polls
+// Python's signed edge policy, the live settings it would gate on, and
+// keeps the newest copy until its not_after (policy.go). Nothing reads it
+// yet.
 package edge
 
 import (
@@ -131,6 +136,9 @@ type Config struct {
 	// Snapshot is the routing snapshot's poll and the shadow comparator;
 	// its URL nil runs neither.
 	Snapshot SnapshotConfig
+	// Policy is the edge policy's poll (policy.go); its URL nil polls
+	// nothing and the policy is always absent.
+	Policy PolicyConfig
 	// ShadowEvery is how often the comparator logs its counts (a minute
 	// when 0); Logf is where the poll and the comparator log (log.Printf
 	// when nil). Both log metadata alone.
@@ -151,6 +159,8 @@ type Edge struct {
 	// shadow unless it is on.
 	poller *poller
 	shadow *shadow
+	// policy is nil unless the edge policy is configured.
+	policy *policyPoller
 }
 
 type cachedBoot struct {
@@ -205,6 +215,13 @@ func New(cfg Config) (*Edge, error) {
 		}
 	} else if cfg.Snapshot.Shadow {
 		return nil, errors.New("edge: the shadow compares against a routing snapshot, which needs its URL")
+	}
+	if cfg.Policy.URL != nil {
+		p, err := newPolicyPoller(cfg.Policy, cfg.Upstream, cfg.Token, cfg.Transport, cfg.Clock, cfg.Logf)
+		if err != nil {
+			return nil, err
+		}
+		e.policy = p
 	}
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""
@@ -364,24 +381,26 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	e.proxy.ServeHTTP(w, out)
 }
 
-// Run polls the routing snapshot and runs the shadow comparator, each on its
-// own goroutine, until ctx ends; with no snapshot configured it returns at
-// once. ServeHTTP never waits for either.
+// Run polls the routing snapshot and the edge policy and runs the shadow
+// comparator, each on its own goroutine, until ctx ends; with none
+// configured it returns at once. ServeHTTP never waits for any.
 func (e *Edge) Run(ctx context.Context) {
-	if e.poller == nil {
-		return
+	var runs []func(context.Context)
+	if e.poller != nil {
+		runs = append(runs, e.poller.run)
+	}
+	if e.shadow != nil {
+		runs = append(runs, e.shadow.run)
+	}
+	if e.policy != nil {
+		runs = append(runs, e.policy.run)
 	}
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		e.poller.run(ctx)
-	}()
-	if e.shadow != nil {
+	for _, run := range runs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			e.shadow.run(ctx)
+			run(ctx)
 		}()
 	}
 	wg.Wait()

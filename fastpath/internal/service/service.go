@@ -176,6 +176,11 @@ type EdgeConfig struct {
 	// for, as cloud/region. Shadow runs the comparator against it.
 	SnapshotURL, SnapshotPublicKey, SnapshotKid, SnapshotPlane string
 	Shadow                                                     bool
+	// PolicyURL is the edge policy the edge polls (edge.PolicyConfig, E2
+	// G8) on the upstream, empty for none. It is signed with the routing
+	// snapshot's key for the same plane, so it takes SnapshotPublicKey,
+	// SnapshotKid and SnapshotPlane.
+	PolicyURL string
 }
 
 func (c Config) valid() error {
@@ -189,6 +194,11 @@ func (c Config) valid() error {
 	case c.Edge.SnapshotURL != "" && (c.Edge.SnapshotPublicKey == "" || c.Edge.SnapshotKid == "" ||
 		c.Edge.SnapshotPlane == ""):
 		return errors.New("service: the routing snapshot needs its public key, kid and plane")
+	case c.Edge.PolicyURL != "" && c.Edge.Address == "":
+		return errors.New("service: the edge policy is the edge's, which needs its address")
+	case c.Edge.PolicyURL != "" && (c.Edge.SnapshotPublicKey == "" || c.Edge.SnapshotKid == "" ||
+		c.Edge.SnapshotPlane == ""):
+		return errors.New("service: the edge policy needs the routing snapshot's public key, kid and plane")
 	case c.Edge.Address != "" && !c.Admission:
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
@@ -335,8 +345,13 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = ln.Close()
 		return err
 	}
+	policy, err := policyConfig(cfg.Edge)
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport, Serving: p.serving, Snapshot: snapshot, Admitter: &p.admitter})
+		Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy, Admitter: &p.admitter})
 	if err != nil {
 		_ = ln.Close()
 		return err
@@ -344,8 +359,9 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 	if cfg.edgeMade != nil {
 		cfg.edgeMade(e)
 	}
-	// The snapshot's poll and the shadow comparator, beside the server and
-	// never in its way; with no snapshot configured this returns at once.
+	// The snapshot's and the policy's polls and the shadow comparator,
+	// beside the server and never in its way; with none configured this
+	// returns at once.
 	p.run("edge snapshot", func(ctx context.Context) error {
 		e.Run(ctx)
 		return nil
@@ -388,25 +404,48 @@ func snapshotConfig(c EdgeConfig) (edge.SnapshotConfig, error) {
 	if c.SnapshotURL == "" {
 		return edge.SnapshotConfig{}, nil
 	}
-	u, err := url.Parse(c.SnapshotURL)
+	u, keys, err := pinned("routing snapshot", c.SnapshotURL, c)
+	if err != nil {
+		return edge.SnapshotConfig{}, err
+	}
+	return edge.SnapshotConfig{URL: u, Keys: keys, Plane: c.SnapshotPlane, Shadow: c.Shadow}, nil
+}
+
+// policyConfig is the edge policy from the node's flags: its URL, and the
+// routing snapshot's keys and plane; the zero config, polling nothing, when
+// no URL is given.
+func policyConfig(c EdgeConfig) (edge.PolicyConfig, error) {
+	if c.PolicyURL == "" {
+		return edge.PolicyConfig{}, nil
+	}
+	u, keys, err := pinned("edge policy", c.PolicyURL, c)
+	if err != nil {
+		return edge.PolicyConfig{}, err
+	}
+	return edge.PolicyConfig{URL: u, Keys: keys, Plane: c.SnapshotPlane}, nil
+}
+
+// pinned parses a document's URL and the routing snapshot key's public
+// keys and kids, each a comma-separated list in the same order.
+func pinned(what, rawURL string, c EdgeConfig) (*url.URL, []edge.SnapshotKey, error) {
+	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return edge.SnapshotConfig{}, fmt.Errorf("service: the routing snapshot's URL %q is not an http or https URL",
-			c.SnapshotURL)
+		return nil, nil, fmt.Errorf("service: the %s's URL %q is not an http or https URL", what, rawURL)
 	}
 	publics, kids := strings.Split(c.SnapshotPublicKey, ","), strings.Split(c.SnapshotKid, ",")
 	if len(publics) != len(kids) {
-		return edge.SnapshotConfig{}, errors.New("service: the routing snapshot's public keys and kids pair up")
+		return nil, nil, errors.New("service: the routing snapshot's public keys and kids pair up")
 	}
 	var keys []edge.SnapshotKey
 	for i, public := range publics {
 		key, err := base64.RawURLEncoding.Strict().DecodeString(public)
 		if err != nil || len(key) != ed25519.PublicKeySize {
-			return edge.SnapshotConfig{}, errors.New("service: a routing snapshot public key is not 32 bytes of " +
+			return nil, nil, errors.New("service: a routing snapshot public key is not 32 bytes of " +
 				"unpadded base64url")
 		}
 		keys = append(keys, edge.SnapshotKey{Kid: kids[i], PublicKey: key})
 	}
-	return edge.SnapshotConfig{URL: u, Keys: keys, Plane: c.SnapshotPlane, Shadow: c.Shadow}, nil
+	return u, keys, nil
 }
 
 // storeBoots reads the edge's boots from the store: production's entity

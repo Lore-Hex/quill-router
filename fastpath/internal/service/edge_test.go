@@ -258,14 +258,26 @@ func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 }
 
 // TestAProcessWithTheSnapshotPollsItBesideTheEdge: configured, the edge's
-// routing snapshot is polled from the upstream with the internal token by
-// the running process, and authorizes still get Python's answer as it was.
+// routing snapshot and edge policy are polled from the upstream with the
+// internal token by the running process, and authorizes still get Python's
+// answer as it was.
 func TestAProcessWithTheSnapshotPollsItBesideTheEdge(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
 	}
 	polls := make(chan string, 16)
+	policyPolls := make(chan string, 16)
 	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/edge-policy" {
+			select {
+			case policyPolls <- r.Header.Get(edge.TokenHeader):
+			default:
+			}
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"compiling","retry_at":0}`))
+			return
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/routing-snapshot" {
 			select {
 			case polls <- r.Header.Get(edge.TokenHeader):
@@ -295,15 +307,18 @@ func TestAProcessWithTheSnapshotPollsItBesideTheEdge(t *testing.T) {
 	cfg := config(ln)
 	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: python.URL, Token: "token-1",
 		SnapshotURL: python.URL + "/internal/fastpath/routing-snapshot", SnapshotKid: "routing-snapshot-1",
-		SnapshotPublicKey: base64.RawURLEncoding.EncodeToString(public), SnapshotPlane: "gcp/us-central1", Shadow: true}
+		SnapshotPublicKey: base64.RawURLEncoding.EncodeToString(public), SnapshotPlane: "gcp/us-central1", Shadow: true,
+		PolicyURL: python.URL + "/internal/fastpath/edge-policy"}
 	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
-	select {
-	case got := <-polls:
-		if got != "token-1" {
-			t.Fatalf("the poll carried %q, not the internal token", got)
+	for what, ch := range map[string]chan string{"routing snapshot": polls, "edge policy": policyPolls} {
+		select {
+		case got := <-ch:
+			if got != "token-1" {
+				t.Fatalf("the %s poll carried %q, not the internal token", what, got)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatalf("the process did not poll the %s", what)
 		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("the process did not poll the routing snapshot")
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	var resp *http.Response
@@ -384,6 +399,65 @@ func TestTheEdgesSnapshotGoesWithTheEdgeAndItsKey(t *testing.T) {
 		c.change(&edgeCfg)
 		if _, err := snapshotConfig(edgeCfg); err == nil {
 			t.Errorf("%s: accepted", c.name)
+		}
+	}
+}
+
+// TestTheEdgesPolicyGoesWithTheEdgeAndTheSnapshotsKey: the edge policy is
+// the edge's, and is verified with the routing snapshot's key, kid and
+// plane (with or without the snapshot polled); with no URL, the default,
+// the edge polls none.
+func TestTheEdgesPolicyGoesWithTheEdgeAndTheSnapshotsKey(t *testing.T) {
+	cfg := Defaults()
+	cfg.Admission, cfg.Address, cfg.Region, cfg.Key = true, "127.0.0.1:1", "us-central1", key
+	cfg.SettleTopic, cfg.RecordTopic = "projects/spike/topics/settle-log", "projects/spike/topics/records"
+	if cfg.Edge.PolicyURL != "" {
+		t.Fatalf("the defaults poll the policy: %+v", cfg.Edge)
+	}
+	public := base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	whole := EdgeConfig{Address: "127.0.0.1:2", Upstream: "http://python.internal", Token: "t",
+		PolicyURL: "http://python.internal/internal/fastpath/edge-policy", SnapshotPublicKey: public,
+		SnapshotKid: "routing-snapshot-1", SnapshotPlane: "gcp/us-central1"}
+	cfg.Edge = whole
+	if err := cfg.valid(); err != nil {
+		t.Fatalf("a whole policy without the snapshot: %v", err)
+	}
+	policy, err := policyConfig(whole)
+	if err != nil || policy.URL == nil || policy.URL.Path != "/internal/fastpath/edge-policy" || len(policy.Keys) != 1 ||
+		policy.Keys[0].Kid != "routing-snapshot-1" || policy.Plane != "gcp/us-central1" {
+		t.Fatalf("the policy's configuration: %+v %v", policy, err)
+	}
+	if snapshot, err := snapshotConfig(whole); err != nil || snapshot.URL != nil {
+		t.Fatalf("the policy alone polls a snapshot: %+v %v", snapshot, err)
+	}
+	if none, err := policyConfig(EdgeConfig{SnapshotURL: "http://python.internal/x", SnapshotPublicKey: public,
+		SnapshotKid: "k", SnapshotPlane: "gcp/us-central1"}); err != nil || none.URL != nil {
+		t.Fatalf("no URL polls nothing: %+v %v", none, err)
+	}
+	for _, c := range []struct {
+		name   string
+		change func(*EdgeConfig)
+	}{
+		{"no edge", func(e *EdgeConfig) { e.Address, e.Upstream, e.Token = "", "", "" }},
+		{"no key", func(e *EdgeConfig) { e.SnapshotPublicKey = "" }},
+		{"no kid", func(e *EdgeConfig) { e.SnapshotKid = "" }},
+		{"no plane", func(e *EdgeConfig) { e.SnapshotPlane = "" }},
+	} {
+		cfg.Edge = whole
+		c.change(&cfg.Edge)
+		if err := cfg.valid(); err == nil {
+			t.Errorf("%s: valid", c.name)
+		}
+	}
+	for name, change := range map[string]func(*EdgeConfig){
+		"another scheme": func(e *EdgeConfig) { e.PolicyURL = "ftp://python.internal/x" },
+		"no host":        func(e *EdgeConfig) { e.PolicyURL = "http:///internal/fastpath/edge-policy" },
+		"a short key":    func(e *EdgeConfig) { e.SnapshotPublicKey = public[:20] },
+	} {
+		edgeCfg := whole
+		change(&edgeCfg)
+		if _, err := policyConfig(edgeCfg); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }
