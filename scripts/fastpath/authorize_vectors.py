@@ -446,15 +446,16 @@ def stored(database: Any, world: dict[str, Any]) -> dict[str, Any]:
     byok, broadcast = ids("byok_provider"), ids("broadcast_destination_by_workspace")
     spec = world["workspace"]
     causes = sorted(set(spec["billing_pause_causes"]).union(*(row["billing_pause_causes"] for row in credit_rows)))
+    key_body, workspace_body = body("api_key", key["hash"]), body("workspace", workspace_id)
     return {
-        "key": {"lookup_body": body("api_key_lookup", lookup_hash(key["hash"])), "key_body": body("api_key", key["hash"])},
-        "workspace": {"body": body("workspace", workspace_id), "credit_rows": credit_rows},
+        "key": {"lookup_body": body("api_key_lookup", lookup_hash(key["hash"])), "key_body": key_body},
+        "workspace": {"body": workspace_body, "credit_rows": credit_rows},
         "byok_entity_ids": byok,
         "broadcast_pointer_ids": broadcast,
         "facts": {
-            "key": key_facts(key, workspace_id),
+            "key": key_facts(key, workspace_id, key_body),
             "workspace": {
-                "workspace_id": workspace_id, "pause_causes": causes,
+                "workspace_id": workspace_id, "missing": workspace_body is None, "pause_causes": causes,
                 "in_debt": any(row["in_debt"] for row in credit_rows),
                 "trust_tier": min(0 if row["trust_latched"] else row["trust_tier"] for row in credit_rows),
                 "federated": bool(spec["federated_home"]), "deleted": spec["deleted"],
@@ -465,8 +466,13 @@ def stored(database: Any, world: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def key_facts(key: dict[str, Any], workspace_id: str) -> dict[str, Any]:
-    """§8.1's KeyFacts, the reasons in Python's order, by Python's predicates."""
+def key_facts(key: dict[str, Any], workspace_id: str, key_body: str | None) -> dict[str, Any]:
+    """§8.1's KeyFacts, the reasons in Python's order, by Python's predicates.
+
+    Tags are the stored body's, in its order (json_body sorts the keys, and
+    Python merges what it decodes from there): an object's entries, none
+    for anything else (merge_tags counts it absent), and usable only when
+    every entry is a string pair of printable ASCII (§6)."""
     reasons = (
         ("disabled", key["disabled"]),
         ("expired", is_api_key_expired(key["expires_at"])),
@@ -478,10 +484,13 @@ def key_facts(key: dict[str, Any], workspace_id: str) -> dict[str, Any]:
         ("budget_strict", key["budget_strict"]),
     )
     reason = next((name for name, holds in reasons if holds), "")
+    stored_tags = json.loads(key_body).get("tags", {}) if key_body is not None else {}
+    tags = stored_tags if isinstance(stored_tags, dict) else {}
     return {
         "lookup_hash": lookup_hash(key["hash"]), "eligible": not reason, "reason": reason,
         "hash": key["hash"], "workspace_id": workspace_id, "expires_at_us": _us(key["expires_at"]),
-        "tags": [[k, v] for k, v in key["tags"].items()],
+        "tags": [[k, v] for k, v in tags.items()],
+        "tags_usable": all(isinstance(v, str) and _printable_ascii(k) and _printable_ascii(v) for k, v in tags.items()),
     }
 
 
@@ -872,14 +881,16 @@ def cases() -> list[dict[str, Any]]:
     add("answer:route:responses", body={"route_type": "responses"})
     add("answer:route:messages", body={"route_type": "messages"})
     add("answer:route:absent", body={"route_type": None})
-    # Tags: the key's stored ones, then the request's, in merge order.
+    # Tags: the key's stored ones, then the request's, in merge order. The
+    # stored ones are in sorted order whatever order they were set in
+    # (json_body sorts the key's body); the request's keep the body's order.
     for name, key_tags, request_tags in (
         ("key_only", {"team": "core", "env": "prod"}, None),
         ("request_only", {}, {"env": "dev", "app": "cli"}),
         ("overlap", {"team": "core", "env": "prod"}, {"env": "dev", "app": "cli"}),
         ("request_empty", {"team": "core"}, {}),
         ("portable_punctuation", {}, {"a+b": "c=d", "path/x": "u@h:1.0", "space key": "v v"}),
-        ("order_kept", {"z": "1", "a": "2"}, {"m": "3", "b": "4"}),
+        ("stored_sorted_then_request_order", {"z": "1", "a": "2"}, {"m": "3", "b": "4"}),
     ):
         add(f"answer:tags:{name}", body={"tags": request_tags}, world={"key": {"tags": key_tags}})
     # Idempotency: the body's key first, then the header's, stripped.
