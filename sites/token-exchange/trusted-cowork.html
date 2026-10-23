@@ -25,14 +25,14 @@
       <p class="lead">Work with your files. Approve the tools. Use only trusted tokens.</p>
       <p>A desktop agent built on OpenCode. Confidential inference is required, not an optional setting.</p>
       <div class="actions">
-        <a class="button primary" href="https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/v0.4.0-alpha.3/Trusted-Cowork-0.4.0-alpha.3-mac-arm64.dmg">Download for Apple silicon</a>
-        <a class="button secondary" href="https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/v0.4.0-alpha.3/Trusted-Cowork-0.4.0-alpha.3-mac-x64.dmg">Download for Intel Mac</a>
+        <a class="button primary" href="https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/v0.4.0-alpha.2/Trusted-Cowork-0.4.0-alpha.2-mac-arm64.dmg">Download for Apple silicon</a>
+        <a class="button secondary" href="https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/v0.4.0-alpha.2/Trusted-Cowork-0.4.0-alpha.2-mac-x64.dmg">Download for Intel Mac</a>
       </div>
-      <p class="cowork-note">macOS 13 or newer. Install updates manually. Existing TrustedRouter accounts and API keys work.</p>
+      <p class="cowork-note">Current release: 0.4.0-alpha.2, signed and notarized. macOS 13 or newer. Install updates manually. Existing TrustedRouter accounts and API keys work.</p>
     </section>
     <section class="section cowork-details" aria-labelledby="tokens-title">
       <h2 id="tokens-title">Only trusted tokens.</h2>
-      <p>The default is <code>nyte/confidential</code>. Choose a specific eligible confidential model when you need one. Every model request requires confidential routing and data collection set to <code>deny</code>. If no eligible route is available, the request fails closed.</p>
+      <p>The current download uses <code>trustedrouter/confidential</code>, the same confidential pool available through the NYTE alias <code>nyte/confidential</code>. Choose a specific eligible confidential model when you need one. Every model request requires confidential routing and data collection set to <code>deny</code>. If no eligible route is available, the request fails closed.</p>
       <p>Browser sign-in and billing use the existing TrustedRouter service. Model requests use its verified confidential API. There is no automatic fallback to a standard endpoint.</p>
       <p>Sessions stay on your Mac. Tools require your approval and can access files or the network you authorize. Tool activity is not covered by the model-inference encryption claim.</p>
       <div class="actions"><a class="button secondary" href="https://trustedrouter.com/trust">Verify attestation</a><a href="https://github.com/Lore-Hex/confidential-cowork-desktop">Source and security boundaries</a></div>
