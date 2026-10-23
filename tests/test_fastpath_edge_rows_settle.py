@@ -27,6 +27,20 @@ process writes as well).
 A positive control corrupts one field Go writes and shows the comparison
 fails on a behaviour, not on the row text.
 
+What this proves, and what it does not: Python handles rows shaped as the
+golden says Go writes them (§5) exactly as it handles its own. It does not
+prove Go writes them; that is G10's row comparison, which must hold every
+column of both rows (all 25 of tr_gateway_authorization, typed columns
+included, and all 18 of tr_reservation) to the golden. Behaviour alone
+cannot: Python falls back to the payload for a NULL typed column, and some
+facts are read by nothing these routes do. A NULL typed invocation_nonce,
+idempotency_fingerprint or stage_d_boot_kid, a wrong typed model_id,
+provider or estimated_microdollars, or a wrong payload endpoint_id,
+requested_model_id, stage_d_reason, stage_d_prompt_tokens or
+fastpath_end_of_life survives every scenario here; only row parity (this
+file's test_go_rows_are_the_rows_python_writes against the golden, and G10
+against Go) catches them.
+
 The clocks are pinned to each case's instant (the route's readings, the
 snapshot fixture's catalog and rank clocks, the reaper's ``now``), every
 uuid4 is seeded, and the route's timing clock reads a constant.
@@ -84,6 +98,8 @@ TTL = real_dt.timedelta(seconds=7_200)
 
 # §5: the columns Go's two inserts name. Every other column of either table
 # is NULL on a row Go writes (a column a Spanner insert does not name).
+# `settled` is among them: G9 names settled=false explicitly rather than
+# relying on a column default.
 GO_AUTHORIZATION_COLUMNS = (
     "authorization_id", "workspace_id", "key_hash", "reservation_id", "model_id", "provider", "usage_type",
     "estimated_microdollars", "settled", "created_at", "terminal_at", "payload",
@@ -204,13 +220,13 @@ def _pinned(at: real_dt.datetime, seed: str) -> Iterator[None]:
     clock = _clock_module(at)
     counter = iter(range(1 << 30))
     saved = sys.modules["datetime"], gateway.dt, uuid.uuid4
-    sys.modules["datetime"], gateway.dt = clock, clock  # type: ignore[assignment]
-    uuid.uuid4 = lambda: _seeded_uuid(f"{seed}#{next(counter)}")  # type: ignore[assignment]
+    sys.modules["datetime"], gateway.dt = clock, clock
+    uuid.uuid4 = lambda: _seeded_uuid(f"{seed}#{next(counter)}")
     try:
         with _routing_cases_vectors().fixture_catalog(at):
             yield
     finally:
-        sys.modules["datetime"], gateway.dt, uuid.uuid4 = saved  # type: ignore[assignment]
+        sys.modules["datetime"], gateway.dt, uuid.uuid4 = saved
 
 
 @contextlib.contextmanager
@@ -276,6 +292,9 @@ def _settings(case: dict[str, Any]) -> Settings:
         fastpath_pilot_workspaces=",".join(policy["fastpath_pilot_workspaces"]),
         fastpath_pilot_regions=",".join(policy["fastpath_pilot_regions"]),
         settle_outbox_enabled=True,
+        # Production renders it true (scripts/deploy/rollout.sh,
+        # TR_REAP_SNAPSHOT_BOOKING_ENABLED): the reaper as it runs there.
+        reap_snapshot_booking_enabled=True,
         stage_d_eligibility_enabled=stage_d["eligibility_enabled"],
         stage_d_heartbeat_enabled=stage_d["heartbeat_enabled"],
         stage_d_require_heartbeat_declaration=stage_d["require_heartbeat_declaration"],
@@ -565,6 +584,18 @@ def _wall(row: dict[str, Any], wall_clock: Callable[[str], bool]) -> dict[str, A
             for name, value in row.items()}
 
 
+def _created_at(name: str) -> bool:
+    return name == "created_at"
+
+
+def _analytics_event(row: dict[str, Any]) -> str:
+    """A provider-benchmark event in full, its payload decoded; the event's
+    created_at is the wall clock's."""
+    payload = row["payload"]
+    decoded = _wall(json.loads(payload), _created_at) if isinstance(payload, str) else payload
+    return json.dumps({**row, "payload": decoded}, sort_keys=True, default=str)
+
+
 def _response(response: Any) -> dict[str, Any]:
     try:
         body: Any = response.json()
@@ -628,8 +659,11 @@ class Observer:
             # the request's).
             "activity": [row["payload"] for row in database.operational_analytics_outbox
                          if json.loads(row["payload"]).get("workspace_id") == workspace_id],
-            "analytics": len(database.analytics_outbox),
-            "generations": sorted(database.generation_records),
+            # Every analytics event and generation record in full (a
+            # generation record's terminal_at is the wall clock's).
+            "analytics": [_analytics_event(row) for row in database.analytics_outbox],
+            "generations": [json.dumps(_wall(row, _terminal_at), sort_keys=True, default=str)
+                            for _id, row in sorted(database.generation_records.items())],
             "authorizations": sorted(database.gateway_authorizations),
             "reservations": sorted(database.reservations),
         }))
@@ -706,15 +740,16 @@ def run_scenario(case: dict[str, Any], scenario: str, rows: str, *,
     return observer.steps
 
 
-def compare(case: dict[str, Any], scenario: str, *,
-            corrupt: Corrupt | None = None) -> dict[str, dict[str, Any]]:
+def compare(case: dict[str, Any], scenario: str, *, corrupt: Corrupt | None = None,
+            ignore: tuple[str, ...] = ()) -> dict[str, dict[str, Any]]:
     """Python decides the same for the rows Go wrote as for its own; the
-    observations, by step."""
+    observations, by step. ``ignore`` (positive controls only) leaves fields
+    out, to show a later one catches a difference by itself."""
     python = run_scenario(case, scenario, "python")
     go = run_scenario(case, scenario, "go", corrupt=corrupt)
     for (name, go_step), (_name, python_step) in zip(go, python, strict=True):
         for field in python_step:
-            if go_step[field] != python_step[field]:
+            if field not in ignore and go_step[field] != python_step[field]:
                 raise AssertionError(
                     f"{case['name']} {scenario}: Go-shaped rows diverge at {name}.{field}:\n"
                     f"  go:     {go_step[field]!r}\n  python: {python_step[field]!r}"
@@ -880,21 +915,41 @@ def _other_fingerprint(_authorization: dict[str, Any], reservation: dict[str, An
     reservation["idempotency_fingerprint"] = hashlib.sha256(b"not the request's material").hexdigest()
 
 
+def _payload_with(**changes: Any) -> Corrupt:
+    def corrupt(authorization: dict[str, Any], _reservation: dict[str, Any]) -> None:
+        payload = json.loads(authorization["payload"])
+        payload.update(changes)
+        authorization["payload"] = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return corrupt
+
+
 @pytest.mark.parametrize(
-    ("corrupt", "scenario", "diverges_at"),
+    ("corrupt", "scenario", "ignore", "diverges_at"),
     [
-        (_drop_credit_reservation_id, "settle", "replay_same_key_and_body.body"),
-        (_drop_credit_reservation_id, "refund", "refund."),
-        (_drop_credit_reservation_id, "reap", "drain_after_expiry."),
-        (_other_fingerprint, "settle", "replay_same_key_and_body.status"),
+        (_drop_credit_reservation_id, "settle", (), "replay_same_key_and_body.body"),
+        (_drop_credit_reservation_id, "refund", (), "refund."),
+        (_drop_credit_reservation_id, "reap", (), "drain_after_expiry."),
+        (_other_fingerprint, "settle", (), "replay_same_key_and_body.status"),
+        # Payload facts Python copies into the records: the activity row,
+        # and on its own the generation record compared in full.
+        (_payload_with(tags={"team": "other"}), "drain", (), "drain_decided.activity"),
+        (_payload_with(tags={"team": "other"}), "drain", ("activity",), "drain_decided.generations"),
+        (_payload_with(app_id="app_e2_other"), "drain", (), "drain_decided.activity"),
+        (_payload_with(app_id="app_e2_other"), "drain", ("activity",), "drain_decided.generations"),
+        (_payload_with(receipt_fee_basis_points=25), "drain", (), "settle_undecided.status"),
+        (_payload_with(receipt_fee_basis_points=25), "settle", (), "replay_same_key_and_body.body"),
     ],
     ids=["drop_credit_reservation_id:replay", "drop_credit_reservation_id:refund",
-         "drop_credit_reservation_id:reap", "change_fingerprint:replay"],
+         "drop_credit_reservation_id:reap", "change_fingerprint:replay",
+         "tags:activity", "tags:generation", "app_id:activity", "app_id:generation",
+         "receipt_fee:settle", "receipt_fee:replay"],
 )
-def test_a_row_go_wrote_wrong_fails_the_comparison(corrupt: Corrupt, scenario: str, diverges_at: str) -> None:
+def test_a_row_go_wrote_wrong_fails_the_comparison(
+    corrupt: Corrupt, scenario: str, ignore: tuple[str, ...], diverges_at: str,
+) -> None:
     """Positive control: one field Go writes, wrong, and Python decides
     differently, which the comparison reports at that behaviour."""
-    compare(_case(CONTROL_CASE), scenario)
+    compare(_case(CONTROL_CASE), scenario, ignore=ignore)
     with pytest.raises(AssertionError, match=r"Go-shaped rows diverge at " + diverges_at.replace(".", r"\.")):
-        compare(_case(CONTROL_CASE), scenario, corrupt=corrupt)
+        compare(_case(CONTROL_CASE), scenario, corrupt=corrupt, ignore=ignore)
 
