@@ -369,3 +369,32 @@ def test_the_headers_say_how_to_sign_and_expand_a_request() -> None:
             assert auth == [f"kid={kid},sig={_signature(vectors, body.encode())}"], case["name"]
             signed += 1
     assert expanded == 1 and signed > 200
+
+
+def test_the_facts_are_the_stored_rows_in_section_10_3s_shapes() -> None:
+    """KEY_FACTS.tags is the stored key body's tags in its order (json_body
+    sorts them; Python merges what it decodes), and the facts carry
+    §10.3's fields."""
+    key_fields = {"lookup_hash", "eligible", "reason", "hash", "workspace_id", "expires_at_us", "tags", "tags_usable"}
+    workspace_fields = {"workspace_id", "missing", "pause_causes", "in_debt", "trust_tier", "federated", "deleted",
+                        "byok_slugs", "broadcast_pointer"}
+    reordered = 0
+    for case in _cases():
+        facts = case["facts"]
+        assert set(facts["key"]) == key_fields and set(facts["workspace"]) == workspace_fields, case["name"]
+        assert facts["workspace"]["missing"] == (case["workspace"]["body"] is None), case["name"]
+        stored = json.loads(case["key"]["key_body"]).get("tags", {})
+        stored = stored if isinstance(stored, dict) else {}
+        assert facts["key"]["tags"] == [[k, v] for k, v in stored.items()], case["name"]
+        # Stored tags are sorted, whatever order the key was given them in.
+        assert list(stored) == sorted(stored), case["name"]
+        reordered += len(stored) > 1
+    # Positive control: the answered tag cases and the read-back case give
+    # their keys tags out of sorted order, and the facts still list them sorted.
+    assert reordered >= 4
+    names = {"answer:tags:key_only", "answer:tags:overlap", "answer:tags:stored_sorted_then_request_order",
+             "answer:insert_unknown_landed_tags"}
+    by_name = {case["name"]: case for case in _cases()}
+    for name in names:
+        tags = by_name[name]["facts"]["key"]["tags"]
+        assert len(tags) == 2 and tags == sorted(tags), name
