@@ -19,7 +19,8 @@ func TestABootIsReadByItsKeyIdFromTheEntityTable(t *testing.T) {
 	x := base64.RawURLEncoding.EncodeToString(public)
 	rows := []struct{ kid, body string }{
 		{"boot-ok", `{"kid":"boot-ok","jwk":{"kty":"OKP","crv":"Ed25519","x":"` + x + `"},"approved":true,"verified":true,` +
-			`"image_digest":"sha256:abc","attestation_kind":"gcp-cs-jwt","registered_at":"2026-10-18T00:00:00Z"}`},
+			`"image_digest":"sha256:abc","attestation_kind":"gcp-cs-jwt","registered_at":"2026-10-18T00:00:00Z",` +
+			`"declares_usage_heartbeat":true,"declares_stream_open_heartbeat":false}`},
 		{"boot-unverified", `{"kid":"boot-unverified","jwk":{"kty":"OKP","crv":"Ed25519","x":"` + x + `"},"verified":false,"image_digest":"sha256:abc"}`},
 		{"boot-rsa", `{"kid":"boot-rsa","jwk":{"kty":"RSA","n":"x"},"verified":true,"image_digest":"sha256:abc"}`},
 		{"boot-short", `{"kid":"boot-short","jwk":{"kty":"OKP","crv":"Ed25519","x":"AAAA"},"verified":true,"image_digest":"sha256:abc"}`},
@@ -37,11 +38,13 @@ func TestABootIsReadByItsKeyIdFromTheEntityTable(t *testing.T) {
 	}
 	ctx := context.Background()
 	got, found, err := s.ReadBoot(ctx, "boot-ok")
-	if err != nil || !found || got.Kid != "boot-ok" || !got.Verified || got.ImageDigest != "sha256:abc" || !got.PublicKey.Equal(public) {
+	if err != nil || !found || got.Kid != "boot-ok" || !got.Verified || got.ImageDigest != "sha256:abc" || !got.PublicKey.Equal(public) ||
+		!got.DeclaresUsageHeartbeat {
 		t.Fatalf("the boot: %+v %v %v", got, found, err)
 	}
 	got, found, err = s.ReadBoot(ctx, "boot-unverified")
-	if err != nil || !found || got.Verified {
+	// A registration that omits the declaration withdraws it.
+	if err != nil || !found || got.Verified || got.DeclaresUsageHeartbeat {
 		t.Fatalf("an unverified boot: %+v %v %v", got, found, err)
 	}
 	for _, kid := range []string{"boot-rsa", "boot-short"} {
