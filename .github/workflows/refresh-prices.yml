@@ -209,6 +209,7 @@ jobs:
                       AKASHML_API_KEY:trustedrouter-akashml-api-key \
                       MANCER_API_KEY:trustedrouter-mancer-api-key \
                       ABLITERATE_API_KEY:trustedrouter-abliterate-api-key \
+                      ABLITERATION_API_KEY:trustedrouter-abliteration-api-key \
                       NSCALE_API_KEY:trustedrouter-nscale-api-key \
                       AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
                       SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \

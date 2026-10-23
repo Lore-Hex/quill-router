@@ -43,6 +43,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "fortanix": (("FORTANIX_API_KEY",), "https://ctf.armet.ai/v1"),
     "byteplus": (("BYTEPLUS_API_KEY",), "https://ark.ap-southeast.bytepluses.com/api/v3"),
     "abliterate": (("ABLITERATE_API_KEY",), "https://abliterate.ai/api/v1"),
+    "abliteration": (("ABLITERATION_API_KEY",), "https://api.abliteration.ai/v1"),
     "meta": (("META_API_KEY",), "https://api.meta.ai/v1"),
     "openrouter": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
