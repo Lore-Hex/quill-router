@@ -12,7 +12,9 @@ import (
 
 // What json.loads reads but the tree does not carry as Python holds it.
 // Decode refuses each, so a caller can pass the document to Python with
-// the reason rather than answer for it.
+// the reason rather than answer for it. An Err value says only that
+// Decode stopped there: a document Python refuses for a later syntax
+// error can return one too, so none of them means Python would read it.
 var (
 	// ErrDuplicateKey: Python keeps the last value at the first key's place.
 	ErrDuplicateKey = errors.New("pyjson: a key twice in one object")
