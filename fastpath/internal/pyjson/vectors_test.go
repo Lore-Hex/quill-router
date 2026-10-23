@@ -42,7 +42,7 @@ type vectors struct {
 		ISOFormat  string `json:"isoformat"`
 	} `json:"isoformat"`
 	// The pydantic_* sections are the authorize route's 200 bodies, which
-	// FastAPI writes with pydantic-core's to_json.
+	// FastAPI writes with TypeAdapter.dump_json.
 	PydanticFloats []struct {
 		Bits string `json:"bits"`
 		JSON string `json:"json"`

@@ -23,9 +23,11 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
   `testdata/credit_debt_vectors.json`. `scripts/fastpath/credit_debt_vectors.py`
   writes the file, and a Python test fails when it is stale.
 - `internal/pyjson`: Python's JSON bytes (float repr, `json.dumps` escaping,
-  `json_body`'s sorted form, `JSONResponse`'s insertion order) and
-  `isoformat()` with `Z`, for rows and responses the edge will compose. It is
-  held to CPython's own output by `testdata/pyjson_vectors_v1.json`, which
+  `json_body`'s sorted form, `JSONResponse`'s insertion order for error
+  bodies, and pydantic-core's `TypeAdapter.dump_json`, which FastAPI writes
+  the authorize route's 200 body with) and `isoformat()` with `Z`, for rows
+  and responses the edge will compose. It is held to CPython's and the real
+  authorize route's own output by `testdata/pyjson_vectors_v1.json`, which
   `scripts/fastpath/pyjson_vectors.py` writes; a Python test fails when it is
   stale. Nothing imports it yet.
 - `internal/service` and `cmd/fastpath`: the spike's one service (spike plan

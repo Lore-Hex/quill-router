@@ -20,6 +20,7 @@ import os
 import struct
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,20 @@ from trusted_router.routes.internal import gateway
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "scripts" / "fastpath" / "pyjson_vectors.py"
 VECTORS = ROOT / "fastpath" / "testdata" / "pyjson_vectors_v1.json"
+
+
+def _tr_environment() -> dict[str, str]:
+    return {name: value for name, value in os.environ.items() if name.startswith("TR_")}
+
+
+@pytest.fixture(autouse=True)
+def _tr_environment_unchanged() -> Iterator[None]:
+    """The generator clears TR_* when it runs; none of that may reach this
+    process, whose later tests read TR_STORAGE_BACKEND,
+    TR_LIFECYCLE_CLOCK_OVERRIDE and TR_ENCLAVE_SOURCE_ROOT."""
+    before = _tr_environment()
+    yield
+    assert _tr_environment() == before
 
 
 def test_the_vectors_are_what_cpython_writes_now() -> None:
@@ -118,9 +133,17 @@ def test_the_real_authorize_route_writes_the_pydantic_vectors(monkeypatch: pytes
     listed(["".join(map(chr, v["codepoints"])) for v in strings], [v["json"] for v in strings])
     money = vectors["pydantic_money"]
     listed([money_pair("estimated_cost", v["microdollars"]) for v in money], [v["json"] for v in money])
-    for document in vectors["pydantic_documents"]:
-        status, body = route({"data": json.loads(document["text"])})
-        if document["json"] is None:
-            assert status == 500, document["text"][:60]
-        else:
-            assert (status, body) == (200, document["json"]), document["text"][:60]
+    # The writable documents in one body, each at the level {"data": ...}
+    # puts it (the real app rate-limits a client sending hundreds of
+    # requests); the unwritable ones one by one.
+    documents = vectors["pydantic_documents"]
+    writable = [d for d in documents if d["json"] is not None]
+    prefix = '{"data":'
+    assert all(d["json"].startswith(prefix) and d["json"].endswith("}") for d in writable)
+    batch = {f"d{i}": json.loads(d["text"]) for i, d in enumerate(writable)}
+    members = [f'"d{i}":' + d["json"][len(prefix) : -1] for i, d in enumerate(writable)]
+    assert route(batch) == (200, "{" + ",".join(members) + "}")
+    unwritable = [d for d in documents if d["json"] is None]
+    assert len(unwritable) >= 10
+    for document in unwritable:
+        assert route({"data": json.loads(document["text"])})[0] == 500, document["text"][:60]

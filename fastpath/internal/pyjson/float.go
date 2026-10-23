@@ -30,15 +30,18 @@ func FormatFloat(f float64) string {
 	return positional(sign, digits, decpt)
 }
 
-// FormatFloatPydantic is the float pydantic-core's to_json writes, which
-// is what FastAPI's response path writes for a route with a response
-// model (the authorize 200 body, typed dict[str, Any]): repr's shortest
+// FormatFloatPydantic is the float TypeAdapter.dump_json writes, which is
+// what FastAPI's response path writes for a route with a response model
+// (the authorize 200 body, typed dict[str, Any]): repr's shortest
 // digits, but positional down to five places before the first digit
 // (0.00001, 0.000012345, where repr writes 1e-05), and in exponent form
 // an exponent of as few digits as it takes, signed either way (1e-6,
 // 9.999999999999999e-6, 1e+16, 1.7976931348623157e+308). Above, the
 // threshold is repr's: 9999999999999998.0, then 1e+16. A NaN or an
-// infinity is "null", as to_json writes it (ser_json_inf_nan="null").
+// infinity is "null": a TypeAdapter's serializer runs with pydantic's
+// default config, whose ser_json_inf_nan is "null". (pydantic_core.to_json
+// called alone writes NaN and Infinity instead; nothing here relies on
+// it.)
 func FormatFloatPydantic(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return "null"
