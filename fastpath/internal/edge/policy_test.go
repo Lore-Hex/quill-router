@@ -255,7 +255,9 @@ func TestThePolicyPollKeepsTheNewestIssuedAt(t *testing.T) {
 
 // TestThePolicyPollAsksWithItsETag: the second poll carries the body's
 // sha256; a 304 keeps the copy. Past refresh_at with nothing newer (the
-// instance is still signing), the next polls back off from 2 s to 15 s.
+// instance is still signing, or another answered), the next polls come at
+// the shortest wait, 2 s, every time: a backoff would leave a few polls
+// before not_after. Real failures still back off.
 func TestThePolicyPollAsksWithItsETag(t *testing.T) {
 	h := newPolicyEdge(t, nil)
 	h.serveIssued(t, goldenIssuedAt)
@@ -279,9 +281,28 @@ func TestThePolicyPollAsksWithItsETag(t *testing.T) {
 	for range 6 {
 		waits = append(waits, h.poll())
 	}
-	want := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second, 15 * time.Second, 15 * time.Second}
+	want := []time.Duration{2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second}
 	if fmt.Sprint(waits) != fmt.Sprint(want) {
-		t.Fatalf("past refresh_at, waits %v, want %v", waits, want)
+		t.Fatalf("past refresh_at (304), waits %v, want %v", waits, want)
+	}
+	// The same past refresh_at when the instance answers an older body.
+	older := h.issued(t, goldenIssuedAt-5)
+	h.serve(t, older, policyPublication(h.manifest(t, routingsnapshot.PolicyTyp, older), older))
+	waits = nil
+	for range 4 {
+		waits = append(waits, h.poll())
+	}
+	if fmt.Sprint(waits) != fmt.Sprint(want[:4]) || h.held(t) != sha(h.golden) {
+		t.Fatalf("past refresh_at (older), waits %v", waits)
+	}
+	// And a 503 meanwhile backs off: it is a failure.
+	h.serve503("compiling", "")
+	waits = nil
+	for range 4 {
+		waits = append(waits, h.poll())
+	}
+	if fmt.Sprint(waits) != fmt.Sprint([]time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second}) {
+		t.Fatalf("503s past refresh_at, waits %v", waits)
 	}
 	// A newer body resets the backoff to refresh_at.
 	h.serveIssued(t, goldenIssuedAt+18)
@@ -488,6 +509,7 @@ func TestThePolicyPollTimesOut(t *testing.T) {
 		select {
 		case <-r.Context().Done():
 		case <-release:
+		case <-time.After(4 * time.Second): // an ignored timeout fails, not hangs
 		}
 	}
 	h.handler.Store(&f)
@@ -495,7 +517,7 @@ func TestThePolicyPollTimesOut(t *testing.T) {
 	if wait := h.poll(); wait != 2*time.Second {
 		t.Fatalf("a timed-out poll waited %v", wait)
 	}
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("the poll took %v", elapsed)
 	}
 	if h.held(t) != sha(h.golden) || h.edge.PolicyCounts().Failed != 1 ||
@@ -596,5 +618,81 @@ func TestTheEdgePolicyIsDark(t *testing.T) {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop with its context")
+	}
+}
+
+// TestTheAccessorAnswersNoPolicyFromTheFuture: a copy held answers only
+// while issued_at <= now + 1 s and now < not_after, so a clock stepped
+// back leaves the edge with none (every request passes) until it catches
+// up.
+func TestTheAccessorAnswersNoPolicyFromTheFuture(t *testing.T) {
+	h := newPolicyEdge(t, nil)
+	h.serveIssued(t, goldenIssuedAt)
+	h.poll()
+	for _, c := range []struct {
+		at   int64
+		held bool
+	}{{goldenIssuedAt - 2, false}, {goldenIssuedAt - 1, true}, {goldenIssuedAt, true}, {goldenIssuedAt + 59, true},
+		{goldenIssuedAt + 60, false}} {
+		h.clock.setUnix(c.at)
+		if got := h.held(t) != ""; got != c.held {
+			t.Errorf("at issued_at%+d the accessor answered a policy: %v, want %v", c.at-goldenIssuedAt, got, c.held)
+		}
+	}
+}
+
+// TestThePolicyBodyIsStrictBase64: the body's base64 is standard, padded,
+// with no line breaks and zero padding bits; each refusal beside the same
+// body in strict base64, which installs.
+func TestThePolicyBodyIsStrictBase64(t *testing.T) {
+	h := newPolicyEdge(t, nil)
+	monitor := `"monitor_lookup_hash":"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9"`
+	body := bytes.Replace(h.golden, []byte(monitor), []byte(`"monitor_lookup_hash":null`), 1)
+	if len(body)%3 == 0 {
+		t.Fatal("the body must need padding")
+	}
+	manifest := h.manifest(t, routingsnapshot.PolicyTyp, body)
+	encoded := base64.StdEncoding.EncodeToString(body)
+	answer := func(b64 string) []byte {
+		out, err := json.Marshal(struct {
+			Body     string `json:"body"`
+			Kind     string `json:"kind"`
+			Manifest string `json:"manifest"`
+			V        int64  `json:"v"`
+		}{b64, policyPublicationKind, manifest, 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	trimmed := strings.TrimRight(encoded, "=")
+	last := strings.IndexByte(alphabet, trimmed[len(trimmed)-1])
+	paddingBits := trimmed[:len(trimmed)-1] + string(alphabet[last+1]) + encoded[len(trimmed):]
+	if decoded, err := base64.StdEncoding.DecodeString(paddingBits); err != nil || !bytes.Equal(decoded, body) {
+		t.Fatalf("the lax decoder must read the padding-bits form as the body: %v", err)
+	}
+	for name, b64 := range map[string]string{
+		// json.Marshal escapes the newline: the publication stays its
+		// canonical encoding, so only the base64 check can refuse it.
+		"a line break":     encoded[:76] + "\n" + encoded[76:],
+		"padding bits set": paddingBits,
+		"unpadded":         trimmed,
+		"url alphabet":     strings.NewReplacer("+", "-", "/", "_").Replace(encoded),
+	} {
+		if name == "url alphabet" && !strings.ContainsAny(encoded, "+/") {
+			continue
+		}
+		h.serve(t, body, answer(b64))
+		h.edge.policy.current.Store(nil)
+		h.poll()
+		if h.held(t) != "" || !strings.Contains(h.logs.text(), `reason="the publication's body is not standard base64"`) {
+			t.Errorf("%s: installed, or refused for another reason:\n%s", name, h.logs.text())
+		}
+	}
+	h.serve(t, body, answer(encoded))
+	h.poll()
+	if h.held(t) != sha(body) {
+		t.Fatalf("the strict control is refused:\n%s", h.logs.text())
 	}
 }

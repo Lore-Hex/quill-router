@@ -71,11 +71,7 @@ type policyPoller struct {
 	plane   routingsnapshot.Plane
 	keys    []routingsnapshot.TrustedKey
 	current atomic.Pointer[heldPolicy]
-	// behind counts the polls in a row, past the held copy's refresh_at,
-	// that brought nothing newer (the instance answering is still
-	// signing): the next poll backs off from the shortest wait.
-	behind int
-	counts policyCounts
+	counts  policyCounts
 }
 
 // policyCounts are the poll's outcomes since the edge started.
@@ -227,14 +223,16 @@ func (p *policyPoller) poll(ctx context.Context) time.Duration {
 
 // after is the wait after a poll that left h held: until its refresh_at;
 // past it, the instance answering has nothing newer yet (its own signing is
-// running), so back off from the shortest wait.
+// running, or another instance answered), so ask again at the shortest
+// wait. That is bounded: an instance signs at most once a refresh interval
+// however often it is polled, and a copy lives only four intervals, so a
+// backoff here would leave the edge with few polls before its not_after.
+// Real failures back off (failed, refused, unavailable).
 func (p *policyPoller) after(h *heldPolicy) time.Duration {
 	if p.clock().Unix() < h.policy.RefreshAt {
-		p.behind = 0
 		return p.until(h.policy.RefreshAt)
 	}
-	p.behind++
-	return p.backoffAfter(p.behind)
+	return p.cfg.MinInterval
 }
 
 func keptPolicy(h *heldPolicy) string {

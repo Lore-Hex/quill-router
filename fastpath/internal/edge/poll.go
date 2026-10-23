@@ -47,8 +47,13 @@ func newFetcher(name string, u, upstream *url.URL, token string, transport http.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
-// pollAnswer is one poll's response: its status, headers and at most limit+1
-// bytes of its body.
+// maxStatusBody bounds what a poll reads of an answer that is not a 200:
+// the publisher's 503 is a few dozen bytes of {"status", "retry_at"}.
+const maxStatusBody = 4096
+
+// pollAnswer is one poll's response: its status, headers, and of its body
+// at most limit+1 bytes for a 200, or the first maxStatusBody bytes (as
+// many as could be read) for anything else.
 type pollAnswer struct {
 	status int
 	header http.Header
@@ -59,8 +64,10 @@ type pollAnswer struct {
 var errStopped = errors.New("the edge is stopping")
 
 // get asks Python once, with If-None-Match when etag is set, within the
-// poll timeout. A failure names its stage ("request", "transport",
-// "read"); errStopped is the edge stopping, not a failure.
+// poll timeout. A failure names its stage ("request", "transport", or
+// "read" for a 200's body); errStopped is the edge stopping, not a failure.
+// Another status is an answer whatever its body does: a body that cannot be
+// read leaves its status and Retry-After to the caller.
 func (f *fetcher) get(ctx context.Context, etag string, limit int64) (pollAnswer, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
@@ -80,6 +87,10 @@ func (f *fetcher) get(ctx context.Context, etag string, limit int64) (pollAnswer
 		return pollAnswer{}, "transport", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxStatusBody))
+		return pollAnswer{status: resp.StatusCode, header: resp.Header, body: raw}, "", nil
+	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return pollAnswer{}, "read", err

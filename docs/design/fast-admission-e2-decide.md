@@ -335,7 +335,8 @@ refused outside test mode, claims canonical and equal to the signed
 payload, `iss` and `aud` the key's, `aud` and `plane` the verifier's own,
 `sha256` and `size` of the decoded body, the body's `v`, `kind`,
 `issued_at`, `not_after` and `plane` equal to the claims', and `issued_at
-<= now < not_after`. A snapshot verifier given a policy manifest refuses it
+<= now + 1` and `now < not_after` (the second of skew is the edge's, see
+below; Python's own check is `issued_at <= now`). A snapshot verifier given a policy manifest refuses it
 on `typ`, and the reverse; both directions are tests in P2 and G8.
 
 **Edge behaviour.** Poll at `refresh_at` with an explicit 5 s request
@@ -347,8 +348,10 @@ answer an older body than one already seen: the edge keeps the newest
 `issued_at` and ignores a verified body issued at or before it. Any 503
 (`compiling`, `digest-policy-unavailable`, `signer-unavailable`,
 `policy-error`) keeps the copy held, its `Retry-After` honoured within 2 s
-to 15 s; a 304 or an unchanged body past `refresh_at` (the instance still
-signing) backs off from 2 s too. `issued_at` is the publisher's clock
+to 15 s. A 304, an unchanged body or an older one past `refresh_at` (the
+instance answering still signing) is not a failure: the edge asks again
+every 2 s, without backing off, which costs Python little (an instance
+signs at most once per 15 s) and keeps the policy present. `issued_at` is the publisher's clock
 floored to seconds, so the edge accepts a body issued up to 1 s ahead of
 its own clock (`issued_at <= now + 1`); `not_after` is not stretched. The
 edge reuses the snapshot's pinned key, kid and plane flags; a node polls

@@ -187,6 +187,12 @@ func TestPolicyVerifyRefusals(t *testing.T) {
 	noSkew := policyOptions(m, policyIssuedAt-1)
 	noSkew.Skew = 0
 	check("skew off", "edge policy freshness", m.JWS, raw, noSkew)
+	// A negative skew is refused outright, even where now - 1 would pass.
+	negative := policyOptions(m, policyIssuedAt+5)
+	negative.Skew = -1
+	check("negative skew", "edge policy freshness", m.JWS, raw, negative)
+	negative.Skew = 0
+	check("negative skew's control", "", m.JWS, raw, negative)
 
 	production := opts
 	production.AllowTestKey = false
@@ -216,6 +222,20 @@ func TestPolicyVerifyRefusals(t *testing.T) {
 	plane := claims
 	plane.Plane.Region = "europe-west4"
 	check("claims plane", "manifest plane", s.sign(header, canonical(plane)), raw, opts)
+	// The body names another plane than the claims (which name the
+	// verifier's own, and bind these exact bytes).
+	otherBody := bytes.Replace(raw, []byte(`"plane":{"cloud":"gcp","region":"us-central1"}`),
+		[]byte(`"plane":{"cloud":"gcp","region":"europe-west4"}`), 1)
+	if bytes.Equal(otherBody, raw) {
+		t.Fatal("the plane mutation does not apply")
+	}
+	bodyPlane := s.policyClaimsFor(t, otherBody)
+	bodyPlane.Plane = goldenPlane
+	check("body plane", "manifest binding", s.sign(header, canonical(bodyPlane)), otherBody, opts)
+	bodyPlaneControl := s.policyClaimsFor(t, otherBody)
+	check("body plane's control", "", s.sign(header, canonical(bodyPlaneControl)), otherBody, PolicyVerifyOptions{
+		VerifyOptions: VerifyOptions{Now: policyIssuedAt, ExpectedPlane: bodyPlaneControl.Plane, ExpectedAud: m.Aud, AllowTestKey: true},
+		Skew:          1})
 	issuer := claims
 	issuer.Iss = "tr-someone-else"
 	check("issuer", "manifest issuer or encoding", s.sign(header, canonical(issuer)), raw, opts)
