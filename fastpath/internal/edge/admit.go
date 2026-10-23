@@ -28,7 +28,8 @@ type LateAdmitter struct {
 type admitterOf struct{ a Admitter }
 
 // Bind binds a, or unbinds the holder for a nil a; a nil holder binds
-// nothing.
+// nothing. A typed nil (a nil pointer in a non-nil interface) is bound as
+// given, so callers bind only a value they have made.
 func (l *LateAdmitter) Bind(a Admitter) {
 	if l == nil {
 		return

@@ -562,7 +562,12 @@ func TestAnEdgeWithNoAdmissionNodeHoldsNoAdmitter(t *testing.T) {
 	}()
 	p := <-started
 	<-p.armed
-	e := <-made
+	var e *edge.Edge
+	select {
+	case e = <-made:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the edge was not made")
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	eventually(t, 20*time.Second, "the edge serving", func() (bool, error) {
 		resp, err := client.Get("http://" + edgeLn.Addr().String() + "/internal/gateway/edge/health")
