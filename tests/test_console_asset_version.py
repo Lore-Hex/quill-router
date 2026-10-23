@@ -31,7 +31,9 @@ def test_console_asset_urls_change_between_releases(template):
         soup = BeautifulSoup(html, "html.parser")
         urls = [str(tag.get("href") or tag.get("src")) for tag in
                 soup.select('link[rel="stylesheet"], script[src]')]
-        assert any("social-rewards.js" in url for url in urls)
+        assert any("social-rewards.js" in url for url in urls) is (template == "console/welcome.html")
+        if template == "console/api_keys.html":
+            assert any("api-keys.css" in url for url in urls)
         assert any("charter.css" in url for url in urls)
         for url in urls:
             if url.startswith("/static/"):
