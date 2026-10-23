@@ -302,6 +302,78 @@ async def test_gcp_gateway_still_probes_health_and_reports_reuse_up(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{ "status": "ok" }\n',
+        b'{"status":"ok","privatemode_probes":[{"model":"glm-5.3","success":true}]}',
+        b'{"privatemode_probes":[{"success":false,"http_status":503}],"status":"ok"}',
+    ],
+)
+async def test_gcp_health_metadata_does_not_break_latency_or_reuse(
+    tls_material: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    cert_path, key_path = tls_material
+
+    def with_metadata(_path: str, _auth: str | None) -> tuple[int, bytes, str, str]:
+        return 200, body, "keep-alive", "application/json"
+
+    samples, gateway = await _run_probe(
+        with_metadata,
+        cert_path=cert_path,
+        key_path=key_path,
+        attested=False,
+        monkeypatch=monkeypatch,
+    )
+
+    assert gateway.requested_paths == ["/health", "/health"]
+    assert samples["gateway_cold_path"].status == "up"
+    assert samples["gateway_reused_path"].status == "up"
+    assert samples["gateway_reused_path"].connection_reused is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (503, OK_BODY),
+        (200, b'{"status":"down","privatemode_probes":[]}'),
+        (200, b'{"privatemode_probes":[{"success":true}]}'),
+        (200, b'{"status":true}'),
+        (200, b'[{"status":"ok"}]'),
+        (200, b'"ok"'),
+        (200, b"null"),
+        (200, b'{"status":"ok"'),
+        (200, b'\xff'),
+    ],
+)
+async def test_gcp_health_still_requires_success_and_valid_gateway_status(
+    tls_material: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    body: bytes,
+) -> None:
+    cert_path, key_path = tls_material
+
+    def unhealthy(_path: str, _auth: str | None) -> tuple[int, bytes, str, str]:
+        return status, body, "keep-alive", "application/json"
+
+    samples, gateway = await _run_probe(
+        unhealthy,
+        cert_path=cert_path,
+        key_path=key_path,
+        attested=False,
+        monkeypatch=monkeypatch,
+    )
+
+    assert gateway.requested_paths == ["/health"]
+    for sample in samples.values():
+        assert sample.status == "down"
+        assert sample.error_type == "bad_health_response"
+        assert sample.connection_reused is False
+
+
+@pytest.mark.asyncio
 async def test_connection_close_on_a_served_request_is_a_real_failure(
     tls_material: tuple[Path, Path],
 ) -> None:
