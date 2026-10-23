@@ -19,8 +19,8 @@
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
   # Each node of infra/fastpath.tf has a group here and is a backend; 3 and
-  # 4 come here, both drained, once 5 and 6 serve and report HEALTHY.
-  fastpath_edge_retiring = []
+  # 4 are here, both drained after 5 and 6 served and reported HEALTHY.
+  fastpath_edge_retiring = ["tr-fastpath-3", "tr-fastpath-4"]
   # The share, in percent, of the enclave's authorize calls the control load
   # balancer sends through the edge (infra/control_lb_url_map.tf). 1 once
   # Python counted every comparison of the edge's verdict (#1904) on the
