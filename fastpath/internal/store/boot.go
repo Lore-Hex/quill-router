@@ -18,13 +18,16 @@ import (
 const bootKind = "spend_lease_boot"
 
 // BootRecord is a registered boot as the edge checks it: its key id, its
-// Ed25519 public key, whether its registration was verified, and the image
-// digest it attested (storage_models.GatewayBoot).
+// Ed25519 public key, whether its registration was verified, the image
+// digest it attested, and whether its latest registration declared usage
+// heartbeats (storage_models.GatewayBoot; an absent declaration is false, as
+// Python reads it).
 type BootRecord struct {
-	Kid         string
-	PublicKey   ed25519.PublicKey
-	Verified    bool
-	ImageDigest string
+	Kid                    string
+	PublicKey              ed25519.PublicKey
+	Verified               bool
+	ImageDigest            string
+	DeclaresUsageHeartbeat bool
 }
 
 type bootBody struct {
@@ -34,8 +37,9 @@ type bootBody struct {
 		Crv string `json:"crv"`
 		X   string `json:"x"`
 	} `json:"jwk"`
-	Verified    bool   `json:"verified"`
-	ImageDigest string `json:"image_digest"`
+	Verified               bool   `json:"verified"`
+	ImageDigest            string `json:"image_digest"`
+	DeclaresUsageHeartbeat bool   `json:"declares_usage_heartbeat"`
 }
 
 // ReadBoot reads a boot by its key id: one point read of production's entity
@@ -78,5 +82,6 @@ func parseBoot(kid, body string) (BootRecord, error) {
 	if err != nil || len(public) != ed25519.PublicKeySize {
 		return BootRecord{}, fmt.Errorf("store: boot %s: its public key is not 32 bytes", kid)
 	}
-	return BootRecord{Kid: b.Kid, PublicKey: ed25519.PublicKey(public), Verified: b.Verified, ImageDigest: b.ImageDigest}, nil
+	return BootRecord{Kid: b.Kid, PublicKey: ed25519.PublicKey(public), Verified: b.Verified, ImageDigest: b.ImageDigest,
+		DeclaresUsageHeartbeat: b.DeclaresUsageHeartbeat}, nil
 }
