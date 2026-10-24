@@ -469,18 +469,31 @@ never on a poll. The first poll at or after the cached copy's `refresh_at`
 (or with no copy) starts it; it calls `StageDPolicyResolver.refresh_now()`
 (serialized with the resolver's own kick worker, so refreshes never
 overlap)
-(two HTTPS fetches with 5 s timeouts per release URL, a Sigstore bundle
-check, the watermark: at most four a minute, only on an instance the edge
+(the watermark read as a floor; then, release URL by URL in one
+short-lived thread the refresh waits on for 15 s, two HTTPS fetches that
+end within 5 s per URL, every connect, handshake, read and write cut to
+that deadline, so a primary that drips header bytes or empty deflate
+blocks times out and the fallback still runs, and a Sigstore bundle check;
+then the watermark's advance; each Spanner call within 5 s: at most 30 s,
+the Spanner client creating or rotating its session aside, which can add
+tens of seconds; at most four a minute, only on an instance the edge
 polls), reads the other facts afresh and signs, with `issued_at` the clock
-after the refresh. So a body's digest set is the release's at `issued_at`
+after the refresh. A refresh whose thread outlives the wait (name
+resolution, a hung TUF refresh) fails like any other; the thread is left
+to finish alone, changes no state, and no other starts while it runs. So
+a body's digest set is the release's at `issued_at`
 and a changed setting reaches a polling edge within about 15 s. Polls are
 served the cached copy while it is within its `not_after`, else 503 at
 once, so none holds a threadpool token authorize shares while a refresh
 runs. A failed refresh signs nothing (no new worker for 5 s); the cached
 copy is served until `not_after`, then polls answer 503
 `digest-policy-unavailable` and the edge passes everything. A worker still
-running after 30 s is abandoned (logged; its late outcome is discarded) and
-the next poll starts a fresh one. With no
+running after 65 s (two refreshes, as it may wait out the kick worker's,
+plus 5 s for the facts and the signature) is abandoned (logged; its late
+outcome is discarded) and the next poll starts a fresh one, which queues on
+the resolver's lock behind any refresh in flight; so the deadline only
+bounds how long polls answer `compiling`, and its length against the 60 s
+lifetime does not matter. With no
 release URL configured there is nothing to refresh and the set is the
 override alone, as in authorize. No worker process: every fact is this
 process's live state and signing a few hundred bytes costs well under a
