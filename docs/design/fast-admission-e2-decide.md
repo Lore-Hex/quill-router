@@ -362,9 +362,11 @@ hashes the decoded bytes and never re-encodes them. The publisher signs a
 body at most once per `refresh_at` interval. A poll never waits on a
 refresh or a signing: the first poll past `refresh_at` starts one
 single-flight background job that calls `StageDPolicyResolver.refresh()`
-(`stage_d_policy.py:238`: two HTTPS fetches with 5 s timeouts, a Sigstore
-bundle check and the watermark, so at most four a minute on an instance
-the edge polls) and, if it succeeds, signs a new body whose `issued_at` is
+(`stage_d_policy.py`: two HTTPS fetches per release URL within 5 s each
+URL and a Sigstore bundle check, failed after 15 s, around the watermark,
+so at most 30 s, Spanner session creation aside, and at most four a minute
+on an instance the edge polls) and, if it succeeds, signs a new body whose
+`issued_at` is
 that instant. Every poll answers at once: the cached publication while
 `now < not_after`, else 503 with `status` `digest-policy-unavailable`. A
 failed refresh signs nothing new; the edge keeps its last copy until

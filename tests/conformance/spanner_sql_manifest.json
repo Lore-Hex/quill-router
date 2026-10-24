@@ -2834,7 +2834,7 @@
       ]
     },
     "storage_gcp_stage_d_policy:get_stage_d_policy_watermark:1": {
-      "fingerprint": "aa9db793080ddd1bd6403471723b396a1560e265c307a08f09ff487c396008c0",
+      "fingerprint": "8a15b7d23674a778d0b3a0267e0a8ed3080f8e99d94c926c79bbcee32f13839d",
       "scenarios": [
         {
           "bindings": {},
@@ -4789,7 +4789,7 @@
     "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
     "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
     "storage_gcp_stage_d_policy:advance_stage_d_policy_watermark.txn": "f8692a3d8d16677e42220de0981b22ff0872777f5a80f690e3a91236d0874df8",
-    "storage_gcp_stage_d_policy:get_stage_d_policy_watermark": "aa9db793080ddd1bd6403471723b396a1560e265c307a08f09ff487c396008c0",
+    "storage_gcp_stage_d_policy:get_stage_d_policy_watermark": "8a15b7d23674a778d0b3a0267e0a8ed3080f8e99d94c926c79bbcee32f13839d",
     "storage_gcp_strict_budget:reserve_strict_key": "7a35098cb2a910de9879df22182c34dae76c643340d9ddf306436a8e786b1f25",
     "storage_gcp_trust:insert_credit_trust_event": "a16a6554e6493d096a98f771e6fe48e7858519238f8ecda75bca42717c37aac4",
     "storage_gcp_trust:_sync_principal_recovery_pause_tx": "04b609c410d77c9b02657a1e8cfa93616b81aaf8358e2bd1623e39485ae8edea",
