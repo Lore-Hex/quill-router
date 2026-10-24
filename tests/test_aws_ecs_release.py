@@ -82,6 +82,7 @@ def expected_registration(original: dict, image: str, backend: str = "postgres")
     )
     container = expected["containerDefinitions"][0]
     container["environment"].append({"name": "TR_RECORD_READ_BACKEND", "value": backend})
+    container["environment"].append({"name": "TR_RATE_LIMIT_IP_PER_WINDOW", "value": "6000"})
     if backend == "clickhouse":
         for entry in container["environment"]:
             if entry["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER":
@@ -178,6 +179,31 @@ def test_release_refuses_an_in_process_remediator_on_aws(value: str) -> None:
     with pytest.raises(ValueError, match="TR_REMEDIATOR_IN_PROCESS_ENABLED must be false"):
         load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
     assert payload == before
+
+
+def _source_admission_values(result: dict) -> list[str]:
+    env = result["containerDefinitions"][0]["environment"]
+    return [e["value"] for e in env if e["name"] == "TR_RATE_LIMIT_IP_PER_WINDOW"]
+
+
+@pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
+def test_release_adds_the_source_admission_window_when_absent(region: str) -> None:
+    # The live AWS observer definitions set no TR_RATE_LIMIT_*, so each task ran
+    # the per-client default of 240/60 s as the cap for the whole region.
+    payload = task_definition(region)
+    assert _source_admission_values(payload["taskDefinition"]) == []
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert _source_admission_values(result) == ["6000"]
+
+
+@pytest.mark.parametrize("live", ["240", "6000", ""])
+def test_release_pins_the_source_admission_window_without_duplicating_it(live: str) -> None:
+    payload = task_definition("eu-west-3")
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
+        {"name": "TR_RATE_LIMIT_IP_PER_WINDOW", "value": live}
+    )
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert _source_admission_values(result) == ["6000"]
 
 
 @pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
@@ -697,6 +723,7 @@ def test_ecs_record_reads_revert_paris_by_the_default_alone(tmp_path: Path) -> N
         elif entry["name"] == "TR_RECORD_READ_BACKEND":
             entry["value"] = "postgres"
     expected["environment"].append({"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"})
+    expected["environment"].append({"name": "TR_RATE_LIMIT_IP_PER_WINDOW", "value": "6000"})
     # Postgres reads, with the reader's credentials kept as they were.
     assert updated == expected
 
