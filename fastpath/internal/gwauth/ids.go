@@ -13,7 +13,7 @@ import (
 // pins them.
 
 // NewAuthorizationID is "gwa-" + uuid4().hex (gateway.py, the
-// authorization's id): 32 lowercase hex digits, no hyphens.
+// authorization's id): a uuid4's 32 lowercase hex digits, no hyphens.
 func NewAuthorizationID() string {
 	u := uuid4()
 	return "gwa-" + hex.EncodeToString(u[:])
@@ -71,6 +71,6 @@ func hyphenated(u [16]byte) string {
 // The forms Stage accepts: an id of any other shape is not one this edge
 // (or Python) minted, and Stage refuses it rather than write it.
 var (
-	authorizationIDForm = regexp.MustCompile(`^gwa-[0-9a-f]{32}$`)
+	authorizationIDForm = regexp.MustCompile(`^gwa-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$`)
 	reservationIDForm   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 )

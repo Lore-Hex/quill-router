@@ -105,12 +105,16 @@ const (
 	Unchecked Verdict = "unchecked"
 )
 
-// Boot is a registered enclave boot: its key id, its Ed25519 public key and
-// whether its registration was verified.
+// Boot is a registered enclave boot: its key id, its Ed25519 public key,
+// whether its registration was verified, and what the decide pipeline gates
+// on besides (decision 8 and §6 of docs/design/fast-admission-e2-decide.md):
+// the image digest it attested and whether it declared usage heartbeats.
 type Boot struct {
-	Kid       string
-	PublicKey ed25519.PublicKey
-	Verified  bool
+	Kid                    string
+	PublicKey              ed25519.PublicKey
+	Verified               bool
+	ImageDigest            string
+	DeclaresUsageHeartbeat bool
 }
 
 // Boots reads a boot by its key id: the boot and true, or false for none.
@@ -480,24 +484,34 @@ func forPython(h http.Header, name string) string {
 
 // verdict checks a boot header against the request it signs.
 func (e *Edge) verdict(ctx context.Context, headers []string, method, path string, body []byte) Verdict {
+	return e.verdictOf(ctx, headers, method, path, body).Verdict
+}
+
+// verdictOf is verdict with the boot it read: the decide pipeline tells an
+// Invalid verdict's causes apart (boot.signature, boot.missing,
+// boot.unverified) and gates on the boot's digest and heartbeat
+// declaration, without a read of its own.
+func (e *Edge) verdictOf(ctx context.Context, headers []string, method, path string, body []byte) BootSeen {
 	if len(headers) != 1 {
-		return Invalid
+		return BootSeen{Verdict: Invalid}
 	}
 	kid, sig, ok := ParseBootHeader(headers[0])
 	if !ok {
-		return Invalid
+		return BootSeen{Verdict: Invalid}
 	}
 	boot, found, err := e.boot(ctx, kid)
 	if err != nil {
-		return Unread
+		return BootSeen{Verdict: Unread, Kid: kid}
 	}
+	seen := BootSeen{Verdict: Invalid, Kid: kid, Found: found, Boot: boot}
 	if !found || !boot.Verified || boot.Kid != kid || len(boot.PublicKey) != ed25519.PublicKeySize {
-		return Invalid
+		return seen
 	}
 	if !ed25519.Verify(boot.PublicKey, Digest(method, path, body), sig) {
-		return Invalid
+		return seen
 	}
-	return Verified
+	seen.Verdict = Verified
+	return seen
 }
 
 // boot reads a boot, from the cache within its TTL, else from the reader

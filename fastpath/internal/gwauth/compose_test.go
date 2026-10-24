@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 )
 
 // The P1 goldens (docs/design/fast-admission-e2-decide.md §10.1): every
@@ -135,56 +136,26 @@ func member(o pyjson.Object, key string) any {
 	return nil
 }
 
+// loadSnapshot reads the published body as the edge holds it, through the
+// production mapping (routingsnapshot.Snapshot.Endpoint, CandidateOf,
+// RegionsOf) the decide pipeline composes from.
 func loadSnapshot(t *testing.T) snapshotFacts {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(testdata, "routing_snapshot_v1.body.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := pyjson.Decode(raw)
+	snap, err := routingsnapshot.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := tree.(pyjson.Object)
-	names := map[string]string{}
-	for _, p := range member(body, "providers").([]any) {
-		p := p.(pyjson.Object)
-		names[member(p, "slug").(string)] = member(p, "name").(string)
-	}
-	s := snapshotFacts{endpoints: map[string]Candidate{}}
-	for _, e := range member(body, "endpoints").([]any) {
-		e := e.(pyjson.Object)
-		response := member(e, "response").(pyjson.Object)
-		provider := member(e, "provider").(string)
-		name, ok := names[provider]
+	s := snapshotFacts{endpoints: map[string]Candidate{}, regions: RegionsOf(snap.Settings.RegionPayload)}
+	for _, e := range snap.Endpoints {
+		facts, ok := snap.Endpoint(e.ID)
 		if !ok {
-			name = provider
+			t.Fatalf("endpoint %q is not in its own snapshot", e.ID)
 		}
-		id := member(e, "id").(string)
-		s.endpoints[id] = Candidate{
-			EndpointID:        id,
-			Model:             member(e, "model_id").(string),
-			UpstreamModel:     member(e, "upstream_model").(string),
-			Provider:          provider,
-			ProviderName:      name,
-			InferenceLocation: member(response, "inference_location").(pyjson.Object),
-			WaferZDRRequired:  member(response, "wafer_zdr_required").(bool),
-		}
-	}
-	settings := member(body, "settings").(pyjson.Object)
-	for _, r := range member(settings, "region_payload").([]any) {
-		r := r.(pyjson.Object)
-		region := Region{
-			ID:         member(r, "id").(string),
-			Name:       member(r, "name").(string),
-			Primary:    member(r, "primary").(bool),
-			Enabled:    member(r, "enabled").(bool),
-			APIBaseURL: member(r, "api_base_url").(string),
-		}
-		if u, ok := member(r, "control_plane_url").(string); ok {
-			region.ControlPlaneURL = &u
-		}
-		s.regions = append(s.regions, region)
+		s.endpoints[e.ID] = CandidateOf(facts)
 	}
 	return s
 }
@@ -640,10 +611,47 @@ func TestEndOfLifeKeepsItsOffset(t *testing.T) {
 		{base.Add(1000), "2026-10-19T05:00:00.000001Z"},
 		{base.In(time.FixedZone("", 0)), "2026-10-19T05:00:00Z"},
 		{base.In(time.FixedZone("", -(5*3600 + 30*60))), "2026-10-18T23:30:00-05:30"},
-		{base.In(time.FixedZone("", 3600+30)), "2026-10-19T06:00:30+01:00:30"},
 	} {
 		if got := EndOfLifeText(v.at); got != v.want {
 			t.Errorf("EndOfLifeText(%v) = %q, want %q", v.at, got, v.want)
+		}
+	}
+}
+
+// TestFinishRefusesAnOffsetWithSeconds: Go's JSON writes an offset to the
+// minute, so Python would parse another instant than the owner meant, and
+// no text Go writes is Python's. Finish refuses (the caller refunds and
+// passes); a whole-minute offset is the positive control.
+func TestFinishRefusesAnOffsetWithSeconds(t *testing.T) {
+	f, snap := loadGoldens(t), loadSnapshot(t)
+	c := answered(f)[0]
+	staged, err := Stage(inputOf(t, f, snap, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 10, 19, 5, 0, 0, 0, time.UTC)
+	if _, err := staged.Finish(c.Admitted.Envelope, base.In(time.FixedZone("", 3600+30))); err == nil {
+		t.Fatal("Finish wrote an end of life whose offset has seconds")
+	}
+	if _, err := staged.Finish(c.Admitted.Envelope, base.In(time.FixedZone("", -(5*3600+30*60)))); err != nil {
+		t.Fatalf("a whole-minute offset: %v", err)
+	}
+}
+
+// TestStageRefusesAnAuthorizationIDThatIsNotAUUID4: the id's 32 digits are
+// a uuid4's, version and variant, as the reservation id's are; any other is
+// not one this edge or Python minted.
+func TestStageRefusesAnAuthorizationIDThatIsNotAUUID4(t *testing.T) {
+	f, snap := loadGoldens(t), loadSnapshot(t)
+	in := inputOf(t, f, snap, answered(f)[0])
+	if _, err := Stage(in); err != nil {
+		t.Fatalf("the golden's own id: %v", err)
+	}
+	for _, id := range []string{"gwa-da235f8103b551818b0a9a656b52460a", "gwa-da235f8103b541817b0a9a656b52460a",
+		"gwa-DA235F8103B541818B0A9A656B52460A"} {
+		in.AuthorizationID = id
+		if _, err := Stage(in); err == nil {
+			t.Errorf("Stage took authorization id %q", id)
 		}
 	}
 }

@@ -355,14 +355,16 @@ func without(keys ...string) func(pyjson.Object) pyjson.Object {
 	}
 }
 
-// TestNothingUsesTheRequestSideYet: the request side is dark until the
-// edge's decide path (G10). A file outside the package may use only the row
-// types of rows.go, which the store (G9) inserts.
-func TestNothingUsesTheRequestSideYet(t *testing.T) {
+// TestOnlyTheEdgeUsesTheRequestSide: the request side is the edge's decide
+// pipeline's (G10; nothing calls it on the request path yet). A file outside the package
+// and the edge may use only the row types of rows.go, which the store (G9)
+// inserts.
+func TestOnlyTheEdgeUsesTheRequestSide(t *testing.T) {
 	const self = "github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	rows := map[string]bool{"AuthorizationRow": true, "ReservationRow": true}
 	root := filepath.Join("..", "..")
-	files := 0
+	edgeDir := filepath.Join(root, "internal", "edge")
+	files, edgeUses := 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
@@ -371,6 +373,10 @@ func TestNothingUsesTheRequestSideYet(t *testing.T) {
 		uses, err := gwauthUses(path, nil)
 		if err != nil {
 			return err
+		}
+		if filepath.Dir(path) == edgeDir {
+			edgeUses += len(uses)
+			return nil
 		}
 		for _, name := range uses {
 			if !rows[name] {
@@ -382,8 +388,8 @@ func TestNothingUsesTheRequestSideYet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if files < 50 {
-		t.Fatalf("scanned %d files", files)
+	if files < 50 || edgeUses == 0 {
+		t.Fatalf("scanned %d files, %d uses by the edge", files, edgeUses)
 	}
 	// Positive control: a file that uses the request side is seen, under
 	// an import name of its own too.
