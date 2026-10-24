@@ -75,6 +75,9 @@ OAUTH_KEY_EXCHANGE_CORS_HEADERS = {
     "Access-Control-Allow-Headers": "content-type",
     "Access-Control-Max-Age": "600",
 }
+# Liveness probes. The AWS NLB target group checks GET /health; the other
+# three are the aliases the read-only cutover already treats as the same probe.
+HEALTH_PATHS = frozenset({"/health", "/healthz", "/v1/health", "/v1/healthz"})
 STATUS_HOST_EXACT_PATHS = frozenset(
     {
         "/",
@@ -303,7 +306,7 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         if method in {"GET", "HEAD", "OPTIONS"}:
             return await call_next(request)
         path = request.url.path
-        if path in {"/health", "/v1/health", "/healthz", "/v1/healthz"}:
+        if path in HEALTH_PATHS:
             return await call_next(request)
         log.info(
             "read_only.write_blocked method=%s path=%s",
@@ -547,6 +550,15 @@ async def _rate_limit_request(
     if not settings.rate_limit_enabled:
         return None
     path = request.url.path
+    # Liveness probes never count against, and are never refused by, the
+    # source bucket. In `untrusted` client-ip mode every request behind a
+    # load balancer shares ONE bucket, so a client burst that exhausts it
+    # would otherwise 429 the balancer's own health check, the target is
+    # marked unhealthy, and the region is replaced while it is serving fine.
+    # Each probe is a constant-time 200 with no storage work, so this is not
+    # the amplification surface the ingress limiter exists for.
+    if path in HEALTH_PATHS:
+        return None
 
     bearer = get_authorization_bearer(request)
     internal_token = request.headers.get("x-trustedrouter-internal-token")
