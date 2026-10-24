@@ -76,10 +76,16 @@ def test_gateway_boot_declarations_follow_the_latest_registration(
     undeclared = _boot(unique)
     assert undeclared.declares_usage_heartbeat is False
     assert undeclared.declares_stream_open_heartbeat is False
+    assert undeclared.declares_idempotency_key_source is False
+    assert undeclared.declares_settle_outbox is False
     assert store.observe_gateway_boot(undeclared) == undeclared
 
     declared = replace(
-        undeclared, declares_usage_heartbeat=True, declares_stream_open_heartbeat=True
+        undeclared,
+        declares_usage_heartbeat=True,
+        declares_stream_open_heartbeat=True,
+        declares_idempotency_key_source=True,
+        declares_settle_outbox=True,
     )
     assert store.observe_gateway_boot(declared) == declared
     assert store.get_gateway_boot(declared.kid) == declared
@@ -87,6 +93,14 @@ def test_gateway_boot_declarations_follow_the_latest_registration(
     partly = replace(undeclared, declares_usage_heartbeat=True)
     assert store.observe_gateway_boot(partly) == partly
     assert store.get_gateway_boot(declared.kid) == partly
+
+    # E4 R2: each of the two new declarations is replaced on its own too.
+    outbox_only = replace(undeclared, declares_settle_outbox=True)
+    assert store.observe_gateway_boot(outbox_only) == outbox_only
+    assert store.get_gateway_boot(declared.kid) == outbox_only
+    key_source_only = replace(undeclared, declares_idempotency_key_source=True)
+    assert store.observe_gateway_boot(key_source_only) == key_source_only
+    assert store.get_gateway_boot(declared.kid) == key_source_only
 
     assert store.observe_gateway_boot(undeclared) == undeclared
     assert store.get_gateway_boot(declared.kid) == undeclared

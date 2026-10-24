@@ -6945,6 +6945,8 @@ class SpannerStore(OperationalAnalyticsReads):
                     # Replaced, never merged: a declaration can be withdrawn.
                     declares_usage_heartbeat=record.declares_usage_heartbeat,
                     declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
+                    declares_idempotency_key_source=record.declares_idempotency_key_source,
+                    declares_settle_outbox=record.declares_settle_outbox,
                 )
             self._write_entity_tx(transaction, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged

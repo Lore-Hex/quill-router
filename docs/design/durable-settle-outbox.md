@@ -295,6 +295,35 @@ enclave's retry budget) — that needs a quill-cloud-proxy change (cross-repo,
 outbox first, then decide enclave-side durability from the observed lost/`dead`
 rate.
 
+### 9.1 Enclave-side outbox: the router's contract (E4 R1 + R2)
+
+The enclave half is being built as E1–E3 in quill-cloud-proxy (#588 declares
+`capabilities.usage_heartbeat` at boot registration; #590 freezes settle and
+refund terminals as exact bytes, `FrozenTerminal` / `PostFrozenTerminal`). The
+router provides, dark by default:
+
+- **Boot registration declarations** (`POST /internal/gateway/spend-lease/register-boot`,
+  `capabilities` object, JSON booleans, unknown names ignored): alongside
+  `usage_heartbeat` and `stream_open_heartbeat`, R2 stores
+  `idempotency_key_source` and `settle_outbox` as
+  `GatewayBoot.declares_idempotency_key_source` / `declares_settle_outbox`.
+  A registration that omits one withdraws it; a body from before R2 reads
+  as undeclared. The record is the `gateway_boot` entity body (no DDL).
+- **`idempotency_key_source` on authorize** (R1, #2002): excluded from the
+  idempotency fingerprint, never a 422. R2 classifies a `gateway` mark as
+  `gateway` only when the key has the minted shape, the boot signature
+  verified **and** that boot declared `idempotency_key_source`; otherwise
+  `legacy`, with `gateway.idempotency_key_source_mismatch
+  reason=key_shape|boot_unverified|capability_undeclared`. Nothing consumes
+  the classification yet.
+- **Authorize boot context**: `idempotency_key_source_declared` and
+  `settle_outbox_declared` sit next to `heartbeat_declared`. Nothing gates
+  on `settle_outbox_declared` yet; it is where a later increment reads it.
+- **Terminals**: the outbox replays frozen bytes to the existing
+  `/internal/gateway/settle` and `/refund` routes, whose answers
+  (`settled`, `already_settled`, `intent_durable`, `reaped_snapshot`) are
+  unchanged. R2 adds no route, flag or column.
+
 ## 10. Test plan (full pyramid, guard-aware)
 
 - **Unit (fake Spanner, guard actually modeled — MF6):** INSERT-as-claim idempotency
