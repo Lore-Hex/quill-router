@@ -324,6 +324,9 @@ jobs:
       - name: Record model route changes and upcoming schedules
         run: uv run python scripts/update_model_changes.py
 
+      - name: Refresh model alias parity vectors
+        run: uv run python scripts/fastpath/model_alias_vectors.py
+
       - name: Refresh measured provider routing evidence
         id: routing_evidence
         # Keep routing evidence fresh without inventing scores for new hosts.
@@ -361,6 +364,7 @@ jobs:
             src/trusted_router/data/model_changes.jsonl \
             src/trusted_router/data/model_changes_state.json \
             src/trusted_router/static/og/providers/ \
+            fastpath/testdata/model_alias_vectors_v1.json \
             scripts/pricing/parsers/
 
           if git diff --cached --quiet; then
