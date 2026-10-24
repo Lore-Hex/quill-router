@@ -12,7 +12,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+
+# The pinned-source checks may fetch into the same shallow checkout.
+pytestmark = pytest.mark.xdist_group("fastpath-pinned-source")
 
 
 def test_release_ships_the_load_generator_and_its_mix() -> None:
@@ -238,6 +243,8 @@ _SNAPSHOT_ATTRIBUTES = (
     "fastpath-edge-snapshot-kid",
     "fastpath-edge-snapshot-plane",
     "fastpath-edge-shadow",
+    "fastpath-edge-policy-url",
+    "fastpath-edge-decide-shadow",
 )
 
 
@@ -261,6 +268,7 @@ def test_the_snapshot_flags_wait_for_metadata_and_a_release_that_takes_them() ->
     flags = _snapshot_flags(script)
     assert flags == {
         "edge-snapshot-url", "edge-snapshot-public-key", "edge-snapshot-kid", "edge-snapshot-plane", "edge-shadow",
+        "edge-policy-url", "edge-decide-shadow",
     }
     for attribute in _SNAPSHOT_ATTRIBUTES:
         assert f"$(attribute {attribute})" in script, attribute
@@ -342,6 +350,57 @@ def test_the_script_refuses_a_snapshot_url_off_the_edges_upstream() -> None:
     assert none.returncode == 0 and none.stdout == "", none.stderr
 
 
+def test_the_script_passes_the_edge_policy_and_decide_shadow_only_with_what_they_need() -> None:
+    """The edge policy is polled on the edge's upstream with the snapshot's
+    key, kid and plane, and the decide shadow decides from both (service.go
+    refuses either without them, which would stop the whole process,
+    admission included, restarted into the same refusal): the startup script
+    refuses first, and passes them in the order the unit takes them."""
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    key = "A" * 43
+    upstream = "https://trusted-router-x.a.run.app"
+    snapshot = {
+        "fastpath-edge-snapshot-url": f"{upstream}/internal/fastpath/routing-snapshot",
+        "fastpath-edge-snapshot-public-key": key,
+        "fastpath-edge-snapshot-kid": "routing-snapshot-1",
+        "fastpath-edge-snapshot-plane": "gcp/us-central1",
+    }
+    flags = (
+        f"-edge-snapshot-url {upstream}/internal/fastpath/routing-snapshot -edge-snapshot-public-key {key} "
+        "-edge-snapshot-kid routing-snapshot-1 -edge-snapshot-plane gcp/us-central1"
+    )
+    policy = {"fastpath-edge-policy-url": f"{upstream}/internal/fastpath/edge-policy"}
+    both = _run_snapshot_block(script, **snapshot, **policy, **{"fastpath-edge-decide-shadow": "true"})
+    assert both.returncode == 0, both.stderr
+    assert both.stdout == f"{flags} -edge-policy-url {upstream}/internal/fastpath/edge-policy -edge-decide-shadow"
+    for off in ("false", ""):
+        polled = _run_snapshot_block(script, **snapshot, **policy, **{"fastpath-edge-decide-shadow": off})
+        assert polled.returncode == 0, polled.stderr
+        assert polled.stdout == f"{flags} -edge-policy-url {upstream}/internal/fastpath/edge-policy"
+    refusals = [
+        ({**snapshot, "fastpath-edge-decide-shadow": "true"}, "needs the edge policy's URL"),
+        ({**snapshot, **policy, "fastpath-edge-decide-shadow": "yes"}, "fastpath-edge-decide-shadow is true, false"),
+        ({**policy}, "need the routing snapshot"),
+        ({"fastpath-edge-decide-shadow": "true"}, "need the routing snapshot"),
+        ({**snapshot, "fastpath-edge-policy-url": f"{upstream}/internal/fastpath/edge-policy x"},
+         "a routing snapshot or edge policy attribute holds a character the unit cannot carry"),
+    ]
+    for url in (
+        "https://elsewhere.example/internal/fastpath/edge-policy",
+        "http://trusted-router-x.a.run.app/internal/fastpath/edge-policy",
+        "https://trusted-router-x.a.run.app:8443/internal/fastpath/edge-policy",
+        "https:/trusted-router-x.a.run.app/x",
+    ):
+        refusals.append(({**snapshot, "fastpath-edge-policy-url": url}, "edge policy's URL is not on the edge's upstream"))
+    for given, why in refusals:
+        refused = _run_snapshot_block(script, **given)
+        assert refused.returncode == 1, given
+        assert why in refused.stderr, (given, refused.stderr)
+    # Neither set: the snapshot alone, as before I1.
+    alone = _run_snapshot_block(script, **snapshot, **{"fastpath-edge-decide-shadow": "false"})
+    assert alone.returncode == 0 and alone.stdout == flags, alone.stderr
+
+
 def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> None:
     """The attributes infra/fastpath.tf gives the snapshot's nodes, rendered
     as Terraform renders them, pass the startup script's own checks (all
@@ -375,12 +434,15 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
         assert pinned and rendered[attribute] == pinned.group(1), (attribute, pinned)
     key = rendered["fastpath-edge-snapshot-public-key"]
     assert len(base64.urlsafe_b64decode(key + "=" * (-len(key) % 4))) == 32, key
+    assert rendered["fastpath-edge-decide-shadow"] in {"true", "false"}
     ran = _run_snapshot_block(script, upstream=upstream.group(1), **rendered)
     assert ran.returncode == 0, ran.stderr
     assert ran.stdout == (
         f"-edge-snapshot-url {upstream.group(1)}/internal/fastpath/routing-snapshot "
         f"-edge-snapshot-public-key {rendered['fastpath-edge-snapshot-public-key']} "
-        f"-edge-snapshot-kid {rendered['fastpath-edge-snapshot-kid']} -edge-snapshot-plane gcp/us-central1 -edge-shadow"
+        f"-edge-snapshot-kid {rendered['fastpath-edge-snapshot-kid']} -edge-snapshot-plane gcp/us-central1 -edge-shadow "
+        f"-edge-policy-url {upstream.group(1)}/internal/fastpath/edge-policy"
+        + (" -edge-decide-shadow" if rendered["fastpath-edge-decide-shadow"] == "true" else "")
     )
     # Every node: the for_each declares at least one, and the metadata merges
     # the snapshot's attributes in with no condition on the node's name.

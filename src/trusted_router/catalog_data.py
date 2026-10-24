@@ -158,6 +158,11 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "inference account and contracting operator jurisdiction are not yet "
         "verified; the supplied credential is rejected. Excluded from jurisdiction filters."
     ),
+    "abliteration": (
+        "Checked abliteration.ai/data-handling and docs.abliteration.ai. They declare "
+        "US inference by default, but the operating entity's "
+        "headquarters country has not been independently verified. Excluded from jurisdiction filters."
+    ),
     "abliterate": (
         "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
         "a legal operating entity or headquarters country, and the terms refer "
@@ -1800,6 +1805,19 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://akashml.com/",
     ),
+    "abliteration": Provider(
+        slug="abliteration", name="Abliteration", supports_prepaid=True, supports_byok=False,
+        stores_content=False, provider_zero_data_retention=True,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy=(
+            "Core chat inference does not retain or train on prompts, completions or images. "
+            "Operational and billing metadata are retained for the account lifetime and legal requirements. "
+            "Optional web search/fetch are not ZDR and are not enabled by this integration. "
+            "US inference is the default; EU residency requires a separate arrangement. "
+            "No confidential-compute or renewable-energy claim has been verified."
+        ),
+        provider_policy_url="https://abliteration.ai/data-handling",
+    ),
     "abliterate": Provider(
         slug="abliterate",
         name="Abliterate",
@@ -2392,6 +2410,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "fortanix",
         "byteplus",
         "abliterate",
+        "abliteration",
         "decisionmodelsio",
         "decisionmodelsio-eu",
         "lyceum",
@@ -4291,6 +4310,11 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- No single creator country ---
     "sao10k": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "Sao10K": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
+    "abliteration": ModelOrigin(
+        country=None, lab_name="Abliteration (API model namespace)",
+        source_url="https://docs.abliteration.ai/models",
+        note="Provider model names do not establish a single model-creator country.",
+    ),
     "abliterate": ModelOrigin(
         country=None,
         lab_name="Abliterate (API model namespace)",
