@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from scripts.pricing.manifest import set_manifest_canary_state
 from scripts.pricing.providers import crusoe
+from trusted_router import provider_lifecycle
 
 
 class FakeResponse:
@@ -21,6 +23,11 @@ class FakeResponse:
 
 
 def test_crusoe_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # noqa: ANN001
+    # Price discovery, not lifecycle: Crusoe retires several of these routes
+    # on 2026-10-30.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: datetime(2026, 10, 29, tzinfo=UTC),
+    )
     payload = {
         "data": [
             {

@@ -6,7 +6,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing.providers import alibaba, arcee, deepinfra, novita, scaleway, together, xiaomi
+from scripts.pricing.providers import (
+    alibaba,
+    arcee,
+    crusoe,
+    deepinfra,
+    novita,
+    scaleway,
+    together,
+    xiaomi,
+)
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -25,6 +34,14 @@ _CASES = [
          datetime(2026, 11, 6, tzinfo=UTC), "minimax/minimax-m3.1-flash"),
     Case("together", "thinkingmachines/inkling", "thinkingmachines/Inkling",
          datetime(2026, 11, 6, tzinfo=UTC), "meta-models/muse-spark-open"),
+    Case("crusoe", "deepseek/deepseek-v4-pro", "deepseek-ai/DeepSeek-V4-Pro",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "deepseek/deepseek-v4.1-flash"),
+    Case("crusoe", "deepseek/deepseek-v4-flash", "deepseek-ai/Deepseek-V4-Flash",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "deepseek/deepseek-v4.1-flash"),
+    Case("crusoe", "nvidia/nemotron-3-super-120b-a12b", "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "nvidia/nemotron-3.5-super-vl"),
+    Case("crusoe", "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b", "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "nvidia/nemotron-3.5-lightning-30b-a3b"),
     Case("deepinfra", "gryphe/mythomax-l2-13b", "Gryphe/MythoMax-L2-13b",
          datetime(2026, 10, 29, tzinfo=UTC), "sao10k/l3-8b-lunaris-v1-turbo"),
     Case("arcee", "arcee-ai/trinity-large-thinking", "trinity-large-thinking",
@@ -62,6 +79,7 @@ _CASES = [
 ]
 _MANIFESTS = {
     "together": together.MANIFEST_PATH,
+    "crusoe": crusoe.MANIFEST_PATH,
     "arcee": arcee.MANIFEST_PATH,
     "novita": novita.MANIFEST_PATH,
     "alibaba": alibaba.MANIFEST_PATH,
