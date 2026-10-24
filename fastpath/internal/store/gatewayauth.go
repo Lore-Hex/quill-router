@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,20 +22,20 @@ import (
 // Nothing here may refund after a commit that might have applied: a refund
 // after an applied commit lets an enclave retry replay, through Python, a row
 // whose hold was given back. So an error is Failed only when it proves
-// nothing applied, and every other error is Unknown, which the caller reads
-// back (AuthorizationExists) and, without a row, answers Python's 503 with
-// the hold kept.
+// nothing applied, and every other error is read back once; without our row
+// it is Unknown, which the caller answers with Python's 503, the hold kept.
 
-// InsertOutcome is what an insert's transaction proves about its rows.
+// InsertOutcome is what an insert's transaction, and its one read-back,
+// prove about its rows.
 type InsertOutcome int
 
 const (
 	// Inserted: the transaction committed.
 	Inserted InsertOutcome = iota
-	// Landed: the commit reported AlreadyExists, and the row under our
-	// authorization id is there and names our reservation, so it is ours: a
-	// commit the client library re-ran after losing the first answer. It
-	// answers as after a read-back.
+	// Landed: the commit's outcome was AlreadyExists or not known, and the
+	// row under our authorization id, read back, is ours column for column:
+	// a commit the client library re-ran after losing the first answer, or
+	// one whose answer never came. It answers as after a read-back.
 	Landed
 	// ScopeTaken: the commit reported AlreadyExists, and our authorization
 	// id has no row of ours: another authorization of the idempotency scope
@@ -42,8 +43,9 @@ const (
 	// ever can; the caller refunds and passes, and Python replays or answers
 	// 409.
 	ScopeTaken
-	// Unknown: the commit may have applied. The caller reads the
-	// authorization back and never refunds.
+	// Unknown: the commit may have applied, and the read-back did not find
+	// our row (or could not read it). The caller answers Python's 503 and
+	// never refunds.
 	Unknown
 	// Failed: proven not applied: the callback never ran, or it ran once
 	// and the code is one only a commit that did not apply is answered with
@@ -77,8 +79,10 @@ const (
 	// InsertDeadline bounds the insert's transaction, the client's own
 	// retries of Aborted within it (decision 12).
 	InsertDeadline = 1500 * time.Millisecond
-	// ReadBackDeadline bounds each read of an authorization by id, on a
-	// context of its own: the insert's may be spent.
+	// ReadBackDeadline bounds the one read of our authorization by id that
+	// follows an AlreadyExists or an outcome not known, on a context of its
+	// own: the insert's may be spent. An insert takes at most InsertDeadline
+	// and then ReadBackDeadline.
 	ReadBackDeadline = 500 * time.Millisecond
 )
 
@@ -152,26 +156,125 @@ func checkLeasedRows(a gwauth.AuthorizationRow, r gwauth.ReservationRow) error {
 	return nil
 }
 
-// InsertLeasedAuthorization inserts an authorization's two rows in one
-// read-write transaction tagged LeasedEdgeTag, and reports what its error
-// proves (§8.4). The callback only buffers the two inserts. Never Apply and
-// never ApplyAtLeastOnce, which may replay a commit that applied.
+// leasedInserts is the store's account of its leased inserts' transactions,
+// which can outlive the insert that began them (a transaction waiting for
+// the client's session), and of the client's session.
 //
-// The transaction runs on context.WithoutCancel(ctx) with InsertDeadline
-// alone, so an enclave that hangs up mid-commit, cancelling the request's
-// context, cannot turn a commit into Canceled; the caller's deadline, if it
-// has one, is dropped with its cancellation. An AlreadyExists is read back
-// by our authorization id, with ReadBackDeadline on a context of its own.
-// Unknown is not read back here: the caller does that with
-// AuthorizationExists, which takes a fresh deadline of its own.
+// The Spanner client (v1.88) waits for its multiplexed session without the
+// context: a transaction begun before the client has a session waits on an
+// unbuffered request to the session worker, up to the worker's own 30 s per
+// creation, whatever its context says. Two things follow. Closing the client
+// while such a wait is blocked panics in the client (a send on the closed
+// request channel), so the process waits for every transaction begun here
+// (Wait) before it closes the client. And the worker exits for good if it
+// serves a request whose context has ended (session.go, createMultiplexedSession),
+// so the transaction's context here never ends while its session take may
+// be waiting: only a transaction whose callback has begun has its context
+// cancelled at the deadline.
+//
+// Once any callback has run the client has its session, which it keeps
+// (sessionReady is the one assignment), and a take never waits again. Until
+// then at most one insert's transaction may wait for a session: another
+// waits for that session within its own deadline, and is Failed without
+// sending anything if none comes.
+type leasedInserts struct {
+	running sync.WaitGroup
+	seen    atomic.Bool
+	waiting atomic.Bool
+	once    sync.Once
+	ready   chan struct{} // closed once seen
+	// refusedLate counts the transactions whose session came only after
+	// their insert was answered Failed, and whose callback then refused.
+	refusedLate atomic.Int64
+}
+
+func (l *leasedInserts) readyChan() chan struct{} {
+	l.once.Do(func() { l.ready = make(chan struct{}) })
+	return l.ready
+}
+
+func (l *leasedInserts) sessionSeen() {
+	if !l.seen.Swap(true) {
+		close(l.readyChan())
+	}
+}
+
+// admit is whether an insert may begin its transaction before its
+// deadline, and whether it is the one waiting for the client's session
+// (which it gives back with release).
+func (l *leasedInserts) admit(deadline time.Time) (ok, waiter bool) {
+	for {
+		if l.seen.Load() {
+			return true, false
+		}
+		if l.waiting.CompareAndSwap(false, true) {
+			return true, true
+		}
+		wait := time.NewTimer(time.Until(deadline))
+		select {
+		case <-l.readyChan():
+			wait.Stop()
+		case <-wait.C:
+			return false, false
+		}
+	}
+}
+
+func (l *leasedInserts) release(waiter bool) {
+	if waiter {
+		l.waiting.Store(false)
+	}
+}
+
+// WaitLeasedInserts waits for every transaction a leased insert began to
+// end, those still waiting for the client's session included. The process
+// calls it, once nothing can begin another insert, before it closes the
+// client: closing it under a waiting transaction panics.
+func (s *Store) WaitLeasedInserts() { s.leased.running.Wait() }
+
+// errAbandoned is the callback's refusal once its insert has ended without
+// it: the transaction it would have committed was answered Failed.
+var errAbandoned = errors.New("store: the insert ended before its transaction began")
+
+// The states of an insert's transaction, which the callback and the
+// deadline settle between them once: the first callback run marks it
+// begun, and a deadline that finds it pending marks it abandoned, after
+// which the callback refuses and nothing is ever sent.
+const (
+	txPending int32 = iota
+	txBegun
+	txAbandoned
+)
+
+// InsertLeasedAuthorization inserts an authorization's two rows in one
+// read-write transaction tagged LeasedEdgeTag, and reports what its error,
+// and one read-back, prove (§8.4). The callback only buffers the two
+// inserts. Never Apply and never ApplyAtLeastOnce, which may replay a commit
+// that applied.
+//
+// The transaction runs detached from ctx (context.WithoutCancel), so an
+// enclave that hangs up mid-commit cannot turn a commit into Canceled, and
+// ends at InsertDeadline whatever the client is doing. An AlreadyExists, and
+// an error after which the commit may have applied, are read back by our
+// authorization id with ReadBackDeadline on a context of their own; the
+// caller reads nothing back itself.
 func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow, r gwauth.ReservationRow) InsertOutcome {
 	if checkLeasedRows(a, r) != nil {
 		return Failed
 	}
-	detachedCtx := context.WithoutCancel(ctx)
-	insertCtx, cancel := context.WithTimeout(detachedCtx, InsertDeadline)
-	defer cancel()
+	deadline := time.Now().Add(InsertDeadline)
+	ok, waiter := s.leased.admit(deadline)
+	if !ok {
+		// Another insert waits for the client's first session, and none
+		// came within this one's deadline: nothing was sent.
+		return Failed
+	}
 	mutations := leasedMutations(a, r)
+	// The transaction's context ends when its goroutine is done with it, or
+	// at the deadline once the callback has begun; never while its session
+	// take may wait (leasedInserts).
+	txCtx, cancelTx := context.WithCancel(context.WithoutCancel(ctx))
+	var state atomic.Int32
 	// runs counts the callback's runs. Until it has run no commit can have
 	// been sent (no session, or no transaction began). The client re-runs
 	// it after an attempt that ended Aborted, ResourceExhausted with a
@@ -185,56 +288,73 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 		runs int32
 	}
 	done := make(chan result, 1)
+	s.leased.running.Add(1)
 	go func() {
+		defer s.leased.running.Done()
+		defer cancelTx()
+		defer s.leased.release(waiter)
 		var err error
 		for attempt := 0; attempt < 2; attempt++ {
-			_, err = s.client.ReadWriteTransactionWithOptions(insertCtx,
+			_, err = s.client.ReadWriteTransactionWithOptions(txCtx,
 				func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+					// The callback runs only on a session.
+					s.leased.sessionSeen()
+					if !state.CompareAndSwap(txPending, txBegun) && state.Load() == txAbandoned {
+						s.leased.refusedLate.Add(1)
+						return errAbandoned
+					}
 					runs.Add(1)
 					return txn.BufferWrite(mutations)
 				}, spanner.TransactionOptions{TransactionTag: LeasedEdgeTag})
-			if err == nil || runs.Load() > 0 {
+			// Retried once, only while nothing was sent and the deadline has
+			// not come: never a take for an insert already answered.
+			if err == nil || runs.Load() > 0 || state.Load() == txAbandoned || !time.Now().Before(deadline) {
 				break
 			}
 		}
 		done <- result{err, runs.Load()}
 	}()
-	// The client bounds every RPC by the deadline, but waits for its session
-	// without it: a session it cannot create holds the transaction past the
-	// deadline, up to the client's own 30 s, before the callback runs. So the
-	// insert ends at its deadline whatever the client is doing. If the
-	// callback never ran before the deadline, nothing was sent, and nothing
-	// will be: the transaction is left on a context that has ended, on which
-	// gRPC sends nothing; that is Failed. If it ran, a commit may be in
-	// flight: Unknown. runs is read once, here, and the outcome follows from
-	// that reading alone.
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
 	var res result
 	select {
 	case res = <-done:
-	case <-insertCtx.Done():
+	case <-timer.C:
+		if state.CompareAndSwap(txPending, txAbandoned) {
+			// The callback never began: nothing was sent, and the callback
+			// refuses if the session comes later. The take, if it waits,
+			// waits on a live context (leasedInserts).
+			return Failed
+		}
+		// Begun: a commit may be in flight. Its context ends now (no grace
+		// past the deadline, decision 12).
+		cancelTx()
 		select {
 		case res = <-done:
 		default:
-			res = result{insertCtx.Err(), runs.Load()}
+			res = result{context.DeadlineExceeded, runs.Load()}
 		}
 	}
-	outcome, alreadyExists := classifyInsert(res.err, res.runs)
-	if !alreadyExists {
+	outcome, readBack := classifyInsert(res.err, res.runs)
+	if !readBack && outcome != Unknown {
 		return outcome
 	}
 	// AlreadyExists: ours, landed by a commit the client re-ran after losing
 	// the first answer, or the scope's, landed first by another
-	// authorization. Python re-reads the scope the same way. The row under
-	// our id is ours only if it names our reservation; one that names
-	// another is not ours, and with it there our insert can never apply.
-	reservationID, found, readErr := s.readAuthorizationReservation(detachedCtx, a.AuthorizationID)
+	// authorization; Python re-reads the scope the same way. Unknown: ours if
+	// it landed. One read, either way.
+	row, err := s.readOurRow(a)
 	switch {
-	case readErr != nil:
+	case err != nil:
 		return Unknown
-	case found && reservationID.Valid && reservationID.StringVal == a.ReservationID:
+	case row == rowOurs:
 		return Landed
+	case readBack && (row == rowAbsent || row == rowTheirs):
+		// The row under our id is not ours, or there is none: with it there,
+		// or with the scope's, our insert can never apply.
+		return ScopeTaken
 	}
-	return ScopeTaken
+	return Unknown
 }
 
 // classifyInsert is §8.4's table: the outcome the transaction's error
@@ -283,37 +403,54 @@ func classifyInsert(err error, runs int32) (outcome InsertOutcome, alreadyExists
 	return Unknown, false
 }
 
-// AuthorizationExists reports whether tr_gateway_authorization has a row
-// for the id, in one strong read by primary key, on
-// context.WithoutCancel(ctx) with ReadBackDeadline alone: it is the
-// read-back of an insert whose context may be spent or cancelled.
-func (s *Store) AuthorizationExists(ctx context.Context, authorizationID string) (bool, error) {
-	_, found, err := s.readAuthorizationReservation(ctx, authorizationID)
-	return found, err
-}
+// rowUnderOurID is what the read-back found under our authorization id.
+type rowUnderOurID int
 
-// readAuthorizationReservation reads the reservation id of the
-// authorization's row, as AuthorizationExists reads the row.
-func (s *Store) readAuthorizationReservation(ctx context.Context, authorizationID string) (spanner.NullString, bool, error) {
-	if authorizationID == "" {
-		return spanner.NullString{}, false, errors.New("store: no authorization id")
-	}
-	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ReadBackDeadline)
+const (
+	rowAbsent rowUnderOurID = iota
+	// rowOurs: every column we wrote that the read reads is ours.
+	rowOurs
+	// rowTheirs: the row names another reservation.
+	rowTheirs
+	// rowDoubt: the row names our reservation but not our other columns,
+	// which no commit of ours writes: not provably ours, nor provably not.
+	rowDoubt
+)
+
+// readOurRow reads the row under our authorization id, in one strong read
+// by primary key, on a context of its own with ReadBackDeadline (the
+// insert's may be spent), and compares it with ours: a 200 is answered only
+// for a row whose content is ours.
+func (s *Store) readOurRow(a gwauth.AuthorizationRow) (rowUnderOurID, error) {
+	readCtx, cancel := context.WithTimeout(context.Background(), ReadBackDeadline)
 	defer cancel()
 	row, err := s.client.Single().ReadRowWithOptions(readCtx, "tr_gateway_authorization",
-		spanner.Key{authorizationID}, []string{"reservation_id"},
+		spanner.Key{a.AuthorizationID}, []string{"reservation_id", "workspace_id", "key_hash",
+			"estimated_microdollars", "payload", "idempotency_fingerprint", "stage_d_boot_kid", "settled"},
 		&spanner.ReadOptions{RequestTag: LeasedEdgeTag})
 	if errors.Is(err, spanner.ErrRowNotFound) {
-		return spanner.NullString{}, false, nil
-	}
-	var reservationID spanner.NullString
-	if err == nil {
-		err = row.Columns(&reservationID)
+		return rowAbsent, nil
 	}
 	if err != nil {
-		return spanner.NullString{}, false, err
+		return rowAbsent, err
 	}
-	return reservationID, true, nil
+	var reservationID, payload, fingerprint, kid spanner.NullString
+	var workspaceID, keyHash string
+	var estimate int64
+	var settled bool
+	if err := row.Columns(&reservationID, &workspaceID, &keyHash, &estimate, &payload, &fingerprint, &kid,
+		&settled); err != nil {
+		return rowAbsent, err
+	}
+	switch {
+	case !reservationID.Valid || reservationID.StringVal != a.ReservationID:
+		return rowTheirs, nil
+	case workspaceID != a.WorkspaceID || keyHash != a.KeyHash || estimate != a.EstimatedMicrodollars ||
+		payload.StringVal != a.Payload || !payload.Valid || fingerprint.StringVal != a.IdempotencyFingerprint ||
+		kid.StringVal != a.StageDBootKid || settled:
+		return rowDoubt, nil
+	}
+	return rowOurs, nil
 }
 
 // StoredAuthorization is every column of an authorization's row but the
