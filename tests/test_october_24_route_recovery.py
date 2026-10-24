@@ -35,3 +35,9 @@ def test_atlas_retirement_does_not_remove_openai_direct():
 
 def test_ended_union_preview_is_not_silently_replaced():
     assert not any(e.model_id == "stealth/union-alpha" for e in MODEL_ENDPOINTS.values())
+
+
+def test_pearl_gemma_retirement_preserves_other_providers():
+    routes = [e for e in MODEL_ENDPOINTS.values() if e.model_id == "google/gemma-4-31b-it"]
+    assert routes
+    assert not any(e.provider == "pearl" for e in routes)
