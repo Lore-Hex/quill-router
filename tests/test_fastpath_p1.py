@@ -368,7 +368,8 @@ def test_the_script_passes_the_edge_policy_and_decide_shadow_only_with_what_they
         ({**snapshot, **policy, "fastpath-edge-decide-shadow": "yes"}, "fastpath-edge-decide-shadow is true, false"),
         ({**policy}, "need the routing snapshot"),
         ({"fastpath-edge-decide-shadow": "true"}, "need the routing snapshot"),
-        ({**snapshot, "fastpath-edge-policy-url": f"{upstream}/internal/fastpath/edge-policy x"}, "cannot carry"),
+        ({**snapshot, "fastpath-edge-policy-url": f"{upstream}/internal/fastpath/edge-policy x"},
+         "a routing snapshot or edge policy attribute holds a character the unit cannot carry"),
     ]
     for url in (
         "https://elsewhere.example/internal/fastpath/edge-policy",

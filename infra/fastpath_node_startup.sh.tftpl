@@ -106,7 +106,7 @@ if [ -n "$snapshot_url$snapshot_public_key$snapshot_kid$snapshot_plane" ]; then
   for value in "$snapshot_url" "$snapshot_public_key" "$snapshot_kid" "$snapshot_plane" "$policy_url"; do
     case "$value" in
       *[!A-Za-z0-9._:/,-]*)
-        echo "fastpath: a routing snapshot attribute holds a character the unit cannot carry; the startup script stops here" | systemd-cat -t fastpath -p err
+        echo "fastpath: a routing snapshot or edge policy attribute holds a character the unit cannot carry; the startup script stops here" | systemd-cat -t fastpath -p err
         exit 1 ;;
     esac
   done
