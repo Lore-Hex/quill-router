@@ -89,7 +89,8 @@ const (
 // reservationColumns are the columns Python's reservation insert names
 // (storage_gcp_counter_dml.py, RESERVATION_COLUMNS), in its order; settled
 // takes its default, false, and actual_micro, settled_usage_type and
-// terminal_at are NULL.
+// terminal_at are NULL. created_at is the commit's timestamp, as Python's
+// PENDING_COMMIT_TIMESTAMP() writes it (gwauth.ReservationRow).
 var reservationColumns = []string{
 	"reservation_id", "workspace_id", "key_hash", "ws_shard", "credit_shard", "key_shard",
 	"credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
@@ -125,7 +126,7 @@ func leasedMutations(a gwauth.AuthorizationRow, r gwauth.ReservationRow) []*span
 			r.ReservationID, r.WorkspaceID, r.KeyHash, int64(0), int64(0), int64(0),
 			int64(0), int64(0), r.HoldUsageType,
 			r.AuthorizationID, r.IdempotencyScope, r.IdempotencyFingerprint, r.ExpiresAt,
-			r.CreatedAt,
+			spanner.CommitTimestamp,
 		}),
 		spanner.Insert("tr_gateway_authorization", authorizationColumns, []any{
 			a.AuthorizationID, a.WorkspaceID, a.KeyHash, a.ReservationID, a.ModelID,

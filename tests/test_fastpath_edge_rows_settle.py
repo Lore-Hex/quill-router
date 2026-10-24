@@ -117,7 +117,11 @@ GO_RESERVATION_COLUMNS = (
 # tr_reservation's other columns and their defaults: settled false, the rest NULL.
 RESERVATION_DEFAULTS = {"settled": False, "settled_usage_type": None, "actual_micro": None, "terminal_at": None}
 AUTHORIZATION_TIMESTAMPS = ("created_at", "terminal_at", "started_at", "heartbeat_at")
-RESERVATION_TIMESTAMPS = ("created_at", "expires_at", "terminal_at")
+# The reservation's created_at is the commit's timestamp (§5): the golden
+# says "commit_timestamp", and the fake holds its COMMIT_TIMESTAMP sentinel,
+# as for a row Go's mutation (spanner.CommitTimestamp) wrote.
+RESERVATION_TIMESTAMPS = ("expires_at", "terminal_at")
+GOLDEN_COMMIT_TIMESTAMP = "commit_timestamp"
 
 REFUND_WON = {"Status": "won", "Kind": "refund", "Charge": 0}
 
@@ -416,6 +420,8 @@ def go_rows(case: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
 
     golden_authorization = stored(case["expect"]["authorization_row"])
     golden_reservation = stored(case["expect"]["reservation_row"])
+    assert golden_reservation["created_at"] == GOLDEN_COMMIT_TIMESTAMP, case["name"]
+    golden_reservation["created_at"] = _SpannerModule.COMMIT_TIMESTAMP
     assert set(golden_authorization) == set(AUTHORIZATION_COLUMNS), case["name"]
     assert set(golden_reservation) == set(GO_RESERVATION_COLUMNS), case["name"]
     authorization = {column: None for column in AUTHORIZATION_COLUMNS}
@@ -874,6 +880,8 @@ def test_go_rows_are_the_rows_python_writes(case: dict[str, Any]) -> None:
         go_view = dataclasses.asdict(go_world.store.get_gateway_authorization(go_world.authorization_id))
     assert _row_in_us(python_authorization, AUTHORIZATION_TIMESTAMPS) == golden, case["name"]
     written = {name: value for name, value in python_reservation.items() if name not in RESERVATION_DEFAULTS}
+    assert written["created_at"] == _SpannerModule.COMMIT_TIMESTAMP, case["name"]
+    written["created_at"] = GOLDEN_COMMIT_TIMESTAMP
     assert _row_in_us(written, RESERVATION_TIMESTAMPS) == case["expect"]["reservation_row"], case["name"]
     assert python_authorization == authorization, case["name"]
     assert python_reservation == reservation, case["name"]

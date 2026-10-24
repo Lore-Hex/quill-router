@@ -147,6 +147,11 @@ func storedRows(t *testing.T, c authorizeCase) store.AuthorizationForCompare {
 	}}
 	if len(r) > 0 {
 		rs, _ := r["settled"].(bool)
+		// The commit's timestamp (§5): some instant after the arrival.
+		committed := spanner.NullTime{}
+		if r["created_at"] == "commit_timestamp" {
+			committed = spanner.NullTime{Time: out.Authorization.CreatedAt.Add(3 * time.Millisecond), Valid: true}
+		}
 		out.Reservation = &store.StoredReservation{
 			ReservationID: str(r, "reservation_id"), WorkspaceID: nstr(r, "workspace_id"), KeyHash: nstr(r, "key_hash"),
 			WsShard: nint(r, "ws_shard"), CreditShard: num(r, "credit_shard"), KeyShard: nint(r, "key_shard"),
@@ -154,7 +159,7 @@ func storedRows(t *testing.T, c authorizeCase) store.AuthorizationForCompare {
 			ActualMicro: nint(r, "actual_micro"), HoldUsageType: nstr(r, "hold_usage_type"),
 			SettledUsageType: nstr(r, "settled_usage_type"), AuthorizationID: nstr(r, "authorization_id"), Settled: rs,
 			IdempotencyScope: nstr(r, "idempotency_scope"), IdempotencyFingerprint: nstr(r, "idempotency_fingerprint"),
-			CreatedAt: ntime(r, "created_at_us"), ExpiresAt: ntime(r, "expires_at_us"), TerminalAt: ntime(r, "terminal_at_us"),
+			CreatedAt: committed, ExpiresAt: ntime(r, "expires_at_us"), TerminalAt: ntime(r, "terminal_at_us"),
 		}
 	}
 	return out
@@ -686,6 +691,12 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"stage_d_reason":"not_streaming"`,
 				`"stage_d_reason":"stage_d_disabled"`, 1))
 		}, "differ", []string{"row.payload.stage_d_reason"}},
+		{"the reservation's created_at NULL", func(r *store.AuthorizationForCompare) {
+			r.Reservation.CreatedAt = spanner.NullTime{}
+		}, "differ", []string{"row.reservation.created_at"}},
+		{"the reservation committed at another instant", func(r *store.AuthorizationForCompare) {
+			r.Reservation.CreatedAt.Time = r.Reservation.CreatedAt.Time.Add(-time.Hour)
+		}, "agree", nil},
 		{"an earlier expiry", func(r *store.AuthorizationForCompare) {
 			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(-time.Microsecond)
 		}, "differ", []string{"row.reservation.expires_at"}},
@@ -709,14 +720,12 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 		}, "moved_on_differ", []string{"row.idempotency_fingerprint"}},
 		{"created past the answer", func(r *store.AuthorizationForCompare) {
 			r.Authorization.CreatedAt = r.Authorization.CreatedAt.Add(2*time.Second + time.Millisecond)
-			r.Reservation.CreatedAt.Time = r.Authorization.CreatedAt
 			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(2*time.Second + time.Millisecond)
 			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"created_at":"2026-10-19T02:00:00Z"`,
 				`"created_at":"2026-10-19T02:00:02.001000Z"`, 1))
 		}, "differ", []string{"row.created_at_skew"}},
 		{"created before the arrival", func(r *store.AuthorizationForCompare) {
 			r.Authorization.CreatedAt = r.Authorization.CreatedAt.Add(-time.Second - time.Microsecond)
-			r.Reservation.CreatedAt.Time = r.Authorization.CreatedAt
 			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(-time.Second - time.Microsecond)
 			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"created_at":"2026-10-19T02:00:00Z"`,
 				`"created_at":"2026-10-19T01:59:58.999999Z"`, 1))

@@ -75,7 +75,7 @@ from google.api_core.exceptions import (  # noqa: E402
 )
 from pydantic import ValidationError  # noqa: E402
 
-from tests.fakes.spanner import make_fake_store  # noqa: E402
+from tests.fakes.spanner import _SpannerModule, make_fake_store  # noqa: E402
 from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
@@ -103,6 +103,8 @@ FINGERPRINT_OUTPUT = "fastpath/testdata/authorize_fingerprint_v1.json"
 GENERATOR = "scripts/fastpath/authorize_vectors.py"
 SNAPSHOT = "fastpath/testdata/routing_snapshot_v1.body.json"
 PATH = "/internal/gateway/authorize"
+# A reservation row's created_at in the goldens: the commit's timestamp (§5).
+RESERVATION_CREATED_AT = "commit_timestamp"
 PLANE = {"cloud": "gcp", "region": "us-central1"}
 
 
@@ -630,6 +632,16 @@ def _row_timestamps(row: dict[str, Any], names: tuple[str, ...]) -> dict[str, An
             for name, value in row.items()}
 
 
+def _reservation_row(row: dict[str, Any]) -> dict[str, Any]:
+    """The reservation's columns as the insert wrote them. created_at is the
+    commit's timestamp (PENDING_COMMIT_TIMESTAMP(), §5), which has no value
+    before the commit: the golden says so rather than name an instant."""
+    if row["created_at"] != _SpannerModule.COMMIT_TIMESTAMP:
+        raise AssertionError(f"the reservation's created_at is {row['created_at']!r}, not the commit's timestamp")
+    written = {k: v for k, v in row.items() if k not in {"settled", "settled_usage_type", "actual_micro", "terminal_at"}}
+    return {**_row_timestamps(written, ("expires_at",)), "created_at": RESERVATION_CREATED_AT}
+
+
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
     at = ROUTING._instant(case["_at"])
     world, policy = case["_world"], case["_policy"]
@@ -704,9 +716,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         "idempotency_scope": reservation["idempotency_scope"],
         "timing": data["timing"],
         "authorization_row": _row_timestamps(authorization, ("created_at", "terminal_at", "started_at", "heartbeat_at")),
-        "reservation_row": _row_timestamps(
-            {k: v for k, v in reservation.items() if k not in {"settled", "settled_usage_type", "actual_micro", "terminal_at"}},
-            ("expires_at", "created_at")),
+        "reservation_row": _reservation_row(reservation),
     }}
 
 

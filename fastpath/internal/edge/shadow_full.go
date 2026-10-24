@@ -987,7 +987,9 @@ var settleStable = map[string]bool{
 
 // reservationDifferences: every column of tr_reservation; expires_at is
 // Python's at least Go's (Python reads its clock again for it, §5) and at
-// most the request's latency and rowSkew later.
+// most the request's latency and rowSkew later. created_at is the commit's
+// timestamp on either path (§5), which no reading of Go's names: it is
+// compared as present, not by value.
 func reservationDifferences(g gwauth.ReservationRow, p *store.StoredReservation, latency time.Duration,
 	moved bool) []string {
 	if p == nil {
@@ -1013,7 +1015,7 @@ func reservationDifferences(g gwauth.ReservationRow, p *store.StoredReservation,
 		{"settled", false, p.Settled},
 		{"idempotency_scope", g.IdempotencyScope, ns(p.IdempotencyScope, p.IdempotencyScope.StringVal)},
 		{"idempotency_fingerprint", g.IdempotencyFingerprint, ns(p.IdempotencyFingerprint, p.IdempotencyFingerprint.StringVal)},
-		{"created_at", g.CreatedAt.UnixMicro(), ns(p.CreatedAt, p.CreatedAt.Time.UnixMicro())},
+		{"created_at", true, p.CreatedAt.Valid},
 		{"terminal_at", nil, ns(p.TerminalAt, p.TerminalAt.Time)},
 	}
 	for _, c := range cols {

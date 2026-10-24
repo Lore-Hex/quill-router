@@ -181,9 +181,10 @@ func TestStageRefusesWhatPythonWouldNotWrite(t *testing.T) {
 	}
 }
 
-// TestStageTakesOneClockReading: created_at, the payload's created_at and
-// expires_at derive from one reading, UTC, to the microsecond; expires_at
-// is exactly 7200 s later (§5).
+// TestStageTakesOneClockReading: the authorization's created_at, the
+// payload's created_at and expires_at derive from one reading, UTC, to the
+// microsecond; expires_at is exactly 7200 s later (§5). The reservation's
+// created_at is the commit's timestamp, no reading of the edge's.
 func TestStageTakesOneClockReading(t *testing.T) {
 	f, snap := loadGoldens(t), loadSnapshot(t)
 	in := inputOf(t, f, snap, answered(f)[0])
@@ -197,8 +198,8 @@ func TestStageTakesOneClockReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := time.Date(2026, 10, 19, 2, 0, 0, 123456000, time.UTC)
-	if c.Authorization.CreatedAt != want || c.Reservation.CreatedAt != want || c.Reservation.ExpiresAt != want.Add(7200*time.Second) {
-		t.Errorf("rows %v %v %v, want %v", c.Authorization.CreatedAt, c.Reservation.CreatedAt, c.Reservation.ExpiresAt, want)
+	if c.Authorization.CreatedAt != want || c.Reservation.ExpiresAt != want.Add(7200*time.Second) {
+		t.Errorf("rows %v %v, want %v", c.Authorization.CreatedAt, c.Reservation.ExpiresAt, want)
 	}
 	if !strings.Contains(c.Authorization.Payload, `"created_at":"2026-10-19T02:00:00.123456Z"`) {
 		t.Errorf("payload created_at: %s", c.Authorization.Payload)

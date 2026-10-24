@@ -121,7 +121,7 @@ type Config struct {
 	// view of it.
 	edgeMade func(*edge.Edge)
 	// edgeClock, when set, is the edge's clock (time.Now otherwise): the
-	// tests' clock behind the emulator's.
+	// tests' clock ahead of the emulator's.
 	edgeClock func() time.Time
 }
 

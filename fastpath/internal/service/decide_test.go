@@ -263,8 +263,9 @@ func (py *signingPython) serve(w http.ResponseWriter, r *http.Request) {
 			"refresh_at": time.Now().Unix() + 60})
 		_, _ = w.Write(out)
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/edge-policy":
-		// Issued a little in the past: the edge's clock is behind (edgeLag).
-		now := time.Now().Add(-2 * edgeLag).Unix()
+		// Issued on this machine's clock, which the edge's runs ahead of
+		// (edgeLead).
+		now := time.Now().Unix()
 		policy := map[string]json.RawMessage{}
 		for k, v := range py.policy {
 			policy[k] = v
@@ -304,20 +305,20 @@ func decideConfig(t *testing.T, py *signingPython, w decideWorld) (Config, chan 
 		PolicyURL: py.server.URL + "/internal/fastpath/edge-policy", Decide: true}
 	made := make(chan *edge.Edge, 1)
 	cfg.edgeMade = func(e *edge.Edge) { made <- e }
-	cfg.edgeClock = func() time.Time { return time.Now().Add(-edgeLag) }
+	cfg.edgeClock = func() time.Time { return time.Now().Add(edgeLead) }
 	return cfg, made, edgeLn.Addr().String()
 }
 
-// edgeLag is how far the tests' edge clock runs behind this machine's. A
-// reservation's created_at is a commit-timestamp column
-// (allow_commit_timestamp), and Spanner refuses a value in it that is past
-// the commit's own timestamp: FailedPrecondition "Cannot write timestamps
-// in the future", which the insert must read as Unknown (§8.4), and so a
-// 503. The emulator's clock, in its container, can run some milliseconds
-// behind this machine's, so an edge reading this machine's clock and
-// committing within a few milliseconds meets that refusal under load (seen
-// as 503s of 8 to 16 ms). The edge's instant is set a second back instead.
-const edgeLag = time.Second
+// edgeLead is how far the tests' edge clock runs ahead of this machine's,
+// and so of the emulator's. A reservation's created_at is a
+// commit-timestamp column (allow_commit_timestamp), and Spanner refuses a
+// value in it that is past the commit's own timestamp: FailedPrecondition
+// "Cannot write timestamps in the future", which the insert reads as
+// Unknown (§8.4), and so a 503 that keeps its hold. The edge writes the
+// commit's timestamp there, never its reading, so an edge whose clock runs
+// ahead answers every request itself; one writing its reading would fail
+// the warm-up.
+const edgeLead = time.Second
 
 // warmUp sends the world's authorize, under a fresh idempotency key each
 // time, until the edge answers one itself; a request passes while the edge

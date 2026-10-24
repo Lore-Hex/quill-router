@@ -406,7 +406,8 @@ func TestEveryPayloadAndRowIsPythons(t *testing.T) {
 			"hold_usage_type": r.HoldUsageType, "authorization_id": r.AuthorizationID,
 			"idempotency_scope": r.IdempotencyScope, "idempotency_fingerprint": r.IdempotencyFingerprint,
 			"expires_at_us": json.Number(strconv.FormatInt(r.ExpiresAt.UnixMicro(), 10)),
-			"created_at_us": json.Number(strconv.FormatInt(r.CreatedAt.UnixMicro(), 10)),
+			// The commit's timestamp, as the store writes it (§5).
+			"created_at": "commit_timestamp",
 		}
 		ok := true
 		for column, want := range wantA {
@@ -436,7 +437,7 @@ func TestEveryPayloadAndRowIsPythons(t *testing.T) {
 		}
 		// The row timestamps are UTC microseconds (Spanner keeps
 		// nanoseconds, Python's datetime microseconds).
-		for _, ts := range []time.Time{a.CreatedAt, r.CreatedAt, r.ExpiresAt} {
+		for _, ts := range []time.Time{a.CreatedAt, r.ExpiresAt} {
 			if ts.Location() != time.UTC || ts.Nanosecond()%1000 != 0 {
 				t.Errorf("%s: row instant %v is not UTC microseconds", c.Name, ts)
 				ok = false
