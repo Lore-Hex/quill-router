@@ -710,7 +710,7 @@ ENV_VARS=(
   # valid one do nothing. It gates shadow v2 only; v1 still installs whenever
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
-  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-10-24T13:00:00Z"
+  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-10-25T20:00:00Z"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
