@@ -61,10 +61,10 @@ locals {
   # section 4): Python's signed live facts, polled on the same upstream and
   # verified with the same key, kid and plane. Only a script from I1 on
   # reads the policy's two attributes, which nodes 7 and 8 run.
-  # The decide shadow (G10) stays off until the policy has been held
-  # through a measured soak (the I1 runbook); it is turned on here, then
-  # each node in turn is drained, its unit stopped and its startup script
-  # run again (a reset alone keeps the unit's old arguments).
+  # The decide shadow (G10) is on, once the policy had been held through a
+  # measured soak (the I1 runbook); each node in turn took it drained, its
+  # unit stopped and its startup script run again (a reset alone keeps the
+  # unit's old arguments). Python still decides.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -72,7 +72,7 @@ locals {
     fastpath-edge-snapshot-plane      = "gcp/${local.fastpath_region}"
     fastpath-edge-shadow              = "true"
     fastpath-edge-policy-url          = "${local.fastpath_edge_upstream}/internal/fastpath/edge-policy"
-    fastpath-edge-decide-shadow       = "false"
+    fastpath-edge-decide-shadow       = "true"
   })
 }
 
