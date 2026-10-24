@@ -135,14 +135,22 @@ edge policy and one of the requests it did not follow (`fastpath edge
 decide shadow: ...`). Each line counts its minute alone, so the span's
 lines, summed, are its counts. It prints JSON:
 
-- `i2`: the gates' figures. `cohort_eligible` is the requests Go would have
-  answered (each counts its decide row's gate), `agree_full` and
-  `agree_full_ratio` of them; `differ` and `differ_by_field` (every
-  `differ.*` and `row.*` field), `differ_estimate` (the `differ.estimate*`
-  fields) and `row_idempotency_fingerprint`; `would_admit_python_refused`
-  and its classes; `stale` by cache, `followed` (every request the shadow
-  compared) and `stale_rate`; and the decide path's `unavailable` answers
-  by the insert's gRPC code.
+- `i2`: the gates' figures. `comparable` is `agree_full` plus `differ`, the
+  requests whose answers were compared (Go would answer, Python answered a
+  200 that is not a replay), and `agree_full_ratio` is `agree_full` over
+  it: the 99.5% gate. `cohort_eligible` is every request Go would have
+  answered (each counts its decide row's gate) and `cohort_by_class` the
+  same requests by class, the comparable ones and the rest the gate
+  accounts for (`would_admit_python_refused.*`, `python_error.*`,
+  `python_unavailable`, `unread.*`, the scope taken, replays). Then
+  `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
+  `differ_estimate` (the `differ.estimate*` fields),
+  `row_idempotency_fingerprint` and `fields_other`: a period's fields past
+  the line's bound are counted `other`, so a non-zero `fields_other` means
+  the two zero gates cannot be read as zero. Then
+  `would_admit_python_refused` and its classes; `stale` by cache,
+  `followed` (every request the shadow compared) and `stale_rate`; and the
+  decide path's `unavailable` answers by the insert's gRPC code.
 - `decide_shadow` and `decide`: every count of the lines, summed.
 - `periods`: each node's lines that come once a minute, the decide line and
   the shadow's line of the requests it did not follow. A node that ran the
@@ -153,8 +161,9 @@ lines, summed, are its counts. It prints JSON:
 
 An entry Cloud Logging hands over twice is counted once (by its insert id),
 and a count line that does not read fails the report (exit 1) rather than
-leaving its counts out. It reads a page of 1,000 entries a second, under
-the API's 60 reads a minute: a week of three nodes, about 90 pages. Exit
+leaving its counts out. It reads a page of 1,000 entries every 1.1 s, under
+the API's 60 reads a minute, and backs off (doubling, six tries) on a 429
+or a 5xx: a week of three nodes is about 90 pages. Exit
 2 is its usage: `-project` and `-since` (RFC 3339) are needed, `-until` is
 now when not given.
 

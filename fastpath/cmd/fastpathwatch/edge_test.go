@@ -5,10 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"maps"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/api/option"
 )
 
 // edgeEntries are a span's journal entries as the edge writes its count
@@ -18,7 +25,8 @@ var edgeEntries = []logEntry{
 	{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=990 ` +
 		`differ=4 would_admit_python_refused=1 read_back=3 classes={"agree_full":990,"differ":4,"stale.key":5,` +
 		`"would_admit_python_refused.403.forbidden":1} fields={"differ.estimate_float":1,"differ.timing":3,` +
-		`"row.idempotency_fingerprint":2} rows={"agree":40,"differ":2} decide={"decide.off":995}`},
+		`"other":3,"row.idempotency_fingerprint":2} rows={"agree":40,"differ":2} decide={"decide.off":995} ` +
+		`cohort={"agree_full":990,"differ":4,"would_admit_python_refused.403.forbidden":1}`},
 	{"2", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: dropped=0 evictions=1 cache_unrefreshed=0 ` +
 		`cache_dropped=0 cache_read_failures=0`},
 	{"3", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide: answered=7 read_back=1 unavailable=2 refunded=1 ` +
@@ -31,7 +39,7 @@ var edgeEntries = []logEntry{
 		`would_admit_python_refused.403.forbidden snapshot=s1 policy=p1`},
 	{"6", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide shadow: snapshot=s2 policy=p1 agree_full=5 ` +
 		`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":5,"passed.owner.off":2,"stale.key":1} ` +
-		`fields={} rows={} decide={"decide.off":5}`},
+		`fields={} rows={} decide={"decide.off":5} cohort={"agree_full":5}`},
 	{"7", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide shadow: dropped=2 evictions=0 cache_unrefreshed=0 ` +
 		`cache_dropped=0 cache_read_failures=0`},
 	{"8", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide: answered=0 read_back=0 unavailable=1 refunded=0 ` +
@@ -55,8 +63,10 @@ func edgeDeps(entries []logEntry, failWith error) (deps, *[]string) {
 }
 
 // TestTheEdgeReportSumsTheSpansLines: the span's count lines summed, each
-// entry once, with the I2 figures: agree_full over the requests Go would
-// answer, the differences by field, the estimate's and the fingerprint's,
+// entry once, with the I2 figures: agree_full over the comparable requests
+// (agree_full and differ), the requests Go would answer by class, the
+// differences by field, the estimate's and the fingerprint's, the fields
+// past the line's bound,
 // would_admit_python_refused by class, the stale passes over every request
 // followed, and the decide path's unavailable answers by code; and each
 // node's period lines.
@@ -77,13 +87,14 @@ func TestTheEdgeReportSumsTheSpansLines(t *testing.T) {
 		t.Fatalf("%v: %s", err, out.Bytes())
 	}
 	g := r.I2
-	if g.CohortEligible != 1000 || g.AgreeFull != 995 || g.AgreeFullRatio == nil || *g.AgreeFullRatio != 0.995 ||
-		g.Differ != 4 || g.DifferEstimate != 1 || g.RowIdempotencyFingerprint != 2 || g.WouldAdmitPythonRefused != 1 ||
+	if g.Comparable != 999 || g.AgreeFull != 995 || g.AgreeFullRatio == nil || *g.AgreeFullRatio != 995.0/999 ||
+		g.CohortEligible != 1000 || !maps.Equal(g.CohortByClass, map[string]int64{"agree_full": 995, "differ": 4,
+		"would_admit_python_refused.403.forbidden": 1}) || g.FieldsOther != 3 || g.Differ != 4 || g.DifferEstimate != 1 || g.RowIdempotencyFingerprint != 2 || g.WouldAdmitPythonRefused != 1 ||
 		!maps.Equal(g.WouldAdmitByClass, map[string]int64{"403.forbidden": 1}) || g.Stale != 6 ||
 		!maps.Equal(g.StaleByCache, map[string]int64{"key": 6}) || g.Followed != 1008 || g.StaleRate == nil ||
 		*g.StaleRate != 6.0/1008 || g.Unavailable != 3 ||
 		!maps.Equal(g.UnavailableByCode, map[string]int64{"failed_precondition": 2, "deadline_exceeded": 1}) ||
-		!maps.Equal(g.DifferByField, map[string]int64{"differ.estimate_float": 1, "differ.timing": 3,
+		!maps.Equal(g.DifferByField, map[string]int64{"differ.estimate_float": 1, "differ.timing": 3, "other": 3,
 			"row.idempotency_fingerprint": 2}) {
 		t.Fatalf("the I2 figures: %s", out.Bytes())
 	}
@@ -141,5 +152,113 @@ func TestTheEdgeReportsUsage(t *testing.T) {
 	if code, err := run(context.Background(), []string{"edge", "-h"}, &bytes.Buffer{}, d); code != 0 || err != nil ||
 		strings.Contains(strings.Join(*asked, ""), "logName") {
 		t.Fatalf("-h: %d %v", code, err)
+	}
+}
+
+// fakeLogging is entries.list: each request's body kept with when it came,
+// and answered by the next of its answers, a status and a body.
+type fakeLogging struct {
+	mu      sync.Mutex
+	asked   []map[string]any
+	at      []time.Time
+	answers []fakeAnswer
+}
+
+type fakeAnswer struct {
+	status int
+	body   string
+}
+
+func (f *fakeLogging) serve(t *testing.T) logReader {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var asked map[string]any
+		if r.Method != http.MethodPost || r.URL.Path != "/v2/entries:list" || json.Unmarshal(body, &asked) != nil {
+			t.Errorf("%s %s %s", r.Method, r.URL.Path, body)
+		}
+		f.mu.Lock()
+		f.asked, f.at = append(f.asked, asked), append(f.at, time.Now())
+		a := fakeAnswer{http.StatusInternalServerError, `{"error":{"code":500,"message":"no more answers"}}`}
+		if len(f.answers) > 0 {
+			a, f.answers = f.answers[0], f.answers[1:]
+		}
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(a.status)
+		_, _ = io.WriteString(w, a.body)
+	}))
+	t.Cleanup(srv.Close)
+	return logReader{opts: []option.ClientOption{option.WithEndpoint(srv.URL + "/"), option.WithoutAuthentication(),
+		option.WithHTTPClient(srv.Client())}, pace: 20 * time.Millisecond}
+}
+
+func entryJSON(id, node, message string) string {
+	b, _ := json.Marshal(map[string]any{"insertId": id, "labels": map[string]string{
+		"compute.googleapis.com/resource_name": node, "unit": "fastpath.service"},
+		"jsonPayload": map[string]any{"MESSAGE": message, "PRIORITY": "6"}})
+	return string(b)
+}
+
+// TestTheLogReaderPagesPacesAndBacksOff: the reader asks for the span's
+// filter, oldest first, a page of 1,000 at a time, follows each page's
+// token, decodes each entry's node from its label and its message from its
+// payload, waits its pace between reads and twice as long again after a 429
+// or a 5xx; a 4xx otherwise, or a 5xx past its attempts, is the read's error.
+func TestTheLogReaderPagesPacesAndBacksOff(t *testing.T) {
+	since, until := time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC), time.Date(2026, 10, 24, 13, 0, 0, 0, time.UTC)
+	f := &fakeLogging{answers: []fakeAnswer{
+		{http.StatusTooManyRequests, `{"error":{"code":429,"message":"quota"}}`},
+		{http.StatusOK, `{"entries":[` + entryJSON("a", "tr-fastpath-5", "line one") + `,` +
+			entryJSON("b", "tr-fastpath-6", "line two") + `],"nextPageToken":"page-2"}`},
+		{http.StatusServiceUnavailable, `{"error":{"code":503,"message":"later"}}`},
+		{http.StatusOK, `{"entries":[` + entryJSON("c", "tr-fastpath-5", "line three") + `]}`},
+	}}
+	lr := f.serve(t)
+	var got []logEntry
+	err := lr.entries(context.Background(), "p", since, until, func(e logEntry) error { got = append(got, e); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []logEntry{{"a", "tr-fastpath-5", "line one"}, {"b", "tr-fastpath-6", "line two"},
+		{"c", "tr-fastpath-5", "line three"}}) {
+		t.Fatalf("the entries: %+v", got)
+	}
+	if len(f.asked) != 4 {
+		t.Fatalf("%d reads", len(f.asked))
+	}
+	for i, a := range f.asked {
+		if a["filter"] != edgeFilter("p", since, until) || a["orderBy"] != "timestamp asc" || a["pageSize"] != 1000.0 ||
+			!slices.Equal(a["resourceNames"].([]any), []any{"projects/p"}) {
+			t.Errorf("read %d: %v", i, a)
+		}
+		want := ""
+		if i >= 2 {
+			want = "page-2"
+		}
+		if token, _ := a["pageToken"].(string); token != want {
+			t.Errorf("read %d: the token %q, want %q", i, token, want)
+		}
+	}
+	// After the 429, twice the pace; then the pace; after the 503, twice
+	// the last wait.
+	for i, least := range []time.Duration{2 * lr.pace, lr.pace, 2 * lr.pace} {
+		if gap := f.at[i+1].Sub(f.at[i]); gap < least {
+			t.Errorf("read %d came %v after the last, under %v", i+1, gap, least)
+		}
+	}
+	for name, answers := range map[string][]fakeAnswer{
+		"a 400":      {{http.StatusBadRequest, `{"error":{"code":400,"message":"bad filter"}}`}},
+		"5xx always": nil,
+	} {
+		f := &fakeLogging{answers: answers}
+		err := f.serve(t).entries(context.Background(), "p", since, until, func(logEntry) error { return nil })
+		want := 1
+		if answers == nil {
+			want = readAttempts
+		}
+		if err == nil || len(f.asked) != want {
+			t.Errorf("%s: %v after %d reads, want an error after %d", name, err, len(f.asked), want)
+		}
 	}
 }

@@ -719,9 +719,9 @@ func (a *alerts) taken() map[string][]string {
 // answers the 503, counted by the code the store reports, so a clock ahead
 // of Spanner's (FailedPrecondition) is told from a lost commit answer
 // (DeadlineExceeded). Each period with one raises AlertUnavailable with the
-// period's counts by code; SustainedPeriods of them running raise
-// AlertUnavailableSustained, and a period without resets the run. A period
-// of 200s alone raises nothing.
+// period's counts by code; SustainedPeriods of them with no 200 between
+// raise AlertUnavailableSustained, and a period with a 200 and none resets
+// the run. A period of 200s alone raises nothing.
 func TestUnavailableAnswersAreCountedByCodeAndAlerted(t *testing.T) {
 	h, c := baseDecide(t)
 	var raised alerts
@@ -773,11 +773,14 @@ func TestUnavailableAnswersAreCountedByCodeAndAlerted(t *testing.T) {
 	h.edge.decider.flush()
 	got = raised.taken()
 	if len(got) != 2 || len(got[AlertUnavailable]) != 1 || len(got[AlertUnavailableSustained]) != 1 ||
-		!strings.Contains(got[AlertUnavailableSustained][0], `in each of the last 3 periods`) ||
+		!strings.Contains(got[AlertUnavailableSustained][0], `in 3 periods with no 200 between them`) ||
 		!strings.Contains(got[AlertUnavailableSustained][0], `{"failed_precondition":1}`) {
 		t.Fatalf("the third period's alerts: %v", got)
 	}
-	// A period without resets the run: the next one is not sustained.
+	// A period with a 200 and no unavailable answer resets the run: the
+	// next one is not sustained.
+	h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return store.Inserted }, codes.OK
+	h.send(t, c)
 	h.edge.decider.flush()
 	unknown(codes.Unavailable)
 	h.edge.decider.flush()
@@ -854,5 +857,35 @@ func TestCodeNames(t *testing.T) {
 		if got := codeName(code); got != want {
 			t.Errorf("%v: %q, want %q", code, got, want)
 		}
+	}
+}
+
+// TestSparseUnavailableAnswersAreSustained: a fault that turns every decided
+// request into the 503, under traffic too sparse for every period to see
+// one (a request every few minutes a node), is sustained all the same: the
+// periods that decided nothing between them neither add to the run nor end
+// it.
+func TestSparseUnavailableAnswersAreSustained(t *testing.T) {
+	h, c := baseDecide(t)
+	var raised alerts
+	h.edge.decider.cfg.Alert = raised.raise
+	h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return store.Unknown },
+		codes.FailedPrecondition
+	sustained := 0
+	for range SustainedPeriods {
+		if rec := h.send(t, c); rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("an unknown insert: %d", rec.Code)
+		}
+		h.edge.decider.flush()
+		sustained += len(raised.taken()[AlertUnavailableSustained])
+		// Two periods that decided nothing.
+		h.edge.decider.flush()
+		h.edge.decider.flush()
+		if got := raised.taken(); len(got) != 0 {
+			t.Fatalf("an empty period alerts: %v", got)
+		}
+	}
+	if sustained != 1 {
+		t.Fatalf("%d sustained alerts over %d sparse unavailable periods, want 1", sustained, SustainedPeriods)
 	}
 }

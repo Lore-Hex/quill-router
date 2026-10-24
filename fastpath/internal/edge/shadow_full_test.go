@@ -43,6 +43,8 @@ type recordingCache struct {
 	evicted    []string
 	workspaces []string
 	slow       time.Duration
+	// more is added to the cache's own counts, as a test makes them grow.
+	more gwstate.Counters
 }
 
 func (c *recordingCache) Lookup(lookupHash string, now time.Time) gwstate.Read {
@@ -53,10 +55,25 @@ func (c *recordingCache) Lookup(lookupHash string, now time.Time) gwstate.Read {
 }
 
 func (c *recordingCache) Counters() gwstate.Counters {
+	var n gwstate.Counters
 	if inner, ok := c.KeyCache.(cacheCounters); ok {
-		return inner.Counters()
+		n = inner.Counters()
 	}
-	return gwstate.Counters{}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n.Unrefreshed += c.more.Unrefreshed
+	n.Dropped += c.more.Dropped
+	n.ReadFailures += c.more.ReadFailures
+	return n
+}
+
+// grow adds to the cache's counts.
+func (c *recordingCache) grow(unrefreshed, dropped, failures int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.more.Unrefreshed += unrefreshed
+	c.more.Dropped += dropped
+	c.more.ReadFailures += failures
 }
 
 func (c *recordingCache) Evict(lookupHash string) {

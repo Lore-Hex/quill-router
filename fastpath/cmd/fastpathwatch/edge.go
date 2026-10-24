@@ -7,10 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
+	"google.golang.org/api/googleapi"
 	logging "google.golang.org/api/logging/v2"
+	"google.golang.org/api/option"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 )
@@ -56,20 +59,31 @@ func (s *edgeSums) add(l edge.CountsLine) {
 	}
 }
 
-// i2 are the I2 gates' figures (§11): the requests Go would have answered
-// (each counts its decide row's gate, so they are the cohort's), agree_full
-// among them, the differences by field (differ.* and row.*), the estimate's
-// and the idempotency fingerprint's, would_admit_python_refused by class,
-// and the stale passes against every request the shadow followed; and the
-// decide path's unavailable answers by the insert's gRPC code.
+// i2 are the I2 gates' figures (§11). The comparable requests are those
+// whose answers were compared, agree_full and differ (Go would answer, and
+// Python answered a 200 that is not a replay), and agree_full_ratio is
+// agree_full's share of them. The cohort-eligible requests are every one Go
+// would answer (each counts its decide row's gate), by class: the
+// comparable ones and the rest (would_admit_python_refused, Python's errors
+// and unavailable answers, the scope taken, replays, unread), which the
+// gates account for rather than ratio. Then the differences by field
+// (differ.* and row.*), the estimate's and the idempotency fingerprint's,
+// fields_other (a period's fields past the line's bound, counted "other",
+// which could hide either: non-zero, those two are not known to be zero),
+// would_admit_python_refused by class, the stale passes against every
+// request the shadow followed, and the decide path's unavailable answers by
+// the insert's gRPC code.
 type i2 struct {
-	CohortEligible            int64            `json:"cohort_eligible"`
+	Comparable                int64            `json:"comparable"`
 	AgreeFull                 int64            `json:"agree_full"`
 	AgreeFullRatio            *float64         `json:"agree_full_ratio"`
+	CohortEligible            int64            `json:"cohort_eligible"`
+	CohortByClass             map[string]int64 `json:"cohort_by_class"`
 	Differ                    int64            `json:"differ"`
 	DifferByField             map[string]int64 `json:"differ_by_field"`
 	DifferEstimate            int64            `json:"differ_estimate"`
 	RowIdempotencyFingerprint int64            `json:"row_idempotency_fingerprint"`
+	FieldsOther               int64            `json:"fields_other"`
 	WouldAdmitPythonRefused   int64            `json:"would_admit_python_refused"`
 	WouldAdmitByClass         map[string]int64 `json:"would_admit_python_refused_by_class"`
 	Stale                     int64            `json:"stale"`
@@ -130,10 +144,14 @@ func (r *edgeReport) gates() {
 	sh := r.DecideShadow
 	g := i2{AgreeFull: sh.Counts["agree_full"], Differ: sh.Counts["differ"],
 		WouldAdmitPythonRefused: sh.Counts["would_admit_python_refused"], DifferByField: map[string]int64{},
-		WouldAdmitByClass: map[string]int64{}, StaleByCache: map[string]int64{},
+		WouldAdmitByClass: map[string]int64{}, StaleByCache: map[string]int64{}, CohortByClass: map[string]int64{},
 		Unavailable: r.Decide.Counts["unavailable"], UnavailableByCode: map[string]int64{}}
+	g.Comparable = g.AgreeFull + g.Differ
 	for _, n := range sh.ByName["decide"] {
 		g.CohortEligible += n
+	}
+	for class, n := range sh.ByName["cohort"] {
+		g.CohortByClass[class] = n
 	}
 	for field, n := range sh.ByName["fields"] {
 		g.DifferByField[field] = n
@@ -142,6 +160,7 @@ func (r *edgeReport) gates() {
 		}
 	}
 	g.RowIdempotencyFingerprint = sh.ByName["fields"]["row.idempotency_fingerprint"]
+	g.FieldsOther = sh.ByName["fields"]["other"]
 	for class, n := range sh.ByName["classes"] {
 		g.Followed += n
 		if c, ok := strings.CutPrefix(class, edge.ClassWouldAdmit+"."); ok {
@@ -155,8 +174,8 @@ func (r *edgeReport) gates() {
 	for code, n := range r.Decide.ByName["unavailable_by_code"] {
 		g.UnavailableByCode[code] = n
 	}
-	if g.CohortEligible > 0 {
-		ratio := float64(g.AgreeFull) / float64(g.CohortEligible)
+	if g.Comparable > 0 {
+		ratio := float64(g.AgreeFull) / float64(g.Comparable)
 		g.AgreeFullRatio = &ratio
 	}
 	if g.Followed > 0 {
@@ -174,16 +193,32 @@ func edgeFilter(project string, since, until time.Time) string {
 		until.UTC().Format(time.RFC3339))
 }
 
-// listEntries reads the span's entries from Cloud Logging, oldest first,
-// a page a second: entries.list allows 60 calls a minute a project.
-func listEntries(ctx context.Context, project string, since, until time.Time, each func(logEntry) error) error {
-	svc, err := logging.NewService(ctx)
+// logReader reads a span's entries from Cloud Logging, oldest first, a
+// page at a time: at least pace apart, since entries.list allows 60 calls a
+// minute a project, and again after a 429 or a 5xx, waiting twice as long
+// each time, readAttempts times in all.
+type logReader struct {
+	opts []option.ClientOption
+	pace time.Duration
+}
+
+// productionLogs is the API's, a little under a page a second.
+var productionLogs = logReader{pace: 1100 * time.Millisecond}
+
+const readAttempts = 6
+
+func (lr logReader) entries(ctx context.Context, project string, since, until time.Time, each func(logEntry) error) error {
+	svc, err := logging.NewService(ctx, lr.opts...)
 	if err != nil {
 		return err
 	}
 	req := &logging.ListLogEntriesRequest{ResourceNames: []string{"projects/" + project},
 		Filter: edgeFilter(project, since, until), OrderBy: "timestamp asc", PageSize: 1000}
-	return svc.Entries.List(req).Pages(ctx, func(resp *logging.ListLogEntriesResponse) error {
+	for first := true; ; first = false {
+		resp, err := lr.page(ctx, svc, req, first)
+		if err != nil {
+			return err
+		}
 		for _, e := range resp.Entries {
 			var payload struct {
 				Message string `json:"MESSAGE"`
@@ -198,13 +233,35 @@ func listEntries(ctx context.Context, project string, since, until time.Time, ea
 				return err
 			}
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Second):
+		if resp.NextPageToken == "" {
 			return nil
 		}
-	})
+		req.PageToken = resp.NextPageToken
+	}
+}
+
+// page reads one page: pace after the last read (none before the first),
+// and after a 429 or a 5xx twice the last wait, at most readAttempts times.
+func (lr logReader) page(ctx context.Context, svc *logging.Service, req *logging.ListLogEntriesRequest,
+	first bool) (*logging.ListLogEntriesResponse, error) {
+	wait := lr.pace
+	if first {
+		wait = 0
+	}
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+		resp, err := svc.Entries.List(req).Context(ctx).Do()
+		var apiErr *googleapi.Error
+		if err == nil || attempt == readAttempts || !errors.As(err, &apiErr) ||
+			(apiErr.Code != http.StatusTooManyRequests && apiErr.Code < 500) {
+			return resp, err
+		}
+		wait = max(2*wait, 2*lr.pace)
+	}
 }
 
 // runEdge is the edge report: its exit code (0 with the report printed, 1
@@ -233,7 +290,7 @@ func runEdge(ctx context.Context, args []string, out io.Writer, d deps) (int, er
 		}
 	}
 	if !r.Since.Before(r.Until) {
-		return 2, errors.New("edge: -since is before -until")
+		return 2, errors.New("edge: -since must be before -until")
 	}
 	if err := d.entries(ctx, *project, r.Since, r.Until, r.add); err != nil {
 		return 1, err

@@ -73,18 +73,22 @@ func TestTheDecideLineReadsBackAsItsCounts(t *testing.T) {
 // TestTheDecideShadowLinesReadBackAsTheirCounts: the shadow's lines of four
 // periods (each request's send ends one, and the last is empty), read by
 // ParseCountsLine and summed, are the counts since the start: the classes,
-// fields, rows and decide gates of the snapshot and policy's lines, and the
-// requests not followed and the evictions of the others.
+// fields, rows, decide gates and cohort classes of the snapshot and
+// policy's lines, and the requests not followed, the evictions and the
+// cache's unrefreshed, dropped and failed reads of the others. The cache
+// keeps running totals; the lines log what each period added.
 func TestTheDecideShadowLinesReadBackAsTheirCounts(t *testing.T) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
 	h := newFullEdge(t, f, c, nil, nil)
 	h.rows.by[c.IDs.AuthorizationID] = storedRows(t, c)
 	h.answer(answerWith(http.StatusOK, []byte(c.Expect.Response)))
+	h.cache.grow(1, 2, 5)
 	h.send(t, c)
 	h.answer(answerWith(http.StatusOK, []byte(strings.Replace(c.Expect.Response, `"stage_d"`, `"stage_x"`, 1))))
 	h.send(t, c)
 	h.answer(answerWith(http.StatusForbidden, []byte(`{"error":{"code":403,"message":"no","type":"forbidden"}}`)))
+	h.cache.grow(0, 1, 2)
 	h.send(t, c)
 	h.edge.WaitDecideShadow()
 	lines := parsedLines(t, h.logs)
@@ -125,6 +129,7 @@ func TestTheDecideShadowLinesReadBackAsTheirCounts(t *testing.T) {
 	}
 	if !maps.Equal(sums["classes"], asInt64(want.Classes)) || !maps.Equal(sums["fields"], asInt64(want.Fields)) ||
 		!maps.Equal(sums["rows"], asInt64(want.Rows)) || !maps.Equal(sums["decide"], asInt64(want.Decide)) ||
+		!maps.Equal(sums["cohort"], asInt64(want.Cohort)) ||
 		counts["read_back"] != int64(want.ReadBack) || counts["dropped"] != want.Dropped ||
 		counts["evictions"] != want.Evictions || counts["agree_full"] != int64(want.Classes[ClassAgreeFull]) ||
 		counts["differ"] != int64(want.Classes[ClassDifferAny]) || counts["would_admit_python_refused"] != would {
@@ -132,6 +137,17 @@ func TestTheDecideShadowLinesReadBackAsTheirCounts(t *testing.T) {
 	}
 	if want.Classes[ClassAgreeFull] != 1 || want.Classes[ClassDifferAny] != 1 || would != 1 || want.Evictions == 0 {
 		t.Fatalf("not the period's requests: %+v", want)
+	}
+	// The cache's counts, each the sum of the periods'.
+	cache := h.cache.Counters()
+	if counts["cache_unrefreshed"] != cache.Unrefreshed || counts["cache_dropped"] != cache.Dropped ||
+		counts["cache_read_failures"] != cache.ReadFailures || cache.ReadFailures != 7 {
+		t.Fatalf("the cache's counts read back %v, the cache's %+v", counts, cache)
+	}
+	// Every request Go would decide is in the cohort, by class.
+	if !maps.Equal(want.Cohort, map[string]int{ClassAgreeFull: 1, ClassDifferAny: 1,
+		ClassWouldAdmit + ".403.forbidden": 1}) {
+		t.Fatalf("the cohort: %v", want.Cohort)
 	}
 }
 

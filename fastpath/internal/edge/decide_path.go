@@ -75,8 +75,9 @@ const (
 	// (failed_precondition, §8.4) and a Spanner incident (unavailable,
 	// deadline_exceeded) from a commit whose answer was simply lost.
 	AlertUnavailable = "edge_decide_unavailable"
-	// AlertUnavailableSustained: unavailable answers in each of the last
-	// SustainedPeriods periods.
+	// AlertUnavailableSustained: unavailable answers in SustainedPeriods
+	// periods with no 200 between them (a period that answered nothing
+	// neither adds to the run nor ends it, so sparse traffic is seen).
 	AlertUnavailableSustained = "edge_decide_unavailable_sustained"
 	// AlertSlowPass: a forwarded pass spent more than SlowAtEdge at the edge
 	// before it was forwarded, or Python's answer to it came more than
@@ -85,9 +86,10 @@ const (
 )
 
 const (
-	// SustainedPeriods is how many periods running (a minute each) with an
-	// unavailable answer make AlertUnavailableSustained: more than one
-	// commit's lost answer, a cause that persists.
+	// SustainedPeriods is how many periods (a minute each) with an
+	// unavailable answer and no 200 between them make
+	// AlertUnavailableSustained: more than one commit's lost answer, a cause
+	// that persists.
 	SustainedPeriods = 3
 	// SlowAtEdge and SlowInAll are decision 12's: what a forwarded pass may
 	// spend at the edge, and the enclave's 25 s an attempt.
@@ -138,7 +140,8 @@ type decider struct {
 
 	mu sync.Mutex
 	// total is the counts since the edge started, period the period's;
-	// unavailableRun counts the periods running with an unavailable answer.
+	// unavailableRun counts the periods with an unavailable answer since
+	// the last with a 200 and none.
 	total, period  decideTally
 	unavailableRun int
 }
@@ -468,9 +471,12 @@ func (dp *decider) flush() {
 	p := dp.period
 	dp.period = newDecideTally()
 	unavailable := sum(p.unavailable)
-	if unavailable > 0 {
+	switch {
+	case unavailable > 0:
 		dp.unavailableRun++
-	} else {
+	case p.answered > 0:
+		// Only an answer ends the run: a period that answered nothing
+		// says nothing of whether the fault is gone.
 		dp.unavailableRun = 0
 	}
 	run := dp.unavailableRun
@@ -482,9 +488,9 @@ func (dp *decider) flush() {
 		dp.alert(AlertUnavailable, fmt.Sprintf("the edge answered %d authorizes unavailable, their insert's "+
 			"outcome not known; by the insert's gRPC code: %s", unavailable, jsonOf(p.unavailable)))
 	}
-	if run >= SustainedPeriods {
-		dp.alert(AlertUnavailableSustained, fmt.Sprintf("the edge has answered authorizes unavailable in each of "+
-			"the last %d periods; this period's by the insert's gRPC code: %s", run, jsonOf(p.unavailable)))
+	if unavailable > 0 && run >= SustainedPeriods {
+		dp.alert(AlertUnavailableSustained, fmt.Sprintf("the edge has answered authorizes unavailable in %d periods "+
+			"with no 200 between them; this period's by the insert's gRPC code: %s", run, jsonOf(p.unavailable)))
 	}
 	if len(p.slow) > 0 {
 		dp.alert(AlertSlowPass, fmt.Sprintf("forwarded passes over %v at the edge (at_edge) or over %v in all "+
