@@ -299,8 +299,9 @@ rate.
 
 The enclave half is being built as E1–E3 in quill-cloud-proxy (#588 declares
 `capabilities.usage_heartbeat` at boot registration; #590 freezes settle and
-refund terminals as exact bytes, `FrozenTerminal` / `PostFrozenTerminal`). The
-router provides, dark by default:
+refund terminals as exact bytes, `FrozenTerminal` / `PostFrozenTerminal`;
+#595 parks undeliverable frozen terminals as GCS objects, §9.2). The router
+provides, dark by default:
 
 - **Boot registration declarations** (`POST /internal/gateway/spend-lease/register-boot`,
   `capabilities` object, JSON booleans, unknown names ignored): alongside
@@ -322,7 +323,66 @@ router provides, dark by default:
 - **Terminals**: the outbox replays frozen bytes to the existing
   `/internal/gateway/settle` and `/refund` routes, whose answers
   (`settled`, `already_settled`, `intent_durable`, `reaped_snapshot`) are
-  unchanged. R2 adds no route, flag or column.
+  unchanged. R2 adds no route, flag or column. The objects and the replay
+  rules are §9.2.
+
+### 9.2 Enclave outbox objects (quill-cloud-proxy #595)
+
+The contract both repos implement. The enclave writes; a later sweeper (a
+sibling enclave holding a time lease; its own PR, out of scope here) replays.
+
+- **Object.** GCS, create-only (`ifGenerationMatch=0`), under the
+  attested pool identity, named
+  `trustedrouter-settle-outbox/v1/pending/<kind>/<authorization_id>/<sha256(body)[:16]>.json`
+  with `kind` ∈ {`settle`, `refund`} derived from the terminal's path
+  (`/internal/gateway/settle`, `/internal/gateway/refund`); an empty or
+  unsafe `authorization_id` goes under `unnamed/`. The envelope is JSON,
+  `version: 1`, fields `kind`, `path`, `body` (base64 of the exact bytes the
+  enclave would have sent), `body_sha256`, `base_url` (the pinned authority,
+  empty when unpinned), `boot_auth`, `boot_kid`, `authorization_id` (read
+  from the body), `reason` (enclave-side metadata: `retry_exhausted`,
+  `evicted`, `queue_full`, `queue_disabled`, `shutdown`; the router never
+  reads it), `attempts`, `written_at`. A repeat create of the same bytes
+  answers 412 and is durable. A differing body for the same authorization
+  (a corrected redelivery, SF9) is a second object; both replay. A reader
+  refuses another version, a non-terminal path, or a body whose digest does
+  not match.
+- **Replay.** The sweeper POSTs the exact bytes to `base_url + path`, with
+  no `X-TR-Settlement-Mode` or `X-TR-Settlement-Shadow` header (a frozen
+  terminal never carried them). Idempotency is the existing
+  `authorization_id` disposition, and that holds today: a settled or
+  refunded authorization answers `already_settled: true` with its stored
+  outcome before the body is priced, so a second body with different token
+  counts books nothing and raises no conflict; the first writer's charge
+  stands (§7). An authorization the control plane still holds open is
+  settled from the replayed bytes as an ordinary first delivery. The
+  answers the sweeper must treat as terminal, not retry: 2xx with
+  `already_settled` or `settled`; 404 (an authorization the control plane
+  never saw, or one past its retention); 409 for a retired settlement kind
+  (`regional_lease`, `spend_lease`) or an authorization whose routes no
+  longer meet the request's modality or privacy filter. 5xx and transport
+  errors retry under the sweeper's lease. No replay marker exists; if the
+  router ever wants one, the sweeper adds it at send time and the stored
+  body stays the exact bytes.
+- **Boot auth on terminals.** `X-TR-Boot-Auth: kid=<kid>,sig=<b64url>` over
+  `spendlease.AuthorizeDigest("POST", path, body)` =
+  `sha256("tr-authorize-v1" || "POST" || path || sha256(body))`, signed by
+  the **authorizing** boot (`kid` == `authorization.stage_d_boot_kid`, which
+  authorize sets for every verified boot); the connection's sender need not
+  be that boot, so a sibling replays without the writer's key. The router
+  does not read the header on `/settle` or `/refund` today (only heartbeat
+  and the disposition lookup verify it, via `_gateway_boot_auth_accepted`).
+  When a later increment does: verify when present, against the authorizing
+  boot, and **ignore, not reject**, when the authorization has no boot kid
+  (settles were never signed before #595). An object without `boot_auth`
+  (a boot with no receipt signer) is unverified: the sweeper must not replay
+  it as trusted, since the bucket grant is pool-wide create-only, gated on
+  Confidential Space, debug off, STABLE, the project and the workload SA,
+  not on an image digest.
+- **Capability.** A boot declares `capabilities.settle_outbox: true` only
+  when its outbox is configured (`QUILL_SETTLE_OUTBOX_BUCKET` set, GCP
+  only); #595 declares none yet. The router records it (§9.1, R2) and a
+  later increment may gate replay acceptance on it.
 
 ## 10. Test plan (full pyramid, guard-aware)
 
