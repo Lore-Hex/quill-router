@@ -34,6 +34,7 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/auditor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/owner"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/settlelog"
@@ -181,6 +182,12 @@ type EdgeConfig struct {
 	// snapshot's key for the same plane, so it takes SnapshotPublicKey,
 	// SnapshotKid and SnapshotPlane.
 	PolicyURL string
+	// DecideShadow runs the full-response shadow (edge.DecideShadowConfig,
+	// E2 G10): the decide pipeline over each authorize the edge passes on,
+	// compared with Python's answer and rows, logging counts alone. It needs
+	// SnapshotURL and PolicyURL. Off (the default), the key and workspace
+	// cache and the decide copy are never made.
+	DecideShadow bool
 }
 
 func (c Config) valid() error {
@@ -199,6 +206,9 @@ func (c Config) valid() error {
 	case c.Edge.PolicyURL != "" && (c.Edge.SnapshotPublicKey == "" || c.Edge.SnapshotKid == "" ||
 		c.Edge.SnapshotPlane == ""):
 		return errors.New("service: the edge policy needs the routing snapshot's public key, kid and plane")
+	case c.Edge.DecideShadow && (c.Edge.SnapshotURL == "" || c.Edge.PolicyURL == ""):
+		return errors.New("service: the edge's decide shadow decides from the routing snapshot and the edge policy, " +
+			"which need their URLs")
 	case c.Edge.Address != "" && !c.Admission:
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
@@ -350,11 +360,38 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = ln.Close()
 		return err
 	}
+	// The decide shadow's cache and reads exist only with it on.
+	var decideShadow *edge.DecideShadowConfig
+	var cache *gwstate.Cache
+	if cfg.Edge.DecideShadow {
+		if cache, err = gwstate.NewCache(gwstate.CacheConfig{Reader: s}); err != nil {
+			_ = ln.Close()
+			return err
+		}
+		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s,
+			// edge.AlertWouldAdmit's alert line, as the auditor's are
+			// written (docs/runbooks/fastpath-alerts.md); its policy is
+			// I1's.
+			Alert: func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }}
+	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy, Admitter: &p.admitter})
+		Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy, Admitter: &p.admitter,
+		DecideShadow: decideShadow})
 	if err != nil {
 		_ = ln.Close()
 		return err
+	}
+	// The cache is closed (its reads ended, before the store's client
+	// closes) only after the last Lookup: once the edge's handlers have
+	// returned and the decide shadow has compared what it followed.
+	followed := make(chan struct{})
+	if cache != nil {
+		p.run("edge decide cache", func(ctx context.Context) error {
+			cache.Run(ctx)
+			<-followed
+			cache.Close()
+			return nil
+		})
 	}
 	if cfg.edgeMade != nil {
 		cfg.edgeMade(e)
@@ -392,6 +429,10 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = srv.Close()
 		endRequests()
 		handlers.wait()
+		// What the decide shadow follows ends with its requests; its reads
+		// end with them, and then the cache may close.
+		e.WaitDecideShadow()
+		close(followed)
 		transport.CloseIdleConnections()
 		return nil
 	})
@@ -457,7 +498,8 @@ func (b storeBoots) Boot(ctx context.Context, kid string) (edge.Boot, bool, erro
 	if err != nil || !found {
 		return edge.Boot{}, false, err
 	}
-	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified}, true, nil
+	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified, ImageDigest: boot.ImageDigest,
+		DeclaresUsageHeartbeat: boot.DeclaresUsageHeartbeat}, true, nil
 }
 
 // lifecycle starts a process's parts with start and runs them until ctx
@@ -1012,10 +1054,16 @@ var alertOutput io.Writer = os.Stderr
 // carries what the alert carries: a lease or an authorization and what
 // happened, never a record's contents.
 func writeAlert(w io.Writer, subject, what string) {
+	writeAlertOf(w, subject, what, auditor.AlertKind(what))
+}
+
+// writeAlertOf is writeAlert with its kind given: an alert that is not the
+// auditor's (edge.AlertWouldAdmit).
+func writeAlertOf(w io.Writer, subject, what, kind string) {
 	line, err := json.Marshal(map[string]any{
 		"message":                       "fastpath alert: " + what,
 		"subject":                       subject,
-		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": kind},
 	})
 	if err != nil {
 		log.Printf("alert: %s: %s", subject, what)

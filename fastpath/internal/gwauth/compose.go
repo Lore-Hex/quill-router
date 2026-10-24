@@ -31,7 +31,7 @@ import (
 // its end of life arrive with Finish, after the admit.
 type ComposeInput struct {
 	At              time.Time // the one clock reading (decision 15)
-	AuthorizationID string    // "gwa-" + 32 lowercase hex
+	AuthorizationID string    // "gwa-" + a uuid4's 32 lowercase hex digits
 	ReservationID   string    // hyphenated uuid4
 
 	// From Identity.

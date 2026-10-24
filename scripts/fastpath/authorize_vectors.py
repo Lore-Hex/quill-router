@@ -443,7 +443,9 @@ def stored(database: Any, world: dict[str, Any]) -> dict[str, Any]:
         for (candidate, _shard), row in sorted(database.typed[CREDIT_BALANCE_TABLE].items())
         if candidate == workspace_id
     ]
-    byok, broadcast = ids("byok_provider"), ids("broadcast_destination_by_workspace")
+    # BYOK entities are kind "byok" (storage_gcp.py's auth-context query and
+    # get_byok_providers), the kind Go's key-context read ranges over.
+    byok, broadcast = ids("byok"), ids("broadcast_destination_by_workspace")
     spec = world["workspace"]
     causes = sorted(set(spec["billing_pause_causes"]).union(*(row["billing_pause_causes"] for row in credit_rows)))
     key_body, workspace_body = body("api_key", key["hash"]), body("workspace", workspace_id)
@@ -965,8 +967,11 @@ def cases() -> list[dict[str, Any]]:
     add("pass:header.video_providers", "header.video_providers",
         headers=(("x-quill-video-allowed-providers", "wafer"),))
     # The boot: E1's signature check and decision 8.
-    for mode in ("absent", "bad_signature", "unknown_kid", "malformed", "repeated"):
+    for mode in ("absent", "bad_signature", "malformed", "repeated"):
         add(f"pass:boot.signature:{mode}", "boot.signature", boot=mode)
+    # A kid with no boot row is boot.missing (§3), whether the row is gone or
+    # the header names a kid never registered: the edge sees the same miss.
+    add("pass:boot.missing:unknown_kid", "boot.missing", boot="unknown_kid")
     add("pass:boot.unverified", "boot.unverified", world={"boot": {"verified": False}})
     add("pass:boot.missing", "boot.missing", world={"boot": None})
     add("pass:policy.digest_not_accepted", "policy.digest_not_accepted",

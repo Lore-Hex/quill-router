@@ -63,7 +63,8 @@ this page names does not change.
 | `no_boot_binding` | A winner's boot binding is stated by no record. | As `unreadable_pending_work`. |
 | `drain_overdue` | A lease is still draining past its holds' longest life and the grace. | Find why with `status`. A fleet must not stop while it drains (`fastpath-turn-off.md`). |
 | `pending_work_overdue` | A pack's pending work was not done in time. | The pending worker does not log why a pack waits: its sweep drops the error. The alerts above, on the same subject or lease, name the causes it knows. `status` shows the workspace's pending packs and staged records; a winner whose full record is not staged waits for it. |
-| `other` | An alert whose message is none of the auditor's. | Read the entry's message. |
+| `edge_would_admit_python_refused` | The edge's decide shadow (`-edge-decide-shadow`) would have answered an authorize Python refused (a 4xx or its pause 503); the subject names the routing snapshot and edge policy digests, the message the class (`would_admit_python_refused.<status>.<type>`). Nothing was answered: the shadow only observes. | Before I2 this blocks turning decide on. A refusal for a key or workspace changed within the facts' 15 s age is the expected revocation lag (decision 17); otherwise find which gate Go missed (`docs/design/fast-admission-e2-decide.md` §3, §11) and, if any workspace decides already, `fastpathctl decide off` it. |
+| `other` | An alert whose message is none of the auditor's or the edge's. | Read the entry's message. |
 
 ## Subscription lag
 

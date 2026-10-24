@@ -43,7 +43,10 @@ def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
     assert '"logName=\\"projects/${local.gcp_project_id}/logs/fastpath_journal\\""' in tf
     # The service labels each alert with its kind and writes it at the
     # journal's err priority, which the agent maps to ERROR.
-    assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)}' in service
+    # The auditor's alerts by their message's kind; the edge's decide shadow
+    # names its own kind (edge.AlertWouldAdmit) through the same line.
+    assert "writeAlertOf(w, subject, what, auditor.AlertKind(what))" in service
+    assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": kind}' in service
     assert 'fmt.Fprintln(w, "<3>"+string(line))' in service
     # A policy per kind, each matching all three parts at once: the log, its
     # kind's label and the severity, so an ordinary entry of the same log, or
@@ -63,6 +66,12 @@ def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
     kinds = re.findall(r'^\tAlert\w+:\s+"(\w+)",$', alerts, re.M)
     assert len(kinds) == len(re.findall(r"^\tAlert\w+\s+= ", alerts, re.M)) == 13
     assert 'return "other"' in alerts
+    # The edge's decide shadow raises its own kind through the service's
+    # alert line (writeAlertOf).
+    edge = _read("fastpath", "internal", "edge", "shadow_full.go")
+    edge_kinds = re.findall(r'^const Alert\w+ = "(\w+)"$', edge, re.M)
+    assert edge_kinds == ["edge_would_admit_python_refused"]
+    kinds += edge_kinds
     # Each kind its own policy, so a kind that keeps firing cannot use up
     # another's daily notifications.
     listed = re.search(r"fastpath_alert_kinds = toset\(\[(.*?)\]\)", POLICIES.read_text(encoding="utf-8"), re.S)

@@ -22,8 +22,13 @@
 //
 // With an edge policy configured (PolicyConfig, E2 G8), the edge also polls
 // Python's signed edge policy, the live settings it would gate on, and
-// keeps the newest copy until its not_after (policy.go). Nothing reads it
-// yet.
+// keeps the newest copy until its not_after (policy.go).
+//
+// With the decide shadow on (DecideShadowConfig, E2 G10), the edge runs its
+// decide pipeline (decide.go) over each authorize it passes on, off the
+// request path, and compares what it would have answered with Python's
+// answer and, sampled, Python's rows (shadow_full.go). Python still
+// decides, and its answer still reaches the enclave byte for byte.
 package edge
 
 import (
@@ -105,12 +110,16 @@ const (
 	Unchecked Verdict = "unchecked"
 )
 
-// Boot is a registered enclave boot: its key id, its Ed25519 public key and
-// whether its registration was verified.
+// Boot is a registered enclave boot: its key id, its Ed25519 public key,
+// whether its registration was verified, and what the decide pipeline gates
+// on besides (decision 8 and §6 of docs/design/fast-admission-e2-decide.md):
+// the image digest it attested and whether it declared usage heartbeats.
 type Boot struct {
-	Kid       string
-	PublicKey ed25519.PublicKey
-	Verified  bool
+	Kid                    string
+	PublicKey              ed25519.PublicKey
+	Verified               bool
+	ImageDigest            string
+	DeclaresUsageHeartbeat bool
 }
 
 // Boots reads a boot by its key id: the boot and true, or false for none.
@@ -147,6 +156,12 @@ type Config struct {
 	// Admitter holds the node's front door once its admission node has
 	// made it (admit.go); nil, or unbound, is none. Nothing calls it yet.
 	Admitter *LateAdmitter
+	// DecideShadow, when set, runs the full-response shadow
+	// (shadow_full.go, -edge-decide-shadow): the decide pipeline over each
+	// authorize the edge passes on, compared with Python's answer and,
+	// sampled, its rows. It needs the snapshot and the policy configured.
+	// Nil runs none: no cache, no reads, no goroutines.
+	DecideShadow *DecideShadowConfig
 }
 
 // Edge serves the enclave's control-plane paths.
@@ -161,6 +176,8 @@ type Edge struct {
 	shadow *shadow
 	// policy is nil unless the edge policy is configured.
 	policy *policyPoller
+	// full is nil unless the decide shadow is on.
+	full *fullShadow
 }
 
 type cachedBoot struct {
@@ -223,6 +240,17 @@ func New(cfg Config) (*Edge, error) {
 		}
 		e.policy = p
 	}
+	if cfg.DecideShadow != nil {
+		if cfg.Snapshot.URL == nil || cfg.Policy.URL == nil {
+			return nil, errors.New("edge: the decide shadow decides from a routing snapshot and an edge policy, " +
+				"which need their URLs")
+		}
+		full, err := newFullShadow(*cfg.DecideShadow, cfg.Logf, cfg.Clock, cfg.ShadowEvery)
+		if err != nil {
+			return nil, err
+		}
+		e.full = full
+	}
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""
 	e.proxy = &httputil.ReverseProxy{
@@ -248,6 +276,9 @@ func New(cfg Config) (*Edge, error) {
 			if call, ok := r.Context().Value(shadowKey{}).(*shadowCall); ok {
 				e.shadow.submit(comparison{call: call, passed: "python was not reached"})
 			}
+			if job, ok := r.Context().Value(fullKey{}).(*fullJob); ok {
+				job.deliver(pyAnswer{why: "not_reached"})
+			}
 			answer(w, http.StatusBadGateway, "The control plane was not reached; retry", "bad_gateway")
 		},
 		// A redirect Python builds names the upstream, which the caller
@@ -258,6 +289,9 @@ func New(cfg Config) (*Edge, error) {
 				// the status, the headers and the bytes are Python's.
 				if call, ok := resp.Request.Context().Value(shadowKey{}).(*shadowCall); ok {
 					e.shadow.tapResponse(resp, call)
+				}
+				if job, ok := resp.Request.Context().Value(fullKey{}).(*fullJob); ok {
+					e.full.tapFull(resp, job)
 				}
 			}
 			location := resp.Header.Get("Location")
@@ -333,8 +367,13 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.proxy.ServeHTTP(w, r)
 		return
 	}
-	// An authorize to compare, when the shadow is on and a snapshot held.
+	// An authorize to compare, when the shadow is on and a snapshot held;
+	// the decide shadow's one clock reading for it (decision 15).
 	call := e.begin(r)
+	var at time.Time
+	if e.full != nil {
+		at = e.cfg.Clock()
+	}
 	headers := r.Header.Values(BootHeader)
 	// A boot header the request names as hop-by-hop (`Connection:
 	// X-TR-Boot-Auth`) is dropped by the proxy: Python sees none.
@@ -343,6 +382,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if call != nil {
 			out = e.shadow.attach(call, out, Absent, nil)
 		}
+		out = e.beginFull(out, at, nil, BootSeen{Verdict: Absent})
 		e.proxy.ServeHTTP(w, out)
 		return
 	}
@@ -359,6 +399,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if call != nil {
 			e.shadow.submit(comparison{call: call, passed: "the request body is over the comparator's bound"})
 		}
+		out = e.beginFull(out, at, nil, BootSeen{Verdict: Unchecked})
 		e.proxy.ServeHTTP(w, out)
 		return
 	}
@@ -368,22 +409,25 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/"
 	}
-	verdict := Unchecked
+	seen := BootSeen{Verdict: Unchecked}
 	if printableASCII(path) {
-		verdict = e.verdict(r.Context(), headers, r.Method, path, body)
+		seen = e.verdictOf(r.Context(), headers, r.Method, path, body)
 	}
+	verdict := seen.Verdict
 	out := r.Clone(context.WithValue(r.Context(), verdictKey{}, verdict))
 	out.Body = io.NopCloser(bytes.NewReader(body))
 	out.ContentLength = int64(len(body))
 	if call != nil {
 		out = e.shadow.attach(call, out, verdict, body)
 	}
+	out = e.beginFull(out, at, body, seen)
 	e.proxy.ServeHTTP(w, out)
 }
 
 // Run polls the routing snapshot and the edge policy and runs the shadow
-// comparator, each on its own goroutine, until ctx ends; with none
-// configured it returns at once. ServeHTTP never waits for any.
+// comparator and the decide shadow (its decide copy and its counts), each
+// on its own goroutine, until ctx ends; with none configured it returns at
+// once. ServeHTTP never waits for any.
 func (e *Edge) Run(ctx context.Context) {
 	var runs []func(context.Context)
 	if e.poller != nil {
@@ -394,6 +438,9 @@ func (e *Edge) Run(ctx context.Context) {
 	}
 	if e.policy != nil {
 		runs = append(runs, e.policy.run)
+	}
+	if e.full != nil {
+		runs = append(runs, e.full.run)
 	}
 	var wg sync.WaitGroup
 	for _, run := range runs {
@@ -480,24 +527,34 @@ func forPython(h http.Header, name string) string {
 
 // verdict checks a boot header against the request it signs.
 func (e *Edge) verdict(ctx context.Context, headers []string, method, path string, body []byte) Verdict {
+	return e.verdictOf(ctx, headers, method, path, body).Verdict
+}
+
+// verdictOf is verdict with the boot it read: the decide pipeline tells an
+// Invalid verdict's causes apart (boot.signature, boot.missing,
+// boot.unverified) and gates on the boot's digest and heartbeat
+// declaration, without a read of its own.
+func (e *Edge) verdictOf(ctx context.Context, headers []string, method, path string, body []byte) BootSeen {
 	if len(headers) != 1 {
-		return Invalid
+		return BootSeen{Verdict: Invalid}
 	}
 	kid, sig, ok := ParseBootHeader(headers[0])
 	if !ok {
-		return Invalid
+		return BootSeen{Verdict: Invalid}
 	}
 	boot, found, err := e.boot(ctx, kid)
 	if err != nil {
-		return Unread
+		return BootSeen{Verdict: Unread, Kid: kid}
 	}
+	seen := BootSeen{Verdict: Invalid, Kid: kid, Found: found, Boot: boot}
 	if !found || !boot.Verified || boot.Kid != kid || len(boot.PublicKey) != ed25519.PublicKeySize {
-		return Invalid
+		return seen
 	}
 	if !ed25519.Verify(boot.PublicKey, Digest(method, path, body), sig) {
-		return Invalid
+		return seen
 	}
-	return Verified
+	seen.Verdict = Verified
+	return seen
 }
 
 // boot reads a boot, from the cache within its TTL, else from the reader

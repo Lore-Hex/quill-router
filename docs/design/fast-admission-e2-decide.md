@@ -1,6 +1,6 @@
 # E2 decide: Go authorizes the cohort
 
-Status: contract, nothing built. This is the shared contract for E2 of
+Status: contract. This is the shared contract for E2 of
 [`fast-admission-enclave-direct.md`](fast-admission-enclave-direct.md): the
 Go edge answers an authorize for the cohort itself, writes the two rows
 Python's leased path writes, and proxies everything else to Python
@@ -16,6 +16,9 @@ parity (a mismatch turns an enclave retry into a 409) and byte parity of the
 authorization row payload that Python settles from.
 
 Line citations are against `origin/main` at `bc5a19c16`.
+
+Status (G10): the decide pipeline and its full-response shadow are built
+and dark (`-edge-decide-shadow`, default off); nothing answers.
 
 ## 1. What Go answers
 
@@ -195,6 +198,35 @@ a pass reason, `group.reason`, which the shadow and the watch count. A
 golden pass case trips exactly one reason, so the order below only fixes
 which reason a request tripping several is counted under.
 
+The pipeline (`fastpath/internal/edge/decide.go`, G10) checks in this
+order:
+
+1. The request is a POST to exactly an authorize path, as E1 (`r.URL.Path`,
+   decoded) and Python (`request.url.path`) both read it: a path the client
+   escaped passes (`request.path`). Decide is built only for a request the
+   edge authenticated and read, with `RequestOf`.
+2. The boot (the edge reads nothing else of a request whose boot fails, and
+   with no boot header it has not read the body).
+3. The request (§3 "Request").
+4. The policy and snapshot caches, then the policy's gates that need no
+   key (`policy.pilot_off`, `policy.not_pilot_workspace` for an empty
+   pilot set, `policy.pilot_region`), so a request outside the pilot never
+   reads or fills the key cache.
+5. The key's cache entry (`cache.key`), the key's facts (`key.*`, expiry at
+   the request's instant) and the workspace entity's (`workspace.*`), then
+   the workspace's credit entry (`cache.workspace`), the credit rows'
+   reasons, the broadcast pointer, `Usable()`, and the merged tags.
+6. The rest of the policy, the evaluation (the requested models first for
+   `candidates.private_proxy` and `candidates.estimated_usage`), the
+   identity, the compose.
+7. The decide row last (`cache.decide`, `decide.off`).
+
+The decide row is checked after everything else so the shadow can compare
+a complete decision for a workspace that does not yet decide: `Decide`
+returns it in `Decided.Shadow` with `decide.off` or `cache.decide` as the
+pass. Only `Decided.Admit()` hands out a decision to admit, and only when
+nothing passed; G11 admits only through it.
+
 **Request** (no I/O, G5):
 
 | Reason | Passes when |
@@ -223,14 +255,26 @@ which reason a request tripping several is counted under.
 | `header.video_providers` | `X-Quill-Video-Allowed-Providers` present |
 
 **Caches:** `cache.policy`, `cache.snapshot`, `cache.key`,
-`cache.workspace`, `cache.decide` (cold or past its maximum age).
+`cache.workspace`, `cache.decide` (cold or past its maximum age). The key
+and workspace entries are read through `gwstate.Cache.Lookup` at the
+request's one clock reading (its monotonic reading kept), and the request
+is decided only if the read is `Usable()`; the expiry is `KeyFacts.At` of
+that reading.
 
 **Key and workspace facts** (G3, G7): `key.<reason>` for an ineligible key
-(§8.1 reasons), `workspace.missing` (no workspace row: Python's 403,
-`gateway.py:971-972`), `workspace.paused` (any pause cause on the entity
-or a credit row), `workspace.in_debt`, `workspace.tier` (latched or below
-the grant's tier: the grant would refuse it anyway),
-`workspace.federated`, `workspace.deleted`, `workspace.broadcast` (any
+(§8.1 reasons; `key.shape` for a stored key Go does not read exactly, such
+as a `usage_shard_count` outside 1 to 64, which Python's shard-count
+re-validation would refuse), `workspace.missing` (no workspace row:
+Python's 403, `gateway.py:971-972`), `workspace.paused` (any pause cause on
+the entity or a credit row: `WorkspaceFacts.PauseCauses`, or
+`store.CreditState.Paused` or its `RefusedPaused`), `workspace.in_debt`
+(`InDebt` or `RefusedInDebt`), `workspace.tier` (`Latched`, or
+`RefusedTier`: below the grant's tier, which the grant would refuse
+anyway), `workspace.credit_rows` (the credit rows are not shards 0 to n-1,
+which a grant refuses), `workspace.refused` (any other refusal of the
+rows; none today), `workspace.federated`, `workspace.deleted`,
+`workspace.shape` (a workspace body Go does not read exactly, or one
+naming another workspace than the key), `workspace.broadcast` (any
 destination pointer), `tags.merged_invalid` (the merged tag map fails
 `validate_tags`, or the key's stored tags are unusable: §6).
 
@@ -243,19 +287,35 @@ require, `gateway.py:2985-3000`), `policy.monitor_key`,
 `policy.regions_mismatch` (the policy's regions disagree with the
 snapshot's `settings`), `decide.off`.
 
-**Evaluation:** `evaluate.<outcome>` for any result but `Answered`
-(Python's refusals included), `evaluate.estimate_overflow` (the estimate
+**Evaluation:** `evaluate.<outcome>` for any result but `Answered`:
+`evaluate.refused` for an evaluator refusal (Python refuses it too) and
+`evaluate.pass` for any other evaluator pass (a
+provider preference or snapshot input Go does not reproduce, such as
+`provider.max_price` or `provider.require_parameters`; P1's goldens label
+a refusal Go passes this way `evaluate.refused`, and either goes to
+Python), `evaluate.estimate_overflow` (the estimate
 in microdollars is beyond int64: Python's leased path would write a value
 the `INT64` columns cannot store, so Spanner refuses the commit; Go
 passes), `candidates.byok`,
 `candidates.estimated_usage`, `candidates.private_proxy` (the requested
 model is a private proxy: Python's `response_model` would not be null),
-`clock.window` (decision 15).
+`clock.window` (decision 15), `compose.refused` (`gwauth.Stage` refuses:
+an id, region or inference location Go cannot write as Python would).
+The requested models are checked for `candidates.private_proxy` and
+`candidates.estimated_usage` before the evaluator runs (it passes a
+private proxy's decision chain and refuses a model its catalog lacks), and
+the candidates' models again after it answers.
 
 **Boot** (E1's check and decision 8, where Python answers without the
 pilot): `boot.signature` (no `X-TR-Boot-Auth`, or one that does not parse
 or verify, or more than one), `boot.unverified` (the boot row is not
-verified), `boot.missing` (no boot row for the kid).
+verified), `boot.missing` (no boot row for the header's kid, whether the
+row is gone or the kid was never registered: the edge sees the same miss),
+`boot.unread` (the boot could not be read within the edge's `BootWait`,
+E1's `Unread`). E1's `Unchecked` (a body past the edge's 16 MiB bound, or a
+path outside printable ASCII, which `request.path` passes first) is
+`body.unparseable`. `request.path`: not a POST to exactly an authorize
+path, or a path the client escaped.
 
 **Admission and insert:** `inflight.key`, `owner.off`, `owner.busy`,
 `owner.invalid`, `owner.failed`, `owner.unreachable`, `budget.spent`,
@@ -629,48 +689,73 @@ works over an order-preserving decoded tree with integers of any size
 
 ### 8.1 `gwstate` (G3, G7)
 
+As merged (G3, G7), and as G10 reads it:
+
 ```go
 package gwstate
 
-type Tag struct{ Key, Value string }
+type Pair struct{ Key, Value string } // G10 converts each to gwauth.Tag
 
-// KeyFacts is what the cohort needs of one api_key_lookup row and its key.
+// KeyFacts is what the cohort needs of one key's stored body.
 type KeyFacts struct {
-	LookupHash  string
-	Eligible    bool
-	Reason      string // "" when eligible; else the first of the reasons below
-	Hash        string // ApiKey.hash: key_hash everywhere
-	WorkspaceID string
-	ExpiresAt   time.Time // zero when the key has none
-	Tags        []Tag     // stored order; empty when the stored tags are not an object
-	TagsUsable  bool      // false: an object with a non-string or non-ASCII entry
-	ReadAt      time.Time
+	Eligible                      bool
+	Reason                        string // "" when eligible; else the first of the reasons below
+	Hash, LookupHash, WorkspaceID string
+	ExpiresAt                     time.Time // zero when the key has none
+	Tags                          []Pair    // stored order, eligible keys only
 }
 
-// WorkspaceFacts is the workspace's entity and credit rows, read only.
+// At is the key's eligibility at the request's instant: an expiry at or
+// before now is key_expired.
+func (k KeyFacts) At(now time.Time) (bool, string)
+
+// WorkspaceFacts is the workspace entity's facts.
 type WorkspaceFacts struct {
-	WorkspaceID      string
-	Missing          bool     // no workspace row: Python's 403
-	PauseCauses      []string // the entity's and every credit row's, sorted, deduplicated
-	InDebt           bool
-	TrustTier        int64 // least over rows, a latched row counting 0
-	Federated        bool
-	Deleted          bool
-	BYOKSlugs        []string // from byok entity ids "ws#slug", sorted; never a body
-	BroadcastPointer bool     // any broadcast_destination_by_workspace id with prefix "ws#"
-	ReadAt           time.Time
+	Eligible    bool
+	Reason      string
+	Deleted     bool
+	PauseCauses []string // the entity's, sorted, deduplicated
+	Federated   bool
 }
+
+type Facts struct {
+	Key                  KeyFacts
+	Workspace            WorkspaceFacts
+	BYOKProviders        []string // slugs of the BYOK entity ids "ws#slug"; never a body
+	BroadcastDestination bool
+}
+
+// Read is what the cache holds for a lookup hash at a request's instant:
+// the key entry's status, Found and Facts, and the workspace's credit
+// entry's status, CreditRows (complete shards 0 to n-1) and
+// store.CreditState{Shards, InDebt, Paused, Latched, Tier, Refused}.
+// Usable: key Fresh and found, both facts eligible, credit Fresh with
+// complete rows.
+func (r Read) Usable() bool
 ```
 
-Key reasons, in Python's order: `missing` (no lookup row or key: Python
-401), `disabled` (401), `expired` (401; evaluated at the request's instant;
-a value Go cannot parse strictly is expired, as Python's `is_api_key_expired`
-treats an unparseable one), `scope` (non-empty `scopes` without
-`inference`: 403, `gateway.py:3274-3288`), `federated`
-(`federated_home` set), `app` (`app_id` set), `key_cap`
-(`limit_microdollars` set), `key_window` (any of `limit_daily_microdollars`,
+The credit rows' pause, debt, latch and tier are `store.CreditState`'s, not
+`WorkspaceFacts`', and the gate combines the two (§3). Key reasons, in
+Python's order, with the §3 reason each counts as: `key_shape:<field>`
+(`key.shape`), no lookup row or key (`key.missing`: Python 401),
+`key_disabled` (`key.disabled`, 401), `key_expires_at` (an expiry Go cannot
+parse strictly, expired as Python's `is_api_key_expired` treats it) and
+`key_expired` (evaluated at the request's instant; `key.expired`, 401),
+`key_scope` (non-empty `scopes` without `inference`: 403,
+`gateway.py:3274-3288`; `key.scope`), `key_federated` (`federated_home`
+set; `key.federated`), `key_tags` and `key_tags_non_ascii` (stored tags Go
+cannot read or that `validate_tags` refuses; `tags.merged_invalid`),
+`key_app` (`app_id` set; `key.app`), `key_limit` (`limit_microdollars`
+set; `key.key_cap`), `key_window_limit` (any of `limit_daily_microdollars`,
 `limit_weekly_microdollars`, `limit_monthly_microdollars` set, alert-only
-or not), `budget_strict`.
+or not; `key.key_window`), `key_budget_strict` (`key.budget_strict`).
+So the §3 key reasons are `key.<reason>` for `missing`, `disabled`,
+`expired`, `scope`, `federated`, `app`, `key_cap`, `key_window`,
+`budget_strict` and `shape`. They cover `authorize_gateway_typed`'s checks
+before its leased branch (the window check, the shard count's
+re-validation, the lifetime cap's precheck) and its later arguments
+(`app_id`, `budget_alert_only`): each is a key the cohort excludes, so each
+is a no-op for a decided request.
 
 ### 8.2 `gwauth` request side (G5)
 
@@ -1259,17 +1344,78 @@ letter: disjoint files, built in parallel.
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
 | I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, soak |
 
-**The shadow (G10)** counts, per snapshot and policy digest:
-`agree_full` (candidates and order, estimate in microdollars and its float
-bytes, `stage_d`, the decoded response equal after substituting Go's ids
-for Python's and ignoring `timing`'s values (its keys and their order are
-compared), the generation id by rule from Python's `authorization_id`),
-`differ.<field>`, `would_admit_python_refused.<status>.<type>` (critical),
-`python_answered_go_passed.<reason>`, `row.<field>` (Python's rows read
-back for one request in 20, at most 5 reads a second, against Go's
-would-be rows; `expires_at` as §5 says), `stale.<cache>`. A Python 401,
-402 or 403, or a pause 503, for a cached lookup hash evicts the key and its
-workspace.
+**The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
+`-edge-decide-shadow`, off by default) runs `Decide` for each authorize the
+edge passes on, from what the edge holds at its arrival (the cache read at
+the request's clock reading, the snapshot, the policy, the decide copy),
+off the request path in a bounded set of jobs (512; past it, or past the
+64 MiB copy budget, a request is counted `dropped` and passes as it came),
+and once Python's answer has passed to the enclave compares the two. It
+never admits, inserts or answers, and the proxy never waits for it. It
+counts, per snapshot and policy digest:
+
+- `agree_full`: Go would answer, and Python's 200 is, byte for byte, the
+  200 Go's decision renders once staged again under Python's
+  `authorization_id` and `credit_reservation_id` (so the generation id is
+  Go's rule over Python's id) with Python's `timing` values (its keys and
+  their order must be §6's): candidates and order, the estimate in
+  microdollars and its float bytes, `stage_d`, every member and its order.
+  A 200 equal to the read-back rendering (tags sorted, §6) is `agree_full`
+  and counted `read_back`.
+- `differ` with `differ.<field>`: each top-level member by name,
+  `differ.estimate` (microdollars), `differ.estimate_float` (the float's
+  bytes, the microdollars equal), `differ.candidates` (the endpoint ids or
+  their order), `differ.route_candidates.<member>`, `differ.generation_id`
+  (not by rule from Python's id), `differ.timing` (its shape),
+  `differ.key_order`, `differ.ids` (Python's ids are not ones Go would
+  write), `differ.shape`.
+- `would_admit_python_refused.<status>.<type>` (critical, a `CRITICAL` log
+  line at once): Go would answer, Python answered a 4xx or its pause 503.
+- `python_answered_go_passed.<reason>`: Go would pass with the §3 reason,
+  Python answered 200; an idempotent replay is
+  `python_answered_go_passed.insert.scope_taken` (Go's insert would have
+  found the scope taken).
+- `passed.<reason>`: Go would pass and Python refused or failed too
+  (Python's 409 `conflict` to a request Go would answer is
+  `passed.insert.scope_taken`).
+- `stale.<cache>`: Go would pass for `cache.<cache>`.
+- `python_unavailable` (decision 1's 503: Python's own insert outcome) and
+  `python_error.<status>` (any other 5xx): not refusals on the facts.
+- `unread.<why>`: Python's answer not read through (not reached, past the
+  bound or the budget, not answered within 30 s).
+
+Each request Go would answer also counts its decide row's gate (`on`,
+`decide.off`, `cache.decide`): during the soak the decide table is empty,
+so every comparison is of a workspace not yet deciding. Rows: for one
+comparable request (agree_full or differ; `SampleEvery` 1 by default, the
+limiter of at most 5 reads a second bounding Spanner), Python's two rows
+are read back by its authorization id
+(`ReadAuthorizationForCompare`) and compared with the rows Go's decision
+would write staged under Python's ids, its `created_at`, envelope and end
+of life, and its idempotency key when the request presented none (checked to be of
+the uuid4 form Go mints, `row.idempotency_key_form`; Python's `created_at`
+within the request's arrival and its answer, a second's skew either way,
+`row.created_at_skew`):
+`row.<column>` for each of the authorization's 25 columns (every typed
+column, which Python reads before its payload copy, so a NULL Go would
+write that Python fills is caught only here), `row.payload.<key>`, and
+`row.reservation.<column>` for each of the reservation's 18 (`expires_at`
+Python's at least Go's and at most the request's latency and a second
+later, §5). A row Python's settle or heartbeat reached first is compared on
+the columns those leave alone (`moved_on`, or `moved_on_differ` with its
+fields); one Python wrote off the pilot's lease (no `fastpath_envelope`) is
+`python_not_leased` and not compared. Python's status classifies whether
+or not its body was read through (a 4xx unread is
+`would_admit_python_refused.<status>.unread`). A Python 401, 402 or 403 (by
+status alone), or a pause 503, evicts the lookup hash the request named,
+whether the cache held it or not (read leniently from a body the strict
+parse passed), and the key's workspace when the cache said which. Each
+`would_admit_python_refused` raises an alert line of kind
+`edge_would_admit_python_refused` (the service's `<3>` JSON line, label
+`fastpath_alert`; its alert policy is I1's or G12's). An INFO line per
+snapshot and policy each minute carries the counts, and one more the
+requests dropped, the evictions and the cache's unrefreshed, dropped and
+failed reads; no line carries a body, an id, a key or a message.
 
 **I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
 cohort-eligible requests with every difference explained; zero
