@@ -186,9 +186,17 @@ def parse_character_price(model: str, html: str) -> int:
             cell.get_text(" ", strip=True) for cell in row.find_all(["td", "th"], recursive=False)
         ]
         if model == "mistralai/voxtral-mini-tts-2603":
-            if len(cells) != 4 or not cells[0].startswith("Voxtral TTS"):
+            if len(cells) != 4 or cells[0].removesuffix(" \u2197") != "Voxtral TTS":
                 continue
-            text = cells[3]
+            table = row.find_parent("table")
+            headers = [cell.get_text(" ", strip=True) for cell in table.find_all("th")] if table else []
+            if headers:
+                if len(headers) != 4 or set(headers) != {"Model", "Input", "Cached input", "Output"}:
+                    raise ValueError("Unrecognized Mistral speech pricing columns")
+                text = cells[headers.index("Input")]
+            else:
+                # Legacy table placed the character tariff in Output.
+                text = cells[3]
         elif model == "x-ai/grok-voice-tts-1.0":
             if len(cells) != 2 or cells[0] not in {"Pricing", "Per 1M chars"}:
                 continue
