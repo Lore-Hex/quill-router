@@ -62,6 +62,8 @@
     {
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-ai/Deepseek-V4-Flash",
+      "retirement_at": "2026-10-30T17:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4.1-flash",
       "display_name": "deepseek-ai/Deepseek-V4-Flash",
       "title": "deepseek-ai/Deepseek-V4-Flash",
       "context_length": 1048576,
@@ -125,6 +127,8 @@
     {
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
+      "retirement_at": "2026-10-30T17:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4.1-flash",
       "display_name": "deepseek-ai/DeepSeek-V4-Pro",
       "title": "deepseek-ai/DeepSeek-V4-Pro",
       "context_length": 1048576,
@@ -415,6 +419,8 @@
     {
       "id": "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
       "upstream_id": "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B",
+      "retirement_at": "2026-10-30T17:00:00Z",
+      "replacement_model_id": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "display_name": "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B",
       "title": "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B",
       "context_length": 262144,
@@ -477,6 +483,8 @@
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "upstream_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
+      "retirement_at": "2026-10-30T17:00:00Z",
+      "replacement_model_id": "nvidia/nemotron-3.5-super-vl",
       "display_name": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
       "title": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
       "context_length": 262144,
