@@ -3,6 +3,8 @@
 
 It also pins TR_REMEDIATOR_IN_PROCESS_ENABLED=false: on AWS the EventBridge tick
 (infra/aws_synthetic_monitoring.tf) is the only remediator scheduler.
+It pins TR_RATE_LIMIT_IP_PER_WINDOW=6000: in `untrusted` client-ip mode every
+request shares one source bucket, so the per-task default (240/60 s) is a region cap.
 The regional outbox expectation can enable a previously disabled producer.
 The record-read expectation selects ClickHouse with reader-only credentials.
 """
@@ -24,6 +26,7 @@ RESPONSE_FIELDS = frozenset({
     "taskDefinitionArn", "revision", "status", "requiresAttributes", "compatibilities",
     "registeredAt", "registeredBy", "deregisteredAt",
 })
+AWS_SOURCE_ADMISSION_PER_WINDOW = "6000"
 
 
 def prepare(
@@ -73,7 +76,15 @@ def prepare(
     # value outside the two is refused.
     if values.get("TR_RECORD_READ_BACKEND") not in (None, "postgres", "clickhouse"):
         raise ValueError("invalid live TR_RECORD_READ_BACKEND")
-    updates = {"TR_RECORD_READ_BACKEND": required_record_read_backend}
+    updates = {
+        "TR_RECORD_READ_BACKEND": required_record_read_backend,
+        # In `untrusted` client-ip mode normalized_client_identity returns one
+        # constant subject for every request, whatever the peer IP, so one
+        # source bucket admits the whole region. 6000 is the value the retired
+        # App Runner service ran with; the default 240 is a per-client figure
+        # that becomes a per-region figure here.
+        "TR_RATE_LIMIT_IP_PER_WINDOW": AWS_SOURCE_ADMISSION_PER_WINDOW,
+    }
     if required_record_read_backend == "clickhouse":
         if not values.get("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL", "").strip():
             raise ValueError("clickhouse record reads require a cloned TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
