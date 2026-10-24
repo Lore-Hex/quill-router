@@ -12,6 +12,7 @@ from trusted_router.catalog import MODEL_ENDPOINTS
 @pytest.mark.parametrize("provider,model", [
     (nextbit, "bsc-lt/alia-40b-instruct-2601"),
     (nvidia_nim, "google/gemma-4-31b-it"),
+    (nvidia_nim, "nvidia/nemotron-3-super-120b-a12b"),
     (sambanova, "deepseek/deepseek-v3.2"),
     (sambanova, "deepseek/deepseek-v3.1"),
     (sambanova, "google/gemma-4-31b-it"),
@@ -53,6 +54,17 @@ def test_atlas_retirement_does_not_remove_openai_direct(model):
 ])
 def test_sambanova_account_hold_does_not_disable_working_models(model):
     assert any(e.provider == "sambanova" and e.model_id == model for e in MODEL_ENDPOINTS.values())
+
+
+def test_nvidia_unavailable_function_is_held_without_disabling_working_route():
+    assert not any(
+        e.provider == "nvidia-nim" and e.model_id == "nvidia/nemotron-3-super-120b-a12b"
+        for e in MODEL_ENDPOINTS.values()
+    )
+    assert any(
+        e.provider == "nvidia-nim" and e.model_id == "nvidia/nemotron-3.5-lightning-30b-a3b"
+        for e in MODEL_ENDPOINTS.values()
+    )
 
 
 def test_ended_union_preview_is_not_silently_replaced():
