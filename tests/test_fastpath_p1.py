@@ -4,10 +4,12 @@ startup script, the load mix)."""
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -201,9 +203,16 @@ def _source_at(commit: str, path: str) -> str:
     show = ["git", "-C", str(ROOT), "show", f"{commit}:{path}"]
     shown = subprocess.run(show, capture_output=True, text=True)  # noqa: S603 - git on the pinned SHA
     if shown.returncode != 0:
-        fetch = ["git", "-C", str(ROOT), "fetch", "--depth=1", "origin", commit]
-        subprocess.run(fetch, check=True)  # noqa: S603 - git on the pinned SHA
-        shown = subprocess.run(show, capture_output=True, text=True, check=True)  # noqa: S603 - as above
+        # pytest-xdist workers share the checkout, and two fetches at once
+        # collide on .git/shallow.lock (exit 128 on CI). One fetch at a
+        # time; a worker that waited finds the commit already fetched.
+        with (Path(tempfile.gettempdir()) / "tr-p1-fetch.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            shown = subprocess.run(show, capture_output=True, text=True)  # noqa: S603 - as above
+            if shown.returncode != 0:
+                fetch = ["git", "-C", str(ROOT), "fetch", "--depth=1", "origin", commit]
+                subprocess.run(fetch, check=True)  # noqa: S603 - git on the pinned SHA
+                shown = subprocess.run(show, capture_output=True, text=True, check=True)  # noqa: S603 - as above
     return shown.stdout
 
 
