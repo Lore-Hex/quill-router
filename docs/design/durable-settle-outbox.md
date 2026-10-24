@@ -295,7 +295,7 @@ enclave's retry budget) — that needs a quill-cloud-proxy change (cross-repo,
 outbox first, then decide enclave-side durability from the observed lost/`dead`
 rate.
 
-### 9.1 Enclave-side outbox: the router's contract (E4 R1 + R2)
+### 9.1 Enclave-side outbox: the router's contract (E4 R1 + R2 + R3)
 
 The enclave half is being built as E1–E3 in quill-cloud-proxy (#588 declares
 `capabilities.usage_heartbeat` at boot registration; #590 freezes settle and
@@ -323,8 +323,10 @@ provides, dark by default:
 - **Terminals**: the outbox replays frozen bytes to the existing
   `/internal/gateway/settle` and `/refund` routes, whose answers
   (`settled`, `already_settled`, `intent_durable`, `reaped_snapshot`) are
-  unchanged. R2 adds no route, flag or column. The objects and the replay
-  rules are §9.2.
+  unchanged. R2 adds no route, flag or column. R3 verifies `X-TR-Boot-Auth`
+  on both routes when it is present (§9.2); no enclave sends it on a
+  terminal today, so production behaviour is unchanged. The objects and the
+  replay rules are §9.2.
 
 ### 9.2 Enclave outbox objects (quill-cloud-proxy #595)
 
@@ -360,28 +362,46 @@ sibling enclave holding a time lease; its own PR, out of scope here) replays.
   `already_settled` or `settled`; 404 (an authorization the control plane
   never saw, or one past its retention); 409 for a retired settlement kind
   (`regional_lease`, `spend_lease`), the one 409 the settle path raises.
-  5xx and transport errors retry under the sweeper's lease. No replay marker exists; if the
-  router ever wants one, the sweeper adds it at send time and the stored
-  body stays the exact bytes.
+  A 401 `unauthorized` with `reason: boot_not_accepted` is a refused
+  `X-TR-Boot-Auth` (below): the object is unverifiable, so the sweeper
+  quarantines it rather than retrying it. 5xx and transport errors retry
+  under the sweeper's lease. No replay marker exists; if the router ever
+  wants one, the sweeper adds it at send time and the stored body stays the
+  exact bytes.
 - **Boot auth on terminals.** `X-TR-Boot-Auth: kid=<kid>,sig=<b64url>` over
   `spendlease.AuthorizeDigest("POST", path, body)` =
   `sha256("tr-authorize-v1" || "POST" || path || sha256(body))`, signed by
   the **authorizing** boot (`kid` == `authorization.stage_d_boot_kid`, which
   authorize sets for every verified boot); the connection's sender need not
-  be that boot, so a sibling replays without the writer's key. The router
-  does not read the header on `/settle` or `/refund` today (only heartbeat
-  and the disposition lookup verify it, via `_gateway_boot_auth_accepted`).
-  When a later increment does: verify when present, against the authorizing
-  boot, and **ignore, not reject**, when the authorization has no boot kid
-  (settles were never signed before #595). An object without `boot_auth`
-  (a boot with no receipt signer) is unverified: the sweeper must not replay
+  be that boot, so a sibling replays without the writer's key. R3 reads
+  the header on `/settle` and `/refund` through the heartbeat verifier
+  (`_gateway_boot_auth_accepted`), once the authorization is loaded and
+  before any disposition read or money write. Present and verified against
+  the authorizing boot: the terminal proceeds. Absent: the unsigned
+  behaviour, unchanged. Authorization with no boot kid: the header is
+  **ignored, not rejected** (settles were never signed before #595) and
+  logged with its kid. Present but failing verification, naming another
+  kid, malformed or repeated: 401 `unauthorized`, `reason:
+  boot_not_accepted`, the status the heartbeat gate and the disposition
+  lookup use for the same failure. A refusal books nothing and reads no
+  disposition, so the retry with a correct header settles exactly once and
+  an already-settled outcome is not disclosed to an unverified sender. The
+  outcome (`verified`, `absent`, `ignored_no_boot_kid`) rides on the
+  `settle timing` log line; a refusal logs
+  `gateway.terminal_boot_auth_refused` with both kids and nothing else.
+  No knob: the header is verified whenever it is present. An object without
+  `boot_auth` (a boot that started no registration path, so its
+  `RegisteredBootSigner` is nil) is unverified: the sweeper must not replay
   it as trusted, since the bucket grant is pool-wide create-only, gated on
   Confidential Space, debug off, STABLE, the project and the workload SA,
-  not on an image digest.
-- **Capability.** A boot declares `capabilities.settle_outbox: true` only
-  when its outbox is configured (`QUILL_SETTLE_OUTBOX_BUCKET` set, GCP
-  only); #595 declares none yet. The router records it (§9.1, R2) and a
-  later increment may gate replay acceptance on it.
+  not on an image digest. The sweeper **quarantines** an unverifiable
+  object (no `boot_auth`, a 401 on replay, a digest that does not match);
+  it never deletes one, and it logs the object's kid.
+- **Capability.** A boot declares `capabilities.settle_outbox: true`
+  exactly when its outbox is configured and writable
+  (`QUILL_SETTLE_OUTBOX_BUCKET` set, GCP only), which #595 does. The router
+  records it (§9.1, R2) and a later increment may gate replay acceptance on
+  it.
 
 ## 10. Test plan (full pyramid, guard-aware)
 

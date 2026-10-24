@@ -641,17 +641,55 @@ async def settle_gateway(
 ) -> dict[str, Any]:
     """Run one settlement off-loop behind the process-local per-key gate."""
     require_internal_gateway(request, settings)
+    boot_auth = await _terminal_boot_auth_input(request)
     if settings.async_settle_shadow_workspace_ids:
         from trusted_router.services.async_settle_shadow import observe_entry
         return await observe_entry(request, body, settings, background_tasks,
             lambda: run_in_threadpool(_settle_gateway_with_admission_sync, body,
-                settings=settings, background_tasks=background_tasks, _shadow_request=request), kind="settle")
+                settings=settings, background_tasks=background_tasks, _shadow_request=request,
+                _boot_auth=boot_auth), kind="settle")
     return await run_in_threadpool(
         _settle_gateway_with_admission_sync,
         body,
         settings=settings,
         background_tasks=background_tasks,
+        _boot_auth=boot_auth,
     )
+
+
+async def refund_gateway(
+    request: Request,
+    body: GatewaySettleRequest,
+    settings: Settings,
+    background_tasks: BackgroundTasks | None = None,
+) -> dict[str, Any]:
+    """Run one refund off-loop; the settle path with ``success=False``."""
+    require_internal_gateway(request, settings)
+    boot_auth = await _terminal_boot_auth_input(request)
+    if settings.async_settle_shadow_workspace_ids:
+        from trusted_router.services.async_settle_shadow import observe_entry
+        return await observe_entry(request, body, settings, background_tasks,
+            lambda: run_in_threadpool(_settle_gateway_authorization, body, success=False,
+                settings=settings, background_tasks=background_tasks, _shadow_request=request,
+                _boot_auth=boot_auth), kind="refund")
+    return await run_in_threadpool(
+        _settle_gateway_authorization,
+        body,
+        success=False,
+        settings=settings,
+        background_tasks=background_tasks,
+        _boot_auth=boot_auth,
+    )
+
+
+async def _terminal_boot_auth_input(request: Request) -> tuple[Request, bytes]:
+    try:
+        raw_body = await request.body()
+    except RuntimeError:
+        # Direct unit callers may construct a Request without an ASGI receive
+        # channel. Real routed requests always provide the exact cached bytes.
+        raw_body = b""
+    return request, raw_body
 
 
 async def heartbeat_gateway(
@@ -755,6 +793,58 @@ def _gateway_boot_auth_accepted(
         # The authorization-time kid is immutable. Membership in the live set
         # is intentionally not re-applied to an in-flight stream.
         accepted_image_digests=({boot.image_digest} if boot is not None else frozenset()),
+    )
+
+
+def _terminal_boot_auth_outcome(
+    boot_auth: tuple[Request, bytes] | None,
+    authorization: GatewayAuthorization,
+    *,
+    kind: str,
+) -> str:
+    """E4 R3 (durable-settle-outbox §9.2): ``X-TR-Boot-Auth`` on a terminal.
+
+    The outbox sweeper replays a frozen settle or refund signed by the
+    AUTHORIZING boot (``kid`` == ``authorization.stage_d_boot_kid``); the
+    sender need not be that boot. Absent header: the unsigned behaviour, as
+    every enclave sends terminals today. Authorization without a boot kid:
+    the header is ignored, not refused (settles were never signed before
+    #595). A present header that fails the heartbeat verifier, or names
+    another kid, is refused before any disposition read or money write, so
+    the retry with a correct header settles exactly once.
+    """
+    if boot_auth is None:
+        return "absent"
+    request, raw_body = boot_auth
+    headers = request.headers.getlist("X-TR-Boot-Auth")
+    if not headers:
+        return "absent"
+    presented = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
+    presented_kid = presented.kid if presented is not None else "-"
+    if not authorization.stage_d_boot_kid:
+        logger.info(
+            "gateway.terminal_boot_auth_ignored authorization_id=%s kind=%s kid=%s "
+            "reason=no_boot_kid",
+            _log_value(authorization.id),
+            kind,
+            _log_value(presented_kid),
+        )
+        return "ignored_no_boot_kid"
+    if _gateway_boot_auth_accepted(request, authorization, raw_body):
+        return "verified"
+    logger.warning(
+        "gateway.terminal_boot_auth_refused authorization_id=%s kind=%s kid=%s "
+        "authorizing_kid=%s",
+        _log_value(authorization.id),
+        kind,
+        _log_value(presented_kid),
+        _log_value(authorization.stage_d_boot_kid),
+    )
+    raise api_error(
+        401,
+        "Gateway boot was not accepted",
+        ErrorType.UNAUTHORIZED,
+        extra={"reason": "boot_not_accepted"},
     )
 
 
@@ -2510,19 +2600,7 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
-        require_internal_gateway(request, settings)
-        if settings.async_settle_shadow_workspace_ids:
-            from trusted_router.services.async_settle_shadow import observe_entry
-            return await observe_entry(request, body, settings, background_tasks,
-                lambda: run_in_threadpool(_settle_gateway_authorization, body, success=False,
-                    settings=settings, background_tasks=background_tasks, _shadow_request=request), kind="refund")
-        return await run_in_threadpool(
-            _settle_gateway_authorization,
-            body,
-            success=False,
-            settings=settings,
-            background_tasks=background_tasks,
-        )
+        return await refund_gateway(request, body, settings, background_tasks)
 
     router.route_class = legacy_route_class
 
@@ -3786,17 +3864,23 @@ def _settle_gateway_with_admission_sync(
     background_tasks: BackgroundTasks | None = None,
     _shadow_request: Request | None = None,
     _authorization: GatewayAuthorization | None = None,
+    _boot_auth: tuple[Request, bytes] | None = None,
+    _boot_auth_outcome: str | None = None,
 ) -> dict[str, Any]:
     with gateway_phase("key_lookup_ms", after="routing_ms"):
         authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
+        _boot_auth, authorization, kind="settle"
+    )
     if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_settle_hook(settings, _shadow_request, body, authorization, once),
             lambda: _settle_gateway_with_admission_sync(body, settings=settings,
-                background_tasks=background_tasks, _authorization=authorization))
+                background_tasks=background_tasks, _authorization=authorization,
+                _boot_auth_outcome=boot_auth_outcome))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -3828,6 +3912,7 @@ def _settle_gateway_with_admission_sync(
             settings=settings,
             background_tasks=background_tasks,
             _authorization=authorization,
+            _boot_auth_outcome=boot_auth_outcome,
         )
     finally:
         _SETTLE_ADMISSION.release(subject)
@@ -3842,6 +3927,8 @@ def _settle_gateway_authorization(
     background_tasks: BackgroundTasks | None = None,
     _authorization: GatewayAuthorization | None = None,
     _shadow_request: Request | None = None,
+    _boot_auth: tuple[Request, bytes] | None = None,
+    _boot_auth_outcome: str | None = None,
 ) -> dict[str, Any]:
     timing_start = perf_counter()
     # getattr: some callers/tests build the settle body via model_construct,
@@ -3852,12 +3939,16 @@ def _settle_gateway_authorization(
         authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
+        _boot_auth, authorization, kind="settle" if success else "refund"
+    )
     if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_refund_hook(settings, _shadow_request, body, authorization, once, success=success),
             lambda: _settle_gateway_authorization(body, success=success, settings=settings,
-                background_tasks=background_tasks, _authorization=authorization))
+                background_tasks=background_tasks, _authorization=authorization,
+                _boot_auth_outcome=boot_auth_outcome))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -4961,7 +5052,7 @@ def _settle_gateway_authorization(
     logger.info(
         "settle timing authorization_id=%s success=%s origin=%s total_ms=%.1f "
         "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f "
-        "commit_path=%s one_commit_ms=%.1f",
+        "commit_path=%s one_commit_ms=%.1f boot_auth=%s",
         authorization.id,
         success,
         "typed" if is_typed else "legacy",
@@ -4979,6 +5070,7 @@ def _settle_gateway_authorization(
             else "fallback" if one_commit_attempted else "two_commit"
         ),
         one_commit_ms,
+        boot_auth_outcome,
     )
     return {
         "data": {
