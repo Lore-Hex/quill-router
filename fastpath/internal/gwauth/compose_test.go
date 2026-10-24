@@ -481,16 +481,19 @@ func TestTheReadBackSortsTags(t *testing.T) {
 }
 
 // TestTheUnavailableBodyIsPythons: decision 1's 503, byte for byte with
-// the case's timing, and its one header.
+// the case's timing, and its one header, for each insert whose outcome is
+// not known and not landed (a lost answer, and the refusals that prove
+// nothing: §8.4).
 func TestTheUnavailableBodyIsPythons(t *testing.T) {
 	f := loadGoldens(t)
 	found := 0
+	unknown := map[string]bool{"unknown_not_landed": true, "failed_precondition": true, "aborted": true}
 	for _, c := range f.Cases {
 		if c.Expect.Outcome != "unavailable" {
 			continue
 		}
 		found++
-		if c.Insert != "unknown_not_landed" || c.Expect.Status != UnavailableStatus {
+		if !unknown[c.Insert] || c.Expect.Status != UnavailableStatus {
 			t.Errorf("%s: insert %q, status %d", c.Name, c.Insert, c.Expect.Status)
 		}
 		if got := Unavailable(c.Expect.timing()); string(got) != c.Expect.Response {
@@ -500,8 +503,8 @@ func TestTheUnavailableBodyIsPythons(t *testing.T) {
 			t.Errorf("%s: headers %q", c.Name, c.Expect.Headers)
 		}
 	}
-	if found != 1 {
-		t.Fatalf("%d unavailable cases, want 1", found)
+	if found != len(unknown) {
+		t.Fatalf("%d unavailable cases, want %d", found, len(unknown))
 	}
 }
 

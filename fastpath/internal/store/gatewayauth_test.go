@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -58,7 +61,7 @@ var insertTable = map[codes.Code]InsertOutcome{
 // an error with no status are Unknown; any error before the callback ran is
 // Failed; no error is Inserted.
 func TestClassifyInsertIsTheContractTable(t *testing.T) {
-	if got, ae := classifyInsert(nil, 1); got != Inserted || ae {
+	if got, ae := ClassifyInsert(nil, 1); got != Inserted || ae {
 		t.Errorf("no error: %v %v", got, ae)
 	}
 	for code := codes.Canceled; code <= codes.Unauthenticated; code++ {
@@ -69,7 +72,7 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 			"wrapped": fmt.Errorf("commit: %w", spanner.ToSpannerError(raw)),
 		} {
 			for _, runs := range []int32{1, 2, 3} {
-				got, alreadyExists := classifyInsert(err, runs)
+				got, alreadyExists := ClassifyInsert(err, runs)
 				if code == codes.AlreadyExists {
 					if !alreadyExists {
 						t.Errorf("%v %s, %d runs: not read back", code, name, runs)
@@ -84,7 +87,7 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 					t.Errorf("%v %s, %d runs: %v (read back %v), want %v", code, name, runs, got, alreadyExists, want)
 				}
 			}
-			if got, _ := classifyInsert(err, 0); got != Failed {
+			if got, _ := ClassifyInsert(err, 0); got != Failed {
 				t.Errorf("%v %s before the callback ran: %v, want failed", code, name, got)
 			}
 		}
@@ -96,7 +99,7 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 		"client deadline":  spanner.ToSpannerError(context.DeadlineExceeded),
 		"no status":        errors.New("connection reset"),
 	} {
-		if got, ae := classifyInsert(err, 1); got != Unknown || ae {
+		if got, ae := ClassifyInsert(err, 1); got != Unknown || ae {
 			t.Errorf("%s: %v %v, want unknown", name, got, ae)
 		}
 	}
@@ -649,7 +652,8 @@ func dropFirstCommitAnswer(code codes.Code, message string) fault {
 // transaction into AlreadyExists, or giving up, the outcome is never one
 // that refunds. A lost answer the client re-runs the transaction after
 // (Aborted, and Internal of a reset stream) reports the second attempt's
-// AlreadyExists, which the own-id check makes Landed.
+// AlreadyExists, which the own-id check makes Landed; one the client gives
+// up on is read back, and found, so Landed too.
 func TestADroppedCommitAnswerIsNeverRefunded(t *testing.T) {
 	for _, tc := range []struct {
 		code    codes.Code
@@ -663,13 +667,13 @@ func TestADroppedCommitAnswerIsNeverRefunded(t *testing.T) {
 		// which Spanner answers as it did the first.
 		{codes.Unavailable, "lost", Inserted},
 		{codes.ResourceExhausted, "lost", Inserted},
-		// The client gives up: the outcome is unknown, and the row is there
-		// for the caller's read-back.
-		{codes.DeadlineExceeded, "lost", Unknown},
-		{codes.Canceled, "lost", Unknown},
-		{codes.Internal, "lost", Unknown},
-		{codes.Unknown, "lost", Unknown},
-		{codes.DataLoss, "lost", Unknown},
+		// The client gives up: the outcome is not known, and the store's
+		// read-back finds the row, ours.
+		{codes.DeadlineExceeded, "lost", Landed},
+		{codes.Canceled, "lost", Landed},
+		{codes.Internal, "lost", Landed},
+		{codes.Unknown, "lost", Landed},
+		{codes.DataLoss, "lost", Landed},
 	} {
 		name := fmt.Sprintf("%v %q", tc.code, tc.message)
 		s, _ := faultStore(t, dropFirstCommitAnswer(tc.code, tc.message))
@@ -682,11 +686,6 @@ func TestADroppedCommitAnswerIsNeverRefunded(t *testing.T) {
 		moneySafe(t, name, out, applied)
 		if out != tc.want {
 			t.Errorf("%s: %v, want %v", name, out, tc.want)
-		}
-		if out == Unknown {
-			if mine, err := s.AuthorizationExists(context.Background(), a.AuthorizationID); err != nil || !mine {
-				t.Errorf("%s: the caller's read-back: %v %v", name, mine, err)
-			}
 		}
 	}
 }
@@ -706,7 +705,7 @@ func TestTheRetriedCommitReportsAlreadyExists(t *testing.T) {
 	if spanner.ErrCode(err) != codes.AlreadyExists || !landed(t, a) {
 		t.Fatalf("the client's own answer: %v, landed %v", err, landed(t, a))
 	}
-	if out, alreadyExists := classifyInsert(err, 2); !alreadyExists {
+	if out, alreadyExists := ClassifyInsert(err, 2); !alreadyExists {
 		t.Fatalf("the error is not read back: %v", out)
 	}
 }
@@ -810,9 +809,9 @@ func TestNoSessionIsFailedAndRetriedOnce(t *testing.T) {
 
 // TestTheInsertOutlivesTheRequest: a request context cancelled before the
 // insert, past its deadline, or cancelled while the commit is in flight
-// (the enclave hanging up) inserts all the same; the read-back reads on such
-// a context too. The positive control: the same client, on the cancelled
-// context directly, is Canceled.
+// (the enclave hanging up) inserts all the same, and an AlreadyExists on
+// such a context is read back all the same. The positive control: the same
+// client, on the cancelled context directly, is Canceled.
 func TestTheInsertOutlivesTheRequest(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -832,8 +831,8 @@ func TestTheInsertOutlivesTheRequest(t *testing.T) {
 		if out := s.InsertLeasedAuthorization(ctx, a, r); out != Inserted || !landed(t, a) {
 			t.Errorf("%s: %v", name, out)
 		}
-		if mine, err := s.AuthorizationExists(ctx, a.AuthorizationID); err != nil || !mine {
-			t.Errorf("%s: the read-back: %v %v", name, mine, err)
+		if out := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
+			t.Errorf("%s: the read-back of our own rows: %v", name, out)
 		}
 	}
 	request, hang := context.WithCancel(context.Background())
@@ -855,10 +854,11 @@ func TestTheInsertOutlivesTheRequest(t *testing.T) {
 	}
 }
 
-// TestTheDeadlinesAreTheInsertsOwn: a commit that never answers is Unknown
-// at the insert's deadline, not before and not long after, and so is one
-// whose call ignores the deadline (no grace past it, decision 12); a read
-// that never answers ends at the read-back's; and the read-back after an
+// TestTheDeadlinesAreTheInsertsOwn: a commit that never answers ends at
+// the insert's deadline, not before and not long after, and so does one
+// whose call ignores the deadline (no grace past it, decision 12); its
+// read-back, which never answers either, ends at the read-back's: Unknown
+// after the two deadlines and no later. The read-back after an
 // AlreadyExists that arrives just before the insert's deadline has a
 // deadline of its own, so it still finds our row though it takes longer
 // than the insert has left.
@@ -881,14 +881,8 @@ func TestTheDeadlinesAreTheInsertsOwn(t *testing.T) {
 	start := time.Now()
 	out := s.InsertLeasedAuthorization(ctx, a, r)
 	took := time.Since(start)
-	if out != Unknown || took < InsertDeadline || took > InsertDeadline+250*time.Millisecond {
-		t.Errorf("a commit that never answers: %v in %v", out, took)
-	}
-	start = time.Now()
-	_, err := s.AuthorizationExists(ctx, a.AuthorizationID)
-	took = time.Since(start)
-	if err == nil || took < ReadBackDeadline || took > ReadBackDeadline+250*time.Millisecond {
-		t.Errorf("a read that never answers: %v in %v", err, took)
+	if out != Unknown || took < InsertDeadline+ReadBackDeadline || took > InsertDeadline+ReadBackDeadline+250*time.Millisecond {
+		t.Errorf("a commit and a read-back that never answer: %v in %v", out, took)
 	}
 	hold.Store(false)
 	if landed(t, a) {
@@ -900,7 +894,7 @@ func TestTheDeadlinesAreTheInsertsOwn(t *testing.T) {
 	start = time.Now()
 	out = s.InsertLeasedAuthorization(ctx, a, r)
 	took = time.Since(start)
-	if out != Unknown || took > InsertDeadline+250*time.Millisecond {
+	if out != Unknown || took > InsertDeadline+ReadBackDeadline+250*time.Millisecond {
 		t.Errorf("a commit that ignores the deadline: %v in %v", out, took)
 	}
 	ignore.Store(false)
@@ -933,8 +927,9 @@ func TestTheDeadlinesAreTheInsertsOwn(t *testing.T) {
 // transaction (Aborted, or Internal of a reset stream); the re-run's
 // BeginTransaction or Commit is then refused with each code that, after one
 // run, would be Failed or proves nothing about the first commit. The rows
-// landed, so the outcome must not refund: it is Unknown, and the caller's
-// read-back finds the row. (The review of #2019 reproduced Failed here.)
+// landed, so the outcome must not refund: the error proves nothing, and the
+// read-back finds the row, Landed. (The review of #2019 reproduced Failed
+// here.)
 func TestALostAnswerThenARefusalIsNeverFailed(t *testing.T) {
 	for _, lost := range []struct {
 		code    codes.Code
@@ -966,23 +961,21 @@ func TestALostAnswerThenARefusalIsNeverFailed(t *testing.T) {
 					t.Errorf("%s: the first commit did not apply", name)
 				}
 				moneySafe(t, name, out, applied)
-				if out != Unknown {
-					t.Errorf("%s: %v, want unknown", name, out)
-				}
-				if mine, err := s.AuthorizationExists(context.Background(), a.AuthorizationID); err != nil || !mine {
-					t.Errorf("%s: the caller's read-back: %v %v", name, mine, err)
+				if out != Landed {
+					t.Errorf("%s: %v, want landed", name, out)
 				}
 			}
 		}
 	}
 }
 
-// TestAReSentCommitsRefusalIsUnknown: the first commit applies and its
+// TestAReSentCommitsRefusalIsReadBack: the first commit applies and its
 // answer is lost as Unavailable, so the client re-sends the commit of the
 // same transaction, and the re-send is refused: as a transaction Spanner
 // has forgotten (NotFound, FailedPrecondition) or as credentials refused.
-// No guarantee says the first did not apply, and it did: Unknown.
-func TestAReSentCommitsRefusalIsUnknown(t *testing.T) {
+// No guarantee says the first did not apply, and it did: not Failed but
+// read back, and found, Landed.
+func TestAReSentCommitsRefusalIsReadBack(t *testing.T) {
 	for _, code := range []codes.Code{codes.NotFound, codes.FailedPrecondition, codes.PermissionDenied,
 		codes.Unauthenticated} {
 		s, _ := faultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
@@ -1001,8 +994,8 @@ func TestAReSentCommitsRefusalIsUnknown(t *testing.T) {
 		out := s.InsertLeasedAuthorization(context.Background(), a, r)
 		applied := landed(t, a)
 		moneySafe(t, code.String(), out, applied)
-		if !applied || out != Unknown {
-			t.Errorf("%v: %v, applied %v; want unknown, applied", code, out, applied)
+		if !applied || out != Landed {
+			t.Errorf("%v: %v, applied %v; want landed, applied", code, out, applied)
 		}
 	}
 }
@@ -1033,62 +1026,420 @@ func TestARowUnderOurIDNamingAnotherReservationIsNotOurs(t *testing.T) {
 	}
 }
 
+// TestADeadlineAfterTheCallbackBeganIsNeverFailed: the deadline comes
+// just after the callback marked its transaction begun and before anything
+// else it does. A commit may follow, so the outcome is never Failed (which
+// refunds): it is Unknown, read back. (A run counted after the mark left a
+// window in which the deadline read no run, and Failed.)
+func TestADeadlineAfterTheCallbackBeganIsNeverFailed(t *testing.T) {
+	s := spikeStore(t)
+	var once atomic.Bool
+	leasedBegun = func() {
+		if once.CompareAndSwap(false, true) {
+			time.Sleep(InsertDeadline + 300*time.Millisecond)
+		}
+	}
+	defer func() { leasedBegun = func() {} }()
+	a, r := leasedRows("")
+	out := s.InsertLeasedAuthorization(context.Background(), a, r)
+	s.WaitLeasedInserts()
+	moneySafe(t, "begun at the deadline", out, landed(t, a))
+	if out != Unknown {
+		t.Errorf("%v, want unknown", out)
+	}
+}
+
+// --- the client's session ------------------------------------------------
+
+// lateSession is a fault that refuses every session until after a first
+// insert's deadline (the client retries it, without the deadline), and
+// records every BeginTransaction and Commit, and when a session is made.
+type lateSession struct {
+	opened time.Time
+	mu     sync.Mutex
+	made   bool
+	sent   []string
+}
+
+func (l *lateSession) fault(ctx context.Context, method string, call int, invoke func() error) error {
+	switch method {
+	case createSessionMethod:
+		if time.Since(l.opened) < InsertDeadline+time.Second {
+			return status.Error(codes.Unavailable, "no session yet")
+		}
+		err := invoke()
+		l.mu.Lock()
+		l.made = l.made || err == nil
+		l.mu.Unlock()
+		return err
+	case beginTransactionMethod, commitMethod:
+		l.mu.Lock()
+		l.sent = append(l.sent, method)
+		l.mu.Unlock()
+	}
+	return invoke()
+}
+
+func (l *lateSession) seen() (made bool, sent []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.made, append([]string(nil), l.sent...)
+}
+
+// sessionWorkers counts the Spanner clients' session workers running in
+// the process (sessionManager.createMultiplexedSession, one a client).
+func sessionWorkers() int {
+	buf := make([]byte, 1<<24)
+	n := runtime.Stack(buf, true)
+	return strings.Count(string(buf[:n]), ").createMultiplexedSession(")
+}
+
+// waitInserts is WaitLeasedInserts, bounded so a test cannot hang on it.
+func waitInserts(t *testing.T, s *Store) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		s.WaitLeasedInserts()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(70 * time.Second):
+		t.Fatal("the leased inserts' transactions did not end")
+	}
+}
+
+// TestARowNotOursColumnForColumnIsNeverAnswered: a row under our
+// authorization id that names our reservation but not our content (no
+// commit of ours writes one) is not Landed: the edge answers a 200 only for
+// a row whose content it read back as its own. It is Unknown (the 503, the
+// hold kept), not ScopeTaken either, which would refund.
+func TestARowNotOursColumnForColumnIsNeverAnswered(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	for name, change := range map[string]func(*gwauth.AuthorizationRow){
+		"payload":     func(a *gwauth.AuthorizationRow) { a.Payload = `{"id":"another"}` },
+		"estimate":    func(a *gwauth.AuthorizationRow) { a.EstimatedMicrodollars++ },
+		"fingerprint": func(a *gwauth.AuthorizationRow) { a.IdempotencyFingerprint = "another" },
+		"boot":        func(a *gwauth.AuthorizationRow) { a.StageDBootKid = "another" },
+		"model":       func(a *gwauth.AuthorizationRow) { a.ModelID = "another/model" },
+		"provider":    func(a *gwauth.AuthorizationRow) { a.Provider = "another" },
+		"usage type":  func(a *gwauth.AuthorizationRow) { a.UsageType = "BYOK" },
+		"created at":  func(a *gwauth.AuthorizationRow) { a.CreatedAt = a.CreatedAt.Add(time.Microsecond) },
+		"nonce": func(a *gwauth.AuthorizationRow) {
+			nonce := "n"
+			a.InvocationNonce = &nonce
+		},
+	} {
+		a, r := leasedRows("")
+		theirs := a
+		change(&theirs)
+		if err := pythonInsert(ctx, shared, theirs, r); err != nil {
+			t.Fatal(err)
+		}
+		if out := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
+			t.Errorf("%s: %v, want unknown", name, out)
+		}
+	}
+	// Our rows as written, then a column ours leaves NULL set (or one ours
+	// sets made NULL where ours is empty): not ours either.
+	for column, value := range map[string]string{
+		"terminal_at": "CURRENT_TIMESTAMP()", "gateway_request_id": "'x'", "finalization_outcome": "'settled'",
+		"finalized_cost_microdollars": "1", "started_at": "CURRENT_TIMESTAMP()", "heartbeat_seq": "1",
+		"heartbeat_at": "CURRENT_TIMESTAMP()", "heartbeat_hash": "'h'", "selected_endpoint_id": "'e'",
+		"delivered_usage": "'{}'", "pricing_snapshot": "'{}'", "stage_d_boot_kid": "NULL",
+	} {
+		a, r := leasedRows("")
+		if column == "stage_d_boot_kid" {
+			a.StageDBootKid = ""
+		}
+		if err := pythonInsert(ctx, shared, a, r); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{SQL: "UPDATE tr_gateway_authorization SET " + column + " = " +
+				value + " WHERE authorization_id = @id", Params: map[string]any{"id": a.AuthorizationID}})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if out := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
+			t.Errorf("%s set: %v, want unknown", column, out)
+		}
+	}
+	// The positive control: our own rows are Landed.
+	a, r := leasedRows("")
+	if err := pythonInsert(ctx, shared, a, r); err != nil {
+		t.Fatal(err)
+	}
+	if out := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
+		t.Errorf("our own rows: %v, want landed", out)
+	}
+}
+
 // TestASessionAfterTheDeadlineSendsNothing: the client cannot make a
 // session until after the insert's deadline, so the insert is Failed at the
-// deadline with its transaction still waiting; when the session comes, the
-// transaction runs on a context that has ended, and nothing reaches Spanner
-// that could commit: no BeginTransaction or Commit on a live context, and
-// no row.
+// deadline with its transaction still waiting. When the session comes the
+// transaction takes it on a context that has not ended, so the client's
+// session worker, which exits for good when it serves an ended one, still
+// runs; its callback then refuses, so nothing is sent at all, on any
+// context: no BeginTransaction, no Commit, no row. The positive control:
+// the waiting transaction got its session and its callback ran and refused
+// (refusedLate), so the test saw something late.
 func TestASessionAfterTheDeadlineSendsNothing(t *testing.T) {
-	var mu sync.Mutex
-	var sessionOK bool
-	var live []string
-	opened := time.Now()
-	s, _ := openFaultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
-		switch method {
-		case createSessionMethod:
-			if time.Since(opened) < InsertDeadline+time.Second {
-				return status.Error(codes.Unavailable, "no session yet")
-			}
-			err := invoke()
-			mu.Lock()
-			sessionOK = sessionOK || err == nil
-			mu.Unlock()
-			return err
-		case beginTransactionMethod, commitMethod:
-			if ctx.Err() == nil {
-				mu.Lock()
-				live = append(live, method)
-				mu.Unlock()
-			}
-		}
-		return invoke()
-	})
+	late := &lateSession{opened: time.Now()}
+	s, _ := openFaultStore(t, late.fault)
+	workers := sessionWorkers()
 	a, r := leasedRows("")
 	if out := s.InsertLeasedAuthorization(context.Background(), a, r); out != Failed {
 		t.Fatalf("%v, want failed", out)
 	}
-	deadline := time.Now().Add(40 * time.Second)
-	for {
-		mu.Lock()
-		ok := sessionOK
-		mu.Unlock()
-		if ok || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	waitInserts(t, s)
+	made, sent := late.seen()
+	if !made || s.leased.refusedLate.Load() != 1 {
+		t.Fatalf("session made %v, late refusals %d: the waiting transaction never took its session",
+			made, s.leased.refusedLate.Load())
 	}
-	// What the waiting transaction does with its session, it does at once.
-	time.Sleep(time.Second)
-	mu.Lock()
-	defer mu.Unlock()
-	if !sessionOK {
-		t.Fatal("the client never made a session: the test saw nothing late")
-	}
-	if len(live) != 0 {
-		t.Errorf("sent on a live context after Failed: %v", live)
+	if len(sent) != 0 {
+		t.Errorf("sent after Failed: %v", sent)
 	}
 	if landed(t, a) {
 		t.Error("the rows of a Failed insert landed")
+	}
+	if got := sessionWorkers(); got != workers {
+		t.Errorf("%d session workers, %d before: a session take was served on an ended context", got, workers)
+	}
+	// The client is whole: the next insert takes the session and inserts.
+	a, r = leasedRows("")
+	if out := s.InsertLeasedAuthorization(context.Background(), a, r); out != Inserted || !landed(t, a) {
+		t.Errorf("after the late session: %v", out)
+	}
+}
+
+// TestAWarmedSessionNeverWaits: WarmSession waits through a client that
+// cannot make a session until after an insert's deadline, on a context that
+// does not end first, so the session worker still runs; then every insert
+// takes the session at once and inserts, and none is left waiting.
+func TestAWarmedSessionNeverWaits(t *testing.T) {
+	late := &lateSession{opened: time.Now()}
+	s, _ := openFaultStore(t, late.fault)
+	workers := sessionWorkers()
+	start := time.Now()
+	if err := s.WarmSession(); err != nil {
+		t.Fatal(err)
+	}
+	if made, _ := late.seen(); !made || time.Since(start) < InsertDeadline {
+		t.Fatalf("warmed after %v, session made %v: the test saw nothing late", time.Since(start), made)
+	}
+	if got := sessionWorkers(); got != workers {
+		t.Errorf("%d session workers, %d before", got, workers)
+	}
+	var wg sync.WaitGroup
+	outs := make([]InsertOutcome, 3)
+	for i := range outs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a, r := leasedRows("")
+			outs[i] = s.InsertLeasedAuthorization(context.Background(), a, r)
+		}()
+	}
+	wg.Wait()
+	waitInserts(t, s)
+	for i, out := range outs {
+		if out != Inserted {
+			t.Errorf("insert %d after the warm-up: %v", i, out)
+		}
+	}
+	if n := s.leased.refusedLate.Load(); n != 0 {
+		t.Errorf("%d transactions waited for a session after the warm-up", n)
+	}
+}
+
+// closeEarly runs TestTheClientClosesAfterItsWaitingInsert's positive
+// control in a process of its own: the client closed while an insert's
+// transaction waits for its session panics, which ends the process.
+const closeEarly = "FASTPATH_STORE_CLOSE_EARLY"
+
+// TestTheClientClosesAfterItsWaitingInsert (§8.4): closing the client while
+// an insert's transaction still waits for its session panics in the client
+// library (a send on its closed session-request channel), so the process
+// closes it only after WaitLeasedInserts. Here the client closes after the
+// wait and nothing panics; the positive control, in a process of its own,
+// closes it without waiting and the process dies of that panic.
+func TestTheClientClosesAfterItsWaitingInsert(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	late := &lateSession{opened: time.Now()}
+	s, c := openFaultStore(t, late.fault)
+	a, r := leasedRows("")
+	if out := s.InsertLeasedAuthorization(context.Background(), a, r); out != Failed {
+		t.Fatalf("%v, want failed", out)
+	}
+	if os.Getenv(closeEarly) == "1" {
+		c.Close()
+		time.Sleep(5 * time.Second)
+		return
+	}
+	waitInserts(t, s)
+	c.Close()
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTheClientClosesAfterItsWaitingInsert$", "-test.count=1")
+	cmd.Env = append(os.Environ(), closeEarly+"=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "send on closed channel") {
+		t.Fatalf("closing the client under a waiting insert: %v\n%s", err, out)
+	}
+}
+
+// --- the money-safety invariants under concurrency (§8.4) -----------------
+
+// scopeRows counts the reservations of a scope, and of those the ones whose
+// authorization row is there too.
+func scopeRows(t *testing.T, scope string) (reservations, authorizations int) {
+	t.Helper()
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL: `SELECT r.authorization_id, a.authorization_id IS NOT NULL FROM tr_reservation r
+		      LEFT JOIN tr_gateway_authorization a ON a.authorization_id = r.authorization_id
+		      WHERE r.idempotency_scope = @scope`,
+		Params: map[string]any{"scope": scope},
+	}).Do(func(row *spanner.Row) error {
+		var id spanner.NullString
+		var paired bool
+		if err := row.Columns(&id, &paired); err != nil {
+			return err
+		}
+		reservations++
+		if paired {
+			authorizations++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reservations, authorizations
+}
+
+// TestOneIdempotencyKeyTwiceAtOnce: authorizations of one scope (the same
+// idempotency key twice, with the same body or not) inserted at once: one
+// lands, Inserted; every other is ScopeTaken, refunds, and lands nothing.
+// No two holds answer for one scope, and none answers without its rows.
+func TestOneIdempotencyKeyTwiceAtOnce(t *testing.T) {
+	s := spikeStore(t)
+	for round := 0; round < 5; round++ {
+		scope := storetest.UniqueID("ws") + "#kh#" + storetest.UniqueID("idem")
+		const n = 6
+		outs := make([]InsertOutcome, n)
+		rows := make([]gwauth.AuthorizationRow, n)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range outs {
+			a, r := leasedRows(scope)
+			rows[i] = a
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				outs[i] = s.InsertLeasedAuthorization(context.Background(), a, r)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		inserted := 0
+		for i, out := range outs {
+			applied := landed(t, rows[i])
+			moneySafe(t, fmt.Sprintf("round %d insert %d", round, i), out, applied)
+			switch out {
+			case Inserted:
+				inserted++
+			case ScopeTaken:
+			default:
+				t.Errorf("round %d insert %d: %v, want inserted or scope_taken", round, i, out)
+			}
+		}
+		if res, auths := scopeRows(t, scope); inserted != 1 || res != 1 || auths != 1 {
+			t.Errorf("round %d: %d inserted, %d reservations and %d authorizations of the scope; want one each",
+				round, inserted, res, auths)
+		}
+	}
+}
+
+// TestARetryAfterUnknownNeverHoldsTwice: an insert whose commit applied but
+// whose answer and read-back were both lost is Unknown (the 503, the hold
+// kept); the enclave's retry of the same idempotency key, under new ids,
+// is ScopeTaken (refund, and Python replays the first). An insert whose
+// commit never applied is Unknown too when its read-back is lost, and then
+// the retry inserts. Either way the scope holds one reservation, and no
+// refund follows a commit that applied.
+func TestARetryAfterUnknownNeverHoldsTwice(t *testing.T) {
+	for _, applies := range []bool{true, false} {
+		var commits atomic.Int32
+		s, _ := faultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
+			switch method {
+			case commitMethod:
+				if commits.Add(1) == 1 {
+					if applies {
+						if err := invoke(); err != nil {
+							return err
+						}
+					}
+					return status.Error(codes.DeadlineExceeded, "lost")
+				}
+			case streamingReadMethod:
+				return status.Error(codes.Unavailable, "read-back lost")
+			}
+			return invoke()
+		})
+		scope := storetest.UniqueID("ws") + "#kh#" + storetest.UniqueID("idem")
+		first, firstReservation := leasedRows(scope)
+		out := s.InsertLeasedAuthorization(context.Background(), first, firstReservation)
+		applied := landed(t, first)
+		moneySafe(t, "the first", out, applied)
+		if out != Unknown || applied != applies {
+			t.Fatalf("applies %v: the first insert %v, landed %v; want unknown", applies, out, applied)
+		}
+		// The retry, through a store whose read-back works.
+		retry, retryReservation := leasedRows(scope)
+		want := ScopeTaken
+		if !applies {
+			want = Inserted
+		}
+		out = spikeStore(t).InsertLeasedAuthorization(context.Background(), retry, retryReservation)
+		moneySafe(t, "the retry", out, landed(t, retry))
+		if out != want {
+			t.Errorf("applies %v: the retry %v, want %v", applies, out, want)
+		}
+		if res, auths := scopeRows(t, scope); res != 1 || auths != 1 {
+			t.Errorf("applies %v: %d reservations, %d authorizations of the scope; want one", applies, res, auths)
+		}
+	}
+}
+
+// TestPythonAndTheEdgeRaceForAScope: Python's leased insert and the edge's
+// of one scope at once: exactly one lands; the edge's is Inserted exactly
+// when Python's failed, and otherwise ScopeTaken with nothing of its own.
+func TestPythonAndTheEdgeRaceForAScope(t *testing.T) {
+	s := spikeStore(t)
+	for round := 0; round < 8; round++ {
+		scope := storetest.UniqueID("ws") + "#kh#" + storetest.UniqueID("idem")
+		pa, pr := leasedRows(scope)
+		ga, gr := leasedRows(scope)
+		var pyErr error
+		var out InsertOutcome
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); pyErr = pythonInsert(context.Background(), shared, pa, pr) }()
+		go func() { defer wg.Done(); out = s.InsertLeasedAuthorization(context.Background(), ga, gr) }()
+		wg.Wait()
+		ours := landed(t, ga)
+		moneySafe(t, fmt.Sprintf("round %d", round), out, ours)
+		if (out == Inserted) != (pyErr != nil) || (out != Inserted && out != ScopeTaken) || landed(t, pa) == ours {
+			t.Errorf("round %d: edge %v (landed %v), Python %v", round, out, ours, pyErr)
+		}
+		if res, auths := scopeRows(t, scope); res != 1 || auths != 1 {
+			t.Errorf("round %d: %d reservations, %d authorizations of the scope", round, res, auths)
+		}
 	}
 }

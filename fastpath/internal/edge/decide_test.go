@@ -451,13 +451,13 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 		switch c.Expect.Outcome {
 		case "answer", "unavailable":
 			if why, ok := evaluatorPasses[c.Name]; ok {
-				if d.Pass != PassEvaluate || d.Shadow != nil {
+				if d.Pass != PassEvaluate || d.ForShadow() != nil {
 					t.Errorf("%s: %q, want the evaluator's pass (%s)", c.Name, d.Pass, why)
 				}
 				evaluatorPassed++
 				continue
 			}
-			if d.Pass != "" || d.Shadow == nil {
+			if d.Pass != "" || d.ForShadow() == nil {
 				t.Errorf("%s: passed %q, want a decision", c.Name, d.Pass)
 				continue
 			}
@@ -465,14 +465,14 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 				admitted++
 				continue
 			}
-			if !checkAnswered(t, c, d.Shadow) {
+			if !checkAnswered(t, c, d.ForShadow()) {
 				continue
 			}
 			answered++
 		case "pass":
 			seen[c.Expect.Reason] = true
 			if postAdmission(c.Expect.Reason) {
-				if d.Pass != "" || d.Shadow == nil {
+				if d.Pass != "" || d.ForShadow() == nil {
 					t.Errorf("%s: passed %q before the admit; Python's reason is %s", c.Name, d.Pass, c.Expect.Reason)
 					continue
 				}
@@ -485,7 +485,7 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 				t.Errorf("%s: passed %q, want %q", c.Name, d.Pass, c.Expect.Reason)
 				continue
 			}
-			if d.Shadow != nil {
+			if d.ForShadow() != nil {
 				t.Errorf("%s: a decision for a request passed before the decide row", c.Name)
 				continue
 			}
@@ -645,7 +645,7 @@ func baseInputs(t *testing.T) (DecideInputs, authorizeCase) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
 	in, _ := caseInputs(t, f, c)
-	if d := Decide(in); d.Pass != "" || d.Shadow == nil {
+	if d := Decide(in); d.Pass != "" || d.ForShadow() == nil {
 		t.Fatalf("the base case passes: %q", d.Pass)
 	}
 	return in, c
@@ -691,8 +691,8 @@ func TestTheGateReadsTheCachesWord(t *testing.T) {
 		{"broadcast", func(r *gwstate.Read) { r.Facts.BroadcastDestination = true }, PassWorkspaceBroadcast},
 		{"not found", func(r *gwstate.Read) { r.Found = false }, PassKeyMissing},
 	} {
-		if got := Decide(withRead(t, in, v.change)); got.Pass != v.want || got.Shadow != nil {
-			t.Errorf("%s: passed %q (decision %v), want %q", v.name, got.Pass, got.Shadow != nil, v.want)
+		if got := Decide(withRead(t, in, v.change)); got.Pass != v.want || got.ForShadow() != nil {
+			t.Errorf("%s: passed %q (decision %v), want %q", v.name, got.Pass, got.ForShadow() != nil, v.want)
 		}
 	}
 	if got := Decide(withRead(t, in, func(*gwstate.Read) {})); got.Pass != "" {
@@ -854,8 +854,8 @@ func TestThePilotGates(t *testing.T) {
 			t.Errorf("%s: passed %q, want %q", v.name, got.Pass, v.want)
 			continue
 		}
-		if v.stageD != "" && got.Shadow.Input.StageDReason != v.stageD {
-			t.Errorf("%s: stage d %q, want %q", v.name, got.Shadow.Input.StageDReason, v.stageD)
+		if v.stageD != "" && got.ForShadow().Input.StageDReason != v.stageD {
+			t.Errorf("%s: stage d %q, want %q", v.name, got.ForShadow().Input.StageDReason, v.stageD)
 		}
 	}
 }
@@ -883,8 +883,8 @@ func TestTheDecideRowIsLastAndTheShadowStillDecides(t *testing.T) {
 		in := in
 		in.Decide = v.view
 		got := Decide(in)
-		if got.Pass != v.want || got.DecideGate != v.want || got.Shadow == nil {
-			t.Errorf("%s: pass %q gate %q decision %v, want %q", v.name, got.Pass, got.DecideGate, got.Shadow != nil, v.want)
+		if got.Pass != v.want || got.DecideGate != v.want || got.ForShadow() == nil {
+			t.Errorf("%s: pass %q gate %q decision %v, want %q", v.name, got.Pass, got.DecideGate, got.ForShadow() != nil, v.want)
 		}
 	}
 }
@@ -978,7 +978,7 @@ func TestTheFingerprintCorpusThroughThePipeline(t *testing.T) {
 				Header: h, Body: []byte(c.Body), Boot: boot},
 			Snapshot: snap, Policy: &p, Lookup: lookup, Decide: decideAll(&p, c.WorkspaceID, at),
 		})
-		if d.Shadow == nil {
+		if d.ForShadow() == nil {
 			passedReasons[d.Pass]++
 			continue
 		}
@@ -992,13 +992,13 @@ func TestTheFingerprintCorpusThroughThePipeline(t *testing.T) {
 				t.Errorf("%s: decided a body labelled %s", c.Name, l)
 			}
 		}
-		if d.Shadow.Identity.Fingerprint != c.Expect.Fingerprint {
-			t.Errorf("%s: fingerprint %s, Python's %s", c.Name, d.Shadow.Identity.Fingerprint, c.Expect.Fingerprint)
+		if d.ForShadow().Identity.Fingerprint != c.Expect.Fingerprint {
+			t.Errorf("%s: fingerprint %s, Python's %s", c.Name, d.ForShadow().Identity.Fingerprint, c.Expect.Fingerprint)
 		}
-		if c.Expect.IdempotencyScope != nil && d.Shadow.Identity.Scope != *c.Expect.IdempotencyScope {
-			t.Errorf("%s: scope %s, Python's %s", c.Name, d.Shadow.Identity.Scope, *c.Expect.IdempotencyScope)
+		if c.Expect.IdempotencyScope != nil && d.ForShadow().Identity.Scope != *c.Expect.IdempotencyScope {
+			t.Errorf("%s: scope %s, Python's %s", c.Name, d.ForShadow().Identity.Scope, *c.Expect.IdempotencyScope)
 		}
-		if c.Expect.IdempotencyKey == nil && d.Shadow.Identity.Presented {
+		if c.Expect.IdempotencyKey == nil && d.ForShadow().Identity.Presented {
 			t.Errorf("%s: a key presented where Python minted one", c.Name)
 		}
 	}
@@ -1094,15 +1094,15 @@ func TestOnlyACompleteDecisionIsAdmittable(t *testing.T) {
 		in := in
 		in.Decide = view
 		got := Decide(in)
-		if got.Pass == "" || got.Shadow == nil {
-			t.Fatalf("%+v: pass %q, shadow %v", view, got.Pass, got.Shadow != nil)
+		if got.Pass == "" || got.ForShadow() == nil {
+			t.Fatalf("%+v: pass %q, shadow %v", view, got.Pass, got.ForShadow() != nil)
 		}
 		if d, ok := got.Admit(); ok || d != nil {
 			t.Fatalf("%+v: admittable with %q", view, got.Pass)
 		}
 	}
 	for _, reason := range []string{PassDecideOff, PassCacheDecide, PassKeyMissing} {
-		if d, ok := (Decided{Pass: reason, Shadow: &Decision{}}).Admit(); ok || d != nil {
+		if d, ok := (Decided{Pass: reason, shadowOnly: &Decision{}}).Admit(); ok || d != nil {
 			t.Fatalf("%s: admittable", reason)
 		}
 	}

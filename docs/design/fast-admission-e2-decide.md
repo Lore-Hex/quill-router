@@ -17,8 +17,10 @@ authorization row payload that Python settles from.
 
 Line citations are against `origin/main` at `bc5a19c16`.
 
-Status (G10): the decide pipeline and its full-response shadow are built
-and dark (`-edge-decide-shadow`, default off); nothing answers.
+Status (G11): the decide pipeline, its full-response shadow
+(`-edge-decide-shadow`) and the decide path that admits, inserts and
+answers (`-edge-decide`) are built and dark: both flags default off, and
+the decide table is empty, so nothing answers.
 
 ## 1. What Go answers
 
@@ -43,9 +45,11 @@ The flow, per request, in this order:
 6. Compose everything but the envelope (§5, §6).
 7. `FrontDoor.Authorize` in process. Anything but `Admitted` passes.
 8. Insert the two rows in one read-write transaction with a 1.5 s deadline
-   (§8.4): `Inserted` and `Landed` answer 200; `ScopeTaken` and `Failed`
-   refund and pass; `Unknown` reads the authorization back by id, answering 200 if it
-   landed and Python's 503 (hold kept) if not.
+   (§8.4); after an `AlreadyExists`, or an error after which the commit may
+   have applied, the store reads our authorization back by id once, with
+   its own 0.5 s: `Inserted` and `Landed` (the row read back is ours) answer
+   200; `ScopeTaken` and `Failed` refund and pass; `Unknown` (no row of ours
+   found, or the read failed) answers Python's 503, the hold kept.
 9. Render: append `timing` (§6) and write the bytes.
 
 ## 2. Decisions
@@ -66,11 +70,11 @@ The flow, per request, in this order:
 3. **Flow.** Gate on cached cohort facts, then the evaluator (`Answered`,
    all candidates Credits, no estimated-usage model), then compose, then
    `FrontDoor.Authorize` (non-`Admitted` passes), then the insert with a
-   1.5 s deadline: `Inserted` and `Landed` answer; `ScopeTaken` refunds and
-   passes; `Failed`
-   refunds and passes; `Unknown` reads back by id (landed: 200, else 503
-   with the hold kept). Which commit errors are which is §8.4: only an
-   error that proves nothing applied is `Failed`. No scope pre-read: the
+   1.5 s deadline and, when its error proves nothing, its one read-back by
+   id: `Inserted` and `Landed` answer; `ScopeTaken` refunds and passes;
+   `Failed` refunds and passes; `Unknown` answers 503 with the hold kept.
+   Which commit errors are which is §8.4: only an error that proves nothing
+   applied is `Failed`. No scope pre-read: the
    unique index `tr_reservation_by_idemp` arbitrates. No key presented:
    mint a uuid4, as Python does (`gateway.py:1119-1120`).
 4. **Fingerprint.** Pass any body with a JSON float or exponent anywhere, a
@@ -111,14 +115,22 @@ The flow, per request, in this order:
     us-central1 only; `rollout.sh` must render `settle_outbox_enabled` the
     same in every region before any other region gets a row.
 12. **Busy is a pass, and the budgets fit the enclave's timeout.** `Busy`
-    or an owner timeout passes, never a 503. The decide budget, 1.5 s, is
-    the deadline of the context `FrontDoor.Authorize` gets, so it cuts
-    each owner's `OwnerWait` short; past it the request passes. Once
-    admitted, the insert has its own 1.5 s and a read-back 0.5 s (§8.4); a
-    refund runs asynchronously with its own 1 s and never delays the pass
-    (a refund not sent ends with the lease, as Python's does). Worst case:
-    an answer 3.5 s after arrival (1.5 + 1.5 + 0.5); a pass forwarded 3.5 s
-    after arrival (an `AlreadyExists` check after a full insert). The
+    or an owner timeout passes, never a 503. The decide budget, 1.5 s from
+    the request's arrival at the edge, is the deadline of the context
+    `FrontDoor.Authorize` gets, so it cuts each owner's `OwnerWait` short;
+    past it the request passes (`budget.spent`), and a budget already spent
+    before the admit (a slow boot read) asks no owner. Once admitted, the
+    insert has its own 1.5 s and then at most one read-back of 0.5 s, which
+    the store makes itself after an `AlreadyExists` or an error that proves
+    nothing (§8.4); the caller never reads back again. A refund runs
+    asynchronously with its own 1 s and never delays the pass (a refund not
+    sent ends with the lease, as Python's does). Worst case: an answer
+    3.5 s after arrival (1.5 + 1.5 + 0.5: an outcome not known, read back);
+    a pass forwarded 3.5 s after arrival (an `AlreadyExists` read back after
+    a full insert). Everything after the decision runs detached from the
+    request's context: an enclave that hangs up neither cancels an admit,
+    which would leave its hold behind, nor turns a commit into `Canceled`;
+    these budgets alone bound it. The
     enclave allows 25 s for response headers per attempt
     (`ResponseHeaderTimeout`, quill-cloud-proxy
     `enclave-go/internal/trustedrouter/http_client_direct.go:37`) and 28 s
@@ -142,7 +154,13 @@ The flow, per request, in this order:
     pydantic-core's float format. Error bodies (the 503) are Starlette's
     `JSONResponse`, `json.dumps`. Python's GZip middleware (`middleware.py:132`,
     `minimum_size=1_000`) compresses only for a caller that accepts gzip;
-    Go never compresses.
+    Go never compresses. The edge's own answers carry only `Content-Type`,
+    `Content-Length` and, on the 503, `Retry-After`: none of the headers
+    Python's middleware adds to its responses (`X-TrustedRouter-Request-Id`,
+    `Strict-Transport-Security` and the rest, `middleware.py`). The enclave
+    reads none of them. What is lost is the request id: an authorize the
+    edge answers has no Python request id to correlate with Python's logs;
+    its authorization id (in the body and both rows) is the handle instead.
 14. **Per-key in-flight limit** at the edge, from the policy's
     `gateway_authorize_max_in_flight_per_key`; over the limit passes. Go
     never learns "exhausted" from `Busy`.
@@ -919,7 +937,7 @@ type ReservationRow struct {
 }
 ```
 
-### 8.4 Admission and store (G4, G9)
+### 8.4 Admission and store (G4, G9, G11)
 
 ```go
 package edge
@@ -937,9 +955,19 @@ an atomic holder `admission()` fills; empty, every decide passes with
 `owner.unreachable`. `AuthorizeOf` is `{Workspace, Request:
 authorization id, Estimate, Stream: false, Boot: []byte(kid)}`
 (`frontdoor.go:184-198`), as Python sends it (`gateway.py:5087-5093`). The
-refund after `ScopeTaken` or `Failed` is `RefundOf{Envelope, Money:
+refund after `ScopeTaken` or `Failed` (or a `Finish` that refuses after
+`Admitted`) is `RefundOf{Envelope, Money:
 []byte(`{"charge":0,"estimate":0}`)}`, Python's
-`_fastpath_release_after_failure` (`gateway.py:5104-5133`).
+`_fastpath_release_after_failure` (`gateway.py:5104-5133`), sent beside the
+pass on a context of its own with 1 s. An `Admitted` with no envelope
+passes (`owner.invalid`), with nothing to refund with.
+
+The decide path (G11, `fastpath/internal/edge/decide_path.go`) admits only
+a decision `Decided.Admit` hands out: `Decided`'s decision is unexported,
+read through `ForShadow` by the shadow alone, and a parser test holds both
+rules. Before the admit, the request takes a slot of its lookup hash's
+in-flight count (`fastpath/internal/edge/inflight.go`, decision 14), held
+to its answer; past the policy's limit it passes (`inflight.key`).
 
 ```go
 package store
@@ -948,14 +976,18 @@ type InsertOutcome int
 
 const (
 	Inserted   InsertOutcome = iota
-	Landed     // AlreadyExists, and the row under our authorization id is ours
-	ScopeTaken // AlreadyExists, and our authorization id has no row
-	Unknown    // the commit may have applied
+	Landed     // AlreadyExists or an outcome not known, and the row read back is ours
+	ScopeTaken // AlreadyExists, and our authorization id has no row of ours
+	Unknown    // the commit may have applied, and no row of ours was read back
 	Failed     // proven not applied
 )
 
+// The outcome after the store's one read-back: the caller reads nothing back.
 func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow, r gwauth.ReservationRow) InsertOutcome
-func (s *Store) AuthorizationExists(ctx context.Context, authorizationID string) (bool, error)
+
+// Waits for every transaction an insert began, those still waiting for the
+// client's session included; the process calls it before closing the client.
+func (s *Store) WaitLeasedInserts()
 ```
 
 The insert is one `client.ReadWriteTransactionWithOptions` (tag
@@ -970,28 +1002,72 @@ returns:
 | Error | Outcome | Then |
 |---|---|---|
 | none | `Inserted` | answer |
-| any, with the callback never run before the deadline (no session, no transaction began); checked first | retried once within the deadline; still failing, or the deadline reached first, `Failed` | refund, pass: nothing was sent, and the transaction left behind runs on a context that has ended, on which gRPC sends nothing; so this is never a 503 |
-| `AlreadyExists` | read our id back, strong, with a 0.5 s deadline on a fresh context: a row naming our reservation is `Landed`; no row, or one naming another reservation, is `ScopeTaken`; a read error goes on as `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
+| any, with the callback never run before the deadline (no session, no transaction began); checked first | retried once within the deadline; still failing, or the deadline reached first, `Failed` | refund, pass: nothing was sent, and nothing will be: a transaction still waiting for its session at the deadline is abandoned, and its callback refuses when the session comes; so this is never a 503 |
+| `AlreadyExists` | read our id back, strong, with a 0.5 s deadline on a fresh context: a row that is ours column for column is `Landed` (every column but the retired spend-lease ones: the ids, workspace, key, model, provider, usage type, estimate, `created_at`, payload, fingerprint, boot kid and invocation nonce equal to ours, a NULL told from an empty string, and `settled` false with `terminal_at`, `gateway_request_id` and the nine typed columns ours leaves NULL still NULL); no row, or one naming another reservation, is `ScopeTaken`; one naming our reservation with other content, or a read error, is `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
 | `Aborted`, `InvalidArgument`, `OutOfRange`, `Unimplemented`, with the callback run exactly once | `Failed` | refund, pass: Spanner applied nothing, and these codes are the request's own, so a re-sent commit is answered as the first was |
 | `NotFound`, `FailedPrecondition`, `PermissionDenied`, `Unauthenticated`, once the callback has run | `Unknown` | as below: the client re-sends a commit that met `Unavailable` or `ResourceExhausted`, of the same transaction, and returns the re-send's answer. Spanner answers a re-sent commit with the first one's outcome while it remembers the transaction, but nothing guarantees that a re-send refused as a forgotten transaction or for its credentials followed a first commit that did not apply |
 | any code but `AlreadyExists`, with the callback run more than once | `Unknown` | as below: the client re-runs the whole transaction after `Aborted`, `ResourceExhausted` with a retry delay, or `Internal` of a broken stream (`retry.go`, `runWithRetryOnAbortedOrFailedInlineBegin`), each of which can be the lost answer to a first commit that applied; the re-run's error proves nothing about it |
-| `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the deadline reached with the callback run, any error that is not a gRPC status | `Unknown` | `AuthorizationExists` with a fresh 0.5 s deadline of its own: true answers as after a read-back; false or a read error answers decision 1's 503 and keeps the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
+| `DeadlineExceeded`, `Canceled`, `Unavailable`, `Internal`, `Unknown`, `ResourceExhausted`, `DataLoss`, the deadline reached with the callback run, any error that is not a gRPC status | `Unknown`, read back | the store reads our id back once, as after `AlreadyExists`, with a fresh 0.5 s deadline of its own: a row of ours is `Landed` and answers as after a read-back; anything else stays `Unknown` and answers decision 1's 503, keeping the hold, as Python does (`storage_gcp.py:5130-5146`, `gateway.py:1794-1807`) |
 
 So `Failed` is only an error before the callback ran, or, with the callback
 run exactly once, a code the request alone determines. The insert ends at
-its 1.5 s deadline with no grace: the client waits for a session without
-the context (up to its own 30 s), so the transaction runs in a goroutine
-and the insert returns at the deadline whatever it is doing, `Failed` if
-the callback never ran by then and `Unknown` if it did. A Spanner client
-must not be closed while such a transaction still waits for its session:
-the client library panics (a send on its closed session-request channel).
+its 1.5 s deadline with no grace, and then makes at most its one 0.5 s
+read-back. The client (v1.88) waits for its multiplexed session without
+the context (up to its session worker's 30 s a creation), so the
+transaction runs in a goroutine and the insert returns at the deadline
+whatever it is doing: `Failed` if the callback never began by then, and
+`Unknown` (read back) if it did. A callback run is counted before the
+callback marks its transaction begun, so a deadline that finds it begun
+always finds a run (and never answers `Failed`). Three rules follow from
+the client:
+
+- The process makes the client's session first (`Store.WarmSession`, the
+  first thing `service.Run` does with the client): once the client has
+  its multiplexed session it keeps it, and a take returns it at once, so
+  no take of the process's (the edge's boot reads and cache fills among
+  them) ever waits. The warm-up is one strong read on a context of its own
+  that outlasts the two 30 s creations its take can wait behind; a node
+  that gets no session does not start.
+- The transaction's context never ends while its session take may wait:
+  the session worker exits for good when it serves a request whose context
+  has ended (`session.go`, `createMultiplexedSession`), and the client
+  would then never refresh its session, and would panic at its close
+  behind the refresh blocked on it. Only a transaction whose callback has
+  begun has its context cancelled at the deadline; one abandoned before
+  it keeps a live context, takes its session when it comes, and its
+  callback refuses before it buffers anything, so the client neither
+  begins nor commits a transaction for it.
+- The client must not be closed while such a transaction still waits for
+  its session: the client library panics (a send on its closed
+  session-request channel). The process drains them first: at shutdown
+  the edge waits for its handlers, then its refunds, then
+  `WaitLeasedInserts`, and only then does `service.Run` return and the
+  caller close the client. With the session warmed the drain is an
+  insert's 1.5 s and a refund's 1 s at most, inside the node's 30 s stop
+  (`TimeoutStopSec`) after the hand-off (10 s) and the server's
+  `Stopping` (10 s). The refunds are best effort at shutdown: the owner
+  and the front door may stop first, and a refund they no longer serve
+  ends with the lease.
+
+`tr_reservation.created_at` is a commit-timestamp column
+(`allow_commit_timestamp`), and Spanner refuses a value in it later than
+the commit's own timestamp (`FailedPrecondition`, "Cannot write
+timestamps in the future"), for Go's rows and Python's alike, since both
+write their clock reading. Go reads that `FailedPrecondition` as `Unknown`
+(it cannot tell it from a re-sent commit's), so an edge clock ahead of
+Spanner's by more than the time from arrival to commit turns each decided
+authorize into the 503, its hold kept. GCE clocks keep within a
+millisecond of Google's time; the emulator in a container can lag its host
+by more, which the tests allow for, and G12 alerts on unavailable answers.
 
 A refund after an `Unknown` would let an enclave retry replay, through
 Python, a row whose hold was given back; so nothing that can follow an
 applied commit refunds. Every read is by primary key on
 `tr_gateway_authorization`, so no extra index is needed.
 
-**Where Go differs from Python on purpose.** An `Aborted` from a
+**Where Go differs from Python on purpose.** A `FailedPrecondition` with
+the callback run once is `Unknown` in Go (the 503, hold kept); Python
+counts it permanent and fails the request with a 500. An `Aborted` from a
 transaction whose callback ran once is `Failed` in Go (refund, pass);
 Python counts it transient and answers 503 after an empty read-back.
 `ABORTED` never applies a commit, so the refund is safe and the pass serves
@@ -1008,10 +1084,10 @@ second attempt's `AlreadyExists`, which the own-id check turns into
 commit's answer.
 
 **G9 notes.** Classify with `spanner.ErrCode(err)`, which unwraps the
-client's error types, not a raw `status.FromError`. Run the insert and
-its read-back on `context.WithoutCancel(r.Context())` with only the
-deadlines above, so an enclave that hangs up mid-commit cannot turn a
-commit into `Canceled`.
+client's error types, not a raw `status.FromError`. Run the admit, the
+insert and its read-back detached from the request
+(`context.WithoutCancel(r.Context())`) with only the deadlines above, so an
+enclave that hangs up mid-commit cannot turn a commit into `Canceled`.
 
 ## 9. The decide table (G2)
 
@@ -1103,7 +1179,9 @@ CASE = {
  "admitted": {"envelope": STR, "end_of_life_us": INT,
               "end_of_life": STR},      // the owner's text as it answered (§5's offset rule)
  "insert": "inserted" | "unknown_landed" | "unknown_not_landed"
-         | "failed_precondition" | "aborted",   // the last two: insert.failed passes
+         | "invalid_argument"                   // refused, the callback run once: Failed, insert.failed passes
+         | "failed_precondition"                // refused, run once: Unknown, unavailable
+         | "aborted",                           // Aborted once the client's re-runs are spent: Unknown, unavailable
  "request": {"path": STR, "headers": [[STR, STR]], "body": STR,
              "body_expand": {"marker": STR, "repeat": STR, "count": INT}},   // optional
  "boot": {"kid": STR, "verified": BOOL, "image_digest": STR,
@@ -1147,7 +1225,8 @@ EXPECT =
       "idempotency_scope": STR, "idempotency_fingerprint": STR,
       "expires_at_us": INT, "created_at_us": INT}}
  | {"outcome": "unavailable", "status": 503,
-    "headers": [["retry-after", "1"]], "response": STR, "timing": TIMING}
+    "headers": [["retry-after", "1"]], "response": STR, "timing": TIMING,
+    "python": {"status": INT, "type": STR | null, "leased": BOOL}}   // only when Python answered otherwise
  | {"outcome": "pass", "reason": STR,   // §3 vocabulary
     "python": {"status": INT, "type": STR | null,
                "leased": BOOL}}         // whether Python took the pilot's lease
@@ -1170,7 +1249,14 @@ that one marker replaced by `repeat` written `count` times. A Go test
 expands it before use; the Python test sends the expanded bytes.
 
 `"unknown_landed"` expects `answer`, with `tags` in sorted order (§6,
-after a read-back); `"unknown_not_landed"` expects `unavailable`. Go's
+after a read-back); `"unknown_not_landed"`, `"failed_precondition"` and
+`"aborted"` expect `unavailable`, and `"invalid_argument"` the
+`insert.failed` pass. Go's tests take a case's outcome from its insert's
+gRPC code and callback runs through `store.ClassifyInsert`, so a label
+cannot drift from §8.4's table. For `"failed_precondition"`, which
+Python fails with a 500, the response is Python's own 503 for the same
+request with the outcome unknown and not landed, and `python` records the
+500. Go's
 tests render with the case's `timing` and compare bytes exactly. A pass
 case trips exactly one §3 reason and records what Python then answered;
 every pass reason has at least one case, `body.content_type`,
@@ -1339,7 +1425,7 @@ letter: disjoint files, built in parallel.
 | P3 | 2 | Python settles Go-shaped rows (test only): settle, refund, disposition, reaper, replay (same key and fingerprint replays, another body 409s), drain | P1 |
 | G10 | 3 | `edge/decide.go` pipeline and full-response shadow, `-edge-decide-shadow` (false) | G4 to G9 |
 | I1 | 3 | Shadow on: node attributes, `TR_EDGE_POLICY_PUBLISH_ENABLED=true`; then at least 7 days of soak | G10 |
-| G11 | 4 | Decide path: admit, insert, answer; per-lookup-hash in-flight limit; `-edge-decide` (false); emulator end-to-end test | G10 |
+| G11 | 4 | Decide path (`edge/decide_path.go`): admit, insert, answer; per-lookup-hash in-flight limit (`edge/inflight.go`); `-edge-decide` (false); the store's one read-back and drain (§8.4); emulator end-to-end test | G10 |
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
 | I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, soak |
