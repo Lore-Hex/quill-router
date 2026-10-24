@@ -406,7 +406,8 @@ func TestEveryPayloadAndRowIsPythons(t *testing.T) {
 			"hold_usage_type": r.HoldUsageType, "authorization_id": r.AuthorizationID,
 			"idempotency_scope": r.IdempotencyScope, "idempotency_fingerprint": r.IdempotencyFingerprint,
 			"expires_at_us": json.Number(strconv.FormatInt(r.ExpiresAt.UnixMicro(), 10)),
-			"created_at_us": json.Number(strconv.FormatInt(r.CreatedAt.UnixMicro(), 10)),
+			// The commit's timestamp, as the store writes it (§5).
+			"created_at": "commit_timestamp",
 		}
 		ok := true
 		for column, want := range wantA {
@@ -436,7 +437,7 @@ func TestEveryPayloadAndRowIsPythons(t *testing.T) {
 		}
 		// The row timestamps are UTC microseconds (Spanner keeps
 		// nanoseconds, Python's datetime microseconds).
-		for _, ts := range []time.Time{a.CreatedAt, r.CreatedAt, r.ExpiresAt} {
+		for _, ts := range []time.Time{a.CreatedAt, r.ExpiresAt} {
 			if ts.Location() != time.UTC || ts.Nanosecond()%1000 != 0 {
 				t.Errorf("%s: row instant %v is not UTC microseconds", c.Name, ts)
 				ok = false
@@ -481,16 +482,19 @@ func TestTheReadBackSortsTags(t *testing.T) {
 }
 
 // TestTheUnavailableBodyIsPythons: decision 1's 503, byte for byte with
-// the case's timing, and its one header.
+// the case's timing, and its one header, for each insert whose outcome is
+// not known and not landed (a lost answer, and the refusals that prove
+// nothing: §8.4).
 func TestTheUnavailableBodyIsPythons(t *testing.T) {
 	f := loadGoldens(t)
 	found := 0
+	unknown := map[string]bool{"unknown_not_landed": true, "failed_precondition": true, "aborted": true}
 	for _, c := range f.Cases {
 		if c.Expect.Outcome != "unavailable" {
 			continue
 		}
 		found++
-		if c.Insert != "unknown_not_landed" || c.Expect.Status != UnavailableStatus {
+		if !unknown[c.Insert] || c.Expect.Status != UnavailableStatus {
 			t.Errorf("%s: insert %q, status %d", c.Name, c.Insert, c.Expect.Status)
 		}
 		if got := Unavailable(c.Expect.timing()); string(got) != c.Expect.Response {
@@ -500,8 +504,8 @@ func TestTheUnavailableBodyIsPythons(t *testing.T) {
 			t.Errorf("%s: headers %q", c.Name, c.Expect.Headers)
 		}
 	}
-	if found != 1 {
-		t.Fatalf("%d unavailable cases, want 1", found)
+	if found != len(unknown) {
+		t.Fatalf("%d unavailable cases, want %d", found, len(unknown))
 	}
 }
 

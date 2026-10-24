@@ -5111,7 +5111,6 @@ class SpannerStore(OperationalAnalyticsReads):
                     idempotency_scope=scope,
                     idempotency_fingerprint=idempotency_fingerprint,
                     expires_at=expires_at,
-                    created_at=when,
                 ),
                 gateway_authorization_insert_statement(pt, authorization, created_at=when),
             ]

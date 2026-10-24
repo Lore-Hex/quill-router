@@ -568,6 +568,12 @@ class _FakeTransaction:
         self._did_dml = False
         self._in_batch = False
         self.rolled_back = False
+        # Tables a statement of this transaction wrote PENDING_COMMIT_TIMESTAMP()
+        # into. docs/design/billing-typed-counters.md §5 holds such a write the
+        # transaction's last touch of its table (the emulator refuses only a
+        # read of the column itself); the fake refuses any later statement on
+        # the table, the stricter rule.
+        self._commit_timestamp_tables: set[str] = set()
 
     @_holds_commit_lock
     def execute_sql(
@@ -583,6 +589,7 @@ class _FakeTransaction:
             assert rpc_options["retry"] is None
             assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self.db.transaction_execute_sql_calls += 1
+        self._refuse_after_commit_timestamp(sql)
         if sql.startswith("UPDATE tr_credit_balance SET reserved = reserved + @est"):
             if not sql.endswith(" THEN RETURN billing_pause_causes, pause_epoch"):
                 raise ValueError("DML rows require the registered THEN RETURN columns")
@@ -787,6 +794,13 @@ class _FakeTransaction:
         self.rolled_back = True
         self.db.rollback_calls += 1
 
+    def _refuse_after_commit_timestamp(self, sql: str) -> None:
+        for table in self._commit_timestamp_tables:
+            if re.search(rf"\b{table}\b", sql):
+                raise FakeFailedPrecondition(
+                    f"{table} was written with a pending commit timestamp in this transaction"
+                )
+
     def batch_update(
         self, statements: Any, request_options: Any = None, last_statement: bool = False,
         *, retry: Any = None, timeout: Any = None,
@@ -833,6 +847,7 @@ class _FakeTransaction:
                 "mixing is forbidden (see docs §5)"
             )
         self._did_dml = True
+        self._refuse_after_commit_timestamp(sql)
         p = params or {}
         if sql.startswith("UPDATE tr_credit_balance SET total_credits = total_credits + @delta"):
             # storage_gcp_credit_debt's move: conditional on the headroom the
@@ -1500,6 +1515,11 @@ class _FakeTransaction:
                 if idemp_key not in self.read_versions:
                     self.read_versions[idemp_key] = 0  # observed absent
             record = dict(p)
+            if "PENDING_COMMIT_TIMESTAMP()" in sql:
+                # The commit's own timestamp, which nothing in the fake reads:
+                # the sentinel the module's COMMIT_TIMESTAMP mutations store.
+                record["created_at"] = _SpannerModule.COMMIT_TIMESTAMP
+                self._commit_timestamp_tables.add("tr_reservation")
             record["settled"] = False
             record["settled_usage_type"] = None
             record["actual_micro"] = None
