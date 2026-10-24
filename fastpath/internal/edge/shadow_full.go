@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -65,8 +67,9 @@ const (
 	// not followed (dropped).
 	DefaultDecideShadowJobs = 512
 	// DefaultRowSampleEvery and DefaultRowReadsPerSecond bound the row
-	// read-backs (§11): one comparable request in 20, at most 5 a second.
-	DefaultRowSampleEvery    = 20
+	// read-backs (§11): every comparable request, at most 5 a second (the
+	// limiter, not the sampling, bounds the reads Spanner serves).
+	DefaultRowSampleEvery    = 1
 	DefaultRowReadsPerSecond = 5
 	// rowReadTimeout bounds one read-back.
 	rowReadTimeout = 2 * time.Second
@@ -75,7 +78,15 @@ const (
 	defaultShadowWait = 30 * time.Second
 	// maxCriticalLogs bounds the critical lines a period logs.
 	maxCriticalLogs = 20
+	// rowSkew is the clock skew a row's instants may show beyond the
+	// request's own latency: Python's clock and the edge's are two hosts'.
+	rowSkew = time.Second
 )
+
+// AlertWouldAdmit is the alert kind (the fastpath_alert label) of a
+// would_admit_python_refused comparison: the edge would have answered an
+// authorize Python refused. Its alert policy is I1's or G12's.
+const AlertWouldAdmit = "edge_would_admit_python_refused"
 
 // The 503 bodies' messages (errors.py assert_workspace_billing_active;
 // gateway.py's insert outcome unknown, decision 1).
@@ -117,7 +128,13 @@ type DecideShadowConfig struct {
 	// Mint makes the ids Go would mint (tests pin them); the shadow
 	// compares under Python's.
 	Mint Mint
+	// Alert raises an alert of a kind (the service's alert line, labelled
+	// fastpath_alert); nil logs it.
+	Alert func(kind, subject, what string)
 }
+
+// cacheCounters is the cache's counts, when it keeps them (gwstate.Cache).
+type cacheCounters interface{ Counters() gwstate.Counters }
 
 type fullKey struct{}
 
@@ -135,6 +152,8 @@ type fullShadow struct {
 	budget int64
 
 	dropped, evictions, sampled atomic.Int64
+	// periodEvictions are this period's, for its line.
+	periodEvictions atomic.Int64
 
 	limiter struct {
 		sync.Mutex
@@ -216,22 +235,42 @@ func (sh *fullShadow) release(n int64) {
 	}
 }
 
-// pyAnswer is Python's answer as the shadow read it: its status, its
-// bytes (decoded from gzip), or why it was not read.
+// pyAnswer is Python's answer as the shadow read it: its status (0 when
+// none came), its bytes as JSON (decoded from gzip by follow), and, when
+// they were not read through, why. latency is from the request's arrival
+// to the answer's end.
 type pyAnswer struct {
-	status int
-	body   []byte
-	why    string
+	status   int
+	encoding string
+	body     []byte
+	why      string
+	latency  time.Duration
 }
 
 // fullJob is one followed request: what the pipeline reads, held at its
-// arrival, and Python's answer once it is in.
+// arrival, and Python's answer once it is in. Its tap is whoever's finishes
+// second: follow, at its end, marks the job abandoned under mu and finishes
+// the tap it finds; a response that comes later is never tapped.
 type fullJob struct {
-	in     DecideInputs
-	digest string
-	held   int64
-	answer chan pyAnswer
-	tap    *tap
+	in      DecideInputs
+	digest  string
+	held    int64
+	answer  chan pyAnswer
+	arrived time.Time // the real clock's, for the latency
+
+	mu        sync.Mutex
+	tap       *tap
+	abandoned bool
+}
+
+// finished ends the job's tap, whatever still passes through it, and is
+// what the tap held of the budget.
+func (j *fullJob) finished() int64 {
+	j.mu.Lock()
+	t := j.tap
+	j.abandoned = true
+	j.mu.Unlock()
+	return t.finish()
 }
 
 // deliver hands the job Python's answer; only the first is kept, and it
@@ -264,8 +303,8 @@ func (e *Edge) beginFull(r *http.Request, at time.Time, body []byte, boot BootSe
 		sh.dropped.Add(1)
 		return r
 	}
-	job := &fullJob{held: int64(len(body)), answer: make(chan pyAnswer, 1), in: DecideInputs{
-		Request: DecideRequest{At: at, Header: r.Header.Clone(), Body: body, Boot: boot},
+	job := &fullJob{held: int64(len(body)), answer: make(chan pyAnswer, 1), arrived: time.Now(), in: DecideInputs{
+		Request: RequestOf(r, at, body, boot),
 		Lookup:  sh.cfg.Cache.Lookup, Decide: sh.decides.view(), Mint: sh.cfg.Mint,
 	}}
 	snapshotDigest, policyDigest := "none", "none"
@@ -286,23 +325,27 @@ func (e *Edge) beginFull(r *http.Request, at time.Time, body []byte, boot BootSe
 }
 
 // tapFull keeps a copy of Python's answer as it passes to the enclave, and
-// hands it to the job once the proxy has closed it.
+// hands it to the job once the proxy has closed it; nothing is decoded on
+// the proxy's goroutine. A job follow has already given up is not tapped.
 func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	status, encoding := resp.StatusCode, resp.Header.Get("Content-Encoding")
-	resp.Body = &tap{rc: resp.Body, sh: sh, limit: maxShadowResponse, length: resp.ContentLength, onClose: func(t *tap) {
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if job.abandoned {
+		return
+	}
+	job.tap = &tap{rc: resp.Body, sh: sh, limit: maxShadowResponse, length: resp.ContentLength, onClose: func(t *tap) {
 		raw, complete, spent := t.bytes()
-		a := pyAnswer{status: status}
+		a := pyAnswer{status: status, encoding: encoding, body: raw, latency: time.Since(job.arrived)}
 		switch {
 		case spent:
-			a.why = "budget"
+			a.why, a.body = "budget", nil
 		case !complete:
-			a.why = "bound"
-		default:
-			a.body, a.why = decoded(encoding, raw)
+			a.why, a.body = "bound", nil
 		}
-		job.tap = t
 		job.deliver(a)
 	}}
+	resp.Body = job.tap
 }
 
 // decoded is Python's answer's bytes as JSON, gunzipped when Python
@@ -340,13 +383,31 @@ func (sh *fullShadow) follow(job *fullJob) {
 	case <-wait.C:
 		a = pyAnswer{why: "wait"}
 	}
+	// The bytes as JSON, here and not on the proxy's goroutine; a gzip's
+	// decoded bytes are the budget's too.
+	var decodedHeld int64
+	if a.why == "" && a.status != 0 {
+		var why string
+		raw := a.body
+		a.body, why = decoded(a.encoding, raw)
+		switch {
+		case why != "":
+			a.why, a.body = why, nil
+		case len(a.body) > 0 && &a.body[0] != &raw[0]:
+			if sh.reserve(int64(len(a.body))) {
+				decodedHeld = int64(len(a.body))
+			} else {
+				a.why, a.body = "budget", nil
+			}
+		}
+	}
 	r := sh.safeCompare(decided, a)
-	sh.evict(decided, a)
+	sh.evict(decided, a, job.in.Request.Body)
 	if r.rows && sh.sample() {
-		sh.readRows(decided.Decision, &r)
+		sh.readRows(decided.Shadow, &r, a.latency)
 	}
 	sh.record(job.digest, r)
-	sh.release(job.held + job.tap.finish())
+	sh.release(job.held + decodedHeld + job.finished())
 }
 
 func (sh *fullShadow) safeDecide(in DecideInputs) (d Decided) {
@@ -388,26 +449,40 @@ type pythonIDs struct {
 }
 
 // compareFull is the comparison of what Go would have answered with what
-// Python answered.
+// Python answered. Python's status classifies whenever it came, its body
+// read or not: a refusal whose body was not read is a refusal all the
+// same.
 func compareFull(d Decided, a pyAnswer) fullResult {
-	if a.why != "" {
-		return fullResult{class: ClassUnread + "." + a.why}
-	}
-	refusal := errorOf(a)
-	if d.Decision == nil {
+	read := a.why == ""
+	if d.Shadow == nil {
 		reason := d.Pass
 		switch {
 		case strings.HasPrefix(reason, "cache."):
 			return fullResult{class: ClassStale + "." + strings.TrimPrefix(reason, "cache.")}
 		case a.status == http.StatusOK:
 			return fullResult{class: ClassPythonAnsweredGoPassed + "." + reason}
+		case a.status == 0:
+			return fullResult{class: ClassUnread + "." + a.why}
 		}
 		return fullResult{class: ClassGoPassed + "." + reason}
 	}
 	r := fullResult{decided: true, gate: d.DecideGate}
+	if !read {
+		switch {
+		case a.status == 0 || a.status == http.StatusOK:
+			r.class = ClassUnread + "." + a.why
+		case a.status >= 500:
+			// A pause 503 is told from Python's others by its body alone.
+			r.class = ClassPythonError + "." + strconv.Itoa(a.status)
+		default:
+			r.class = ClassWouldAdmit + "." + strconv.Itoa(a.status) + ".unread"
+		}
+		return r
+	}
+	refusal := errorOf(a)
 	switch {
 	case a.status == http.StatusOK:
-		return compareAnswer(d.Decision, a.body, r)
+		return compareAnswer(d.Shadow, a.body, r)
 	case a.status == http.StatusConflict && refusal.kind == "conflict":
 		// Another body under the key: Go's insert would have found the
 		// scope taken and passed (insert.scope_taken).
@@ -639,25 +714,49 @@ func sortedCopy(s []string) []string {
 }
 
 // evict drops what the cache holds for a key Python refused, 401, 402 or
-// 403, or whose workspace it paused (503): the lookup hash the request
-// named, read or not, and its workspace when the cache said which.
-func (sh *fullShadow) evict(d Decided, a pyAnswer) {
+// 403 (by the status alone, its body read or not), or whose workspace it
+// paused (503, told by its message): the lookup hash the request named,
+// cached or not (read from the body leniently when the request did not
+// parse), and its workspace when the cache said which.
+func (sh *fullShadow) evict(d Decided, a pyAnswer, body []byte) {
 	switch {
-	case a.why != "":
-		return
 	case a.status == http.StatusUnauthorized, a.status == http.StatusPaymentRequired, a.status == http.StatusForbidden:
-	case a.status == http.StatusServiceUnavailable && errorOf(a).message == pauseMessage:
+	case a.status == http.StatusServiceUnavailable && a.why == "" && errorOf(a).message == pauseMessage:
 	default:
 		return
 	}
-	if d.LookupHash != "" {
-		sh.cfg.Cache.Evict(d.LookupHash)
+	lookup := d.LookupHash
+	if lookup == "" {
+		lookup = lenientLookupHash(body)
+	}
+	if lookup != "" {
+		sh.cfg.Cache.Evict(lookup)
 		sh.evictions.Add(1)
+		sh.periodEvictions.Add(1)
 	}
 	if d.Workspace != "" {
 		sh.cfg.Cache.EvictWorkspace(d.Workspace)
 		sh.evictions.Add(1)
+		sh.periodEvictions.Add(1)
 	}
+}
+
+// lenientLookupHash is the body's api_key_lookup_hash for an eviction when
+// the strict parse passed the request: any top-level string of it,
+// stripped, printable ASCII, at most 256 bytes; "" otherwise. An eviction
+// of a hash the cache does not hold is harmless.
+func lenientLookupHash(body []byte) string {
+	var b struct {
+		Lookup *string `json:"api_key_lookup_hash"`
+	}
+	if json.Unmarshal(body, &b) != nil || b.Lookup == nil {
+		return ""
+	}
+	s := strings.TrimSpace(*b.Lookup)
+	if s == "" || len(s) > 256 || !printableASCII(s) {
+		return ""
+	}
+	return s
 }
 
 // sample is one comparable request in SampleEvery, within ReadsPerSecond
@@ -685,7 +784,7 @@ func (sh *fullShadow) sample() bool {
 // compares every column with the rows Go would have written for the same
 // decision, staged under Python's ids, instant, envelope and end of life
 // (and its minted idempotency key, when the request presented none).
-func (sh *fullShadow) readRows(d *Decision, r *fullResult) {
+func (sh *fullShadow) readRows(d *Decision, r *fullResult, latency time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), rowReadTimeout)
 	stored, found, err := sh.cfg.Rows.ReadAuthorizationForCompare(ctx, r.py.authorization)
 	cancel()
@@ -697,37 +796,63 @@ func (sh *fullShadow) readRows(d *Decision, r *fullResult) {
 		r.rowsOf = "missing"
 		return
 	}
-	r.rowsOf, r.fields = compareRows(d, stored, r.fields)
+	r.rowsOf, r.fields = compareRows(d, stored, r.fields, latency)
 }
 
+// mintedKeyForm is str(uuid4()), the form of a key Go mints (and Python).
+var mintedKeyForm = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
 // compareRows is Python's rows against Go's: the outcome for the rows
-// tally, and the fields with any row.<column> appended.
-func compareRows(d *Decision, stored store.AuthorizationForCompare, fields []string) (string, []string) {
+// tally, and the fields with any row.<column> appended. Python's values put
+// in Go's place are checked as far as Go can: its created_at within the
+// request's arrival and its answer (latency) and rowSkew, its minted
+// idempotency key of the form Go mints. A row Python's settle or heartbeat
+// reached first is compared on the columns those leave alone (moved_on).
+func compareRows(d *Decision, stored store.AuthorizationForCompare, fields []string,
+	latency time.Duration) (string, []string) {
 	a := stored.Authorization
-	if a.Settled || a.TerminalAt.Valid || a.StartedAt.Valid || a.HeartbeatSeq.Valid || a.FinalizationOutcome.Valid {
-		// Python's settle or heartbeat reached the row first: its columns
-		// are no longer the authorize's.
-		return "moved_on", fields
-	}
+	moved := a.Settled || a.TerminalAt.Valid || a.StartedAt.Valid || a.HeartbeatSeq.Valid || a.FinalizationOutcome.Valid
 	payloadTree, err := pyjson.Decode([]byte(a.Payload.StringVal))
 	payload, ok := payloadTree.(pyjson.Object)
 	if !a.Payload.Valid || err != nil || !ok {
-		return "differ", append(fields, "row.payload")
+		if !moved {
+			return "differ", append(fields, "row.payload")
+		}
+		payload = nil
 	}
 	envelope, leased := memberOf(payload, "fastpath_envelope").(string)
-	if !leased {
+	if !leased && !moved {
 		// Python took today's path, not the pilot's lease (its owner was
 		// busy, say): its rows are not the cohort's.
 		return "python_not_leased", fields
 	}
-	eolText, _ := memberOf(payload, "fastpath_end_of_life").(string)
-	eol, err := time.Parse(time.RFC3339Nano, eolText)
-	if err != nil {
-		return "differ", append(fields, "row.payload.fastpath_end_of_life")
+	before := len(fields)
+	arrival := d.Input.At
+	if a.CreatedAt.Before(arrival.Add(-rowSkew)) || a.CreatedAt.After(arrival.Add(latency+rowSkew)) {
+		fields = append(fields, "row.created_at_skew")
 	}
-	key := d.Input.IdempotencyKey
+	key, scopeKnown := d.Input.IdempotencyKey, true
 	if !d.Identity.Presented {
-		key, _ = memberOf(payload, "idempotency_key").(string)
+		minted, _ := memberOf(payload, "idempotency_key").(string)
+		switch {
+		case minted == "" && moved:
+			// A settle that rewrote the payload took Python's minted key
+			// with it: the scope is not Go's to remake.
+			scopeKnown = false
+		case !mintedKeyForm.MatchString(minted):
+			fields = append(fields, "row.idempotency_key_form")
+			key = minted
+		default:
+			key = minted
+		}
+	}
+	eol := a.CreatedAt
+	if text, isText := memberOf(payload, "fastpath_end_of_life").(string); isText {
+		if eol, err = time.Parse(time.RFC3339Nano, text); err != nil {
+			return "differ", append(fields, "row.payload.fastpath_end_of_life")
+		}
+	} else if !moved {
+		return "differ", append(fields, "row.payload.fastpath_end_of_life")
 	}
 	staged, err := d.Restage(a.AuthorizationID, a.ReservationID.StringVal, key, a.CreatedAt)
 	if err != nil {
@@ -737,11 +862,18 @@ func compareRows(d *Decision, stored store.AuthorizationForCompare, fields []str
 	if err != nil {
 		return "differ", append(fields, "row.payload.fastpath_end_of_life")
 	}
-	before := len(fields)
-	fields = append(fields, authorizationDifferences(composed.Authorization, a, payload)...)
-	fields = append(fields, reservationDifferences(composed.Reservation, stored.Reservation)...)
-	if len(fields) > before {
+	fields = append(fields, authorizationDifferences(composed.Authorization, a, payload, moved)...)
+	if !scopeKnown && stored.Reservation != nil {
+		composed.Reservation.IdempotencyScope = stored.Reservation.IdempotencyScope.StringVal
+	}
+	fields = append(fields, reservationDifferences(composed.Reservation, stored.Reservation, latency, moved)...)
+	switch {
+	case len(fields) > before && moved:
+		return "moved_on_differ", fields
+	case len(fields) > before:
 		return "differ", fields
+	case moved:
+		return "moved_on", fields
 	}
 	return "agree", fields
 }
@@ -764,7 +896,10 @@ func ns(v interface{ IsNull() bool }, value any) any {
 // 13 typed columns included, which Python reads before the payload's copy
 // of each, so a typed column Go would leave NULL that Python fills, or the
 // reverse, is caught only here), and the payload member by member.
-func authorizationDifferences(g gwauth.AuthorizationRow, p store.StoredAuthorization, pyPayload pyjson.Object) []string {
+// With moved (Python's settle or heartbeat reached the row first) only the
+// columns those leave alone are compared, and not the payload.
+func authorizationDifferences(g gwauth.AuthorizationRow, p store.StoredAuthorization, pyPayload pyjson.Object,
+	moved bool) []string {
 	var out []string
 	cols := []struct {
 		name     string
@@ -796,11 +931,14 @@ func authorizationDifferences(g gwauth.AuthorizationRow, p store.StoredAuthoriza
 		{"gateway_request_id", nil, ns(p.GatewayRequestID, p.GatewayRequestID.StringVal)},
 	}
 	for _, c := range cols {
+		if moved && !settleStable[c.name] {
+			continue
+		}
 		if c.go_ != c.py_ {
 			out = append(out, "row."+c.name)
 		}
 	}
-	if g.Payload != p.Payload.StringVal {
+	if !moved && g.Payload != p.Payload.StringVal {
 		goTree, _ := pyjson.Decode([]byte(g.Payload))
 		goPayload, _ := goTree.(pyjson.Object)
 		var keys []string
@@ -827,9 +965,20 @@ func authorizationDifferences(g gwauth.AuthorizationRow, p store.StoredAuthoriza
 	return out
 }
 
+// settleStable are the columns of either row that settle, refund and
+// heartbeat leave as the authorize wrote them.
+var settleStable = map[string]bool{
+	"authorization_id": true, "workspace_id": true, "key_hash": true, "reservation_id": true, "model_id": true,
+	"provider": true, "usage_type": true, "estimated_microdollars": true, "created_at": true,
+	"idempotency_fingerprint": true, "stage_d_boot_kid": true, "invocation_nonce": true,
+	"ws_shard": true, "credit_shard": true, "key_shard": true, "hold_usage_type": true, "idempotency_scope": true,
+}
+
 // reservationDifferences: every column of tr_reservation; expires_at is
-// Python's at least Go's (Python reads its clock again for it, §5).
-func reservationDifferences(g gwauth.ReservationRow, p *store.StoredReservation) []string {
+// Python's at least Go's (Python reads its clock again for it, §5) and at
+// most the request's latency and rowSkew later.
+func reservationDifferences(g gwauth.ReservationRow, p *store.StoredReservation, latency time.Duration,
+	moved bool) []string {
 	if p == nil {
 		return []string{"row.reservation.missing"}
 	}
@@ -857,11 +1006,15 @@ func reservationDifferences(g gwauth.ReservationRow, p *store.StoredReservation)
 		{"terminal_at", nil, ns(p.TerminalAt, p.TerminalAt.Time)},
 	}
 	for _, c := range cols {
+		if moved && !settleStable[c.name] {
+			continue
+		}
 		if c.go_ != c.py_ {
 			out = append(out, "row.reservation."+c.name)
 		}
 	}
-	if !p.ExpiresAt.Valid || p.ExpiresAt.Time.Before(g.ExpiresAt) {
+	if !p.ExpiresAt.Valid || p.ExpiresAt.Time.Before(g.ExpiresAt) ||
+		p.ExpiresAt.Time.After(g.ExpiresAt.Add(latency+rowSkew)) {
 		out = append(out, "row.reservation.expires_at")
 	}
 	return out
@@ -898,7 +1051,11 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 	}
 	if strings.HasPrefix(r.class, ClassWouldAdmit+".") && sh.critical < maxCriticalLogs {
 		sh.critical++
-		sh.logf("fastpath edge decide shadow CRITICAL: class=%s %s", r.class, digest)
+		if sh.cfg.Alert != nil {
+			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class)
+		} else {
+			sh.logf("fastpath edge decide shadow CRITICAL: class=%s %s", r.class, digest)
+		}
 	}
 	if len(r.fields) > 0 && sh.differs < maxDifferLogs {
 		sh.differs++
@@ -922,6 +1079,8 @@ func (sh *fullShadow) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			wg.Wait()
+			// The requests still followed are counted in the last line.
+			sh.wait()
 			sh.flush()
 			return
 		case <-ticker.C:
@@ -955,9 +1114,14 @@ func (sh *fullShadow) flush() {
 			"classes=%s fields=%s rows=%s decide=%s", d, t.classes[ClassAgreeFull], t.classes[ClassDifferAny], would,
 			t.readBack, jsonOf(t.classes), jsonOf(t.fields), jsonOf(t.rows), jsonOf(t.decide))
 	}
-	if dropped := sh.dropped.Swap(0); dropped > 0 {
-		sh.logf("fastpath edge decide shadow: dropped=%d", dropped)
+	line := "fastpath edge decide shadow: dropped=%d evictions=%d"
+	args := []any{sh.dropped.Swap(0), sh.periodEvictions.Swap(0)}
+	if c, ok := sh.cfg.Cache.(cacheCounters); ok {
+		n := c.Counters()
+		line += " cache_unrefreshed=%d cache_dropped=%d cache_read_failures=%d"
+		args = append(args, n.Unrefreshed, n.Dropped, n.ReadFailures)
 	}
+	sh.logf(line, args...)
 	sh.tallies, sh.critical, sh.differs = map[string]*fullTally{}, 0, 0
 }
 

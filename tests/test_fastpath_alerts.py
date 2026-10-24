@@ -43,7 +43,10 @@ def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
     assert '"logName=\\"projects/${local.gcp_project_id}/logs/fastpath_journal\\""' in tf
     # The service labels each alert with its kind and writes it at the
     # journal's err priority, which the agent maps to ERROR.
-    assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)}' in service
+    # The auditor's alerts by their message's kind; the edge's decide shadow
+    # names its own kind (edge.AlertWouldAdmit) through the same line.
+    assert "writeAlertOf(w, subject, what, auditor.AlertKind(what))" in service
+    assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": kind}' in service
     assert 'fmt.Fprintln(w, "<3>"+string(line))' in service
     # A policy per kind, each matching all three parts at once: the log, its
     # kind's label and the severity, so an ordinary entry of the same log, or

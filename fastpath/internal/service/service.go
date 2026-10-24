@@ -368,7 +368,11 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 			_ = ln.Close()
 			return err
 		}
-		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s}
+		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s,
+			// edge.AlertWouldAdmit's alert line, as the auditor's are
+			// written (docs/runbooks/fastpath-alerts.md); its policy is
+			// I1's.
+			Alert: func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }}
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
 		Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy, Admitter: &p.admitter,
@@ -377,11 +381,14 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = ln.Close()
 		return err
 	}
+	// The cache is closed (its reads ended, before the store's client
+	// closes) only after the last Lookup: once the edge's handlers have
+	// returned and the decide shadow has compared what it followed.
+	followed := make(chan struct{})
 	if cache != nil {
-		// Its strong refresh beside the edge; closed (its reads ended) once
-		// the parts stop, before the store's client closes.
 		p.run("edge decide cache", func(ctx context.Context) error {
 			cache.Run(ctx)
+			<-followed
 			cache.Close()
 			return nil
 		})
@@ -423,8 +430,9 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		endRequests()
 		handlers.wait()
 		// What the decide shadow follows ends with its requests; its reads
-		// end with them.
+		// end with them, and then the cache may close.
 		e.WaitDecideShadow()
+		close(followed)
 		transport.CloseIdleConnections()
 		return nil
 	})
@@ -1046,10 +1054,16 @@ var alertOutput io.Writer = os.Stderr
 // carries what the alert carries: a lease or an authorization and what
 // happened, never a record's contents.
 func writeAlert(w io.Writer, subject, what string) {
+	writeAlertOf(w, subject, what, auditor.AlertKind(what))
+}
+
+// writeAlertOf is writeAlert with its kind given: an alert that is not the
+// auditor's (edge.AlertWouldAdmit).
+func writeAlertOf(w io.Writer, subject, what, kind string) {
 	line, err := json.Marshal(map[string]any{
 		"message":                       "fastpath alert: " + what,
 		"subject":                       subject,
-		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": kind},
 	})
 	if err != nil {
 		log.Printf("alert: %s: %s", subject, what)

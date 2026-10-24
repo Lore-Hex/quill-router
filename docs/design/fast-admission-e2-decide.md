@@ -17,9 +17,8 @@ authorization row payload that Python settles from.
 
 Line citations are against `origin/main` at `bc5a19c16`.
 
-Status (G10, part 1): the decide pipeline is built
-(`fastpath/internal/edge/decide.go`); nothing on the request path calls
-it, and nothing answers.
+Status (G10): the decide pipeline and its full-response shadow are built
+and dark (`-edge-decide-shadow`, default off); nothing answers.
 
 ## 1. What Go answers
 
@@ -1386,22 +1385,35 @@ counts, per snapshot and policy digest:
 Each request Go would answer also counts its decide row's gate (`on`,
 `decide.off`, `cache.decide`): during the soak the decide table is empty,
 so every comparison is of a workspace not yet deciding. Rows: for one
-comparable request in 20 (agree_full or differ), at most 5 reads a second,
-Python's two rows are read back by its authorization id
+comparable request (agree_full or differ; `SampleEvery` 1 by default, the
+limiter of at most 5 reads a second bounding Spanner), Python's two rows
+are read back by its authorization id
 (`ReadAuthorizationForCompare`) and compared with the rows Go's decision
 would write staged under Python's ids, its `created_at`, envelope and end
-of life, and its idempotency key when the request presented none:
+of life, and its idempotency key when the request presented none (checked to be of
+the uuid4 form Go mints, `row.idempotency_key_form`; Python's `created_at`
+within the request's arrival and its answer, a second's skew either way,
+`row.created_at_skew`):
 `row.<column>` for each of the authorization's 25 columns (every typed
 column, which Python reads before its payload copy, so a NULL Go would
 write that Python fills is caught only here), `row.payload.<key>`, and
 `row.reservation.<column>` for each of the reservation's 18 (`expires_at`
-Python's at least Go's, §5). A row Python's settle or heartbeat reached
-first is `moved_on`, one Python wrote off the pilot's lease (no
-`fastpath_envelope`) `python_not_leased`; neither is compared. A Python
-401, 402 or 403, or a pause 503, evicts the lookup hash the request named,
-whether the cache held it or not, and the key's workspace when the cache
-said which. An INFO line per snapshot and policy each minute carries the
-counts; no line carries a body, an id, a key or a message.
+Python's at least Go's and at most the request's latency and a second
+later, §5). A row Python's settle or heartbeat reached first is compared on
+the columns those leave alone (`moved_on`, or `moved_on_differ` with its
+fields); one Python wrote off the pilot's lease (no `fastpath_envelope`) is
+`python_not_leased` and not compared. Python's status classifies whether
+or not its body was read through (a 4xx unread is
+`would_admit_python_refused.<status>.unread`). A Python 401, 402 or 403 (by
+status alone), or a pause 503, evicts the lookup hash the request named,
+whether the cache held it or not (read leniently from a body the strict
+parse passed), and the key's workspace when the cache said which. Each
+`would_admit_python_refused` raises an alert line of kind
+`edge_would_admit_python_refused` (the service's `<3>` JSON line, label
+`fastpath_alert`; its alert policy is I1's or G12's). An INFO line per
+snapshot and policy each minute carries the counts, and one more the
+requests dropped, the evictions and the cache's unrefreshed, dropped and
+failed reads; no line carries a body, an id, a key or a message.
 
 **I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
 cohort-eligible requests with every difference explained; zero

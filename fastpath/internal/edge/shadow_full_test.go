@@ -2,6 +2,7 @@ package edge
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -49,6 +50,13 @@ func (c *recordingCache) Lookup(lookupHash string, now time.Time) gwstate.Read {
 		time.Sleep(c.slow)
 	}
 	return c.KeyCache.Lookup(lookupHash, now)
+}
+
+func (c *recordingCache) Counters() gwstate.Counters {
+	if inner, ok := c.KeyCache.(cacheCounters); ok {
+		return inner.Counters()
+	}
+	return gwstate.Counters{}
 }
 
 func (c *recordingCache) Evict(lookupHash string) {
@@ -227,6 +235,15 @@ func newFullEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython,
 	view := decideAll(p, c.Facts.Key.WorkspaceID, c.at())
 	e.full.decides.current.Store(&view)
 	h.edge = e
+	// Whatever a test does, every byte the shadow reserved comes back once
+	// the requests it followed are compared (a leak would starve the
+	// shadow over a soak).
+	t.Cleanup(func() {
+		e.WaitDecideShadow()
+		if n := e.full.bytes.Load(); n != 0 {
+			t.Errorf("the decide shadow still holds %d bytes of its budget", n)
+		}
+	})
 	return h
 }
 
@@ -268,10 +285,10 @@ func pythonsLegacyAnswer(t *testing.T, f authorizeFile, c authorizeCase, replay 
 	t.Helper()
 	in, _ := caseInputs(t, f, c)
 	d := Decide(in)
-	if d.Decision == nil {
+	if d.Shadow == nil {
 		t.Fatalf("%s: no decision to stand for Python's answer: %q", c.Name, d.Pass)
 	}
-	composed, err := d.Decision.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	composed, err := d.Shadow.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,14 +542,14 @@ func TestEachDifferenceIsCountedByItsField(t *testing.T) {
 	in, _ := caseInputs(t, f, c)
 	in.Mint = Mint{} // Go's own ids, not Python's
 	d := Decide(in)
-	if d.Decision == nil {
+	if d.Shadow == nil {
 		t.Fatal(d.Pass)
 	}
 	golden := c.Expect.Response
 	if got := compareFull(d, pyAnswer{status: 200, body: []byte(golden)}); got.class != ClassAgreeFull {
 		t.Fatalf("the golden: %+v", got)
 	}
-	composed, _ := d.Decision.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	composed, _ := d.Shadow.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
 	if string(composed.Render(c.Expect.timing(), false)) == golden {
 		t.Fatal("Go's own ids render Python's bytes: the substitution is not tested")
 	}
@@ -614,10 +631,10 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 	in, _ := caseInputs(t, f, c)
 	in.Mint = Mint{}
 	d := Decide(in)
-	if d.Decision == nil || d.Decision.Identity.Presented {
+	if d.Shadow == nil || d.Shadow.Identity.Presented {
 		t.Fatalf("not a minted-key decision: %q", d.Pass)
 	}
-	if outcome, fields := compareRows(d.Decision, storedRows(t, c), nil); outcome != "agree" || len(fields) != 0 {
+	if outcome, fields := compareRows(d.Shadow, storedRows(t, c), nil, time.Second); outcome != "agree" || len(fields) != 0 {
 		t.Fatalf("the golden rows: %s %v", outcome, fields)
 	}
 	set := func(s string) spanner.NullString { return spanner.NullString{StringVal: s, Valid: true} }
@@ -655,6 +672,37 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 		{"no reservation", func(r *store.AuthorizationForCompare) { r.Reservation = nil }, "differ",
 			[]string{"row.reservation.missing"}},
 		{"settled first", func(r *store.AuthorizationForCompare) { r.Authorization.Settled = true }, "moved_on", nil},
+		{"settled first, its payload rewritten", func(r *store.AuthorizationForCompare) {
+			r.Authorization.Settled = true
+			r.Authorization.Payload = set(`{"settled":true}`)
+			r.Reservation.CreditReservedMicro = spanner.NullInt64{Int64: 9, Valid: true}
+		}, "moved_on", nil},
+		{"settled first, a column settle leaves alone", func(r *store.AuthorizationForCompare) {
+			r.Authorization.Settled = true
+			r.Authorization.IdempotencyFingerprint = set(strings.Repeat("0", 64))
+		}, "moved_on_differ", []string{"row.idempotency_fingerprint"}},
+		{"created past the answer", func(r *store.AuthorizationForCompare) {
+			r.Authorization.CreatedAt = r.Authorization.CreatedAt.Add(2*time.Second + time.Millisecond)
+			r.Reservation.CreatedAt.Time = r.Authorization.CreatedAt
+			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(2*time.Second + time.Millisecond)
+			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"created_at":"2026-10-19T02:00:00Z"`,
+				`"created_at":"2026-10-19T02:00:02.001000Z"`, 1))
+		}, "differ", []string{"row.created_at_skew"}},
+		{"created before the arrival", func(r *store.AuthorizationForCompare) {
+			r.Authorization.CreatedAt = r.Authorization.CreatedAt.Add(-time.Second - time.Microsecond)
+			r.Reservation.CreatedAt.Time = r.Authorization.CreatedAt
+			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(-time.Second - time.Microsecond)
+			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"created_at":"2026-10-19T02:00:00Z"`,
+				`"created_at":"2026-10-19T01:59:58.999999Z"`, 1))
+		}, "differ", []string{"row.created_at_skew"}},
+		{"an expiry past the latency and the skew", func(r *store.AuthorizationForCompare) {
+			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(2*time.Second + time.Microsecond)
+		}, "differ", []string{"row.reservation.expires_at"}},
+		{"a minted key not of the minted form", func(r *store.AuthorizationForCompare) {
+			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal,
+				`"idempotency_key":"57cb4348-7025-4788-b765-56c01f2f9aab"`, `"idempotency_key":"not-a-uuid"`, 1))
+			r.Reservation.IdempotencyScope = set(gwauth.ScopeOf(c.Facts.Key.WorkspaceID, c.Facts.Key.Hash, "not-a-uuid"))
+		}, "differ", []string{"row.idempotency_key_form"}},
 		{"heartbeat first", func(r *store.AuthorizationForCompare) {
 			r.Authorization.HeartbeatSeq = spanner.NullInt64{Int64: 1, Valid: true}
 		}, "moved_on", nil},
@@ -668,7 +716,7 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 			rows.Reservation = &copied
 		}
 		v.change(&rows)
-		outcome, fields := compareRows(d.Decision, rows, nil)
+		outcome, fields := compareRows(d.Shadow, rows, nil, time.Second)
 		if outcome != v.outcome || strings.Join(fields, ",") != strings.Join(v.want, ",") {
 			t.Errorf("%s: %s %v, want %s %v", v.name, outcome, fields, v.outcome, v.want)
 		}
@@ -678,16 +726,16 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 	pin, _ := caseInputs(t, f, presented)
 	pin.Mint = Mint{}
 	pd := Decide(pin)
-	if pd.Decision == nil || !pd.Decision.Identity.Presented {
+	if pd.Shadow == nil || !pd.Shadow.Identity.Presented {
 		t.Fatalf("not a presented-key decision: %q", pd.Pass)
 	}
 	rows := storedRows(t, presented)
-	if outcome, fields := compareRows(pd.Decision, rows, nil); outcome != "agree" {
+	if outcome, fields := compareRows(pd.Shadow, rows, nil, time.Second); outcome != "agree" {
 		t.Fatalf("the presented key's golden rows: %s %v", outcome, fields)
 	}
 	rows.Authorization.Payload = spanner.NullString{Valid: true, StringVal: strings.Replace(rows.Authorization.Payload.StringVal,
 		`"idempotency_key":"`, `"idempotency_key":"x`, 1)}
-	if outcome, fields := compareRows(pd.Decision, rows, nil); outcome != "differ" ||
+	if outcome, fields := compareRows(pd.Shadow, rows, nil, time.Second); outcome != "differ" ||
 		strings.Join(fields, ",") != "row.payload.idempotency_key" {
 		t.Fatalf("another presented key: %s %v", outcome, fields)
 	}
@@ -720,8 +768,8 @@ func TestRowsAreSampledAndRateLimited(t *testing.T) {
 	if n < 5 || n > 6 {
 		t.Fatalf("%d of 50 at once allowed at 5 a second", n)
 	}
-	if DefaultRowSampleEvery != 20 || DefaultRowReadsPerSecond != 5 {
-		t.Fatal("§11's sampling is one in 20, at most 5 a second")
+	if DefaultRowSampleEvery != 1 || DefaultRowReadsPerSecond != 5 {
+		t.Fatal("§11's sampling is every comparable request, at most 5 a second")
 	}
 }
 
@@ -851,6 +899,10 @@ func TestTheDecideShadowLogsCountsAlone(t *testing.T) {
 	h.send(t, c)
 	h.edge.full.flush()
 	logs := h.logs.all()
+	if !strings.Contains(logs, "fastpath edge decide shadow: dropped=0 evictions=0 cache_unrefreshed=0 cache_dropped=0 "+
+		"cache_read_failures=0") {
+		t.Fatalf("the counts line: %s", logs)
+	}
 	if !strings.Contains(logs, "fastpath edge decide shadow: snapshot=golden-snapshot policy=golden-policy agree_full=1 "+
 		"differ=0 would_admit_python_refused=0 read_back=0") || !strings.Contains(logs, `decide={"on":1}`) ||
 		!strings.Contains(logs, `rows={"agree":1}`) {
@@ -860,5 +912,164 @@ func TestTheDecideShadowLogsCountsAlone(t *testing.T) {
 		if strings.Contains(logs, secret) {
 			t.Errorf("the logs carry %q", secret)
 		}
+	}
+}
+
+// TestALateAnswerGivesItsBytesBack: the shadow's wait ends before
+// Python's body does; the body still passes to the enclave whole, the
+// request is counted unread, and every byte the tap reserved, before the
+// wait ended or after, comes back to the budget.
+func TestALateAnswerGivesItsBytesBack(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Wait = 50 * time.Millisecond })
+	body := []byte(c.Expect.Response)
+	half := len(body) / 2
+	h.answer(func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(body[:half])
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond)
+		_, _ = w.Write(body[half:])
+	})
+	rec := h.send(t, c)
+	if rec.Body.String() != c.Expect.Response {
+		t.Fatalf("the enclave got %q", rec.Body.String())
+	}
+	if got := h.edge.DecideShadowCounts(); got.Classes[ClassUnread+".wait"] != 1 || got.Decide["on"] != 1 {
+		t.Fatalf("counts %+v", got)
+	}
+	if n := h.edge.full.bytes.Load(); n != 0 {
+		t.Fatalf("%d bytes held after a late answer", n)
+	}
+	// Positive control: while the job waits, the tap does hold bytes.
+	h2 := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Wait = time.Second })
+	release := make(chan struct{})
+	h2.answer(func(w http.ResponseWriter) {
+		w.WriteHeader(200)
+		_, _ = w.Write(body[:half])
+		w.(http.Flusher).Flush()
+		<-release
+		_, _ = w.Write(body[half:])
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodPost, c.Request.Path, bytes.NewReader(c.body()))
+		req.Header = c.header()
+		h2.edge.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	waitFor(t, func() bool { return h2.edge.full.bytes.Load() > int64(len(c.body())) })
+	close(release)
+	<-done
+	h2.edge.WaitDecideShadow()
+}
+
+// TestAnUnreadRefusalIsStillARefusal: Python's status classifies whether
+// or not its body was read: a 403 past the bound is
+// would_admit_python_refused and evicts, a decided request with no answer
+// counts its decide gate, and a 5xx unread is Python's error.
+func TestAnUnreadRefusalIsStillARefusal(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	in, _ := caseInputs(t, f, c)
+	d := Decide(in)
+	for _, v := range []struct {
+		a    pyAnswer
+		want string
+	}{
+		{pyAnswer{status: 403, why: "bound"}, ClassWouldAdmit + ".403.unread"},
+		{pyAnswer{status: 401, why: "budget"}, ClassWouldAdmit + ".401.unread"},
+		{pyAnswer{status: 503, why: "bound"}, ClassPythonError + ".503"},
+		{pyAnswer{status: 200, why: "bound"}, ClassUnread + ".bound"},
+		{pyAnswer{why: "not_reached"}, ClassUnread + ".not_reached"},
+	} {
+		got := compareFull(d, v.a)
+		if got.class != v.want || !got.decided || got.gate != "" {
+			t.Errorf("%+v: %+v, want %s, decided", v.a, got, v.want)
+		}
+	}
+	h := newFullEdge(t, f, c, nil, nil)
+	h.edge.full.evict(d, pyAnswer{status: 403, why: "bound"}, c.body())
+	h.cache.mu.Lock()
+	defer h.cache.mu.Unlock()
+	if len(h.cache.evicted) != 1 || len(h.cache.workspaces) != 1 {
+		t.Fatalf("an unread 403 evicted %v and %v", h.cache.evicted, h.cache.workspaces)
+	}
+}
+
+// TestARefusalEvictsTheKeyOfABodyThatDidNotParse: Decide named no key (the
+// body changed past its boot signature, which passes first, and holds a
+// float the strict parse would pass too); Python's 401 evicts the lookup
+// hash the body names all the same.
+func TestARefusalEvictsTheKeyOfABodyThatDidNotParse(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	c.Request.Body = strings.Replace(c.Request.Body, `"estimated_input_tokens":1000`, `"estimated_input_tokens":1000.0`, 1)
+	h := newFullEdge(t, f, c, nil, nil)
+	h.answer(answerWith(401, errorBody(401, "invalid_api_key", "Invalid API key")))
+	h.send(t, c)
+	if got := h.edge.DecideShadowCounts(); got.Classes[ClassGoPassed+"."+PassBootSignature] != 1 {
+		t.Fatalf("counts %+v", got)
+	}
+	h.cache.mu.Lock()
+	defer h.cache.mu.Unlock()
+	if len(h.cache.evicted) != 1 || h.cache.evicted[0] != c.Facts.Key.LookupHash {
+		t.Fatalf("evicted %v", h.cache.evicted)
+	}
+	if got := lenientLookupHash([]byte(`{"api_key_lookup_hash":7}`)); got != "" {
+		t.Fatalf("a number named a key: %q", got)
+	}
+}
+
+// TestACompressedAnswerIsDecodedOffTheProxy: Python's gzip is decoded in
+// the job, its decoded bytes held of the budget while compared, and the
+// comparison agrees; the enclave gets the compressed bytes.
+func TestACompressedAnswerIsDecodedOffTheProxy(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	h := newFullEdge(t, f, c, nil, nil)
+	var zipped bytes.Buffer
+	zw := gzip.NewWriter(&zipped)
+	_, _ = zw.Write([]byte(c.Expect.Response))
+	_ = zw.Close()
+	h.answer(answerWith(200, zipped.Bytes(), "Content-Encoding", "gzip"))
+	h.rows.by[c.IDs.AuthorizationID] = storedRows(t, c)
+	rec := h.send(t, c)
+	if !bytes.Equal(rec.Body.Bytes(), zipped.Bytes()) {
+		t.Fatal("the enclave did not get Python's compressed bytes")
+	}
+	if got := h.edge.DecideShadowCounts(); got.Classes[ClassAgreeFull] != 1 || got.Rows["agree"] != 1 {
+		t.Fatalf("counts %+v", got)
+	}
+	h.answer(answerWith(200, []byte("not gzip"), "Content-Encoding", "gzip"))
+	h.send(t, c)
+	if got := h.edge.DecideShadowCounts(); got.Classes[ClassUnread+".encoding"] != 1 {
+		t.Fatalf("a body that is not gzip: %+v", got)
+	}
+}
+
+// TestTheCriticalClassIsAnAlert: with the service's alert path given, the
+// would_admit_python_refused comparison raises an alert of its own kind.
+func TestTheCriticalClassIsAnAlert(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	var mu sync.Mutex
+	var alerts []string
+	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) {
+		cfg.Alert = func(kind, subject, what string) {
+			mu.Lock()
+			defer mu.Unlock()
+			alerts = append(alerts, kind+"|"+subject+"|"+what)
+		}
+	})
+	h.answer(answerWith(403, errorBody(403, "forbidden", "billing_paused")))
+	h.send(t, c)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(alerts) != 1 || alerts[0] != AlertWouldAdmit+"|snapshot=golden-snapshot policy=golden-policy|"+
+		"the edge would have answered an authorize Python refused: "+ClassWouldAdmit+".403.forbidden" {
+		t.Fatalf("alerts %q", alerts)
 	}
 }
