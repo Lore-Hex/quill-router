@@ -5,13 +5,14 @@ import json
 import pytest
 
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
-from scripts.pricing.providers import nextbit, nvidia_nim
+from scripts.pricing.providers import nextbit, nvidia_nim, sambanova
 from trusted_router.catalog import MODEL_ENDPOINTS
 
 
 @pytest.mark.parametrize("provider,model", [
     (nextbit, "bsc-lt/alia-40b-instruct-2601"),
     (nvidia_nim, "google/gemma-4-31b-it"),
+    (sambanova, "deepseek/deepseek-v3.2"),
 ])
 def test_unavailable_route_can_recover_only_after_canary(provider, model, tmp_path):
     row = next(row for row in json.loads(provider.MANIFEST_PATH.read_text())["models"] if row["id"] == model)
@@ -28,9 +29,25 @@ def test_unavailable_route_can_recover_only_after_canary(provider, model, tmp_pa
         assert candidate[model]["routable"] is healthy
 
 
-def test_atlas_retirement_does_not_remove_openai_direct():
-    assert not any(e.provider == "atlas-cloud" and e.model_id == "openai/gpt-4.1-mini" for e in MODEL_ENDPOINTS.values())
-    assert any(e.provider == "openai" and e.model_id == "openai/gpt-4.1-mini" for e in MODEL_ENDPOINTS.values())
+@pytest.mark.parametrize("model", [
+    "deepseek/deepseek-v3.1", "deepseek/deepseek-v3.1-terminus",
+    "kwaipilot/kat-coder-pro-v2.5", "openai/gpt-4.1-mini",
+    "openai/gpt-5.2-codex", "openai/gpt-5.3-codex", "openai/gpt-5.4",
+    "openai/gpt-5.4-mini", "openai/gpt-5.4-nano", "qwen/qwen3-235b-a22b-2507",
+    "qwen/qwen3-vl-235b-a22b-thinking", "z-ai/glm-4.6", "z-ai/glm-4.7",
+    "deepseek/deepseek-v4-flash-vision-exp",
+])
+def test_retired_atlas_routes_are_not_advertised(model):
+    assert not any(e.provider == "atlas-cloud" and e.model_id == model for e in MODEL_ENDPOINTS.values())
+
+
+@pytest.mark.parametrize("model", ["openai/gpt-4.1-mini", "openai/gpt-5.4-mini"])
+def test_atlas_retirement_does_not_remove_openai_direct(model):
+    assert any(e.provider == "openai" and e.model_id == model for e in MODEL_ENDPOINTS.values())
+
+
+def test_sambanova_account_hold_does_not_disable_working_models():
+    assert any(e.provider == "sambanova" and e.model_id == "openai/gpt-oss-120b" for e in MODEL_ENDPOINTS.values())
 
 
 def test_ended_union_preview_is_not_silently_replaced():
