@@ -29,6 +29,12 @@
 // request path, and compares what it would have answered with Python's
 // answer and, sampled, Python's rows (shadow_full.go). Python still
 // decides, and its answer still reaches the enclave byte for byte.
+//
+// With the decide path on (DecideConfig, E2 G11, -edge-decide), the edge
+// answers an authorize in the cohort itself: it admits it through the
+// node's front door, inserts its two rows and writes the 200, or Python's
+// 503 when the insert's outcome is not known; every other request still
+// passes to Python unchanged (decide_path.go).
 package edge
 
 import (
@@ -154,7 +160,8 @@ type Config struct {
 	ShadowEvery time.Duration
 	Logf        func(format string, args ...any)
 	// Admitter holds the node's front door once its admission node has
-	// made it (admit.go); nil, or unbound, is none. Nothing calls it yet.
+	// made it (admit.go); nil, or unbound, is none, and the decide path
+	// passes everything (owner.unreachable).
 	Admitter *LateAdmitter
 	// DecideShadow, when set, runs the full-response shadow
 	// (shadow_full.go, -edge-decide-shadow): the decide pipeline over each
@@ -162,6 +169,11 @@ type Config struct {
 	// sampled, its rows. It needs the snapshot and the policy configured.
 	// Nil runs none: no cache, no reads, no goroutines.
 	DecideShadow *DecideShadowConfig
+	// Decide, when set, runs the decide path (decide_path.go,
+	// -edge-decide): the edge admits, inserts and answers the authorizes it
+	// decides. It needs the snapshot and the policy configured. Nil answers
+	// nothing: every request passes to Python.
+	Decide *DecideConfig
 }
 
 // Edge serves the enclave's control-plane paths.
@@ -176,8 +188,10 @@ type Edge struct {
 	shadow *shadow
 	// policy is nil unless the edge policy is configured.
 	policy *policyPoller
-	// full is nil unless the decide shadow is on.
-	full *fullShadow
+	// full is nil unless the decide shadow is on, and decider unless the
+	// decide path is.
+	full    *fullShadow
+	decider *decider
 }
 
 type cachedBoot struct {
@@ -251,6 +265,16 @@ func New(cfg Config) (*Edge, error) {
 		}
 		e.full = full
 	}
+	if d := cfg.Decide; d != nil {
+		if cfg.Snapshot.URL == nil || cfg.Policy.URL == nil {
+			return nil, errors.New("edge: the decide path decides from a routing snapshot and an edge policy, " +
+				"which need their URLs")
+		}
+		if d.Cache == nil || d.Decides == nil || d.Rows == nil {
+			return nil, errors.New("edge: the decide path needs its cache, the decide table and the rows")
+		}
+		e.decider = newDecider(*d, cfg.Logf, cfg.Clock, cfg.ShadowEvery)
+	}
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""
 	e.proxy = &httputil.ReverseProxy{
@@ -285,6 +309,9 @@ func New(cfg Config) (*Edge, error) {
 		// cannot reach: it is given back under the authority the caller used.
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.Request != nil {
+				if p, ok := resp.Request.Context().Value(decidePassedKey{}).(decidePassed); ok {
+					e.decider.evict(resp, p)
+				}
 				// The comparator reads a copy of the bytes as they pass;
 				// the status, the headers and the bytes are Python's.
 				if call, ok := resp.Request.Context().Value(shadowKey{}).(*shadowCall); ok {
@@ -368,16 +395,19 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// An authorize to compare, when the shadow is on and a snapshot held;
-	// the decide shadow's one clock reading for it (decision 15).
+	// the decide shadow's and the decide path's one clock reading for it
+	// (decision 15), and its arrival for the decide path's budgets.
 	call := e.begin(r)
 	var at time.Time
-	if e.full != nil {
+	arrived := time.Now()
+	if e.full != nil || e.decider != nil {
 		at = e.cfg.Clock()
 	}
 	headers := r.Header.Values(BootHeader)
 	// A boot header the request names as hop-by-hop (`Connection:
 	// X-TR-Boot-Auth`) is dropped by the proxy: Python sees none.
 	if len(headers) == 0 || listedAsHopByHop(r.Header, BootHeader) {
+		e.passedUnread(r, BootSeen{Verdict: Absent})
 		out := r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent))
 		if call != nil {
 			out = e.shadow.attach(call, out, Absent, nil)
@@ -394,6 +424,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(body) > maxBody {
 		// The rest streams after what was read; the length declared stays
 		// declared, since the body is the same.
+		e.passedUnread(r, BootSeen{Verdict: Unchecked})
 		out := r.Clone(context.WithValue(r.Context(), verdictKey{}, Unchecked))
 		out.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 		if call != nil {
@@ -414,7 +445,15 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		seen = e.verdictOf(r.Context(), headers, r.Method, path, body)
 	}
 	verdict := seen.Verdict
-	out := r.Clone(context.WithValue(r.Context(), verdictKey{}, verdict))
+	ctx := context.WithValue(r.Context(), verdictKey{}, verdict)
+	if e.decider != nil && r.Method == http.MethodPost && authorizeRoutes[r.URL.Path] {
+		answered, passed := e.decide(w, r, at, arrived, body, seen)
+		if answered {
+			return
+		}
+		ctx = context.WithValue(ctx, decidePassedKey{}, passed)
+	}
+	out := r.Clone(ctx)
 	out.Body = io.NopCloser(bytes.NewReader(body))
 	out.ContentLength = int64(len(body))
 	if call != nil {
@@ -425,9 +464,9 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Run polls the routing snapshot and the edge policy and runs the shadow
-// comparator and the decide shadow (its decide copy and its counts), each
-// on its own goroutine, until ctx ends; with none configured it returns at
-// once. ServeHTTP never waits for any.
+// comparator, the decide shadow and the decide path (their decide copies
+// and counts), each on its own goroutine, until ctx ends; with none
+// configured it returns at once. ServeHTTP never waits for any.
 func (e *Edge) Run(ctx context.Context) {
 	var runs []func(context.Context)
 	if e.poller != nil {
@@ -441,6 +480,9 @@ func (e *Edge) Run(ctx context.Context) {
 	}
 	if e.full != nil {
 		runs = append(runs, e.full.run)
+	}
+	if e.decider != nil {
+		runs = append(runs, e.decider.run)
 	}
 	var wg sync.WaitGroup
 	for _, run := range runs {

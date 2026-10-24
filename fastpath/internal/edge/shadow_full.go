@@ -411,7 +411,7 @@ func (sh *fullShadow) follow(job *fullJob) {
 	r := sh.safeCompare(decided, a)
 	sh.evict(decided, a, job.in.Request.Body)
 	if r.rows && sh.sample() {
-		sh.readRows(decided.Shadow, &r, a.latency)
+		sh.readRows(decided.ForShadow(), &r, a.latency)
 	}
 	sh.record(job.digest, r)
 	sh.release(job.held + decodedHeld + job.finished())
@@ -461,7 +461,7 @@ type pythonIDs struct {
 // same.
 func compareFull(d Decided, a pyAnswer) fullResult {
 	read := a.why == ""
-	if d.Shadow == nil {
+	if d.ForShadow() == nil {
 		reason := d.Pass
 		switch {
 		case strings.HasPrefix(reason, "cache."):
@@ -489,7 +489,7 @@ func compareFull(d Decided, a pyAnswer) fullResult {
 	refusal := errorOf(a)
 	switch {
 	case a.status == http.StatusOK:
-		return compareAnswer(d.Shadow, a.body, r)
+		return compareAnswer(d.ForShadow(), a.body, r)
 	case a.status == http.StatusConflict && refusal.kind == "conflict":
 		// Another body under the key: Go's insert would have found the
 		// scope taken and passed (insert.scope_taken).

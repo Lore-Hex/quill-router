@@ -150,6 +150,8 @@ type fakePython struct {
 	server    *httptest.Server
 	transport *http.Transport
 	respond   atomic.Pointer[func(http.ResponseWriter)]
+	// hits counts the requests that reached it.
+	hits atomic.Int64
 }
 
 func newFakePython(t *testing.T) *fakePython {
@@ -157,6 +159,7 @@ func newFakePython(t *testing.T) *fakePython {
 	py := &fakePython{transport: &http.Transport{DisableCompression: true, MaxIdleConnsPerHost: 4}}
 	py.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
+		py.hits.Add(1)
 		(*py.respond.Load())(w)
 	}))
 	t.Cleanup(func() {
@@ -285,10 +288,10 @@ func pythonsLegacyAnswer(t *testing.T, f authorizeFile, c authorizeCase, replay 
 	t.Helper()
 	in, _ := caseInputs(t, f, c)
 	d := Decide(in)
-	if d.Shadow == nil {
+	if d.ForShadow() == nil {
 		t.Fatalf("%s: no decision to stand for Python's answer: %q", c.Name, d.Pass)
 	}
-	composed, err := d.Shadow.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	composed, err := d.ForShadow().Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,14 +545,14 @@ func TestEachDifferenceIsCountedByItsField(t *testing.T) {
 	in, _ := caseInputs(t, f, c)
 	in.Mint = Mint{} // Go's own ids, not Python's
 	d := Decide(in)
-	if d.Shadow == nil {
+	if d.ForShadow() == nil {
 		t.Fatal(d.Pass)
 	}
 	golden := c.Expect.Response
 	if got := compareFull(d, pyAnswer{status: 200, body: []byte(golden)}); got.class != ClassAgreeFull {
 		t.Fatalf("the golden: %+v", got)
 	}
-	composed, _ := d.Shadow.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	composed, _ := d.ForShadow().Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
 	if string(composed.Render(c.Expect.timing(), false)) == golden {
 		t.Fatal("Go's own ids render Python's bytes: the substitution is not tested")
 	}
@@ -631,10 +634,10 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 	in, _ := caseInputs(t, f, c)
 	in.Mint = Mint{}
 	d := Decide(in)
-	if d.Shadow == nil || d.Shadow.Identity.Presented {
+	if d.ForShadow() == nil || d.ForShadow().Identity.Presented {
 		t.Fatalf("not a minted-key decision: %q", d.Pass)
 	}
-	if outcome, fields := compareRows(d.Shadow, storedRows(t, c), nil, time.Second); outcome != "agree" || len(fields) != 0 {
+	if outcome, fields := compareRows(d.ForShadow(), storedRows(t, c), nil, time.Second); outcome != "agree" || len(fields) != 0 {
 		t.Fatalf("the golden rows: %s %v", outcome, fields)
 	}
 	set := func(s string) spanner.NullString { return spanner.NullString{StringVal: s, Valid: true} }
@@ -716,7 +719,7 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 			rows.Reservation = &copied
 		}
 		v.change(&rows)
-		outcome, fields := compareRows(d.Shadow, rows, nil, time.Second)
+		outcome, fields := compareRows(d.ForShadow(), rows, nil, time.Second)
 		if outcome != v.outcome || strings.Join(fields, ",") != strings.Join(v.want, ",") {
 			t.Errorf("%s: %s %v, want %s %v", v.name, outcome, fields, v.outcome, v.want)
 		}
@@ -726,16 +729,16 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 	pin, _ := caseInputs(t, f, presented)
 	pin.Mint = Mint{}
 	pd := Decide(pin)
-	if pd.Shadow == nil || !pd.Shadow.Identity.Presented {
+	if pd.ForShadow() == nil || !pd.ForShadow().Identity.Presented {
 		t.Fatalf("not a presented-key decision: %q", pd.Pass)
 	}
 	rows := storedRows(t, presented)
-	if outcome, fields := compareRows(pd.Shadow, rows, nil, time.Second); outcome != "agree" {
+	if outcome, fields := compareRows(pd.ForShadow(), rows, nil, time.Second); outcome != "agree" {
 		t.Fatalf("the presented key's golden rows: %s %v", outcome, fields)
 	}
 	rows.Authorization.Payload = spanner.NullString{Valid: true, StringVal: strings.Replace(rows.Authorization.Payload.StringVal,
 		`"idempotency_key":"`, `"idempotency_key":"x`, 1)}
-	if outcome, fields := compareRows(pd.Shadow, rows, nil, time.Second); outcome != "differ" ||
+	if outcome, fields := compareRows(pd.ForShadow(), rows, nil, time.Second); outcome != "differ" ||
 		strings.Join(fields, ",") != "row.payload.idempotency_key" {
 		t.Fatalf("another presented key: %s %v", outcome, fields)
 	}
