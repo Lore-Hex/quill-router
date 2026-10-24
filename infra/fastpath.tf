@@ -61,7 +61,7 @@ locals {
   # The edge policy (stage I1, docs/design/fast-admission-e2-decide.md
   # section 4): Python's signed live facts, polled on the same upstream and
   # verified with the same key, kid and plane. Only a script from I1 on
-  # reads the policy's two attributes, so only nodes 7 and 8 act on them.
+  # reads the policy's two attributes, which nodes 7 and 8 run.
   # The decide shadow (G10) stays off until the policy has been held
   # through a measured soak (the I1 runbook); it is turned on here, then
   # each node in turn is drained, its unit stopped and its startup script
@@ -305,12 +305,10 @@ resource "google_compute_instance" "fastpath_node" {
   # shadow on (local.fastpath_edge_snapshot), which the script 3 and 4 ran,
   # from before #1969, read neither of. Each replaced pair was marked
   # leaving and drained, left the edge backend (local.fastpath_edge_retiring)
-  # one apply before its removal, then was removed. 7 and 8 take the places
+  # one apply before its removal, then was removed. 7 and 8 took the places
   # of 5 and 6 the same way, with the edge policy's attributes (stage I1),
-  # which the script 5 and 6 run, from before I1, reads neither of.
+  # which the script 5 and 6 ran, from before I1, read neither of.
   for_each = {
-    "tr-fastpath-5" = "us-central1-a"
-    "tr-fastpath-6" = "us-central1-b"
     "tr-fastpath-7" = "us-central1-a"
     "tr-fastpath-8" = "us-central1-b"
   }

@@ -101,7 +101,7 @@ then answers 503 `{"status": "signer-unavailable"}`.
    node, whose identity reads the internal token:
 
    ```bash
-   gcloud compute ssh tr-fastpath-5 --zone us-central1-a --project quill-cloud-proxy \
+   gcloud compute ssh tr-fastpath-7 --zone us-central1-a --project quill-cloud-proxy \
      --tunnel-through-iap < check-snapshot.sh
    ```
 
