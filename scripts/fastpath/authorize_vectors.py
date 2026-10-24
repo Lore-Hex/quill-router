@@ -67,7 +67,12 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 
 import httpx  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
-from google.api_core.exceptions import Aborted, DeadlineExceeded, FailedPrecondition, InvalidArgument  # noqa: E402
+from google.api_core.exceptions import (  # noqa: E402
+    Aborted,
+    DeadlineExceeded,
+    FailedPrecondition,
+    InvalidArgument,
+)
 from pydantic import ValidationError  # noqa: E402
 
 from tests.fakes.spanner import make_fake_store  # noqa: E402
