@@ -1038,11 +1038,13 @@ func TestARowUnderOurIDNamingAnotherReservationIsNotOurs(t *testing.T) {
 // deadline with its transaction still waiting; when the session comes, the
 // transaction runs on a context that has ended, and nothing reaches Spanner
 // that could commit: no BeginTransaction or Commit on a live context, and
-// no row.
+// no row. The positive control: the waiting transaction did go on once its
+// session came, so at least one BeginTransaction or Commit was attempted on
+// its ended context (else the test saw nothing late).
 func TestASessionAfterTheDeadlineSendsNothing(t *testing.T) {
 	var mu sync.Mutex
 	var sessionOK bool
-	var live []string
+	var live, dead []string
 	opened := time.Now()
 	s, _ := openFaultStore(t, func(ctx context.Context, method string, call int, invoke func() error) error {
 		switch method {
@@ -1056,11 +1058,13 @@ func TestASessionAfterTheDeadlineSendsNothing(t *testing.T) {
 			mu.Unlock()
 			return err
 		case beginTransactionMethod, commitMethod:
+			mu.Lock()
 			if ctx.Err() == nil {
-				mu.Lock()
 				live = append(live, method)
-				mu.Unlock()
+			} else {
+				dead = append(dead, method)
 			}
+			mu.Unlock()
 		}
 		return invoke()
 	})
@@ -1087,6 +1091,9 @@ func TestASessionAfterTheDeadlineSendsNothing(t *testing.T) {
 	}
 	if len(live) != 0 {
 		t.Errorf("sent on a live context after Failed: %v", live)
+	}
+	if len(dead) == 0 {
+		t.Error("no BeginTransaction or Commit on the ended context: the waiting transaction never went on")
 	}
 	if landed(t, a) {
 		t.Error("the rows of a Failed insert landed")
