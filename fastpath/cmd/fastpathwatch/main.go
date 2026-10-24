@@ -23,6 +23,12 @@
 //
 //	fastpathwatch -database D -project P -instance I -subscriptions ... -workspace WS \
 //	    -max-cpu 0.35 ... -run /opt/fastpath/loadgen -front ... -workspace WS -database D ...
+//
+// fastpathwatch edge reads instead: the edge's decide counts of a span, from
+// the nodes' journal in Cloud Logging, summed, with the E2 I2 gates' figures
+// (edge.go):
+//
+//	fastpathwatch edge -project P -since 2026-10-17T00:00:00Z [-until 2026-10-24T00:00:00Z]
 package main
 
 import (
@@ -70,13 +76,15 @@ type target struct {
 }
 
 // deps are what the command reaches: its sources and the store, closed by
-// the function returned with them, and the load generator's process.
+// the function returned with them, the load generator's process, and the
+// edge report's log entries.
 type deps struct {
-	open  func(ctx context.Context, t target) (watch.Sources, *store.Store, func(), error)
-	term  func(pid int) error
-	kill  func(pid int) error
-	alive func(pid int) bool
-	clock func() time.Time
+	open    func(ctx context.Context, t target) (watch.Sources, *store.Store, func(), error)
+	entries func(ctx context.Context, project string, since, until time.Time, each func(logEntry) error) error
+	term    func(pid int) error
+	kill    func(pid int) error
+	alive   func(pid int) bool
+	clock   func() time.Time
 }
 
 var production = deps{
@@ -102,14 +110,18 @@ var production = deps{
 		}
 		return src, s, func() { _ = metrics.Close(); client.Close() }, nil
 	},
-	term:  func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) },
-	kill:  func(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) },
-	alive: func(pid int) bool { err := syscall.Kill(pid, 0); return err == nil || errors.Is(err, syscall.EPERM) },
-	clock: time.Now,
+	term:    func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) },
+	kill:    func(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) },
+	alive:   func(pid int) bool { err := syscall.Kill(pid, 0); return err == nil || errors.Is(err, syscall.EPERM) },
+	clock:   time.Now,
+	entries: listEntries,
 }
 
 // run is the command, its exit code and what went wrong.
 func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error) {
+	if len(args) > 0 && args[0] == "edge" {
+		return runEdge(ctx, args[1:], out, d)
+	}
 	fs := flag.NewFlagSet("fastpathwatch", flag.ContinueOnError)
 	var t target
 	fs.StringVar(&t.database, "database", "", "the service's database: projects/P/instances/I/databases/D")

@@ -388,15 +388,15 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 			return err
 		}
 	}
+	// The edge's alerts (edge.AlertWouldAdmit, the decide path's) are written
+	// as the auditor's are, each kind with a policy of its own
+	// (docs/runbooks/fastpath-alerts.md).
+	edgeAlert := func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }
 	if cfg.Edge.DecideShadow {
-		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s,
-			// edge.AlertWouldAdmit's alert line, as the auditor's are
-			// written (docs/runbooks/fastpath-alerts.md); its policy is
-			// I1's.
-			Alert: func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }}
+		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
 	}
 	if cfg.Edge.Decide {
-		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s}
+		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
 		Clock: cfg.edgeClock, Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy,

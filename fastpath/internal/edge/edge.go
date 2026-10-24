@@ -297,6 +297,9 @@ func New(cfg Config) (*Edge, error) {
 			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+			if p, ok := r.Context().Value(decidePassedKey{}).(decidePassed); ok {
+				e.decider.answeredUpstream(p)
+			}
 			if call, ok := r.Context().Value(shadowKey{}).(*shadowCall); ok {
 				e.shadow.submit(comparison{call: call, passed: "python was not reached"})
 			}
@@ -310,6 +313,7 @@ func New(cfg Config) (*Edge, error) {
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.Request != nil {
 				if p, ok := resp.Request.Context().Value(decidePassedKey{}).(decidePassed); ok {
+					e.decider.answeredUpstream(p)
 					e.decider.evict(resp, p)
 				}
 				// The comparator reads a copy of the bytes as they pass;

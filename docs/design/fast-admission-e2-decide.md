@@ -1503,6 +1503,19 @@ snapshot and policy each minute carries the counts, and one more the
 requests dropped, the evictions and the cache's unrefreshed, dropped and
 failed reads; no line carries a body, an id, a key or a message.
 
+**The watch and alerts (G12).** Every count line of the decide path and the
+shadow counts its period alone, so a span's lines sum to its counts;
+`fastpathwatch edge` sums them from Cloud Logging and prints the I2
+figures below (`docs/runbooks/fastpath-watch.md`). The decide path counts
+its unavailable answers by the insert's gRPC code (`store` returns it with
+the outcome), so a clock ahead of Spanner's (`failed_precondition`, §8.4)
+or a Spanner incident is told from a lost commit answer. A period with an
+unavailable answer raises `edge_decide_unavailable`, three periods running
+`edge_decide_unavailable_sustained`, and a pass past decision 12's 1 s at
+the edge or 25 s in all `edge_decide_pass_slow`; each kind has its policy
+(`infra/fastpath_alerts.tf`) and runbook row
+(`docs/runbooks/fastpath-alerts.md`).
+
 **I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
 cohort-eligible requests with every difference explained; zero
 `differ.estimate*`, zero `row.idempotency_fingerprint`, zero

@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -70,20 +71,21 @@ func (f *fakeAdmitter) seen() ([]frontdoor.AuthorizeOf, []frontdoor.RefundOf, []
 	return slices.Clone(f.asked), slices.Clone(f.refunds), slices.Clone(f.refundLive)
 }
 
-// fakeInserter is the store's insert: insert answers each, and the rows of
-// each are kept.
+// fakeInserter is the store's insert: insert answers each, with code as
+// the transaction's error's, and the rows of each are kept.
 type fakeInserter struct {
 	insert func(ctx context.Context) store.InsertOutcome
+	code   codes.Code
 	mu     sync.Mutex
 	rows   []gwauth.Composed
 }
 
 func (f *fakeInserter) InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow,
-	r gwauth.ReservationRow) store.InsertOutcome {
+	r gwauth.ReservationRow) (store.InsertOutcome, codes.Code) {
 	f.mu.Lock()
 	f.rows = append(f.rows, gwauth.Composed{Authorization: a, Reservation: r})
 	f.mu.Unlock()
-	return f.insert(ctx)
+	return f.insert(ctx), f.code
 }
 
 func (f *fakeInserter) inserted() []gwauth.Composed {
@@ -208,8 +210,9 @@ var insertFaults = map[string]struct {
 // insertOf is the store's outcome for a case: its insert's error
 // classified by store.ClassifyInsert (so a golden label cannot drift from
 // §8.4's table), then the store's one read-back. A case Python found the
-// scope taken for is AlreadyExists with no row of ours.
-func insertOf(t *testing.T, c authorizeCase) store.InsertOutcome {
+// scope taken for is AlreadyExists with no row of ours. With it, the code
+// the store reports.
+func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 	t.Helper()
 	fault, ok := insertFaults[c.Insert]
 	if !ok {
@@ -225,20 +228,21 @@ func insertOf(t *testing.T, c authorizeCase) store.InsertOutcome {
 	outcome, alreadyExists := store.ClassifyInsert(err, fault.runs)
 	switch {
 	case outcome != store.Unknown:
-		return outcome
+		return outcome, fault.code
 	case fault.landed:
-		return store.Landed
+		return store.Landed, fault.code
 	case alreadyExists:
-		return store.ScopeTaken
+		return store.ScopeTaken, fault.code
 	}
-	return store.Unknown
+	return store.Unknown, fault.code
 }
 
 // TestEveryGoldenCaseThroughTheDecidePath: with the decide path on, every
 // answered case is answered by the edge with Python's 200 byte for byte
 // (timing values aside), Python never reached, its rows inserted as Python
 // wrote them, and nothing refunded; the unavailable case is Python's 503
-// exactly, Retry-After 1, the hold kept; every pass case reaches Python
+// exactly, Retry-After 1, the hold kept, counted by its insert's code; every
+// pass case reaches Python
 // with its §3 reason counted, the owner asked only for a reason after the
 // admit, and a refund sent for exactly the insert's passes (its own
 // envelope, Python's refund money, on a live context of its own).
@@ -246,6 +250,7 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
 	answered, unavailable, passed, refunded := 0, 0, 0, 0
+	unavailableCodes := map[string]int{}
 	for _, c := range f.Cases {
 		h := newDecideEdge(t, f, c, py)
 		reason := c.Expect.Reason
@@ -258,8 +263,8 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 				return frontdoor.Authorized{Status: status}
 			}
 		}
-		outcome := insertOf(t, c)
-		h.rows.insert = func(context.Context) store.InsertOutcome { return outcome }
+		outcome, code := insertOf(t, c)
+		h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return outcome }, code
 		hits := py.hits.Load()
 		rec := h.send(t, c)
 		reached := py.hits.Load() - hits
@@ -299,6 +304,10 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 				t.Errorf("%s: %d %v %s, refunds %d, Python reached %d", c.Name, rec.Code, rec.Header(), rec.Body.Bytes(),
 					len(refunds), reached)
 			}
+			if !maps.Equal(counts.UnavailableByCode, map[string]int64{codeName(code): 1}) {
+				t.Errorf("%s: unavailable by code %v, want %s", c.Name, counts.UnavailableByCode, codeName(code))
+			}
+			unavailableCodes[codeName(code)]++
 			unavailable++
 		default:
 			if evaluatorPassed {
@@ -338,6 +347,11 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	t.Logf("%d answered, %d unavailable, %d passed (%d refunded)", answered, unavailable, passed, refunded)
 	if answered != 161 || unavailable != 3 || refunded != 7 {
 		t.Fatalf("answered %d, unavailable %d, refunded %d: not the goldens' counts", answered, unavailable, refunded)
+	}
+	// The goldens' three unavailable answers, a code each: the clock ahead
+	// of Spanner's among them (§8.4).
+	if !maps.Equal(unavailableCodes, map[string]int{"deadline_exceeded": 1, "failed_precondition": 1, "aborted": 1}) {
+		t.Fatalf("the unavailable answers' codes: %v", unavailableCodes)
 	}
 }
 
@@ -675,5 +689,170 @@ func TestOnlyAdmitHandsOutADecision(t *testing.T) {
 	}
 	if !seen["ForShadow"] || !seen["Admit"] || !seen["file:../service"] || !seen["file:../../cmd/fastpath"] {
 		t.Fatalf("the positive control: %v", seen)
+	}
+}
+
+// alerts records the alerts an edge raises, by kind.
+type alerts struct {
+	mu   sync.Mutex
+	what map[string][]string
+}
+
+func (a *alerts) raise(kind, subject, what string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.what == nil {
+		a.what = map[string][]string{}
+	}
+	a.what[kind] = append(a.what[kind], subject+": "+what)
+}
+
+func (a *alerts) taken() map[string][]string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := a.what
+	a.what = nil
+	return out
+}
+
+// TestUnavailableAnswersAreCountedByCodeAndAlerted (G12): an Unknown insert
+// answers the 503, counted by the code the store reports, so a clock ahead
+// of Spanner's (FailedPrecondition) is told from a lost commit answer
+// (DeadlineExceeded). Each period with one raises AlertUnavailable with the
+// period's counts by code; SustainedPeriods of them running raise
+// AlertUnavailableSustained, and a period without resets the run. A period
+// of 200s alone raises nothing.
+func TestUnavailableAnswersAreCountedByCodeAndAlerted(t *testing.T) {
+	h, c := baseDecide(t)
+	var raised alerts
+	h.edge.decider.cfg.Alert = raised.raise
+	unknown := func(code codes.Code) {
+		h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return store.Unknown }, code
+		if rec := h.send(t, c); rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("an unknown insert: %d", rec.Code)
+		}
+	}
+	h.edge.decider.flush()
+	if got := raised.taken(); len(got) != 0 {
+		t.Fatalf("an empty period alerts: %v", got)
+	}
+	h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return store.Inserted }, codes.OK
+	if rec := h.send(t, c); rec.Code != http.StatusOK {
+		t.Fatalf("an insert: %d", rec.Code)
+	}
+	h.edge.decider.flush()
+	if got := raised.taken(); len(got) != 0 {
+		t.Fatalf("a period of 200s alerts: %v", got)
+	}
+	unknown(codes.FailedPrecondition)
+	unknown(codes.FailedPrecondition)
+	unknown(codes.DeadlineExceeded)
+	counts := h.edge.DecideCounts()
+	if counts.Unavailable != 3 || !maps.Equal(counts.UnavailableByCode,
+		map[string]int64{"failed_precondition": 2, "deadline_exceeded": 1}) {
+		t.Fatalf("the counts: %+v", counts)
+	}
+	h.edge.decider.flush()
+	if !strings.Contains(h.logs.all(), `fastpath edge decide: answered=0 read_back=0 unavailable=3 refunded=0 `+
+		`refund_failed=0 unavailable_by_code={"deadline_exceeded":1,"failed_precondition":2} passed={} slow={}`) {
+		t.Fatalf("the period's line: %s", h.logs.all())
+	}
+	got := raised.taken()
+	if len(got) != 1 || len(got[AlertUnavailable]) != 1 ||
+		!strings.Contains(got[AlertUnavailable][0], `edge decide: the edge answered 3 authorizes unavailable`) ||
+		!strings.Contains(got[AlertUnavailable][0], `{"deadline_exceeded":1,"failed_precondition":2}`) {
+		t.Fatalf("the first period's alerts: %v", got)
+	}
+	// Two more periods running: the third is sustained.
+	unknown(codes.FailedPrecondition)
+	h.edge.decider.flush()
+	if got := raised.taken(); len(got) != 1 || len(got[AlertUnavailable]) != 1 {
+		t.Fatalf("the second period's alerts: %v", got)
+	}
+	unknown(codes.FailedPrecondition)
+	h.edge.decider.flush()
+	got = raised.taken()
+	if len(got) != 2 || len(got[AlertUnavailable]) != 1 || len(got[AlertUnavailableSustained]) != 1 ||
+		!strings.Contains(got[AlertUnavailableSustained][0], `in each of the last 3 periods`) ||
+		!strings.Contains(got[AlertUnavailableSustained][0], `{"failed_precondition":1}`) {
+		t.Fatalf("the third period's alerts: %v", got)
+	}
+	// A period without resets the run: the next one is not sustained.
+	h.edge.decider.flush()
+	unknown(codes.Unavailable)
+	h.edge.decider.flush()
+	if got := raised.taken(); len(got) != 1 || len(got[AlertUnavailable]) != 1 {
+		t.Fatalf("after a quiet period: %v", got)
+	}
+}
+
+// TestSlowPassesAreCountedAndAlerted (decision 12, G12): a pass that spent
+// more than SlowAtEdge at the edge before it was forwarded is counted
+// at_edge, and one whose answer from Python, or the proxy's failure to
+// reach it, came more than SlowInAll after its arrival is counted in_all;
+// a period with either raises AlertSlowPass. At the contract's thresholds
+// the same passes count neither.
+func TestSlowPassesAreCountedAndAlerted(t *testing.T) {
+	h, c := baseDecide(t)
+	var raised alerts
+	h.edge.decider.cfg.Alert = raised.raise
+	h.rows.insert = func(context.Context) store.InsertOutcome { return store.Failed }
+	if rec := h.send(t, c); rec.Code != http.StatusTeapot {
+		t.Fatalf("a failed insert: %d", rec.Code)
+	}
+	h.edge.decider.flush()
+	if c := h.edge.DecideCounts(); len(c.Slow) != 0 || len(raised.taken()) != 0 {
+		t.Fatalf("a fast pass is slow: %+v", c)
+	}
+	h.edge.decider.slowAtEdge = 0
+	h.send(t, c)
+	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1}) {
+		t.Fatalf("slow at the edge: %v", got)
+	}
+	h.edge.decider.slowAtEdge, h.edge.decider.slowInAll = SlowAtEdge, 0
+	h.send(t, c)
+	// Python not reached: the proxy's failure is the pass's end.
+	h.python.respond.Store(func() *func(http.ResponseWriter) {
+		f := func(http.ResponseWriter) { panic(http.ErrAbortHandler) }
+		return &f
+	}())
+	if rec := h.send(t, c); rec.Code != http.StatusBadGateway {
+		t.Fatalf("Python not reached: %d", rec.Code)
+	}
+	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "in_all": 2}) {
+		t.Fatalf("slow in all: %v", got)
+	}
+	h.edge.decider.flush()
+	if !strings.Contains(h.logs.all(), `passed={"insert.failed":3} slow={"at_edge":1,"in_all":2}`) {
+		t.Fatalf("the period's line: %s", h.logs.all())
+	}
+	got := raised.taken()
+	if len(got) != 1 || len(got[AlertSlowPass]) != 1 ||
+		!strings.Contains(got[AlertSlowPass][0], `{"at_edge":1,"in_all":2}`) {
+		t.Fatalf("the alerts: %v", got)
+	}
+}
+
+// TestTheDecideLineCountsItsPeriodAlone: each period's line carries that
+// period's counts, totals not carried over, so a span's lines add up to its
+// counts; DecideCounts keeps the totals.
+func TestTheDecideLineCountsItsPeriodAlone(t *testing.T) {
+	h, c := baseDecide(t)
+	h.send(t, c)
+	h.edge.decider.flush()
+	h.edge.decider.flush()
+	lines := h.logs.all()
+	if !strings.Contains(lines, "fastpath edge decide: answered=1 ") ||
+		!strings.Contains(lines, "fastpath edge decide: answered=0 ") || h.edge.DecideCounts().Answered != 1 {
+		t.Fatalf("the periods' lines: %s", lines)
+	}
+}
+
+func TestCodeNames(t *testing.T) {
+	for code, want := range map[codes.Code]string{codes.OK: "ok", codes.FailedPrecondition: "failed_precondition",
+		codes.DeadlineExceeded: "deadline_exceeded", codes.Unavailable: "unavailable", codes.Code(99): "code(99)"} {
+		if got := codeName(code); got != want {
+			t.Errorf("%v: %q, want %q", code, got, want)
+		}
 	}
 }
