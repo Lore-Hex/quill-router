@@ -32,6 +32,20 @@ def test_routing_evidence_refresh_uses_catalog_publication_gates():
                and "GITHUB_STEP_SUMMARY" in step.get("run", "") for step in steps)
 
 
+def test_catalog_refresh_regenerates_and_publishes_model_alias_vectors():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
+    steps = workflow["jobs"]["refresh"]["steps"]
+    model_changes = next(step for step in steps if step.get("name") == "Record model route changes and upcoming schedules")
+    publication = next(step for step in steps if step.get("name") == "Commit, verify, and push if changed")
+    vector_steps = [step for step in steps if "uv run python scripts/fastpath/model_alias_vectors.py" in step.get("run", "")]
+    assert len(vector_steps) == 1
+    vectors = vector_steps[0]
+    assert steps.index(model_changes) < steps.index(vectors) < steps.index(publication)
+    assert not vectors.get("continue-on-error")
+    assert "if" not in vectors
+    assert "fastpath/testdata/model_alias_vectors_v1.json" in publication["run"]
+
+
 def publication_prerequisites() -> dict[str, str]:
     commands = {
         name: shutil.which(name) for name, kind in PUBLICATION_COMMANDS.items() if kind != "fake"
@@ -261,6 +275,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         "src/trusted_router/data/model_changes.jsonl",
         "src/trusted_router/data/model_changes_state.json",
         "src/trusted_router/static/og/providers/fixture.png",
+        "fastpath/testdata/model_alias_vectors_v1.json",
         "scripts/pricing/parsers/fixture.py",
     ):
         path = repo.clone / name
