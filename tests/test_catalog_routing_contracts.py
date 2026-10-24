@@ -137,6 +137,7 @@ from trusted_router.pricing import _customer_price
 from trusted_router.provider_lifecycle import (
     BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
     FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+    TOGETHER_NOVEMBER_6_RETIREMENT_AT,
     WAFER_KIMI_K26_RETIREMENT_AT,
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
 )
@@ -1552,7 +1553,9 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         inkling = MODELS["thinkingmachines/inkling"]
         endpoints = endpoints_for_model(inkling.id)
         provider_ids = {endpoint.provider for endpoint in endpoints}
-        assert inkling.provider in provider_ids
+        # Together is Inkling's listed provider until its route retires.
+        if catalog_predates(TOGETHER_NOVEMBER_6_RETIREMENT_AT):
+            assert inkling.provider in provider_ids
         assert "thinkingmachines" in provider_ids or _delisted(
             "thinkingmachines/inkling@thinkingmachines/prepaid"
         )
