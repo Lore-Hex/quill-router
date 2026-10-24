@@ -154,6 +154,33 @@ if [ -n "$ROUTING_SNAPSHOT_KEY_VERSION" ]; then
   ROUTING_SNAPSHOT_KEY_FILE="$ROUTING_SNAPSHOT_KEY_PATH"
 fi
 
+# E2 edge policy publication (docs/design/fast-admission-e2-decide.md section
+# 4, stage I1): the live facts the edge gates on, signed with the routing
+# snapshot key above under its own typ. A literal, never read from the caller
+# or a previous revision. On, GET /internal/fastpath/edge-policy answers the
+# edge's token on the combined surface; a poll signs at most once per 15 s per
+# instance, and an instance nobody polls signs nothing. The way back is false
+# and a deploy: the route is gone (404), the edge keeps its last copy until
+# that copy's not_after (60 s), then passes every request to Python.
+EDGE_POLICY_PUBLISH_ENABLED=true
+case "$EDGE_POLICY_PUBLISH_ENABLED" in
+  false) ;;
+  true)
+    # The publisher's signer (load_signer) needs the mounted file, the kid
+    # and the pinned public key; without any of them the route would answer
+    # 503 signer-unavailable for as long as the revision serves.
+    if [ -z "$ROUTING_SNAPSHOT_KEY_FILE" ] || [ -z "$ROUTING_SNAPSHOT_KID" ] ||
+       [[ ! "$ROUTING_SNAPSHOT_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+      echo "refusing rollout: edge policy publishing signs with the routing snapshot key, which is not mounted with its kid and public key" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "refusing rollout: edge policy publishing must be true or false" >&2
+    exit 1
+    ;;
+esac
+
 # Read the metadata inventory once. Probing every optional name with
 # `secrets describe` records an ERROR audit event for each expected missing
 # secret, which obscures real Secret Manager failures and inflates logging
@@ -725,6 +752,8 @@ ENV_VARS=(
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"
   "TR_ROUTING_SNAPSHOT_KID=${ROUTING_SNAPSHOT_KID}"
   "TR_ROUTING_SNAPSHOT_PUBLIC_KEY=${ROUTING_SNAPSHOT_PUBLIC_KEY}"
+  # E2 edge policy publication: the literal of the block above.
+  "TR_EDGE_POLICY_PUBLISH_ENABLED=${EDGE_POLICY_PUBLISH_ENABLED}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
