@@ -310,8 +310,6 @@ resource "google_compute_instance" "fastpath_node" {
   for_each = {
     "tr-fastpath-5" = "us-central1-a"
     "tr-fastpath-6" = "us-central1-b"
-    "tr-fastpath-7" = "us-central1-a"
-    "tr-fastpath-8" = "us-central1-b"
   }
 
   project      = local.gcp_project_id

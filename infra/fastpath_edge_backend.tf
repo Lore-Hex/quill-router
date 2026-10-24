@@ -18,10 +18,10 @@
 # local.fastpath_edge_port is infra/fastpath.tf's; the nodes' unit reads it too.
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
-  # Each node of infra/fastpath.tf has a group here and is a backend; 7 and
-  # 8 are retiring (stage I1 rolled back: they leave the backend one apply
-  # before their removal, 5 and 6 serving meanwhile).
-  fastpath_edge_retiring = ["tr-fastpath-7", "tr-fastpath-8"]
+  # Each node of infra/fastpath.tf has a group here and is a backend; none
+  # is retiring (7 and 8 left after stage I1 was rolled back, one apply
+  # before their removal).
+  fastpath_edge_retiring = []
   # The share, in percent, of the enclave's authorize calls the control load
   # balancer sends through the edge (infra/control_lb_url_map.tf). 1 once
   # Python counted every comparison of the edge's verdict (#1904) on the
