@@ -367,8 +367,11 @@ func TestTheInFlightLimitIsPerLookupHash(t *testing.T) {
 	release := make(chan struct{})
 	var blocked atomic.Int32
 	h.rows.insert = func(context.Context) store.InsertOutcome {
-		blocked.Add(1)
-		<-release
+		// The first two hold their slots; one past the limit that got this
+		// far answers at once, so the test fails rather than hangs.
+		if blocked.Add(1) <= 2 {
+			<-release
+		}
 		return store.Inserted
 	}
 	recs := make([]*httptest.ResponseRecorder, 2)
@@ -422,7 +425,10 @@ func TestTheDecideBudgetIsTheAdmitsDeadline(t *testing.T) {
 	var deadline time.Time
 	h.admitter.authorize = func(ctx context.Context, a frontdoor.AuthorizeOf) frontdoor.Authorized {
 		deadline, _ = ctx.Deadline()
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-time.After(DecideBudget + time.Second):
+		}
 		return frontdoor.Authorized{Status: frontdoor.Busy}
 	}
 	start := time.Now()

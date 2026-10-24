@@ -451,6 +451,36 @@ func TestTheEdgeDecidesEndToEnd(t *testing.T) {
 	stop()
 }
 
+// TestTheDecidePathNeedsTheSnapshotAndThePolicy: -edge-decide decides from
+// both, so it is refused without either; off is the default.
+func TestTheDecidePathNeedsTheSnapshotAndThePolicy(t *testing.T) {
+	cfg := Defaults()
+	if cfg.Edge.Decide {
+		t.Fatal("the defaults run the decide path")
+	}
+	cfg.Admission, cfg.Address, cfg.Region, cfg.Key = true, "127.0.0.1:1", "us-central1", key
+	cfg.SettleTopic, cfg.RecordTopic = "projects/spike/topics/settle-log", "projects/spike/topics/records"
+	public := base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	whole := EdgeConfig{Address: "127.0.0.1:2", Upstream: "http://python.internal", Token: "t",
+		SnapshotURL: "http://python.internal/internal/fastpath/routing-snapshot",
+		PolicyURL:   "http://python.internal/internal/fastpath/edge-policy", SnapshotPublicKey: public,
+		SnapshotKid: "routing-snapshot-1", SnapshotPlane: "gcp/us-central1", Decide: true}
+	cfg.Edge = whole
+	if err := cfg.valid(); err != nil {
+		t.Fatalf("a whole decide path: %v", err)
+	}
+	for name, change := range map[string]func(*EdgeConfig){
+		"no snapshot": func(e *EdgeConfig) { e.SnapshotURL = "" },
+		"no policy":   func(e *EdgeConfig) { e.PolicyURL = "" },
+	} {
+		cfg.Edge = whole
+		change(&cfg.Edge)
+		if err := cfg.valid(); err == nil {
+			t.Errorf("%s: valid", name)
+		}
+	}
+}
+
 // TestAProcessDrainsItsInsertsBeforeItReturns (§8.4): an insert whose
 // commit hangs past its deadline is answered Python's 503 at once, and its
 // transaction lives on; a process told to stop then returns only once that

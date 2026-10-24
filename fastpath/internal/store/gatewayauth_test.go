@@ -1086,6 +1086,40 @@ func waitInserts(t *testing.T, s *Store) {
 	}
 }
 
+// TestARowNotOursColumnForColumnIsNeverAnswered: a row under our
+// authorization id that names our reservation but not our content (no
+// commit of ours writes one) is not Landed: the edge answers a 200 only for
+// a row whose content it read back as its own. It is Unknown (the 503, the
+// hold kept), not ScopeTaken either, which would refund.
+func TestARowNotOursColumnForColumnIsNeverAnswered(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	for name, change := range map[string]func(*gwauth.AuthorizationRow){
+		"payload":     func(a *gwauth.AuthorizationRow) { a.Payload = `{"id":"another"}` },
+		"estimate":    func(a *gwauth.AuthorizationRow) { a.EstimatedMicrodollars++ },
+		"fingerprint": func(a *gwauth.AuthorizationRow) { a.IdempotencyFingerprint = "another" },
+		"boot":        func(a *gwauth.AuthorizationRow) { a.StageDBootKid = "another" },
+	} {
+		a, r := leasedRows("")
+		theirs := a
+		change(&theirs)
+		if err := pythonInsert(ctx, shared, theirs, r); err != nil {
+			t.Fatal(err)
+		}
+		if out := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
+			t.Errorf("%s: %v, want unknown", name, out)
+		}
+	}
+	// The positive control: our own rows are Landed.
+	a, r := leasedRows("")
+	if err := pythonInsert(ctx, shared, a, r); err != nil {
+		t.Fatal(err)
+	}
+	if out := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
+		t.Errorf("our own rows: %v, want landed", out)
+	}
+}
+
 // TestASessionAfterTheDeadlineSendsNothing: the client cannot make a
 // session until after the insert's deadline, so the insert is Failed at the
 // deadline with its transaction still waiting. When the session comes the
