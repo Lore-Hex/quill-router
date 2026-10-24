@@ -19,8 +19,8 @@
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
   # Each node of infra/fastpath.tf has a group here and is a backend; none
-  # is retiring (3 and 4 left once 5 and 6 served and reported HEALTHY,
-  # one apply before their removal).
+  # is retiring (7 and 8 left after stage I1 was rolled back, one apply
+  # before their removal).
   fastpath_edge_retiring = []
   # The share, in percent, of the enclave's authorize calls the control load
   # balancer sends through the edge (infra/control_lb_url_map.tf). 1 once
@@ -31,7 +31,9 @@ locals {
   # alerts (docs/incidents/2026-10-22-authorize-edge-deadline.md) were
   # explained: the route's own timeout, and the enclave's settle retry,
   # which no longer overlaps the settle it retries.
-  fastpath_edge_route_weight = 1
+  # 0 while stage I1 is rolled back: no enclave call reaches the edge until
+  # the nodes are understood (the I1 runbook).
+  fastpath_edge_route_weight = 0
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
