@@ -22,7 +22,12 @@ locals {
   # #1969's edge flags (-edge-snapshot-url, -public-key, -kid, -plane and
   # -edge-shadow); the first release a node with the snapshot attributes
   # below may run. Its fastpath/ tree is main's as of f12f8967d.
-  fastpath_release        = "04c5ad7692f8c234c4a7d2040f86bd120f88f1f9"
+  # 2d90fa113: main after #2040, with G10's decide pipeline and shadow
+  # (#2027/#2028), G11's decide path (#2030, off by flag), the reservation
+  # commit timestamp (#2038) and G12's per-period counts (#2039); it takes
+  # -edge-policy-url and -edge-decide-shadow, which the nodes' policy
+  # attributes below pass (stage I1).
+  fastpath_release        = "2d90fa113678233b9edcdf9d0ea833ace37b6c94"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -53,12 +58,22 @@ locals {
   # "Turning the edge on"). Until publishing is on
   # (docs/runbooks/routing-snapshot-key.md) the poll answers 404 and the
   # edge keeps polling, admission unaffected.
+  # The edge policy (stage I1, docs/design/fast-admission-e2-decide.md
+  # section 4): Python's signed live facts, polled on the same upstream and
+  # verified with the same key, kid and plane. Only a script from I1 on
+  # reads the policy's two attributes, so only nodes 7 and 8 act on them.
+  # The decide shadow (G10) stays off until the policy has been held
+  # through a measured soak (the I1 runbook); it is turned on here, then
+  # each node in turn is drained, its unit stopped and its startup script
+  # run again (a reset alone keeps the unit's old arguments).
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
     fastpath-edge-snapshot-kid        = "tr-routing-snapshot-2026-10a"
     fastpath-edge-snapshot-plane      = "gcp/${local.fastpath_region}"
     fastpath-edge-shadow              = "true"
+    fastpath-edge-policy-url          = "${local.fastpath_edge_upstream}/internal/fastpath/edge-policy"
+    fastpath-edge-decide-shadow       = "false"
   })
 }
 
@@ -290,10 +305,14 @@ resource "google_compute_instance" "fastpath_node" {
   # shadow on (local.fastpath_edge_snapshot), which the script 3 and 4 ran,
   # from before #1969, read neither of. Each replaced pair was marked
   # leaving and drained, left the edge backend (local.fastpath_edge_retiring)
-  # one apply before its removal, then was removed.
+  # one apply before its removal, then was removed. 7 and 8 take the places
+  # of 5 and 6 the same way, with the edge policy's attributes (stage I1),
+  # which the script 5 and 6 run, from before I1, reads neither of.
   for_each = {
     "tr-fastpath-5" = "us-central1-a"
     "tr-fastpath-6" = "us-central1-b"
+    "tr-fastpath-7" = "us-central1-a"
+    "tr-fastpath-8" = "us-central1-b"
   }
 
   project      = local.gcp_project_id
