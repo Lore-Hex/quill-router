@@ -779,6 +779,8 @@ def reservation_insert_statement(param_types: Any, **fields: Any) -> DmlStatemen
     binds = ", ".join(
         "PENDING_COMMIT_TIMESTAMP()" if c == "created_at" else f"@{c}" for c in RESERVATION_COLUMNS
     )
+    # Only bound columns are read from fields: a created_at= is ignored, which the
+    # frozen AST-pinned authorize copies under tests/fakes/ still pass.
     values = {c: fields.get(c) for c in types}
     values["credit_shard"] = fields.get(
         "credit_shard", fields.get("ws_shard", UNSHARDED)

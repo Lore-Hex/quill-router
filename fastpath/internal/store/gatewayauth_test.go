@@ -418,6 +418,22 @@ func compareStored(t *testing.T, name string, got, want AuthorizationForCompare)
 	}
 }
 
+// committedAt fails the test unless the reservation's created_at is the
+// commit's timestamp: present, not the edge's reading, and within the
+// emulator's clock of the commit (begun at before, read back just now),
+// which may run some milliseconds from this machine's.
+func committedAt(t *testing.T, name string, created spanner.NullTime, reading, before time.Time) {
+	t.Helper()
+	switch {
+	case !created.Valid:
+		t.Errorf("%s: the reservation's created_at is NULL, not the commit's timestamp", name)
+	case created.Time.Equal(reading):
+		t.Errorf("%s: the reservation's created_at is the reading %v, not the commit's timestamp", name, reading)
+	case created.Time.Before(before.Add(-time.Minute)) || created.Time.After(time.Now().Add(time.Minute)):
+		t.Errorf("%s: the reservation's created_at %v is not within a minute of the commit (begun %v)", name, created.Time, before)
+	}
+}
+
 // typedColumnsWritten checks, one by one, what the whole-row comparison
 // also holds: settled is false (the edge names the column, NOT NULL DEFAULT
 // false, as Python's statement does), and each typed column the edge writes
@@ -477,6 +493,7 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 		if a.InvocationNonce != nil {
 			nonces++
 		}
+		before := time.Now()
 		if out := goStore.InsertLeasedAuthorization(ctx, a, r); out != Inserted {
 			t.Fatalf("%s: %v", g.Name, out)
 		}
@@ -485,7 +502,9 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 			t.Fatalf("%s: read back: %v %v", g.Name, found, err)
 		}
 		compareStored(t, g.Name+" (the edge's insert)", got, g.want())
+		committedAt(t, g.Name+" (the edge's insert)", got.Reservation.CreatedAt, a.CreatedAt, before)
 		typedColumnsWritten(t, g.Name, got.Authorization, a)
+		before = time.Now()
 		if err := pythonInsert(ctx, pyClient, a, r); err != nil {
 			t.Fatalf("%s: Python's statements: %v", g.Name, err)
 		}
@@ -494,6 +513,7 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 			t.Fatalf("%s: read back Python's: %v %v", g.Name, found, err)
 		}
 		compareStored(t, g.Name+" (Python's statements)", py, got)
+		committedAt(t, g.Name+" (Python's statements)", py.Reservation.CreatedAt, a.CreatedAt, before)
 	}
 	if nonces == 0 {
 		t.Error("no golden case sends an invocation nonce: the typed column's non-NULL value went untested")
@@ -577,12 +597,7 @@ func TestAClockAheadOfTheCommitInserts(t *testing.T) {
 		if err != nil || !found || got.Reservation == nil {
 			t.Fatalf("%s: read back: %v %v %v", name, found, err, got.Reservation)
 		}
-		created := got.Reservation.CreatedAt
-		// The commit's timestamp: within the emulator's clock of the
-		// commit, which may run some milliseconds from this machine's.
-		if !created.Valid || created.Time.Before(before.Add(-time.Minute)) || created.Time.After(time.Now().Add(time.Minute)) {
-			t.Errorf("%s: the reservation's created_at %+v is not the commit's timestamp", name, created)
-		}
+		committedAt(t, name, got.Reservation.CreatedAt, ahead, before)
 		if !got.Authorization.CreatedAt.Equal(ahead) {
 			t.Errorf("%s: the authorization's created_at %v, want the reading %v", name, got.Authorization.CreatedAt, ahead)
 		}
