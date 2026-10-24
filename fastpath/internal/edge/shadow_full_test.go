@@ -981,7 +981,7 @@ func TestAnUnreadRefusalIsStillARefusal(t *testing.T) {
 	}{
 		{pyAnswer{status: 403, why: "bound"}, ClassWouldAdmit + ".403.unread"},
 		{pyAnswer{status: 401, why: "budget"}, ClassWouldAdmit + ".401.unread"},
-		{pyAnswer{status: 503, why: "bound"}, ClassPythonError + ".503"},
+		{pyAnswer{status: 503, why: "bound"}, ClassPythonError + ".503.unread"},
 		{pyAnswer{status: 200, why: "bound"}, ClassUnread + ".bound"},
 		{pyAnswer{why: "not_reached"}, ClassUnread + ".not_reached"},
 	} {
@@ -1071,5 +1071,149 @@ func TestTheCriticalClassIsAnAlert(t *testing.T) {
 	if len(alerts) != 1 || alerts[0] != AlertWouldAdmit+"|snapshot=golden-snapshot policy=golden-policy|"+
 		"the edge would have answered an authorize Python refused: "+ClassWouldAdmit+".403.forbidden" {
 		t.Fatalf("alerts %q", alerts)
+	}
+}
+
+// TestRunEndsWhileRequestsAreServed: Run's context ends while handlers
+// still begin following requests (a server shutting down serves its
+// in-flight requests). Run must not wait on what the handlers add to, which
+// is WaitDecideShadow's, called once the handlers have returned: the
+// service's order. Under -race, rounds of eight serving goroutines.
+func TestRunEndsWhileRequestsAreServed(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	py := newFakePython(t)
+	for range 100 {
+		h := newFullEdge(t, f, c, py, nil)
+		h.answer(answerWith(200, []byte(c.Expect.Response)))
+		ctx, cancel := context.WithCancel(context.Background())
+		ran := make(chan struct{})
+		go func() {
+			defer close(ran)
+			h.edge.Run(ctx)
+		}()
+		var serving sync.WaitGroup
+		for range 8 {
+			serving.Add(1)
+			go func() {
+				defer serving.Done()
+				for range 5 {
+					req := httptest.NewRequest(http.MethodPost, c.Request.Path, bytes.NewReader(c.body()))
+					req.Header = c.header()
+					h.edge.ServeHTTP(httptest.NewRecorder(), req)
+				}
+			}()
+		}
+		time.Sleep(2 * time.Millisecond)
+		cancel()
+		<-ran
+		serving.Wait()
+		h.edge.WaitDecideShadow()
+		got := h.edge.DecideShadowCounts()
+		if n := got.Classes[ClassAgreeFull] + int(got.Dropped); n != 40 {
+			t.Fatalf("%d of 40 requests compared or dropped: %+v", n, got)
+		}
+	}
+}
+
+// TestAGzipIsDecodedWithinTheBudget: what may be decoded is reserved
+// before a byte is, so a budget nearly spent refuses the decode rather than
+// allocate past it, and gives every byte back.
+func TestAGzipIsDecodedWithinTheBudget(t *testing.T) {
+	sh, err := newFullShadow(DecideShadowConfig{Cache: &recordingCache{}, Decides: &fakeDecides{}, Rows: &fakeRows{}},
+		func(string, ...any) {}, time.Now, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var zipped bytes.Buffer
+	zw := gzip.NewWriter(&zipped)
+	_, _ = zw.Write(bytes.Repeat([]byte("x"), 1000))
+	_ = zw.Close()
+	sh.budget = 100
+	if out, held, why := sh.decode("gzip", zipped.Bytes()); why != "budget" || out != nil || held != 0 ||
+		sh.bytes.Load() != 0 {
+		t.Fatalf("past the budget: %d bytes, held %d, %q, budget holds %d", len(out), held, why, sh.bytes.Load())
+	}
+	sh.budget = 2000
+	out, held, why := sh.decode("gzip", zipped.Bytes())
+	if why != "" || len(out) != 1000 || held != 1000 || sh.bytes.Load() != 1000 {
+		t.Fatalf("within it: %d bytes, held %d, %q, budget holds %d", len(out), held, why, sh.bytes.Load())
+	}
+	sh.release(held)
+	if _, _, why := sh.decode("br", zipped.Bytes()); why != "encoding" || sh.bytes.Load() != 0 {
+		t.Fatalf("another encoding: %q", why)
+	}
+}
+
+// closingReader is a store whose key reads block until their context ends,
+// and that counts the reads begun after the cache was closed.
+type closingReader struct {
+	fakeWorld
+	closed           atomic.Bool
+	began, afterward atomic.Int64
+}
+
+func (r *closingReader) ReadKeyContext(ctx context.Context, lookupHash string) (store.KeyContext, bool, error) {
+	r.began.Add(1)
+	if r.closed.Load() {
+		r.afterward.Add(1)
+	}
+	<-ctx.Done()
+	return store.KeyContext{}, false, ctx.Err()
+}
+
+// TestTheCacheClosesAfterTheLastLookup: a request whose key the cache does
+// not hold (its Lookup starts a read, which blocks) is with a slow Python
+// when the edge stops and the enclave hangs up; the service's order,
+// WaitDecideShadow and then Close, begins no read after Close, and Close
+// ends the one blocked.
+func TestTheCacheClosesAfterTheLastLookup(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	reader := &closingReader{fakeWorld: fakeWorld{c: c}}
+	cache, err := gwstate.NewCache(gwstate.CacheConfig{Reader: reader, Clock: func() time.Time { return c.at() },
+		ReadTimeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Cache = &recordingCache{KeyCache: cache} })
+	answering := make(chan struct{})
+	h.answer(func(w http.ResponseWriter) {
+		close(answering)
+		time.Sleep(time.Second)
+		w.WriteHeader(200)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	run := make(chan struct{})
+	go func() {
+		defer close(run)
+		h.edge.Run(ctx)
+	}()
+	served := make(chan struct{})
+	reqCtx, hangUp := context.WithCancel(context.Background())
+	go func() {
+		defer close(served)
+		req := httptest.NewRequest(http.MethodPost, c.Request.Path, bytes.NewReader(c.body())).WithContext(reqCtx)
+		req.Header = c.header()
+		h.edge.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	<-answering
+	cancel()
+	hangUp()
+	<-run
+	<-served
+	// The service's order: the handlers have returned, then the shadow's
+	// requests are compared, then the cache closes.
+	h.edge.WaitDecideShadow()
+	reader.closed.Store(true)
+	cache.Close()
+	if reader.began.Load() == 0 {
+		t.Fatal("no Lookup read the store: the test does not hold a read in flight at the stop")
+	}
+	if n := reader.afterward.Load(); n != 0 {
+		t.Fatalf("%d reads began after Close", n)
+	}
+	if got := h.edge.DecideShadowCounts(); got.Classes[ClassStale+".key"] != 1 {
+		t.Fatalf("counts %+v", got)
 	}
 }

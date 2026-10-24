@@ -348,24 +348,40 @@ func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	resp.Body = job.tap
 }
 
-// decoded is Python's answer's bytes as JSON, gunzipped when Python
-// compressed them (decision 13: Go never does).
-func decoded(encoding string, raw []byte) ([]byte, string) {
+// decode is Python's answer's bytes as JSON, gunzipped when Python
+// compressed them (decision 13: Go never does), and the bytes of the
+// budget the decoded copy holds: what may be decoded is reserved before a
+// byte is, and what was not used given back. why says why there is none.
+func (sh *fullShadow) decode(encoding string, raw []byte) (out []byte, held int64, why string) {
 	switch strings.ToLower(strings.TrimSpace(encoding)) {
 	case "", "identity":
-		return raw, ""
+		return raw, 0, ""
 	case "gzip":
-		zr, err := gzip.NewReader(bytes.NewReader(raw))
-		if err != nil {
-			return nil, "encoding"
-		}
-		out, err := io.ReadAll(io.LimitReader(zr, maxShadowResponse+1))
-		if err != nil || len(out) > maxShadowResponse {
-			return nil, "bound"
-		}
-		return out, ""
+	default:
+		return nil, 0, "encoding"
 	}
-	return nil, "encoding"
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, 0, "encoding"
+	}
+	limit := min(int64(maxShadowResponse), sh.budget-sh.bytes.Load())
+	if limit <= 0 || !sh.reserve(limit) {
+		return nil, 0, "budget"
+	}
+	out, err = io.ReadAll(io.LimitReader(zr, limit+1))
+	switch {
+	case err != nil:
+		sh.release(limit)
+		return nil, 0, "encoding"
+	case int64(len(out)) > limit && limit < maxShadowResponse:
+		sh.release(limit)
+		return nil, 0, "budget"
+	case int64(len(out)) > limit:
+		sh.release(limit)
+		return nil, 0, "bound"
+	}
+	sh.release(limit - int64(len(out)))
+	return out, int64(len(out)), ""
 }
 
 // follow decides the request, waits for Python's answer, compares, evicts
@@ -388,17 +404,8 @@ func (sh *fullShadow) follow(job *fullJob) {
 	var decodedHeld int64
 	if a.why == "" && a.status != 0 {
 		var why string
-		raw := a.body
-		a.body, why = decoded(a.encoding, raw)
-		switch {
-		case why != "":
-			a.why, a.body = why, nil
-		case len(a.body) > 0 && &a.body[0] != &raw[0]:
-			if sh.reserve(int64(len(a.body))) {
-				decodedHeld = int64(len(a.body))
-			} else {
-				a.why, a.body = "budget", nil
-			}
+		if a.body, decodedHeld, why = sh.decode(a.encoding, a.body); why != "" {
+			a.why = why
 		}
 	}
 	r := sh.safeCompare(decided, a)
@@ -473,7 +480,7 @@ func compareFull(d Decided, a pyAnswer) fullResult {
 			r.class = ClassUnread + "." + a.why
 		case a.status >= 500:
 			// A pause 503 is told from Python's others by its body alone.
-			r.class = ClassPythonError + "." + strconv.Itoa(a.status)
+			r.class = ClassPythonError + "." + strconv.Itoa(a.status) + ".unread"
 		default:
 			r.class = ClassWouldAdmit + "." + strconv.Itoa(a.status) + ".unread"
 		}
@@ -1065,7 +1072,10 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 }
 
 // run logs the counts each period and refreshes the decide copy, until ctx
-// ends; then waits for the requests it follows.
+// ends. It never waits for the requests followed: handlers may still begin
+// following when ctx ends (a server shutting down serves its in-flight
+// requests); WaitDecideShadow, once they have returned, waits and logs the
+// last counts.
 func (sh *fullShadow) run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -1079,18 +1089,12 @@ func (sh *fullShadow) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			wg.Wait()
-			// The requests still followed are counted in the last line.
-			sh.wait()
-			sh.flush()
 			return
 		case <-ticker.C:
 			sh.flush()
 		}
 	}
 }
-
-// wait waits for every request the shadow follows to be compared.
-func (sh *fullShadow) wait() { sh.wg.Wait() }
 
 // flush logs and resets the period's counts: one INFO line a snapshot and
 // policy, and one for the requests not followed.
@@ -1154,8 +1158,13 @@ func (e *Edge) DecideShadowOn() bool { return e.full != nil }
 // WaitDecideShadow waits for every request the full-response shadow
 // follows to be compared (at shutdown, after the edge's handlers have
 // returned, so no read the shadow makes outlives the store's client).
+//
+// It is called only once no handler can begin following a request: the
+// WaitGroup it waits on is the handlers' to add to. It then logs the
+// period's last counts.
 func (e *Edge) WaitDecideShadow() {
 	if e.full != nil {
-		e.full.wait()
+		e.full.wg.Wait()
+		e.full.flush()
 	}
 }

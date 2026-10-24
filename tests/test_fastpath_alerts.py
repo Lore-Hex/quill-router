@@ -66,6 +66,12 @@ def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
     kinds = re.findall(r'^\tAlert\w+:\s+"(\w+)",$', alerts, re.M)
     assert len(kinds) == len(re.findall(r"^\tAlert\w+\s+= ", alerts, re.M)) == 13
     assert 'return "other"' in alerts
+    # The edge's decide shadow raises its own kind through the service's
+    # alert line (writeAlertOf).
+    edge = _read("fastpath", "internal", "edge", "shadow_full.go")
+    edge_kinds = re.findall(r'^const Alert\w+ = "(\w+)"$', edge, re.M)
+    assert edge_kinds == ["edge_would_admit_python_refused"]
+    kinds += edge_kinds
     # Each kind its own policy, so a kind that keeps firing cannot use up
     # another's daily notifications.
     listed = re.search(r"fastpath_alert_kinds = toset\(\[(.*?)\]\)", POLICIES.read_text(encoding="utf-8"), re.S)
