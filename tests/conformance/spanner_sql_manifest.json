@@ -12,7 +12,7 @@
     "storage_gcp_counter_dml:release_credit_no_debt_statement": "4878ba0734d0e8da48e9a2dad558cc4f559e5f2d4b380226cb2f9721a7a3c8c2",
     "storage_gcp_counter_dml:reserve_key_statement": "9eb78b975825a2ab99e03b669c8d3dbdbbbae2c0b359ad1a57e9ff5b7d604227",
     "storage_gcp_counter_dml:release_key_statement": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
-    "storage_gcp_counter_dml:reservation_insert_statement": "b1ef994b99af7ae79da8a3e3795169c2704edf4e789af3994c3eda292460927e",
+    "storage_gcp_counter_dml:reservation_insert_statement": "3f34179db8924ac503948102e54ec4c3073af24a7fad30647e3e3a48cae7e056",
     "storage_gcp_counter_dml:claim_reservation_statement": "d060c661d91a0e5c6f29355b2872ed79059d88fc54a9e4a6e994b895c466f97b",
     "storage_gcp_counter_dml:reservation_retention_clear_statement": "ea44390479712ba4e7d9b80b9e450797a780b107760164a313dbdf293d09e885",
     "storage_gcp_counter_dml:entity_insert_statement": "dd77ee0b463b7c33354554a82a8079efff08126fbe32b9810866da714e332f7b",
@@ -1360,16 +1360,15 @@
       ]
     },
     "storage_gcp_counter_dml:reservation_insert_statement:1": {
-      "fingerprint": "b1ef994b99af7ae79da8a3e3795169c2704edf4e789af3994c3eda292460927e",
+      "fingerprint": "3f34179db8924ac503948102e54ec4c3073af24a7fad30647e3e3a48cae7e056",
       "scenarios": [
         {
           "bindings": {
             "cols": "=\", \".join(RESERVATION_COLUMNS)",
-            "binds": "=\", \".join(\"@\"+c for c in RESERVATION_COLUMNS)"
+            "binds": "=\", \".join(\"PENDING_COMMIT_TIMESTAMP()\" if c == \"created_at\" else \"@\"+c for c in RESERVATION_COLUMNS)"
           },
           "types": {
             "authorization_id": "STRING",
-            "created_at": "TIMESTAMP",
             "credit_reserved_micro": "INT64",
             "credit_shard": "INT64",
             "expires_at": "TIMESTAMP",
@@ -4653,7 +4652,7 @@
     "storage_gcp:SpannerStore.reserve_earnings_cashout.txn": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
     "storage_gcp:SpannerStore.release_earnings_cashout.txn": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
     "storage_gcp:SpannerStore.ensure_earnings_account.txn": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
-    "storage_gcp:SpannerStore._authorize_gateway_leased.txn": "6cb35a5c6b32f9f80baa3adf6308e1c40a93a734e1fb96eaf6a034ee4fbccb06",
+    "storage_gcp:SpannerStore._authorize_gateway_leased.txn": "e0d7dd393533de8693295ae4b7428ce8de6a5ef93822ba3f0840a58c0830c657",
     "storage_gcp:SpannerStore.typed_finalize_leased_result.txn": "f77ee92a6773c3a162d63dbb91e0f4e59667a76ebca3b408d0d44ba2a5802137",
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
@@ -4692,7 +4691,7 @@
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
-    "storage_gcp_authorize:authorize_atomic.txn": "5913141222670dc1e3084ff60dd684202a0443f657b5cbb6fc7b169c20262956",
+    "storage_gcp_authorize:authorize_atomic.txn": "e5288bdecf407431b46d41b566e301b9b1b5f649e2ffc25ea089060d3c74964a",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:reap_expired_reservations_result": "792c0c08242dcd713034dd26eb9821673662536d20a3af9b1a2308dfe186a7d1",

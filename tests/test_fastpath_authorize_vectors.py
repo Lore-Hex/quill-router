@@ -173,7 +173,10 @@ def test_every_answer_agrees_with_its_rows_and_inputs() -> None:
                 == data["credit_reservation_id"] == ids["reservation_id"]), name
         assert reservation["authorization_id"] == ids["authorization_id"], name
         # One clock reading: the instant prices, stamps and expires the rows.
-        assert authorization["created_at_us"] == reservation["created_at_us"] == case["at_us"], name
+        # The reservation's created_at alone is the commit's timestamp (§5):
+        # Spanner refuses a reading later than the commit in that column.
+        assert authorization["created_at_us"] == case["at_us"], name
+        assert "created_at_us" not in reservation and reservation["created_at"] == "commit_timestamp", name
         assert payload["created_at"] == _instant(case["at_us"]), name
         assert reservation["expires_at_us"] - case["at_us"] == 7_200_000_000, name
         assert authorization["settled"] is False and authorization["terminal_at_us"] is None, name

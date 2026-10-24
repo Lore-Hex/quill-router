@@ -569,7 +569,9 @@ func rowsAreGoldens(t *testing.T, c authorizeCase, composed gwauth.Composed) boo
 		"ws_shard": num(0), "credit_shard": num(0), "key_shard": num(0), "credit_reserved_micro": num(0),
 		"key_reserved_micro": num(0), "hold_usage_type": r.HoldUsageType, "authorization_id": r.AuthorizationID,
 		"idempotency_scope": r.IdempotencyScope, "idempotency_fingerprint": r.IdempotencyFingerprint,
-		"expires_at_us": num(r.ExpiresAt.UnixMicro()), "created_at_us": num(r.CreatedAt.UnixMicro()),
+		"expires_at_us": num(r.ExpiresAt.UnixMicro()),
+		// The commit's timestamp, as the store writes it (§5).
+		"created_at": "commit_timestamp",
 	}
 	ok := true
 	// Every column of the table (store.StoredAuthorization's 25, the

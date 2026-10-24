@@ -165,8 +165,9 @@ The flow, per request, in this order:
     `gateway_authorize_max_in_flight_per_key`; over the limit passes. Go
     never learns "exhausted" from `Busy`.
 15. **One clock.** One edge clock reading per request is the price instant,
-    `created_at` and the base of `expires_at`. An instant outside the
-    snapshot's window passes.
+    the authorization's `created_at` and the base of `expires_at`. An
+    instant outside the snapshot's window passes. The reservation's
+    `created_at` is the commit's timestamp, no reading (§5, §8.4).
 16. **Imports.** `gwauth` may import `routingsnapshot`; the import rule
     (`routingsnapshot/rules_test.go:138`, `TestOnlyTheEdgeImportsTheEvaluator`)
     widens to the edge and `gwauth` only.
@@ -476,8 +477,8 @@ is §8.4.
 | `authorization_id` | the authorization's |
 | `idempotency_scope` | `f"{workspace_id}#{key_hash}#{sha256_hex(idempotency_key)}"` (`storage_gcp_keys.py:596-600`), never null in the cohort (a key is always presented or minted) |
 | `idempotency_fingerprint` | §7 |
-| `expires_at` | the clock reading plus 7200 s (`GATEWAY_RESERVATION_TTL_SECONDS`, `user_model_rules.py:17`). Python takes a second clock reading for it (`gateway.py:1668`), a few milliseconds after `created_at`; Go uses its one reading (decision 15), P1 pins both of Python's to the case's instant, and G10 compares `expires_at - created_at` as exactly 7200 s for Go and at least 7200 s for Python |
-| `created_at` | the clock reading |
+| `expires_at` | the clock reading plus 7200 s (`GATEWAY_RESERVATION_TTL_SECONDS`, `user_model_rules.py:17`). Python takes a second clock reading for it (`gateway.py:1668`), a few milliseconds after the authorization's `created_at`; Go uses its one reading (decision 15), P1 pins both of Python's to the case's instant, and G10 holds Python's at least Go's and at most the request's latency and a second later |
+| `created_at` | the commit's timestamp: Python's `PENDING_COMMIT_TIMESTAMP()`, Go's `spanner.CommitTimestamp`, never a clock reading (§8.4). Nothing reads it: settle, the reaper and the retention sweeps key on the ids, `settled`, `expires_at` and `terminal_at`, and the operator's `verify_gateway_authorization.py` only prints it. The insert is the transaction's last touch of `tr_reservation`, as a commit-timestamp write must be |
 
 `settled` takes its default (false); `actual_micro`, `settled_usage_type`,
 `terminal_at` are null.
@@ -1052,13 +1053,16 @@ the client:
 `tr_reservation.created_at` is a commit-timestamp column
 (`allow_commit_timestamp`), and Spanner refuses a value in it later than
 the commit's own timestamp (`FailedPrecondition`, "Cannot write
-timestamps in the future"), for Go's rows and Python's alike, since both
-write their clock reading. Go reads that `FailedPrecondition` as `Unknown`
-(it cannot tell it from a re-sent commit's), so an edge clock ahead of
-Spanner's by more than the time from arrival to commit turns each decided
-authorize into the 503, its hold kept. GCE clocks keep within a
-millisecond of Google's time; the emulator in a container can lag its host
-by more, which the tests allow for, and G12 alerts on unavailable answers.
+timestamps in the future"). Both paths therefore write the commit's
+timestamp there (§5), never a clock reading; the authorization row and its
+payload keep the reading, a column without `allow_commit_timestamp`. A
+clock reading in that column would fail every authorize of a node or
+instance whose clock runs ahead of TrueTime by more than the time from its
+reading to the commit: Go reads that `FailedPrecondition` as `Unknown` (it
+cannot tell it from a re-sent commit's), the 503 with its hold kept, and
+each enclave retry carries a new authorization id, so the held
+reservations would multiply. The store's tests run the edge an hour ahead
+of the emulator, and the service's a second ahead, and both answer.
 
 A refund after an `Unknown` would let an enclave retry replay, through
 Python, a row whose hold was given back; so nothing that can follow an
@@ -1223,7 +1227,8 @@ EXPECT =
       "credit_reserved_micro": 0, "key_reserved_micro": 0,
       "hold_usage_type": "Credits", "authorization_id": STR,
       "idempotency_scope": STR, "idempotency_fingerprint": STR,
-      "expires_at_us": INT, "created_at_us": INT}}
+      "expires_at_us": INT,
+      "created_at": "commit_timestamp"}} // the commit's timestamp (§5)
  | {"outcome": "unavailable", "status": 503,
     "headers": [["retry-after", "1"]], "response": STR, "timing": TIMING,
     "python": {"status": INT, "type": STR | null, "leased": BOOL}}   // only when Python answered otherwise
@@ -1487,7 +1492,8 @@ column, which Python reads before its payload copy, so a NULL Go would
 write that Python fills is caught only here), `row.payload.<key>`, and
 `row.reservation.<column>` for each of the reservation's 18 (`expires_at`
 Python's at least Go's and at most the request's latency and a second
-later, §5). A row Python's settle or heartbeat reached first is compared on
+later, §5; `created_at` present, not compared by value, since on either
+path it is the commit's timestamp). A row Python's settle or heartbeat reached first is compared on
 the columns those leave alone (`moved_on`, or `moved_on_differ` with its
 fields); one Python wrote off the pilot's lease (no `fastpath_envelope`) is
 `python_not_leased` and not compared. Python's status classifies whether

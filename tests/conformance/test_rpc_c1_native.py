@@ -147,7 +147,7 @@ def test_finalize_ten_statement_native_readback(c1_database, monkeypatch, window
                 pt, reservation_id=rid, workspace_id=ws, key_hash=key, ws_shard=0,
                 credit_shard=3, key_shard=2, credit_reserved_micro=100, key_reserved_micro=100,
                 hold_usage_type="Credits", authorization_id=aid, idempotency_scope=identity,
-                idempotency_fingerprint=identity, expires_at=NOW + timedelta(hours=1), created_at=NOW,
+                idempotency_fingerprint=identity, expires_at=NOW + timedelta(hours=1),
             )]
     database.run_in_transaction(lambda tx: execute_dml(tx, seed, batch=True))
     intent = SettleOutboxRow(

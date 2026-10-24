@@ -120,7 +120,7 @@ func leasedRows(scope string) (gwauth.AuthorizationRow, gwauth.ReservationRow) {
 			Payload: `{"id":"` + aid + `"}`, IdempotencyFingerprint: "fp", StageDBootKid: "kid"},
 		gwauth.ReservationRow{ReservationID: rid, WorkspaceID: ws, KeyHash: kh, HoldUsageType: "Credits",
 			AuthorizationID: aid, IdempotencyScope: scope, IdempotencyFingerprint: "fp",
-			ExpiresAt: at.Add(7200 * time.Second), CreatedAt: at}
+			ExpiresAt: at.Add(7200 * time.Second)}
 }
 
 // landed reports whether the authorization's row and its reservation's are
@@ -162,15 +162,15 @@ func moneySafe(t *testing.T, name string, out InsertOutcome, applied bool) {
 
 // pythonReservationSQL and pythonAuthorizationSQL are Python's inserts,
 // verbatim: reservation_insert_statement (storage_gcp_counter_dml.py, the
-// column list RESERVATION_COLUMNS) and _INSERT_GATEWAY_AUTHORIZATION_SQL
-// (storage_gcp_request_records.py).
+// column list RESERVATION_COLUMNS, created_at the commit's timestamp) and
+// _INSERT_GATEWAY_AUTHORIZATION_SQL (storage_gcp_request_records.py).
 const (
 	pythonReservationSQL = "INSERT INTO tr_reservation (reservation_id, workspace_id, key_hash, ws_shard, " +
 		"credit_shard, key_shard, credit_reserved_micro, key_reserved_micro, hold_usage_type, authorization_id, " +
 		"idempotency_scope, idempotency_fingerprint, expires_at, created_at) VALUES (@reservation_id, " +
 		"@workspace_id, @key_hash, @ws_shard, @credit_shard, @key_shard, @credit_reserved_micro, " +
 		"@key_reserved_micro, @hold_usage_type, @authorization_id, @idempotency_scope, " +
-		"@idempotency_fingerprint, @expires_at, @created_at)"
+		"@idempotency_fingerprint, @expires_at, PENDING_COMMIT_TIMESTAMP())"
 	pythonAuthorizationSQL = "INSERT INTO tr_gateway_authorization (" +
 		"authorization_id, workspace_id, key_hash, reservation_id, model_id, " +
 		"provider, usage_type, estimated_microdollars, settled, created_at, " +
@@ -204,7 +204,7 @@ func pythonInsert(ctx context.Context, c *spanner.Client, a gwauth.Authorization
 				"credit_reserved_micro": int64(0), "key_reserved_micro": int64(0),
 				"hold_usage_type": r.HoldUsageType, "authorization_id": r.AuthorizationID,
 				"idempotency_scope": r.IdempotencyScope, "idempotency_fingerprint": r.IdempotencyFingerprint,
-				"expires_at": r.ExpiresAt, "created_at": r.CreatedAt,
+				"expires_at": r.ExpiresAt,
 			}},
 			{SQL: pythonAuthorizationSQL, Params: map[string]any{
 				"authorization_id": a.AuthorizationID, "workspace_id": a.WorkspaceID, "key_hash": a.KeyHash,
@@ -288,7 +288,9 @@ type goldenReservationRow struct {
 	IdempotencyScope       string `json:"idempotency_scope"`
 	IdempotencyFingerprint string `json:"idempotency_fingerprint"`
 	ExpiresAtUS            int64  `json:"expires_at_us"`
-	CreatedAtUS            int64  `json:"created_at_us"`
+	// "commit_timestamp": the commit's own timestamp (§5), no instant the
+	// golden can name.
+	CreatedAt string `json:"created_at"`
 }
 
 // goldenAnswered is every P1 case Python answered, with the rows it wrote.
@@ -331,8 +333,7 @@ func (g goldenCase) rows() (gwauth.AuthorizationRow, gwauth.ReservationRow) {
 			InvocationNonce: a.InvocationNonce},
 		gwauth.ReservationRow{ReservationID: r.ReservationID, WorkspaceID: r.WorkspaceID, KeyHash: r.KeyHash,
 			HoldUsageType: r.HoldUsageType, AuthorizationID: r.AuthorizationID, IdempotencyScope: r.IdempotencyScope,
-			IdempotencyFingerprint: r.IdempotencyFingerprint, ExpiresAt: fromUS(r.ExpiresAtUS),
-			CreatedAt: fromUS(r.CreatedAtUS)}
+			IdempotencyFingerprint: r.IdempotencyFingerprint, ExpiresAt: fromUS(r.ExpiresAtUS)}
 }
 
 func nullString(p *string) spanner.NullString {
@@ -384,13 +385,18 @@ func (g goldenCase) want() AuthorizationForCompare {
 			CreditReservedMicro: someInt(r.CreditReservedMicro), KeyReservedMicro: someInt(r.KeyReservedMicro),
 			HoldUsageType: someString(r.HoldUsageType), AuthorizationID: someString(r.AuthorizationID),
 			IdempotencyScope: someString(r.IdempotencyScope), IdempotencyFingerprint: someString(r.IdempotencyFingerprint),
-			CreatedAt: someTime(r.CreatedAtUS), ExpiresAt: someTime(r.ExpiresAtUS),
+			ExpiresAt: someTime(r.ExpiresAtUS),
 			// Python's insert leaves these to their defaults and NULL.
 			Settled: false,
+			// created_at is the commit's timestamp: compareStored holds it
+			// present and leaves its value out.
 		},
 	}
 }
 
+// compareStored holds every column of the two rows equal but the
+// reservation's created_at, which must be present: it is the commit's
+// timestamp (§5), and no two commits share one.
 func compareStored(t *testing.T, name string, got, want AuthorizationForCompare) {
 	t.Helper()
 	if got.Authorization != want.Authorization {
@@ -402,8 +408,13 @@ func compareStored(t *testing.T, name string, got, want AuthorizationForCompare)
 	if got.Reservation == nil || want.Reservation == nil {
 		t.Fatalf("%s: a reservation is missing: got %v, want %v", name, got.Reservation, want.Reservation)
 	}
-	if *got.Reservation != *want.Reservation {
-		t.Errorf("%s: the reservation row\n got %+v\nwant %+v", name, *got.Reservation, *want.Reservation)
+	if !got.Reservation.CreatedAt.Valid {
+		t.Errorf("%s: the reservation's created_at is NULL, not the commit's timestamp", name)
+	}
+	g, w := *got.Reservation, *want.Reservation
+	g.CreatedAt, w.CreatedAt = spanner.NullTime{}, spanner.NullTime{}
+	if g != w {
+		t.Errorf("%s: the reservation row\n got %+v\nwant %+v", name, g, w)
 	}
 }
 
@@ -459,6 +470,9 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 	}
 	nonces := 0
 	for _, g := range goldenAnswered(t) {
+		if g.Expect.ReservationRow.CreatedAt != "commit_timestamp" {
+			t.Fatalf("%s: the golden reservation's created_at is %q, not the commit's timestamp", g.Name, g.Expect.ReservationRow.CreatedAt)
+		}
 		a, r := g.rows()
 		if a.InvocationNonce != nil {
 			nonces++
@@ -538,6 +552,61 @@ func TestOurOwnRowIsLanded(t *testing.T) {
 	}
 	if out := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
 		t.Fatalf("the same rows again: %v, want landed", out)
+	}
+}
+
+// TestAClockAheadOfTheCommitInserts: an edge whose clock runs an hour
+// ahead of the emulator's inserts, on either path's statements, and the
+// reservation's created_at is the commit's timestamp, while the
+// authorization keeps the edge's reading. The control: the same reading
+// written into the reservation's created_at is refused (FailedPrecondition,
+// "Cannot write timestamps in the future"), which the insert reads as
+// Unknown, a 503 that keeps its hold, on every authorize.
+func TestAClockAheadOfTheCommitInserts(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ahead := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	rows := func() (gwauth.AuthorizationRow, gwauth.ReservationRow) {
+		a, r := leasedRows("")
+		a.CreatedAt, r.ExpiresAt = ahead, ahead.Add(7200*time.Second)
+		return a, r
+	}
+	check := func(name string, a gwauth.AuthorizationRow, before time.Time) {
+		t.Helper()
+		got, found, err := s.ReadAuthorizationForCompare(ctx, a.AuthorizationID)
+		if err != nil || !found || got.Reservation == nil {
+			t.Fatalf("%s: read back: %v %v %v", name, found, err, got.Reservation)
+		}
+		created := got.Reservation.CreatedAt
+		// The commit's timestamp: within the emulator's clock of the
+		// commit, which may run some milliseconds from this machine's.
+		if !created.Valid || created.Time.Before(before.Add(-time.Minute)) || created.Time.After(time.Now().Add(time.Minute)) {
+			t.Errorf("%s: the reservation's created_at %+v is not the commit's timestamp", name, created)
+		}
+		if !got.Authorization.CreatedAt.Equal(ahead) {
+			t.Errorf("%s: the authorization's created_at %v, want the reading %v", name, got.Authorization.CreatedAt, ahead)
+		}
+	}
+
+	before := time.Now()
+	a, r := rows()
+	if out := s.InsertLeasedAuthorization(ctx, a, r); out != Inserted {
+		t.Fatalf("the edge's insert with its clock an hour ahead: %v, want inserted", out)
+	}
+	check("the edge's insert", a, before)
+
+	pa, pr := rows()
+	if err := pythonInsert(ctx, shared, pa, pr); err != nil {
+		t.Fatalf("Python's statements with the clock an hour ahead: %v", err)
+	}
+	check("Python's statements", pa, before)
+
+	// The control: the reading itself, in the commit-timestamp column.
+	ca, cr := rows()
+	_, err := shared.Apply(ctx, []*spanner.Mutation{spanner.Insert("tr_reservation",
+		[]string{"reservation_id", "authorization_id", "created_at"}, []any{cr.ReservationID, ca.AuthorizationID, ahead})})
+	if spanner.ErrCode(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "in the future") {
+		t.Fatalf("the reading written into created_at: %v, want FailedPrecondition, a timestamp in the future", err)
 	}
 }
 

@@ -755,7 +755,17 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
 
 def reservation_insert_statement(param_types: Any, **fields: Any) -> DmlStatement:
     """INSERT a reservation row. Raises ALREADY_EXISTS (NOT retried) on a scoped
-    idempotency-key conflict — the caller converts that to the replay path."""
+    idempotency-key conflict — the caller converts that to the replay path.
+
+    created_at is the commit's own timestamp (PENDING_COMMIT_TIMESTAMP()),
+    never a client clock: the column is allow_commit_timestamp=true, and
+    Spanner refuses (FAILED_PRECONDITION, "Cannot write timestamps in the
+    future") a value in it later than the commit's timestamp, so a node
+    whose clock runs ahead of TrueTime would fail every authorize. No
+    decision reads the column (settle, the reaper and retention key on the
+    ids, settled, expires_at and terminal_at), and the statement is its
+    transaction's last touch of tr_reservation, as a commit-timestamp write
+    must be. A created_at field is not bound."""
     pt = param_types
     types = {
         "reservation_id": pt.STRING, "workspace_id": pt.STRING, "key_hash": pt.STRING,
@@ -763,18 +773,20 @@ def reservation_insert_statement(param_types: Any, **fields: Any) -> DmlStatemen
         "credit_reserved_micro": pt.INT64, "key_reserved_micro": pt.INT64,
         "hold_usage_type": pt.STRING, "authorization_id": pt.STRING,
         "idempotency_scope": pt.STRING, "idempotency_fingerprint": pt.STRING,
-        "expires_at": pt.TIMESTAMP, "created_at": pt.TIMESTAMP,
+        "expires_at": pt.TIMESTAMP,
     }
     cols = ", ".join(RESERVATION_COLUMNS)
-    binds = ", ".join(f"@{c}" for c in RESERVATION_COLUMNS)
-    values = {c: fields.get(c) for c in RESERVATION_COLUMNS}
+    binds = ", ".join(
+        "PENDING_COMMIT_TIMESTAMP()" if c == "created_at" else f"@{c}" for c in RESERVATION_COLUMNS
+    )
+    values = {c: fields.get(c) for c in types}
     values["credit_shard"] = fields.get(
         "credit_shard", fields.get("ws_shard", UNSHARDED)
     )
     return (
         f"INSERT INTO tr_reservation ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
         values,
-        {c: types[c] for c in RESERVATION_COLUMNS},
+        types,
     )
 
 
