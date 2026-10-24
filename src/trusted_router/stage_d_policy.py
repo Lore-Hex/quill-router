@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import re
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from urllib.parse import urljoin
 
+import httpcore
 import httpx
 
 from trusted_router.config import Settings
@@ -29,20 +31,119 @@ _RFC3339_UTC_RE = re.compile(
 )
 _MAX_DOCUMENT_BYTES = 64 * 1024
 _MAX_BUNDLE_BYTES = 2 * 1024 * 1024
+# Each release URL's two fetches end within this: every connect, TLS
+# handshake, read and write gets the time left before the URL's deadline
+# (_DeadlineBackend), so a host that drips header bytes or empty deflate
+# blocks times out and the next URL still runs in the same refresh. Name
+# resolution, and a connect's tries of a host's further addresses, are
+# bounded only by the refresh's join below.
 _FETCH_TIMEOUT_SECONDS = 5.0
-# A refresh's network part (every fetch and the Sigstore check, which runs a
-# TUF refresh) runs in its own short-lived thread; the refresh fails once
-# that thread has run this long. httpx's timeouts are per operation (each
-# header read, each body read, each resolved address, the TLS handshake;
-# name resolution has none), so only a wall-clock join bounds the whole.
+# A refresh's network part (the fetches and the Sigstore check, which runs a
+# TUF refresh, URL by URL in one short-lived thread) fails once that thread
+# has run this long: room for a hung primary, a fallback and the checks.
 REFRESH_TIMEOUT_SECONDS = 3 * _FETCH_TIMEOUT_SECONDS
 # Each of the durable watermark's Spanner calls (storage_gcp_stage_d_policy)
-# finishes within this. A refresh makes at most two, under _refresh_lock,
-# after its network part.
+# has this budget for its RPCs and retries. A refresh makes at most three
+# under _refresh_lock: the floor read before the network part, the advance
+# and the highest-sequence read after it.
 WATERMARK_TIMEOUT_SECONDS = _FETCH_TIMEOUT_SECONDS
-# So one refresh holds _refresh_lock at most this long.
-REFRESH_BOUND_SECONDS = REFRESH_TIMEOUT_SECONDS + 2 * WATERMARK_TIMEOUT_SECONDS
+# So one refresh holds _refresh_lock at most this long. Not counted: the
+# Spanner client creating or rotating its multiplexed session (CreateSession
+# with its own 30 s timeout and retries, at startup and once a week), which
+# can add tens of seconds to a watermark call in that window. Bounded, not
+# indefinite.
+REFRESH_BOUND_SECONDS = REFRESH_TIMEOUT_SECONDS + 3 * WATERMARK_TIMEOUT_SECONDS
 _MAX_FUTURE_SKEW = timedelta(minutes=5)
+
+
+# The deadline of the release URL the current thread is fetching from.
+_fetch_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "stage_d_policy_fetch_deadline", default=None,
+)
+
+
+def _within_deadline(timeout: float | None, expired: type[Exception]) -> float | None:
+    """An operation's timeout cut to the fetch deadline; ``expired`` once it passed."""
+    deadline = _fetch_deadline.get()
+    if deadline is None:
+        return timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise expired("Stage D policy fetch deadline passed")
+    return remaining if timeout is None else min(timeout, remaining)
+
+
+class _DeadlineStream(httpcore.NetworkStream):
+    def __init__(self, stream: httpcore.NetworkStream) -> None:
+        self._stream = stream
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self._stream.read(max_bytes, _within_deadline(timeout, httpcore.ReadTimeout))
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self._stream.write(buffer, _within_deadline(timeout, httpcore.WriteTimeout))
+
+    def close(self) -> None:
+        self._stream.close()
+
+    def start_tls(
+        self, ssl_context: Any, server_hostname: str | None = None, timeout: float | None = None,
+    ) -> httpcore.NetworkStream:
+        return _DeadlineStream(self._stream.start_tls(
+            ssl_context, server_hostname, _within_deadline(timeout, httpcore.ConnectTimeout)))
+
+    def get_extra_info(self, info: str) -> Any:
+        return self._stream.get_extra_info(info)
+
+
+class _DeadlineBackend(httpcore.NetworkBackend):
+    """httpcore's sync backend with every operation cut to ``_fetch_deadline``."""
+
+    def __init__(self) -> None:
+        self._backend = httpcore.SyncBackend()
+
+    def connect_tcp(
+        self, host: str, port: int, timeout: float | None = None,
+        local_address: str | None = None, socket_options: Any = None,
+    ) -> httpcore.NetworkStream:
+        return _DeadlineStream(self._backend.connect_tcp(
+            host, port, _within_deadline(timeout, httpcore.ConnectTimeout),
+            local_address, socket_options))
+
+    def connect_unix_socket(
+        self, path: str, timeout: float | None = None, socket_options: Any = None,
+    ) -> httpcore.NetworkStream:
+        return _DeadlineStream(self._backend.connect_unix_socket(
+            path, _within_deadline(timeout, httpcore.ConnectTimeout), socket_options))
+
+    def sleep(self, seconds: float) -> None:
+        self._backend.sleep(seconds)
+
+
+class DeadlineTransport(httpx.HTTPTransport):
+    """httpx's transport on a pool whose network backend honours the fetch
+    deadline (httpx 0.28's HTTPTransport takes no network_backend)."""
+
+    def __init__(self) -> None:
+        ssl_context = httpx.create_ssl_context()
+        super().__init__(verify=ssl_context)
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=ssl_context, network_backend=_DeadlineBackend(),
+        )
+
+
+def _deadline_client(**kwargs: Any) -> httpx.Client:
+    return httpx.Client(transport=DeadlineTransport(), **kwargs)
+
+
+@dataclass(eq=False)
+class _NetworkRun:
+    """One refresh's network part: its thread and, once it returns, its outcome."""
+
+    thread: threading.Thread | None = None
+    outcome: list[StageDPolicy | Exception] = field(default_factory=list)
+    abandoned: bool = False
+    skip_logged: bool = False
 
 
 class BundleVerifier(Protocol):
@@ -196,7 +297,7 @@ class StageDPolicyResolver:
         release_urls: Sequence[str] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] | None = None,
-        client_factory: Callable[..., httpx.Client] = httpx.Client,
+        client_factory: Callable[..., httpx.Client] = _deadline_client,
     ) -> None:
         self._settings = settings
         self._watermark = watermark
@@ -215,9 +316,10 @@ class StageDPolicyResolver:
         self._refresh_lock = threading.Lock()
         # The network part of the latest refresh. One that outlived its
         # refresh is left to finish alone and no other starts meanwhile, so
-        # a host that never answers costs one thread, not one per refresh.
+        # a hang the fetch deadlines do not cover (name resolution, the TUF
+        # refresh) costs one thread, not one per refresh.
         self._network_lock = threading.Lock()
-        self._network: threading.Thread | None = None
+        self._network: _NetworkRun | None = None
         self._next_refresh_at = 0.0
         self._policy: StageDPolicy | None = None
 
@@ -276,35 +378,31 @@ class StageDPolicyResolver:
         """Fetch, verify, validate, and watermark one policy publication.
 
         Not serialized: call ``refresh_now()`` where another refresh may run.
-        Returns within ``REFRESH_BOUND_SECONDS``: the network part
-        (``_verified_policy``, which changes no state) runs in a daemon thread
-        joined for ``REFRESH_TIMEOUT_SECONDS``; only after it returns a
-        verified policy does this thread advance the watermark and assign
-        it. A thread that outlives its refresh is abandoned, and its outcome
-        with it, so it can never change the verified state.
+        Returns within ``REFRESH_BOUND_SECONDS`` (Spanner session creation
+        aside): the watermark is read as a floor, then the network part
+        (``_verified_policy``, which changes no state) runs in a daemon
+        thread joined for ``REFRESH_TIMEOUT_SECONDS``; only after it returns
+        a verified policy at or above the floor does this thread advance the
+        watermark and assign it. A thread that outlives its refresh is
+        abandoned, and its outcome with it, so it can never change the
+        verified state.
         """
 
         if not self._release_urls():
             return False
-        with self._network_lock:
-            if self._network is not None and self._network.is_alive():
-                logger.warning(
-                    "stage_d.policy_refresh_failed error_class=%s", "PreviousFetchRunning",
-                )
-                return False
-            outcome: list[StageDPolicy | Exception] = []
-            network = threading.Thread(
-                target=lambda: outcome.append(self._verified_policy()),
-                name="stage-d-policy-fetch",
-                daemon=True,
-            )
-            self._network = network
-            network.start()
-        network.join(REFRESH_TIMEOUT_SECONDS)
         try:
-            if not outcome:
-                raise TimeoutError("Stage D policy fetch and verification timed out")
-            policy = outcome[0]
+            floor = self._watermark.highest_sequence(plane="gcp") or 0
+            run = self._start_network(floor)
+            if run is None:
+                return False
+            assert run.thread is not None
+            run.thread.join(REFRESH_TIMEOUT_SECONDS)
+            with self._network_lock:
+                if not run.outcome:
+                    run.abandoned = run.thread.is_alive()
+                    raise (TimeoutError if run.abandoned else RuntimeError)(
+                        "Stage D policy fetch and verification returned nothing")
+                policy = run.outcome[0]
             if isinstance(policy, Exception):
                 raise policy
             advanced = self._watermark.advance(
@@ -335,23 +433,60 @@ class StageDPolicyResolver:
         )
         return True
 
-    def _verified_policy(self) -> StageDPolicy | Exception:
-        """The first release's policy that fetches, verifies and validates,
-        or the last failure. Network only: touches no resolver state."""
+    def _start_network(self, floor: int) -> _NetworkRun | None:
+        """Start this refresh's network part, or None while an abandoned one
+        still runs (logged once for it, and once more when it ends)."""
+
+        with self._network_lock:
+            previous = self._network
+            if previous is not None and previous.thread is not None and previous.thread.is_alive():
+                if not previous.skip_logged:
+                    previous.skip_logged = True
+                    logger.warning(
+                        "stage_d.policy_refresh_failed error_class=%s", "PreviousFetchRunning",
+                    )
+                return None
+            run = _NetworkRun()
+
+            def network() -> None:
+                result = self._verified_policy(floor)
+                with self._network_lock:
+                    run.outcome.append(result)
+                    if run.abandoned:
+                        logger.info("stage_d.policy_abandoned_fetch_ended error_class=%s",
+                                    type(result).__name__)
+
+            run.thread = threading.Thread(target=network, name="stage-d-policy-fetch", daemon=True)
+            self._network = run
+            run.thread.start()
+            return run
+
+    def _verified_policy(self, floor: int) -> StageDPolicy | Exception:
+        """The first release's policy that fetches, verifies, validates and
+        is at or above ``floor``, or the last failure. Release URL by URL,
+        each with its own fetch deadline. Network only: touches no resolver
+        state."""
 
         last_error: Exception = ValueError("no Stage D release URL")
         for release_url in self._release_urls():
             try:
                 policy_url = _policy_url(release_url)
-                document = self._fetch(policy_url, _MAX_DOCUMENT_BYTES)
-                bundle = self._fetch(policy_url + ".bundle", _MAX_BUNDLE_BYTES)
+                deadline = _fetch_deadline.set(time.monotonic() + _FETCH_TIMEOUT_SECONDS)
+                try:
+                    document = self._fetch(policy_url, _MAX_DOCUMENT_BYTES)
+                    bundle = self._fetch(policy_url + ".bundle", _MAX_BUNDLE_BYTES)
+                finally:
+                    _fetch_deadline.reset(deadline)
                 self._verifier.verify(
                     document,
                     bundle,
                     certificate_identity=self._settings.stage_d_policy_cert_identity,
                     oidc_issuer=self._settings.stage_d_policy_oidc_issuer,
                 )
-                return parse_stage_d_policy(document, now=self._wall_clock())
+                policy = parse_stage_d_policy(document, now=self._wall_clock())
+                if policy.sequence < floor:
+                    raise ValueError("Stage D policy sequence is below the watermark")
+                return policy
             except Exception as exc:  # noqa: BLE001 - reported by refresh()
                 last_error = exc
         return last_error

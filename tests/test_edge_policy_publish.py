@@ -522,7 +522,9 @@ def test_the_real_resolver_refreshes_and_its_failure_is_a_503(key) -> None:
         raise httpx.ConnectError("unreachable")
 
     settings = _settings(key, spend_lease_accepted_gcp_image_digests=DIGEST_C)
-    failing = StageDPolicyResolver(settings, object(), verifier=object(),  # type: ignore[arg-type]
+    # The resolver reads the watermark as a floor before it fetches: none yet.
+    no_watermark = SimpleNamespace(highest_sequence=lambda plane: None)
+    failing = StageDPolicyResolver(settings, no_watermark, verifier=object(),  # type: ignore[arg-type]
                                    release_urls=["https://release.invalid/trust"],
                                    client_factory=unreachable)
     assert failing.release_configured() is True
@@ -880,7 +882,6 @@ def test_a_slow_release_host_within_its_timeouts_does_not_trip_the_signing_deadl
     assert (publisher.attempts, publisher.abandoned, host.requests) == (1, 0, 8)
 
 
-
 def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_signs_nothing(
     key, monkeypatch,
 ) -> None:
@@ -890,7 +891,8 @@ def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_sign
     from tests.fakes.release_host import ReleaseHost, plain_http_client_factory
     from trusted_router import stage_d_policy
 
-    monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", 0.5, raising=False)
+    monkeypatch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", 1.5)
     host = ReleaseHost(_stage_d_document(1200))
     settings = _settings(key)
     resolver = _real_resolver(settings, plain_http_client_factory, Ticks(),
@@ -915,6 +917,11 @@ def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_sign
         assert publisher.signatures == 1
         assert sorted(resolver.accepted_image_digests()) == digests
     finally:
+        host.end_drips()
+        network = getattr(resolver._network, "thread", resolver._network)
+        if network is not None:
+            network.join(10)
+            assert not network.is_alive()
         host.close()
 
 def test_one_signature_per_refresh_interval_served_until_refresh_at(key) -> None:

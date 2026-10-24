@@ -35,12 +35,13 @@ bytes, so building and signing it costs well under a millisecond.
 
 Except for ``accepted_image_digests``: before each signing the publisher
 calls ``StageDPolicyResolver.refresh_now()`` (two HTTPS fetches per release
-URL and a Sigstore bundle check, together failed after 15 s, then the
-watermark), so a body's set is the release's at ``issued_at`` (decide
-contract decision 17). That is at most four refreshes a minute, and only on
-an instance the edge polls. A refresh takes at most
-``REFRESH_BOUND_SECONDS`` (25 s) and may first wait out the resolver's own
-in-flight one, which is why it runs in the worker. If it fails nothing new is
+URL, each URL's within 5 s, and a Sigstore bundle check, together failed
+after 15 s, and three watermark reads or writes), so a body's set is the
+release's at ``issued_at`` (decide contract decision 17). That is at most
+four refreshes a minute, and only on an instance the edge polls. A refresh
+takes at most ``REFRESH_BOUND_SECONDS`` (30 s, Spanner session creation
+aside) and may first wait out the resolver's own in-flight one, which is
+why it runs in the worker. If it fails nothing new is
 signed; the cached copy is served until its ``not_after``, then polls
 answer 503 ``digest-policy-unavailable`` and the edge passes every request.
 With no release URL configured there is nothing to refresh and the set is
@@ -100,8 +101,8 @@ COMPILING_RETRY_SECONDS = 2
 # reporting it as in flight and the next one starts a fresh worker. Its late
 # outcome, if any, is discarded. Above its worst case: refresh_now() may wait
 # out the kick worker's refresh, then run its own, each within
-# REFRESH_BOUND_SECONDS, and reading the other facts and signing take
-# milliseconds (5 s allowed). So only a worker stuck outside the refresh is
+# REFRESH_BOUND_SECONDS (Spanner session creation aside), and reading the
+# other facts and signing take milliseconds (5 s allowed). So only a worker stuck outside the refresh is
 # abandoned. Its length against the body's 60 s lifetime does not matter: a
 # replacement worker queues on the resolver's lock behind any refresh in
 # flight, so the deadline only bounds how long polls answer "compiling", and
