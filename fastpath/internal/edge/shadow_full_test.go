@@ -1162,11 +1162,25 @@ func (r *closingReader) ReadKeyContext(ctx context.Context, lookupHash string) (
 	return store.KeyContext{}, false, ctx.Err()
 }
 
+// closedLookups counts the lookups made after its reader's cache closed.
+type closedLookups struct {
+	KeyCache
+	reader    *closingReader
+	afterward atomic.Int64
+}
+
+func (c *closedLookups) Lookup(lookupHash string, now time.Time) gwstate.Read {
+	if c.reader.closed.Load() {
+		c.afterward.Add(1)
+	}
+	return c.KeyCache.Lookup(lookupHash, now)
+}
+
 // TestTheCacheClosesAfterTheLastLookup: a request whose key the cache does
 // not hold (its Lookup starts a read, which blocks) is with a slow Python
 // when the edge stops and the enclave hangs up; the service's order,
-// WaitDecideShadow and then Close, begins no read after Close, and Close
-// ends the one blocked.
+// WaitDecideShadow and then Close, makes no Lookup after Close (gwstate's
+// contract), so no read begins after it, and Close ends the one blocked.
 func TestTheCacheClosesAfterTheLastLookup(t *testing.T) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
@@ -1176,10 +1190,19 @@ func TestTheCacheClosesAfterTheLastLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Cache = &recordingCache{KeyCache: cache} })
+	lookups := &closedLookups{KeyCache: cache, reader: reader}
+	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Cache = lookups })
+	// Only the authorize answers slowly: Run's snapshot and policy polls
+	// reach the same fake Python.
 	answering := make(chan struct{})
-	h.answer(func(w http.ResponseWriter) {
-		close(answering)
+	var once sync.Once
+	h.python.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.Method != http.MethodPost || r.URL.Path != c.Request.Path {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		once.Do(func() { close(answering) })
 		time.Sleep(time.Second)
 		w.WriteHeader(200)
 	})
@@ -1198,6 +1221,8 @@ func TestTheCacheClosesAfterTheLastLookup(t *testing.T) {
 		h.edge.ServeHTTP(httptest.NewRecorder(), req)
 	}()
 	<-answering
+	// The cold key's read is under way (blocked in the store) at the stop.
+	waitFor(t, func() bool { return reader.began.Load() == 1 })
 	cancel()
 	hangUp()
 	<-run
@@ -1207,11 +1232,11 @@ func TestTheCacheClosesAfterTheLastLookup(t *testing.T) {
 	h.edge.WaitDecideShadow()
 	reader.closed.Store(true)
 	cache.Close()
-	if reader.began.Load() == 0 {
-		t.Fatal("no Lookup read the store: the test does not hold a read in flight at the stop")
+	if n := lookups.afterward.Load(); n != 0 {
+		t.Fatalf("%d lookups after Close", n)
 	}
-	if n := reader.afterward.Load(); n != 0 {
-		t.Fatalf("%d reads began after Close", n)
+	if n := reader.afterward.Load(); n != 0 || reader.began.Load() != 1 {
+		t.Fatalf("%d reads began after Close, %d in all", n, reader.began.Load())
 	}
 	if got := h.edge.DecideShadowCounts(); got.Classes[ClassStale+".key"] != 1 {
 		t.Fatalf("counts %+v", got)
