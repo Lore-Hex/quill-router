@@ -6,7 +6,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing.providers import alibaba, arcee, crusoe, deepinfra, novita, scaleway, together, xiaomi
+from scripts.pricing.providers import (
+    alibaba,
+    arcee,
+    crusoe,
+    deepinfra,
+    novita,
+    scaleway,
+    together,
+    xiaomi,
+)
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
