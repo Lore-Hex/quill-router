@@ -690,15 +690,19 @@ ENV_VARS=(
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  # October 22: the bounded canary failed its remote-deadline health gate.
-  # Clear all three opt-ins so neither v1 nor v2 observation can restart from
-  # inherited environment. Preserve evidence; do not certify this window.
-  # Re-enable only after the canary gates in the incident report are met.
-  # docs/incidents/2026-10-20-shadow-session-leak.md
+  # October 24, shadow v2 canary 3 (Joseph's 'you run it'): the v2 policy, the one
+  # probe workspace and the primary health region, on code that carries the
+  # observation-timestamp fix (#2004) and the claim-row removal with runtime
+  # expiry (#2015). The expiry below is the canary's stop (design: exact phase
+  # pins of shadow-opt-in). Gates for the canary hour: publications >= 80% after
+  # a 5-minute warm-up, unknown <= 5%, readers installed >= 80% per region,
+  # Spanner sessions bounded, no incident; otherwise opt out by emptying the
+  # policy, workspaces, health-region and expiry lines (keep the bucket).
+  # Money, protection and fast drain stay off.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
-  "TR_ASYNC_SETTLE_SHADOW_POLICY="
-  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
+  "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
+  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
   # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 48 h
   # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
   # checks it, so the canary turns itself off without a deploy. Deployed
@@ -706,7 +710,7 @@ ENV_VARS=(
   # valid one do nothing. It gates shadow v2 only; v1 still installs whenever
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
-  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
+  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-10-24T13:00:00Z"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
