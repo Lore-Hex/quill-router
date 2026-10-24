@@ -12,7 +12,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+
+# The pinned-source checks may fetch into the same shallow checkout.
+pytestmark = pytest.mark.xdist_group("fastpath-pinned-source")
 
 
 def test_release_ships_the_load_generator_and_its_mix() -> None:

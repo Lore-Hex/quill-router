@@ -21,6 +21,13 @@ class ProviderBrand:
 
 
 PROVIDER_BRANDS: dict[str, ProviderBrand] = {
+    "abliteration": ProviderBrand(
+        "https://abliteration.ai/",
+        description="Chat, vision and reasoning models with cached-input pricing. Separate from Abliterate.ai.",
+        resources=(("API documentation", "https://docs.abliteration.ai/"),
+                   ("Pricing", "https://abliteration.ai/pricing"),
+                   ("Data handling", "https://abliteration.ai/data-handling")),
+    ),
     "abliterate": ProviderBrand(
         "https://abliterate.ai/",
         description=("OpenAI-compatible chat and research models. " + ABLITERATE_ESTIMATED_USAGE_NOTICE),

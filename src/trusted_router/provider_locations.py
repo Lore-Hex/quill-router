@@ -32,6 +32,17 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "abliteration": InferenceLocations(
+        locations=("United States",),
+        scope="Provider-declared default inference location; EU residency is separately arranged.",
+        routing="Datacenter placement within the default region is not published.",
+        provider_pinning="EU residency requires contacting the provider; no documented per-request regional pin.",
+        trustedrouter_pinning="No finer regional pin is supported by this integration.",
+        declaration="United States by provider declaration, not an attested location.",
+        evidence="Published data-handling policy, default processing region.",
+        reviewed_on="2026-10-23",
+        sources=(("Data handling", "https://abliteration.ai/data-handling"),),
+    ),
     "muna": InferenceLocations(
         locations=("United States",),
         scope="Provider-declared US inference on rented dedicated GPUs operated by Muna; no downstream model APIs.",
