@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -625,7 +625,7 @@ def test_a_hung_worker_is_abandoned_after_its_deadline(key, caplog) -> None:
             publisher.current()
         assert busy.value.status == "compiling" and entered.wait(30)
         # Within the deadline: still in flight, no second worker.
-        ticks.now += int(publisher_module.WORKER_DEADLINE_SECONDS)
+        ticks.now += int(publisher.worker_deadline)
         with pytest.raises(PolicyUnavailable):
             publisher.current()
         assert (publisher.attempts, publisher.abandoned) == (1, 0)
@@ -700,6 +700,273 @@ def test_resolver_refreshes_are_serialized_with_kicks_worker(key) -> None:
     for thread in overlapping:
         thread.join(30)
     assert state["peak"] == 2
+
+
+STAGE_D_FIXTURE = ROOT / "tests" / "fixtures" / "stage_d" / "stage-d-accepted.json"
+
+
+class Ticks:
+    """A monotonic clock the fake release host advances, shared by the
+    resolver's fetches and the publisher's worker deadline."""
+
+    def __init__(self, now: float = 1_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class ReleaseHost:
+    """A release host behind StageDPolicyResolver's ``client_factory``.
+
+    Every request takes ``op_seconds`` of ``ticks`` to answer its headers.
+    A request whose index is in ``drip`` gets its body a byte per
+    ``op_seconds``, each within httpx's per-operation timeout; a fetch still
+    reading after
+    ``DRIP_HANG_CHUNKS`` of them hangs until ``unstick`` (a host that never
+    returns). ``unavailable`` hosts answer a bundle 503. ``hold`` maps a
+    request's index to an event it waits on before answering, and
+    ``arrived`` to one it sets on arrival.
+    """
+
+    DRIP_HANG_CHUNKS = 30
+
+    def __init__(self, ticks: Ticks, documents: list[bytes]) -> None:
+        import threading
+
+        self.ticks, self.documents = ticks, documents
+        self.op_seconds = 1.0
+        self.drip: set[int] = set()
+        self.unavailable: set[str] = set()
+        self.requests = 0
+        self.hold: dict[int, Any] = {}
+        self.arrived: dict[int, Any] = {}
+        self.unstick = threading.Event()
+        self._lock = threading.Lock()
+
+    def __call__(self, **kwargs: Any) -> Any:
+        return _HostClient(self)
+
+
+class _HostClient:
+    def __init__(self, host: ReleaseHost) -> None:
+        self.host = host
+
+    def __enter__(self) -> _HostClient:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def stream(self, method: str, url: Any, headers: Any = None) -> Any:
+        import contextlib
+
+        import httpx
+
+        host = self.host
+        with host._lock:
+            index = host.requests
+            host.requests += 1
+        if index in host.arrived:
+            host.arrived[index].set()
+        if index in host.hold:
+            assert host.hold[index].wait(30)
+        host.ticks.now += host.op_seconds
+        url = httpx.URL(str(url))
+        bundle = url.path.endswith(".bundle")
+        status = 503 if bundle and url.host in host.unavailable else 200
+        drip = index in host.drip
+        body = b"bundle" if bundle else host.documents[0]
+
+        def chunks() -> Any:
+            if not drip:
+                yield body
+                return
+            for count in range(len(body)):
+                if count == ReleaseHost.DRIP_HANG_CHUNKS:
+                    host.unstick.wait(30)
+                host.ticks.now += host.op_seconds
+                yield body[count:count + 1]
+
+        def raise_for_status() -> None:
+            if status != 200:
+                request = httpx.Request(method, url)
+                raise httpx.HTTPStatusError(
+                    "unavailable", request=request,
+                    response=httpx.Response(status, request=request))
+
+        response = SimpleNamespace(headers={}, iter_bytes=chunks,
+                                   raise_for_status=raise_for_status)
+        return contextlib.nullcontext(response)
+
+
+class AcceptAll:
+    def verify(self, document: bytes, bundle: bytes, **kwargs: Any) -> None:
+        return None
+
+    def advance(self, **kwargs: Any) -> bool:
+        return True
+
+    def highest_sequence(self, **kwargs: Any) -> int | None:
+        return None
+
+
+def _stage_d_document(sequence: int) -> bytes:
+    value = json.loads(STAGE_D_FIXTURE.read_bytes())
+    value["sequence"] = sequence
+    return json.dumps(value).encode()
+
+
+def _real_resolver(settings: Settings, host: ReleaseHost, ticks: Ticks,
+                   release_urls: list[str] | None = None) -> Any:
+    from datetime import UTC, datetime
+
+    from trusted_router.stage_d_policy import StageDPolicyResolver
+
+    return StageDPolicyResolver(
+        settings, AcceptAll(), verifier=AcceptAll(), release_urls=release_urls,
+        monotonic=ticks, wall_clock=lambda: datetime(2026, 9, 3, 22, tzinfo=UTC),
+        client_factory=host,
+    )
+
+
+def _within(seconds: float, target: Any) -> Any:
+    """Runs target in a thread and returns or raises its outcome, failing
+    when it is still running after ``seconds``."""
+    import threading
+
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = target()
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    assert not thread.is_alive(), "still running"
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
+
+def test_a_release_fetch_that_never_returns_times_out_and_frees_kicks_worker(key) -> None:
+    """A host that drips the policy forever (every byte within httpx's
+    per-operation timeout) ends the publisher's refresh_now() within the
+    fetch's timeout, so _refresh_lock is released and kick's worker, queued
+    behind it, refreshes."""
+    import threading
+
+    ticks = Ticks()
+    host = ReleaseHost(ticks, [_stage_d_document(1200)])
+    resolver = _real_resolver(_settings(key), host, ticks, ["https://release.invalid/trust/"])
+    assert resolver.refresh_now() is True  # requests 0 and 1
+    accepted = resolver.accepted_image_digests()
+    assert accepted and resolver.current_policy().sequence == 1200
+    # The publisher's refresh (request 2) drips; kick's queues behind it.
+    arrived, go = threading.Event(), threading.Event()
+    host.drip, host.hold, host.arrived = {2}, {2: go}, {2: arrived}
+    try:
+        publisher_refresh: dict[str, Any] = {}
+        publishing = threading.Thread(
+            target=lambda: publisher_refresh.update(ok=resolver.refresh_now()), daemon=True)
+        publishing.start()
+        assert arrived.wait(30)
+        resolver.kick()
+        worker = resolver._worker
+        assert worker is not None and worker.is_alive()
+        host.documents[0] = _stage_d_document(1201)
+        go.set()
+        # The publisher's refresh_now() returns, failed, instead of holding the lock.
+        publishing.join(10)
+        assert not publishing.is_alive(), "the dripping fetch held _refresh_lock"
+        assert publisher_refresh["ok"] is False
+        # Kick's worker gets the lock and refreshes (requests 3 and 4).
+        worker.join(10)
+        assert not worker.is_alive()
+        assert resolver.current_policy().sequence == 1201 and host.requests == 5
+    finally:
+        go.set()
+        host.unstick.set()
+
+
+def test_a_timed_out_refresh_keeps_the_last_verified_set_and_signs_nothing(key) -> None:
+    ticks = Ticks()
+    host = ReleaseHost(ticks, [_stage_d_document(1200)])
+    settings = _settings(key)
+    resolver = _real_resolver(settings, host, ticks, ["https://release.invalid/trust/"])
+    clock = Clock(T0)
+    publisher = build_publisher(settings, clock=clock, resolver=lambda: resolver,
+                                typed_store=lambda: None, spawn=_inline, monotonic=ticks)
+    first = publisher.current()
+    digests = json.loads(first.body)["accepted_image_digests"]
+    assert digests == sorted(resolver.accepted_image_digests()) and digests
+    # Every later refresh's policy fetch drips (requests 2 and 3).
+    host.drip = {2, 3}
+    try:
+        # Past refresh_at the inline worker's refresh times out: the cached
+        # copy is served, nothing new is signed, the verified set is kept.
+        clock.now = first.refresh_at
+        assert _within(10, publisher.current) is first
+        assert publisher.signatures == 1
+        assert sorted(resolver.accepted_image_digests()) == digests
+        # Past not_after: 503 digest-policy-unavailable, never an unverified
+        # or empty set.
+        clock.now = first.not_after
+        with pytest.raises(PolicyUnavailable) as refused:
+            _within(10, publisher.current)
+        assert refused.value.status == "digest-policy-unavailable"
+        assert publisher.signatures == 1 and host.requests == 4
+        assert sorted(resolver.accepted_image_digests()) == digests
+    finally:
+        host.unstick.set()
+
+
+def test_a_slow_release_host_within_its_timeouts_does_not_trip_the_signing_deadline(key) -> None:
+    """Two release URLs, every fetch 4.9 s, the primary's bundle 503: each
+    refresh takes 19.6 s, and the publisher's queues behind kick's. The
+    worker runs 34 s, past the old fixed 30 s deadline, and is not
+    abandoned."""
+    import threading
+
+    ticks = Ticks()
+    host = ReleaseHost(ticks, [_stage_d_document(1200)])
+    host.op_seconds = 4.9
+    host.unavailable = {"primary.invalid"}
+    settings = _settings(
+        key, trust_gcp_release_url="https://primary.invalid/trust/gcp-release.json",
+        trust_gcp_release_fallback_urls="https://fallback.invalid/trust/gcp-release.json")
+    resolver = _real_resolver(settings, host, ticks)
+    publisher = build_publisher(settings, clock=Clock(T0), resolver=lambda: resolver,
+                                typed_store=lambda: None, monotonic=ticks)
+    # Requests 0-3 are kick's refresh, 4-7 the publisher's.
+    kick_in, kick_go = threading.Event(), threading.Event()
+    publisher_last, publisher_go = threading.Event(), threading.Event()
+    host.hold, host.arrived = {0: kick_go, 7: publisher_go}, {0: kick_in, 7: publisher_last}
+    try:
+        resolver.kick()
+        # Kick's refresh holds _refresh_lock before the publisher's worker starts.
+        assert kick_in.wait(30)
+        with pytest.raises(PolicyUnavailable) as busy:
+            publisher.current()
+        assert busy.value.status == "compiling"
+        kick_go.set()
+        assert publisher_last.wait(30)
+        assert ticks.now - 1_000.0 > 30
+        with pytest.raises(PolicyUnavailable) as still:
+            publisher.current()
+        assert still.value.status == "compiling"
+        assert (publisher.attempts, publisher.abandoned) == (1, 0)
+    finally:
+        kick_go.set()
+        publisher_go.set()
+    assert publisher.idle(30)
+    served = publisher.current()
+    assert json.loads(served.body)["accepted_image_digests"] == sorted(
+        resolver.accepted_image_digests())
+    assert (publisher.attempts, publisher.abandoned, host.requests) == (1, 0, 8)
 
 
 def test_one_signature_per_refresh_interval_served_until_refresh_at(key) -> None:

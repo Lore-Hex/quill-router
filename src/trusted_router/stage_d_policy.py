@@ -29,8 +29,28 @@ _RFC3339_UTC_RE = re.compile(
 )
 _MAX_DOCUMENT_BYTES = 64 * 1024
 _MAX_BUNDLE_BYTES = 2 * 1024 * 1024
+# Each fetch's timeout, per network operation (httpx's connect, write and
+# read) and for the fetch as a whole: past it the fetch raises, checked once
+# the response headers are in and after every body chunk, so a host that
+# drips bytes cannot hold a refresh (and _refresh_lock) open.
 _FETCH_TIMEOUT_SECONDS = 5.0
+# A fetch therefore ends within three timeouts: the connect, the request's
+# write and the headers' read may each take one before the first check, and
+# after a check passes at most one more read follows. Name resolution
+# excepted, which no httpx timeout covers.
+FETCH_BOUND_SECONDS = 3 * _FETCH_TIMEOUT_SECONDS
 _MAX_FUTURE_SKEW = timedelta(minutes=5)
+
+
+def release_urls(settings: Settings) -> tuple[str, ...]:
+    """The release URLs a resolver built from these settings refreshes from, in order."""
+    candidates = (settings.trust_gcp_release_url, *settings.trust_gcp_release_fallback_url_list)
+    return tuple(dict.fromkeys(url.strip() for url in candidates if url.strip()))
+
+
+def refresh_fetch_bound_seconds(release_url_count: int) -> float:
+    """The most one refresh spends fetching: two fetches per release URL."""
+    return release_url_count * 2 * FETCH_BOUND_SECONDS
 
 
 class BundleVerifier(Protocol):
@@ -205,13 +225,9 @@ class StageDPolicyResolver:
         self._policy: StageDPolicy | None = None
 
     def _release_urls(self) -> tuple[str, ...]:
-        if self._release_urls_override is not None:
-            candidates = self._release_urls_override
-        else:
-            candidates = (
-                self._settings.trust_gcp_release_url,
-                *self._settings.trust_gcp_release_fallback_url_list,
-            )
+        if self._release_urls_override is None:
+            return release_urls(self._settings)
+        candidates = self._release_urls_override
         return tuple(dict.fromkeys(url.strip() for url in candidates if url.strip()))
 
     def release_configured(self) -> bool:
@@ -249,7 +265,10 @@ class StageDPolicyResolver:
         """``refresh()``, serialized with every other ``refresh_now()``: kick's
         background worker and a caller that needs the set current now (the
         fast path's edge policy publisher). A caller waits for an in-flight
-        refresh to finish, then fetches again."""
+        refresh to finish, then fetches again. A refresh's fetches end
+        within ``refresh_fetch_bound_seconds`` of its release URL count, so
+        no fetch holds the lock past that (the verifier's Sigstore check
+        and the watermark keep their own timeouts)."""
 
         with self._refresh_lock:
             return self.refresh()
@@ -307,17 +326,25 @@ class StageDPolicyResolver:
         parsed = httpx.URL(url)
         if parsed.scheme != "https" or not parsed.host:
             raise ValueError("Stage D policy URL must be absolute HTTPS")
+        started = self._monotonic()
+
+        def within_timeout() -> None:
+            if self._monotonic() - started > _FETCH_TIMEOUT_SECONDS:
+                raise TimeoutError("Stage D policy fetch exceeded its timeout")
+
         with self._client_factory(
             timeout=_FETCH_TIMEOUT_SECONDS,
             follow_redirects=False,
         ) as client:
             with client.stream("GET", parsed, headers={"accept": "application/json"}) as response:
+                within_timeout()
                 response.raise_for_status()
                 length = response.headers.get("content-length")
                 if length is not None and int(length) > byte_limit:
                     raise ValueError("Stage D policy artifact exceeds its size limit")
                 content = bytearray()
                 for chunk in response.iter_bytes():
+                    within_timeout()
                     if len(content) + len(chunk) > byte_limit:
                         raise ValueError("Stage D policy artifact exceeds its size limit")
                     content.extend(chunk)
