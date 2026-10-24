@@ -31,3 +31,7 @@ def test_unavailable_route_can_recover_only_after_canary(provider, model, tmp_pa
 def test_atlas_retirement_does_not_remove_openai_direct():
     assert not any(e.provider == "atlas-cloud" and e.model_id == "openai/gpt-4.1-mini" for e in MODEL_ENDPOINTS.values())
     assert any(e.provider == "openai" and e.model_id == "openai/gpt-4.1-mini" for e in MODEL_ENDPOINTS.values())
+
+
+def test_ended_union_preview_is_not_silently_replaced():
+    assert not any(e.model_id == "stealth/union-alpha" for e in MODEL_ENDPOINTS.values())
