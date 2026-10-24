@@ -8,6 +8,15 @@
     "route_mode": "Prepaid",
     "slug": "abliterate"
   },
+  "abliteration": {
+    "card_version": 2,
+    "model_count": 4,
+    "name": "Abliteration",
+    "privacy": "Zero retention",
+    "route_count": 4,
+    "route_mode": "Prepaid",
+    "slug": "abliteration"
+  },
   "aion-labs": {
     "card_version": 2,
     "model_count": 6,

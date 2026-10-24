@@ -149,6 +149,13 @@ Set `ROUTING_SNAPSHOT_PUBLISH_ENABLED=false` and deploy: the route is gone
 (404) and the edge keeps its last good copy until that copy's `not_after`,
 then passes every request to Python. The mount can stay.
 
+The edge policy (`EDGE_POLICY_PUBLISH_ENABLED` in `rollout.sh`, E2 stage I1)
+is signed with this key under its own `typ`, so the rotation above moves it
+too, and removing the mount needs it off first: `rollout.sh` refuses edge
+policy publishing without the key. Off, its route is gone (404) and the edge
+keeps its last policy until that copy's `not_after` (60 s), then passes every
+request to Python.
+
 ## Rotating
 
 A rotation adds version N+1 and moves the edge before the control plane, so

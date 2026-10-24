@@ -387,16 +387,23 @@ def _register(
 
 
 @pytest.mark.parametrize(
-    ("capabilities", "usage", "stream_open"),
+    ("capabilities", "usage", "stream_open", "key_source", "outbox"),
     [
         # An enclave built before the declaration existed sends none.
-        (None, False, False),
-        ({}, False, False),
-        ({"usage_heartbeat": True}, True, False),
-        ({"usage_heartbeat": True, "stream_open_heartbeat": True}, True, True),
-        ({"usage_heartbeat": False, "stream_open_heartbeat": True}, False, True),
+        (None, False, False, False, False),
+        ({}, False, False, False, False),
+        ({"usage_heartbeat": True}, True, False, False, False),
+        ({"usage_heartbeat": True, "stream_open_heartbeat": True}, True, True, False, False),
+        ({"usage_heartbeat": False, "stream_open_heartbeat": True}, False, True, False, False),
         # A capability this release does not know is ignored, not refused.
-        ({"usage_heartbeat": True, "a_later_capability": True}, True, False),
+        ({"usage_heartbeat": True, "a_later_capability": True}, True, False, False, False),
+        # E4 R2: the two declarations the enclave's outbox work adds, each
+        # stored on its own, independent of the heartbeat declarations.
+        ({"idempotency_key_source": True}, False, False, True, False),
+        ({"settle_outbox": True}, False, False, False, True),
+        ({"usage_heartbeat": True, "idempotency_key_source": True, "settle_outbox": True},
+         True, False, True, True),
+        ({"idempotency_key_source": False, "settle_outbox": False}, False, False, False, False),
     ],
 )
 def test_boot_registration_stores_what_the_boot_declares(
@@ -404,11 +411,15 @@ def test_boot_registration_stores_what_the_boot_declares(
     capabilities: dict[str, Any] | None,
     usage: bool,
     stream_open: bool,
+    key_source: bool,
+    outbox: bool,
 ) -> None:
     STORE.reset()
     stored = _register(monkeypatch, _jwk(Ed25519PrivateKey.generate()), capabilities)
     assert stored.declares_usage_heartbeat is usage
     assert stored.declares_stream_open_heartbeat is stream_open
+    assert stored.declares_idempotency_key_source is key_source
+    assert stored.declares_settle_outbox is outbox
 
 
 def test_boot_reregistration_replaces_the_declarations(
@@ -419,23 +430,37 @@ def test_boot_reregistration_replaces_the_declarations(
     STORE.reset()
     jwk = _jwk(Ed25519PrivateKey.generate())
     declared = _register(
-        monkeypatch, jwk, {"usage_heartbeat": True, "stream_open_heartbeat": True}
+        monkeypatch, jwk, {
+            "usage_heartbeat": True, "stream_open_heartbeat": True,
+            "idempotency_key_source": True, "settle_outbox": True,
+        },
     )
     assert declared.declares_usage_heartbeat and declared.declares_stream_open_heartbeat
+    assert declared.declares_idempotency_key_source and declared.declares_settle_outbox
 
     withdrawn = _register(monkeypatch, jwk, None)
     assert withdrawn.declares_usage_heartbeat is False
     assert withdrawn.declares_stream_open_heartbeat is False
+    assert withdrawn.declares_idempotency_key_source is False
+    assert withdrawn.declares_settle_outbox is False
     # The identity and its verification are still merged upward, as before.
     assert withdrawn.verified is True and withdrawn.approved is True
 
-    again = _register(monkeypatch, jwk, {"usage_heartbeat": True})
+    again = _register(monkeypatch, jwk, {"usage_heartbeat": True, "settle_outbox": True})
     assert again.declares_usage_heartbeat is True
     assert again.declares_stream_open_heartbeat is False
+    assert again.declares_idempotency_key_source is False
+    assert again.declares_settle_outbox is True
 
 
 @pytest.mark.parametrize("value", ["true", 1, "yes", None, [True]])
-def test_boot_registration_refuses_a_declaration_that_is_not_a_boolean(value: object) -> None:
+@pytest.mark.parametrize(
+    "capability",
+    ["usage_heartbeat", "stream_open_heartbeat", "idempotency_key_source", "settle_outbox"],
+)
+def test_boot_registration_refuses_a_declaration_that_is_not_a_boolean(
+    capability: str, value: object,
+) -> None:
     # "true" or 1 read as a declaration would let a malformed registration
     # claim heartbeats. Only a JSON boolean declares anything.
     with pytest.raises(ValueError):
@@ -444,7 +469,7 @@ def test_boot_registration_refuses_a_declaration_that_is_not_a_boolean(value: ob
             receipt_public_key={"kty": "OKP"},
             attestation_evidence="evidence",
             attestation_kind="gcp",
-            capabilities={"usage_heartbeat": value},
+            capabilities={capability: value},
         )
 
 
@@ -456,7 +481,8 @@ def test_boot_registration_wire_contract_accepts_declared_capabilities(
         '{"kid":"testkid","receipt_public_key":{"kty":"OKP","crv":"Ed25519",'
         '"x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},'
         '"attestation_evidence":"<...>","attestation_kind":"gcp",'
-        '"capabilities":{"usage_heartbeat":true,"stream_open_heartbeat":false}}'
+        '"capabilities":{"usage_heartbeat":true,"stream_open_heartbeat":false,'
+        '"idempotency_key_source":true,"settle_outbox":true}}'
     )
     monkeypatch.setattr(gateway, "receipt_kid", lambda _jwk: "testkid")
     monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
@@ -476,18 +502,65 @@ def test_boot_registration_wire_contract_accepts_declared_capabilities(
     assert stored is not None
     assert stored.declares_usage_heartbeat is True
     assert stored.declares_stream_open_heartbeat is False
+    assert stored.declares_idempotency_key_source is True
+    assert stored.declares_settle_outbox is True
 
 
-def test_boot_record_stored_before_the_declaration_reads_as_undeclared() -> None:
+def test_boot_registration_wire_contract_without_the_e4_declarations(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The enclave at quill-cloud-proxy #588 sends only usage_heartbeat; its
+    # body is byte-identical before and after R2 and reads as undeclared for
+    # the two R2 capabilities.
+    wire_fixture = (
+        '{"kid":"testkid","receipt_public_key":{"kty":"OKP","crv":"Ed25519",'
+        '"x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},'
+        '"attestation_evidence":"<...>","attestation_kind":"gcp",'
+        '"capabilities":{"usage_heartbeat":true}}'
+    )
+    monkeypatch.setattr(gateway, "receipt_kid", lambda _jwk: "testkid")
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: "")
+
+    response = client.post(
+        "/internal/gateway/spend-lease/register-boot",
+        content=wire_fixture,
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"data": {"verified": True}}
+    stored = STORE.get_gateway_boot("testkid")
+    assert stored is not None
+    assert stored.declares_usage_heartbeat is True
+    assert stored.declares_idempotency_key_source is False
+    assert stored.declares_settle_outbox is False
+
+
+@pytest.mark.parametrize(
+    "absent",
+    [
+        # A body written before #1519.
+        {
+            "declares_usage_heartbeat", "declares_stream_open_heartbeat",
+            "declares_idempotency_key_source", "declares_settle_outbox",
+        },
+        # A body written by the release before R2.
+        {"declares_idempotency_key_source", "declares_settle_outbox"},
+    ],
+)
+def test_boot_record_stored_before_the_declaration_reads_as_undeclared(
+    absent: set[str],
+) -> None:
     _private, boot, _raw_body, _auth = _boot_auth_fixture()
-    legacy = {
-        key: value
-        for key, value in boot.__dict__.items()
-        if key not in {"declares_usage_heartbeat", "declares_stream_open_heartbeat"}
-    }
+    legacy = {key: value for key, value in boot.__dict__.items() if key not in absent}
     decoded = decode_auth_record(json.dumps(legacy), GatewayBoot)
     assert decoded.declares_usage_heartbeat is False
     assert decoded.declares_stream_open_heartbeat is False
+    assert decoded.declares_idempotency_key_source is False
+    assert decoded.declares_settle_outbox is False
 
 
 def test_authorize_gateway_forwards_exact_cached_body_bytes(

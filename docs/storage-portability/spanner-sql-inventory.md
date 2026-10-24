@@ -139,7 +139,7 @@ Round-4 offline verification: ruff passed; mypy reported no issues in 400 source
 | [storage_gcp_counter_dml:key_limit_exists:1](../../src/trusted_router/storage_gcp_counter_dml.py#L529) | SELECT | INT64: shard; STRING: kh | — |
 | [storage_gcp_counter_dml:read_reservation_by_idempotency:1](../../src/trusted_router/storage_gcp_counter_dml.py#L562) | SELECT | STRING: scope | — |
 | [storage_gcp_counter_dml:read_reservation:1](../../src/trusted_router/storage_gcp_counter_dml.py#L591) | SELECT | STRING: rid | — |
-| [storage_gcp_counter_dml:reservation_insert_statement:1](../../src/trusted_router/storage_gcp_counter_dml.py#L639) | DML | INT64: credit_reserved_micro, credit_shard, key_reserved_micro, key_shard, ws_shard; STRING: authorization_id, hold_usage_type, idempotency_fingerprint, idempotency_scope, key_hash, reservation_id, workspace_id; TIMESTAMP: created_at, expires_at | — |
+| [storage_gcp_counter_dml:reservation_insert_statement:1](../../src/trusted_router/storage_gcp_counter_dml.py#L639) | DML | INT64: credit_reserved_micro, credit_shard, key_reserved_micro, key_shard, ws_shard; STRING: authorization_id, hold_usage_type, idempotency_fingerprint, idempotency_scope, key_hash, reservation_id, workspace_id; TIMESTAMP: expires_at | PENDING_COMMIT_TIMESTAMP |
 | [storage_gcp_counter_dml:reservation_retention_clear_statement:1](../../src/trusted_router/storage_gcp_counter_dml.py#L738) | DML | STRING: rid | — |
 | [storage_gcp_counter_dml:entity_insert_statement:1](../../src/trusted_router/storage_gcp_counter_dml.py#L758) | DML | STRING: body, id, kind | PENDING_COMMIT_TIMESTAMP |
 | [storage_gcp_counter_dml:insert_entity_dml_at:1](../../src/trusted_router/storage_gcp_counter_dml.py#L777) | DML | STRING: body, id, kind; TIMESTAMP: now | — |

@@ -56,6 +56,9 @@ const MaxSetting = 7 * 24 * time.Hour
 type Store struct {
 	client *spanner.Client
 	cfg    Config
+	// leased is the leased inserts' transactions and the client's session
+	// (gatewayauth.go).
+	leased leasedInserts
 }
 
 // New returns a store of the database client reads and writes.

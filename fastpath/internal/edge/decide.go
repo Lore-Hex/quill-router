@@ -21,8 +21,9 @@ import (
 // (the request is in the cohort; staged rows and a 200 ready for the
 // envelope) or the §3 reason it goes to Python. Nothing here admits,
 // writes or answers: the full-response shadow (shadow_full.go) compares a
-// decision (Decided.Shadow) with what Python did, off the request path, and
-// G11's decide path will admit, insert and answer one (Decided.Admit).
+// decision (Decided.ForShadow) with what Python did, off the request path,
+// and the decide path (decide_path.go) admits, inserts and answers one
+// (Decided.Admit).
 //
 // Decide is only for an authorize the edge has authenticated (the
 // internal token) and read: build its request with RequestOf, which records
@@ -229,18 +230,20 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 }
 
 // Decided is Decide's answer. Pass is "" when the edge would answer the
-// request itself, else the first §3 reason it goes to Python. Shadow is
+// request itself, else the first §3 reason it goes to Python. ForShadow is
 // the decision when every gate but the decide row passed, so the shadow
 // compares what the edge would answer for a workspace it does not yet
 // decide; DecideGate is then that row's reason ("" for on, PassDecideOff
 // or PassCacheDecide), and Pass is it. Only Admit hands out a decision to
 // admit, and only when Pass is "". LookupHash and Workspace are what the
 // request named and what the cache said of its key, "" when not known:
-// the shadow evicts them when Python refuses the key.
+// the shadow and the decide path evict them when Python refuses the key.
 type Decided struct {
 	Pass string
-	// Shadow is for comparison only: never admit it (Admit).
-	Shadow     *Decision
+	// shadowOnly is the decision for comparison: read through ForShadow,
+	// admitted only through Admit. Outside this file nothing names it, and
+	// only the shadow calls ForShadow (TestOnlyAdmitHandsOutADecision).
+	shadowOnly *Decision
 	DecideGate string
 	LookupHash string
 	Workspace  string
@@ -252,11 +255,16 @@ type Decided struct {
 // Admit is the decision the edge may admit: one, and true, only when every
 // gate passed, the decide row's included.
 func (d Decided) Admit() (*Decision, bool) {
-	if d.Pass != "" || d.Shadow == nil {
+	if d.Pass != "" || d.shadowOnly == nil {
 		return nil, false
 	}
-	return d.Shadow, true
+	return d.shadowOnly, true
 }
+
+// ForShadow is the decision to compare with Python's answer, the decide
+// row's gate aside: nil when a gate before it passed. It is the shadow's
+// alone, and never admitted (Admit is).
+func (d Decided) ForShadow() *Decision { return d.shadowOnly }
 
 func passDecided(reason string) Decided { return Decided{Pass: reason} }
 
@@ -424,8 +432,9 @@ func Decide(in DecideInputs) Decided {
 		StageDReason: gwauth.StageDReasonOf(gwauth.StageDSettings{
 			// Python ANDs the switch with not budget_strict (gateway.py,
 			// _stage_d_eligibility_reason's caller); a budget-strict key
-			// passed above (key.budget_strict), so this is the switch.
-			EligibilityEnabled:          sd.EligibilityEnabled && key.Reason != gwstate.ReasonKeyBudgetStrict,
+			// passed above (key.budget_strict), so the switch is the whole
+			// of it.
+			EligibilityEnabled:          sd.EligibilityEnabled,
 			HeartbeatEnabled:            sd.HeartbeatEnabled,
 			RequireHeartbeatDeclaration: sd.RequireHeartbeatDeclaration, PilotWorkspaces: sd.PilotWorkspaces,
 		}, key.WorkspaceID, in.Request.Boot.Boot.DeclaresUsageHeartbeat),
@@ -435,7 +444,7 @@ func Decide(in DecideInputs) Decided {
 	if err != nil {
 		return pass(PassCompose)
 	}
-	out.Shadow = &Decision{
+	out.shadowOnly = &Decision{
 		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),

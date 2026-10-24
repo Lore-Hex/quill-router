@@ -112,12 +112,18 @@ def test_positive_control_an_undeclared_field_does_change_the_fingerprint() -> N
 def test_no_value_is_refused_and_long_values_are_bounded(raw: Any, stored: str | None) -> None:
     body = GatewayAuthorizeRequest(api_key_hash="k" * 64, model="m/x", idempotency_key_source=raw)
     assert body.idempotency_key_source == stored
-    assert gateway.idempotency_key_source(body, MINTED, boot_verified=True) == "legacy"
+    assert gateway.idempotency_key_source(
+        body, MINTED, boot_verified=True, capability_declared=True,
+    ) == "legacy"
 
 
-def _classify(source: Any, key: str | None, *, verified: bool = True) -> str:
+def _classify(
+    source: Any, key: str | None, *, verified: bool = True, declared: bool = True,
+) -> str:
     body = GatewayAuthorizeRequest(api_key_hash="k" * 64, model="m/x", idempotency_key_source=source)
-    return gateway.idempotency_key_source(body, key, boot_verified=verified)
+    return gateway.idempotency_key_source(
+        body, key, boot_verified=verified, capability_declared=declared,
+    )
 
 
 def test_gateway_needs_the_minted_shape_and_a_verified_boot() -> None:
@@ -129,6 +135,21 @@ def test_gateway_needs_the_minted_shape_and_a_verified_boot() -> None:
     ):
         assert _classify("gateway", key) == "legacy", key
     assert _classify("gateway", MINTED, verified=False) == "legacy"
+
+
+def test_gateway_needs_the_boots_capability_declaration() -> None:
+    # E4 R2: a boot that never declared capabilities.idempotency_key_source
+    # at registration cannot have a key treated as gateway-minted on the
+    # strength of the body field alone, however well-formed the key.
+    assert _classify("gateway", MINTED, declared=True) == "gateway"
+    assert _classify("gateway", MINTED, declared=False) == "legacy"
+    assert _classify("gateway", MINTED, verified=False, declared=True) == "legacy"
+    assert _classify("gateway", MINTED, verified=False, declared=False) == "legacy"
+    # The declaration does not make a client-sent or absent mark a gateway one.
+    assert _classify("client", "client-order-42", declared=True) == "client"
+    assert _classify("client", "client-order-42", declared=False) == "client"
+    assert _classify(None, MINTED, declared=True) == "legacy"
+    assert _classify("future-value", MINTED, declared=True) == "legacy"
 
 
 def test_client_unknown_and_absent() -> None:
@@ -222,7 +243,9 @@ def test_authorize_with_an_unknown_or_overlong_value_is_not_refused(
 # --- the source split log -----------------------------------------------------
 
 
-def _seed_with_boot() -> Any:
+def _seed_with_boot(
+    *, declares_idempotency_key_source: bool = True, declares_settle_outbox: bool = False,
+) -> Any:
     store, database = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="ws-key-source", name="Key source", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
@@ -238,6 +261,8 @@ def _seed_with_boot() -> Any:
         kid="boot-key-source", jwk={"kty": "OKP", "crv": "Ed25519", "x": "AA"},
         approved=True, verified=True, image_digest=IMAGE_DIGEST,
         attestation_kind="gcp-cs-jwt", registered_at="2026-10-23T00:00:00Z",
+        declares_idempotency_key_source=declares_idempotency_key_source,
+        declares_settle_outbox=declares_settle_outbox,
     ))
     configure_store(store)
     return key
@@ -260,20 +285,29 @@ def _source_lines(caplog: pytest.LogCaptureFixture, prefix: str) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.getMessage().startswith(prefix)]
 
 
-@pytest.mark.parametrize(("verified", "key", "source", "line", "mismatch"), [
-    (True, MINTED, "gateway", f"source=gateway declared=gateway image_digest={IMAGE_DIGEST}", None),
-    (False, MINTED, "gateway", "source=legacy declared=gateway image_digest=-", "reason=boot_unverified"),
-    (True, "client-picked-key", "gateway", f"source=legacy declared=gateway image_digest={IMAGE_DIGEST}",
+@pytest.mark.parametrize(("verified", "declared", "key", "source", "line", "mismatch"), [
+    (True, True, MINTED, "gateway", f"source=gateway declared=gateway image_digest={IMAGE_DIGEST}", None),
+    (False, True, MINTED, "gateway", "source=legacy declared=gateway image_digest=-", "reason=boot_unverified"),
+    (True, True, "client-picked-key", "gateway", f"source=legacy declared=gateway image_digest={IMAGE_DIGEST}",
      "reason=key_shape"),
-    (True, "client-picked-key", "client", f"source=client declared=client image_digest={IMAGE_DIGEST}", None),
-    (True, MINTED, None, f"source=legacy declared=absent image_digest={IMAGE_DIGEST}", None),
-    (True, MINTED, "future-value", f"source=legacy declared=other image_digest={IMAGE_DIGEST}", None),
+    # E4 R2: a verified boot that did not declare the capability.
+    (True, False, MINTED, "gateway", f"source=legacy declared=gateway image_digest={IMAGE_DIGEST}",
+     "reason=capability_undeclared"),
+    # The key shape is checked before the declaration, and the boot before
+    # the declaration, so each reason names the first failing check.
+    (True, False, "client-picked-key", "gateway", f"source=legacy declared=gateway image_digest={IMAGE_DIGEST}",
+     "reason=key_shape"),
+    (False, False, MINTED, "gateway", "source=legacy declared=gateway image_digest=-", "reason=boot_unverified"),
+    (True, False, "client-picked-key", "client", f"source=client declared=client image_digest={IMAGE_DIGEST}", None),
+    (True, True, "client-picked-key", "client", f"source=client declared=client image_digest={IMAGE_DIGEST}", None),
+    (True, True, MINTED, None, f"source=legacy declared=absent image_digest={IMAGE_DIGEST}", None),
+    (True, True, MINTED, "future-value", f"source=legacy declared=other image_digest={IMAGE_DIGEST}", None),
 ])
 def test_source_split_is_logged_per_boot_image_without_the_key(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
-    verified: bool, key: str, source: str | None, line: str, mismatch: str | None,
+    verified: bool, declared: bool, key: str, source: str | None, line: str, mismatch: str | None,
 ) -> None:
-    api_key = _seed_with_boot()
+    api_key = _seed_with_boot(declares_idempotency_key_source=declared)
     monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: verified)
     with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
         _signed_authorize(api_key, key, source)
@@ -303,3 +337,52 @@ def test_the_observation_never_fails_an_authorize(
     data = _signed_authorize(api_key, MINTED, "gateway")
     assert data["authorization_id"]
 
+
+
+# --- the boot context carries both R2 declarations ---------------------------
+
+
+@pytest.mark.parametrize(("key_source", "outbox"), [
+    (False, False), (True, False), (False, True), (True, True),
+])
+def test_authorize_boot_context_carries_the_boots_r2_declarations(
+    monkeypatch: pytest.MonkeyPatch, key_source: bool, outbox: bool,
+) -> None:
+    """What the boot declared at registration reaches the authorize boot
+    context, next to heartbeat_declared, so a gate can read it there."""
+    api_key = _seed_with_boot(declares_idempotency_key_source=key_source, declares_settle_outbox=outbox)
+    monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: True)
+    seen: list[dict[str, Any]] = []
+    observe = gateway._observe_idempotency_key_source
+
+    def capture(request: Any, body: Any, key: Any, boot_context: dict[str, Any]) -> None:
+        seen.append(dict(boot_context))
+        observe(request, body, key, boot_context)
+
+    monkeypatch.setattr(gateway, "_observe_idempotency_key_source", capture)
+    _signed_authorize(api_key, MINTED, "gateway")
+    assert len(seen) == 1
+    assert seen[0]["boot_verified"] is True
+    assert seen[0]["idempotency_key_source_declared"] is key_source
+    assert seen[0]["settle_outbox_declared"] is outbox
+
+
+def test_authorize_without_a_boot_header_declares_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    api_key = _seed_with_boot(declares_idempotency_key_source=True, declares_settle_outbox=True)
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        gateway, "_observe_idempotency_key_source",
+        lambda _request, _body, _key, boot_context: seen.append(dict(boot_context)),
+    )
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+    body = GatewayAuthorizeRequest(
+        api_key_hash=api_key.hash, idempotency_key=MINTED, idempotency_key_source="gateway",
+        model="anthropic/claude-haiku-4.5", estimated_input_tokens=100, max_output_tokens=100,
+        route_type="chat.completions",
+    )
+    gateway._authorize_gateway_sync(request, body, Settings(environment="test"))
+    assert len(seen) == 1
+    assert seen[0]["boot_verified"] is False
+    assert seen[0]["heartbeat_declared"] is False
+    assert seen[0]["idempotency_key_source_declared"] is False
+    assert seen[0]["settle_outbox_declared"] is False

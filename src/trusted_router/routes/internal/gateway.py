@@ -563,6 +563,12 @@ def _register_gateway_boot_sync(
             declares_stream_open_heartbeat=bool(
                 body.capabilities is not None and body.capabilities.stream_open_heartbeat
             ),
+            declares_idempotency_key_source=bool(
+                body.capabilities is not None and body.capabilities.idempotency_key_source
+            ),
+            declares_settle_outbox=bool(
+                body.capabilities is not None and body.capabilities.settle_outbox
+            ),
         )
         stored = STORE.observe_gateway_boot(record)
     except ValueError as exc:
@@ -889,6 +895,10 @@ def _authorize_gateway_sync(
         "boot_auth": boot_auth,
         "boot_verified": False,
         "heartbeat_declared": False,
+        # E4 R2: what the boot declared at registration. The idempotency
+        # key source classifier reads the first; nothing reads the second yet.
+        "idempotency_key_source_declared": False,
+        "settle_outbox_declared": False,
         "image_digest": "",
     }
     return _authorize_gateway_sync_impl(request, body, settings, boot_context)
@@ -948,6 +958,12 @@ def _authorize_gateway_sync_impl(
         )
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
+        )
+        boot_context["idempotency_key_source_declared"] = bool(
+            boot is not None and boot.declares_idempotency_key_source
+        )
+        boot_context["settle_outbox_declared"] = bool(
+            boot is not None and boot.declares_settle_outbox
         )
         boot_context["image_digest"] = boot.image_digest if boot is not None else ""
         # Over the path as the server decoded it, which is what the edge
@@ -2654,22 +2670,26 @@ def idempotency_key_source(
     presented_key: str | None,
     *,
     boot_verified: bool,
+    capability_declared: bool,
 ) -> Literal["gateway", "client", "legacy"]:
     """Who chose this authorize's idempotency key, as far as the router can tell.
 
     ``gateway`` only when the enclave says it minted the key, the presented
-    key has the minted shape, and the request's boot signature verified; R2
-    adds the boot's capability declaration as a further requirement.
-    ``client`` when the enclave says the caller sent the key. Anything else
-    (absent, a value this router does not know, or a ``gateway`` claim that
-    fails a check) is ``legacy``: today's treatment. Only ``gateway`` may ever
-    be treated as unkeyed, and nothing consumes the result yet. The field is
-    outside the idempotency fingerprint, so this never changes a replay.
+    key has the minted shape, the request's boot signature verified, and that
+    boot declared ``capabilities.idempotency_key_source`` at registration: a
+    boot that never declared the mark cannot have its key treated as
+    unkeyed on the strength of a body field alone. ``client`` when the
+    enclave says the caller sent the key. Anything else (absent, a value this
+    router does not know, or a ``gateway`` claim that fails a check) is
+    ``legacy``: today's treatment. Only ``gateway`` may ever be treated as
+    unkeyed, and nothing consumes the result yet. The field is outside the
+    idempotency fingerprint, so this never changes a replay.
     """
     raw = body.idempotency_key_source
     if raw == "gateway":
         if (
             boot_verified
+            and capability_declared
             and presented_key is not None
             and _GATEWAY_MINTED_IDEMPOTENCY_KEY.fullmatch(presented_key) is not None
         ):
@@ -2691,7 +2711,13 @@ def _observe_idempotency_key_source(
     the key, its raw source value, or any request content."""
     try:
         boot_verified = bool(boot_context.get("boot_verified"))
-        source = idempotency_key_source(body, presented_key, boot_verified=boot_verified)
+        capability_declared = bool(boot_context.get("idempotency_key_source_declared"))
+        source = idempotency_key_source(
+            body,
+            presented_key,
+            boot_verified=boot_verified,
+            capability_declared=capability_declared,
+        )
         raw = body.idempotency_key_source
         declared = "absent" if raw is None else raw if raw in {"gateway", "client"} else "other"
         image_digest = str(boot_context.get("image_digest") or "") if boot_verified else ""
@@ -2702,12 +2728,15 @@ def _observe_idempotency_key_source(
             _log_value(image_digest or "-"),
         )
         if declared == "gateway" and source != "gateway":
-            reason = (
-                "boot_unverified"
-                if presented_key is not None
-                and _GATEWAY_MINTED_IDEMPOTENCY_KEY.fullmatch(presented_key) is not None
-                else "key_shape"
-            )
+            if (
+                presented_key is None
+                or _GATEWAY_MINTED_IDEMPOTENCY_KEY.fullmatch(presented_key) is None
+            ):
+                reason = "key_shape"
+            elif not boot_verified:
+                reason = "boot_unverified"
+            else:
+                reason = "capability_undeclared"
             logger.warning(
                 "gateway.idempotency_key_source_mismatch reason=%s image_digest=%s request_id=%s",
                 reason,

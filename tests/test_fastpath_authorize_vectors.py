@@ -173,7 +173,10 @@ def test_every_answer_agrees_with_its_rows_and_inputs() -> None:
                 == data["credit_reservation_id"] == ids["reservation_id"]), name
         assert reservation["authorization_id"] == ids["authorization_id"], name
         # One clock reading: the instant prices, stamps and expires the rows.
-        assert authorization["created_at_us"] == reservation["created_at_us"] == case["at_us"], name
+        # The reservation's created_at alone is the commit's timestamp (§5):
+        # Spanner refuses a reading later than the commit in that column.
+        assert authorization["created_at_us"] == case["at_us"], name
+        assert "created_at_us" not in reservation and reservation["created_at"] == "commit_timestamp", name
         assert payload["created_at"] == _instant(case["at_us"]), name
         assert reservation["expires_at_us"] - case["at_us"] == 7_200_000_000, name
         assert authorization["settled"] is False and authorization["terminal_at_us"] is None, name
@@ -277,16 +280,24 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
 
 
 def test_an_insert_whose_outcome_is_unknown_and_not_landed_is_pythons_exact_503() -> None:
-    (case,) = _cases("unavailable")
-    expect = case["expect"]
-    assert case["insert"] == "unknown_not_landed" and expect["status"] == 503
-    assert expect["headers"] == [["retry-after", "1"]]
-    response = json.loads(expect["response"])
-    error = response["error"]
-    assert (error["code"], error["message"], error["type"]) == (503, "Authorization unavailable; retry",
-                                                                "service_unavailable")
-    assert list(response["data"]) == ["timing"] and response["data"]["timing"] == expect["timing"]
-    assert list(response["data"]["timing"]) == TIMING
+    # A lost answer, and the refusals that prove nothing about a commit that
+    # may have applied (§8.4: FailedPrecondition, Aborted once the client's
+    # re-runs are spent): the same 503 bytes.
+    cases = {case["insert"]: case for case in _cases("unavailable")}
+    assert set(cases) == {"unknown_not_landed", "failed_precondition", "aborted"}
+    for insert, case in cases.items():
+        expect = case["expect"]
+        assert expect["status"] == 503 and expect["headers"] == [["retry-after", "1"]], insert
+        assert expect["response"] == cases["unknown_not_landed"]["expect"]["response"], insert
+        response = json.loads(expect["response"])
+        error = response["error"]
+        assert (error["code"], error["message"], error["type"]) == (503, "Authorization unavailable; retry",
+                                                                    "service_unavailable"), insert
+        assert list(response["data"]) == ["timing"] and response["data"]["timing"] == expect["timing"], insert
+        assert list(response["data"]["timing"]) == TIMING, insert
+    # Python fails a FailedPrecondition outright, where Go keeps the hold.
+    assert cases["failed_precondition"]["expect"]["python"]["status"] == 500
+    assert "python" not in cases["aborted"]["expect"]
 
 
 def test_the_fingerprint_bodies_cover_what_go_must_pass() -> None:

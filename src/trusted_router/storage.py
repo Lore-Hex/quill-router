@@ -420,6 +420,8 @@ class InMemoryStore:
                     # Replaced, never merged: a declaration can be withdrawn.
                     declares_usage_heartbeat=record.declares_usage_heartbeat,
                     declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
+                    declares_idempotency_key_source=record.declares_idempotency_key_source,
+                    declares_settle_outbox=record.declares_settle_outbox,
                 )
             self.gateway_boots[record.kid] = record
             return record
