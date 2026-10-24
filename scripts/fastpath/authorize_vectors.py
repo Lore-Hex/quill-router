@@ -67,10 +67,15 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 
 import httpx  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
-from google.api_core.exceptions import Aborted, DeadlineExceeded, FailedPrecondition  # noqa: E402
+from google.api_core.exceptions import (  # noqa: E402
+    Aborted,
+    DeadlineExceeded,
+    FailedPrecondition,
+    InvalidArgument,
+)
 from pydantic import ValidationError  # noqa: E402
 
-from tests.fakes.spanner import make_fake_store  # noqa: E402
+from tests.fakes.spanner import _SpannerModule, make_fake_store  # noqa: E402
 from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
@@ -98,6 +103,8 @@ FINGERPRINT_OUTPUT = "fastpath/testdata/authorize_fingerprint_v1.json"
 GENERATOR = "scripts/fastpath/authorize_vectors.py"
 SNAPSHOT = "fastpath/testdata/routing_snapshot_v1.body.json"
 PATH = "/internal/gateway/authorize"
+# A reservation row's created_at in the goldens: the commit's timestamp (§5).
+RESERVATION_CREATED_AT = "commit_timestamp"
 PLANE = {"cloud": "gcp", "region": "us-central1"}
 
 
@@ -443,7 +450,9 @@ def stored(database: Any, world: dict[str, Any]) -> dict[str, Any]:
         for (candidate, _shard), row in sorted(database.typed[CREDIT_BALANCE_TABLE].items())
         if candidate == workspace_id
     ]
-    byok, broadcast = ids("byok_provider"), ids("broadcast_destination_by_workspace")
+    # BYOK entities are kind "byok" (storage_gcp.py's auth-context query and
+    # get_byok_providers), the kind Go's key-context read ranges over.
+    byok, broadcast = ids("byok"), ids("broadcast_destination_by_workspace")
     spec = world["workspace"]
     causes = sorted(set(spec["billing_pause_causes"]).union(*(row["billing_pause_causes"] for row in credit_rows)))
     key_body, workspace_body = body("api_key", key["hash"]), body("workspace", workspace_id)
@@ -576,7 +585,13 @@ def front_door(answers: dict[str, Any] | None) -> Iterator[_Door]:
 def leased_insert(insert: str) -> Iterator[None]:
     """The leased insert's commit: as it is; applied, or not, with its answer
     lost to a deadline, which Python resolves by reading back; or refused
-    with nothing applied (failed_precondition, aborted: §8.4's `Failed`)."""
+    with nothing applied. Go classifies a refusal by its code and how many
+    times its callback ran (§8.4, store.ClassifyInsert): invalid_argument
+    (InvalidArgument, the callback run once) proves nothing applied, Go's
+    `Failed`; failed_precondition (FailedPrecondition, run once: possibly a
+    re-sent commit's answer) and aborted (Aborted once the client's re-runs
+    are spent, run more than once) prove nothing, Go's `Unknown`, which reads
+    back, finds no row and answers decision 1's 503."""
     if insert == "inserted":
         yield
         return
@@ -584,6 +599,8 @@ def leased_insert(insert: str) -> Iterator[None]:
     def lost(database: Any, txn: Any, **kwargs: Any) -> Any:
         if kwargs.get("transaction_tag") != "tr_authorize_leased":
             return _REAL_TRANSACTION(database, txn, **kwargs)
+        if insert == "invalid_argument":
+            raise InvalidArgument("the commit was refused; nothing applied")
         if insert == "failed_precondition":
             raise FailedPrecondition("the commit was refused; nothing applied")
         if insert == "aborted":
@@ -613,6 +630,16 @@ def _eol(answer: dict[str, Any]) -> str:
 def _row_timestamps(row: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
     return {f"{name}_us" if name in names else name: _us(value) if name in names else value
             for name, value in row.items()}
+
+
+def _reservation_row(row: dict[str, Any]) -> dict[str, Any]:
+    """The reservation's columns as the insert wrote them. created_at is the
+    commit's timestamp (PENDING_COMMIT_TIMESTAMP(), §5), which has no value
+    before the commit: the golden says so rather than name an instant."""
+    if row["created_at"] != _SpannerModule.COMMIT_TIMESTAMP:
+        raise AssertionError(f"the reservation's created_at is {row['created_at']!r}, not the commit's timestamp")
+    written = {k: v for k, v in row.items() if k not in {"settled", "settled_usage_type", "actual_micro", "terminal_at"}}
+    return {**_row_timestamps(written, ("expires_at",)), "created_at": RESERVATION_CREATED_AT}
 
 
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
@@ -655,6 +682,16 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         error = _error(body) if response.status_code != 200 else {}
         return {**world_rows, "expect": {"outcome": "pass", "reason": reason, "python": {
             "status": response.status_code, "type": error.get("type"), "leased": leased}}}
+    if case["insert"] == "failed_precondition" and response.status_code != 503:
+        # Python counts this code permanent and fails the request; Go cannot
+        # tell it from the refusal of a re-sent commit whose first applied
+        # (§8.4), so it answers as for an outcome not known and not landed:
+        # Python's own 503 for the same request, recorded with what Python
+        # answered here.
+        error = _error(body) if response.status_code != 200 else {}
+        unknown = run_case({**case, "insert": "unknown_not_landed"})
+        unknown["expect"]["python"] = {"status": response.status_code, "type": error.get("type"), "leased": leased}
+        return unknown
     if response.status_code == 503:
         if authorizations or [path for path, _sent in door.seen] != ["/v1/authorize"]:
             raise AssertionError(f"{case['name']}: a 503 that wrote or refunded")
@@ -679,9 +716,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         "idempotency_scope": reservation["idempotency_scope"],
         "timing": data["timing"],
         "authorization_row": _row_timestamps(authorization, ("created_at", "terminal_at", "started_at", "heartbeat_at")),
-        "reservation_row": _row_timestamps(
-            {k: v for k, v in reservation.items() if k not in {"settled", "settled_usage_type", "actual_micro", "terminal_at"}},
-            ("expires_at", "created_at")),
+        "reservation_row": _reservation_row(reservation),
     }}
 
 
@@ -965,8 +1000,11 @@ def cases() -> list[dict[str, Any]]:
     add("pass:header.video_providers", "header.video_providers",
         headers=(("x-quill-video-allowed-providers", "wafer"),))
     # The boot: E1's signature check and decision 8.
-    for mode in ("absent", "bad_signature", "unknown_kid", "malformed", "repeated"):
+    for mode in ("absent", "bad_signature", "malformed", "repeated"):
         add(f"pass:boot.signature:{mode}", "boot.signature", boot=mode)
+    # A kid with no boot row is boot.missing (§3), whether the row is gone or
+    # the header names a kid never registered: the edge sees the same miss.
+    add("pass:boot.missing:unknown_kid", "boot.missing", boot="unknown_kid")
     add("pass:boot.unverified", "boot.unverified", world={"boot": {"verified": False}})
     add("pass:boot.missing", "boot.missing", world={"boot": None})
     add("pass:policy.digest_not_accepted", "policy.digest_not_accepted",
@@ -1101,9 +1139,11 @@ def cases() -> list[dict[str, Any]]:
     # A federated key, served from its local shadow: this plane has no home
     # configured, so Python makes no home-plane call (_federated_key_still_valid).
     add("pass:key.federated", "key.federated", world={"key": {"federated_home": "https://home.example.invalid"}})
-    # The leased insert refused with nothing applied (§8.4's Failed).
-    add("pass:insert.failed:failed_precondition", "insert.failed", insert="failed_precondition")
-    add("pass:insert.failed:aborted", "insert.failed", insert="aborted")
+    # The leased insert refused with nothing applied: proven (§8.4's Failed),
+    # and not provably (Go's Unknown, the 503).
+    add("pass:insert.failed:invalid_argument", "insert.failed", insert="invalid_argument")
+    add("unavailable:insert_failed_precondition", insert="failed_precondition")
+    add("unavailable:insert_aborted", insert="aborted")
     # A read-back answers from the stored authorization: tags sorted (§6).
     add("answer:insert_unknown_landed_tags", insert="unknown_landed", body={"tags": {"zeta": "1", "alpha": "2"}},
         world={"key": {"tags": {"mid": "k", "beta": "k"}}})

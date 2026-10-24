@@ -20,6 +20,44 @@ NEW_TOKEN_PRICES = {
 MICROSOFT_ARTICLE = Path(__file__).parent / "fixtures/pricing/microsoft_speech_article_2026-10-12.html"
 
 
+def mistral_audio_pricing_html() -> str:
+    return """<table><tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr>
+    <tr><td>Voxtral TTS 3</td><td>$13 /M Chars</td><td>$1.3 /M Chars</td><td>-</td></tr>
+    <tr><td>Voxtral TTS</td><td>$16 /M Chars</td><td>$1.6 /M Chars</td><td>-</td></tr></table>"""
+
+
+def test_mistral_audio_pricing_selects_exact_model_and_input_tariff() -> None:
+    assert speech.parse_character_price("mistralai/voxtral-mini-tts-2603", mistral_audio_pricing_html()) == 16_000_000
+
+
+def test_mistral_audio_pricing_follows_input_header() -> None:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(mistral_audio_pricing_html(), "html.parser")
+    for row in soup.select("tr"):
+        cells = row.find_all(["th", "td"])
+        row.append(cells[1].extract())
+    assert speech.parse_character_price("mistralai/voxtral-mini-tts-2603", str(soup)) == 16_000_000
+
+
+def test_mistral_audio_pricing_allows_link_icon_not_other_model_suffixes() -> None:
+    html = mistral_audio_pricing_html().replace("Voxtral TTS</td>", 'Voxtral TTS <span>&#8599;</span></td>')
+    assert speech.parse_character_price("mistralai/voxtral-mini-tts-2603", html) == 16_000_000
+
+
+@pytest.mark.parametrize("old,new", [
+    ("<th>Input</th>", "<th>Unknown</th>"),
+    ("<th>Cached input</th>", "<th>Input</th>"),
+    ("<td>Voxtral TTS</td>", "<td>Voxtral TTS 2</td>"),
+    ("$16 /M Chars", "$16 /M Tokens"),
+    ("$16 /M Chars", "$0 /M Chars"),
+    ("$16 /M Chars", "$16.0000001 /M Chars"),
+])
+def test_mistral_audio_pricing_fails_closed(old: str, new: str) -> None:
+    with pytest.raises(ValueError):
+        speech.parse_character_price("mistralai/voxtral-mini-tts-2603", mistral_audio_pricing_html().replace(old, new))
+
+
 def _freeze_today(monkeypatch: pytest.MonkeyPatch, today: date) -> None:
     class Clock(datetime):
         @classmethod

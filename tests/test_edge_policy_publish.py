@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -522,7 +522,9 @@ def test_the_real_resolver_refreshes_and_its_failure_is_a_503(key) -> None:
         raise httpx.ConnectError("unreachable")
 
     settings = _settings(key, spend_lease_accepted_gcp_image_digests=DIGEST_C)
-    failing = StageDPolicyResolver(settings, object(), verifier=object(),  # type: ignore[arg-type]
+    # The resolver reads the watermark as a floor before it fetches: none yet.
+    no_watermark = SimpleNamespace(highest_sequence=lambda plane: None)
+    failing = StageDPolicyResolver(settings, no_watermark, verifier=object(),  # type: ignore[arg-type]
                                    release_urls=["https://release.invalid/trust"],
                                    client_factory=unreachable)
     assert failing.release_configured() is True
@@ -637,7 +639,8 @@ def test_a_hung_worker_is_abandoned_after_its_deadline(key, caplog) -> None:
         except PolicyUnavailable as exc:
             assert exc.status == "compiling"
         assert (publisher.attempts, publisher.abandoned) == (2, 1)
-        assert "edge policy signing worker abandoned after 30 s" in [
+        deadline = int(publisher_module.WORKER_DEADLINE_SECONDS)
+        assert f"edge policy signing worker abandoned after {deadline} s" in [
             r.getMessage() for r in caplog.records]
         assert publisher.idle(30)
         fresh = publisher.current()
@@ -701,6 +704,225 @@ def test_resolver_refreshes_are_serialized_with_kicks_worker(key) -> None:
         thread.join(30)
     assert state["peak"] == 2
 
+
+STAGE_D_FIXTURE = ROOT / "tests" / "fixtures" / "stage_d" / "stage-d-accepted.json"
+
+
+class Ticks:
+    """A monotonic clock the fake release host advances, shared by the
+    resolver's fetches and the publisher's worker deadline."""
+
+    def __init__(self, now: float = 1_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class SlowReleaseHost:
+    """A release host behind StageDPolicyResolver's ``client_factory`` that
+    takes ``op_seconds`` of ``ticks`` to answer each request. ``unavailable``
+    hosts answer a bundle 503. ``hold`` maps a request's index to an event
+    it waits on before answering, and ``arrived`` to one it sets on arrival.
+    """
+
+    def __init__(self, ticks: Ticks, documents: list[bytes]) -> None:
+        import threading
+
+        self.ticks, self.documents = ticks, documents
+        self.op_seconds = 1.0
+        self.unavailable: set[str] = set()
+        self.requests = 0
+        self.hold: dict[int, Any] = {}
+        self.arrived: dict[int, Any] = {}
+        self._lock = threading.Lock()
+
+    def __call__(self, **kwargs: Any) -> Any:
+        return _HostClient(self)
+
+
+class _HostClient:
+    def __init__(self, host: SlowReleaseHost) -> None:
+        self.host = host
+
+    def __enter__(self) -> _HostClient:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def stream(self, method: str, url: Any, headers: Any = None) -> Any:
+        import contextlib
+
+        import httpx
+
+        host = self.host
+        with host._lock:
+            index = host.requests
+            host.requests += 1
+        if index in host.arrived:
+            host.arrived[index].set()
+        if index in host.hold:
+            assert host.hold[index].wait(30)
+        host.ticks.now += host.op_seconds
+        url = httpx.URL(str(url))
+        bundle = url.path.endswith(".bundle")
+        status = 503 if bundle and url.host in host.unavailable else 200
+        body = b"bundle" if bundle else host.documents[0]
+
+        def chunks() -> Any:
+            yield body
+
+        def raise_for_status() -> None:
+            if status != 200:
+                request = httpx.Request(method, url)
+                raise httpx.HTTPStatusError(
+                    "unavailable", request=request,
+                    response=httpx.Response(status, request=request))
+
+        response = SimpleNamespace(headers={}, iter_bytes=chunks,
+                                   raise_for_status=raise_for_status)
+        return contextlib.nullcontext(response)
+
+
+class AcceptAll:
+    def verify(self, document: bytes, bundle: bytes, **kwargs: Any) -> None:
+        return None
+
+    def advance(self, **kwargs: Any) -> bool:
+        return True
+
+    def highest_sequence(self, **kwargs: Any) -> int | None:
+        return None
+
+
+def _stage_d_document(sequence: int) -> bytes:
+    value = json.loads(STAGE_D_FIXTURE.read_bytes())
+    value["sequence"] = sequence
+    return json.dumps(value).encode()
+
+
+def _real_resolver(settings: Settings, host: Any, ticks: Ticks,
+                   release_urls: list[str] | None = None) -> Any:
+    from datetime import UTC, datetime
+
+    from trusted_router.stage_d_policy import StageDPolicyResolver
+
+    return StageDPolicyResolver(
+        settings, AcceptAll(), verifier=AcceptAll(), release_urls=release_urls,
+        monotonic=ticks, wall_clock=lambda: datetime(2026, 9, 3, 22, tzinfo=UTC),
+        client_factory=host,
+    )
+
+
+def _within(seconds: float, target: Any) -> Any:
+    """Runs target in a thread and returns or raises its outcome, failing
+    when it is still running after ``seconds``."""
+    import threading
+
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = target()
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    assert not thread.is_alive(), "still running"
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
+
+def test_a_slow_release_host_within_its_timeouts_does_not_trip_the_signing_deadline(key) -> None:
+    """Two release URLs, every fetch 4.9 s, the primary's bundle 503: each
+    refresh takes 19.6 s, and the publisher's queues behind kick's. The
+    worker runs 34 s, past the old fixed 30 s deadline, and is not
+    abandoned: the deadline covers two refreshes' bound."""
+    import threading
+
+    ticks = Ticks()
+    host = SlowReleaseHost(ticks, [_stage_d_document(1200)])
+    host.op_seconds = 4.9
+    host.unavailable = {"primary.invalid"}
+    settings = _settings(
+        key, trust_gcp_release_url="https://primary.invalid/trust/gcp-release.json",
+        trust_gcp_release_fallback_urls="https://fallback.invalid/trust/gcp-release.json")
+    resolver = _real_resolver(settings, host, ticks)
+    publisher = build_publisher(settings, clock=Clock(T0), resolver=lambda: resolver,
+                                typed_store=lambda: None, monotonic=ticks)
+    # Requests 0-3 are kick's refresh, 4-7 the publisher's.
+    kick_in, kick_go = threading.Event(), threading.Event()
+    publisher_last, publisher_go = threading.Event(), threading.Event()
+    host.hold, host.arrived = {0: kick_go, 7: publisher_go}, {0: kick_in, 7: publisher_last}
+    try:
+        resolver.kick()
+        # Kick's refresh holds _refresh_lock before the publisher's worker starts.
+        assert kick_in.wait(30)
+        with pytest.raises(PolicyUnavailable) as busy:
+            publisher.current()
+        assert busy.value.status == "compiling"
+        kick_go.set()
+        assert publisher_last.wait(30)
+        assert ticks.now - 1_000.0 > 30
+        with pytest.raises(PolicyUnavailable) as still:
+            publisher.current()
+        assert still.value.status == "compiling"
+        assert (publisher.attempts, publisher.abandoned) == (1, 0)
+    finally:
+        kick_go.set()
+        publisher_go.set()
+    assert publisher.idle(30)
+    served = publisher.current()
+    assert json.loads(served.body)["accepted_image_digests"] == sorted(
+        resolver.accepted_image_digests())
+    assert (publisher.attempts, publisher.abandoned, host.requests) == (1, 0, 8)
+
+
+def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_signs_nothing(
+    key, monkeypatch,
+) -> None:
+    """Through the real httpx client: a header drip fails the publisher's
+    refresh within the resolver's timeout. The cached copy is served, then
+    503 digest-policy-unavailable; nothing unverified or empty is signed."""
+    from tests.fakes.release_host import ReleaseHost, plain_http_client_factory
+    from trusted_router import stage_d_policy
+
+    monkeypatch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", 1.5)
+    host = ReleaseHost(_stage_d_document(1200))
+    settings = _settings(key)
+    resolver = _real_resolver(settings, plain_http_client_factory, Ticks(),
+                              [host.release_url])
+    clock = Clock(T0)
+    publisher = build_publisher(settings, clock=clock, resolver=lambda: resolver,
+                                typed_store=lambda: None, spawn=_inline)
+    try:
+        first = publisher.current()
+        digests = json.loads(first.body)["accepted_image_digests"]
+        assert digests == sorted(resolver.accepted_image_digests()) and digests
+        host.mode = "header-drip"
+        host.document = _stage_d_document(1201)
+        clock.now = first.refresh_at
+        assert _within(5, publisher.current) is first
+        assert publisher.signatures == 1
+        assert sorted(resolver.accepted_image_digests()) == digests
+        clock.now = first.not_after
+        with pytest.raises(PolicyUnavailable) as refused:
+            _within(5, publisher.current)
+        assert refused.value.status == "digest-policy-unavailable"
+        assert publisher.signatures == 1
+        assert sorted(resolver.accepted_image_digests()) == digests
+    finally:
+        host.end_drips()
+        network = getattr(resolver._network, "thread", resolver._network)
+        if network is not None:
+            network.join(10)
+            assert not network.is_alive()
+        host.close()
 
 def test_one_signature_per_refresh_interval_served_until_refresh_at(key) -> None:
     clock = Clock(T0 + 1)

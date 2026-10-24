@@ -85,3 +85,31 @@ def test_paged_entity_range_scan_serializes_against_a_concurrent_commit() -> Non
     )
     # The re-run observed committed state rather than acting on the stale range.
     assert scanned == ["t-a", "t-b"]
+
+
+def test_reservation_created_at_is_the_commit_timestamp_and_the_last_touch() -> None:
+    """tr_reservation.created_at is allow_commit_timestamp: the insert writes
+    PENDING_COMMIT_TIMESTAMP() (a client reading ahead of TrueTime would be
+    refused), the fake stores its COMMIT_TIMESTAMP sentinel, and a later
+    statement on the table in the same transaction is refused, so the insert
+    stays the transaction's last touch of it."""
+    from tests.fakes.spanner import FakeFailedPrecondition, _ParamTypes, _SpannerModule
+    from trusted_router.storage_gcp_counter_dml import insert_reservation, read_reservation
+
+    db = _db()
+    fields = {
+        "reservation_id": "res-pct", "workspace_id": "ws", "key_hash": "kh", "ws_shard": 0, "credit_shard": 0,
+        "key_shard": 0, "credit_reserved_micro": 0, "key_reserved_micro": 0, "hold_usage_type": "Credits",
+        "authorization_id": "gwa-pct", "idempotency_scope": "scope-pct", "idempotency_fingerprint": "fp",
+        "expires_at": None,
+    }
+    db.run_in_transaction(lambda tx: insert_reservation(tx, _ParamTypes, **fields))
+    assert db.reservations["res-pct"]["created_at"] == _SpannerModule.COMMIT_TIMESTAMP
+
+    def insert_then_read(tx: object) -> None:
+        insert_reservation(tx, _ParamTypes, **{**fields, "reservation_id": "res-pct-2", "idempotency_scope": None})
+        read_reservation(tx, _ParamTypes, "res-pct")
+
+    with pytest.raises(FakeFailedPrecondition, match="pending commit timestamp"):
+        db.run_in_transaction(insert_then_read)
+    assert "res-pct-2" not in db.reservations

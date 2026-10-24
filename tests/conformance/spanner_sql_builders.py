@@ -157,7 +157,7 @@ def builder_cases() -> list[SQLCase]:
         key_hash="acceptance-key", ws_shard=0, credit_shard=0, key_shard=0,
         credit_reserved_micro=1, key_reserved_micro=1, hold_usage_type="credits",
         authorization_id="acceptance-auth", idempotency_scope="acceptance-scope",
-        idempotency_fingerprint="acceptance-fingerprint", expires_at=NOW, created_at=NOW,
+        idempotency_fingerprint="acceptance-fingerprint", expires_at=NOW,
     )
     entity = counters.entity_insert_statement(pt, "acceptance", "acceptance", "{}")
     reserve_key = counters.reserve_key_statement(pt, "acceptance-key", 1, is_byok=False, shard=0)

@@ -109,12 +109,19 @@ func (call *shadowCall) finish() int64 {
 	return n + call.tap.finish()
 }
 
+// byteBudget is a comparator's bound on the bytes its copies hold (shadow
+// and fullShadow).
+type byteBudget interface {
+	reserve(n int64) bool
+	release(n int64)
+}
+
 // tap passes a body through unchanged, keeping a copy within a bound and
 // within the comparator's byte budget. Each Read passes on what the body
 // gave it at once: the copy never holds the bytes back.
 type tap struct {
 	rc      io.ReadCloser
-	sh      *shadow
+	sh      byteBudget
 	limit   int
 	length  int64
 	onClose func(*tap)
@@ -476,7 +483,7 @@ func (sh *shadow) flush() {
 }
 
 // jsonOf is a count map as a JSON object, its keys sorted and unescaped.
-func jsonOf(m map[string]int) string {
+func jsonOf[V int | int64](m map[string]V) string {
 	var b bytes.Buffer
 	encoder := json.NewEncoder(&b)
 	encoder.SetEscapeHTML(false)

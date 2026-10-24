@@ -29,9 +29,10 @@ EXPECTED_MODELS = list(EXPLICIT_MODEL_MAP.values())
 
 def _parse_prices(html: str) -> dict[str, ModelPrice]:
     soup = BeautifulSoup(html, "html.parser")
-    headings = [node for node in soup.find_all(["h2", "h3"]) if node.get_text(" ", strip=True) == "Standard tier"]
+    headings = [node for node in soup.find_all(["h2", "h3"]) if node.get_text(" ", strip=True) in {"Standard tier", "Muse Spark"}]
     if len(headings) != 1:
         raise RuntimeError("meta: ambiguous Standard-tier pricing section")
+    model_table = headings[0].get_text(" ", strip=True) == "Muse Spark"
     section: list[Tag] = []
     for node in headings[0].next_siblings:
         if isinstance(node, Tag):
@@ -39,22 +40,30 @@ def _parse_prices(html: str) -> dict[str, ModelPrice]:
                 break
             section.append(node)
     text = " ".join(node.get_text(" ", strip=True) for node in section)
-    if "Price per 1M tokens" not in text:
-        raise RuntimeError("meta: missing per-million pricing unit")
     native_ids = set(re.findall(r"\bmuse-spark-\d+\.\d+(?:-[a-z]+)?\b", text))
-    if not set(EXPLICIT_MODEL_MAP) <= native_ids or any("contributor" in name for name in native_ids):
+    if not set(EXPLICIT_MODEL_MAP) <= native_ids or (not model_table and any("contributor" in name for name in native_ids)):
         raise RuntimeError("meta: unexpected Standard-tier model list")
     tables = [table for node in section for table in ([node] if node.name == "table" else node.find_all("table"))]
     if len(tables) != 1:
         raise RuntimeError("meta: ambiguous Standard-tier price table")
+    headers = [cell.get_text(" ", strip=True) for cell in tables[0].find_all("th")]
+    expected_headers = (
+        {"Usage", "Standard mode (per 1M tokens)", "Contributor mode (per 1M tokens)"}
+        if model_table else {"Usage", "Price per 1M tokens"}
+    )
+    if len(headers) != len(expected_headers) or set(headers) != expected_headers:
+        raise RuntimeError("meta: missing or ambiguous per-million Standard pricing column")
+    price_column = headers.index("Standard mode (per 1M tokens)" if model_table else "Price per 1M tokens")
+    usage_column = headers.index("Usage")
     amounts: dict[str, int] = {}
     for row in tables[0].find_all("tr"):
         cells = row.find_all("td")
         if not cells:
             continue
-        if len(cells) != 2:
+        if len(cells) != len(headers):
             raise RuntimeError("meta: unexpected price row")
-        label, raw = [cell.get_text(" ", strip=True) for cell in cells]
+        label = cells[usage_column].get_text(" ", strip=True)
+        raw = cells[price_column].get_text(" ", strip=True)
         if label not in {"Cached input", "Input", "Output"} or label in amounts or not re.fullmatch(r"\$\d+(?:\.\d+)?", raw):
             raise RuntimeError("meta: malformed Standard-tier price")
         amount = Decimal(raw[1:]) * 1_000_000

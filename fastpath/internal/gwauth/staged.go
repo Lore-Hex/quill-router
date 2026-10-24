@@ -25,7 +25,7 @@ type Staged struct {
 // nothing needs refunding).
 func Stage(in ComposeInput) (Staged, error) {
 	if !authorizationIDForm.MatchString(in.AuthorizationID) {
-		return Staged{}, composeErr("authorization id %q is not gwa- and 32 lowercase hex digits", in.AuthorizationID)
+		return Staged{}, composeErr("authorization id %q is not gwa- and a uuid4's 32 lowercase hex digits", in.AuthorizationID)
 	}
 	if !reservationIDForm.MatchString(in.ReservationID) {
 		return Staged{}, composeErr("reservation id %q is not a hyphenated uuid4", in.ReservationID)
@@ -37,8 +37,9 @@ func Stage(in ComposeInput) (Staged, error) {
 		return Staged{}, composeErr("no clock reading")
 	}
 	// One clock reading (decision 15), as a Python datetime holds it: UTC,
-	// to the microsecond. created_at, the payload's created_at and
-	// expires_at all derive from it.
+	// to the microsecond. The authorization's created_at, the payload's
+	// created_at and expires_at all derive from it; the reservation's
+	// created_at is the commit's timestamp (ReservationRow).
 	in.At = in.At.UTC().Truncate(time.Microsecond)
 	in.Candidates = slices.Clone(in.Candidates)
 	in.Regions = slices.Clone(in.Regions)
@@ -90,6 +91,13 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 	if endOfLife.IsZero() {
 		return Composed{}, composeErr("no end of life")
 	}
+	// An offset with seconds is one Python never writes back as Go does:
+	// Go's JSON drops the offset's seconds (RFC 3339 has none), so the text
+	// Python parses names another instant. The front door answers in UTC;
+	// anything else passes rather than write a payload Python would not.
+	if _, offset := endOfLife.Zone(); offset%60 != 0 {
+		return Composed{}, composeErr("the end of life's UTC offset has seconds")
+	}
 	payload := append(slices.Clone(s.payload),
 		pyjson.Member{Key: "fastpath_envelope", Value: envelope},
 		pyjson.Member{Key: "fastpath_end_of_life", Value: EndOfLifeText(endOfLife)},
@@ -125,7 +133,6 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 			IdempotencyScope:       in.IdempotencyScope,
 			IdempotencyFingerprint: in.IdempotencyFingerprint,
 			ExpiresAt:              in.At.Add(reservationTTL),
-			CreatedAt:              in.At,
 		},
 		inserted: s.inserted,
 		readBack: s.readBack,
