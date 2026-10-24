@@ -13,6 +13,8 @@ from trusted_router.catalog import MODEL_ENDPOINTS
     (nextbit, "bsc-lt/alia-40b-instruct-2601"),
     (nvidia_nim, "google/gemma-4-31b-it"),
     (sambanova, "deepseek/deepseek-v3.2"),
+    (sambanova, "deepseek/deepseek-v3.1"),
+    (sambanova, "google/gemma-4-31b-it"),
 ])
 def test_unavailable_route_can_recover_only_after_canary(provider, model, tmp_path):
     row = next(row for row in json.loads(provider.MANIFEST_PATH.read_text())["models"] if row["id"] == model)
@@ -46,8 +48,11 @@ def test_atlas_retirement_does_not_remove_openai_direct(model):
     assert any(e.provider == "openai" and e.model_id == model for e in MODEL_ENDPOINTS.values())
 
 
-def test_sambanova_account_hold_does_not_disable_working_models():
-    assert any(e.provider == "sambanova" and e.model_id == "openai/gpt-oss-120b" for e in MODEL_ENDPOINTS.values())
+@pytest.mark.parametrize("model", [
+    "openai/gpt-oss-120b", "meta-llama/llama-3.3-70b-instruct", "minimax/minimax-m3",
+])
+def test_sambanova_account_hold_does_not_disable_working_models(model):
+    assert any(e.provider == "sambanova" and e.model_id == model for e in MODEL_ENDPOINTS.values())
 
 
 def test_ended_union_preview_is_not_silently_replaced():
