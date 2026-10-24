@@ -367,3 +367,180 @@ def test_sequence_below_durable_watermark_is_rejected() -> None:
     assert resolver.refresh() is False
     assert resolver.current_policy() is accepted
     assert watermark.highest == 852
+
+
+# The refresh's network part, joined for REFRESH_TIMEOUT_SECONDS: the tests
+# below shrink it so a hang shows within a second.
+SHORT_REFRESH_TIMEOUT = 0.5
+
+
+@pytest.fixture
+def release_host() -> Any:
+    from tests.fakes.release_host import ReleaseHost
+
+    host = ReleaseHost(_policy_document(1200))
+    yield host
+    host.close()
+
+
+@pytest.fixture
+def short_refresh_timeout(monkeypatch: pytest.MonkeyPatch) -> float:
+    import trusted_router.stage_d_policy as stage_d_policy
+
+    monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", SHORT_REFRESH_TIMEOUT,
+                        raising=False)
+    return SHORT_REFRESH_TIMEOUT
+
+
+class BlockingVerifier(FakeVerifier):
+    """Verifies once ``gate`` is open: a Sigstore TUF refresh that hangs."""
+
+    def __init__(self) -> None:
+        import threading
+
+        super().__init__()
+        self.gate = threading.Event()
+        self.gate.set()
+
+    def verify(self, document: bytes, bundle: bytes, **kwargs: Any) -> None:
+        super().verify(document, bundle, **kwargs)
+        self.gate.wait(30)
+
+
+def _served_resolver(host: Any, watermark: PolicyWatermark,
+                     verifier: FakeVerifier | None = None) -> StageDPolicyResolver:
+    from tests.fakes.release_host import plain_http_client_factory
+
+    return StageDPolicyResolver(
+        Settings(environment="test"),
+        watermark,
+        verifier=verifier or FakeVerifier(),
+        release_urls=[host.release_url],
+        wall_clock=lambda: datetime(2026, 9, 3, 22, tzinfo=UTC),
+        client_factory=plain_http_client_factory,
+    )
+
+
+def _within(seconds: float, target: Any) -> Any:
+    """target() in a thread: its outcome, failing when it is still running
+    after ``seconds``."""
+    import threading
+
+    outcome: list[Any] = []
+    thread = threading.Thread(target=lambda: outcome.append(target()), daemon=True)
+    thread.start()
+    thread.join(seconds)
+    assert not thread.is_alive(), "still running"
+    return outcome[0]
+
+
+def _network_threads() -> int:
+    import threading
+
+    return sum(thread.name == "stage-d-policy-fetch" for thread in threading.enumerate())
+
+
+@pytest.mark.parametrize("mode", ["header-drip", "deflate-forever"])
+def test_a_release_host_that_never_finishes_fails_the_refresh_within_its_timeout(
+    release_host: Any, short_refresh_timeout: float, mode: str,
+) -> None:
+    """Through the real httpx client, neither a header drip nor endless empty
+    deflate blocks trips any httpx timeout. The refresh still fails within
+    its timeout, keeps the verified policy and releases _refresh_lock, so
+    kick's worker queued behind it finishes too."""
+    import time
+
+    watermark = FakeWatermark()
+    resolver = _served_resolver(release_host, watermark)
+    assert resolver.refresh_now() is True
+    verified = resolver.current_policy()
+    release_host.mode = mode
+    release_host.document = _policy_document(1201)
+    try:
+        started = time.monotonic()
+        refreshing: list[bool] = []
+        import threading
+
+        publisher = threading.Thread(target=lambda: refreshing.append(resolver.refresh_now()),
+                                     daemon=True)
+        publisher.start()
+        resolver.kick()
+        kick_worker = resolver._worker
+        assert kick_worker is not None
+        publisher.join(5)
+        kick_worker.join(5)
+        assert not publisher.is_alive() and not kick_worker.is_alive(), "a refresh hung"
+        assert refreshing == [False]
+        assert time.monotonic() - started < 4 * short_refresh_timeout + 1
+        assert resolver.current_policy() is verified and watermark.highest == 1200
+        assert resolver._refresh_lock.acquire(timeout=1)
+        resolver._refresh_lock.release()
+    finally:
+        release_host.end_drips()
+    # Positive control: once the host stops, the abandoned fetch ends and the
+    # next refresh accepts the new policy.
+    release_host.mode = "ok"
+    network = resolver._network
+    assert network is not None
+    network.join(10)
+    assert not network.is_alive()
+    assert resolver.refresh() is True
+    assert resolver.current_policy().sequence == 1201  # type: ignore[union-attr]
+
+
+def test_a_verification_that_hangs_fails_the_refresh_and_its_late_result_is_discarded(
+    release_host: Any, short_refresh_timeout: float,
+) -> None:
+    watermark = FakeWatermark()
+    verifier = BlockingVerifier()
+    resolver = _served_resolver(release_host, watermark, verifier)
+    assert resolver.refresh() is True
+    verified = resolver.current_policy()
+    release_host.document = _policy_document(1201)
+    verifier.gate.clear()
+    try:
+        assert _within(5, resolver.refresh) is False
+        assert resolver.current_policy() is verified and watermark.highest == 1200
+    finally:
+        verifier.gate.set()
+    # The abandoned verification completes with a valid newer policy: it
+    # changes nothing, neither the policy nor the watermark.
+    network = resolver._network
+    assert network is not None
+    network.join(10)
+    assert not network.is_alive() and len(verifier.calls) == 2
+    assert resolver.current_policy() is verified and watermark.highest == 1200
+    # Positive control: the next refresh accepts it.
+    assert resolver.refresh() is True
+    assert resolver.current_policy().sequence == 1201  # type: ignore[union-attr]
+    assert watermark.highest == 1201
+
+
+def test_no_second_fetch_starts_while_an_abandoned_one_runs(
+    release_host: Any, short_refresh_timeout: float,
+) -> None:
+    """A host that never answers costs one thread, not one per refresh."""
+    import time
+
+    verifier = BlockingVerifier()
+    resolver = _served_resolver(release_host, FakeWatermark(), verifier)
+    verifier.gate.clear()
+    try:
+        assert _within(5, resolver.refresh) is False
+        assert _network_threads() == 1
+        requests, verifications = release_host.requests, len(verifier.calls)
+        for _ in range(3):
+            started = time.monotonic()
+            assert _within(5, resolver.refresh) is False
+            # Failed at once: no join, no fetch, no verification, no thread.
+            assert time.monotonic() - started < short_refresh_timeout / 2
+        assert (release_host.requests, len(verifier.calls)) == (requests, verifications)
+        assert _network_threads() == 1
+    finally:
+        verifier.gate.set()
+    network = resolver._network
+    assert network is not None
+    network.join(10)
+    # Positive control: with the abandoned fetch gone, a refresh fetches again.
+    assert resolver.refresh() is True
+    assert release_host.requests == requests + 2 and _network_threads() == 0

@@ -35,12 +35,12 @@ bytes, so building and signing it costs well under a millisecond.
 
 Except for ``accepted_image_digests``: before each signing the publisher
 calls ``StageDPolicyResolver.refresh_now()`` (two HTTPS fetches per release
-URL, each ending within ``FETCH_BOUND_SECONDS``, a Sigstore bundle check and
-the watermark), so a body's set is the release's at ``issued_at`` (decide
+URL and a Sigstore bundle check, together failed after 15 s, then the
+watermark), so a body's set is the release's at ``issued_at`` (decide
 contract decision 17). That is at most four refreshes a minute, and only on
-an instance the edge polls. The refresh can take tens of seconds on a slow
-release host, and may first wait out the resolver's own in-flight refresh,
-which is why it runs in the worker. If it fails nothing new is
+an instance the edge polls. A refresh takes at most
+``REFRESH_BOUND_SECONDS`` (25 s) and may first wait out the resolver's own
+in-flight one, which is why it runs in the worker. If it fails nothing new is
 signed; the cached copy is served until its ``not_after``, then polls
 answer 503 ``digest-policy-unavailable`` and the edge passes every request.
 With no release URL configured there is nothing to refresh and the set is
@@ -78,7 +78,7 @@ from trusted_router.regions import configured_regions
 from trusted_router.routing_snapshot_signing import EdgePolicySigner
 from trusted_router.services.fastpath_frontdoor import records_durable
 from trusted_router.services.routing_snapshot_publisher import load_signer, plane_of
-from trusted_router.stage_d_policy import refresh_fetch_bound_seconds, release_urls
+from trusted_router.stage_d_policy import REFRESH_BOUND_SECONDS
 from trusted_router.synthetic.funding import monitor_lookup_hash
 
 if TYPE_CHECKING:
@@ -96,21 +96,17 @@ ERROR_RETRY_SECONDS = 5
 # A poll that finds no valid copy while the background signing is in flight
 # comes back this soon.
 COMPILING_RETRY_SECONDS = 2
-# What a signing worker may spend besides the Stage D fetches: the Sigstore
-# check, the watermark, the other facts and the signature.
-WORKER_BASE_SECONDS = 30.0
-
-
-def worker_deadline_seconds(release_url_count: int) -> float:
-    """A signing worker running longer than this is abandoned: polls stop
-    reporting it as in flight and the next one starts a fresh worker. Its
-    late outcome, if any, is discarded.
-
-    Derived from the fetch bound, so a slow release host that stays within
-    its timeouts never trips it: the worker's ``refresh_now()`` may first
-    wait out one in-flight refresh (the resolver's kick worker), then runs
-    its own, each fetching for at most ``refresh_fetch_bound_seconds``."""
-    return WORKER_BASE_SECONDS + 2 * refresh_fetch_bound_seconds(release_url_count)
+# A signing worker running longer than this is abandoned: polls stop
+# reporting it as in flight and the next one starts a fresh worker. Its late
+# outcome, if any, is discarded. Above its worst case: refresh_now() may wait
+# out the kick worker's refresh, then run its own, each within
+# REFRESH_BOUND_SECONDS, and reading the other facts and signing take
+# milliseconds (5 s allowed). So only a worker stuck outside the refresh is
+# abandoned. Its length against the body's 60 s lifetime does not matter: a
+# replacement worker queues on the resolver's lock behind any refresh in
+# flight, so the deadline only bounds how long polls answer "compiling", and
+# past not_after the edge passes every request to Python either way.
+WORKER_DEADLINE_SECONDS = 2 * REFRESH_BOUND_SECONDS + 5.0
 
 
 class DigestPolicyUnavailable(Exception):
@@ -237,11 +233,9 @@ class EdgePolicyPublisher:
         facts: Callable[[], dict[str, Any]], clock: Callable[[], float] = time.time,
         spawn: Callable[[Callable[[], None]], Any] = _spawn_thread,
         monotonic: Callable[[], float] = time.monotonic,
-        worker_deadline: float = WORKER_BASE_SECONDS,
     ) -> None:
         self._signer, self._plane, self._facts, self._clock = signer, plane, facts, clock
         self._spawn, self._monotonic = spawn, monotonic
-        self.worker_deadline = worker_deadline
         # Re-entrant: an inline worker (tests) records its outcome under the
         # lock the poll that started it holds.
         self._lock = threading.RLock()
@@ -287,7 +281,7 @@ class EdgePolicyPublisher:
         worker = self._worker
         if worker is None or not worker.is_alive():
             return False
-        if self._monotonic() - self._worker_started <= self.worker_deadline:
+        if self._monotonic() - self._worker_started <= WORKER_DEADLINE_SECONDS:
             return True
         with self._lock:
             if self._worker is worker:
@@ -297,7 +291,7 @@ class EdgePolicyPublisher:
                 self._worker, self._generation = None, self._generation + 1
                 self.abandoned += 1
                 log.warning("edge policy signing worker abandoned after %d s",
-                            int(self.worker_deadline))
+                            int(WORKER_DEADLINE_SECONDS))
         return False
 
     def _start_locked(self, now: int) -> None:
@@ -374,16 +368,13 @@ def build_publisher(
 ) -> EdgePolicyPublisher:
     """The publisher for this process; raises ValueError when the routing key is unusable.
 
-    ``facts`` replaces the live facts (tests). The worker deadline is sized
-    from the release URLs the process's resolver refreshes from (its
-    settings').
+    ``facts`` replaces the live facts (tests).
     """
     signer = EdgePolicySigner(load_signer(settings))
     return EdgePolicyPublisher(
         signer=signer, plane=plane_of(settings),
         facts=facts or LiveFacts(settings, resolver=resolver, typed_store=typed_store),
         clock=clock, spawn=spawn, monotonic=monotonic,
-        worker_deadline=worker_deadline_seconds(len(release_urls(settings))),
     )
 
 

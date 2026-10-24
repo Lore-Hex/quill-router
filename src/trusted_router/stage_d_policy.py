@@ -29,28 +29,20 @@ _RFC3339_UTC_RE = re.compile(
 )
 _MAX_DOCUMENT_BYTES = 64 * 1024
 _MAX_BUNDLE_BYTES = 2 * 1024 * 1024
-# Each fetch's timeout, per network operation (httpx's connect, write and
-# read) and for the fetch as a whole: past it the fetch raises, checked once
-# the response headers are in and after every body chunk, so a host that
-# drips bytes cannot hold a refresh (and _refresh_lock) open.
 _FETCH_TIMEOUT_SECONDS = 5.0
-# A fetch therefore ends within three timeouts: the connect, the request's
-# write and the headers' read may each take one before the first check, and
-# after a check passes at most one more read follows. Name resolution
-# excepted, which no httpx timeout covers.
-FETCH_BOUND_SECONDS = 3 * _FETCH_TIMEOUT_SECONDS
+# A refresh's network part (every fetch and the Sigstore check, which runs a
+# TUF refresh) runs in its own short-lived thread; the refresh fails once
+# that thread has run this long. httpx's timeouts are per operation (each
+# header read, each body read, each resolved address, the TLS handshake;
+# name resolution has none), so only a wall-clock join bounds the whole.
+REFRESH_TIMEOUT_SECONDS = 3 * _FETCH_TIMEOUT_SECONDS
+# Each of the durable watermark's Spanner calls (storage_gcp_stage_d_policy)
+# finishes within this. A refresh makes at most two, under _refresh_lock,
+# after its network part.
+WATERMARK_TIMEOUT_SECONDS = _FETCH_TIMEOUT_SECONDS
+# So one refresh holds _refresh_lock at most this long.
+REFRESH_BOUND_SECONDS = REFRESH_TIMEOUT_SECONDS + 2 * WATERMARK_TIMEOUT_SECONDS
 _MAX_FUTURE_SKEW = timedelta(minutes=5)
-
-
-def release_urls(settings: Settings) -> tuple[str, ...]:
-    """The release URLs a resolver built from these settings refreshes from, in order."""
-    candidates = (settings.trust_gcp_release_url, *settings.trust_gcp_release_fallback_url_list)
-    return tuple(dict.fromkeys(url.strip() for url in candidates if url.strip()))
-
-
-def refresh_fetch_bound_seconds(release_url_count: int) -> float:
-    """The most one refresh spends fetching: two fetches per release URL."""
-    return release_url_count * 2 * FETCH_BOUND_SECONDS
 
 
 class BundleVerifier(Protocol):
@@ -221,13 +213,22 @@ class StageDPolicyResolver:
         # assigned after a newer one. Separate from _worker_lock, which
         # kick() takes on the request path and must never wait on a fetch.
         self._refresh_lock = threading.Lock()
+        # The network part of the latest refresh. One that outlived its
+        # refresh is left to finish alone and no other starts meanwhile, so
+        # a host that never answers costs one thread, not one per refresh.
+        self._network_lock = threading.Lock()
+        self._network: threading.Thread | None = None
         self._next_refresh_at = 0.0
         self._policy: StageDPolicy | None = None
 
     def _release_urls(self) -> tuple[str, ...]:
-        if self._release_urls_override is None:
-            return release_urls(self._settings)
-        candidates = self._release_urls_override
+        if self._release_urls_override is not None:
+            candidates = self._release_urls_override
+        else:
+            candidates = (
+                self._settings.trust_gcp_release_url,
+                *self._settings.trust_gcp_release_fallback_url_list,
+            )
         return tuple(dict.fromkeys(url.strip() for url in candidates if url.strip()))
 
     def release_configured(self) -> bool:
@@ -265,10 +266,8 @@ class StageDPolicyResolver:
         """``refresh()``, serialized with every other ``refresh_now()``: kick's
         background worker and a caller that needs the set current now (the
         fast path's edge policy publisher). A caller waits for an in-flight
-        refresh to finish, then fetches again. A refresh's fetches end
-        within ``refresh_fetch_bound_seconds`` of its release URL count, so
-        no fetch holds the lock past that (the verifier's Sigstore check
-        and the watermark keep their own timeouts)."""
+        refresh to finish, then fetches again: at most two refreshes'
+        ``REFRESH_BOUND_SECONDS``."""
 
         with self._refresh_lock:
             return self.refresh()
@@ -277,9 +276,70 @@ class StageDPolicyResolver:
         """Fetch, verify, validate, and watermark one policy publication.
 
         Not serialized: call ``refresh_now()`` where another refresh may run.
+        Returns within ``REFRESH_BOUND_SECONDS``: the network part
+        (``_verified_policy``, which changes no state) runs in a daemon thread
+        joined for ``REFRESH_TIMEOUT_SECONDS``; only after it returns a
+        verified policy does this thread advance the watermark and assign
+        it. A thread that outlives its refresh is abandoned, and its outcome
+        with it, so it can never change the verified state.
         """
 
-        last_error: Exception | None = None
+        if not self._release_urls():
+            return False
+        with self._network_lock:
+            if self._network is not None and self._network.is_alive():
+                logger.warning(
+                    "stage_d.policy_refresh_failed error_class=%s", "PreviousFetchRunning",
+                )
+                return False
+            outcome: list[StageDPolicy | Exception] = []
+            network = threading.Thread(
+                target=lambda: outcome.append(self._verified_policy()),
+                name="stage-d-policy-fetch",
+                daemon=True,
+            )
+            self._network = network
+            network.start()
+        network.join(REFRESH_TIMEOUT_SECONDS)
+        try:
+            if not outcome:
+                raise TimeoutError("Stage D policy fetch and verification timed out")
+            policy = outcome[0]
+            if isinstance(policy, Exception):
+                raise policy
+            advanced = self._watermark.advance(
+                plane=policy.plane,
+                sequence=policy.sequence,
+                updated_at=self._wall_clock(),
+            )
+            if (
+                not advanced
+                and self._watermark.highest_sequence(plane=policy.plane)
+                != policy.sequence
+            ):
+                raise ValueError("Stage D policy sequence is below the watermark")
+        except Exception as exc:  # noqa: BLE001 - verified state survives every failure
+            logger.warning(
+                "stage_d.policy_refresh_failed error_class=%s",
+                type(exc).__name__,
+            )
+            return False
+        with self._state_lock:
+            self._policy = policy
+        logger.info(
+            "stage_d.policy_accepted plane=%s sequence=%s kind=%s digests=%s",
+            policy.plane,
+            policy.sequence,
+            policy.kind,
+            len(policy.image_digests),
+        )
+        return True
+
+    def _verified_policy(self) -> StageDPolicy | Exception:
+        """The first release's policy that fetches, verifies and validates,
+        or the last failure. Network only: touches no resolver state."""
+
+        last_error: Exception = ValueError("no Stage D release URL")
         for release_url in self._release_urls():
             try:
                 policy_url = _policy_url(release_url)
@@ -291,60 +351,26 @@ class StageDPolicyResolver:
                     certificate_identity=self._settings.stage_d_policy_cert_identity,
                     oidc_issuer=self._settings.stage_d_policy_oidc_issuer,
                 )
-                policy = parse_stage_d_policy(document, now=self._wall_clock())
-                advanced = self._watermark.advance(
-                    plane=policy.plane,
-                    sequence=policy.sequence,
-                    updated_at=self._wall_clock(),
-                )
-                if (
-                    not advanced
-                    and self._watermark.highest_sequence(plane=policy.plane)
-                    != policy.sequence
-                ):
-                    raise ValueError("Stage D policy sequence is below the watermark")
-                with self._state_lock:
-                    self._policy = policy
-                logger.info(
-                    "stage_d.policy_accepted plane=%s sequence=%s kind=%s digests=%s",
-                    policy.plane,
-                    policy.sequence,
-                    policy.kind,
-                    len(policy.image_digests),
-                )
-                return True
-            except Exception as exc:  # noqa: BLE001 - verified state survives every failure
+                return parse_stage_d_policy(document, now=self._wall_clock())
+            except Exception as exc:  # noqa: BLE001 - reported by refresh()
                 last_error = exc
-        if last_error is not None:
-            logger.warning(
-                "stage_d.policy_refresh_failed error_class=%s",
-                type(last_error).__name__,
-            )
-        return False
+        return last_error
 
     def _fetch(self, url: str, byte_limit: int) -> bytes:
         parsed = httpx.URL(url)
         if parsed.scheme != "https" or not parsed.host:
             raise ValueError("Stage D policy URL must be absolute HTTPS")
-        started = self._monotonic()
-
-        def within_timeout() -> None:
-            if self._monotonic() - started > _FETCH_TIMEOUT_SECONDS:
-                raise TimeoutError("Stage D policy fetch exceeded its timeout")
-
         with self._client_factory(
             timeout=_FETCH_TIMEOUT_SECONDS,
             follow_redirects=False,
         ) as client:
             with client.stream("GET", parsed, headers={"accept": "application/json"}) as response:
-                within_timeout()
                 response.raise_for_status()
                 length = response.headers.get("content-length")
                 if length is not None and int(length) > byte_limit:
                     raise ValueError("Stage D policy artifact exceeds its size limit")
                 content = bytearray()
                 for chunk in response.iter_bytes():
-                    within_timeout()
                     if len(content) + len(chunk) > byte_limit:
                         raise ValueError("Stage D policy artifact exceeds its size limit")
                     content.extend(chunk)

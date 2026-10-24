@@ -1,13 +1,20 @@
-"""Native-Spanner monotonic watermark for signed Stage D policies."""
+"""Native-Spanner monotonic watermark for signed Stage D policies.
+
+Both calls run under the Stage D resolver's refresh lock, so each has one
+Spanner budget for all its RPCs and retries (``WATERMARK_TIMEOUT_SECONDS``):
+a wedged channel fails the refresh instead of holding the lock.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from trusted_router.storage_gcp_io import run_in_transaction_with_retry
+from trusted_router.stage_d_policy import WATERMARK_TIMEOUT_SECONDS
+from trusted_router.storage_gcp_io import run_in_transaction_with_retry, spanner_rpc_budget
 
 
+@spanner_rpc_budget(WATERMARK_TIMEOUT_SECONDS)
 def get_stage_d_policy_watermark(
     database: Any,
     param_types: Any,
@@ -27,6 +34,7 @@ def get_stage_d_policy_watermark(
     return int(rows[0][0]) if rows else None
 
 
+@spanner_rpc_budget(WATERMARK_TIMEOUT_SECONDS)
 def advance_stage_d_policy_watermark(
     database: Any,
     param_types: Any,
@@ -83,6 +91,7 @@ def advance_stage_d_policy_watermark(
         run_in_transaction_with_retry(
             database,
             txn,
+            total_budget_seconds=WATERMARK_TIMEOUT_SECONDS,
             transaction_tag="tr_stage_d_policy_watermark",
         )
     )
