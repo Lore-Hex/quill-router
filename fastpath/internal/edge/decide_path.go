@@ -3,14 +3,17 @@ package edge
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
+	"unicode"
+
+	"google.golang.org/grpc/codes"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
@@ -61,6 +64,39 @@ const (
 	RefundBudget = time.Second
 )
 
+// The decide path's alert kinds (the fastpath_alert label of the service's
+// alert line; a policy each in infra/fastpath_alerts.tf, and a row each in
+// docs/runbooks/fastpath-alerts.md). Each is raised once a period at most,
+// when the period's counts are logged.
+const (
+	// AlertUnavailable: the period's answers included decision 1's 503, an
+	// insert whose outcome is not known; the message counts them by the
+	// insert's gRPC code, which tells a clock ahead of Spanner's
+	// (failed_precondition, §8.4) and a Spanner incident (unavailable,
+	// deadline_exceeded) from a commit whose answer was simply lost.
+	AlertUnavailable = "edge_decide_unavailable"
+	// AlertUnavailableSustained: unavailable answers in SustainedPeriods
+	// periods with no 200 between them (a period that answered nothing
+	// neither adds to the run nor ends it, so sparse traffic is seen).
+	AlertUnavailableSustained = "edge_decide_unavailable_sustained"
+	// AlertSlowPass: a forwarded pass spent more than SlowAtEdge at the edge
+	// before it was forwarded, or Python's answer to it came more than
+	// SlowInAll after its arrival (decision 12).
+	AlertSlowPass = "edge_decide_pass_slow"
+)
+
+const (
+	// SustainedPeriods is how many periods (a minute each) with an
+	// unavailable answer and no 200 between them make
+	// AlertUnavailableSustained: more than one commit's lost answer, a cause
+	// that persists.
+	SustainedPeriods = 3
+	// SlowAtEdge and SlowInAll are decision 12's: what a forwarded pass may
+	// spend at the edge, and the enclave's 25 s an attempt.
+	SlowAtEdge = time.Second
+	SlowInAll  = 25 * time.Second
+)
+
 // refundMoney is a refund's money fields, Python's
 // _fastpath_release_after_failure's (gateway.py).
 var refundMoney = []byte(`{"charge":0,"estimate":0}`)
@@ -68,7 +104,8 @@ var refundMoney = []byte(`{"charge":0,"estimate":0}`)
 // Inserter writes an admitted decision's two rows and reports what the
 // commit, and its one read-back, prove (store.Store.InsertLeasedAuthorization).
 type Inserter interface {
-	InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow, r gwauth.ReservationRow) store.InsertOutcome
+	InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow,
+		r gwauth.ReservationRow) (store.InsertOutcome, codes.Code)
 }
 
 // DecideConfig turns the decide path on: the key and workspace cache it
@@ -83,6 +120,9 @@ type DecideConfig struct {
 	// Mint makes the ids the edge mints; nil funcs are gwauth's random
 	// ones. A test pins them.
 	Mint Mint
+	// Alert raises an alert of a kind (the service's alert line, labelled
+	// fastpath_alert); nil logs it.
+	Alert func(kind, subject, what string)
 }
 
 // decider is the decide path's state: the decide copy, the in-flight
@@ -94,13 +134,30 @@ type decider struct {
 	decides  *decideCopy
 	inflight inFlightKeys
 	refunds  sync.WaitGroup
+	// slowAtEdge and slowInAll are SlowAtEdge and SlowInAll; a test
+	// shortens them.
+	slowAtEdge, slowInAll time.Duration
 
-	answered, readBack, unavailable atomic.Int64
-	refunded, refundFailed          atomic.Int64
+	mu sync.Mutex
+	// total is the counts since the edge started, period the period's;
+	// unavailableRun counts the periods with an unavailable answer since
+	// the last with a 200 and none.
+	total, period  decideTally
+	unavailableRun int
+}
 
-	mu     sync.Mutex
-	passed map[string]int64
-	period map[string]int64
+// decideTally is the decide path's counts: the requests answered (of which
+// read back, the 200 after a read-back), the 503s of an outcome not known
+// by the insert's gRPC code, the refunds sent and failed, the requests
+// passed by §3 reason, and the forwarded passes slow at the edge (at_edge)
+// or in all (in_all).
+type decideTally struct {
+	answered, readBack, refunded, refundFailed int64
+	unavailable, passed, slow                  map[string]int64
+}
+
+func newDecideTally() decideTally {
+	return decideTally{unavailable: map[string]int64{}, passed: map[string]int64{}, slow: map[string]int64{}}
 }
 
 func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.Time, every time.Duration) *decider {
@@ -108,12 +165,24 @@ func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.T
 		every = time.Minute
 	}
 	return &decider{cfg: cfg, logf: logf, every: every, decides: newDecideCopy(cfg.Decides, 0, clock, logf),
-		passed: map[string]int64{}, period: map[string]int64{}}
+		slowAtEdge: SlowAtEdge, slowInAll: SlowInAll, total: newDecideTally(), period: newDecideTally()}
+}
+
+// count adds to the period's counts and the totals.
+func (dp *decider) count(add func(*decideTally)) {
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	add(&dp.total)
+	add(&dp.period)
 }
 
 // decidePassed is what the proxy carries of a request the decide path
-// passed: what it named, for the eviction Python's refusal makes.
-type decidePassed struct{ lookupHash, workspace string }
+// passed: what it named, for the eviction Python's refusal makes, and its
+// arrival, for the time Python's answer took in all.
+type decidePassed struct {
+	lookupHash, workspace string
+	arrived               time.Time
+}
 
 type decidePassedKey struct{}
 
@@ -137,15 +206,17 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	}
 	decided := Decide(in)
 	routed := time.Now()
-	passed = decidePassed{lookupHash: decided.LookupHash, workspace: decided.Workspace}
-	d, ok := decided.Admit()
-	if !ok {
-		dp.pass(decided.Pass)
-		return false, passed
-	}
+	passed = decidePassed{lookupHash: decided.LookupHash, workspace: decided.Workspace, arrived: arrived}
 	pass := func(reason string) (bool, decidePassed) {
 		dp.pass(reason)
+		if time.Since(arrived) > dp.slowAtEdge {
+			dp.count(func(t *decideTally) { t.slow["at_edge"]++ })
+		}
 		return false, passed
+	}
+	d, ok := decided.Admit()
+	if !ok {
+		return pass(decided.Pass)
 	}
 	if !dp.inflight.enter(d.LookupHash, in.Policy.GatewayAuthorizeMaxInFlightPerKey) {
 		return pass(PassInFlightKey)
@@ -180,7 +251,7 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 		dp.refund(admitter, got.Envelope)
 		return pass(PassCompose)
 	}
-	outcome := dp.cfg.Rows.InsertLeasedAuthorization(detached, composed.Authorization, composed.Reservation)
+	outcome, code := dp.cfg.Rows.InsertLeasedAuthorization(detached, composed.Authorization, composed.Reservation)
 	committed := time.Now()
 	timing := func(rpcs int64) gwauth.Timing {
 		now := time.Now()
@@ -190,21 +261,20 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	}
 	switch outcome {
 	case store.Inserted:
-		dp.answered.Add(1)
+		dp.count(func(t *decideTally) { t.answered++ })
 		writeAnswer(w, http.StatusOK, composed.Render(timing(1), false))
 		return true, passed
 	case store.Landed:
 		// The commit's answer was lost or AlreadyExists, and the row read
 		// back is ours: Python's bytes after a read-back (§6).
-		dp.answered.Add(1)
-		dp.readBack.Add(1)
+		dp.count(func(t *decideTally) { t.answered++; t.readBack++ })
 		writeAnswer(w, http.StatusOK, composed.Render(timing(2), true))
 		return true, passed
 	case store.Unknown:
 		// The commit may have applied: never refunded. Python's 503, the
 		// hold kept; the enclave's retry finds the row through Python's
-		// replay, or inserts.
-		dp.unavailable.Add(1)
+		// replay, or inserts. Counted by the insert's code.
+		dp.count(func(t *decideTally) { t.unavailable[codeName(code)]++ })
 		writeAnswer(w, gwauth.UnavailableStatus, gwauth.Unavailable(timing(2)))
 		return true, passed
 	case store.ScopeTaken:
@@ -262,18 +332,38 @@ func (dp *decider) refund(a Admitter, envelope string) {
 		got := a.Refund(ctx, frontdoor.RefundOf{Envelope: envelope, Money: refundMoney})
 		switch got.Status {
 		case frontdoor.Won, frontdoor.Recorded, frontdoor.Settled:
-			dp.refunded.Add(1)
+			dp.count(func(t *decideTally) { t.refunded++ })
 		default:
-			dp.refundFailed.Add(1)
+			dp.count(func(t *decideTally) { t.refundFailed++ })
 		}
 	}()
 }
 
 func (dp *decider) pass(reason string) {
-	dp.mu.Lock()
-	defer dp.mu.Unlock()
-	dp.passed[reason]++
-	dp.period[reason]++
+	dp.count(func(t *decideTally) { t.passed[reason]++ })
+}
+
+// answeredUpstream counts a pass whose answer from Python, or the proxy's
+// failure to reach it, came more than SlowInAll after the request arrived.
+func (dp *decider) answeredUpstream(p decidePassed) {
+	if time.Since(p.arrived) > dp.slowInAll {
+		dp.count(func(t *decideTally) { t.slow["in_all"]++ })
+	}
+}
+
+// codeName is a gRPC code as the vectors and the counts name it:
+// FailedPrecondition is failed_precondition.
+func codeName(c codes.Code) string {
+	var b strings.Builder
+	afterLower := false
+	for _, r := range c.String() {
+		if unicode.IsUpper(r) && afterLower {
+			b.WriteByte('_')
+		}
+		afterLower = unicode.IsLower(r)
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
 }
 
 // evict drops what the cache holds of a key Python refused (401, 402 or
@@ -318,11 +408,12 @@ func pauseAnswer(resp *http.Response) bool {
 
 // DecideCounts are the decide path's counts since the edge started: the
 // requests it answered (of which read back, the 200 after a read-back), the
-// 503s of an outcome not known, the refunds sent and failed, and the
-// requests it passed by §3 reason.
+// 503s of an outcome not known (and by the insert's gRPC code), the refunds
+// sent and failed, the requests it passed by §3 reason, and the forwarded
+// passes slow at the edge (at_edge) or in all (in_all).
 type DecideCounts struct {
 	Answered, ReadBack, Unavailable, Refunded, RefundFailed int64
-	Passed                                                  map[string]int64
+	UnavailableByCode, Passed, Slow                         map[string]int64
 }
 
 // DecideCounts are the counts now; zero with the decide path off.
@@ -332,13 +423,19 @@ func (e *Edge) DecideCounts() DecideCounts {
 		return DecideCounts{}
 	}
 	dp.mu.Lock()
-	passed := make(map[string]int64, len(dp.passed))
-	for k, v := range dp.passed {
-		passed[k] = v
+	defer dp.mu.Unlock()
+	t := dp.total
+	return DecideCounts{Answered: t.answered, ReadBack: t.readBack, Unavailable: sum(t.unavailable),
+		Refunded: t.refunded, RefundFailed: t.refundFailed, UnavailableByCode: maps.Clone(t.unavailable),
+		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow)}
+}
+
+func sum(m map[string]int64) int64 {
+	var n int64
+	for _, v := range m {
+		n += v
 	}
-	dp.mu.Unlock()
-	return DecideCounts{Answered: dp.answered.Load(), ReadBack: dp.readBack.Load(), Unavailable: dp.unavailable.Load(),
-		Refunded: dp.refunded.Load(), RefundFailed: dp.refundFailed.Load(), Passed: passed}
+	return n
 }
 
 // DecideOn reports the decide path configured.
@@ -366,24 +463,49 @@ func (dp *decider) run(ctx context.Context) {
 	}
 }
 
-// flush logs the period's counts: totals of the answers and refunds, and
-// the period's passes by reason.
+// flush logs the period's counts and resets them, each a count of the
+// period alone, so that the lines of a span add up to its counts
+// (fastpathwatch edge); then raises the period's alerts.
 func (dp *decider) flush() {
 	dp.mu.Lock()
-	reasons := make([]string, 0, len(dp.period))
-	for r := range dp.period {
-		reasons = append(reasons, r)
+	p := dp.period
+	dp.period = newDecideTally()
+	unavailable := sum(p.unavailable)
+	switch {
+	case unavailable > 0:
+		dp.unavailableRun++
+	case p.answered > 0:
+		// Only an answer ends the run: a period that answered nothing
+		// says nothing of whether the fault is gone.
+		dp.unavailableRun = 0
 	}
-	sort.Strings(reasons)
-	parts := make([]string, len(reasons))
-	for i, r := range reasons {
-		parts[i] = r + "=" + strconv.FormatInt(dp.period[r], 10)
-	}
-	dp.period = map[string]int64{}
+	run := dp.unavailableRun
 	dp.mu.Unlock()
-	dp.logf("fastpath edge decide: answered=%d read_back=%d unavailable=%d refunded=%d refund_failed=%d passed={%s}",
-		dp.answered.Load(), dp.readBack.Load(), dp.unavailable.Load(), dp.refunded.Load(), dp.refundFailed.Load(),
-		strings.Join(parts, ","))
+	dp.logf("fastpath edge decide: answered=%d read_back=%d unavailable=%d refunded=%d refund_failed=%d "+
+		"unavailable_by_code=%s passed=%s slow=%s", p.answered, p.readBack, unavailable, p.refunded, p.refundFailed,
+		jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow))
+	if unavailable > 0 {
+		dp.alert(AlertUnavailable, fmt.Sprintf("the edge answered %d authorizes unavailable, their insert's "+
+			"outcome not known; by the insert's gRPC code: %s", unavailable, jsonOf(p.unavailable)))
+	}
+	if unavailable > 0 && run >= SustainedPeriods {
+		dp.alert(AlertUnavailableSustained, fmt.Sprintf("the edge has answered authorizes unavailable in %d periods "+
+			"with no 200 between them; this period's by the insert's gRPC code: %s", run, jsonOf(p.unavailable)))
+	}
+	if len(p.slow) > 0 {
+		dp.alert(AlertSlowPass, fmt.Sprintf("forwarded passes over %v at the edge (at_edge) or over %v in all "+
+			"(in_all): %s", dp.slowAtEdge, dp.slowInAll, jsonOf(p.slow)))
+	}
+}
+
+// alert raises one of the decide path's alerts, its subject the decide
+// path's: the counts name no request.
+func (dp *decider) alert(kind, what string) {
+	if dp.cfg.Alert != nil {
+		dp.cfg.Alert(kind, "edge decide", what)
+		return
+	}
+	dp.logf("fastpath edge decide ALERT %s: %s", kind, what)
 }
 
 // WaitDecide waits for the decide path's refunds still running (at

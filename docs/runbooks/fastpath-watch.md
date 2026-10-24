@@ -117,6 +117,64 @@ the workspace is enabled again and the next ceiling exercised.
 - Spend: `-max-spend 1`, once a request has settled.
 - A watch that cannot see: `-subscriptions` naming one that does not exist.
 
+## The edge's decide counts (E2's I2 gates)
+
+`fastpathwatch edge` reads instead of watching: the edge's count lines of
+a span from the nodes' journal in Cloud Logging, summed, with the figures
+the I2 gates of `docs/design/fast-admission-e2-decide.md` (§11) are judged
+by. It stops nothing, and needs logging read access only:
+
+```bash
+fastpathwatch edge -project quill-cloud-proxy -since 2026-10-17T00:00:00Z -until 2026-10-24T00:00:00Z
+```
+
+Each minute every node logs one line of its decide path's counts
+(`fastpath edge decide: ...`, with `-edge-decide`) and, with
+`-edge-decide-shadow`, one of the shadow's counts per routing snapshot and
+edge policy and one of the requests it did not follow (`fastpath edge
+decide shadow: ...`). Each line counts its minute alone, so the span's
+lines, summed, are its counts. It prints JSON:
+
+- `i2`: the gates' figures. `comparable` is `agree_full` plus `differ`, the
+  requests whose answers were compared (Go would answer, Python answered a
+  200 that is not a replay), and `agree_full_ratio` is `agree_full` over
+  it: the 99.5% gate. `cohort_eligible` is every request Go would have
+  answered (each counts its decide row's gate) and `cohort_by_class` the
+  same requests by class, the comparable ones and the rest the gate
+  accounts for (`would_admit_python_refused.*`, `python_error.*`,
+  `python_unavailable`, `unread.*`, the scope taken, replays). Then
+  `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
+  `differ_estimate` (the `differ.estimate*` fields),
+  `row_idempotency_fingerprint` and `fields_other`: a period's fields past
+  the line's bound are counted `other`, so a non-zero `fields_other` means
+  the two zero gates cannot be read as zero. Then
+  `would_admit_python_refused` and its classes; `stale` by cache,
+  `followed` (every request the shadow compared) and `stale_rate`; and the
+  decide path's `unavailable` answers by the insert's gRPC code.
+- `decide_shadow` and `decide`: every count of the lines, summed.
+- `periods`: each node's lines that come once a minute, the decide line and
+  the shadow's line of the requests it did not follow. A node that ran the
+  whole span has one a minute; fewer is a node that was not running, or a
+  minute whose line never reached Cloud Logging (a process killed between
+  two lines loses its last minute's counts), and the report's counts are
+  short by those minutes.
+
+An entry Cloud Logging hands over twice is counted once (by its insert id),
+and a count line that does not read fails the report (exit 1) rather than
+leaving its counts out. It reads a page of 1,000 entries every 1.1 s, under
+the API's 60 reads a minute, and backs off (doubling, six tries) on a 429
+or a 5xx: a week of three nodes is about 90 pages. Exit
+2 is its usage: `-project` and `-since` (RFC 3339) are needed, `-until` is
+now when not given.
+
+The lines themselves, to read a minute's by eye:
+
+```bash
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide"' \
+  --project=quill-cloud-proxy --freshness=10m --limit=20 \
+  --format='table(timestamp,labels."compute.googleapis.com/resource_name",jsonPayload.MESSAGE)'
+```
+
 ## The baseline
 
 An idle node, with both roles, no workspace enabled and the service's

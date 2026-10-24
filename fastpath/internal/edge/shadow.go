@@ -483,7 +483,7 @@ func (sh *shadow) flush() {
 }
 
 // jsonOf is a count map as a JSON object, its keys sorted and unescaped.
-func jsonOf(m map[string]int) string {
+func jsonOf[V int | int64](m map[string]V) string {
 	var b bytes.Buffer
 	encoder := json.NewEncoder(&b)
 	encoder.SetEscapeHTML(false)

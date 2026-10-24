@@ -4002,11 +4002,12 @@ def test_rollout_with_no_key_version_mounts_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The way back for a rotation: publishing off and the version empty
-    # mounts no key and passes no key file.
+    # mounts no key and passes no key file. The edge policy signs with the
+    # same key, so it is off too.
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
     _edit_routing_snapshot_literals(
         isolated, ROUTING_SNAPSHOT_PUBLISH_ENABLED="false", ROUTING_SNAPSHOT_KEY_VERSION="",
-        ROUTING_SNAPSHOT_PUBLIC_KEY="",
+        ROUTING_SNAPSHOT_PUBLIC_KEY="", EDGE_POLICY_PUBLISH_ENABLED="false",
     )
     run = isolated.run("scripts/deploy/rollout.sh")
     assert run.returncode == 0, summarise(run)
@@ -4017,6 +4018,7 @@ def test_rollout_with_no_key_version_mounts_nothing(
         rendered = _cloud_run_job_env(deploy)
         assert rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "false"
         assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == ""
+        assert rendered["TR_EDGE_POLICY_PUBLISH_ENABLED"] == "false"
 
 
 @pytest.mark.parametrize("literals", [
@@ -4053,6 +4055,69 @@ def test_rollout_publishes_routing_snapshots_with_a_pinned_key_when_turned_on(
         assert _routing_snapshot_bindings(deploy) == [
             "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:2",
         ]
+
+
+def test_rollout_pins_edge_policy_publishing_from_its_literal_without_inheritance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # E2 I1: on, from the literal only, whatever the caller or the serving
+    # revision carries, beside the routing snapshot key it signs with.
+    hostile = {"TR_EDGE_POLICY_PUBLISH_ENABLED": "false", "EDGE_POLICY_PUBLISH_ENABLED": "false"}
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        rendered = _cloud_run_job_env(deploy)
+        assert rendered["TR_EDGE_POLICY_PUBLISH_ENABLED"] == "true"
+        assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == "/secrets/routing-snapshot/signing.pem"
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:1"
+        ]
+        settings = Settings(edge_policy_publish_enabled=rendered["TR_EDGE_POLICY_PUBLISH_ENABLED"])
+        assert settings.edge_policy_publish_enabled is True
+    # The code's own default stays off: only the rollout literal turns it on.
+    assert Settings().edge_policy_publish_enabled is False
+
+
+def test_rollout_turns_edge_policy_publishing_off_with_its_literal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The way back: false renders false, the key still mounted.
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(isolated, EDGE_POLICY_PUBLISH_ENABLED="false")
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        assert _cloud_run_job_env(deploy)["TR_EDGE_POLICY_PUBLISH_ENABLED"] == "false"
+
+
+@pytest.mark.parametrize("literals", [
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "", "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KID": ""},
+    # The key mounted by its version while snapshot publishing is off, its
+    # public key not pinned: load_signer refuses that, so the route would
+    # answer 503 signer-unavailable for good.
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "1", "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "1", "ROUTING_SNAPSHOT_PUBLIC_KEY": "not-a-key"},
+    {"EDGE_POLICY_PUBLISH_ENABLED": "yes"},
+], ids=["enabled-without-key", "enabled-without-kid", "enabled-without-public-key", "enabled-with-a-malformed-public-key",
+        "not-a-boolean"])
+def test_rollout_refuses_edge_policy_publishing_without_the_routing_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, literals: dict[str, str],
+) -> None:
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(isolated, **literals)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode != 0
+    assert "refusing rollout: edge policy publishing" in run.stderr
+    assert _gcloud_calls(run, "run", "deploy") == []
 
 
 def test_rollout_pins_dormant_drain_knobs_without_inheritance(

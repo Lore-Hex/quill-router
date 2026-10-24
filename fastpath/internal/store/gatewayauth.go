@@ -237,9 +237,17 @@ const (
 // an error after which the commit may have applied, are read back by our
 // authorization id with ReadBackDeadline on a context of their own; the
 // caller reads nothing back itself.
-func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow, r gwauth.ReservationRow) InsertOutcome {
+//
+// With the outcome comes the gRPC code of the transaction's error (OK for
+// none, InvalidArgument for rows refused before anything is sent, and
+// DeadlineExceeded for a transaction abandoned at the deadline), which the
+// edge counts its Unknowns by: a clock ahead of Spanner's (FailedPrecondition,
+// §8.4) and a Spanner incident (Unavailable, DeadlineExceeded) are told apart
+// by it from a commit whose outcome is simply not known.
+func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.AuthorizationRow,
+	r gwauth.ReservationRow) (InsertOutcome, codes.Code) {
 	if checkLeasedRows(a, r) != nil {
-		return Failed
+		return Failed, codes.InvalidArgument
 	}
 	deadline := time.Now().Add(InsertDeadline)
 	mutations := leasedMutations(a, r)
@@ -296,7 +304,7 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 			// The callback never began: nothing was sent, and the callback
 			// refuses before it buffers anything if the session comes later.
 			// The take, if it waits, waits on a live context (leasedInserts).
-			return Failed
+			return Failed, codes.DeadlineExceeded
 		}
 		// Begun: a commit may be in flight. Its context ends now (no grace
 		// past the deadline, decision 12).
@@ -307,9 +315,10 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 			res = result{context.DeadlineExceeded, runs.Load()}
 		}
 	}
+	code := errorCode(res.err)
 	outcome, readBack := ClassifyInsert(res.err, res.runs)
 	if !readBack && outcome != Unknown {
-		return outcome
+		return outcome, code
 	}
 	// AlreadyExists: ours, landed by a commit the client re-ran after losing
 	// the first answer, or the scope's, landed first by another
@@ -318,15 +327,30 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 	row, err := s.readOurRow(a)
 	switch {
 	case err != nil:
-		return Unknown
+		return Unknown, code
 	case row == rowOurs:
-		return Landed
+		return Landed, code
 	case readBack && (row == rowAbsent || row == rowTheirs):
 		// The row under our id is not ours, or there is none: with it there,
 		// or with the scope's, our insert can never apply.
-		return ScopeTaken
+		return ScopeTaken, code
 	}
-	return Unknown
+	return Unknown, code
+}
+
+// errorCode is the gRPC code of a transaction's error, as ClassifyInsert
+// reads it: the context's own end by its own code, whatever the client
+// wrapped it in.
+func errorCode(err error) codes.Code {
+	switch {
+	case err == nil:
+		return codes.OK
+	case errors.Is(err, context.DeadlineExceeded):
+		return codes.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return codes.Canceled
+	}
+	return spanner.ErrCode(err)
 }
 
 // ClassifyInsert is §8.4's table: the outcome the transaction's error
