@@ -457,7 +457,8 @@ func (b storeBoots) Boot(ctx context.Context, kid string) (edge.Boot, bool, erro
 	if err != nil || !found {
 		return edge.Boot{}, false, err
 	}
-	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified}, true, nil
+	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified, ImageDigest: boot.ImageDigest,
+		DeclaresUsageHeartbeat: boot.DeclaresUsageHeartbeat}, true, nil
 }
 
 // lifecycle starts a process's parts with start and runs them until ctx

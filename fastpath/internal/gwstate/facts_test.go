@@ -229,12 +229,15 @@ func TestBYOKProvidersAreMatchedOnCompleteIds(t *testing.T) {
 	}
 }
 
-// TestNothingImportsTheFactsYet: the package is dark until the edge's
-// decide path imports it.
-func TestNothingImportsTheFactsYet(t *testing.T) {
+// TestOnlyTheEdgeAndTheServiceImportTheFacts: the package is the edge's
+// decide pipeline's (G10), and the service makes the cache only with
+// -edge-decide-shadow on.
+func TestOnlyTheEdgeAndTheServiceImportTheFacts(t *testing.T) {
 	const self = "github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	root := filepath.Join("..", "..")
-	files := 0
+	allowed := map[string]bool{filepath.Join(root, "internal", "edge"): true,
+		filepath.Join(root, "internal", "service"): true}
+	files, imports := 0, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
@@ -246,6 +249,10 @@ func TestNothingImportsTheFactsYet(t *testing.T) {
 		files++
 		for _, spec := range parsed.Imports {
 			if imported, _ := strconv.Unquote(spec.Path.Value); imported == self {
+				if allowed[filepath.Dir(path)] {
+					imports++
+					continue
+				}
 				t.Errorf("%s imports gwstate", path)
 			}
 		}
@@ -254,7 +261,7 @@ func TestNothingImportsTheFactsYet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if files < 50 {
-		t.Fatalf("scanned %d files", files)
+	if files < 50 || imports == 0 {
+		t.Fatalf("scanned %d files, %d allowed imports", files, imports)
 	}
 }

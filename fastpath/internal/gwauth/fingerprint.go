@@ -12,7 +12,6 @@ package gwauth
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 )
@@ -63,8 +62,7 @@ func IdentityOf(r Request, h Headers, workspaceID, keyHash string, mint func() s
 	id.Material = encoded
 	sum := sha256.Sum256(encoded)
 	id.Fingerprint = hex.EncodeToString(sum[:])
-	keySum := sha256.Sum256([]byte(id.IdempotencyKey))
-	id.Scope = fmt.Sprintf("%s#%s#%s", workspaceID, keyHash, hex.EncodeToString(keySum[:]))
+	id.Scope = ScopeOf(workspaceID, keyHash, id.IdempotencyKey)
 	return id, Pass{}
 }
 
