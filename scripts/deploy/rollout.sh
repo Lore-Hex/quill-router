@@ -166,8 +166,12 @@ EDGE_POLICY_PUBLISH_ENABLED=true
 case "$EDGE_POLICY_PUBLISH_ENABLED" in
   false) ;;
   true)
-    if [ -z "$ROUTING_SNAPSHOT_KEY_FILE" ] || [ -z "$ROUTING_SNAPSHOT_KID" ]; then
-      echo "refusing rollout: edge policy publishing signs with the routing snapshot key, which is not mounted" >&2
+    # The publisher's signer (load_signer) needs the mounted file, the kid
+    # and the pinned public key; without any of them the route would answer
+    # 503 signer-unavailable for as long as the revision serves.
+    if [ -z "$ROUTING_SNAPSHOT_KEY_FILE" ] || [ -z "$ROUTING_SNAPSHOT_KID" ] ||
+       [[ ! "$ROUTING_SNAPSHOT_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+      echo "refusing rollout: edge policy publishing signs with the routing snapshot key, which is not mounted with its kid and public key" >&2
       exit 1
     fi
     ;;

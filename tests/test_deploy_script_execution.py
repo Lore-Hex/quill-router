@@ -4099,8 +4099,16 @@ def test_rollout_turns_edge_policy_publishing_off_with_its_literal(
     {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
      "ROUTING_SNAPSHOT_KEY_VERSION": "", "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
     {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KID": ""},
+    # The key mounted by its version while snapshot publishing is off, its
+    # public key not pinned: load_signer refuses that, so the route would
+    # answer 503 signer-unavailable for good.
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "1", "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "1", "ROUTING_SNAPSHOT_PUBLIC_KEY": "not-a-key"},
     {"EDGE_POLICY_PUBLISH_ENABLED": "yes"},
-], ids=["enabled-without-key", "enabled-without-kid", "not-a-boolean"])
+], ids=["enabled-without-key", "enabled-without-kid", "enabled-without-public-key", "enabled-with-a-malformed-public-key",
+        "not-a-boolean"])
 def test_rollout_refuses_edge_policy_publishing_without_the_routing_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, literals: dict[str, str],
 ) -> None:
