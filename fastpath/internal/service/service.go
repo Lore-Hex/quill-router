@@ -188,6 +188,11 @@ type EdgeConfig struct {
 	// SnapshotURL and PolicyURL. Off (the default), the key and workspace
 	// cache and the decide copy are never made.
 	DecideShadow bool
+	// Decide runs the decide path (edge.DecideConfig, E2 G11): the edge
+	// admits the authorizes it decides through the node's front door,
+	// inserts their rows and answers them. It needs SnapshotURL and
+	// PolicyURL. Off (the default), the edge answers nothing.
+	Decide bool
 }
 
 func (c Config) valid() error {
@@ -206,9 +211,9 @@ func (c Config) valid() error {
 	case c.Edge.PolicyURL != "" && (c.Edge.SnapshotPublicKey == "" || c.Edge.SnapshotKid == "" ||
 		c.Edge.SnapshotPlane == ""):
 		return errors.New("service: the edge policy needs the routing snapshot's public key, kid and plane")
-	case c.Edge.DecideShadow && (c.Edge.SnapshotURL == "" || c.Edge.PolicyURL == ""):
-		return errors.New("service: the edge's decide shadow decides from the routing snapshot and the edge policy, " +
-			"which need their URLs")
+	case (c.Edge.DecideShadow || c.Edge.Decide) && (c.Edge.SnapshotURL == "" || c.Edge.PolicyURL == ""):
+		return errors.New("service: the edge's decide shadow and decide path decide from the routing snapshot and " +
+			"the edge policy, which need their URLs")
 	case c.Edge.Address != "" && !c.Admission:
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
@@ -360,30 +365,38 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = ln.Close()
 		return err
 	}
-	// The decide shadow's cache and reads exist only with it on.
+	// The key and workspace cache and its reads exist only with the decide
+	// shadow or the decide path on; the two share it.
 	var decideShadow *edge.DecideShadowConfig
+	var decide *edge.DecideConfig
 	var cache *gwstate.Cache
-	if cfg.Edge.DecideShadow {
+	if cfg.Edge.DecideShadow || cfg.Edge.Decide {
 		if cache, err = gwstate.NewCache(gwstate.CacheConfig{Reader: s}); err != nil {
 			_ = ln.Close()
 			return err
 		}
+	}
+	if cfg.Edge.DecideShadow {
 		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s,
 			// edge.AlertWouldAdmit's alert line, as the auditor's are
 			// written (docs/runbooks/fastpath-alerts.md); its policy is
 			// I1's.
 			Alert: func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }}
 	}
+	if cfg.Edge.Decide {
+		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s}
+	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
 		Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy, Admitter: &p.admitter,
-		DecideShadow: decideShadow})
+		DecideShadow: decideShadow, Decide: decide})
 	if err != nil {
 		_ = ln.Close()
 		return err
 	}
 	// The cache is closed (its reads ended, before the store's client
 	// closes) only after the last Lookup: once the edge's handlers have
-	// returned and the decide shadow has compared what it followed.
+	// returned, the decide path's refunds and inserts have ended, and the
+	// decide shadow has compared what it followed.
 	followed := make(chan struct{})
 	if cache != nil {
 		p.run("edge decide cache", func(ctx context.Context) error {
@@ -429,6 +442,13 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = srv.Close()
 		endRequests()
 		handlers.wait()
+		// The decide path's refunds run beside its passes, and its inserts'
+		// transactions can outlive the inserts (one waiting for the client's
+		// session): Run returns, and the client closes, only once both have
+		// ended, since closing the client under a waiting transaction
+		// panics. Then the owner the refunds reach may stop.
+		e.WaitDecide()
+		s.WaitLeasedInserts()
 		// What the decide shadow follows ends with its requests; its reads
 		// end with them, and then the cache may close.
 		e.WaitDecideShadow()
