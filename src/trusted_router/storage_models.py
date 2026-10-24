@@ -1997,6 +1997,8 @@ class GatewayBoot:
     # that omits one withdraws it: an absent declaration means undeclared.
     declares_usage_heartbeat: bool = False
     declares_stream_open_heartbeat: bool = False
+    declares_idempotency_key_source: bool = False
+    declares_settle_outbox: bool = False
 
 
 @dataclass(frozen=True)
