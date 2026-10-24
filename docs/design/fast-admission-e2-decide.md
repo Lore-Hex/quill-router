@@ -17,8 +17,9 @@ authorization row payload that Python settles from.
 
 Line citations are against `origin/main` at `bc5a19c16`.
 
-Status (G10): the decide pipeline and its full-response shadow are built
-and dark (`-edge-decide-shadow`, default off); nothing answers.
+Status (G10, part 1): the decide pipeline is built
+(`fastpath/internal/edge/decide.go`); nothing on the request path calls
+it, and nothing answers.
 
 ## 1. What Go answers
 
@@ -199,14 +200,33 @@ golden pass case trips exactly one reason, so the order below only fixes
 which reason a request tripping several is counted under.
 
 The pipeline (`fastpath/internal/edge/decide.go`, G10) checks in this
-order: the boot first (the edge reads nothing else of a request whose boot
-fails, and with no boot header it has not read the body), then the
-request, the caches, the key and workspace facts, the policy, the
-evaluation, the identity and the compose, and the decide row last. The
-decide row is checked after everything else so the shadow can compare a
-complete decision for a workspace that does not yet decide: `Decide`
-returns the decision with `decide.off` or `cache.decide` as its pass, and
-G11 passes on it.
+order:
+
+1. The request is a POST to exactly an authorize path, as E1 (`r.URL.Path`,
+   decoded) and Python (`request.url.path`) both read it: a path the client
+   escaped passes (`request.path`). Decide is built only for a request the
+   edge authenticated and read, with `RequestOf`.
+2. The boot (the edge reads nothing else of a request whose boot fails, and
+   with no boot header it has not read the body).
+3. The request (§3 "Request").
+4. The policy and snapshot caches, then the policy's gates that need no
+   key (`policy.pilot_off`, `policy.not_pilot_workspace` for an empty
+   pilot set, `policy.pilot_region`), so a request outside the pilot never
+   reads or fills the key cache.
+5. The key's cache entry (`cache.key`), the key's facts (`key.*`, expiry at
+   the request's instant) and the workspace entity's (`workspace.*`), then
+   the workspace's credit entry (`cache.workspace`), the credit rows'
+   reasons, the broadcast pointer, `Usable()`, and the merged tags.
+6. The rest of the policy, the evaluation (the requested models first for
+   `candidates.private_proxy` and `candidates.estimated_usage`), the
+   identity, the compose.
+7. The decide row last (`cache.decide`, `decide.off`).
+
+The decide row is checked after everything else so the shadow can compare
+a complete decision for a workspace that does not yet decide: `Decide`
+returns it in `Decided.Shadow` with `decide.off` or `cache.decide` as the
+pass. Only `Decided.Admit()` hands out a decision to admit, and only when
+nothing passed; G11 admits only through it.
 
 **Request** (no I/O, G5):
 
@@ -293,8 +313,10 @@ or verify, or more than one), `boot.unverified` (the boot row is not
 verified), `boot.missing` (no boot row for the header's kid, whether the
 row is gone or the kid was never registered: the edge sees the same miss),
 `boot.unread` (the boot could not be read within the edge's `BootWait`,
-E1's `Unread`). A body past the edge's 16 MiB bound (E1's `Unchecked`) is
-`body.unparseable`.
+E1's `Unread`). E1's `Unchecked` (a body past the edge's 16 MiB bound, or a
+path outside printable ASCII, which `request.path` passes first) is
+`body.unparseable`. `request.path`: not a POST to exactly an authorize
+path, or a path the client escaped.
 
 **Admission and insert:** `inflight.key`, `owner.off`, `owner.busy`,
 `owner.invalid`, `owner.failed`, `owner.unreachable`, `budget.spent`,

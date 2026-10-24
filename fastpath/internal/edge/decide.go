@@ -20,9 +20,14 @@ import (
 // edge holds when the request arrives. Decide answers either a Decision
 // (the request is in the cohort; staged rows and a 200 ready for the
 // envelope) or the §3 reason it goes to Python. Nothing here admits,
-// writes or answers: the full-response shadow (shadow_full.go) compares a
-// Decision with what Python did, and G11's decide path will admit, insert
-// and answer one.
+// writes or answers, and nothing on the request path calls it yet: G10's
+// full-response shadow will compare a Decision with what Python did, and
+// G11's decide path will admit, insert and answer one (Decided.Admit).
+//
+// Decide is only for an authorize the edge has authenticated (the
+// internal token) and read: build its request with RequestOf, which records
+// the method and the path as both E1 and Python read them; any other
+// passes (request.path).
 
 // The §3 pass reasons Decide names beyond gwauth's request reasons (the
 // body.* and header.* reasons, and tags.merged_invalid).
@@ -33,6 +38,10 @@ const (
 	// PassBootUnread: the boot could not be read within BootWait (E1's
 	// Unread verdict); Python decides as it would alone.
 	PassBootUnread = "boot.unread"
+	// PassRequestPath: not a POST to exactly an authorize path, as E1
+	// (r.URL.Path, decoded) and Python (request.url.path) both read it: an
+	// escaped path, whose decoding the two may read apart, passes.
+	PassRequestPath = "request.path"
 
 	PassCachePolicy    = "cache.policy"
 	PassCacheSnapshot  = "cache.snapshot"
@@ -122,9 +131,23 @@ type BootSeen struct {
 // or one past its bound): the boot passes it first.
 type DecideRequest struct {
 	At     time.Time
-	Header http.Header
-	Body   []byte
-	Boot   BootSeen
+	Method string
+	// Path is r.URL.Path (decoded, as E1 verifies the boot signature over
+	// it) and EscapedPath r.URL.EscapedPath(): they differ for a path the
+	// client escaped.
+	Path, EscapedPath string
+	Header            http.Header
+	Body              []byte
+	Boot              BootSeen
+}
+
+// RequestOf is the DecideRequest of an authenticated request the edge
+// read: at its one clock reading, the body the edge read (nil for none) and
+// E1's verdict. The decide path (G11) and the shadow build it only this
+// way.
+func RequestOf(r *http.Request, at time.Time, body []byte, boot BootSeen) DecideRequest {
+	return DecideRequest{At: at, Method: r.Method, Path: r.URL.Path, EscapedPath: r.URL.EscapedPath(),
+		Header: r.Header.Clone(), Body: body, Boot: boot}
 }
 
 // Mint makes a decision's ids; a nil func is gwauth's random one. A test
@@ -206,22 +229,33 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 }
 
 // Decided is Decide's answer. Pass is "" when the edge would answer the
-// request itself, else the first §3 reason it goes to Python. Decision is
-// set when every gate but the decide row passed, so the shadow compares
-// what the edge would answer for a workspace it does not yet decide;
-// DecideGate is then that row's reason ("" for on, PassDecideOff or
-// PassCacheDecide), and Pass is it. LookupHash and Workspace are what the
+// request itself, else the first §3 reason it goes to Python. Shadow is
+// the decision when every gate but the decide row passed, so the shadow
+// compares what the edge would answer for a workspace it does not yet
+// decide; DecideGate is then that row's reason ("" for on, PassDecideOff
+// or PassCacheDecide), and Pass is it. Only Admit hands out a decision to
+// admit, and only when Pass is "". LookupHash and Workspace are what the
 // request named and what the cache said of its key, "" when not known:
 // the shadow evicts them when Python refuses the key.
 type Decided struct {
-	Pass       string
-	Decision   *Decision
+	Pass string
+	// Shadow is for comparison only: never admit it (Admit).
+	Shadow     *Decision
 	DecideGate string
 	LookupHash string
 	Workspace  string
 	// Read is what the cache held for the lookup hash (zero when not
 	// looked up).
 	Read gwstate.Read
+}
+
+// Admit is the decision the edge may admit: one, and true, only when every
+// gate passed, the decide row's included.
+func (d Decided) Admit() (*Decision, bool) {
+	if d.Pass != "" || d.Shadow == nil {
+		return nil, false
+	}
+	return d.Shadow, true
 }
 
 func passDecided(reason string) Decided { return Decided{Pass: reason} }
@@ -231,6 +265,9 @@ func passDecided(reason string) Decided { return Decided{Pass: reason} }
 // compose, in §3's order (the boot first: the edge reads nothing else of a
 // request whose boot fails), and the decide row last.
 func Decide(in DecideInputs) Decided {
+	if q := in.Request; q.Method != http.MethodPost || !authorizeRoutes[q.Path] || q.EscapedPath != q.Path {
+		return passDecided(PassRequestPath)
+	}
 	if reason := bootPass(in.Request.Boot); reason != "" {
 		return passDecided(reason)
 	}
@@ -251,6 +288,18 @@ func Decide(in DecideInputs) Decided {
 	}
 	if snap == nil {
 		return pass(PassCacheSnapshot)
+	}
+	// The policy's gates a key is not needed for, before the cache is read:
+	// with the pilot off, or this region or no workspace in it, the key is
+	// never looked up (and never filled and refreshed). The workspace's own
+	// membership needs the key (below, policyPass).
+	switch {
+	case !policy.FastpathPilotEnabled:
+		return pass(PassPilotOff)
+	case len(policy.FastpathPilotWorkspaces) == 0:
+		return pass(PassNotPilotWorkspace)
+	case !slices.Contains(policy.FastpathPilotRegions, policy.Plane.Region):
+		return pass(PassPilotRegion)
 	}
 	if in.Lookup == nil || r.APIKeyLookupHash == "" {
 		return pass(PassCacheKey)
@@ -373,7 +422,11 @@ func Decide(in DecideInputs) Decided {
 		Candidates:             candidates,
 		Estimate:               res.ModelEstimate,
 		StageDReason: gwauth.StageDReasonOf(gwauth.StageDSettings{
-			EligibilityEnabled: sd.EligibilityEnabled, HeartbeatEnabled: sd.HeartbeatEnabled,
+			// Python ANDs the switch with not budget_strict (gateway.py,
+			// _stage_d_eligibility_reason's caller); a budget-strict key
+			// passed above (key.budget_strict), so this is the switch.
+			EligibilityEnabled:          sd.EligibilityEnabled && key.Reason != gwstate.ReasonKeyBudgetStrict,
+			HeartbeatEnabled:            sd.HeartbeatEnabled,
 			RequireHeartbeatDeclaration: sd.RequireHeartbeatDeclaration, PilotWorkspaces: sd.PilotWorkspaces,
 		}, key.WorkspaceID, in.Request.Boot.Boot.DeclaresUsageHeartbeat),
 		BootKid: in.Request.Boot.Kid,
@@ -382,7 +435,7 @@ func Decide(in DecideInputs) Decided {
 	if err != nil {
 		return pass(PassCompose)
 	}
-	out.Decision = &Decision{
+	out.Shadow = &Decision{
 		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
@@ -414,7 +467,8 @@ func bootPass(b BootSeen) string {
 	case Unread:
 		return PassBootUnread
 	case Unchecked:
-		// A body past the edge's bound is past Python's 4 MiB too.
+		// A body past the edge's bound (past Python's 4 MiB too), or a
+		// path outside printable ASCII, which request.path passes first.
 		return gwauth.ReasonUnparseable
 	}
 	switch {

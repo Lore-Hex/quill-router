@@ -356,7 +356,7 @@ func without(keys ...string) func(pyjson.Object) pyjson.Object {
 }
 
 // TestOnlyTheEdgeUsesTheRequestSide: the request side is the edge's decide
-// pipeline's (G10, behind -edge-decide-shadow). A file outside the package
+// pipeline's (G10; nothing calls it on the request path yet). A file outside the package
 // and the edge may use only the row types of rows.go, which the store (G9)
 // inserts.
 func TestOnlyTheEdgeUsesTheRequestSide(t *testing.T) {

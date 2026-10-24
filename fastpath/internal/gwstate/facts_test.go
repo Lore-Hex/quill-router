@@ -230,8 +230,8 @@ func TestBYOKProvidersAreMatchedOnCompleteIds(t *testing.T) {
 }
 
 // TestOnlyTheEdgeAndTheServiceImportTheFacts: the package is the edge's
-// decide pipeline's (G10), and the service makes the cache only with
-// -edge-decide-shadow on.
+// decide pipeline's (G10), and the service, which will make the cache for
+// the decide shadow (G10's second part), may import it too.
 func TestOnlyTheEdgeAndTheServiceImportTheFacts(t *testing.T) {
 	const self = "github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	root := filepath.Join("..", "..")

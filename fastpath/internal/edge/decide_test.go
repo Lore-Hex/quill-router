@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -408,7 +409,8 @@ func caseInputs(t *testing.T, f authorizeFile, c authorizeCase) (DecideInputs, *
 	w := &fakeWorld{c: c}
 	cache := warmCache(t, w, lookupHashOf(c.body()), c.at())
 	return DecideInputs{
-		Request:  DecideRequest{At: c.at(), Header: c.header(), Body: c.body(), Boot: bootSeenOf(t, f, c)},
+		Request: DecideRequest{At: c.at(), Method: http.MethodPost, Path: c.Request.Path, EscapedPath: c.Request.Path,
+			Header: c.header(), Body: c.body(), Boot: bootSeenOf(t, f, c)},
 		Snapshot: snapshotFor(t, p),
 		Policy:   p,
 		Lookup:   cache.Lookup,
@@ -449,13 +451,13 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 		switch c.Expect.Outcome {
 		case "answer", "unavailable":
 			if why, ok := evaluatorPasses[c.Name]; ok {
-				if d.Pass != PassEvaluate || d.Decision != nil {
+				if d.Pass != PassEvaluate || d.Shadow != nil {
 					t.Errorf("%s: %q, want the evaluator's pass (%s)", c.Name, d.Pass, why)
 				}
 				evaluatorPassed++
 				continue
 			}
-			if d.Pass != "" || d.Decision == nil {
+			if d.Pass != "" || d.Shadow == nil {
 				t.Errorf("%s: passed %q, want a decision", c.Name, d.Pass)
 				continue
 			}
@@ -463,14 +465,14 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 				admitted++
 				continue
 			}
-			if !checkAnswered(t, c, d.Decision) {
+			if !checkAnswered(t, c, d.Shadow) {
 				continue
 			}
 			answered++
 		case "pass":
 			seen[c.Expect.Reason] = true
 			if postAdmission(c.Expect.Reason) {
-				if d.Pass != "" || d.Decision == nil {
+				if d.Pass != "" || d.Shadow == nil {
 					t.Errorf("%s: passed %q before the admit; Python's reason is %s", c.Name, d.Pass, c.Expect.Reason)
 					continue
 				}
@@ -483,7 +485,7 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 				t.Errorf("%s: passed %q, want %q", c.Name, d.Pass, c.Expect.Reason)
 				continue
 			}
-			if d.Decision != nil {
+			if d.Shadow != nil {
 				t.Errorf("%s: a decision for a request passed before the decide row", c.Name)
 				continue
 			}
@@ -570,6 +572,18 @@ func rowsAreGoldens(t *testing.T, c authorizeCase, composed gwauth.Composed) boo
 		"expires_at_us": num(r.ExpiresAt.UnixMicro()), "created_at_us": num(r.CreatedAt.UnixMicro()),
 	}
 	ok := true
+	// Every column of the table (store.StoredAuthorization's 25, the
+	// timestamps as _us): a typed column is caught only by row parity.
+	if len(c.Expect.AuthorizationRow) != 25 {
+		t.Errorf("%s: the authorization row has %d columns, the table 25", c.Name, len(c.Expect.AuthorizationRow))
+		ok = false
+	}
+	for column := range gotA {
+		if _, recorded := c.Expect.AuthorizationRow[column]; !recorded {
+			t.Errorf("%s: authorization column %s is not in Python's row", c.Name, column)
+			ok = false
+		}
+	}
 	for column, want := range c.Expect.AuthorizationRow {
 		if got := gotA[column]; got != want {
 			t.Errorf("%s: authorization %s = %v, want %v", c.Name, column, got, want)
@@ -631,7 +645,7 @@ func baseInputs(t *testing.T) (DecideInputs, authorizeCase) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
 	in, _ := caseInputs(t, f, c)
-	if d := Decide(in); d.Pass != "" || d.Decision == nil {
+	if d := Decide(in); d.Pass != "" || d.Shadow == nil {
 		t.Fatalf("the base case passes: %q", d.Pass)
 	}
 	return in, c
@@ -677,8 +691,8 @@ func TestTheGateReadsTheCachesWord(t *testing.T) {
 		{"broadcast", func(r *gwstate.Read) { r.Facts.BroadcastDestination = true }, PassWorkspaceBroadcast},
 		{"not found", func(r *gwstate.Read) { r.Found = false }, PassKeyMissing},
 	} {
-		if got := Decide(withRead(t, in, v.change)); got.Pass != v.want || got.Decision != nil {
-			t.Errorf("%s: passed %q (decision %v), want %q", v.name, got.Pass, got.Decision != nil, v.want)
+		if got := Decide(withRead(t, in, v.change)); got.Pass != v.want || got.Shadow != nil {
+			t.Errorf("%s: passed %q (decision %v), want %q", v.name, got.Pass, got.Shadow != nil, v.want)
 		}
 	}
 	if got := Decide(withRead(t, in, func(*gwstate.Read) {})); got.Pass != "" {
@@ -840,8 +854,8 @@ func TestThePilotGates(t *testing.T) {
 			t.Errorf("%s: passed %q, want %q", v.name, got.Pass, v.want)
 			continue
 		}
-		if v.stageD != "" && got.Decision.Input.StageDReason != v.stageD {
-			t.Errorf("%s: stage d %q, want %q", v.name, got.Decision.Input.StageDReason, v.stageD)
+		if v.stageD != "" && got.Shadow.Input.StageDReason != v.stageD {
+			t.Errorf("%s: stage d %q, want %q", v.name, got.Shadow.Input.StageDReason, v.stageD)
 		}
 	}
 }
@@ -869,8 +883,8 @@ func TestTheDecideRowIsLastAndTheShadowStillDecides(t *testing.T) {
 		in := in
 		in.Decide = v.view
 		got := Decide(in)
-		if got.Pass != v.want || got.DecideGate != v.want || got.Decision == nil {
-			t.Errorf("%s: pass %q gate %q decision %v, want %q", v.name, got.Pass, got.DecideGate, got.Decision != nil, v.want)
+		if got.Pass != v.want || got.DecideGate != v.want || got.Shadow == nil {
+			t.Errorf("%s: pass %q gate %q decision %v, want %q", v.name, got.Pass, got.DecideGate, got.Shadow != nil, v.want)
 		}
 	}
 }
@@ -960,10 +974,11 @@ func TestTheFingerprintCorpusThroughThePipeline(t *testing.T) {
 			h.Add(kv[0], kv[1])
 		}
 		d := Decide(DecideInputs{
-			Request:  DecideRequest{At: at, Header: h, Body: []byte(c.Body), Boot: boot},
+			Request: DecideRequest{At: at, Method: http.MethodPost, Path: authorizePath, EscapedPath: authorizePath,
+				Header: h, Body: []byte(c.Body), Boot: boot},
 			Snapshot: snap, Policy: &p, Lookup: lookup, Decide: decideAll(&p, c.WorkspaceID, at),
 		})
-		if d.Decision == nil {
+		if d.Shadow == nil {
 			passedReasons[d.Pass]++
 			continue
 		}
@@ -977,13 +992,13 @@ func TestTheFingerprintCorpusThroughThePipeline(t *testing.T) {
 				t.Errorf("%s: decided a body labelled %s", c.Name, l)
 			}
 		}
-		if d.Decision.Identity.Fingerprint != c.Expect.Fingerprint {
-			t.Errorf("%s: fingerprint %s, Python's %s", c.Name, d.Decision.Identity.Fingerprint, c.Expect.Fingerprint)
+		if d.Shadow.Identity.Fingerprint != c.Expect.Fingerprint {
+			t.Errorf("%s: fingerprint %s, Python's %s", c.Name, d.Shadow.Identity.Fingerprint, c.Expect.Fingerprint)
 		}
-		if c.Expect.IdempotencyScope != nil && d.Decision.Identity.Scope != *c.Expect.IdempotencyScope {
-			t.Errorf("%s: scope %s, Python's %s", c.Name, d.Decision.Identity.Scope, *c.Expect.IdempotencyScope)
+		if c.Expect.IdempotencyScope != nil && d.Shadow.Identity.Scope != *c.Expect.IdempotencyScope {
+			t.Errorf("%s: scope %s, Python's %s", c.Name, d.Shadow.Identity.Scope, *c.Expect.IdempotencyScope)
 		}
-		if c.Expect.IdempotencyKey == nil && d.Decision.Identity.Presented {
+		if c.Expect.IdempotencyKey == nil && d.Shadow.Identity.Presented {
 			t.Errorf("%s: a key presented where Python minted one", c.Name)
 		}
 	}
@@ -1065,4 +1080,101 @@ func waitFor(t *testing.T, cond func() bool) {
 
 func readTestdata(name string) ([]byte, error) {
 	return os.ReadFile(filepath.Join("..", "..", "testdata", name))
+}
+
+// TestOnlyACompleteDecisionIsAdmittable (G11's footgun): a decision the
+// decide row stops (decide.off, cache.decide) is the shadow's only; Admit
+// hands one out only when nothing passed.
+func TestOnlyACompleteDecisionIsAdmittable(t *testing.T) {
+	in, _ := baseInputs(t)
+	if d, ok := Decide(in).Admit(); !ok || d == nil {
+		t.Fatal("positive control: the base case is not admittable")
+	}
+	for _, view := range []DecideView{{}, {On: map[DecideKey]bool{}, ReadAt: in.Request.At, MaxAge: 15 * time.Second}} {
+		in := in
+		in.Decide = view
+		got := Decide(in)
+		if got.Pass == "" || got.Shadow == nil {
+			t.Fatalf("%+v: pass %q, shadow %v", view, got.Pass, got.Shadow != nil)
+		}
+		if d, ok := got.Admit(); ok || d != nil {
+			t.Fatalf("%+v: admittable with %q", view, got.Pass)
+		}
+	}
+	for _, reason := range []string{PassDecideOff, PassCacheDecide, PassKeyMissing} {
+		if d, ok := (Decided{Pass: reason, Shadow: &Decision{}}).Admit(); ok || d != nil {
+			t.Fatalf("%s: admittable", reason)
+		}
+	}
+}
+
+// TestOnlyAnAuthorizePostIsDecided: Decide passes anything but a POST to
+// exactly an authorize path as E1 and Python both read it; a path the
+// client escaped (Python's request.url.path and E1's r.URL.Path may read
+// it apart) passes, as does a request RequestOf did not build.
+func TestOnlyAnAuthorizePostIsDecided(t *testing.T) {
+	in, _ := baseInputs(t)
+	for _, v := range []struct{ method, path, escaped, want string }{
+		{http.MethodPost, "/internal/gateway/authorize", "/internal/gateway/authorize", ""},
+		{http.MethodPost, "/v1/internal/gateway/authorize", "/v1/internal/gateway/authorize", ""},
+		{http.MethodGet, "/internal/gateway/authorize", "/internal/gateway/authorize", PassRequestPath},
+		{http.MethodPost, "/internal/gateway/heartbeat", "/internal/gateway/heartbeat", PassRequestPath},
+		{http.MethodPost, "/internal/gateway/authorize", "/internal/gateway/%61uthorize", PassRequestPath},
+		{"", "", "", PassRequestPath},
+	} {
+		in := in
+		in.Request.Method, in.Request.Path, in.Request.EscapedPath = v.method, v.path, v.escaped
+		if got := Decide(in); got.Pass != v.want {
+			t.Errorf("%s %s (%s): %q, want %q", v.method, v.path, v.escaped, got.Pass, v.want)
+		}
+	}
+	for _, target := range []string{"/internal/gateway/authorize", "/internal/gateway/%61uthorize",
+		"/internal/gateway/authorize%3Fx", "/internal/gateway/authorize?x=1"} {
+		r := httptest.NewRequest(http.MethodPost, target, nil)
+		q := RequestOf(r, in.Request.At, in.Request.Body, in.Request.Boot)
+		q.Header = in.Request.Header
+		in := in
+		in.Request = q
+		want := PassRequestPath
+		if target == "/internal/gateway/authorize" || target == "/internal/gateway/authorize?x=1" {
+			want = ""
+		}
+		if got := Decide(in); got.Pass != want {
+			t.Errorf("%s: %q, want %q", target, got.Pass, want)
+		}
+	}
+}
+
+// TestTheKeylessPolicyGatesAreBeforeTheLookup: with the pilot off, no
+// pilot workspace or not this region, the cache is never read.
+func TestTheKeylessPolicyGatesAreBeforeTheLookup(t *testing.T) {
+	in, _ := baseInputs(t)
+	looked := 0
+	lookup := in.Lookup
+	in.Lookup = func(h string, now time.Time) gwstate.Read {
+		looked++
+		return lookup(h, now)
+	}
+	for _, v := range []struct {
+		change func(*routingsnapshot.EdgePolicy)
+		want   string
+	}{
+		{func(p *routingsnapshot.EdgePolicy) { p.FastpathPilotEnabled = false }, PassPilotOff},
+		{func(p *routingsnapshot.EdgePolicy) { p.FastpathPilotWorkspaces = nil }, PassNotPilotWorkspace},
+		{func(p *routingsnapshot.EdgePolicy) { p.FastpathPilotRegions = []string{"europe-west4"} }, PassPilotRegion},
+	} {
+		changed := *in.Policy
+		v.change(&changed)
+		in := in
+		in.Policy = &changed
+		if got := Decide(in); got.Pass != v.want {
+			t.Errorf("passed %q, want %q", got.Pass, v.want)
+		}
+	}
+	if looked != 0 {
+		t.Fatalf("%d lookups behind a keyless gate", looked)
+	}
+	if Decide(in); looked != 1 {
+		t.Fatalf("positive control: %d lookups", looked)
+	}
 }
