@@ -2,7 +2,7 @@
   "_about": "Direct Meta Model API Standard-tier chat models. Contributor variants are excluded. No-training is not a ZDR or confidential-compute guarantee.",
   "provider": "meta",
   "source": "https://api.meta.ai/v1/models",
-  "generated_at": "2026-10-12T06:29:35Z",
+  "generated_at": "2026-10-24T07:47:37Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3,
   "models": [
