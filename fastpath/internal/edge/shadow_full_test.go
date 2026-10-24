@@ -314,6 +314,12 @@ func pythonOfCase(t *testing.T, f authorizeFile, c authorizeCase) (func(http.Res
 		}
 		return answerWith(200, []byte(e.Response)), ClassAgreeFull
 	case "unavailable":
+		if e.Python.Status != 0 {
+			// Python failed outright where Go answers the 503 (a
+			// FailedPrecondition it counts permanent, §8.4).
+			return answerWith(e.Python.Status, []byte(`{"detail":"Internal Server Error"}`)),
+				ClassPythonError + "." + fmt.Sprint(e.Python.Status)
+		}
 		return answerWith(503, []byte(e.Response), "Retry-After", "1"), ClassPythonUnavailable
 	}
 	kind := ""

@@ -49,7 +49,7 @@ const (
 	Unknown
 	// Failed: proven not applied: the callback never ran, or it ran once
 	// and the code is one only a commit that did not apply is answered with
-	// (classifyInsert). The caller refunds and passes.
+	// (ClassifyInsert). The caller refunds and passes.
 	Failed
 )
 
@@ -156,74 +156,26 @@ func checkLeasedRows(a gwauth.AuthorizationRow, r gwauth.ReservationRow) error {
 	return nil
 }
 
-// leasedInserts is the store's account of its leased inserts' transactions,
-// which can outlive the insert that began them (a transaction waiting for
-// the client's session), and of the client's session.
+// leasedInserts is the store's account of its leased inserts'
+// transactions, which can outlive the insert that began them.
 //
 // The Spanner client (v1.88) waits for its multiplexed session without the
-// context: a transaction begun before the client has a session waits on an
-// unbuffered request to the session worker, up to the worker's own 30 s per
-// creation, whatever its context says. Two things follow. Closing the client
-// while such a wait is blocked panics in the client (a send on the closed
-// request channel), so the process waits for every transaction begun here
-// (Wait) before it closes the client. And the worker exits for good if it
-// serves a request whose context has ended (session.go, createMultiplexedSession),
-// so the transaction's context here never ends while its session take may
-// be waiting: only a transaction whose callback has begun has its context
-// cancelled at the deadline.
-//
-// Once any callback has run the client has its session, which it keeps
-// (sessionReady is the one assignment), and a take never waits again. Until
-// then at most one insert's transaction may wait for a session: another
-// waits for that session within its own deadline, and is Failed without
-// sending anything if none comes.
+// context: a take before the client has a session waits on an unbuffered
+// request to the session worker, up to the worker's own 30 s a creation,
+// whatever its context says. Two things follow. The session worker exits
+// for good if it serves a request whose context has ended (session.go,
+// createMultiplexedSession), so the transaction's context here never ends
+// while its take may wait: only a transaction whose callback has begun has
+// its context cancelled at the deadline. And closing the client while such
+// a take is blocked panics in the client (a send on the closed request
+// channel), so the process waits for every transaction begun here
+// (WaitLeasedInserts) before it closes the client. A process that warms
+// the client's session first (WarmSession) never has a take wait at all.
 type leasedInserts struct {
 	running sync.WaitGroup
-	seen    atomic.Bool
-	waiting atomic.Bool
-	once    sync.Once
-	ready   chan struct{} // closed once seen
 	// refusedLate counts the transactions whose session came only after
 	// their insert was answered Failed, and whose callback then refused.
 	refusedLate atomic.Int64
-}
-
-func (l *leasedInserts) readyChan() chan struct{} {
-	l.once.Do(func() { l.ready = make(chan struct{}) })
-	return l.ready
-}
-
-func (l *leasedInserts) sessionSeen() {
-	if !l.seen.Swap(true) {
-		close(l.readyChan())
-	}
-}
-
-// admit is whether an insert may begin its transaction before its
-// deadline, and whether it is the one waiting for the client's session
-// (which it gives back with release).
-func (l *leasedInserts) admit(deadline time.Time) (ok, waiter bool) {
-	for {
-		if l.seen.Load() {
-			return true, false
-		}
-		if l.waiting.CompareAndSwap(false, true) {
-			return true, true
-		}
-		wait := time.NewTimer(time.Until(deadline))
-		select {
-		case <-l.readyChan():
-			wait.Stop()
-		case <-wait.C:
-			return false, false
-		}
-	}
-}
-
-func (l *leasedInserts) release(waiter bool) {
-	if waiter {
-		l.waiting.Store(false)
-	}
 }
 
 // WaitLeasedInserts waits for every transaction a leased insert began to
@@ -232,6 +184,31 @@ func (l *leasedInserts) release(waiter bool) {
 // client: closing it under a waiting transaction panics.
 func (s *Store) WaitLeasedInserts() { s.leased.running.Wait() }
 
+// WarmSession makes the client's multiplexed session before anything else
+// uses the client, so that no take ever waits on the session worker: once
+// the client has its session it keeps it (sessionReady is the one
+// assignment), and a take returns it at once. It is one strong single-use
+// read of nothing, on a context of its own that outlasts the worker's two
+// 30 s creations a take can wait behind (the client's own at its opening,
+// then the take's), so the take is never served on an ended context. An
+// error is a client with no session: the process does not start.
+func (s *Store) WarmSession() error {
+	ctx, cancel := context.WithTimeout(context.Background(), warmSessionWait)
+	defer cancel()
+	ro := s.client.Single()
+	defer ro.Close()
+	return ro.QueryWithOptions(ctx, spanner.Statement{SQL: "SELECT 1"},
+		spanner.QueryOptions{RequestTag: tag("warm-session")}).Do(func(*spanner.Row) error { return nil })
+}
+
+// warmSessionWait bounds WarmSession past the two session creations its
+// take can wait behind.
+const warmSessionWait = 2 * time.Minute
+
+// leasedBegun runs once a callback has marked its transaction begun; a
+// test stretches the moment to the deadline.
+var leasedBegun = func() {}
+
 // errAbandoned is the callback's refusal once its insert has ended without
 // it: the transaction it would have committed was answered Failed.
 var errAbandoned = errors.New("store: the insert ended before its transaction began")
@@ -239,7 +216,8 @@ var errAbandoned = errors.New("store: the insert ended before its transaction be
 // The states of an insert's transaction, which the callback and the
 // deadline settle between them once: the first callback run marks it
 // begun, and a deadline that finds it pending marks it abandoned, after
-// which the callback refuses and nothing is ever sent.
+// which the callback refuses before it buffers anything, so the client
+// neither begins nor commits a transaction for it.
 const (
 	txPending int32 = iota
 	txBegun
@@ -263,12 +241,6 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 		return Failed
 	}
 	deadline := time.Now().Add(InsertDeadline)
-	ok, waiter := s.leased.admit(deadline)
-	if !ok {
-		// Another insert waits for the client's first session, and none
-		// came within this one's deadline: nothing was sent.
-		return Failed
-	}
 	mutations := leasedMutations(a, r)
 	// The transaction's context ends when its goroutine is done with it, or
 	// at the deadline once the callback has begun; never while its session
@@ -281,7 +253,8 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 	// retry delay, or Internal of a broken stream (retry.go,
 	// runWithRetryOnAbortedOrFailedInlineBegin), each of which can be a lost
 	// answer to a commit that applied; so after a second run, no error
-	// proves nothing applied.
+	// proves nothing applied. A run is counted before the callback marks
+	// the transaction begun, so a deadline that finds it begun finds a run.
 	var runs atomic.Int32
 	type result struct {
 		err  error
@@ -292,18 +265,16 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 	go func() {
 		defer s.leased.running.Done()
 		defer cancelTx()
-		defer s.leased.release(waiter)
 		var err error
 		for attempt := 0; attempt < 2; attempt++ {
 			_, err = s.client.ReadWriteTransactionWithOptions(txCtx,
 				func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-					// The callback runs only on a session.
-					s.leased.sessionSeen()
+					runs.Add(1)
 					if !state.CompareAndSwap(txPending, txBegun) && state.Load() == txAbandoned {
 						s.leased.refusedLate.Add(1)
 						return errAbandoned
 					}
-					runs.Add(1)
+					leasedBegun()
 					return txn.BufferWrite(mutations)
 				}, spanner.TransactionOptions{TransactionTag: LeasedEdgeTag})
 			// Retried once, only while nothing was sent and the deadline has
@@ -322,8 +293,8 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 	case <-timer.C:
 		if state.CompareAndSwap(txPending, txAbandoned) {
 			// The callback never began: nothing was sent, and the callback
-			// refuses if the session comes later. The take, if it waits,
-			// waits on a live context (leasedInserts).
+			// refuses before it buffers anything if the session comes later.
+			// The take, if it waits, waits on a live context (leasedInserts).
 			return Failed
 		}
 		// Begun: a commit may be in flight. Its context ends now (no grace
@@ -335,7 +306,7 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 			res = result{context.DeadlineExceeded, runs.Load()}
 		}
 	}
-	outcome, readBack := classifyInsert(res.err, res.runs)
+	outcome, readBack := ClassifyInsert(res.err, res.runs)
 	if !readBack && outcome != Unknown {
 		return outcome
 	}
@@ -357,7 +328,7 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 	return Unknown
 }
 
-// classifyInsert is §8.4's table: the outcome the transaction's error
+// ClassifyInsert is §8.4's table: the outcome the transaction's error
 // proves, runs being how many times its callback ran. An AlreadyExists is
 // no outcome yet: alreadyExists says so, for the caller to read its own id
 // back.
@@ -373,7 +344,7 @@ func (s *Store) InsertLeasedAuthorization(ctx context.Context, a gwauth.Authoriz
 // outcome while it remembers the transaction, but no guarantee covers one
 // it has forgotten (NotFound, FailedPrecondition) or a re-send refused its
 // credentials, after a first commit that applied.
-func classifyInsert(err error, runs int32) (outcome InsertOutcome, alreadyExists bool) {
+func ClassifyInsert(err error, runs int32) (outcome InsertOutcome, alreadyExists bool) {
 	if err == nil {
 		return Inserted, false
 	}
@@ -408,7 +379,8 @@ type rowUnderOurID int
 
 const (
 	rowAbsent rowUnderOurID = iota
-	// rowOurs: every column we wrote that the read reads is ours.
+	// rowOurs: every column of the row (but the retired spend-lease ones,
+	// NULL on every row and read by neither path) is what we wrote.
 	rowOurs
 	// rowTheirs: the row names another reservation.
 	rowTheirs
@@ -419,38 +391,51 @@ const (
 
 // readOurRow reads the row under our authorization id, in one strong read
 // by primary key, on a context of its own with ReadBackDeadline (the
-// insert's may be spent), and compares it with ours: a 200 is answered only
-// for a row whose content is ours.
+// insert's may be spent), and compares it with ours column for column, a
+// NULL told from an empty string: a 200 is answered only for a row whose
+// content is ours.
 func (s *Store) readOurRow(a gwauth.AuthorizationRow) (rowUnderOurID, error) {
 	readCtx, cancel := context.WithTimeout(context.Background(), ReadBackDeadline)
 	defer cancel()
 	row, err := s.client.Single().ReadRowWithOptions(readCtx, "tr_gateway_authorization",
-		spanner.Key{a.AuthorizationID}, []string{"reservation_id", "workspace_id", "key_hash",
-			"estimated_microdollars", "payload", "idempotency_fingerprint", "stage_d_boot_kid", "settled"},
-		&spanner.ReadOptions{RequestTag: LeasedEdgeTag})
+		spanner.Key{a.AuthorizationID}, storedAuthorizationColumns, &spanner.ReadOptions{RequestTag: LeasedEdgeTag})
 	if errors.Is(err, spanner.ErrRowNotFound) {
 		return rowAbsent, nil
 	}
 	if err != nil {
 		return rowAbsent, err
 	}
-	var reservationID, payload, fingerprint, kid spanner.NullString
-	var workspaceID, keyHash string
-	var estimate int64
-	var settled bool
-	if err := row.Columns(&reservationID, &workspaceID, &keyHash, &estimate, &payload, &fingerprint, &kid,
-		&settled); err != nil {
+	var got StoredAuthorization
+	if err := row.Columns(got.fields()...); err != nil {
 		return rowAbsent, err
 	}
-	switch {
-	case !reservationID.Valid || reservationID.StringVal != a.ReservationID:
+	if got.ReservationID != (spanner.NullString{StringVal: a.ReservationID, Valid: true}) {
 		return rowTheirs, nil
-	case workspaceID != a.WorkspaceID || keyHash != a.KeyHash || estimate != a.EstimatedMicrodollars ||
-		payload.StringVal != a.Payload || !payload.Valid || fingerprint.StringVal != a.IdempotencyFingerprint ||
-		kid.StringVal != a.StageDBootKid || settled:
+	}
+	if !isOurs(a, got) {
 		return rowDoubt, nil
 	}
 	return rowOurs, nil
+}
+
+// isOurs: the stored row is a's as leasedMutations writes it.
+func isOurs(a gwauth.AuthorizationRow, got StoredAuthorization) bool {
+	some := func(v string) spanner.NullString { return spanner.NullString{StringVal: v, Valid: true} }
+	nonce := spanner.NullString{}
+	if a.InvocationNonce != nil {
+		nonce = some(*a.InvocationNonce)
+	}
+	return got.AuthorizationID == a.AuthorizationID && got.WorkspaceID == a.WorkspaceID && got.KeyHash == a.KeyHash &&
+		got.ModelID == a.ModelID && got.Provider == a.Provider && got.UsageType == a.UsageType &&
+		got.EstimatedMicrodollars == a.EstimatedMicrodollars && !got.Settled && got.CreatedAt.Equal(a.CreatedAt) &&
+		!got.TerminalAt.Valid && got.Payload == some(a.Payload) &&
+		got.IdempotencyFingerprint == some(a.IdempotencyFingerprint) && got.StageDBootKid == some(a.StageDBootKid) &&
+		got.InvocationNonce == nonce &&
+		// The typed columns the edge's insert leaves NULL.
+		!got.FinalizationOutcome.Valid && !got.FinalizedCostMicrodollars.Valid && !got.StartedAt.Valid &&
+		!got.HeartbeatSeq.Valid && !got.HeartbeatAt.Valid && !got.HeartbeatHash.Valid &&
+		!got.SelectedEndpointID.Valid && !got.DeliveredUsage.Valid && !got.PricingSnapshot.Valid &&
+		!got.GatewayRequestID.Valid
 }
 
 // StoredAuthorization is every column of an authorization's row but the

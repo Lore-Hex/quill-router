@@ -258,7 +258,8 @@ func (py *signingPython) serve(w http.ResponseWriter, r *http.Request) {
 			"refresh_at": time.Now().Unix() + 60})
 		_, _ = w.Write(out)
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/edge-policy":
-		now := time.Now().Unix()
+		// Issued a little in the past: the edge's clock is behind (edgeLag).
+		now := time.Now().Add(-2 * edgeLag).Unix()
 		policy := map[string]json.RawMessage{}
 		for k, v := range py.policy {
 			policy[k] = v
@@ -289,13 +290,47 @@ func decideConfig(t *testing.T, py *signingPython, w decideWorld) (Config, chan 
 	ln, edgeLn := listen(t), listen(t)
 	cfg := config(ln)
 	cfg.Auditor = false
+	// The owner's first lease covers every hold a test makes, so no admit
+	// meets a lease being topped up (owner.busy) after the warm-up.
+	cfg.Owner.TopUps.Min = cfg.Owner.TopUps.Max
 	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: py.server.URL, Token: w.token,
 		SnapshotURL: py.server.URL + "/internal/fastpath/routing-snapshot", SnapshotKid: snapshotKid,
 		SnapshotPublicKey: base64.RawURLEncoding.EncodeToString(py.public), SnapshotPlane: "gcp/us-central1",
 		PolicyURL: py.server.URL + "/internal/fastpath/edge-policy", Decide: true}
 	made := make(chan *edge.Edge, 1)
 	cfg.edgeMade = func(e *edge.Edge) { made <- e }
+	cfg.edgeClock = func() time.Time { return time.Now().Add(-edgeLag) }
 	return cfg, made, edgeLn.Addr().String()
+}
+
+// edgeLag is how far the tests' edge clock runs behind this machine's. A
+// reservation's created_at is a commit-timestamp column
+// (allow_commit_timestamp), and Spanner refuses a value in it that is past
+// the commit's own timestamp: FailedPrecondition "Cannot write timestamps
+// in the future", which the insert must read as Unknown (§8.4), and so a
+// 503. The emulator's clock, in its container, can run some milliseconds
+// behind this machine's, so an edge reading this machine's clock and
+// committing within a few milliseconds meets that refusal under load (seen
+// as 503s of 8 to 16 ms). The edge's instant is set a second back instead.
+const edgeLag = time.Second
+
+// warmUp sends the world's authorize, under a fresh idempotency key each
+// time, until the edge answers one itself; a request passes while the edge
+// fills its caches and the owner takes its lease. An edge 503 (an insert
+// whose outcome was not known keeps its hold) fails the test at once: the
+// counts that follow are exact.
+func warmUp(t *testing.T, w decideWorld, e *edge.Edge, edgeAddr string) {
+	t.Helper()
+	eventually(t, 60*time.Second, "the edge's own answer", func() (bool, error) {
+		a := send(t, w.request(t, edgeAddr, storetest.UniqueID("warm")))
+		if a.byEdge && a.status != http.StatusOK {
+			return false, fmt.Errorf("the edge answered %d during the warm-up: %s", a.status, a.body)
+		}
+		return a.byEdge, nil
+	})
+	if c := e.DecideCounts(); c.Unavailable != 0 || c.Answered != 1 {
+		t.Fatalf("after the warm-up: %+v", c)
+	}
 }
 
 // answer is one response as the enclave read it.
@@ -375,11 +410,12 @@ func TestTheEdgeDecidesEndToEnd(t *testing.T) {
 	if !e.DecideOn() {
 		t.Fatal("-edge-decide made no decide path")
 	}
-	var first answer
-	eventually(t, 60*time.Second, "the edge's own answer", func() (bool, error) {
-		first = send(t, w.request(t, edgeAddr, "client-key-1"))
-		return first.byEdge && first.status == http.StatusOK, nil
-	})
+	warmUp(t, w, e, edgeAddr)
+	busy := e.DecideCounts().Passed["owner.busy"]
+	first := send(t, w.request(t, edgeAddr, "client-key-1"))
+	if !first.byEdge || first.status != http.StatusOK {
+		t.Fatalf("the first: %d %s, counts %+v", first.status, first.body, e.DecideCounts())
+	}
 	if first.header.Get("Content-Type") != "application/json" || first.header.Get("Content-Length") != strconv.Itoa(len(first.body)) {
 		t.Errorf("the 200's headers: %v", first.header)
 	}
@@ -448,6 +484,9 @@ func TestTheEdgeDecidesEndToEnd(t *testing.T) {
 		c := e.DecideCounts()
 		return c.Passed["insert.scope_taken"] == 2 && c.Refunded == 2 && c.RefundFailed == 0, nil
 	})
+	if c := e.DecideCounts(); c.Unavailable != 0 || c.Passed["owner.busy"] != busy || c.Answered != 3 {
+		t.Fatalf("after the warm-up, every request but the scope's passes was the edge's 200: %+v", c)
+	}
 	stop()
 }
 
@@ -516,19 +555,20 @@ func TestAProcessDrainsItsInsertsBeforeItReturns(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, cfg, Clients{Spanner: client, PubSub: pubSub(t)}) }()
+	var e *edge.Edge
 	select {
-	case <-made:
+	case e = <-made:
 	case <-time.After(20 * time.Second):
 		t.Fatal("the edge was not made")
 	}
 	// Warm: the edge answers one itself before the commit hangs.
-	eventually(t, 60*time.Second, "the edge's own answer", func() (bool, error) {
-		a := send(t, w.request(t, edgeAddr, storetest.UniqueID("warm")))
-		return a.byEdge && a.status == http.StatusOK, nil
-	})
+	warmUp(t, w, e, edgeAddr)
 	hanging.Store(true)
 	sent := time.Now()
 	a := send(t, w.request(t, edgeAddr, "client-key-hang"))
+	if c := e.DecideCounts(); c.Unavailable != 1 {
+		t.Errorf("counts after the hung commit: %+v", c)
+	}
 	if !a.byEdge || a.status != http.StatusServiceUnavailable || a.header.Get("Retry-After") != "1" ||
 		!bytes.HasPrefix(a.body, []byte(`{"error":{"code":503,"message":"Authorization unavailable; retry",`)) ||
 		time.Since(sent) > 3*time.Second {

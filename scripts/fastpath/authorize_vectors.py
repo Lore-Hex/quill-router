@@ -67,7 +67,7 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 
 import httpx  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
-from google.api_core.exceptions import Aborted, DeadlineExceeded, FailedPrecondition  # noqa: E402
+from google.api_core.exceptions import Aborted, DeadlineExceeded, FailedPrecondition, InvalidArgument  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 from tests.fakes.spanner import make_fake_store  # noqa: E402
@@ -578,7 +578,13 @@ def front_door(answers: dict[str, Any] | None) -> Iterator[_Door]:
 def leased_insert(insert: str) -> Iterator[None]:
     """The leased insert's commit: as it is; applied, or not, with its answer
     lost to a deadline, which Python resolves by reading back; or refused
-    with nothing applied (failed_precondition, aborted: §8.4's `Failed`)."""
+    with nothing applied. Go classifies a refusal by its code and how many
+    times its callback ran (§8.4, store.ClassifyInsert): invalid_argument
+    (InvalidArgument, the callback run once) proves nothing applied, Go's
+    `Failed`; failed_precondition (FailedPrecondition, run once: possibly a
+    re-sent commit's answer) and aborted (Aborted once the client's re-runs
+    are spent, run more than once) prove nothing, Go's `Unknown`, which reads
+    back, finds no row and answers decision 1's 503."""
     if insert == "inserted":
         yield
         return
@@ -586,6 +592,8 @@ def leased_insert(insert: str) -> Iterator[None]:
     def lost(database: Any, txn: Any, **kwargs: Any) -> Any:
         if kwargs.get("transaction_tag") != "tr_authorize_leased":
             return _REAL_TRANSACTION(database, txn, **kwargs)
+        if insert == "invalid_argument":
+            raise InvalidArgument("the commit was refused; nothing applied")
         if insert == "failed_precondition":
             raise FailedPrecondition("the commit was refused; nothing applied")
         if insert == "aborted":
@@ -657,6 +665,16 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         error = _error(body) if response.status_code != 200 else {}
         return {**world_rows, "expect": {"outcome": "pass", "reason": reason, "python": {
             "status": response.status_code, "type": error.get("type"), "leased": leased}}}
+    if case["insert"] == "failed_precondition" and response.status_code != 503:
+        # Python counts this code permanent and fails the request; Go cannot
+        # tell it from the refusal of a re-sent commit whose first applied
+        # (§8.4), so it answers as for an outcome not known and not landed:
+        # Python's own 503 for the same request, recorded with what Python
+        # answered here.
+        error = _error(body) if response.status_code != 200 else {}
+        unknown = run_case({**case, "insert": "unknown_not_landed"})
+        unknown["expect"]["python"] = {"status": response.status_code, "type": error.get("type"), "leased": leased}
+        return unknown
     if response.status_code == 503:
         if authorizations or [path for path, _sent in door.seen] != ["/v1/authorize"]:
             raise AssertionError(f"{case['name']}: a 503 that wrote or refunded")
@@ -1106,9 +1124,11 @@ def cases() -> list[dict[str, Any]]:
     # A federated key, served from its local shadow: this plane has no home
     # configured, so Python makes no home-plane call (_federated_key_still_valid).
     add("pass:key.federated", "key.federated", world={"key": {"federated_home": "https://home.example.invalid"}})
-    # The leased insert refused with nothing applied (§8.4's Failed).
-    add("pass:insert.failed:failed_precondition", "insert.failed", insert="failed_precondition")
-    add("pass:insert.failed:aborted", "insert.failed", insert="aborted")
+    # The leased insert refused with nothing applied: proven (§8.4's Failed),
+    # and not provably (Go's Unknown, the 503).
+    add("pass:insert.failed:invalid_argument", "insert.failed", insert="invalid_argument")
+    add("unavailable:insert_failed_precondition", insert="failed_precondition")
+    add("unavailable:insert_aborted", insert="aborted")
     # A read-back answers from the stored authorization: tags sorted (§6).
     add("answer:insert_unknown_landed_tags", insert="unknown_landed", body={"tags": {"zeta": "1", "alpha": "2"}},
         world={"key": {"tags": {"mid": "k", "beta": "k"}}})

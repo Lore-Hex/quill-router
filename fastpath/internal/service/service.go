@@ -120,6 +120,9 @@ type Config struct {
 	// edgeMade, when set, is given the edge once it is made: the tests'
 	// view of it.
 	edgeMade func(*edge.Edge)
+	// edgeClock, when set, is the edge's clock (time.Now otherwise): the
+	// tests' clock behind the emulator's.
+	edgeClock func() time.Time
 }
 
 // Defaults is the spike's configuration, but for what a deployment names:
@@ -295,6 +298,15 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if err != nil {
 		return err
 	}
+	// The client's session before anything else uses it: no session take
+	// of the process's ever waits, so none is served on an ended context
+	// (which ends the client's session worker for good) and none blocks the
+	// client's close (store.WarmSession). Bounded by the client's own
+	// session creations, past Run's context: a node that cannot get a
+	// session does not start.
+	if err := s.WarmSession(); err != nil {
+		return fmt.Errorf("service: the Spanner client's session: %w", err)
+	}
 	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.publish())
 	if err != nil {
 		return err
@@ -387,7 +399,8 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s}
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy, Admitter: &p.admitter,
+		Clock: cfg.edgeClock, Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy,
+		Admitter:     &p.admitter,
 		DecideShadow: decideShadow, Decide: decide})
 	if err != nil {
 		_ = ln.Close()
@@ -443,10 +456,16 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		endRequests()
 		handlers.wait()
 		// The decide path's refunds run beside its passes, and its inserts'
-		// transactions can outlive the inserts (one waiting for the client's
-		// session): Run returns, and the client closes, only once both have
-		// ended, since closing the client under a waiting transaction
-		// panics. Then the owner the refunds reach may stop.
+		// transactions can outlive the inserts: Run returns, and the client
+		// closes, only once both have ended, since closing the client under
+		// a transaction still waiting for its session panics. The refunds
+		// are best effort here: the owner and the front door are parts of
+		// their own and may stop first, and a refund they no longer serve
+		// fails within its 1 s, its hold ending with the lease as any refund
+		// not sent does (decision 12). The drain is short: with the session
+		// warmed no take waits, an insert's transaction ends within its
+		// 1.5 s, a refund within 1 s, all well inside the node's 30 s stop
+		// (TimeoutStopSec) after the hand-off and the server's Stopping.
 		e.WaitDecide()
 		s.WaitLeasedInserts()
 		// What the decide shadow follows ends with its requests; its reads

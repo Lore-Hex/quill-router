@@ -61,7 +61,7 @@ var insertTable = map[codes.Code]InsertOutcome{
 // an error with no status are Unknown; any error before the callback ran is
 // Failed; no error is Inserted.
 func TestClassifyInsertIsTheContractTable(t *testing.T) {
-	if got, ae := classifyInsert(nil, 1); got != Inserted || ae {
+	if got, ae := ClassifyInsert(nil, 1); got != Inserted || ae {
 		t.Errorf("no error: %v %v", got, ae)
 	}
 	for code := codes.Canceled; code <= codes.Unauthenticated; code++ {
@@ -72,7 +72,7 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 			"wrapped": fmt.Errorf("commit: %w", spanner.ToSpannerError(raw)),
 		} {
 			for _, runs := range []int32{1, 2, 3} {
-				got, alreadyExists := classifyInsert(err, runs)
+				got, alreadyExists := ClassifyInsert(err, runs)
 				if code == codes.AlreadyExists {
 					if !alreadyExists {
 						t.Errorf("%v %s, %d runs: not read back", code, name, runs)
@@ -87,7 +87,7 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 					t.Errorf("%v %s, %d runs: %v (read back %v), want %v", code, name, runs, got, alreadyExists, want)
 				}
 			}
-			if got, _ := classifyInsert(err, 0); got != Failed {
+			if got, _ := ClassifyInsert(err, 0); got != Failed {
 				t.Errorf("%v %s before the callback ran: %v, want failed", code, name, got)
 			}
 		}
@@ -99,7 +99,7 @@ func TestClassifyInsertIsTheContractTable(t *testing.T) {
 		"client deadline":  spanner.ToSpannerError(context.DeadlineExceeded),
 		"no status":        errors.New("connection reset"),
 	} {
-		if got, ae := classifyInsert(err, 1); got != Unknown || ae {
+		if got, ae := ClassifyInsert(err, 1); got != Unknown || ae {
 			t.Errorf("%s: %v %v, want unknown", name, got, ae)
 		}
 	}
@@ -705,7 +705,7 @@ func TestTheRetriedCommitReportsAlreadyExists(t *testing.T) {
 	if spanner.ErrCode(err) != codes.AlreadyExists || !landed(t, a) {
 		t.Fatalf("the client's own answer: %v, landed %v", err, landed(t, a))
 	}
-	if out, alreadyExists := classifyInsert(err, 2); !alreadyExists {
+	if out, alreadyExists := ClassifyInsert(err, 2); !alreadyExists {
 		t.Fatalf("the error is not read back: %v", out)
 	}
 }
@@ -1026,6 +1026,29 @@ func TestARowUnderOurIDNamingAnotherReservationIsNotOurs(t *testing.T) {
 	}
 }
 
+// TestADeadlineAfterTheCallbackBeganIsNeverFailed: the deadline comes
+// just after the callback marked its transaction begun and before anything
+// else it does. A commit may follow, so the outcome is never Failed (which
+// refunds): it is Unknown, read back. (A run counted after the mark left a
+// window in which the deadline read no run, and Failed.)
+func TestADeadlineAfterTheCallbackBeganIsNeverFailed(t *testing.T) {
+	s := spikeStore(t)
+	var once atomic.Bool
+	leasedBegun = func() {
+		if once.CompareAndSwap(false, true) {
+			time.Sleep(InsertDeadline + 300*time.Millisecond)
+		}
+	}
+	defer func() { leasedBegun = func() {} }()
+	a, r := leasedRows("")
+	out := s.InsertLeasedAuthorization(context.Background(), a, r)
+	s.WaitLeasedInserts()
+	moneySafe(t, "begun at the deadline", out, landed(t, a))
+	if out != Unknown {
+		t.Errorf("%v, want unknown", out)
+	}
+}
+
 // --- the client's session ------------------------------------------------
 
 // lateSession is a fault that refuses every session until after a first
@@ -1099,6 +1122,14 @@ func TestARowNotOursColumnForColumnIsNeverAnswered(t *testing.T) {
 		"estimate":    func(a *gwauth.AuthorizationRow) { a.EstimatedMicrodollars++ },
 		"fingerprint": func(a *gwauth.AuthorizationRow) { a.IdempotencyFingerprint = "another" },
 		"boot":        func(a *gwauth.AuthorizationRow) { a.StageDBootKid = "another" },
+		"model":       func(a *gwauth.AuthorizationRow) { a.ModelID = "another/model" },
+		"provider":    func(a *gwauth.AuthorizationRow) { a.Provider = "another" },
+		"usage type":  func(a *gwauth.AuthorizationRow) { a.UsageType = "BYOK" },
+		"created at":  func(a *gwauth.AuthorizationRow) { a.CreatedAt = a.CreatedAt.Add(time.Microsecond) },
+		"nonce": func(a *gwauth.AuthorizationRow) {
+			nonce := "n"
+			a.InvocationNonce = &nonce
+		},
 	} {
 		a, r := leasedRows("")
 		theirs := a
@@ -1108,6 +1139,32 @@ func TestARowNotOursColumnForColumnIsNeverAnswered(t *testing.T) {
 		}
 		if out := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
 			t.Errorf("%s: %v, want unknown", name, out)
+		}
+	}
+	// Our rows as written, then a column ours leaves NULL set (or one ours
+	// sets made NULL where ours is empty): not ours either.
+	for column, value := range map[string]string{
+		"terminal_at": "CURRENT_TIMESTAMP()", "gateway_request_id": "'x'", "finalization_outcome": "'settled'",
+		"finalized_cost_microdollars": "1", "started_at": "CURRENT_TIMESTAMP()", "heartbeat_seq": "1",
+		"heartbeat_at": "CURRENT_TIMESTAMP()", "heartbeat_hash": "'h'", "selected_endpoint_id": "'e'",
+		"delivered_usage": "'{}'", "pricing_snapshot": "'{}'", "stage_d_boot_kid": "NULL",
+	} {
+		a, r := leasedRows("")
+		if column == "stage_d_boot_kid" {
+			a.StageDBootKid = ""
+		}
+		if err := pythonInsert(ctx, shared, a, r); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{SQL: "UPDATE tr_gateway_authorization SET " + column + " = " +
+				value + " WHERE authorization_id = @id", Params: map[string]any{"id": a.AuthorizationID}})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if out := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
+			t.Errorf("%s set: %v, want unknown", column, out)
 		}
 	}
 	// The positive control: our own rows are Landed.
@@ -1159,54 +1216,43 @@ func TestASessionAfterTheDeadlineSendsNothing(t *testing.T) {
 	}
 }
 
-// TestOneInsertAtATimeWaitsForASession: until the client has a session,
-// one insert's transaction may wait for it; another insert waits only
-// within its own deadline, for that session, and begins no transaction:
-// Failed with nothing sent. So the transactions left waiting are one, not
-// one an insert (each could hold the client's close for its own 30 s).
-func TestOneInsertAtATimeWaitsForASession(t *testing.T) {
+// TestAWarmedSessionNeverWaits: WarmSession waits through a client that
+// cannot make a session until after an insert's deadline, on a context that
+// does not end first, so the session worker still runs; then every insert
+// takes the session at once and inserts, and none is left waiting.
+func TestAWarmedSessionNeverWaits(t *testing.T) {
 	late := &lateSession{opened: time.Now()}
 	s, _ := openFaultStore(t, late.fault)
+	workers := sessionWorkers()
+	start := time.Now()
+	if err := s.WarmSession(); err != nil {
+		t.Fatal(err)
+	}
+	if made, _ := late.seen(); !made || time.Since(start) < InsertDeadline {
+		t.Fatalf("warmed after %v, session made %v: the test saw nothing late", time.Since(start), made)
+	}
+	if got := sessionWorkers(); got != workers {
+		t.Errorf("%d session workers, %d before", got, workers)
+	}
 	var wg sync.WaitGroup
 	outs := make([]InsertOutcome, 3)
-	took := make([]time.Duration, 3)
 	for i := range outs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			a, r := leasedRows("")
-			start := time.Now()
 			outs[i] = s.InsertLeasedAuthorization(context.Background(), a, r)
-			took[i] = time.Since(start)
 		}()
 	}
 	wg.Wait()
-	for i, out := range outs {
-		if out != Failed || took[i] < InsertDeadline-50*time.Millisecond || took[i] > InsertDeadline+250*time.Millisecond {
-			t.Errorf("insert %d: %v in %v, want failed at the deadline", i, out, took[i])
-		}
-	}
 	waitInserts(t, s)
-	if n := s.leased.refusedLate.Load(); n != 1 {
-		t.Errorf("%d transactions waited for the session and refused, want 1", n)
-	}
-	if _, sent := late.seen(); len(sent) != 0 {
-		t.Errorf("sent after Failed: %v", sent)
-	}
-	// With the session made, inserts no longer wait on one another.
-	for i := range outs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			a, r := leasedRows("")
-			outs[i] = s.InsertLeasedAuthorization(context.Background(), a, r)
-		}()
-	}
-	wg.Wait()
 	for i, out := range outs {
 		if out != Inserted {
-			t.Errorf("insert %d with the session: %v", i, out)
+			t.Errorf("insert %d after the warm-up: %v", i, out)
 		}
+	}
+	if n := s.leased.refusedLate.Load(); n != 0 {
+		t.Errorf("%d transactions waited for a session after the warm-up", n)
 	}
 }
 

@@ -154,7 +154,13 @@ The flow, per request, in this order:
     pydantic-core's float format. Error bodies (the 503) are Starlette's
     `JSONResponse`, `json.dumps`. Python's GZip middleware (`middleware.py:132`,
     `minimum_size=1_000`) compresses only for a caller that accepts gzip;
-    Go never compresses.
+    Go never compresses. The edge's own answers carry only `Content-Type`,
+    `Content-Length` and, on the 503, `Retry-After`: none of the headers
+    Python's middleware adds to its responses (`X-TrustedRouter-Request-Id`,
+    `Strict-Transport-Security` and the rest, `middleware.py`). The enclave
+    reads none of them. What is lost is the request id: an authorize the
+    edge answers has no Python request id to correlate with Python's logs;
+    its authorization id (in the body and both rows) is the handle instead.
 14. **Per-key in-flight limit** at the edge, from the policy's
     `gateway_authorize_max_in_flight_per_key`; over the limit passes. Go
     never learns "exhausted" from `Busy`.
@@ -995,7 +1001,7 @@ returns:
 |---|---|---|
 | none | `Inserted` | answer |
 | any, with the callback never run before the deadline (no session, no transaction began); checked first | retried once within the deadline; still failing, or the deadline reached first, `Failed` | refund, pass: nothing was sent, and nothing will be: a transaction still waiting for its session at the deadline is abandoned, and its callback refuses when the session comes; so this is never a 503 |
-| `AlreadyExists` | read our id back, strong, with a 0.5 s deadline on a fresh context: a row that is ours column for column (reservation, workspace, key, estimate, payload, fingerprint, boot kid, not settled) is `Landed`; no row, or one naming another reservation, is `ScopeTaken`; one naming our reservation with other content, or a read error, is `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
+| `AlreadyExists` | read our id back, strong, with a 0.5 s deadline on a fresh context: a row that is ours column for column is `Landed` (every column but the retired spend-lease ones: the ids, workspace, key, model, provider, usage type, estimate, `created_at`, payload, fingerprint, boot kid and invocation nonce equal to ours, a NULL told from an empty string, and `settled` false with `terminal_at`, `gateway_request_id` and the nine typed columns ours leaves NULL still NULL); no row, or one naming another reservation, is `ScopeTaken`; one naming our reservation with other content, or a read error, is `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
 | `Aborted`, `InvalidArgument`, `OutOfRange`, `Unimplemented`, with the callback run exactly once | `Failed` | refund, pass: Spanner applied nothing, and these codes are the request's own, so a re-sent commit is answered as the first was |
 | `NotFound`, `FailedPrecondition`, `PermissionDenied`, `Unauthenticated`, once the callback has run | `Unknown` | as below: the client re-sends a commit that met `Unavailable` or `ResourceExhausted`, of the same transaction, and returns the re-send's answer. Spanner answers a re-sent commit with the first one's outcome while it remembers the transaction, but nothing guarantees that a re-send refused as a forgotten transaction or for its credentials followed a first commit that did not apply |
 | any code but `AlreadyExists`, with the callback run more than once | `Unknown` | as below: the client re-runs the whole transaction after `Aborted`, `ResourceExhausted` with a retry delay, or `Internal` of a broken stream (`retry.go`, `runWithRetryOnAbortedOrFailedInlineBegin`), each of which can be the lost answer to a first commit that applied; the re-run's error proves nothing about it |
@@ -1008,32 +1014,58 @@ read-back. The client (v1.88) waits for its multiplexed session without
 the context (up to its session worker's 30 s a creation), so the
 transaction runs in a goroutine and the insert returns at the deadline
 whatever it is doing: `Failed` if the callback never began by then, and
-`Unknown` (read back) if it did. Three rules follow from the client:
+`Unknown` (read back) if it did. A callback run is counted before the
+callback marks its transaction begun, so a deadline that finds it begun
+always finds a run (and never answers `Failed`). Three rules follow from
+the client:
 
+- The process makes the client's session first (`Store.WarmSession`, the
+  first thing `service.Run` does with the client): once the client has
+  its multiplexed session it keeps it, and a take returns it at once, so
+  no take of the process's (the edge's boot reads and cache fills among
+  them) ever waits. The warm-up is one strong read on a context of its own
+  that outlasts the two 30 s creations its take can wait behind; a node
+  that gets no session does not start.
 - The transaction's context never ends while its session take may wait:
   the session worker exits for good when it serves a request whose context
   has ended (`session.go`, `createMultiplexedSession`), and the client
-  would then never refresh its session. Only a transaction whose callback
-  has begun has its context cancelled at the deadline; one abandoned
-  before it keeps a live context, takes its session when it comes, and
-  its callback refuses, so nothing at all is sent.
-- Until the client has a session (once any callback has run it keeps one),
-  at most one insert's transaction may wait for it; another insert waits
-  only for that session, within its own deadline, and is `Failed` without
-  beginning a transaction.
+  would then never refresh its session, and would panic at its close
+  behind the refresh blocked on it. Only a transaction whose callback has
+  begun has its context cancelled at the deadline; one abandoned before
+  it keeps a live context, takes its session when it comes, and its
+  callback refuses before it buffers anything, so the client neither
+  begins nor commits a transaction for it.
 - The client must not be closed while such a transaction still waits for
   its session: the client library panics (a send on its closed
   session-request channel). The process drains them first: at shutdown
   the edge waits for its handlers, then its refunds, then
   `WaitLeasedInserts`, and only then does `service.Run` return and the
-  caller close the client.
+  caller close the client. With the session warmed the drain is an
+  insert's 1.5 s and a refund's 1 s at most, inside the node's 30 s stop
+  (`TimeoutStopSec`) after the hand-off (10 s) and the server's
+  `Stopping` (10 s). The refunds are best effort at shutdown: the owner
+  and the front door may stop first, and a refund they no longer serve
+  ends with the lease.
+
+`tr_reservation.created_at` is a commit-timestamp column
+(`allow_commit_timestamp`), and Spanner refuses a value in it later than
+the commit's own timestamp (`FailedPrecondition`, "Cannot write
+timestamps in the future"), for Go's rows and Python's alike, since both
+write their clock reading. Go reads that `FailedPrecondition` as `Unknown`
+(it cannot tell it from a re-sent commit's), so an edge clock ahead of
+Spanner's by more than the time from arrival to commit turns each decided
+authorize into the 503, its hold kept. GCE clocks keep within a
+millisecond of Google's time; the emulator in a container can lag its host
+by more, which the tests allow for, and G12 alerts on unavailable answers.
 
 A refund after an `Unknown` would let an enclave retry replay, through
 Python, a row whose hold was given back; so nothing that can follow an
 applied commit refunds. Every read is by primary key on
 `tr_gateway_authorization`, so no extra index is needed.
 
-**Where Go differs from Python on purpose.** An `Aborted` from a
+**Where Go differs from Python on purpose.** A `FailedPrecondition` with
+the callback run once is `Unknown` in Go (the 503, hold kept); Python
+counts it permanent and fails the request with a 500. An `Aborted` from a
 transaction whose callback ran once is `Failed` in Go (refund, pass);
 Python counts it transient and answers 503 after an empty read-back.
 `ABORTED` never applies a commit, so the refund is safe and the pass serves
@@ -1145,7 +1177,9 @@ CASE = {
  "admitted": {"envelope": STR, "end_of_life_us": INT,
               "end_of_life": STR},      // the owner's text as it answered (§5's offset rule)
  "insert": "inserted" | "unknown_landed" | "unknown_not_landed"
-         | "failed_precondition" | "aborted",   // the last two: insert.failed passes
+         | "invalid_argument"                   // refused, the callback run once: Failed, insert.failed passes
+         | "failed_precondition"                // refused, run once: Unknown, unavailable
+         | "aborted",                           // Aborted once the client's re-runs are spent: Unknown, unavailable
  "request": {"path": STR, "headers": [[STR, STR]], "body": STR,
              "body_expand": {"marker": STR, "repeat": STR, "count": INT}},   // optional
  "boot": {"kid": STR, "verified": BOOL, "image_digest": STR,
@@ -1189,7 +1223,8 @@ EXPECT =
       "idempotency_scope": STR, "idempotency_fingerprint": STR,
       "expires_at_us": INT, "created_at_us": INT}}
  | {"outcome": "unavailable", "status": 503,
-    "headers": [["retry-after", "1"]], "response": STR, "timing": TIMING}
+    "headers": [["retry-after", "1"]], "response": STR, "timing": TIMING,
+    "python": {"status": INT, "type": STR | null, "leased": BOOL}}   // only when Python answered otherwise
  | {"outcome": "pass", "reason": STR,   // §3 vocabulary
     "python": {"status": INT, "type": STR | null,
                "leased": BOOL}}         // whether Python took the pilot's lease
@@ -1212,7 +1247,14 @@ that one marker replaced by `repeat` written `count` times. A Go test
 expands it before use; the Python test sends the expanded bytes.
 
 `"unknown_landed"` expects `answer`, with `tags` in sorted order (§6,
-after a read-back); `"unknown_not_landed"` expects `unavailable`. Go's
+after a read-back); `"unknown_not_landed"`, `"failed_precondition"` and
+`"aborted"` expect `unavailable`, and `"invalid_argument"` the
+`insert.failed` pass. Go's tests take a case's outcome from its insert's
+gRPC code and callback runs through `store.ClassifyInsert`, so a label
+cannot drift from §8.4's table. For `"failed_precondition"`, which
+Python fails with a 500, the response is Python's own 503 for the same
+request with the outcome unknown and not landed, and `python` records the
+500. Go's
 tests render with the case's `timing` and compare bytes exactly. A pass
 case trips exactly one §3 reason and records what Python then answered;
 every pass reason has at least one case, `body.content_type`,

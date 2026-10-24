@@ -22,6 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
@@ -186,19 +189,49 @@ var ownerAnswers = map[string]frontdoor.Status{
 	PassOwnerFailed: frontdoor.Failed,
 }
 
-// insertOf is the store outcome a case stands for.
-func insertOf(c authorizeCase) store.InsertOutcome {
-	switch {
-	case c.Expect.Reason == PassInsertScopeTaken:
-		return store.ScopeTaken
-	case c.Insert == "unknown_landed":
-		return store.Landed
-	case c.Insert == "unknown_not_landed":
-		return store.Unknown
-	case c.Insert == "failed_precondition" || c.Insert == "aborted":
-		return store.Failed
+// insertFaults are the goldens' leased inserts (§10.1's insert), each as
+// the commit's error, how many times its callback ran, and whether the row
+// is there for the read-back: what the store's insert meets.
+var insertFaults = map[string]struct {
+	code   codes.Code // codes.OK: committed
+	runs   int32
+	landed bool
+}{
+	"inserted":            {codes.OK, 1, true},
+	"unknown_landed":      {codes.DeadlineExceeded, 1, true},
+	"unknown_not_landed":  {codes.DeadlineExceeded, 1, false},
+	"invalid_argument":    {codes.InvalidArgument, 1, false},
+	"failed_precondition": {codes.FailedPrecondition, 1, false},
+	"aborted":             {codes.Aborted, 2, false},
+}
+
+// insertOf is the store's outcome for a case: its insert's error
+// classified by store.ClassifyInsert (so a golden label cannot drift from
+// §8.4's table), then the store's one read-back. A case Python found the
+// scope taken for is AlreadyExists with no row of ours.
+func insertOf(t *testing.T, c authorizeCase) store.InsertOutcome {
+	t.Helper()
+	fault, ok := insertFaults[c.Insert]
+	if !ok {
+		t.Fatalf("%s: insert %q", c.Name, c.Insert)
 	}
-	return store.Inserted
+	if c.Expect.Reason == PassInsertScopeTaken {
+		fault.code, fault.landed = codes.AlreadyExists, false
+	}
+	var err error
+	if fault.code != codes.OK {
+		err = status.Error(fault.code, c.Insert)
+	}
+	outcome, alreadyExists := store.ClassifyInsert(err, fault.runs)
+	switch {
+	case outcome != store.Unknown:
+		return outcome
+	case fault.landed:
+		return store.Landed
+	case alreadyExists:
+		return store.ScopeTaken
+	}
+	return store.Unknown
 }
 
 // TestEveryGoldenCaseThroughTheDecidePath: with the decide path on, every
@@ -225,7 +258,7 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 				return frontdoor.Authorized{Status: status}
 			}
 		}
-		outcome := insertOf(c)
+		outcome := insertOf(t, c)
 		h.rows.insert = func(context.Context) store.InsertOutcome { return outcome }
 		hits := py.hits.Load()
 		rec := h.send(t, c)
@@ -303,7 +336,7 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 		}
 	}
 	t.Logf("%d answered, %d unavailable, %d passed (%d refunded)", answered, unavailable, passed, refunded)
-	if answered != 161 || unavailable != 1 || refunded != 8 {
+	if answered != 161 || unavailable != 3 || refunded != 7 {
 		t.Fatalf("answered %d, unavailable %d, refunded %d: not the goldens' counts", answered, unavailable, refunded)
 	}
 }
@@ -571,13 +604,18 @@ func TestTheDecidePathIsDark(t *testing.T) {
 }
 
 // TestOnlyAdmitHandsOutADecision: the decision a Decided holds is named
-// only in decide.go (shadowOnly), and read through ForShadow only by the
-// shadow (shadow_full.go): the decide path can reach one only through
-// Admit.
+// only in decide.go (shadowOnly), read through ForShadow only by the shadow
+// (shadow_full.go), and no Decided is written unkeyed (which would set the
+// field by position): the decide path, and the service and commands that
+// run it, reach a decision only through Admit.
 func TestOnlyAdmitHandsOutADecision(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
+	var files []string
+	for _, pattern := range []string{"*.go", "../service/*.go", "../../cmd/*/*.go"} {
+		matched, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, matched...)
 	}
 	fset := gotoken.NewFileSet()
 	seen := map[string]bool{}
@@ -593,6 +631,7 @@ func TestOnlyAdmitHandsOutADecision(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		seen["file:"+filepath.Dir(name)] = true
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.SelectorExpr:
@@ -613,11 +652,28 @@ func TestOnlyAdmitHandsOutADecision(t *testing.T) {
 				if id, ok := x.Key.(*ast.Ident); ok && id.Name == "shadowOnly" && name != "decide.go" {
 					t.Errorf("%s: %s sets shadowOnly", fset.Position(x.Pos()), name)
 				}
+			case *ast.CompositeLit:
+				typeName := ""
+				switch ty := x.Type.(type) {
+				case *ast.Ident:
+					typeName = ty.Name
+				case *ast.SelectorExpr:
+					typeName = ty.Sel.Name
+				}
+				if typeName != "Decided" {
+					return true
+				}
+				for _, elt := range x.Elts {
+					if _, keyed := elt.(*ast.KeyValueExpr); !keyed {
+						t.Errorf("%s: %s writes a Decided unkeyed", fset.Position(x.Pos()), name)
+						break
+					}
+				}
 			}
 			return true
 		})
 	}
-	if !seen["ForShadow"] || !seen["Admit"] {
-		t.Fatalf("the positive control: ForShadow %v, Admit %v seen", seen["ForShadow"], seen["Admit"])
+	if !seen["ForShadow"] || !seen["Admit"] || !seen["file:../service"] || !seen["file:../../cmd/fastpath"] {
+		t.Fatalf("the positive control: %v", seen)
 	}
 }
