@@ -359,9 +359,8 @@ sibling enclave holding a time lease; its own PR, out of scope here) replays.
   answers the sweeper must treat as terminal, not retry: 2xx with
   `already_settled` or `settled`; 404 (an authorization the control plane
   never saw, or one past its retention); 409 for a retired settlement kind
-  (`regional_lease`, `spend_lease`) or an authorization whose routes no
-  longer meet the request's modality or privacy filter. 5xx and transport
-  errors retry under the sweeper's lease. No replay marker exists; if the
+  (`regional_lease`, `spend_lease`), the one 409 the settle path raises.
+  5xx and transport errors retry under the sweeper's lease. No replay marker exists; if the
   router ever wants one, the sweeper adds it at send time and the stored
   body stays the exact bytes.
 - **Boot auth on terminals.** `X-TR-Boot-Auth: kid=<kid>,sig=<b64url>` over

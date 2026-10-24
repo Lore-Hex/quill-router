@@ -381,7 +381,8 @@ def test_authorize_without_a_boot_header_declares_nothing(monkeypatch: pytest.Mo
         route_type="chat.completions",
     )
     gateway._authorize_gateway_sync(request, body, Settings(environment="test"))
-    assert seen == [{
-        **seen[0], "boot_verified": False, "heartbeat_declared": False,
-        "idempotency_key_source_declared": False, "settle_outbox_declared": False,
-    }]
+    assert len(seen) == 1
+    assert seen[0]["boot_verified"] is False
+    assert seen[0]["heartbeat_declared"] is False
+    assert seen[0]["idempotency_key_source_declared"] is False
+    assert seen[0]["settle_outbox_declared"] is False
