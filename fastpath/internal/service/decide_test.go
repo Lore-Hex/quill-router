@@ -32,7 +32,6 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
-	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
@@ -194,7 +193,7 @@ type signingPython struct {
 	private    ed25519.PrivateKey
 	public     ed25519.PublicKey
 	snapshot   []byte
-	claims     routingsnapshot.Claims
+	claims     map[string]any
 	policy     map[string]json.RawMessage
 	authorizes atomic.Int64
 }
@@ -210,9 +209,9 @@ func newSigningPython(t *testing.T, w decideWorld) *signingPython {
 	py := &signingPython{private: private, public: public, policy: w.policy}
 	raw := readGolden(t, "routing_snapshot_v1.body.json")
 	var fields struct {
-		CompiledAt     int64                 `json:"compiled_at"`
-		SourceRevision string                `json:"source_revision"`
-		Plane          routingsnapshot.Plane `json:"plane"`
+		CompiledAt     int64             `json:"compiled_at"`
+		SourceRevision string            `json:"source_revision"`
+		Plane          map[string]string `json:"plane"`
 	}
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
@@ -225,14 +224,20 @@ func newSigningPython(t *testing.T, w decideWorld) *signingPython {
 		n, _ := strconv.ParseInt(string(m[i+1:]), 10, 64)
 		return append(m[:i+1:i+1], strconv.FormatInt(n+shift, 10)...)
 	})
-	snap, err := routingsnapshot.Parse(py.snapshot)
-	if err != nil {
+	// The claims' instants, read back from the moved body (the routing
+	// snapshot's package is the edge's and gwauth's alone to import).
+	var moved struct {
+		CompiledAt int64 `json:"compiled_at"`
+		NotAfter   int64 `json:"not_after"`
+	}
+	if err := json.Unmarshal(py.snapshot, &moved); err != nil {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(py.snapshot)
-	py.claims = routingsnapshot.Claims{Aud: edge.SnapshotAudience, CompiledAt: snap.CompiledAt, Iss: edge.SnapshotIssuer,
-		NotAfter: snap.NotAfter, Plane: fields.Plane, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(py.snapshot)),
-		SourceRevision: fields.SourceRevision, V: 1}
+	// A manifest's claims, as canonical JSON: sorted keys, compact.
+	py.claims = map[string]any{"aud": edge.SnapshotAudience, "compiled_at": moved.CompiledAt, "iss": edge.SnapshotIssuer,
+		"not_after": moved.NotAfter, "plane": fields.Plane, "sha256": hex.EncodeToString(sum[:]),
+		"size": len(py.snapshot), "source_revision": fields.SourceRevision, "v": 1}
 	py.server = httptest.NewServer(http.HandlerFunc(py.serve))
 	t.Cleanup(py.server.Close)
 	return py
@@ -254,7 +259,7 @@ func (py *signingPython) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/routing-snapshot":
 		out, _ := json.Marshal(map[string]any{"v": 1, "kind": "tr-routing-snapshot-publication",
-			"manifest": py.jws(routingsnapshot.Typ, py.claims), "body": base64.StdEncoding.EncodeToString(py.snapshot),
+			"manifest": py.jws("tr-routing-snapshot-v1", py.claims), "body": base64.StdEncoding.EncodeToString(py.snapshot),
 			"refresh_at": time.Now().Unix() + 60})
 		_, _ = w.Write(out)
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/edge-policy":
@@ -269,11 +274,11 @@ func (py *signingPython) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		body, _ := json.Marshal(policy)
 		sum := sha256.Sum256(body)
-		claims := routingsnapshot.PolicyClaims{Aud: edge.SnapshotAudience, Iss: edge.SnapshotIssuer, IssuedAt: now,
-			NotAfter: now + 60, Plane: routingsnapshot.Plane{Cloud: "gcp", Region: "us-central1"},
-			SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body)), V: 1}
+		claims := map[string]any{"aud": edge.SnapshotAudience, "iss": edge.SnapshotIssuer, "issued_at": now,
+			"not_after": now + 60, "plane": map[string]string{"cloud": "gcp", "region": "us-central1"},
+			"sha256": hex.EncodeToString(sum[:]), "size": len(body), "v": 1}
 		out := fmt.Sprintf(`{"body":%q,"kind":"tr-edge-policy-publication","manifest":%q,"v":1}`,
-			base64.StdEncoding.EncodeToString(body), py.jws(routingsnapshot.PolicyTyp, claims))
+			base64.StdEncoding.EncodeToString(body), py.jws("tr-edge-policy-v1", claims))
 		_, _ = w.Write([]byte(out))
 	case r.Method == http.MethodPost:
 		py.authorizes.Add(1)
