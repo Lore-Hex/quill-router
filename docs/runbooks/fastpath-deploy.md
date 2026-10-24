@@ -226,6 +226,29 @@ attributes: a reset leaves the unit systemd started from disk running
 with its old arguments, as "Taking a pinned release" explains for the
 binary.
 
+## Turning the edge policy and the decide shadow on
+
+The edge polls Python's signed edge policy
+(`docs/design/fast-admission-e2-decide.md` section 4) on a node whose
+metadata names `fastpath-edge-policy-url` beside the routing snapshot's
+four attributes, and runs the full-response decide shadow (G10) when
+`fastpath-edge-decide-shadow` is `true` as well; the startup script passes
+`-edge-policy-url` and `-edge-decide-shadow`, and refuses either without
+what it needs (the snapshot, the URL on the edge's upstream, the policy for
+the shadow). Only a script from stage I1 on reads them, so they reach the
+fleet as the snapshot's did: nodes 7 and 8 added beside 5 and 6, which are
+then drained, leave the backend one apply before their removal, and are
+removed.
+Python publishes the policy first (`EDGE_POLICY_PUBLISH_ENABLED` in
+`rollout.sh`); until then the poll answers 404 and the edge keeps polling,
+admission unaffected. The shadow is turned on only once the policy has been
+held through a measured soak: Cloud Run's instances each sign and cache
+their own copy and polls are balanced across them, so a cold instance
+answers 503 `compiling`, which the edge rides out on the copy it holds.
+Turning it on, or off again, is a metadata change each node takes as a pin
+is taken (below): mark it leaving, wait for its leases and the balancer,
+reset it, restart it, and read the running arguments from the process.
+
 ## Taking a pinned release
 
 A node takes a release pinned in `infra/fastpath.tf` (`fastpath_release`)
