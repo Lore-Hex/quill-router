@@ -268,8 +268,9 @@ require, `gateway.py:2985-3000`), `policy.monitor_key`,
 `policy.regions_mismatch` (the policy's regions disagree with the
 snapshot's `settings`), `decide.off`.
 
-**Evaluation:** `evaluate.refused` for an evaluator refusal (Python
-refuses it too) and `evaluate.pass` for any other evaluator pass (a
+**Evaluation:** `evaluate.<outcome>` for any result but `Answered`:
+`evaluate.refused` for an evaluator refusal (Python refuses it too) and
+`evaluate.pass` for any other evaluator pass (a
 provider preference or snapshot input Go does not reproduce, such as
 `provider.max_price` or `provider.require_parameters`; P1's goldens label
 a refusal Go passes this way `evaluate.refused`, and either goes to
@@ -725,10 +726,13 @@ cannot read or that `validate_tags` refuses; `tags.merged_invalid`),
 set; `key.key_cap`), `key_window_limit` (any of `limit_daily_microdollars`,
 `limit_weekly_microdollars`, `limit_monthly_microdollars` set, alert-only
 or not; `key.key_window`), `key_budget_strict` (`key.budget_strict`).
-These cover `authorize_gateway_typed`'s checks before its leased branch
-(the window check, the shard count's re-validation, the lifetime cap's
-precheck) and its later arguments (`app_id`, `budget_alert_only`): each is
-a key the cohort excludes, so each is a no-op for a decided request.
+So the §3 key reasons are `key.<reason>` for `missing`, `disabled`,
+`expired`, `scope`, `federated`, `app`, `key_cap`, `key_window`,
+`budget_strict` and `shape`. They cover `authorize_gateway_typed`'s checks
+before its leased branch (the window check, the shard count's
+re-validation, the lifetime cap's precheck) and its later arguments
+(`app_id`, `budget_alert_only`): each is a key the cohort excludes, so each
+is a no-op for a decided request.
 
 ### 8.2 `gwauth` request side (G5)
 
