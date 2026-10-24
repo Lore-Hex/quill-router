@@ -20,8 +20,8 @@ import (
 // edge holds when the request arrives. Decide answers either a Decision
 // (the request is in the cohort; staged rows and a 200 ready for the
 // envelope) or the §3 reason it goes to Python. Nothing here admits,
-// writes or answers, and nothing on the request path calls it yet: G10's
-// full-response shadow will compare a Decision with what Python did, and
+// writes or answers: the full-response shadow (shadow_full.go) compares a
+// decision (Decided.Shadow) with what Python did, off the request path, and
 // G11's decide path will admit, insert and answer one (Decided.Admit).
 //
 // Decide is only for an authorize the edge has authenticated (the

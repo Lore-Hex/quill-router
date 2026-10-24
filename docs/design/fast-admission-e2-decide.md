@@ -17,9 +17,8 @@ authorization row payload that Python settles from.
 
 Line citations are against `origin/main` at `bc5a19c16`.
 
-Status (G10, part 1): the decide pipeline is built
-(`fastpath/internal/edge/decide.go`); nothing on the request path calls
-it, and nothing answers.
+Status (G10): the decide pipeline and its full-response shadow are built
+and dark (`-edge-decide-shadow`, default off); nothing answers.
 
 ## 1. What Go answers
 
@@ -1343,17 +1342,78 @@ letter: disjoint files, built in parallel.
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
 | I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, soak |
 
-**The shadow (G10)** counts, per snapshot and policy digest:
-`agree_full` (candidates and order, estimate in microdollars and its float
-bytes, `stage_d`, the decoded response equal after substituting Go's ids
-for Python's and ignoring `timing`'s values (its keys and their order are
-compared), the generation id by rule from Python's `authorization_id`),
-`differ.<field>`, `would_admit_python_refused.<status>.<type>` (critical),
-`python_answered_go_passed.<reason>`, `row.<field>` (Python's rows read
-back for one request in 20, at most 5 reads a second, against Go's
-would-be rows; `expires_at` as §5 says), `stale.<cache>`. A Python 401,
-402 or 403, or a pause 503, for a cached lookup hash evicts the key and its
-workspace.
+**The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
+`-edge-decide-shadow`, off by default) runs `Decide` for each authorize the
+edge passes on, from what the edge holds at its arrival (the cache read at
+the request's clock reading, the snapshot, the policy, the decide copy),
+off the request path in a bounded set of jobs (512; past it, or past the
+64 MiB copy budget, a request is counted `dropped` and passes as it came),
+and once Python's answer has passed to the enclave compares the two. It
+never admits, inserts or answers, and the proxy never waits for it. It
+counts, per snapshot and policy digest:
+
+- `agree_full`: Go would answer, and Python's 200 is, byte for byte, the
+  200 Go's decision renders once staged again under Python's
+  `authorization_id` and `credit_reservation_id` (so the generation id is
+  Go's rule over Python's id) with Python's `timing` values (its keys and
+  their order must be §6's): candidates and order, the estimate in
+  microdollars and its float bytes, `stage_d`, every member and its order.
+  A 200 equal to the read-back rendering (tags sorted, §6) is `agree_full`
+  and counted `read_back`.
+- `differ` with `differ.<field>`: each top-level member by name,
+  `differ.estimate` (microdollars), `differ.estimate_float` (the float's
+  bytes, the microdollars equal), `differ.candidates` (the endpoint ids or
+  their order), `differ.route_candidates.<member>`, `differ.generation_id`
+  (not by rule from Python's id), `differ.timing` (its shape),
+  `differ.key_order`, `differ.ids` (Python's ids are not ones Go would
+  write), `differ.shape`.
+- `would_admit_python_refused.<status>.<type>` (critical, a `CRITICAL` log
+  line at once): Go would answer, Python answered a 4xx or its pause 503.
+- `python_answered_go_passed.<reason>`: Go would pass with the §3 reason,
+  Python answered 200; an idempotent replay is
+  `python_answered_go_passed.insert.scope_taken` (Go's insert would have
+  found the scope taken).
+- `passed.<reason>`: Go would pass and Python refused or failed too
+  (Python's 409 `conflict` to a request Go would answer is
+  `passed.insert.scope_taken`).
+- `stale.<cache>`: Go would pass for `cache.<cache>`.
+- `python_unavailable` (decision 1's 503: Python's own insert outcome) and
+  `python_error.<status>` (any other 5xx): not refusals on the facts.
+- `unread.<why>`: Python's answer not read through (not reached, past the
+  bound or the budget, not answered within 30 s).
+
+Each request Go would answer also counts its decide row's gate (`on`,
+`decide.off`, `cache.decide`): during the soak the decide table is empty,
+so every comparison is of a workspace not yet deciding. Rows: for one
+comparable request (agree_full or differ; `SampleEvery` 1 by default, the
+limiter of at most 5 reads a second bounding Spanner), Python's two rows
+are read back by its authorization id
+(`ReadAuthorizationForCompare`) and compared with the rows Go's decision
+would write staged under Python's ids, its `created_at`, envelope and end
+of life, and its idempotency key when the request presented none (checked to be of
+the uuid4 form Go mints, `row.idempotency_key_form`; Python's `created_at`
+within the request's arrival and its answer, a second's skew either way,
+`row.created_at_skew`):
+`row.<column>` for each of the authorization's 25 columns (every typed
+column, which Python reads before its payload copy, so a NULL Go would
+write that Python fills is caught only here), `row.payload.<key>`, and
+`row.reservation.<column>` for each of the reservation's 18 (`expires_at`
+Python's at least Go's and at most the request's latency and a second
+later, §5). A row Python's settle or heartbeat reached first is compared on
+the columns those leave alone (`moved_on`, or `moved_on_differ` with its
+fields); one Python wrote off the pilot's lease (no `fastpath_envelope`) is
+`python_not_leased` and not compared. Python's status classifies whether
+or not its body was read through (a 4xx unread is
+`would_admit_python_refused.<status>.unread`). A Python 401, 402 or 403 (by
+status alone), or a pause 503, evicts the lookup hash the request named,
+whether the cache held it or not (read leniently from a body the strict
+parse passed), and the key's workspace when the cache said which. Each
+`would_admit_python_refused` raises an alert line of kind
+`edge_would_admit_python_refused` (the service's `<3>` JSON line, label
+`fastpath_alert`; its alert policy is I1's or G12's). An INFO line per
+snapshot and policy each minute carries the counts, and one more the
+requests dropped, the evictions and the cache's unrefreshed, dropped and
+failed reads; no line carries a body, an id, a key or a message.
 
 **I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
 cohort-eligible requests with every difference explained; zero

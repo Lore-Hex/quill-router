@@ -102,6 +102,10 @@ func run() error {
 	flag.BoolVar(&cfg.Edge.Shadow, "edge-shadow", false,
 		"compare Go's answer from the routing snapshot with Python's on each authorize the edge passes on, "+
 			"logging counts alone; Python still decides")
+	flag.BoolVar(&cfg.Edge.DecideShadow, "edge-decide-shadow", false,
+		"run the edge's decide pipeline over each authorize it passes on and compare the whole answer, and sampled "+
+			"rows, with Python's (docs/design/fast-admission-e2-decide.md section 11), logging counts alone; needs "+
+			"-edge-snapshot-url and -edge-policy-url; Python still decides")
 	flag.Parse()
 
 	switch *roles {
