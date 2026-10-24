@@ -70,7 +70,7 @@ from google.api_core.exceptions import DeadlineExceeded
 
 from tests.fakes.spanner import _Row, _SpannerModule, make_fake_store
 from tests.test_fastpath_frontdoor import _Door, _transport
-from trusted_router import gateway_timing, storage_gcp
+from trusted_router import gateway_timing, spend_windows, storage_gcp
 from trusted_router.config import Settings
 from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, boot_auth_digest
 from trusted_router.main import create_app
@@ -214,7 +214,7 @@ def _seeded_uuid(seed: str) -> uuid.UUID:
 @contextlib.contextmanager
 def _pinned(at: real_dt.datetime, seed: str) -> Iterator[None]:
     """The route's clock readings (its module's ``dt`` and every function-local
-    ``import datetime``) answer ``at``, the snapshot fixture's catalog and
+    ``import datetime``) answer ``at``, the spend-window, catalog and
     rank clocks too, and uuid4 answers a sequence derived from ``seed`` (as
     scripts/fastpath/authorize_vectors.py ``pinned``)."""
     clock = _clock_module(at)
@@ -223,7 +223,7 @@ def _pinned(at: real_dt.datetime, seed: str) -> Iterator[None]:
     sys.modules["datetime"], gateway.dt = clock, clock
     uuid.uuid4 = lambda: _seeded_uuid(f"{seed}#{next(counter)}")
     try:
-        with _routing_cases_vectors().fixture_catalog(at):
+        with _patched(spend_windows, "dt", clock), _routing_cases_vectors().fixture_catalog(at):
             yield
     finally:
         sys.modules["datetime"], gateway.dt, uuid.uuid4 = saved
@@ -755,6 +755,26 @@ def compare(case: dict[str, Any], scenario: str, *, corrupt: Corrupt | None = No
                     f"  go:     {go_step[field]!r}\n  python: {python_step[field]!r}"
                 )
     return dict(python)
+
+
+@pytest.mark.parametrize("boundary", ["2026-10-24", "2026-10-26", "2026-11-01"])
+def test_key_windows_ignore_wall_clock_rollover(boundary: str) -> None:
+    case = _case("answer:estimate:google/gemini-3.1-pro-preview:0+1")
+    midnight = real_dt.datetime.fromisoformat(boundary).replace(tzinfo=real_dt.UTC)
+    before, after = midnight - real_dt.timedelta(seconds=1), midnight + real_dt.timedelta(seconds=1)
+    with _patched(spend_windows, "dt", _clock_module(before)):
+        python = run_scenario(case, "settle", "python")
+        assert spend_windows.utcnow() == before
+    with _patched(spend_windows, "dt", _clock_module(after)):
+        go = run_scenario(case, "settle", "go")
+        assert spend_windows.utcnow() == after
+    assert go == python
+    at = _from_us(case["at_us"])
+    assert at is not None
+    (row,) = dict(go)["settle"]["key_limit"]
+    floors = spend_windows.window_floors(at)
+    for column, window in (("day_start", "daily"), ("week_start", "weekly"), ("month_start", "monthly")):
+        assert json.loads(row)[column] == str(floors[window])
 
 
 # What each scenario must do (checked once the two worlds agree, so of both):
