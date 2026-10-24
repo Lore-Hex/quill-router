@@ -30,6 +30,10 @@ type AuthorizationRow struct {
 // ReservationRow is the authorization's row in tr_reservation. The shards,
 // the reserved amounts and settled take their §5 constants (0, 0 and
 // false); actual_micro, settled_usage_type and terminal_at are NULL.
+// created_at is the commit's timestamp, so it is no field here: the column
+// is allow_commit_timestamp, and Spanner refuses a value in it later than
+// the commit's own timestamp, which the edge's clock reading is whenever
+// the clock runs ahead of TrueTime by more than the time to the commit.
 type ReservationRow struct {
 	ReservationID          string
 	WorkspaceID            string
@@ -39,5 +43,4 @@ type ReservationRow struct {
 	IdempotencyScope       string
 	IdempotencyFingerprint string
 	ExpiresAt              time.Time
-	CreatedAt              time.Time
 }

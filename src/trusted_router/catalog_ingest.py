@@ -301,6 +301,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "amazon-bedrock",
         "greenference",
         "muna",
+        "abliteration",
         "coralbricks",
         "boundless",
         "zro",
@@ -1077,6 +1078,7 @@ def _supplemental_provider_models_and_endpoints(
     endpoints: dict[str, ModelEndpoint] = {}
     for provider_slug in (
         "abliterate",
+        "abliteration",
         "decisionmodelsio",
         "decisionmodelsio-eu",
         "novita",

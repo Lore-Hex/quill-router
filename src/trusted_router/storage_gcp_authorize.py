@@ -712,7 +712,6 @@ def authorize_atomic(
             idempotency_scope=idempotency_scope,
             idempotency_fingerprint=idempotency_fingerprint,
             expires_at=expires_at,
-            created_at=created_at,
         )
         if request_record_write_mode == "typed":
             assert authorization is not None

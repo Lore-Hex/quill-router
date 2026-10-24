@@ -154,6 +154,33 @@ if [ -n "$ROUTING_SNAPSHOT_KEY_VERSION" ]; then
   ROUTING_SNAPSHOT_KEY_FILE="$ROUTING_SNAPSHOT_KEY_PATH"
 fi
 
+# E2 edge policy publication (docs/design/fast-admission-e2-decide.md section
+# 4, stage I1): the live facts the edge gates on, signed with the routing
+# snapshot key above under its own typ. A literal, never read from the caller
+# or a previous revision. On, GET /internal/fastpath/edge-policy answers the
+# edge's token on the combined surface; a poll signs at most once per 15 s per
+# instance, and an instance nobody polls signs nothing. The way back is false
+# and a deploy: the route is gone (404), the edge keeps its last copy until
+# that copy's not_after (60 s), then passes every request to Python.
+EDGE_POLICY_PUBLISH_ENABLED=true
+case "$EDGE_POLICY_PUBLISH_ENABLED" in
+  false) ;;
+  true)
+    # The publisher's signer (load_signer) needs the mounted file, the kid
+    # and the pinned public key; without any of them the route would answer
+    # 503 signer-unavailable for as long as the revision serves.
+    if [ -z "$ROUTING_SNAPSHOT_KEY_FILE" ] || [ -z "$ROUTING_SNAPSHOT_KID" ] ||
+       [[ ! "$ROUTING_SNAPSHOT_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+      echo "refusing rollout: edge policy publishing signs with the routing snapshot key, which is not mounted with its kid and public key" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "refusing rollout: edge policy publishing must be true or false" >&2
+    exit 1
+    ;;
+esac
+
 # Read the metadata inventory once. Probing every optional name with
 # `secrets describe` records an ERROR audit event for each expected missing
 # secret, which obscures real Secret Manager failures and inflates logging
@@ -690,11 +717,11 @@ ENV_VARS=(
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  # October 22: the bounded canary failed its remote-deadline health gate.
-  # Clear all three opt-ins so neither v1 nor v2 observation can restart from
-  # inherited environment. Preserve evidence; do not certify this window.
-  # Re-enable only after the canary gates in the incident report are met.
-  # docs/incidents/2026-10-20-shadow-session-leak.md
+  # October 24: canary 3 hit its API-failure stop gate. Opt out of both shadow
+  # versions together; clearing only policy would re-enable v1 for the cohort.
+  # Retain the bucket and evidence. Re-enable only with a reviewed contention
+  # repair and another bounded canary. Money/protection/fast drain stay off.
+  # See docs/incidents/2026-10-24-shadow-canary-api-failures.md.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
   "TR_ASYNC_SETTLE_SHADOW_POLICY="
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
@@ -725,6 +752,8 @@ ENV_VARS=(
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"
   "TR_ROUTING_SNAPSHOT_KID=${ROUTING_SNAPSHOT_KID}"
   "TR_ROUTING_SNAPSHOT_PUBLIC_KEY=${ROUTING_SNAPSHOT_PUBLIC_KEY}"
+  # E2 edge policy publication: the literal of the block above.
+  "TR_EDGE_POLICY_PUBLISH_ENABLED=${EDGE_POLICY_PUBLISH_ENABLED}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

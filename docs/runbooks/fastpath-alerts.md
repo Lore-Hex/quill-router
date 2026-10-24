@@ -45,8 +45,9 @@ path (`docs/design/fast-admission-pilot.md`).
 
 ## The kinds
 
-The kinds are `fastpath/internal/auditor/alerts.go`'s; a kind a policy or
-this page names does not change.
+The kinds are `fastpath/internal/auditor/alerts.go`'s and the edge's (the
+`Alert` constants of `fastpath/internal/edge`); a kind a policy or this
+page names does not change.
 
 | Kind | What happened | What to do |
 |---|---|---|
@@ -64,7 +65,21 @@ this page names does not change.
 | `drain_overdue` | A lease is still draining past its holds' longest life and the grace. | Find why with `status`. A fleet must not stop while it drains (`fastpath-turn-off.md`). |
 | `pending_work_overdue` | A pack's pending work was not done in time. | The pending worker does not log why a pack waits: its sweep drops the error. The alerts above, on the same subject or lease, name the causes it knows. `status` shows the workspace's pending packs and staged records; a winner whose full record is not staged waits for it. |
 | `edge_would_admit_python_refused` | The edge's decide shadow (`-edge-decide-shadow`) would have answered an authorize Python refused (a 4xx or its pause 503); the subject names the routing snapshot and edge policy digests, the message the class (`would_admit_python_refused.<status>.<type>`). Nothing was answered: the shadow only observes. | Before I2 this blocks turning decide on. A refusal for a key or workspace changed within the facts' 15 s age is the expected revocation lag (decision 17); otherwise find which gate Go missed (`docs/design/fast-admission-e2-decide.md` §3, §11) and, if any workspace decides already, `fastpathctl decide off` it. |
+| `edge_decide_unavailable` | In the last period (a minute) the edge's decide path (`-edge-decide`) answered an authorize with decision 1's 503: its insert's outcome not known, its hold kept. The message counts them by the insert's gRPC code. | Read the codes. `failed_precondition` is the node's clock ahead of Spanner's ("Cannot write timestamps in the future", `docs/design/fast-admission-e2-decide.md` §8.4): every decided request answers 503 and keeps its hold, so `fastpathctl decide off` the workspaces the node decides for and fix the node's clock. `deadline_exceeded` is the insert's 1.5 s deadline reached, and is how Spanner's `Unavailable`, `Aborted` and `ResourceExhausted` surface too, since the client retries them to the deadline; it, or `internal`, from several nodes at once is Spanner itself: check its health. One answer of another code is a commit whose answer was lost; the enclave's retry finds its row through Python's replay. |
+| `edge_decide_unavailable_sustained` | Unavailable answers in three periods with no 200 between them (a period that answered nothing neither adds to the run nor ends it, so a fault under sparse traffic is seen): a cause that persists, not one lost commit. | `fastpathctl decide off` the workspaces deciding (or `decide-off-all`, `fastpath-turn-off.md`) at once, then find the cause by code as for `edge_decide_unavailable`. Their requests pass to Python while it lasts. |
+| `edge_decide_pass_slow` | A request the decide path passed spent over 1 s at the edge before it was forwarded (`at_edge`), or Python's answer to it, or the edge's failure to reach Python, came over 25 s after it arrived (`in_all`); decision 12's budgets. | `at_edge`: the owner's admit or the insert ran to its budget; the decide line's `passed` counts of the same minute (`budget.spent`, `insert.failed`, `owner.*`) say which. `in_all`: the enclave had already given up the attempt; with `at_edge` beside it, `fastpathctl decide off` until the edge's time is found; alone, Python was slow. The shadow alone gives no baseline for this kind: only the decide path (`-edge-decide`) counts passes, so it first fires at I2. |
 | `other` | An alert whose message is none of the auditor's or the edge's. | Read the entry's message. |
+
+## The edge's counts
+
+The edge logs its decide path's counts each minute, and its decide shadow's,
+as INFO lines of the same journal (`fastpath edge decide: ...` and
+`fastpath edge decide shadow: ...`), each a count of that minute alone. The
+decide path's line counts its answers, its `unavailable` answers by the
+insert's gRPC code (`unavailable_by_code`), its passes by reason and its
+slow passes; the alerts above are raised from the same minute's counts.
+`fastpathwatch edge` sums a span's lines (`fastpath-watch.md`), for the I2
+gates or for an incident's minutes.
 
 ## Subscription lag
 
