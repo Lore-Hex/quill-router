@@ -77,7 +77,9 @@
         "completion_timeout_seconds": 600,
         "stream_idle_timeout_seconds": 120
       },
-      "missing_since": "2026-09-17"
+      "missing_since": "2026-09-17",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ],
   "pricing_source": "https://openrouter.ai/api/v1/models"

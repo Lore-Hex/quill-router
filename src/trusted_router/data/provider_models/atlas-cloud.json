@@ -1704,7 +1704,10 @@
       "max_output_tokens": 32768,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 1600000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "missing_since": "2026-10-24",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 4.1 nano",
