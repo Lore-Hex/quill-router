@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import gmi, novita, together, venice
+from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.catalog_data import _PROVIDER_UNSERVED_CREDITS_MODELS
 from trusted_router.request_capabilities import endpoint_capabilities
@@ -57,6 +59,10 @@ def test_venice_flash_refresh_and_legacy_requests_share_one_model(client: TestCl
 def test_together_flash_refresh_checks_missing_serverless_feed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, probe_status: int,
 ) -> None:
+    # Probe mechanics, not lifecycle: Together retires MiniMax M3 on 2026-11-06.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: datetime(2026, 11, 5, tzinfo=UTC),
+    )
     calls: list[str] = []
 
     def handle(request: httpx.Request) -> httpx.Response:

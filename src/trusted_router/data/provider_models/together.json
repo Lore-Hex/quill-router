@@ -195,6 +195,8 @@
       "status": 1,
       "id": "minimax/minimax-m3",
       "upstream_id": "MiniMaxAI/MiniMax-M3",
+      "retirement_at": "2026-11-06T00:00:00Z",
+      "replacement_model_id": "minimax/minimax-m3.1-flash",
       "features": [
         "serverless"
       ],
@@ -450,6 +452,8 @@
       "status": 1,
       "id": "thinkingmachines/inkling",
       "upstream_id": "thinkingmachines/Inkling",
+      "retirement_at": "2026-11-06T00:00:00Z",
+      "replacement_model_id": "meta-models/muse-spark-open",
       "features": [
         "serverless"
       ],
@@ -474,6 +478,8 @@
       "status": 1,
       "id": "thinkingmachines/inkling-1m",
       "upstream_id": "thinkingmachines/Inkling",
+      "retirement_at": "2026-11-06T00:00:00Z",
+      "replacement_model_id": "meta-models/muse-spark-open",
       "features": [
         "serverless"
       ],
