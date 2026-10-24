@@ -245,9 +245,14 @@ admission unaffected. The shadow is turned on only once the policy has been
 held through a measured soak: Cloud Run's instances each sign and cache
 their own copy and polls are balanced across them, so a cold instance
 answers 503 `compiling`, which the edge rides out on the copy it holds.
-Turning it on, or off again, is a metadata change each node takes as a pin
-is taken (below): mark it leaving, wait for its leases and the balancer,
-reset it, restart it, and read the running arguments from the process.
+Turning it on, or off again, is a metadata change each node takes only when
+its startup script writes the unit again, one node at a time, the other
+serving: mark it leaving, wait for its leases and the balancer (below),
+stop the unit (`sudo systemctl stop fastpath`), run the script again
+(`sudo google_metadata_script_runner startup`, which writes the unit from
+the current metadata and starts it), and read the running arguments from
+the process. A reset is not enough: at boot systemd starts the unit from
+disk with its old arguments, and the script leaves a running unit alone.
 
 ## Taking a pinned release
 
