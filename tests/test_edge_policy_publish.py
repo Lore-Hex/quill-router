@@ -545,9 +545,13 @@ def test_a_hanging_refresh_never_delays_a_poll_and_runs_once(key) -> None:
     import threading
     import time
 
+    # A poll that waited on the worker takes HANG seconds and sees the policy
+    # the worker then compiles; one that did not takes milliseconds, a few
+    # seconds on a loaded runner. The bound sits between.
+    HANG = 60.0
     entered, release = threading.Event(), threading.Event()
     resolver = Resolver(frozenset({DIGEST_A}))
-    resolver.on_refresh = lambda: (entered.set(), release.wait(60))
+    resolver.on_refresh = lambda: (entered.set(), release.wait(HANG))
     settings = _settings(key)
     clock = Clock(T0)
     publisher = _publisher(settings, clock, resolver, background=True)
@@ -556,7 +560,7 @@ def test_a_hanging_refresh_never_delays_a_poll_and_runs_once(key) -> None:
         # No copy yet: 503 compiling at once, while the worker hangs.
         started = time.monotonic()
         response = _get(client)
-        assert time.monotonic() - started < 2.0
+        assert time.monotonic() - started < HANG / 2
         assert response.status_code == 503 and response.json()["status"] == "compiling"
         assert response.headers["retry-after"] == str(publisher_module.COMPILING_RETRY_SECONDS)
         assert entered.wait(30)
@@ -578,7 +582,7 @@ def test_a_hanging_refresh_never_delays_a_poll_and_runs_once(key) -> None:
             thread.start()
         for thread in threads:
             thread.join(10)
-        assert answers == [503] * 16 and max(durations) < 1.0
+        assert answers == [503] * 16 and max(durations) < HANG / 2
         assert resolver.refreshes == 1 and publisher.attempts == 1
     finally:
         release.set()
@@ -593,7 +597,7 @@ def test_a_hanging_refresh_never_delays_a_poll_and_runs_once(key) -> None:
         for _ in range(8):
             started = time.monotonic()
             assert publisher.current() is first
-            assert time.monotonic() - started < 1.0
+            assert time.monotonic() - started < HANG / 2
         assert entered.wait(30)
         assert resolver.refreshes == 2 and publisher.attempts == 2
     finally:
