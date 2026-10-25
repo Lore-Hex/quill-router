@@ -635,7 +635,12 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     ]
     assert "id: coverage_audit" in coverage
     assert "continue-on-error: true" in coverage
-    assert "--strict-model-discovery" in coverage
+    # A required-model gap is provider-scoped: annotated and tracked, never a
+    # global publication block that ages every other manifest to fail-closed.
+    assert "--strict-model-discovery" not in workflow
+    assert "--annotate-model-discovery-gaps" in coverage
+    assert "'^::error title=Model discovery coverage gap::'" in coverage
+    assert "gap_attention=true" in coverage
     assert "tee /tmp/coverage-summary.txt" in coverage
     alert = workflow[workflow.index(final_alert) :]
     assert "COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}" in alert

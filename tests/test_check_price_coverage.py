@@ -1322,10 +1322,16 @@ def test_provider_glm_discovery_keeps_legacy_variants_visibility_only(
     assert not any("current model API" in warning for warning in warnings)
 
 
-def test_strict_model_discovery_fails_glm_provider_warnings(
+GAP_ANNOTATION = "::error title=Model discovery coverage gap::"
+
+
+def test_required_discovery_gap_is_annotated_without_blocking_publication(
     monkeypatch,
     capsys,
 ) -> None:
+    # 2026-10-24/25: kimi, fireworks and parasail gaps blocked every provider
+    # for six runs in a row. A gap is one provider's missing route; the
+    # others must still publish.
     def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
         warning = (
             "deepinfra: live GLM current model API lists unpublished model(s) "
@@ -1335,13 +1341,20 @@ def test_strict_model_discovery_fails_glm_provider_warnings(
 
     monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
 
-    rc = check_price_coverage.main(["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"])
+    rc = check_price_coverage.main(
+        ["--annotate-model-discovery-gaps", "--now", "2026-06-14T00:00:00Z"]
+    )
 
-    assert rc == 1
-    assert "z-ai/glm-5.3" in capsys.readouterr().out
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Provider-scoped discovery gaps (unrelated providers still publish):" in out
+    assert (
+        f"{GAP_ANNOTATION}deepinfra: live GLM current model API lists unpublished "
+        "model(s) z-ai/glm-5.3 — add/update provider_models/deepinfra.json"
+    ) in out.splitlines()
 
 
-def test_strict_model_discovery_fails_only_discovery_warnings(
+def test_gap_annotation_covers_only_required_discovery_warnings(
     monkeypatch,
     capsys,
 ) -> None:
@@ -1357,28 +1370,39 @@ def test_strict_model_discovery_fails_only_discovery_warnings(
 
     monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
 
-    rc = check_price_coverage.main(["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"])
+    rc = check_price_coverage.main(
+        ["--annotate-model-discovery-gaps", "--now", "2026-06-14T00:00:00Z"]
+    )
 
-    assert rc == 1
-    assert "z-ai/glm-5.3" in capsys.readouterr().out
+    assert rc == 0
+    annotations = [
+        line for line in capsys.readouterr().out.splitlines() if line.startswith(GAP_ANNOTATION)
+    ]
+    assert annotations == [
+        f"{GAP_ANNOTATION}zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3"
+    ]
 
 
-def test_strict_model_discovery_allows_visibility_only_price_warnings(
+def test_gap_annotation_skips_visibility_only_price_warnings(
     monkeypatch,
+    capsys,
 ) -> None:
     def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
         return (["cohere: NO price source"], ["openai: live scraper ✓"], [])
 
     monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
 
-    assert (
-        check_price_coverage.main(["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"])
-        == 0
+    rc = check_price_coverage.main(
+        ["--annotate-model-discovery-gaps", "--now", "2026-06-14T00:00:00Z"]
     )
 
+    assert rc == 0
+    assert GAP_ANNOTATION not in capsys.readouterr().out
 
-def test_strict_model_discovery_does_not_fail_provider_api_visibility_warning(
+
+def test_gap_annotation_skips_provider_api_visibility_warning(
     monkeypatch,
+    capsys,
 ) -> None:
     def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
         return (
@@ -1390,10 +1414,20 @@ def test_strict_model_discovery_does_not_fail_provider_api_visibility_warning(
     monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
 
     rc = check_price_coverage.main(
-        ["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"]
+        ["--annotate-model-discovery-gaps", "--now", "2026-06-14T00:00:00Z"]
     )
 
     assert rc == 0
+    assert GAP_ANNOTATION not in capsys.readouterr().out
+
+
+def test_strict_still_fails_on_every_warning(monkeypatch) -> None:
+    def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
+        return (["cohere: NO price source"], [], [])
+
+    monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
+
+    assert check_price_coverage.main(["--strict", "--now", "2026-06-14T00:00:00Z"]) == 1
 
 
 def test_manifest_state_buckets_rows_by_routability(

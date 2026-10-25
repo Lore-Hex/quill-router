@@ -11,8 +11,11 @@ actually re-reads each run. This reports the gaps:
     --max-age-days (stale → may serve wrong prices).
 
 Run in refresh-prices.yml as a report-producing gate. Stale authenticated
-fallback manifests and required model-discovery gaps block publication while
-the last known-good catalog remains live. Pass --strict to fail on every gap.
+fallback manifests quarantine their own provider's routes. A required
+model-discovery gap is provider-scoped too: with
+--annotate-model-discovery-gaps it is printed as an ::error annotation and
+tracked in a GitHub issue, while every provider (including the one with the
+gap) still publishes its refreshed prices. Pass --strict to fail on every gap.
 """
 
 from __future__ import annotations
@@ -1334,9 +1337,12 @@ def main(argv: list[str] | None = None) -> int:
         help="skip network checks for provider docs that announce new models before pricing pages",
     )
     parser.add_argument(
-        "--strict-model-discovery",
+        "--annotate-model-discovery-gaps",
         action="store_true",
-        help="exit 1 when provider docs mention unpublished models or model discovery fails",
+        help=(
+            "print each required-model discovery gap as a provider-scoped ::error "
+            "annotation; exit 0 so unrelated providers still publish"
+        ),
     )
     parser.add_argument("--now", default=None, help="ISO timestamp override (testing)")
     args = parser.parse_args(argv)
@@ -1368,9 +1374,16 @@ def main(argv: list[str] | None = None) -> int:
         print("Covered:")
         for i in info:
             print(f"  - {i}")
+    if args.annotate_model_discovery_gaps and hard_fail_warnings:
+        # A gap is one provider's missing route. Blocking the whole catalog
+        # would not publish that route either; it only lets every other
+        # provider's manifest age toward its 14-day fail-closed deadline.
+        print("")
+        print("Provider-scoped discovery gaps (unrelated providers still publish):")
+        for w in hard_fail_warnings:
+            print(f"  - {w}")
+            print(f"::error title=Model discovery coverage gap::{w}")
     if args.strict and warnings:
-        return 1
-    if args.strict_model_discovery and hard_fail_warnings:
         return 1
     return 0
 
