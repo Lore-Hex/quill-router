@@ -36,8 +36,7 @@
         "logprobs",
         "top_logprobs"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 600000
     },
@@ -360,10 +359,88 @@
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 650000,
       "missing_since": "2026-10-20"
+    },
+    {
+      "display_name": "gemma3:12b-it",
+      "title": "gemma3:12b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-3-12b-it",
+      "upstream_id": "gemma3:12b-it",
+      "context_length": 131072,
+      "supported_features": [
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logprobs",
+        "top_logprobs"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 75000,
+      "output_token_price_per_m": 150000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "gemma3:27b",
+      "title": "gemma3:27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-3-27b-it",
+      "upstream_id": "gemma3:27b",
+      "context_length": 131072,
+      "supported_features": [
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logprobs",
+        "top_logprobs"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 350000,
+      "cached_input_token_price_per_m": 40000
     }
   ],
   "source": "https://api.nextbit256.com/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-25T14:36:27Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 9
+  "model_count": 11
 }
