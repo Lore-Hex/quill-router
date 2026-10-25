@@ -80,8 +80,15 @@ def modules(ref=None):
     with tempfile.TemporaryDirectory() as directory:
         for name, source in MODULE_SOURCES:
             path = "src/trusted_router/" + source
-            raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT)  # noqa: S603, S607 - local git revision, no shell
-                   if ref else (ROOT/path).read_bytes())
+            try:
+                raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT,  # noqa: S603, S607 - local git revision, no shell
+                                              stderr=subprocess.PIPE)
+                       if ref else (ROOT/path).read_bytes())
+            except (OSError, subprocess.CalledProcessError):
+                if ref is None:
+                    raise
+                pytest.skip(f"simulation revision {ref!r} unavailable: missing local source {path} "
+                            "(shallow checkout or absent Git metadata); worktree cases run independently")
             dest = Path(directory)/f"{name}.py"
             dest.write_bytes(raw)
             key = "shadow_sim_" + name

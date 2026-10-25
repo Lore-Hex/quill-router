@@ -1521,6 +1521,12 @@ class Service:
     def allocation_jitter(self, seconds: float) -> float:
         # A distinct boot UUID spreads a simultaneous fleet restart. Include
         # the day and attempt so retries and midnight do not repeat one phase.
+        # Eager first attempts still burst. In the simultaneous 26/40-process
+        # lock witness, a 60 s ceiling gave 170/255 s last-grant tails; 40 s
+        # gives 165/230 s with 89/183 aborts (baseline: 350/819). These tails
+        # remain longer than baseline lock-step retries (130/200 s). Jitter
+        # reduces contention; it neither bounds fleet writes/s nor avoids all
+        # retry collisions after five-second maintenance quantization.
         seed = f"{self.journal.boot}/{self.allocation_day}/{self.allocation_failures}"
         return seconds*int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big")/2**64
 
@@ -1561,7 +1567,7 @@ class Service:
                     if isinstance(error, ContentionLoss):
                         self.allocation_failures += 1
                         self.next_allocate = self.store.clock()+5+self.allocation_jitter(
-                            min(60., 5.*2**min(4, self.allocation_failures)))
+                            min(40., 5.*2**min(4, self.allocation_failures)))
                     target = self.counters[day]["diagnostics"]
                     self._counter_cells(day, target, {"cap_unavailable": target.get("cap_unavailable", 0)+1})
         yield from self._flush(deadline)
