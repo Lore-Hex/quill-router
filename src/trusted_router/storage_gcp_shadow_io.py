@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import Cancelled, DeadlineExceeded, NotFound
 
 
 def elapsed_clock() -> float:
@@ -252,6 +252,13 @@ def configure(database: Any) -> None:
             record = _RECORDER.get()
             started = scope.clock()
             streaming = False
+            def failed(error: Exception) -> None:
+                # Notify before replacing the exception or retiring its session.
+                # This hook is confined to the v2-owned client, never money IO.
+                callback = getattr(database, "_shadow_v2_failure", None)
+                if callback is not None and _name in ("commit", "execute_streaming_sql"):
+                    if isinstance(error, (DeadlineExceeded, Cancelled)):
+                        callback(_name, type(error).__name__)
             def measured() -> None:
                 if record is not None:
                     record(max(0, round((scope.clock()-started)*1_000_000)))
@@ -265,6 +272,7 @@ def configure(database: Any) -> None:
                                 scope.remaining()
                                 yield response
                         except Exception as error:
+                            failed(error)
                             manager = getattr(database, "_sessions_manager", None)
                             if isinstance(manager, Sessions):
                                 manager.retire()
@@ -279,6 +287,7 @@ def configure(database: Any) -> None:
                     scope.remaining()
                 return result
             except Exception as error:
+                failed(error)
                 # Deletion is idempotent, but NotFound from a query is not:
                 # the missing resource might be a table rather than a session.
                 if _name == "delete_session" and isinstance(error, NotFound):

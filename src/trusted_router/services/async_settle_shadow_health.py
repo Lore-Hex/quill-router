@@ -39,6 +39,7 @@ from trusted_router.async_settle_shadow_journal import (
     Reservation,
     Row,
 )
+from trusted_router.async_settle_shadow_stop import RuntimeStop
 from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_result
 from trusted_router.async_settle_shadow_v2_a1_health import (
     PUBLISHER_OPERATIONS,
@@ -757,6 +758,24 @@ class Service:
         self.close_finished = False
         self.close_done = asyncio.Event()
         self.ensure_day(int(store.wall()*1_000_000))
+        self.runtime_stop = RuntimeStop(store, self.journal.boot, self.latch_stop)
+        self.breaker_recorded = False
+
+    def latch_stop(self) -> None:
+        # Worker-safe terminal latches: block requests and publisher starts now.
+        # The owner publishes the generation change through the expiry path.
+        self.settings.stop_async_settle_shadow()
+        self.revocation_epoch = 1
+
+    def record_breaker(self) -> None:
+        row = self.runtime_stop.tripped
+        if row is not None and not self.breaker_recorded:
+            day = self.ensure_day(row.value()["stopped_at_us"])
+            if day in self.counters:
+                target = self.counters[day]["diagnostics"]
+                self._counter_cells(day, target, {"runtime_breaker_trips": 1,
+                    "runtime_breaker_api_failures": row.value()["failure_count"]})
+                self.breaker_recorded = True
 
     def pin(self) -> tuple[Any, ...]:
         # The effective policy includes the canary expiry: when it passes, the
@@ -823,6 +842,7 @@ class Service:
 
     def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
+        self.record_breaker()
         self.enabled()  # Publish any changed admission generation before dispatch.
         effects: tuple[lifecycle.Effect, ...] = ()
         job = self.state.job
@@ -1247,6 +1267,7 @@ class Service:
                 value, error = operation(), None
             except Exception as caught:
                 value, error = None, caught
+            self.record_breaker()  # Include a trip from drain IO before resuming closure.
 
     async def drive_async(self, work: Generator[Callable[[], Any], Any, None]) -> None:
         self.assert_owner()
@@ -1267,6 +1288,7 @@ class Service:
                 loop.call_soon_threadsafe(deliver, result.value, result.error)
             self.evidence_executor.submit(execute)
             value, error = await reply
+            self.record_breaker()
 
     def flush(self, deadline: float) -> None:
         self.drive(self._flush(min(deadline, self.termination_deadline or deadline)))
@@ -1596,6 +1618,10 @@ class Service:
     async def run(self) -> None:
         self.assert_owner()
         self.loop = asyncio.get_running_loop()
+        if self.policy_enabled():
+            await asyncio.to_thread(self.runtime_stop.poll)
+        self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                lambda: not self.close_finished)
         while not self.stopped.is_set() and self.enabled():
             if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
@@ -1608,6 +1634,7 @@ class Service:
                 self.next_flush = now+5
                 self.flush_job = self.loop.create_task(self.drive_async(self.maintenance()))
             await asyncio.sleep(.01)
+        self.record_breaker()
         if not self.stopped.is_set():
             await self.close("opt_out", from_loop=True)
 
@@ -1643,6 +1670,8 @@ class Service:
         signal.signal(signal.SIGTERM, stop)
 
     def start(self) -> None:
+        if self.enabled() and not self.runtime_stop.poll():
+            return
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
@@ -1727,6 +1756,8 @@ class Service:
             self.session_executor.shutdown(wait=False, cancel_futures=True)
             self.publisher_executor.shutdown(wait=False, cancel_futures=True)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
+            if reason != "opt_out" or self.runtime_stop.tripped is None or self.runtime_stop.persisted:
+                await self.runtime_stop.close()
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
@@ -1736,6 +1767,11 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     store = ObservationStore(backend._database)
     service = Service(settings, store)
     store.prepare_session(service.journal.boot)
+    if not service.runtime_stop.poll():
+        service.session_executor.shutdown(wait=False, cancel_futures=True)
+        service.publisher_executor.shutdown(wait=False, cancel_futures=True)
+        service.evidence_executor.shutdown(wait=False, cancel_futures=True)
+        return
     app.state.async_settle_shadow_observation = service
     @app.on_event("startup")
     async def start() -> None:
@@ -1743,3 +1779,4 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     @app.on_event("shutdown")
     async def stop() -> None:
         await service.close()
+        await service.runtime_stop.close()

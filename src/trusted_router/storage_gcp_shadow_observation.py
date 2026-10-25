@@ -443,8 +443,35 @@ class ObservationStore:
             proofs.add(proof)
         return True
 
+    def runtime_stop(self, row: Row | None, budget: Budget) -> Row | None:
+        """Reviewed stop/clear path: one key, one transaction, first stop wins.
+
+        A lost commit acknowledgement is safe to retry. Clear deletes only this
+        latch; ordinary immutable controls and retention remain unchanged.
+        """
+        from google.cloud.spanner_v1 import KeySet
+
+        if row is not None:
+            require(row.kind == CONTROL_KIND and row.key == "stop-v2", "stop_identity")
+            row.value()
+        budget = budget.child(WRITE_SECONDS)
+        def run(tx: Any) -> Row | None:
+            old = self.point(tx, entity_point_statement(CONTROL_KIND, "stop-v2"), budget, READ_SECONDS)
+            if row is None:
+                if old is not None:
+                    tx.delete("tr_entities", KeySet(keys=[(CONTROL_KIND, "stop-v2")]))
+                return None
+            if old is not None:
+                return old
+            self.write(tx, [row], budget)
+            return row
+        return self.transaction(run, budget, WRITE_SECONDS)
+
+    def read_runtime_stop(self) -> Row | None:
+        return self.read(CONTROL_KIND, "stop-v2", Budget(self.clock()+READ_SECONDS, self.clock))
+
     def control(self, row: Row, budget: Budget) -> None:
-        require(row.kind == CONTROL_KIND, "control_kind")
+        require(row.kind == CONTROL_KIND and row.key != "stop-v2", "control_kind")
         budget = budget.child(WRITE_SECONDS)
         def run(tx: Any) -> None:
             self.retention(tx, [row], budget)
