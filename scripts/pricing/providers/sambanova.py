@@ -24,7 +24,7 @@ CATALOG = DirectOpenAIProvider(
         base_url=BASE_URL,
         api_key_env="SAMBANOVA_API_KEY",
         explicit_model_map=EXPLICIT_MODEL_MAP,
-        expected_models=("minimax/minimax-m3", "openai/gpt-oss-120b"),
+        expected_models=("meta-llama/llama-3.3-70b-instruct", "openai/gpt-oss-120b"),
         canary_require_usage=True,
         canary_require_message=True,
     ),
