@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-10-25T14:36:27Z",
+  "generated_at": "2026-10-25T17:52:07Z",
   "model_count": 12,
   "models": [
     {
@@ -147,7 +147,9 @@
         "structured-outputs",
         "reasoning"
       ],
-      "missing_since": "2026-10-25"
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-v3.2",
@@ -181,7 +183,9 @@
         "structured-outputs",
         "reasoning"
       ],
-      "missing_since": "2026-10-25"
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.1",
