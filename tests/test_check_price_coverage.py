@@ -1354,18 +1354,23 @@ def test_required_discovery_gap_is_annotated_without_blocking_publication(
     ) in out.splitlines()
 
 
+KIMI_GAP = (
+    "kimi: live model API lists required unpublished model(s) kimi-k3.1-pro — refresh "
+    "provider_models/kimi.json or add a provider-direct price source"
+)
+STALE_MANIFEST = "nvidia-nim: live scraper fallback manifest is 20d stale (> 14d) — prices may be wrong"
+VIDEO_CONTRACT = "runway: official fixed-cost video price differs from production"
+
+
 def test_gap_annotation_covers_only_required_discovery_warnings(
     monkeypatch,
     capsys,
 ) -> None:
     def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
         return (
-            [
-                "cohere: NO price source",
-                "zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3",
-            ],
+            ["cohere: NO price source", KIMI_GAP],
             ["openai: live scraper ✓"],
-            ["zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3"],
+            [KIMI_GAP],
         )
 
     monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
@@ -1378,9 +1383,43 @@ def test_gap_annotation_covers_only_required_discovery_warnings(
     annotations = [
         line for line in capsys.readouterr().out.splitlines() if line.startswith(GAP_ANNOTATION)
     ]
-    assert annotations == [
-        f"{GAP_ANNOTATION}zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3"
-    ]
+    assert annotations == [f"{GAP_ANNOTATION}{KIMI_GAP}"]
+
+
+@pytest.mark.parametrize("blocker", [STALE_MANIFEST, VIDEO_CONTRACT])
+def test_non_discovery_hard_failures_still_block_under_the_annotate_flag(
+    monkeypatch, capsys, blocker: str,
+) -> None:
+    # Only a provider's missing route is demoted to an annotation. A stale
+    # no-scraper manifest or an official video price contract mismatch means
+    # the catalog itself may be wrong, so it keeps blocking publication even
+    # when a discovery gap sits next to it.
+    def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
+        return ([KIMI_GAP, blocker], ["openai: live scraper ✓"], [KIMI_GAP, blocker])
+
+    monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
+
+    rc = check_price_coverage.main(
+        ["--annotate-model-discovery-gaps", "--now", "2026-06-14T00:00:00Z"]
+    )
+
+    assert rc == 1
+    lines = capsys.readouterr().out.splitlines()
+    annotations = [line for line in lines if line.startswith(GAP_ANNOTATION)]
+    assert annotations == [f"{GAP_ANNOTATION}{KIMI_GAP}"]
+    assert f"  - {blocker}" in lines[lines.index("Publication blocked (not a provider-scoped discovery gap):"):]
+
+
+def test_discovery_gap_markers_match_the_audit_collector() -> None:
+    assert check_price_coverage._DISCOVERY_GAP_MARKERS == (  # noqa: SLF001
+        "required unpublished model",
+        "newly discovered required model",
+        "live GLM current model API lists unpublished",
+    )
+    for blocker in (STALE_MANIFEST, VIDEO_CONTRACT, "fallback manifest expiry policy mismatch: x",
+                    "cohere: NO price source (scraper missing) — catalog prices cannot refresh safely",
+                    "zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3"):
+        assert not check_price_coverage._is_discovery_gap(blocker)  # noqa: SLF001
 
 
 def test_gap_annotation_skips_visibility_only_price_warnings(

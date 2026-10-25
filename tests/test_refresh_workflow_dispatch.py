@@ -642,6 +642,18 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     assert "'^::error title=Model discovery coverage gap::'" in coverage
     assert "gap_attention=true" in coverage
     assert "tee /tmp/coverage-summary.txt" in coverage
+
+    # Speech sources hold independently of refresh.py; both summaries feed
+    # the held-price issue.
+    refresh_step = workflow[
+        workflow.index("- name: Refresh provider-direct prices (with self-heal)") :
+        workflow.index("- name: Sanity-check for price spikes + record deltas")
+    ]
+    assert "python -m scripts.pricing.speech | tee /tmp/speech-summary.txt" in refresh_step
+    held_issue = workflow[workflow.index("- name: Reconcile held-price issue") :]
+    assert "for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt; do" in held_issue
+    assert 'for summary in ${summaries}; do' in held_issue
+    assert "sed -n '/^Held for price review/,/^$/p' \"${summary}\"" in held_issue
     alert = workflow[workflow.index(final_alert) :]
     assert "COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}" in alert
     assert 'title="[bot] Model discovery coverage gaps"' in alert

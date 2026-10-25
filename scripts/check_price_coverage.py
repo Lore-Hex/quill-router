@@ -923,6 +923,21 @@ def _safe_fetch_error(url: str, exc: Exception) -> str:
     return f"{type(exc).__name__}{status_text} host={host}"
 
 
+# A required model that a provider's live API lists without a published price.
+# These are the only hard failures that are one provider's missing route;
+# every other hard failure (stale or missing fallback manifests, expiry-policy
+# or official video price contract mismatches) still blocks publication.
+_DISCOVERY_GAP_MARKERS = (
+    "required unpublished model",
+    "newly discovered required model",
+    "live GLM current model API lists unpublished",
+)
+
+
+def _is_discovery_gap(warning: str) -> bool:
+    return any(marker in warning for marker in _DISCOVERY_GAP_MARKERS)
+
+
 def _model_discovery_audit(
     *,
     fetch_text: Callable[[str], str],
@@ -1299,13 +1314,7 @@ def _run_audit(
             published_model_ids=set(MODELS),
         )
         warnings.extend(discovery_warnings)
-        hard_fail_warnings.extend(
-            warning
-            for warning in discovery_warnings
-            if "required unpublished model" in warning
-            or "newly discovered required model" in warning
-            or "live GLM current model API lists unpublished" in warning
-        )
+        hard_fail_warnings.extend(filter(_is_discovery_gap, discovery_warnings))
         info.extend(discovery_info)
 
     return warnings, info, hard_fail_warnings
@@ -1341,7 +1350,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "print each required-model discovery gap as a provider-scoped ::error "
-            "annotation; exit 0 so unrelated providers still publish"
+            "annotation and exit 0 so unrelated providers still publish; every "
+            "other hard failure (stale manifests, contract mismatches) still exits 1"
         ),
     )
     parser.add_argument("--now", default=None, help="ISO timestamp override (testing)")
@@ -1374,15 +1384,24 @@ def main(argv: list[str] | None = None) -> int:
         print("Covered:")
         for i in info:
             print(f"  - {i}")
-    if args.annotate_model_discovery_gaps and hard_fail_warnings:
-        # A gap is one provider's missing route. Blocking the whole catalog
-        # would not publish that route either; it only lets every other
-        # provider's manifest age toward its 14-day fail-closed deadline.
-        print("")
-        print("Provider-scoped discovery gaps (unrelated providers still publish):")
-        for w in hard_fail_warnings:
-            print(f"  - {w}")
-            print(f"::error title=Model discovery coverage gap::{w}")
+    if args.annotate_model_discovery_gaps:
+        gaps = [w for w in hard_fail_warnings if _is_discovery_gap(w)]
+        blockers = [w for w in hard_fail_warnings if not _is_discovery_gap(w)]
+        if gaps:
+            # A gap is one provider's missing route. Blocking the whole catalog
+            # would not publish that route either; it only lets every other
+            # provider's manifest age toward its 14-day fail-closed deadline.
+            print("")
+            print("Provider-scoped discovery gaps (unrelated providers still publish):")
+            for w in gaps:
+                print(f"  - {w}")
+                print(f"::error title=Model discovery coverage gap::{w}")
+        if blockers:
+            print("")
+            print("Publication blocked (not a provider-scoped discovery gap):")
+            for w in blockers:
+                print(f"  - {w}")
+            return 1
     if args.strict and warnings:
         return 1
     return 0
