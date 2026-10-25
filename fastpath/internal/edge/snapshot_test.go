@@ -48,7 +48,7 @@ type goldenBody struct {
 
 func loadGoldenBody(t *testing.T) goldenBody {
 	t.Helper()
-	raw := testdata(t, "routing_snapshot_v1.body.json")
+	raw := testdata(t, "routing_snapshot_v2.body.json")
 	var fields struct {
 		CompiledAt     int64                 `json:"compiled_at"`
 		NotAfter       int64                 `json:"not_after"`
@@ -73,7 +73,7 @@ func sign(t *testing.T, private ed25519.PrivateKey, kid string, g goldenBody, bo
 	header := fmt.Sprintf(`{"alg":"EdDSA","kid":%q,"typ":%q}`, kid, routingsnapshot.Typ)
 	payload, err := json.Marshal(routingsnapshot.Claims{Aud: SnapshotAudience, CompiledAt: g.compiledAt, Iss: SnapshotIssuer,
 		NotAfter: g.notAfter, Plane: g.plane, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body)),
-		SourceRevision: g.sourceRevision, V: 1})
+		SourceRevision: g.sourceRevision, V: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestAPublicationThatDoesNotVerifyKeepsTheLastGoodCopy(t *testing.T) {
 	var goldenManifest struct {
 		JWS string `json:"jws"`
 	}
-	if err := json.Unmarshal(testdata(t, "routing_snapshot_v1.manifest.json"), &goldenManifest); err != nil {
+	if err := json.Unmarshal(testdata(t, "routing_snapshot_v2.manifest.json"), &goldenManifest); err != nil {
 		t.Fatal(err)
 	}
 	tampered := append([]byte(nil), h.golden.raw...)

@@ -1458,7 +1458,13 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
 _polyphemus_endpoint = _endpoint(MODELS[POLYPHEMUS_MODEL_ID], usage_type="Credits")
 MODEL_ENDPOINTS[_polyphemus_endpoint.id] = _polyphemus_endpoint
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
-MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
+for _endpoint_id, _supplemental_endpoint in _SUPPLEMENTAL_ENDPOINTS.items():
+    _previous_endpoint = MODEL_ENDPOINTS.get(_endpoint_id)
+    if not _supplemental_endpoint.context_length and _previous_endpoint is not None:
+        _supplemental_endpoint = replace(
+            _supplemental_endpoint, context_length=_previous_endpoint.context_length,
+        )
+    MODEL_ENDPOINTS[_endpoint_id] = _supplemental_endpoint
 # A hosted decision model's vendor route came from `_build_endpoints`; its
 # fallback hosts (same model, different upstream id and price) are explicit.
 MODEL_ENDPOINTS.update(_decision_fallback_endpoints(_DECISION_MODELS))

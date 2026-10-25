@@ -39,7 +39,7 @@ from trusted_router.routing_snapshot import (  # noqa: E402
     RegionEntry,
     RequestedModel,
     RequestedOverrides,
-    RoutingSnapshotV1,
+    RoutingSnapshotV2,
     SnapshotSettings,
     StageDSettings,
     VariantSuffix,
@@ -52,8 +52,8 @@ from trusted_router.routing_snapshot_signing import (  # noqa: E402
     RoutingSnapshotSigner,
 )
 
-OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "routing_snapshot_v1.body.json"
-OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "routing_snapshot_v1.manifest.json"
+OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "routing_snapshot_v2.body.json"
+OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "routing_snapshot_v2.manifest.json"
 GENERATOR = "scripts/fastpath/routing_snapshot_vectors.py"
 
 COMPILED_AT = int(datetime(2026, 10, 19, tzinfo=UTC).timestamp())
@@ -120,7 +120,8 @@ def fixture_inputs() -> CatalogInputs:
         _endpoint(tencent_flash, "tencent", "Credits", 158_250, 633_000,
                   input_modalities=("text", "image")),
         # Wafer's catalog reports ZDR for GLM 5.3: wafer_zdr_required.
-        _endpoint(glm, "wafer", "Credits", 1_000_000, 3_200_000, upstream_id="GLM-5.3"),
+        _endpoint(glm, "wafer", "Credits", 1_000_000, 3_200_000, upstream_id="GLM-5.3",
+                  context_length=100_000),
         # More hosts for GLM 5.3 and V4.1 Flash, so the routing cases order
         # several candidates: by rank evidence, preference, price and filters.
         _endpoint(glm, "together", "Credits", 950_000, 3_300_000),
@@ -230,7 +231,7 @@ def fixture_settings() -> SnapshotSettings:
     )
 
 
-def snapshot() -> RoutingSnapshotV1:
+def snapshot() -> RoutingSnapshotV2:
     return compile_routing_snapshot(
         at=COMPILED_AT, horizon=HORIZON_SECONDS, settings=fixture_settings(),
         source_revision="golden-fixture", plane=Plane(cloud="gcp", region="us-central1"),

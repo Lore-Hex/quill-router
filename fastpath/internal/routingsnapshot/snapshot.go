@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-// The literals of the v1 schema (src/trusted_router/routing_snapshot.py).
+// The literals of the v2 schema (src/trusted_router/routing_snapshot.py).
 const (
-	snapshotVersion  = 1
+	snapshotVersion  = 2
 	snapshotKind     = "tr-routing-snapshot"
 	epochSeconds     = 3600
 	maxHorizon       = 24 * 3600
@@ -117,6 +117,7 @@ type Endpoint struct {
 	UpstreamModel       string           `json:"upstream_model"`
 	SupportedParameters []string         `json:"supported_parameters"`
 	InputModalities     []string         `json:"input_modalities"`
+	ContextLength       int64            `json:"context_length"`
 	Privacy             Privacy          `json:"privacy"`
 	GatewayRegions      GatewayRegions   `json:"gateway_regions"`
 	CatalogValidUntil   *int64           `json:"catalog_valid_until"`
@@ -573,6 +574,9 @@ func (s *Snapshot) validate() error {
 	s.endpointIndex = make(map[string]int, len(s.Endpoints))
 	for i := range s.Endpoints {
 		e := &s.Endpoints[i]
+		if e.ContextLength < 0 {
+			return fmt.Errorf("endpoint %q: negative context_length", e.ID)
+		}
 		if _, dup := s.endpointIndex[e.ID]; dup || s.models[e.ModelID] == nil || s.providers[e.Provider] == nil {
 			return fmt.Errorf("endpoint %q: duplicate, or unknown model or provider", e.ID)
 		}

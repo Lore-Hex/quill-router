@@ -141,7 +141,7 @@ func member(o pyjson.Object, key string) any {
 // RegionsOf) the decide pipeline composes from.
 func loadSnapshot(t *testing.T) snapshotFacts {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(testdata, "routing_snapshot_v1.body.json"))
+	raw, err := os.ReadFile(filepath.Join(testdata, "routing_snapshot_v2.body.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

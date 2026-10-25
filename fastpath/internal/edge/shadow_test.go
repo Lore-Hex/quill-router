@@ -71,7 +71,7 @@ func goldenHeld(t *testing.T) *held {
 		PublicKey string `json:"public_key_b64url"`
 		JWS       string `json:"jws"`
 	}
-	if err := json.Unmarshal(testdata(t, "routing_snapshot_v1.manifest.json"), &m); err != nil {
+	if err := json.Unmarshal(testdata(t, "routing_snapshot_v2.manifest.json"), &m); err != nil {
 		t.Fatal(err)
 	}
 	public, err := base64.RawURLEncoding.DecodeString(m.PublicKey)
@@ -173,7 +173,7 @@ func withFields(t *testing.T, request json.RawMessage, fields map[string]any) []
 // estimate, the Stage D reason, or the refusal's status, type, message and
 // param) or is passed to Python for a reason with no request value in it;
 // none differs. The counts are the evaluator's (routing-snapshot-v1.md,
-// "What Go evaluates"): 124 answered and 49 refused alike, 25 passed.
+// "What Go evaluates"): 127 answered and 50 refused alike, 25 passed.
 func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 	h := goldenHeld(t)
 	classes := map[string]int{}
@@ -192,8 +192,8 @@ func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 			t.Errorf("%s: %+v", c.Name, r)
 		}
 	}
-	if classes[ClassAgree] != 173 || classes[ClassPassed] != 25 {
-		t.Fatalf("classes %v, want 173 agree and 25 passed", classes)
+	if classes[ClassAgree] != 177 || classes[ClassPassed] != 25 {
+		t.Fatalf("classes %v, want 177 agree and 25 passed", classes)
 	}
 	// BYOK presence decides some cases (Gemini's BYOK endpoint) and not others.
 	if byok["determined"] == 0 || byok["consistent"] == 0 {
