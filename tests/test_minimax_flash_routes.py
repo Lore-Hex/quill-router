@@ -23,13 +23,32 @@ NATIVE = "MiniMaxAI/MiniMax-M3.1-Flash"
 
 def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
     routes = {e.provider: e for e in endpoints_for_model(MODEL) if e.usage_type == "Credits"}
-    assert set(routes) == {"gmi", "minimax", "novita", "parasail", "together", "venice"}
+    # The 2026-10-25 refresh added six prepaid hosts that price and canary
+    # the launch model; each keeps its own native id.
     assert {p: e.upstream_id for p, e in routes.items()} == {
-        "gmi": NATIVE, "minimax": "MiniMax-M3.1-Flash", "novita": MODEL,
-        "parasail": NATIVE, "together": NATIVE, "venice": "minimax-m3-1-flash",
+        "boundless": MODEL,  # Boundless lists the canonical id at the launch price
+        "featherless": NATIVE,  # Featherless serves the HF id with tools
+        "gmi": NATIVE,
+        "minimax": "MiniMax-M3.1-Flash",
+        "nebius": NATIVE,  # Nebius serves the HF id at the launch price
+        "novita": MODEL,
+        "nvidia-nim": "minimaxai/minimax-m3.1-flash",  # NIM lowercases the HF id
+        "parasail": NATIVE,
+        "together": NATIVE,
+        "venice": "minimax-m3-1-flash",
+        "wafer": "MiniMax-M3.1-Flash",  # Wafer serves MiniMax's own id
+        "zro": "minimax-m3.1-flash",  # ZRO serves the bare model name
     }
-    for endpoint in routes.values():
-        assert endpoint_capabilities(MODELS[MODEL], endpoint)["tools"] is True
+    # NIM declares no tool support and carries NVIDIA's conservative hosted
+    # rate, so it never wins cheapest-route selection for this model.
+    assert {p: endpoint_capabilities(MODELS[MODEL], e)["tools"] for p, e in routes.items()} == {
+        p: p != "nvidia-nim" for p in routes
+    }
+    nim_prompt = routes["nvidia-nim"].price_tiers[0].prompt_price_microdollars_per_million_tokens
+    assert all(
+        e.price_tiers[0].prompt_price_microdollars_per_million_tokens < nim_prompt
+        for p, e in routes.items() if p != "nvidia-nim"
+    )
     assert MODEL not in _PROVIDER_UNSERVED_CREDITS_MODELS["novita"]
     assert MODEL in gmi._VERIFIED_PREPAID_MODELS
     assert any(e.provider == "gmi" and e.usage_type == "BYOK" for e in endpoints_for_model(MODEL))

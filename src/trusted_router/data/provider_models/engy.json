@@ -233,9 +233,9 @@
         "reasoning",
         "prompt_caching"
       ],
-      "input_token_price_per_m": 40000,
-      "output_token_price_per_m": 80000,
-      "cached_input_token_price_per_m": 8000
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 120000,
+      "cached_input_token_price_per_m": 6000
     },
     {
       "display_name": "deepseek-v4.1-flash-1017",
@@ -262,11 +262,11 @@
         "reasoning",
         "prompt_caching"
       ],
-      "input_token_price_per_m": 40000,
-      "output_token_price_per_m": 80000,
-      "cached_input_token_price_per_m": 8000
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 120000,
+      "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-25T14:36:27Z",
   "model_count": 9
 }

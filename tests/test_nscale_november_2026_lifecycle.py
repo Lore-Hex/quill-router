@@ -28,7 +28,14 @@ _RETIRING = {
         "Qwen/Qwen3-235B-A22B-Instruct-2507", ("qwen/qwen3.8-flash-next",),
     ),
 }
-_RETAINED = {"qwen/qwen3-embedding-8b": "Qwen/Qwen3-Embedding-8B"}
+_RETAINED = {
+    "qwen/qwen3-embedding-8b": "Qwen/Qwen3-Embedding-8B",
+    # The Oct 6 notice's recommended replacements, which Nscale's /v1/models
+    # began listing on 2026-10-25. They are routes, not retirements.
+    "qwen/qwen3.8-27b": "Qwen/Qwen3.8-27B",  # recommended for the Qwen3 family
+    "qwen/qwen3.8-flash-next-fp8": "Qwen/Qwen3.8-Flash-Next-FP8",  # the FP8 build of Flash Next
+    "z-ai/glm-5.3": "zai-org/GLM-5.3",  # recommended for gpt-oss; canary still failing
+}
 
 
 def test_nscale_cutoff_is_the_earliest_named_date_at_midnight_utc() -> None:
@@ -79,7 +86,7 @@ def test_nscale_replacements_are_quoted_not_substituted(model_id: str) -> None:
     assert entries[0].notice_id == f"nscale:{_CUTOFF.isoformat()}"
 
 
-def test_nscale_embedding_model_survives() -> None:
+def test_nscale_retained_models_survive() -> None:
     for model_id, native_id in _RETAINED.items():
         assert not provider_lifecycle.provider_model_retired(
             "nscale", model_id, native_id, at=_CUTOFF + timedelta(days=1),
@@ -88,7 +95,8 @@ def test_nscale_embedding_model_survives() -> None:
 
 def test_nscale_manifest_records_only_announced_retirements() -> None:
     rows = {row["id"]: row for row in json.loads(nscale.MANIFEST_PATH.read_text())["models"]}
-    for model_id in _RETAINED:
+    for model_id, native_id in _RETAINED.items():
+        assert rows[model_id]["upstream_id"] == native_id
         assert "retirement_at" not in rows[model_id]
     for model_id, (native_id, replacements) in _RETIRING.items():
         assert rows[model_id]["upstream_id"] == native_id
