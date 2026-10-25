@@ -131,17 +131,29 @@ class ObservationStore:
         # Partial offline transports can exercise sessions without snapshot reads.
         self.supports_runtime_stop = callable(getattr(self.database, "snapshot", None))
 
-    def session_ready(self) -> bool:
-        manager = getattr(self.database, "_sessions_manager", None)
+    def session_ready(self, *, workspace: bool = False) -> bool:
+        database = self.workspace_database if workspace else self.database
+        manager = getattr(database, "_sessions_manager", None)
         return not isinstance(manager, Sessions) or manager.ready
 
     def session_recovery_due(self) -> bool:
-        manager = getattr(self.database, "_sessions_manager", None)
-        return isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+        return any(isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+                   for manager in (getattr(self.database, "_sessions_manager", None),
+                                   getattr(self.workspace_database, "_sessions_manager", None)))
 
     def prepare_session(self, boot: str | None = None) -> bool:
         manager = getattr(self.database, "_sessions_manager", None)
-        return not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+        ready = not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+        workspace = getattr(self.workspace_database, "_sessions_manager", None)
+        if isinstance(workspace, Sessions) and workspace is not manager:
+            # Reconciliation deletes this manager's boot-filtered inventory.
+            # A distinct label keeps it from deleting the other lane's session.
+            workspace_boot = None if boot is None else f"{boot}-workspace"
+            workspace_ready = workspace.prepare(self.clock, workspace_boot)
+            # Prepare both even when the first lane failed or is quarantined;
+            # each retains its own five-second budget and recovery window.
+            ready = ready and workspace_ready
+        return ready
 
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement

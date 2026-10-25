@@ -181,6 +181,8 @@ class HealthObserver(Observer):
 
     def _workspace(self, key: str, started: float) -> None:
         def read() -> Any:
+            if self.service is not None and not self.service.store.session_ready(workspace=True):
+                raise SessionUnavailable("shadow_session_unavailable")
             with rpc_scope(self.clock()+OBSERVER_READ_RPC_SECONDS, OBSERVER_READ_RPC_SECONDS, self.clock):
                 return self.read(key)
         self._owned(key, started, read)
