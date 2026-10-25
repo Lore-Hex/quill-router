@@ -103,6 +103,9 @@ STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT = datetime(2026, 10, 10, 19, 39, tz
 # the confirmed production rejection observation rather than inventing one.
 NVIDIA_NIM_KIMI_K3_RETIREMENT_AT = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
 STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT = datetime(2026, 10, 16, 22, 1, tzinfo=UTC)
+# Direct authenticated inference confirmed UnavailableModel at this time.
+# This is our enforcement observation, not an announced upstream cutover.
+STREAMLAKE_QWEN3_30B_THINKING_RETIREMENT_AT = datetime(2026, 10, 25, 17, 17, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -376,6 +379,12 @@ _RETIREMENTS = (
             "Qwen3-30B-A3B-Instruct-2507",
         }),
         effective_at=STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({"qwen/qwen3-30b-a3b-thinking-2507"}),
+        upstream_ids=frozenset({"Qwen3-30B-A3B-Thinking-2507"}),
+        effective_at=STREAMLAKE_QWEN3_30B_THINKING_RETIREMENT_AT,
     ),
     _Retirement(
         provider="nvidia-nim",

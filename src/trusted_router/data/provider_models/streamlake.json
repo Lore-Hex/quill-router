@@ -513,7 +513,8 @@
       "id": "qwen/qwen3-30b-a3b-thinking-2507",
       "upstream_id": "Qwen3-30B-A3B-Thinking-2507",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 2400000,
       "cached_input_token_price_per_m": 40000
