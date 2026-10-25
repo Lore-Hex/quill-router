@@ -294,7 +294,7 @@ class Port:
             if svc.allocation_day != day:
                 svc.allocation_day = day
                 svc.allocation_failures = 0
-                svc.next_allocate = svc.store.clock()+svc.allocation_jitter(60.)
+                svc.next_allocate = svc.store.clock()
             svc.allocation_requested = True
             if terminal:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
@@ -752,8 +752,8 @@ class Service:
         self.allocation_day: str | None = None
         self.allocation_requested = False
         self.allocation_failures = 0
-        # Dephase the five-second evidence cadence too: otherwise simultaneous
-        # boots round the continuous allocation jitter back onto shared ticks.
+        # Dephase the five-second evidence cadence so first-demand allocations
+        # do not all contend on one tick after a simultaneous fleet restart.
         self.next_flush = store.clock()+self.allocation_jitter(5.)
         self.previous_closure: str | None = None
         self.last_closure_ack: dict[str, Any] | None = None
