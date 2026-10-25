@@ -30,6 +30,7 @@ def without_fix(storage, publisher):
         self.assert_owner()
         return self.incumbent_slot in (slot-1, slot-2)
     publisher.Service.is_incumbent = is_incumbent
+    publisher.HOLDER_FAILURE_SLOTS = 0  # Remove storage-only grace as well.
     publisher.takeover_due = lambda boot, slot, claim: True
     storage.ObservationStore.read_shadow_publication = lambda self, budget: None
 
@@ -91,30 +92,38 @@ def test_holder_loss_costs_one_small_takeover(reject):
     assert result["claim_lock_wait_seconds"] < .1 < control["claim_lock_wait_seconds"]
     # Liveness (S4): a new holder publishes within the spread window, then the
     # row is back to one writer per slot.
-    # The last publication is slot 29; the first takeover wave is due at age 3.
+    # The last publication is slot 29; takeover follows the full renewal window.
     gap = next(i for i, n in enumerate(result["claim_transactions_by_slot"][STALLED:]) if n > 0)
-    assert gap <= TAKEOVER_GAP + 1
+    # Preserve bounded S4, now using the first surviving fixed rank instead of
+    # assuming a quarter-fleet wave finds a survivor in its first two slots.
+    from tests.shadow_health_cold_start_simulation import START
+    first_rank = min(shell.takeover_rank(f"boot-{i}", START+29) for i in range(1, FLEET))
+    assert gap == TAKEOVER_GAP + first_rank
     assert set(result["claim_transactions_by_slot"][STALLED+gap+1:]) == {1}
     assert result["durable_publication_rate"] >= .9
 
 
-def test_takeover_ranks_spread_and_widen():
+def test_takeover_ranks_spread_without_accumulating_missed_turns():
     claim = {"slot": 1000}
-    ranks = [shell.takeover_rank(f"boot-{i}", 1000) for i in range(256)]
+    ranks = [shell.takeover_rank(f"boot-{i}", 1000) for i in range(4096)]
     assert set(ranks) == set(range(shell.TAKEOVER_SPREAD))
     assert all(ranks.count(r) >= 32 for r in range(shell.TAKEOVER_SPREAD))
     for boot in ("boot-0", "boot-1", "boot-2"):
         rank = shell.takeover_rank(boot, 1000)
-        due = [shell.takeover_due(boot, 1000+age, claim) for age in range(8)]
-        # Never inside the two-slot protection window; always by the last wave.
-        assert due == [age >= shell.TAKEOVER_MIN_AGE + rank for age in range(8)]
-        assert due[shell.TAKEOVER_MIN_AGE + shell.TAKEOVER_SPREAD - 1]
+        due = [shell.takeover_due(boot, 1000+age, claim) for age in range(shell.TAKEOVER_MIN_AGE+2*shell.TAKEOVER_SPREAD)]
+        # Never inside the protection window; exactly one turn per spread.
+        assert due == [age >= shell.TAKEOVER_MIN_AGE and
+                       (age-shell.TAKEOVER_MIN_AGE) % shell.TAKEOVER_SPREAD == rank
+                       for age in range(len(due))]
+        assert any(due[:shell.TAKEOVER_MIN_AGE + shell.TAKEOVER_SPREAD])
+        assert sum(due) == 2
     assert shell.takeover_due("boot-0", 1000, None)  # A cold start is never gated.
 
 
 @pytest.mark.parametrize("n", [1, 2])
 def test_small_fleet_takeover_stays_live(n):
-    result = simulate_lifecycle(warm=True, slots=SLOTS, n=n+1, stall_from=30)
+    result = simulate_lifecycle(warm=True, slots=30+shell.TAKEOVER_MIN_AGE+shell.TAKEOVER_SPREAD+10,
+                                n=n+1, stall_from=30)
     gap = next(i for i, c in enumerate(result["claim_transactions_by_slot"][STALLED:]) if c > 0)
     # Worst case: every survivor has the last rank.
     assert gap <= TAKEOVER_GAP + shell.TAKEOVER_SPREAD - 1
@@ -129,7 +138,8 @@ def test_cold_fleet_still_elects_promptly():
 
 
 def without_storage_renewal(storage, publisher):
-    """Positive control: the holder cannot see its own durable publication."""
+    """Positive control: old renewal needs a recent visible publication."""
+    publisher.HOLDER_FAILURE_SLOTS = 0
     storage.ObservationStore.read_shadow_publication = lambda self, budget: None
 
 
@@ -148,3 +158,100 @@ def test_degraded_observer_cannot_demote_the_holder(control):
         assert set(result["claim_transactions_by_slot"]) == {1}
         assert result["durable_publication_rate"] == 1
         assert result["aborts"] == result["claim_lock_wait_seconds"] == 0
+
+
+@pytest.mark.parametrize("ref", ["baseline", None])
+def test_microsecond_floor_at_waited_bound_positive_control(ref):
+    # Production replica behaviour: a waited-for bound is returned floored to
+    # a microsecond. CLAIM_SQL still returns a statement stamp ending in 777ns.
+    result = simulate_lifecycle(warm=True, slots=SLOTS, n=8, ref=ref,
+                                microsecond_reads=True, bound_wait_probability=1.)
+    traces = result["worker_traces"]
+    ordering = [t for t in traces if t.get("observation_failure") == "claim_observed_order"]
+    if ref:
+        assert ordering
+        assert all(t["outcome"] == "failed" for t in ordering)
+        # Failed trace encoding deliberately omits invalid observation stamps;
+        # inspect the fake transport's original timestamps, not rewritten traces.
+        assert all(t["observed_at_ns"] is None for t in ordering)
+        assert set(result["observation_order_gaps_ns"]) == {-777}
+        assert result["durable_publication_rate"] == 0
+    else:
+        assert not ordering
+        assert result["durable_publication_rate"] == 1
+        assert set(result["claim_transactions_by_slot"]) == {1}
+        published = [t for t in traces if t["outcome"] == "published"]
+        assert published and all(t["observed_at_ns"] % 1000 == 0 for t in published)
+        assert all(t["observed_at_ns"] - t["claim_at_ns"] == 223 for t in published)
+        assert result["max_published_observation_ms"] <= 250
+        assert result["max_published_cycle_ms"] <= 500
+
+
+@pytest.mark.parametrize("n", [8, 20])
+@pytest.mark.parametrize("ref", ["baseline", None])
+def test_two_failed_cycles_recover_without_a_takeover(n, ref):
+    from tests.shadow_health_cold_start_simulation import START
+    result = simulate_lifecycle(warm=True, slots=SLOTS, n=n, ref=ref,
+                                fail_observations=(30, 2), microsecond_reads=True)
+    claims = result["claim_transactions_by_slot"]
+    publications = set(result["durable_publication_slots"])
+    assert START+30 not in publications and START+31 not in publications
+    if ref:
+        assert START+32 not in publications
+        recovered = min(s for s in publications if s > START+31)
+        assert 3 <= recovered-(START+30) <= 5
+        assert 0 in claims and result["max_claim_contenders"] >= 2
+    else:
+        assert START+32 in publications
+        assert set(claims) == {1}
+        assert result["aborts"] == result["claim_lock_wait_seconds"] == 0
+        assert result["durable_publication_rate"] == (SLOTS-12)/(SLOTS-10)
+
+
+@pytest.mark.parametrize("n", [8, 20])
+def test_failure_limit_yields_without_overlapping_renewal_and_takeover(n):
+    from tests.shadow_health_cold_start_simulation import START
+    result = simulate_lifecycle(warm=True, slots=100, n=n,
+                                fail_observations=(30, shell.HOLDER_FAILURE_SLOTS))
+    traces = result["worker_traces"]
+    holder_claims = [t["slot"] for t in traces if t["boot"] == "boot-0" and t["claim_at_ns"] is not None]
+    assert max(holder_claims) == START+30+shell.HOLDER_FAILURE_SLOTS-1
+    takeovers = [t["slot"] for t in traces if t["boot"] != "boot-0" and t["claim_at_ns"] is not None]
+    assert takeovers
+    assert shell.TAKEOVER_MIN_AGE <= min(takeovers)-max(holder_claims)
+    assert min(takeovers)-max(holder_claims) < shell.TAKEOVER_MIN_AGE+shell.TAKEOVER_SPREAD
+    assert result["max_claim_contenders"] <= 2
+    # Only the K forced failures are attempts by the old holder; S5 holds.
+    identities = [(t["boot"], t["slot"]) for t in traces]
+    assert len(identities) == len(set(identities))
+
+
+@pytest.mark.parametrize("ref", ["baseline", None])
+@pytest.mark.parametrize("warm", [False, True])
+def test_unknown_claim_commit_is_reconciled_next_slot(ref, warm):
+    from tests.shadow_health_cold_start_simulation import START
+    result = simulate_lifecycle(warm=warm, slots=SLOTS, n=8, ref=ref, unknown_claim_at=0)
+    traces = result["worker_traces"]
+    unknown = [t for t in traces if t["slot"] == START and t["unknown_outcome"]]
+    assert len(unknown) == 1
+    boot = unknown[0]["boot"]
+    following = next(t for t in traces if t["boot"] == boot and t["slot"] == START+1)
+    if ref:
+        assert following["outcome"] == ("published" if warm else "lost_claim")
+        if warm:
+            assert following["rpc_count"] == 6  # Old cache bypassed reconciliation.
+    else:
+        assert following["outcome"] == "published"
+        assert following["rpc_count"] == 8  # Claim + publication snapshots, then normal six.
+        assert result["aborts"] == 0
+
+
+def test_two_failed_claim_reads_do_not_open_a_follower_race():
+    from tests.shadow_health_cold_start_simulation import START
+    result = simulate_lifecycle(warm=True, slots=SLOTS, n=20, fail_claim_reads=(30, 2))
+    # Failed claim reads leave the row at slot 29. The holder must still have
+    # an exclusive recovery turn at age three; followers cannot enter yet.
+    assert set(result["claim_transactions_by_slot"]) == {1}
+    assert result["aborts"] == result["claim_lock_wait_seconds"] == 0
+    assert START+32 in result["durable_publication_slots"]
+    assert all(t["boot"] == "boot-0" for t in result["worker_traces"] if t["outcome"] == "published")

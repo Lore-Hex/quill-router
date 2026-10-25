@@ -199,7 +199,8 @@ def fake_store() -> tuple[ObservationStore, FakeSpannerDatabase]:
     return ObservationStore(db, clock=logical_time, wall=lambda: NOW_US/1_000_000+100), db
 
 
-def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypatch):
+@pytest.mark.parametrize("nanos", [0, 123456789, 999999999])
+def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypatch, nanos):
     from types import SimpleNamespace
 
     from google.cloud.spanner_v1.database import Database
@@ -207,7 +208,9 @@ def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypa
     from google.protobuf.timestamp_pb2 import Timestamp
     from proto.datetime_helpers import DatetimeWithNanoseconds
 
-    seconds, nanos = 1792627200, 123456789
+    seconds = 1792627200
+    aligned_ns = ((seconds*1_000_000_000+nanos+999)//1000)*1000
+    bound_seconds, bound_nanos = divmod(aligned_ns, 1_000_000_000)
     claim_ns = seconds*1_000_000_000+nanos
     selectors = []
     checkouts = []
@@ -229,10 +232,11 @@ def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypa
             bound = snapshot._min_read_timestamp
             assert isinstance(bound, DatetimeWithNanoseconds)
             assert bound.tzinfo is dt.UTC and bound.utcoffset() == dt.timedelta(0)
-            assert bound.nanosecond == nanos
+            assert bound.nanosecond == bound_nanos
             read_only = options._pb.read_only
             assert read_only.WhichOneof("timestamp_bound") == "min_read_timestamp"
-            assert read_only.min_read_timestamp == Timestamp(seconds=seconds, nanos=nanos)
+            assert read_only.min_read_timestamp == Timestamp(seconds=bound_seconds, nanos=bound_nanos)
+            assert aligned_ns >= claim_ns and aligned_ns % 1000 == 0
         else:
             assert options._pb.read_only.WhichOneof("timestamp_bound") == "strong"
             assert options.read_only.strong is True

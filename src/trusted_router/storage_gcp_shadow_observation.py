@@ -121,6 +121,11 @@ class ObservationStore:
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
         self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
+        # Scheduling hints only; neither proves ownership. Unknown commits must
+        # be reconciled from the claim row in the next slot, never retried here.
+        self.claim_attempt: tuple[str, int] | None = None
+        self.claim_unknown = False
+        self.unpublished_since: int | None = None
         self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
         self.startup_publication_raw: bytes | None = None
@@ -243,6 +248,10 @@ class ObservationStore:
 
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
+        self.claim_attempt = (boot, slot)
+        self.claim_unknown = False
+        if self.unpublished_since is None:
+            self.unpublished_since = slot
         original = None
         def run(tx: Any) -> bool:
             nonlocal original
@@ -260,12 +269,18 @@ class ObservationStore:
                 # hot row until it completes. A loss must roll back instead;
                 # like ABORTED it is recorded once, never retried in this slot.
                 raise ContentionLoss("slot_already_claimed")
+            if old is None or old["owner_boot_id"] != boot:
+                self.unpublished_since = slot
             row = Row.build(CLAIM_KIND, "local/publish", value)
             self.write(tx, [row], budget)
             if self.startup_retention:
                 original = row.body
             return True
-        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        try:
+            landed = self.transaction(run, budget, CYCLE_SECONDS)
+        except UnknownCommit:
+            self.claim_unknown = True
+            raise
         if landed:
             self.won = (boot, slot)
         if landed and self.startup_retention:
@@ -282,6 +297,8 @@ class ObservationStore:
             self.write(tx, [row], budget)
             return True
         landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed:
+            self.unpublished_since = None
         if landed and self.startup_retention:
             self.startup_publication_raw = row.body
         return landed
@@ -307,7 +324,11 @@ class ObservationStore:
 
         # proto-plus preserves nanos on the wire; api_core's similarly named
         # datetime is marshalled as ordinary datetime and loses sub-microseconds.
-        seconds, nanos = divmod(claim_at_ns, 1_000_000_000)
+        # Spanner reports read timestamps at microsecond precision, including
+        # when it waits for this bound. Ceil (never floor) the bound so even a
+        # read exactly at floor_us(bound) is >= the original nanosecond claim.
+        # Stored claims, historical traces and the a1 ordering rules stay exact.
+        seconds, nanos = divmod(((claim_at_ns + 999) // 1000) * 1000, 1_000_000_000)
         bound = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=seconds, nanos=nanos))
         rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS,
                                                min_read_timestamp=bound)
