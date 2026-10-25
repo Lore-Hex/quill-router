@@ -13,17 +13,22 @@ import (
 
 // §3's request reasons, in its table's order.
 const (
-	ReasonContentType     = "body.content_type"
-	ReasonUnparseable     = "body.unparseable"
-	ReasonDuplicateKey    = "body.duplicate_key"
-	ReasonFloat           = "body.float"
-	ReasonLaxType         = "body.lax_type"
-	ReasonStripAmbiguous  = "body.strip_ambiguous"
-	ReasonDictKeyStrip    = "body.dict_key_strip"
-	ReasonRefused         = "body.refused"
-	ReasonAPIKeyHash      = "body.api_key_hash"
-	ReasonStream          = "body.stream"
-	ReasonServiceTier     = "body.service_tier"
+	ReasonContentType    = "body.content_type"
+	ReasonUnparseable    = "body.unparseable"
+	ReasonDuplicateKey   = "body.duplicate_key"
+	ReasonFloat          = "body.float"
+	ReasonLaxType        = "body.lax_type"
+	ReasonStripAmbiguous = "body.strip_ambiguous"
+	ReasonDictKeyStrip   = "body.dict_key_strip"
+	ReasonRefused        = "body.refused"
+	ReasonAPIKeyHash     = "body.api_key_hash"
+	ReasonStream         = "body.stream"
+	ReasonServiceTier    = "body.service_tier"
+	// ReasonCacheAffinity is not the request half's: a body naming a
+	// cache_affinity_key parses (Request.CacheAffinity) and the decide
+	// pipeline composes Go's cold order, then passes with this reason after
+	// the compose (edge.Decide), so the shadow measures Python's order
+	// against it while nothing admits it (§3 "Decision gates").
 	ReasonCacheAffinity   = "body.cache_affinity"
 	ReasonPricedExtra     = "body.priced_extra"
 	ReasonCanonicalModel  = "body.canonical_model"
@@ -77,8 +82,6 @@ func (r *Request) cohort(object pyjson.Object, h Headers) Pass {
 		return passFor(ReasonStream)
 	case present("service_tier"):
 		return passFor(ReasonServiceTier)
-	case present("cache_affinity_key"):
-		return passFor(ReasonCacheAffinity)
 	case r.additionalCost || r.inferenceReceipt || present("video_resolution") ||
 		present("speech_input_characters") || present("transcription_duration_ms"):
 		return passFor(ReasonPricedExtra)

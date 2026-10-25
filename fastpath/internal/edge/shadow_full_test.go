@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -344,6 +346,11 @@ func pythonOfCase(t *testing.T, f authorizeFile, c authorizeCase) (func(http.Res
 		}
 		return answerWith(503, []byte(e.Response), "Retry-After", "1"), ClassPythonUnavailable
 	}
+	if e.Affinity != nil {
+		// G13: Python's bytes with its sessions remembered, which Go
+		// composed the cold order to measure against.
+		return answerWith(200, []byte(e.Affinity.Response)), e.Affinity.Class
+	}
 	kind := ""
 	if e.Python.Type != nil {
 		kind = *e.Python.Type
@@ -419,6 +426,11 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 		if want == ClassAgreeFull && len(got.Fields) != 0 {
 			t.Errorf("%s: agree_full with fields %v", c.Name, got.Fields)
 		}
+		// An affinity decision is measured apart from the cohort.
+		if affinity := c.Expect.Affinity != nil; affinity != (got.Affinity[want] == 1) ||
+			(affinity && (len(got.Decide) > 0 || len(got.Fields) != 0)) || (!affinity && len(got.Affinity) != 0) {
+			t.Errorf("%s: affinity %v, decide %v, fields %v", c.Name, got.Affinity, got.Decide, got.Fields)
+		}
 		if c.Expect.Outcome == "answer" && want == ClassAgreeFull {
 			if got.Rows["agree"] != 1 {
 				t.Errorf("%s: rows %v, fields %v", c.Name, got.Rows, got.Fields)
@@ -451,6 +463,84 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 		classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 2 {
 		t.Fatalf("agree_full %d, rows %d, read back %d, unavailable %d: not the goldens' counts",
 			classes[ClassAgreeFull], rowsAgree, readBack, classes[ClassPythonUnavailable])
+	}
+}
+
+// TestAffinityIsMeasuredNeverAdmitted (G13): a request naming a
+// cache_affinity_key is composed in the cold order and never admittable;
+// Python's bytes classify as affinity_cold (the same bytes), affinity_warm
+// (Go's decision with Python's remembered endpoint promoted within its
+// model, or the one warm endpoint with fallbacks off, at its own
+// estimate), and otherwise differ with the fields that differ: an order
+// that is no promotion, a promotion across models, or a warm endpoint's
+// bytes with anything else changed.
+func TestAffinityIsMeasuredNeverAdmitted(t *testing.T) {
+	f := authorizeGoldens(t)
+	for _, name := range []string{"pass:body.cache_affinity:warm", "pass:body.cache_affinity:warm:fallback_models",
+		"pass:body.cache_affinity:warm:no_fallbacks"} {
+		c := authorizeCaseNamed(t, name)
+		a := c.Expect.Affinity
+		in, _ := caseInputs(t, f, c)
+		in.Mint = Mint{} // Go's own ids: Python's are substituted
+		d := Decide(in)
+		if d.Pass != gwauth.ReasonCacheAffinity || d.ForShadow() == nil {
+			t.Fatalf("%s: pass %q", name, d.Pass)
+		}
+		if _, ok := d.Admit(); ok {
+			t.Fatalf("%s: admittable", name)
+		}
+		classOf := func(body string) fullResult { return compareFull(d, pyAnswer{status: 200, body: []byte(body)}) }
+		if r := classOf(a.ColdResponse); r.class != ClassAffinityCold || !r.affinity || r.decided || !r.rows {
+			t.Errorf("%s: the cold bytes: %+v", name, r)
+		}
+		if r := classOf(a.Response); r.class != ClassAffinityWarm || len(r.fields) != 0 || !r.affinity || r.decided || r.rows {
+			t.Errorf("%s: the warm bytes: %+v", name, r)
+		}
+		// Controls: the warm bytes with the estimate off by one, or a tag
+		// changed, are differ, counted by field; so is an order that is
+		// not one endpoint promoted.
+		for _, v := range []struct {
+			name   string
+			change func(pyjson.Object) pyjson.Object
+			field  string
+		}{
+			{"estimate", func(o pyjson.Object) pyjson.Object {
+				return setMember(o, "estimated_cost_microdollars", json.Number(strconv.FormatInt(a.Estimate+1, 10)))
+			}, "differ.estimate"},
+			{"a tag", func(o pyjson.Object) pyjson.Object {
+				return setMember(o, "tags", pyjson.Object{{Key: "x", Value: "y"}})
+			}, "differ.tags"},
+			{"the order reversed", func(o pyjson.Object) pyjson.Object {
+				l, _ := memberOf(o, "route_candidates").([]any)
+				reversed := slices.Clone(l)
+				slices.Reverse(reversed)
+				return setMember(o, "route_candidates", reversed)
+			}, "differ.candidates"},
+		} {
+			r := classOf(string(mutated(t, a.Response, v.change)))
+			if len(a.Candidates) < 3 && v.name == "the order reversed" {
+				continue
+			}
+			if r.class != ClassDifferAny || !slices.Contains(r.fields, v.field) || !r.affinity || r.decided {
+				t.Errorf("%s: %s: %+v, want differ with %s", name, v.name, r, v.field)
+			}
+		}
+	}
+	// Across models: the fallback case's cold order with the second
+	// model's last endpoint moved to the front of the list is no promotion
+	// within its model (Python partitions the sort by model).
+	c := authorizeCaseNamed(t, "pass:body.cache_affinity:warm:fallback_models")
+	a := c.Expect.Affinity
+	in, _ := caseInputs(t, f, c)
+	d := Decide(in)
+	across := mutated(t, a.ColdResponse, func(o pyjson.Object) pyjson.Object {
+		l, _ := memberOf(o, "route_candidates").([]any)
+		moved := slices.Concat([]any{l[3]}, l[:3], l[4:])
+		return setMember(o, "route_candidates", moved)
+	})
+	if r := compareFull(d, pyAnswer{status: 200, body: across}); r.class != ClassDifferAny ||
+		!slices.Contains(r.fields, "differ.candidates") {
+		t.Errorf("across models: %+v", r)
 	}
 }
 
@@ -940,7 +1030,7 @@ func TestTheDecideShadowLogsCountsAlone(t *testing.T) {
 	}
 	if !strings.Contains(logs, "fastpath edge decide shadow: snapshot=golden-snapshot policy=golden-policy agree_full=1 "+
 		"differ=0 would_admit_python_refused=0 read_back=0") || !strings.Contains(logs, `decide={"on":1}`) ||
-		!strings.Contains(logs, `rows={"agree":1}`) {
+		!strings.Contains(logs, `rows={"agree":1}`) || !strings.Contains(logs, ` affinity={}`) {
 		t.Fatalf("the summary: %s", logs)
 	}
 	for _, secret := range []string{c.Facts.Key.LookupHash, c.Facts.Key.Hash, c.IDs.AuthorizationID, "z-ai/glm-5.3"} {

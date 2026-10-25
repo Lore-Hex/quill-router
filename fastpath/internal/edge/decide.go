@@ -207,6 +207,14 @@ type Decision struct {
 	Kid        string
 	Region     string
 	Candidates []string
+	// Affinity is whether the body names a cache_affinity_key: the
+	// candidates are Go's cold order, and the decision is the shadow's
+	// alone (body.cache_affinity; G13). Routing is the evaluator's request
+	// and Snapshot the snapshot it answered from, for the shadow's warm
+	// comparison (affinity.go).
+	Affinity bool
+	Routing  routingsnapshot.Request
+	Snapshot *routingsnapshot.Snapshot
 }
 
 // Finish is the decision admitted: the front door's envelope and end of
@@ -220,7 +228,15 @@ func (d *Decision) Finish(envelope string, endOfLife time.Time) (gwauth.Composed
 // shadow's substitution of Python's per-request values, §10.1): the same
 // candidates, estimate, request and facts.
 func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string, at time.Time) (gwauth.Staged, error) {
+	return d.RestageWith(d.Input.Candidates, d.Input.Estimate, authorizationID, reservationID, idempotencyKey, at)
+}
+
+// RestageWith is Restage with other candidates and estimate: the shadow's
+// rendering of Python's warm order over Go's decision (affinity.go).
+func (d *Decision) RestageWith(candidates []gwauth.Candidate, estimate int64, authorizationID, reservationID,
+	idempotencyKey string, at time.Time) (gwauth.Staged, error) {
 	in := d.Input
+	in.Candidates, in.Estimate = candidates, estimate
 	in.AuthorizationID, in.ReservationID, in.At = authorizationID, reservationID, at
 	if idempotencyKey != in.IdempotencyKey {
 		in.IdempotencyKey = idempotencyKey
@@ -448,9 +464,17 @@ func Decide(in DecideInputs) Decided {
 		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
+		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap,
 	}
 	out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
 	out.Pass = out.DecideGate
+	if r.CacheAffinity {
+		// body.cache_affinity (G13): Python's order may be a session's
+		// warm endpoint, remembered in its own process by its settle,
+		// which Go cannot read. The decision is composed for the shadow to
+		// measure the cold order against Python's, and never admitted.
+		out.Pass = gwauth.ReasonCacheAffinity
+	}
 	return out
 }
 

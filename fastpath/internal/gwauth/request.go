@@ -51,6 +51,10 @@ type Request struct {
 	EstimatedInputTokens int64 // 1 when omitted
 	OutputEstimate       int64 // max_tokens, max_completion_tokens, max_output_tokens, else 512
 	RequestedRegion      *string
+	// CacheAffinity is whether the body names a cache_affinity_key
+	// (body.cache_affinity, the decide pipeline's gate after the compose:
+	// Python's order may be a remembered session's, which Go cannot read).
+	CacheAffinity bool
 
 	// attribution is validate_request_attribution's result (§7 step 4).
 	attribution attribution
@@ -516,6 +520,8 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 	}
 	r.BodyIdempotencyKey, r.InvocationNonce, r.RequestedRegion = str("idempotency_key"), str("invocation_nonce"),
 		str("region")
+	// The schema's pattern (hex64) admits no empty key.
+	r.CacheAffinity = str("cache_affinity_key") != nil
 	cost, _ := new(big.Int).SetString(string(dumped["additional_cost_reservation_microdollars"].(json.Number)), 10)
 	r.additionalCost = cost.Sign() != 0
 	r.inferenceReceipt = dumped["inference_receipt"].(bool)

@@ -40,6 +40,14 @@ import (
 const (
 	ClassAgreeFull = "agree_full"
 	ClassDifferAny = "differ"
+	// ClassAffinityCold: a request naming a cache_affinity_key (G13),
+	// which Go never admits (body.cache_affinity), whose Python 200 is Go's
+	// cold order byte for byte: Python's process held no session for it.
+	// ClassAffinityWarm (shadow.go's constant, the same meaning) is one
+	// whose Python 200 is Go's decision rendered with Python's remembered
+	// endpoint promoted (affinity.go); anything else of theirs is differ.
+	// Both are counted apart (affinity=), never in the cohort.
+	ClassAffinityCold = "affinity_cold"
 	// ClassWouldAdmit is critical: Go would have answered 200 where Python
 	// refused (status.type follows).
 	ClassWouldAdmit = "would_admit_python_refused"
@@ -177,17 +185,22 @@ type fullShadow struct {
 // their classes (cohort), and the answers Python made from a read-back.
 type fullTally struct {
 	classes, fields, rows, decide, cohort map[string]int
-	readBack                              int
+	// affinity counts the requests naming a cache_affinity_key that Go
+	// composed, by class (affinity_cold, affinity_warm, differ, ...): the
+	// measure of §1 item 5's revisit, apart from the cohort.
+	affinity map[string]int
+	readBack int
 }
 
 func newFullTally() *fullTally {
 	return &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{},
-		cohort: map[string]int{}}
+		cohort: map[string]int{}, affinity: map[string]int{}}
 }
 
 func (t *fullTally) clone() *fullTally {
 	return &fullTally{classes: clonedCounts(t.classes), fields: clonedCounts(t.fields), rows: clonedCounts(t.rows),
-		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), readBack: t.readBack}
+		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), affinity: clonedCounts(t.affinity),
+		readBack: t.readBack}
 }
 
 func clonedCounts(m map[string]int) map[string]int {
@@ -441,14 +454,16 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer) (r fullResult) {
 
 // fullResult is one comparison: its class, the fields that differ, whether
 // Python answered from a read-back, the decide row's gate (when Go would
-// decide), whether the rows are worth reading back, and Python's ids for
-// that read.
+// decide), whether the decision is a cache affinity one (measured, never
+// in the cohort), whether the rows are worth reading back, and Python's
+// ids for that read.
 type fullResult struct {
 	class    string
 	fields   []string
 	readBack bool
 	gate     string
 	decided  bool
+	affinity bool
 	rows     bool
 	py       pythonIDs
 	rowsOf   string
@@ -477,7 +492,10 @@ func compareFull(d Decided, a pyAnswer) fullResult {
 		}
 		return fullResult{class: ClassGoPassed + "." + reason}
 	}
-	r := fullResult{decided: true, gate: d.DecideGate}
+	// An affinity decision is measured apart: Go composed it for the
+	// comparison alone (body.cache_affinity), so it is no cohort member.
+	affinity := d.ForShadow().Affinity
+	r := fullResult{decided: !affinity, affinity: affinity, gate: d.DecideGate}
 	if !read {
 		switch {
 		case a.status == 0 || a.status == http.StatusOK:
@@ -575,12 +593,23 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 		return r
 	}
 	inserted, readBack := composed.Render(timing, false), composed.Render(timing, true)
+	agree := ClassAgreeFull
+	if d.Affinity {
+		agree = ClassAffinityCold
+	}
 	switch {
 	case len(r.fields) == 0 && shaped && bytes.Equal(inserted, raw):
-		r.class = ClassAgreeFull
+		r.class = agree
 		return r
 	case len(r.fields) == 0 && shaped && bytes.Equal(readBack, raw):
-		r.class, r.readBack = ClassAgreeFull, true
+		r.class, r.readBack = agree, true
+		return r
+	}
+	if d.Affinity && len(r.fields) == 0 && shaped && warmBytes(d, staged, data, raw, timing) {
+		// Python's bytes are Go's decision with the session's endpoint
+		// promoted: the rows Go would write differ by design, so none are
+		// read back.
+		r.class, r.rows = ClassAffinityWarm, false
 		return r
 	}
 	goTree, _ := pyjson.Decode(inserted)
@@ -592,6 +621,38 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 	}
 	r.class = ClassDifferAny
 	return r
+}
+
+// warmBytes: Python's 200 is Go's decision, under Python's ids as staged,
+// rendered with Python's candidates where they are a warm re-rank of Go's
+// cold order (Decision.warmOf), as inserted or after a read-back.
+func warmBytes(d *Decision, staged gwauth.Staged, data pyjson.Object, raw []byte, timing gwauth.Timing) bool {
+	candidates, estimate, ok := d.warmOf(candidateIDs(memberOf(data, "route_candidates")))
+	if !ok {
+		return false
+	}
+	in := staged.Input()
+	warm, err := d.RestageWith(candidates, estimate, in.AuthorizationID, in.ReservationID, in.IdempotencyKey, in.At)
+	if err != nil {
+		return false
+	}
+	composed, err := warm.Finish("shadow", in.At.UTC())
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(composed.Render(timing, false), raw) || bytes.Equal(composed.Render(timing, true), raw)
+}
+
+// candidateIDs are the endpoint ids of a 200's route_candidates, in order.
+func candidateIDs(v any) []string {
+	l, _ := v.([]any)
+	var out []string
+	for _, c := range l {
+		o, _ := c.(pyjson.Object)
+		id, _ := memberOf(o, "endpoint_id").(string)
+		out = append(out, id)
+	}
+	return out
 }
 
 // timingOf is Python's data.timing: its values when it has §6's six keys
@@ -674,16 +735,7 @@ func differences(goData, pyData pyjson.Object, timingShaped bool) []string {
 func candidateDifferences(g, p any, add func(string)) {
 	gl, _ := g.([]any)
 	pl, _ := p.([]any)
-	ids := func(l []any) []string {
-		var out []string
-		for _, c := range l {
-			o, _ := c.(pyjson.Object)
-			id, _ := memberOf(o, "endpoint_id").(string)
-			out = append(out, id)
-		}
-		return out
-	}
-	if !slices.Equal(ids(gl), ids(pl)) {
+	if !slices.Equal(candidateIDs(g), candidateIDs(p)) {
 		add("candidates")
 		return
 	}
@@ -1059,6 +1111,9 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 			tally.decide[gate]++
 			boundedTo(tally.cohort, r.class, maxShadowReasons*4)
 		}
+		if r.affinity {
+			boundedTo(tally.affinity, r.class, maxShadowReasons*4)
+		}
 		if r.readBack {
 			tally.readBack++
 		}
@@ -1122,8 +1177,9 @@ func (sh *fullShadow) flush() {
 			}
 		}
 		sh.logf("fastpath edge decide shadow: %s agree_full=%d differ=%d would_admit_python_refused=%d read_back=%d "+
-			"classes=%s fields=%s rows=%s decide=%s cohort=%s", d, t.classes[ClassAgreeFull], t.classes[ClassDifferAny],
-			would, t.readBack, jsonOf(t.classes), jsonOf(t.fields), jsonOf(t.rows), jsonOf(t.decide), jsonOf(t.cohort))
+			"classes=%s fields=%s rows=%s decide=%s cohort=%s affinity=%s", d, t.classes[ClassAgreeFull],
+			t.classes[ClassDifferAny], would, t.readBack, jsonOf(t.classes), jsonOf(t.fields), jsonOf(t.rows),
+			jsonOf(t.decide), jsonOf(t.cohort), jsonOf(t.affinity))
 	}
 	// Every count of the line is the period's, the cache's too: its own
 	// are totals, so the line logs what they grew by since the last.
@@ -1141,13 +1197,14 @@ func (sh *fullShadow) flush() {
 
 // DecideShadowCounts are the full-response shadow's counts since the edge
 // started: by class, by field, by row read-back outcome, by the decide
-// row's gate and, of the requests Go would decide, by class (Cohort), and
-// the answers Python made from a read-back, the requests
+// row's gate and, of the requests Go would decide, by class (Cohort), of
+// the cache affinity requests Go composed for comparison alone, by class
+// (Affinity), and the answers Python made from a read-back, the requests
 // not followed (dropped) and the cache evictions Python's refusals made.
 type DecideShadowCounts struct {
-	Classes, Fields, Rows, Decide, Cohort map[string]int
-	ReadBack                              int
-	Dropped, Evictions                    int64
+	Classes, Fields, Rows, Decide, Cohort, Affinity map[string]int
+	ReadBack                                        int
+	Dropped, Evictions                              int64
 }
 
 // DecideShadowCounts are the counts now; zero with the shadow off.
@@ -1160,8 +1217,8 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	t := sh.totals.clone()
 	sh.mu.Unlock()
 	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
-		ReadBack: t.readBack,
-		Dropped:  sh.dropped.Load(), Evictions: sh.evictions.Load()}
+		Affinity: t.affinity, ReadBack: t.readBack,
+		Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
 }
 
 // DecideShadowOn reports the full-response shadow configured.

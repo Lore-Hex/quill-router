@@ -97,7 +97,7 @@ func TestTheReasons(t *testing.T) {
 		{"stream", ReasonStream, bodyOf(`"stream":true`), jsonHeaders},
 		{"stream false", "", bodyOf(`"stream":false`), jsonHeaders},
 		{"tier", ReasonServiceTier, bodyOf(`"service_tier":"auto"`), jsonHeaders},
-		{"affinity", ReasonCacheAffinity, bodyOf(`"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`), jsonHeaders},
+		{"affinity", "", bodyOf(`"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`), jsonHeaders},
 		{"affinity explicit only", "", bodyOf(`"cache_affinity_explicit":true`), jsonHeaders},
 		{"receipt", ReasonPricedExtra, bodyOf(`"inference_receipt":true`), jsonHeaders},
 		{"zero cost", "", bodyOf(`"additional_cost_reservation_microdollars":0`), jsonHeaders},
@@ -129,6 +129,29 @@ func TestTheReasons(t *testing.T) {
 		if _, p := ParseRequest(c.body, c.headers); p.Reason != c.reason {
 			t.Errorf("%s: %q, want %q", c.name, p.Reason, c.reason)
 		}
+	}
+}
+
+// TestACacheAffinityKeyParsesAndIsFlagged (G13): a body naming a
+// cache_affinity_key is not the request half's to pass; it parses with
+// CacheAffinity set, the key excluded from the dump as the schema excludes
+// it, so the decide pipeline composes the cold order and gates after.
+func TestACacheAffinityKeyParsesAndIsFlagged(t *testing.T) {
+	key := strings.Repeat("a", 64)
+	r, p := ParseRequest(bodyOf(`"cache_affinity_key":"`+key+`"`, `"cache_affinity_explicit":true`), jsonHeaders)
+	if p.Passed() || !r.CacheAffinity {
+		t.Fatalf("pass %q, affinity %v", p.Reason, r.CacheAffinity)
+	}
+	for _, m := range r.Dump {
+		if m.Key == "cache_affinity_key" || m.Key == "cache_affinity_explicit" {
+			t.Errorf("the dump carries %s", m.Key)
+		}
+	}
+	if r, p := ParseRequest(bodyOf(`"cache_affinity_explicit":true`), jsonHeaders); p.Passed() || r.CacheAffinity {
+		t.Errorf("without a key: pass %q, affinity %v", p.Reason, r.CacheAffinity)
+	}
+	if _, p := ParseRequest(bodyOf(`"cache_affinity_key":null`), jsonHeaders); p.Passed() {
+		t.Errorf("a null key: pass %q", p.Reason)
 	}
 }
 

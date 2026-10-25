@@ -50,6 +50,7 @@ import os
 import random
 import re
 import sys
+import time
 import types
 import uuid
 from collections.abc import Callable, Iterator
@@ -89,6 +90,7 @@ from trusted_router.pricing import PriceTier  # noqa: E402
 from trusted_router.receipt_keys import b64url_encode, normalize_receipt_jwk, receipt_kid  # noqa: E402
 from trusted_router.regions import configured_regions  # noqa: E402
 from trusted_router.routes.internal import gateway  # noqa: E402
+from trusted_router.routing_state import RoutingState  # noqa: E402
 from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 from trusted_router.scopes import SCOPE_INFERENCE  # noqa: E402
 from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
@@ -642,13 +644,88 @@ def _reservation_row(row: dict[str, Any]) -> dict[str, Any]:
     return {**_row_timestamps(written, ("expires_at",)), "created_at": RESERVATION_CREATED_AT}
 
 
+def _session_key(world: dict[str, Any], body: dict[str, Any], region: str) -> tuple[str, str, str, str]:
+    """The route's affinity session (gateway.py, ``rerank``): the key's hash,
+    body.model, the region it chose and the cache affinity key."""
+    return (world["key"]["hash"], body["model"], region, body["cache_affinity_key"])
+
+
+def _seeded_routing_state(case: dict[str, Any], sessions: tuple[tuple[str, float], ...],
+                          region: str | None) -> RoutingState:
+    """A fresh process-local routing state (the route's is per process and
+    seeded only by settle), remembering each (endpoint, age in seconds) under
+    the case's session. ``rank`` reads the monotonic clock, so an age past
+    600 s is an expired session."""
+    state = RoutingState()
+    if sessions:
+        body = json.loads(case["request"]["body"])
+        assert region is not None
+        for endpoint_id, age in sessions:
+            state.remember(_session_key(case["_world"], body, region), endpoint_id, now=time.monotonic() - age)
+    return state
+
+
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
+    if case["_affinity"] is None:
+        return _run_case(case, ())
+    # A cache affinity key: Python's order with no session (the cold order,
+    # which Go composes) and then with the case's sessions remembered.
+    cold = _run_case(case, ())
+    if cold["expect"]["outcome"] != "answer":
+        raise AssertionError(f"{case['name']}: an affinity case Python did not answer: {cold['expect']}")
+    data = json.loads(cold["expect"]["response"])["data"]
+    warm = _run_case(case, case["_affinity"], region=data["region"])
+    if warm["expect"]["outcome"] != "answer":
+        raise AssertionError(f"{case['name']}: a seeded affinity case Python did not answer: {warm['expect']}")
+    cold_ids = [c["endpoint_id"] for c in data["route_candidates"]]
+    warm_data = json.loads(warm["expect"]["response"])["data"]
+    warm_ids = [c["endpoint_id"] for c in warm_data["route_candidates"]]
+    if warm_ids == cold_ids:
+        if warm["expect"]["response"] != cold["expect"]["response"]:
+            raise AssertionError(f"{case['name']}: the same order, other bytes")
+        affinity_class = "affinity_cold"
+    else:
+        # Python's health re-rank moved one remembered endpoint to the front
+        # (of its model's run, or of the list), or, with fallbacks off, kept
+        # the remembered one in place of the first: nothing else changes.
+        seeded = {endpoint_id for endpoint_id, _age in case["_affinity"]}
+        if len(warm_ids) == len(cold_ids) == 1:
+            if warm_ids[0] not in seeded:
+                raise AssertionError(f"{case['name']}: the one candidate is not a remembered endpoint")
+        else:
+            if sorted(warm_ids) != sorted(cold_ids):
+                raise AssertionError(f"{case['name']}: the candidates are not the cold ones")
+            first = next(i for i, (w, c) in enumerate(zip(warm_ids, cold_ids, strict=True)) if w != c)
+            moved = warm_ids[first]
+            if moved not in seeded or warm_ids[first + 1:] != [c for c in cold_ids[first:] if c != moved]:
+                raise AssertionError(f"{case['name']}: not one remembered endpoint moved to the front")
+        affinity_class = "affinity_warm"
+    for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
+        if cold["expect"][field] != warm["expect"][field]:
+            raise AssertionError(f"{case['name']}: the session changed {field}")
+    expect = {"outcome": "pass", "reason": "body.cache_affinity",
+              "python": {"status": 200, "type": None, "leased": True},
+              "affinity": {"class": affinity_class, "sessions": [list(s) for s in case["_affinity"]],
+                           **{field: cold["expect"][field] for field in
+                              ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region")},
+                           "response": warm["expect"]["response"], "cold_response": cold["expect"]["response"],
+                           "timing": warm["expect"]["timing"], "cold_timing": cold["expect"]["timing"],
+                           "candidates": warm_ids, "cold_candidates": cold_ids,
+                           "estimate_microdollars": warm_data["estimated_cost_microdollars"],
+                           "cold_estimate_microdollars": data["estimated_cost_microdollars"]}}
+    return {**{k: v for k, v in cold.items() if k != "expect"}, "expect": expect}
+
+
+def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
+              region: str | None = None) -> dict[str, Any]:
     at = ROUTING._instant(case["_at"])
     world, policy = case["_world"], case["_policy"]
     with pinned(at, case["name"]), contextlib.ExitStack() as stack:
         for model, endpoint in (_catalog_addition(model_id) for model_id in case["_catalog"]):
             MODELS[model.id] = model
             MODEL_ENDPOINTS[endpoint.id] = endpoint
+        # The route's process-local routing state, fresh for every case.
+        stack.enter_context(patched(gateway, "ROUTING_STATE", _seeded_routing_state(case, sessions, region)))
         store, database = build_world(world, policy)
         if case["_stored_key_tags"] is not None:
             # Tags as a corrupt row holds them: writes validate, this does not.
@@ -677,7 +754,8 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError("the response was compressed")
     body = response.content.decode()
     leased = bool(authorizations and json.loads(authorizations[0]["payload"]).get("fastpath_envelope"))
-    reason = case["_reason"]
+    # An affinity case is an answer inside: run_case records its pass.
+    reason = case["_reason"] if case["_affinity"] is None else None
     if reason is not None:
         error = _error(body) if response.status_code != 200 else {}
         return {**world_rows, "expect": {"outcome": "pass", "reason": reason, "python": {
@@ -740,6 +818,8 @@ def _catalog_addition(model_id: str) -> tuple[Model, ModelEndpoint]:
 def case_labels(case: dict[str, Any], expect: dict[str, Any]) -> list[str]:
     """§10.1's labels."""
     if expect["outcome"] == "pass":
+        if "affinity" in expect:
+            return sorted([f"pass.{expect['reason']}", expect["affinity"]["class"].replace("_", ".", 1)])
         return [f"pass.{expect['reason']}"]
     labels = {f"insert.{case['insert']}"}
     if expect["outcome"] == "unavailable":
@@ -831,7 +911,12 @@ def cases() -> list[dict[str, Any]]:
             prior: tuple[tuple[dict[str, Any], dict[str, Any]], ...] = (),
             catalog: tuple[str, ...] = (), content_type: str | None = "application/json",
             stored_key_tags: Any = None, workspace_row: bool = True,
-            body_expand: dict[str, Any] | None = None) -> None:
+            body_expand: dict[str, Any] | None = None,
+            affinity: tuple[tuple[str, float], ...] | None = None) -> None:
+        # affinity: a body with cache_affinity_key, run cold and then with
+        # these (endpoint, age in seconds) sessions remembered; () is cold.
+        if (affinity is not None) != ("cache_affinity_key" in (body if isinstance(body, dict) else {})):
+            raise AssertionError(f"{name}: an affinity case is one with cache_affinity_key, and vice versa")
         case_world = _merge(DEFAULT_WORLD, world)
         admitted = door if door is not None and "Envelope" in door else ADMIT
         request_body = body if isinstance(body, str) else {**BASE_BODY, **(body or {})}
@@ -849,6 +934,7 @@ def cases() -> list[dict[str, Any]]:
             "_front_door": door, "_reason": reason, "_catalog": catalog,
             "_stored_key_tags": stored_key_tags, "_workspace_row": workspace_row,
             "_prior": [(_request(case_world, {**BASE_BODY, **p}), answer) for p, answer in prior],
+            "_affinity": affinity,
         })
 
     # Answers: every fixture model at every instant, as Python leases it.
@@ -979,7 +1065,34 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.stream:stage_d_ok", "body.stream", body={"stream": True, "model": GEMINI})
     for tier in ("auto", "priority", "flex", "default"):
         add(f"pass:body.service_tier:{tier}", "body.service_tier", body={"model": GEMINI, "service_tier": tier})
-    add("pass:body.cache_affinity", "body.cache_affinity", body={"cache_affinity_key": "c" * 64})
+    # A cache affinity key (G13): Python's order comes from a per-process
+    # session table that only settle seeds, so Go composes the cold order
+    # and the shadow measures it against Python's. Each case records both
+    # Python's cold bytes and its bytes with the sessions remembered.
+    key = {"cache_affinity_key": "c" * 64}
+    glm_wafer, glm_together, glm_fireworks = (f"{GLM}@{p}/prepaid" for p in ("wafer", "together", "fireworks"))
+    add("pass:body.cache_affinity", "body.cache_affinity", body=key, affinity=())
+    add("pass:body.cache_affinity:cold:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI]}, affinity=())
+    add("pass:body.cache_affinity:cold:explicit", "body.cache_affinity",
+        body={**key, "cache_affinity_explicit": True}, affinity=())
+    add("pass:body.cache_affinity:cold:expired", "body.cache_affinity", body=key,
+        affinity=((glm_fireworks, 601.0),))
+    add("pass:body.cache_affinity:cold:other_key", "body.cache_affinity", body=key,
+        affinity=((f"{FLASH}@deepseek/prepaid", 1.0),))
+    add("pass:body.cache_affinity:cold:order", "body.cache_affinity",
+        body={**key, "provider": {"order": ["fireworks", "together"]}}, affinity=((glm_together, 1.0),))
+    add("pass:body.cache_affinity:warm", "body.cache_affinity", body=key, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:second", "body.cache_affinity", body=key, affinity=((glm_together, 599.0),))
+    add("pass:body.cache_affinity:cold:already_first", "body.cache_affinity", body=key, affinity=((glm_wafer, 1.0),))
+    add("pass:body.cache_affinity:warm:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI]}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:no_fallbacks", "body.cache_affinity",
+        body={**key, "provider": {"allow_fallbacks": False}}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:top_level_no_fallbacks", "body.cache_affinity",
+        body={**key, "allow_fallbacks": False}, affinity=((glm_together, 1.0),))
+    add("pass:body.cache_affinity:warm:sort_price", "body.cache_affinity",
+        body={**key, "provider": {"sort": "price"}}, affinity=((glm_together, 1.0),))
     add("pass:body.priced_extra:additional_cost", "body.priced_extra",
         body={"additional_cost_reservation_microdollars": 5_000})
     add("pass:body.priced_extra:inference_receipt", "body.priced_extra", body={"inference_receipt": True})

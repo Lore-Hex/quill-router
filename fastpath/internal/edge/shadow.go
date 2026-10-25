@@ -662,31 +662,10 @@ func (h *held) impliedBYOK(candidates []string) []string {
 	return out
 }
 
-// promotedWithinItsModel: py is cold with one endpoint moved to the front of
-// its model's run, or to the front of the list, which is the order
-// routing_state.rank gives a session's sticky endpoint (the warm cache)
-// with the sort partitioned by model or not at all.
+// promotedWithinItsModel is affinity.go's shape over the snapshot's
+// endpoint models.
 func (h *held) promotedWithinItsModel(cold, py []string) bool {
-	if len(cold) != len(py) {
-		return false
-	}
-	i := 0
-	for i < len(cold) && cold[i] == py[i] {
-		i++
-	}
-	if i == len(cold) {
-		return false
-	}
-	j := slices.Index(cold, py[i])
-	if j <= i {
-		return false
-	}
-	moved := slices.Concat(cold[:i], []string{cold[j]}, cold[i:j], cold[j+1:])
-	if !slices.Equal(moved, py) {
-		return false
-	}
-	model := h.endpointModel[cold[j]]
-	return i == 0 || (h.endpointModel[cold[i-1]] != model && h.endpointModel[cold[i]] == model)
+	return promotedWithinItsModel(cold, py, func(id string) string { return h.endpointModel[id] })
 }
 
 // warmInsteadOfFirst: with fallbacks off Python re-ranks and then keeps
@@ -713,21 +692,10 @@ func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string
 // false unless Go then answers exactly that endpoint, when its estimate is
 // not one Go can name.
 func (h *held) warmEstimate(req routingsnapshot.Request, endpoint string) (int64, bool) {
-	fields := map[string]json.RawMessage{}
-	if !isJSONNull(req.Provider) && (json.Unmarshal(req.Provider, &fields) != nil || fields == nil) {
+	pinned, ok := withProviderOnly(req, h.endpointProvider[endpoint])
+	if !ok {
 		return 0, false
 	}
-	only, err := json.Marshal([]string{h.endpointProvider[endpoint]})
-	if err != nil {
-		return 0, false
-	}
-	fields["only"] = only
-	provider, err := json.Marshal(fields)
-	if err != nil {
-		return 0, false
-	}
-	pinned := req
-	pinned.Provider = provider
 	pinned.BYOKProviders = append(slices.Clone(req.BYOKProviders), h.impliedBYOK([]string{endpoint})...)
 	r := h.snapshot.Evaluate(pinned)
 	if r.Outcome != routingsnapshot.Answered || !slices.Equal(r.Candidates, []string{endpoint}) {

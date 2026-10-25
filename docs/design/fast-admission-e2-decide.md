@@ -84,8 +84,30 @@ The flow, per request, in this order:
    rewrites, or a native-batch or partner idempotency key. G10's row
    read-back compares fingerprints live.
 5. **Health rank and affinity.** Go answers the cold order. A request with
-   `cache_affinity_key` passes in E2; revisit if that is more than about
-   30% of the cohort.
+   `cache_affinity_key` passes in E2 (`body.cache_affinity`), after the
+   compose rather than before it (G13): the enclave attaches an implicit
+   key to nearly every non-streaming chat authorize, so the revisit's
+   threshold (about 30% of the cohort) was met at once, with the cohort
+   comparing nothing. Python's order for such a request is
+   `routing_state.rank` over a session table (`ROUTING_STATE._sessions`:
+   key hash, `body.model`, region, key) that lives in each Python
+   process's memory, is seeded only by that process's settle of a request
+   with a discounted cache hit (or `cache_affinity_explicit`), expires
+   after 600 s and is never stored: no Spanner row, no snapshot field, no
+   shared cache. Go cannot read it, and Python's own answer is the
+   instance's: another instance answers the cold order. So byte parity
+   for a warm session is not reproducible from Go, and Go does not
+   approximate it. Instead the decide pipeline composes the cold order
+   (which is Python's own answer with no session, byte for byte: §10.1's
+   affinity cases) and the full shadow measures Python's answer against
+   it, `affinity_cold` or `affinity_warm` (§11), apart from the cohort;
+   `fastpathwatch edge` prints the warm share. The revisit then decides
+   between the two ways out, on that share: accept the cold order for
+   decided requests (affinity off for the cohort: a cache miss, never a
+   wrong answer, since any Python instance without the session answers
+   it), or move the session table to shared storage written by settle and
+   read by both, which changes Python's own routing and is a design of its
+   own. Neither is taken here.
 6. **Broadcast and BYOK.** Any broadcast destination pointer for the
    workspace passes; otherwise `broadcast_destinations` is `[]`. BYOK
    presence comes from entity ids alone; any BYOK candidate passes.
@@ -238,13 +260,23 @@ order:
 6. The rest of the policy, the evaluation (the requested models first for
    `candidates.private_proxy` and `candidates.estimated_usage`), the
    identity, the compose.
-7. The decide row last (`cache.decide`, `decide.off`).
+7. The decide row last (`cache.decide`, `decide.off`), and a cache
+   affinity key after it (`body.cache_affinity`).
 
 The decide row is checked after everything else so the shadow can compare
 a complete decision for a workspace that does not yet decide: `Decide`
 returns it in `Decided.Shadow` with `decide.off` or `cache.decide` as the
 pass. Only `Decided.Admit()` hands out a decision to admit, and only when
 nothing passed; G11 admits only through it.
+
+**Decision gates** (after the compose, G13): `body.cache_affinity`, a
+body naming a `cache_affinity_key` (`Request.CacheAffinity`; the key
+itself is excluded from the dump, the fingerprint and the 200, as the
+schema excludes it). The decision is composed in the cold order and is
+the shadow's alone (`Decision.Affinity`), compared as §11's
+`affinity_cold` or `affinity_warm` and never admitted, whatever the decide
+row says (§1 item 5). It is the one reason that reaches the compose and
+still passes before the admit.
 
 **Request** (no I/O, G5):
 
@@ -261,7 +293,6 @@ nothing passed; G11 admits only through it.
 | `body.api_key_hash` | `api_key_hash` present (the lookup hash alone identifies the key in the cohort) |
 | `body.stream` | `stream` true |
 | `body.service_tier` | `service_tier` present |
-| `body.cache_affinity` | `cache_affinity_key` present |
 | `body.priced_extra` | `additional_cost_reservation_microdollars` nonzero, `inference_receipt` true, `video_resolution`, `speech_input_characters` or `transcription_duration_ms` present |
 | `body.canonical_model` | `model` or a `models` entry not identity under `canonical_router_model_id` (`model_aliases.py:70-80`, applied by the schema at `schemas.py:440`) |
 | `body.custom_model` | a custom or user-provided model in `model` or `models` |
@@ -1235,6 +1266,17 @@ EXPECT =
  | {"outcome": "pass", "reason": STR,   // §3 vocabulary
     "python": {"status": INT, "type": STR | null,
                "leased": BOOL}}         // whether Python took the pilot's lease
+ | {"outcome": "pass", "reason": "body.cache_affinity",   // G13
+    "python": {"status": 200, "type": null, "leased": true},
+    "affinity": {
+      "class": "affinity_cold" | "affinity_warm",   // §11
+      "sessions": [[STR, NUMBER]],      // (endpoint id, age in seconds) remembered
+      "fingerprint": HEX, "idempotency_scope": STR, "fingerprint_material": STR,
+      "decide_region": STR,             // the same with or without a session
+      "cold_response": STR, "cold_timing": TIMING,  // Python's 200 with no session: Go's bytes
+      "cold_candidates": [STR], "cold_estimate_microdollars": INT,
+      "response": STR, "timing": TIMING,            // Python's 200 with the sessions remembered
+      "candidates": [STR], "estimate_microdollars": INT}}
 ```
 
 **Signatures.** Every request whose `boot.signature_ok` is true carries
@@ -1279,6 +1321,25 @@ every pass reason has at least one case, `body.content_type`,
 The test fake keeps any integer, so a case whose estimate is beyond int64
 (`evaluate.estimate_overflow`) records Python's 200 from the fake, where
 real Spanner refuses the commit.
+
+**Affinity cases** (`pass:body.cache_affinity*`, G13). The generator runs
+each twice in its own world, against a fresh `RoutingState` in the
+route's place: with no session, then with the case's `sessions`
+remembered under the route's session key (the key's hash, `body.model`,
+the region the cold answer chose, the affinity key), each at its age
+(`rank` reads the monotonic clock; past 600 s is expired). The class is
+what the second answer compares as: the same bytes (`affinity_cold`: no
+session, an expired one, one for an endpoint not among the candidates, a
+`provider.order`, under which Python does not re-rank, or the remembered
+endpoint already first), or the remembered endpoint moved to the front of
+its model's run (the sort is partitioned by model), or, with fallbacks
+off, kept as the one candidate at its own estimate, and nothing else
+changed (`affinity_warm`); the generator refuses any other shape. Go's
+tests hold the decision's 200 to `cold_response` byte for byte and
+Python's `response` to the case's class through the shadow's comparison
+(`checkAffinity`, `TestAffinityIsMeasuredNeverAdmitted`), and that no
+such decision is admittable. Labels: `pass.body.cache_affinity` and
+`affinity.cold` or `affinity.warm`.
 
 ### 10.2 `fastpath/testdata/authorize_fingerprint_v1.json` (P1)
 
@@ -1460,6 +1521,22 @@ counts, per snapshot and policy digest:
   (not by rule from Python's id), `differ.timing` (its shape),
   `differ.key_order`, `differ.ids` (Python's ids are not ones Go would
   write), `differ.shape`.
+- `affinity_cold` and `affinity_warm` (G13, §1 item 5): a request naming
+  a `cache_affinity_key`, which Go composes in the cold order and never
+  admits (`body.cache_affinity`). `affinity_cold`: Python's 200 is Go's,
+  byte for byte as `agree_full` reads it (Python's process held no live
+  session). `affinity_warm`: Python's 200 is Go's decision staged again
+  with Python's candidates where those are Go's cold order with one
+  endpoint moved to the front of its model's run, at the same estimate,
+  or, with fallbacks off, one endpoint of the same model that Go admits
+  with fallbacks on, at the estimate Go names pinned to its provider
+  (`Decision.warmOf`, `fastpath/internal/edge/affinity.go`): a
+  remembered session's endpoint promoted, and nothing else changed. Any
+  other difference is `differ` with its fields. These requests are counted
+  apart (`affinity=` on the count line, by class, `would_admit` and the
+  rest included), never in the cohort or its decide gate; their rows are
+  read back only when cold. The would-admit alert fires for them as for
+  any decision: Go's gates are the same, only the order is not comparable.
 - `would_admit_python_refused.<status>.<type>` (critical, a `CRITICAL` log
   line at once): Go would answer, Python answered a 4xx or its pause 503.
 - `python_answered_go_passed.<reason>`: Go would pass with the §3 reason,
@@ -1513,7 +1590,10 @@ failed reads; no line carries a body, an id, a key or a message.
 shadow counts its period alone, so a span's lines sum to its counts;
 `fastpathwatch edge` sums them from Cloud Logging and prints the I2
 figures below; the shadow's line counts the requests Go would decide by
-class too (`cohort`) (`docs/runbooks/fastpath-watch.md`). The decide path counts
+class too (`cohort`), and the cache affinity requests it measured by class
+(`affinity`; the report's `affinity_by_class` and `affinity_warm_share`,
+`affinity_warm` over `affinity_cold` plus `affinity_warm`, the figure §1
+item 5's revisit reads) (`docs/runbooks/fastpath-watch.md`). The decide path counts
 its unavailable answers by the insert's gRPC code (`store` returns it with
 the outcome), so a clock ahead of Spanner's (`failed_precondition`, §8.4)
 or a Spanner incident is told from a lost commit answer. A period with an
