@@ -125,6 +125,7 @@ class ObservationStore:
         # be reconciled from the claim row in the next slot, never retried here.
         self.claim_attempt: tuple[str, int] | None = None
         self.claim_unknown = False
+        self.last_publication: tuple[str, int] | None = None
         self.unpublished_since: int | None = None
         self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
@@ -298,7 +299,8 @@ class ObservationStore:
             return True
         landed = self.transaction(run, budget, CYCLE_SECONDS)
         if landed:
-            self.unpublished_since = None
+            self.last_publication = (value["publisher_boot_id"], value["slot"])
+            self.unpublished_since = value["slot"] + 1
         if landed and self.startup_retention:
             self.startup_publication_raw = row.body
         return landed

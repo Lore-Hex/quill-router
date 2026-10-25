@@ -12,10 +12,23 @@ positive control: the same harness with the fix removed must show the storm.
 """
 from __future__ import annotations
 
+import json
+import subprocess
+import threading
+from types import SimpleNamespace
+
 import pytest
 
-from tests.shadow_health_cold_start_simulation import simulate_lifecycle
+from tests.shadow_health_cold_start_simulation import (
+    START,
+    Clock,
+    Database,
+    modules,
+    run_workers,
+    simulate_lifecycle,
+)
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
+from trusted_router.async_settle_shadow_journal import CLAIM_KIND
 from trusted_router.services import async_settle_shadow_health as shell
 
 FLEET = 32
@@ -255,3 +268,129 @@ def test_two_failed_claim_reads_do_not_open_a_follower_race():
     assert result["aborts"] == result["claim_lock_wait_seconds"] == 0
     assert START+32 in result["durable_publication_slots"]
     assert all(t["boot"] == "boot-0" for t in result["worker_traces"] if t["outcome"] == "published")
+
+
+ROUND_ONE = "259dda21c10da458d1e9f391c0aa355d663f5d66"
+
+
+class PublisherControl:
+    """Real copied worker/store and simulator transport, with explicit missed slots."""
+
+    def __init__(self, ref):
+        try:
+            self.storage, self.publisher = modules(ref)
+        except (OSError, subprocess.CalledProcessError):
+            if ref != ROUND_ONE:
+                raise
+            pytest.skip("round-1 commit source objects unavailable; worktree controls run independently")
+        self.clock = Clock()
+        self.db = Database(self.clock, self.storage)
+        self.store = self.new_store()
+        self.waits = []
+        def sleep(seconds):
+            self.waits.append(seconds)
+            self.clock.sleep(seconds)
+        self.publisher.sleep = sleep
+
+    def new_store(self):
+        return self.storage.ObservationStore(self.db, clock=lambda: self.clock.now,
+                                              wall=lambda: self.clock.now)
+
+    def run(self, slot, callback):
+        self.clock.now = slot*2.
+        self.clock.ready = self.clock.finished = 0
+        def worker():
+            self.clock.local.slot = slot
+            return callback()
+        result, = run_workers(self.clock, worker)
+        return result
+
+    def cycle(self, slot, *, store=None, boot="holder", incumbent=False):
+        job = self.publisher.lifecycle.PublisherJob(slot, 1, slot*2., slot*2.+.25)
+        admission = SimpleNamespace(admission_lock=threading.Lock(), generation=1,
+            revocation_epoch=0, admission_job=job, startup_retention=False)
+        return self.run(slot, lambda: self.publisher.publish_cycle(
+            store or self.store, boot, "us-central1", "a"*40, job, slot*2_000_000,
+            admission, incumbent, incumbent, True))
+
+
+@pytest.mark.parametrize("ref", [
+    pytest.param(ROUND_ONE, marks=pytest.mark.xfail(strict=True, reason="P1: delayed claim extends K-slot allowance")),
+    None,
+], ids=["round-1", "worktree"])
+@pytest.mark.parametrize("forget_local_publication", [False, True])
+def test_missed_slots_consume_holder_allowance(ref, forget_local_publication):
+    control = PublisherControl(ref)
+    publisher, store = control.publisher, control.store
+    assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
+    # No dispatch at s+1. At s+2 the recent publication permits the fast path,
+    # but the observation fails. Round 1 starts its allowance at this claim.
+    observe = store.observe
+    def fail(*args, **kwargs):
+        raise TimeoutError("failed observation after a missed slot")
+    store.observe = fail
+    failed = control.cycle(START+2, incumbent=True)
+    assert failed.claimed and failed.trace["outcome"] == "failed"
+    store.observe = observe
+    if forget_local_publication:
+        # Storage must supply the publication anchor even without local history.
+        control.store = control.new_store()
+    # No dispatch at s+3 either. K unpublished slots have now elapsed, even
+    # though only one of them had a claim. Renewal at s+4 is forbidden.
+    expired = control.cycle(START+publisher.HOLDER_FAILURE_SLOTS+1)
+    assert not expired.claimed, "holder renewed after K unpublished slots"
+    assert expired.trace["outcome"] == "lost_claim"
+    claim = json.loads(control.db.rows[CLAIM_KIND, "local/publish"])
+    assert claim["slot"] == START+2
+    follower = next(f"follower-{i}" for i in range(10000)
+                    if publisher.takeover_rank(f"follower-{i}", claim["slot"]) == 0)
+    due = claim["slot"]+publisher.TAKEOVER_MIN_AGE
+    assert not publisher.takeover_due(follower, due-1, claim)
+    assert publisher.takeover_due(follower, due, claim)
+    assert not control.cycle(due).claimed
+    reply = control.cycle(due, store=control.new_store(), boot=follower)
+    assert reply.claimed and reply.trace["outcome"] == "published"
+    assert due-START <= publisher.HOLDER_FAILURE_SLOTS+publisher.TAKEOVER_MIN_AGE+publisher.TAKEOVER_SPREAD-1
+
+
+@pytest.mark.parametrize("ref", [ROUND_ONE, None], ids=["round-1", "worktree"])
+def test_uninterrupted_missed_slots_leave_takeover_due(ref):
+    control = PublisherControl(ref)
+    publisher = control.publisher
+    assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
+    claim = json.loads(control.db.rows[CLAIM_KIND, "local/publish"])
+    # Miss K+1 slots without any claim, then resume at the advertised S4 bound.
+    # Round 1 already rejects this uninterrupted gap via its claim-age guard.
+    assert not control.cycle(START+publisher.HOLDER_FAILURE_SLOTS+2).claimed
+    due = START+publisher.HOLDER_FAILURE_SLOTS+publisher.TAKEOVER_MIN_AGE+publisher.TAKEOVER_SPREAD-1
+    follower = next(f"follower-{i}" for i in range(10000)
+                    if publisher.takeover_due(f"follower-{i}", due, claim))
+    assert due > START+publisher.HOLDER_FAILURE_SLOTS+1
+    assert not control.cycle(due).claimed
+    assert publisher.takeover_due(follower, due, claim)
+    reply = control.cycle(due, store=control.new_store(), boot=follower)
+    assert reply.claimed and reply.trace["outcome"] == "published"
+
+
+@pytest.mark.parametrize("ref", [
+    pytest.param(ROUND_ONE, marks=pytest.mark.xfail(strict=True, reason="P2: definite loser skips follower stagger")),
+    None,
+], ids=["round-1", "worktree"])
+def test_definite_claim_loser_staggers_next_slot(ref):
+    control = PublisherControl(ref)
+    publisher = control.publisher
+    assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
+    loser = control.new_store()
+    # A race reaches the transaction after another boot has committed the slot.
+    with pytest.raises(control.storage.ContentionLoss):
+        control.run(START, lambda: loser.claim("loser", START, START*2_000_000,
+            control.storage.Budget(control.clock.now+.5, lambda: control.clock.now)))
+    assert loser.won is None and not loser.claim_unknown
+    assert loser.claim_attempt == ("loser", START)
+    before = control.db.claim_transactions
+    control.waits.clear()
+    reply = control.cycle(START+1, store=loser, boot="loser")
+    assert reply.trace["outcome"] == "lost_claim" and not reply.claimed
+    assert reply.trace["rpc_count"] == 1
+    assert control.db.claim_transactions == before
+    assert control.waits == [publisher.follower_stagger("loser", START+1, True)], "definite loser skipped follower stagger"

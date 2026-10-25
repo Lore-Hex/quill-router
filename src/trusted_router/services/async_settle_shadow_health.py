@@ -575,9 +575,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 budget = Budget(started + CYCLE_SECONDS, store.clock)
             finally:
                 admission.admission_lock.release()
-            # A previous attempt (including unknown commit) skips only the
-            # follower delay. The snapshot below must still prove ownership.
-            previous_attempt = store.claim_attempt or store.won
+            # Only a won claim or an unknown commit skips the follower delay.
+            # A definite loser remains a follower; neither hint proves ownership.
+            previous_attempt = store.claim_attempt if store.claim_unknown else store.won
             # A known abort can retain the recent-publication fast path. Only
             # an unknown commit needs storage reconciliation before that path.
             fast_incumbent = incumbent and not store.claim_unknown
@@ -617,11 +617,17 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 renew = False
                 if owner and current is not None and slot-HOLDER_FAILURE_SLOTS <= current["slot"] < slot:
                     publication = store.read_shadow_publication(budget)
-                    since = store.unpublished_since
+                    published = store.last_publication
+                    if publication is not None and publication["publisher_boot_id"] == boot:
+                        if published is None or published[0] != boot or publication["slot"] > published[1]:
+                            published = store.last_publication = (boot, publication["slot"])
+                    # Publication evidence outranks any claim/tenure anchor:
+                    # missed slots consume the allowance too. Only a boot with
+                    # no publication uses the start of its initial claim tenure.
+                    since = (published[1] + 1 if published is not None and published[0] == boot
+                             else store.unpublished_since)
                     if since is None:
                         since = current["slot"]
-                    if publication is not None and publication["publisher_boot_id"] == boot:
-                        since = max(since, publication["slot"] + 1)
                     store.unpublished_since = since
                     renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
                 if not renew and (owner or incumbent_present
