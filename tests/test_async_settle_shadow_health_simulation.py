@@ -71,14 +71,39 @@ def test_controls_resolve_baseline_in_shallow_checkout(monkeypatch, base):
     monkeypatch.setattr(simulation.subprocess, "run", check)
     monkeypatch.setattr(simulation.subprocess, "check_output", show)
     if base:
-        storage, publisher = modules("baseline")
-        assert publisher.ObservationStore is storage.ObservationStore
+        with pytest.raises(pytest.skip.Exception, match="source blobs are byte-identical to the worktree"):
+            modules("baseline")
         assert len(loaded) == 2
     else:
         with pytest.raises(pytest.skip.Exception, match="baseline unavailable"):
             modules("baseline")
         assert not loaded
     # Missing baseline objects never stop independent worktree cases.
+    storage, publisher = modules()
+    assert publisher.ObservationStore is storage.ObservationStore
+
+
+@pytest.mark.parametrize("ref", ["baseline", "259dda21c10da458d1e9f391c0aa355d663f5d66",
+                                 "587c15eb407d6bc075964034da94596ec1238b89"])
+@pytest.mark.parametrize("changed", [None, *[source for _, source in simulation.MODULE_SOURCES]])
+def test_controls_compare_both_loaded_sources(monkeypatch, ref, changed):
+    monkeypatch.setattr(simulation, "baseline_ref", lambda: "different-ref-name")
+    loaded = []
+
+    def show(command, **kwargs):
+        path = command[-1].split(":", 1)[1]
+        loaded.append(path)
+        raw = (simulation.ROOT/path).read_bytes()
+        return raw + b"\n" if path == f"src/trusted_router/{changed}" else raw
+
+    monkeypatch.setattr(simulation.subprocess, "check_output", show)
+    if changed is None:
+        with pytest.raises(pytest.skip.Exception, match="source blobs are byte-identical to the worktree"):
+            modules(ref)
+    else:
+        storage, publisher = modules(ref)
+        assert publisher.ObservationStore is storage.ObservationStore
+    assert loaded == ["src/trusted_router/" + source for _, source in simulation.MODULE_SOURCES]
     storage, publisher = modules()
     assert publisher.ObservationStore is storage.ObservationStore
 
