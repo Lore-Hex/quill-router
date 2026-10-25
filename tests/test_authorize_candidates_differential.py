@@ -11,8 +11,8 @@ log lines must be identical, except for the explicitly checked reservation
 guidance and diagnostic added in #1926, and the idempotency-key-source
 observation line added in E4 R1 (exactly once, with its exact text, on every
 request that resolved its idempotency key; never otherwise). The frozen leg's
-chat candidate hook applies an independent specification of the subsequently approved context
-limit. Its provider hook independently requires an explicit upgraded origin
+chat candidate hook applies an independent specification of the subsequently approved model
+and host context limits. Its provider hook independently requires an explicit upgraded origin
 for the new native adapters, without changing the frozen file. Reservation
 quotes are compared too.
 
@@ -203,10 +203,16 @@ def _body_fields(case: dict[str, Any]) -> dict[str, Any]:
 def _reference_context_candidates(candidates: Any, body: GatewayAuthorizeRequest) -> Any:
     prompt = body.estimated_input_tokens
     completion = body.max_tokens or body.max_completion_tokens or 0
-    kept = [(model, endpoint) for model, endpoint in candidates
-            if model.context_length == 0 or prompt + completion <= model.context_length]
+    windows = []
+    kept = []
+    for model, endpoint in candidates:
+        known = [limit for limit in (model.context_length, endpoint.context_length) if limit > 0]
+        window = min(known) if known else 0
+        windows.append(window)
+        if not window or prompt + completion <= window:
+            kept.append((model, endpoint))
     if candidates and not kept:
-        window = max(model.context_length for model, _endpoint in candidates)
+        window = max(windows)
         if completion:
             message = (
                 f"This model's maximum context length is {window} tokens. However, you "
@@ -509,5 +515,22 @@ def test_the_comparison_rejects_missing_context_filter(monkeypatch, caplog) -> N
 
     monkeypatch.setattr(authorize_candidates, "candidates_fitting_context", lambda rows, **kw: rows)
     case = {"model": "anthropic/claude-haiku-4.5", "estimated_input_tokens": 2_000_000_000}
+    with pytest.raises(AssertionError, match="1 differences"):
+        _compare([case], "memory", monkeypatch, caplog)
+
+
+def test_the_comparison_rejects_ignoring_host_windows(monkeypatch, caplog) -> None:
+    from dataclasses import replace
+
+    from trusted_router.catalog import MODEL_ENDPOINTS
+    from trusted_router.catalog_data import ModelEndpoint
+
+    model_id = "anthropic/claude-haiku-4.5"
+    for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == model_id:
+            monkeypatch.setitem(MODEL_ENDPOINTS, endpoint_id, replace(endpoint, context_length=10))
+    case = {"model": model_id, "estimated_input_tokens": 11}
+    _compare([case], "memory", monkeypatch, caplog)
+    monkeypatch.setattr(ModelEndpoint, "effective_context_length", lambda self, model: model.context_length)
     with pytest.raises(AssertionError, match="1 differences"):
         _compare([case], "memory", monkeypatch, caplog)

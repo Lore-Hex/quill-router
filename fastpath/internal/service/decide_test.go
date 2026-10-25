@@ -209,6 +209,7 @@ func newSigningPython(t *testing.T, w decideWorld) *signingPython {
 	py := &signingPython{private: private, public: public, policy: w.policy}
 	raw := readGolden(t, "routing_snapshot_v2.body.json")
 	var fields struct {
+		V              int64             `json:"v"`
 		CompiledAt     int64             `json:"compiled_at"`
 		SourceRevision string            `json:"source_revision"`
 		Plane          map[string]string `json:"plane"`
@@ -237,7 +238,7 @@ func newSigningPython(t *testing.T, w decideWorld) *signingPython {
 	// A manifest's claims, as canonical JSON: sorted keys, compact.
 	py.claims = map[string]any{"aud": edge.SnapshotAudience, "compiled_at": moved.CompiledAt, "iss": edge.SnapshotIssuer,
 		"not_after": moved.NotAfter, "plane": fields.Plane, "sha256": hex.EncodeToString(sum[:]),
-		"size": len(py.snapshot), "source_revision": fields.SourceRevision, "v": 1}
+		"size": len(py.snapshot), "source_revision": fields.SourceRevision, "v": fields.V}
 	py.server = httptest.NewServer(http.HandlerFunc(py.serve))
 	t.Cleanup(py.server.Close)
 	return py
