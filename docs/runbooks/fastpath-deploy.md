@@ -239,9 +239,10 @@ are in us-central1 only, so that share of European and Asian enclaves'
 authorizes crosses to us-central1 while the weight holds.
 
 Gates, read after 1 h and again after 24 h at the new weight, against the
-same hours at the previous one (the monitoring queries are the ones
-"Reading the edge" gives, grouped by backend, response code class and
-proxy continent):
+same hours at the previous one, read from the balancer's metrics
+(`loadbalancing.googleapis.com/https/request_count` and
+`https/backend_latencies`, grouped by `backend_name`,
+`response_code_class` and `proxy_continent`):
 
 - Hard: no `500`-class rows on the edge backend beyond control's own
   authorize 5xx rate in the same hours.
