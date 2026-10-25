@@ -1541,11 +1541,12 @@ class Service:
         with self.lock:
             if self.journal.stopped:
                 return
-            if self.allocation_day is None:
-                # Owner startup is demand for the first block, just as on the
-                # eager baseline. Subsequent days/refills require port demand.
+            if self.allocation_day != day:
+                # Startup and rollover supply demand for the day's first block.
+                # Preserve next_allocate's throttle; same-day refills need port demand.
                 self.allocation_day = day
                 self.allocation_requested = True
+                self.allocation_failures = 0
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
             allocate = (self.allocation_requested and self.allocation_day == day

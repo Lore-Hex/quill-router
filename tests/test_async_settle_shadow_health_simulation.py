@@ -47,6 +47,7 @@ def test_serialized_fleet_survives_aborted_writer():
 
 
 ROUND_TWO = "c2e8139b19d510b5af4db5489da2aef9f55a0c7d"
+ROUND_FOUR = "2d0b2fe08a5a83f4f0335c2e41e203bc3a712adb"
 
 
 @pytest.mark.parametrize("base", ["main", None])
@@ -82,7 +83,7 @@ def test_controls_resolve_baseline_in_shallow_checkout(monkeypatch, base):
     assert publisher.ObservationStore is storage.ObservationStore
 
 
-@pytest.mark.parametrize("ref", ["587c15eb407d6bc075964034da94596ec1238b89", ROUND_TWO])
+@pytest.mark.parametrize("ref", ["587c15eb407d6bc075964034da94596ec1238b89", ROUND_TWO, ROUND_FOUR])
 def test_controls_skip_missing_historical_sources(monkeypatch, ref):
     def missing(command, **kwargs):
         raise subprocess.CalledProcessError(128, command)
@@ -420,6 +421,56 @@ def test_simultaneous_restart_attempt_control(monkeypatch, count):
     # Five-second maintenance quantization can collide individual retries;
     # jitter breaks the fleet-wide lock-step, not every possible collision.
     assert len(set(retry_ticks)) > 1
+
+
+@pytest.mark.parametrize("ref", [ROUND_FOUR, "baseline", None])
+@pytest.mark.parametrize("since_allocation", [5., .2])
+def test_rollover_first_block_without_request(monkeypatch, ref, since_allocation):
+    _, shell = modules(ref)
+    store, _ = fake_store()
+    boundary = NOW_US+86_400_000_000
+    started = logical_time()
+    monkeypatch.setattr(store, "wall", lambda: boundary/1e6+logical_time()-started-since_allocation)
+    svc = shell.Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
+        async_settle_shadow_workspaces="ws", source_revision="a"*40), store)
+    try:
+        svc.maintain()  # Previous day's startup block, with no requests.
+        assert svc.journal.permits["2026-10-12"] == shell.RESERVATION_BLOCK
+        next_allocate = svc.next_allocate
+        assert next_allocate == started+5
+        logical_time.now = started+since_allocation
+        day = svc.ensure_day(boundary)
+        assert day == "2026-10-13"
+        svc.maintain()  # The owner supplies rollover demand before any traffic.
+        if since_allocation < 5:
+            assert not svc.journal.permits.get(day, 0)
+            assert not svc.journal.terminal_permits.get(day, 0)
+            assert svc.next_allocate == next_allocate  # Do not bypass the throttle.
+            logical_time.now = next_allocate
+            svc.maintain()
+        permits = (svc.journal.permits.get(day, 0), svc.journal.terminal_permits.get(day, 0))
+        tick_finished = logical_time()
+        reservation = svc.port.reserve(round(store.wall()*1e6), terminal=True)
+        assert logical_time() == tick_finished  # Request at +0 ms after the tick.
+
+        def rollover_admitted():
+            assert permits == (shell.RESERVATION_BLOCK,)*2, "rollover permits missing"
+            assert reservation is not None
+            assert not svc.port.lost.is_set()
+
+        if ref == ROUND_FOUR:
+            # The identical positive assertion must reject the committed regression.
+            with pytest.raises(AssertionError, match="rollover permits missing"):
+                rollover_admitted()
+            assert reservation is None and svc.port.lost.is_set()
+        else:
+            rollover_admitted()
+        print(json.dumps(dict(rollover_ref=ref, since_allocation_s=since_allocation,
+            permits=permits, admitted=reservation is not None,
+            grant_tick_after_boundary_s=tick_finished-started-since_allocation), sort_keys=True))
+    finally:
+        for executor in (svc.evidence_executor, svc.publisher_executor, svc.session_executor):
+            executor.shutdown(wait=True)
 
 
 @pytest.mark.parametrize("ref", ["baseline", ROUND_TWO, None])
