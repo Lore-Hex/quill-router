@@ -82,7 +82,7 @@ def test_reversed_observation_is_measured_failure_accepted_by_owner(monkeypatch,
         assert kwargs["claim_at_ns"] == svc.store.last_claim["claim_at_ns"]
         value = original(*args, **kwargs)
         bound = svc.store.database.snapshot_calls[-1]["min_read_timestamp"].timestamp_pb()
-        assert bound.seconds*10**9+bound.nanos == kwargs["claim_at_ns"]
+        assert bound.seconds*10**9+bound.nanos == ((kwargs["claim_at_ns"]+999)//1000)*1000
         # Deliberately violate the service guarantee to exercise the fallback.
         value["observed_at_ns"] = value["publisher_heartbeat_ns"] = kwargs["claim_at_ns"]-1
         assert not publish_allowed(svc.store.last_claim, None, value)
