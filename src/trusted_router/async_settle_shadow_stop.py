@@ -27,7 +27,10 @@ class RuntimeStop:
         self.backoff = 1.
         self.next_read = float('-inf')
         self.task: asyncio.Task[None] | None = None
-        store.database._shadow_v2_failure = self.outcome
+        for transport in (getattr(store, "transport", None),
+                          getattr(store, "workspace_transport", None)):
+            if transport is not None:
+                transport.failure = self.outcome
 
     def outcome(self, method: str, outcome: str) -> None:
         """Called synchronously on IO workers; never performs IO itself."""
@@ -58,6 +61,11 @@ class RuntimeStop:
         An unavailable or malformed control is fail-closed locally. It cannot
         authorize shadow work, nor is it claimed as an observed fleet incident.
         """
+        # Offline Service stand-ins may have no control-read capability. Real
+        # database read errors still take the fail-closed path below.
+        if not getattr(self.store, "supports_runtime_stop",
+                       callable(getattr(self.store, "read_runtime_stop", None))):
+            return True
         now = self.store.clock()
         if now < self.next_read:
             return True

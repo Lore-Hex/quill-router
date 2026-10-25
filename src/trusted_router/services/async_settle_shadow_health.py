@@ -180,7 +180,10 @@ class HealthObserver(Observer):
         self._owned(None, started, self.health_read)
 
     def _workspace(self, key: str, started: float) -> None:
-        self._owned(key, started, partial(self.read, key))
+        def read() -> Any:
+            with rpc_scope(self.clock()+OBSERVER_READ_RPC_SECONDS, OBSERVER_READ_RPC_SECONDS, self.clock):
+                return self.read(key)
+        self._owned(key, started, read)
 
     async def run(self) -> None:
         enabled = self.enabled

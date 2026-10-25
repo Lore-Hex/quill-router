@@ -117,7 +117,7 @@ def read_shadow_health_statement() -> Statement:
 class ObservationStore:
     def __init__(self, database: Any, *, clock: Callable[[], float] = elapsed_clock,
                  wall: Callable[[], float] = time.time) -> None:
-        self.workspace_database = database
+        self.workspace_database = owned_database(database)
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
         self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
@@ -126,7 +126,10 @@ class ObservationStore:
         self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
-        configure(self.database)
+        self.transport = configure(self.database)
+        self.workspace_transport = configure(self.workspace_database)
+        # Partial offline transports can exercise sessions without snapshot reads.
+        self.supports_runtime_stop = callable(getattr(self.database, "snapshot", None))
 
     def session_ready(self) -> bool:
         manager = getattr(self.database, "_sessions_manager", None)

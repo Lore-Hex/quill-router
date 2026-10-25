@@ -5,6 +5,7 @@ import contextvars
 import threading
 import time
 import uuid
+import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -219,14 +220,28 @@ def owned_database(database: Any) -> Any:
     return result
 
 
-def configure(database: Any) -> None:
-    if getattr(database, "_shadow_v2_io", False):
-        return
+@dataclass
+class Transport:
+    database: Any
+    failure: Callable[[str, str], None] | None = None
+
+
+# Wrappers retain their state; the registry does not keep discarded clients alive.
+# Identity keys also support unhashable, non-weakrefable offline stand-ins.
+_TRANSPORTS: weakref.WeakValueDictionary[int, Transport] = weakref.WeakValueDictionary()
+
+
+def configure(database: Any) -> Transport | None:
+    existing = _TRANSPORTS.get(id(database))
+    if existing is not None:
+        return existing
     api = getattr(database, "spanner_api", None)
     if api is None:
-        return
+        return None
     from google.api_core.exceptions import Aborted
 
+    transport = Transport(database)
+    _TRANSPORTS[id(database)] = transport
     for name, original in (
             ("begin_transaction", api.begin_transaction if hasattr(api, "begin_transaction") else None),
             ("commit", api.commit if hasattr(api, "commit") else None),
@@ -255,10 +270,10 @@ def configure(database: Any) -> None:
             def failed(error: Exception) -> None:
                 # Notify before replacing the exception or retiring its session.
                 # This hook is confined to the v2-owned client, never money IO.
-                callback = getattr(database, "_shadow_v2_failure", None)
+                callback = transport.failure
                 if callback is not None and _name in ("commit", "execute_streaming_sql"):
                     if isinstance(error, (DeadlineExceeded, Cancelled)):
-                        callback(_name, type(error).__name__)
+                        callback(_name, "DeadlineExceeded" if isinstance(error, DeadlineExceeded) else "Cancelled")
             def measured() -> None:
                 if record is not None:
                     record(max(0, round((scope.clock()-started)*1_000_000)))
@@ -302,7 +317,7 @@ def configure(database: Any) -> None:
                 if not streaming:
                     measured()
         setattr(api, name, bounded)
-    database._shadow_v2_io = True
+    return transport
 
 
 def timestamp_ns(value: Any) -> int:
