@@ -1,18 +1,28 @@
-"""Refresh speech tariffs independently of the language-model pricing pipeline."""
+"""Refresh speech tariffs independently of the language-model pricing pipeline.
+
+Every price page is one source. A source that fails to fetch, parse, or pass
+the price-change review keeps its last published prices and is reported under
+the same "Held for price review" heading refresh.py uses, while the other
+sources publish. A strict majority of sources failing publishes nothing.
+"""
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import requests
 from bs4 import BeautifulSoup, Tag
 
+from scripts.pricing.base import safe_exception_summary
 from trusted_router.pricing_approvals import approved_dated_price_transition
 
+HELD_FOR_REVIEW_HEADING = "Held for price review (last published prices kept):"
 SOURCES = {
     "x-ai/grok-voice-tts-1.0": "https://docs.x.ai/developers/models/text-to-speech",
     "mistralai/voxtral-mini-tts-2603": "https://docs.mistral.ai/inference/pricing",
@@ -205,7 +215,8 @@ def parse_character_price(model: str, html: str) -> int:
             raise ValueError("unimplemented speech tariff")
         match = re.fullmatch(r"\$(\d+(?:\.\d+)?)\s*/\s*(?:1M|M)\s+[Cc]hars", text)
         if match is None:
-            raise ValueError(f"Unrecognized speech billing unit for {model}")
+            # Name the cell so the hold reason says what the page served.
+            raise ValueError(f"Unrecognized speech billing unit for {model}: {text!r}")
         micro = Decimal(match[1]) * 1_000_000
         if micro <= 0 or micro != micro.to_integral_value():
             raise ValueError(f"Invalid speech tariff for {model}")
@@ -215,65 +226,124 @@ def parse_character_price(model: str, html: str) -> int:
     return found.pop()
 
 
-def refresh() -> None:
+# Section of the snapshot each source refreshes, keyed by model id.
+Updates = dict[str, dict[str, Any]]
+_SECTIONS = ("prices", "token_prices", "request_prices")
+
+
+def _fetch_text(url: str) -> str:
+    headers = {"User-Agent": "Mozilla/5.0"} if url == ELEVENLABS_URL else {}
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
+    return response.text
+
+
+def _character_source(model: str) -> Updates:
+    return {"prices": {model: parse_character_price(model, _fetch_text(SOURCES[model]))}}
+
+
+def _sources(today: date) -> list[tuple[str, Callable[[], Updates]]]:
+    return [
+        ("mistral", lambda: _character_source("mistralai/voxtral-mini-tts-2603")),
+        ("xai", lambda: _character_source("x-ai/grok-voice-tts-1.0")),
+        ("elevenlabs", lambda: {"prices": parse_elevenlabs_prices(_fetch_text(ELEVENLABS_URL))}),
+        ("microsoft", lambda: {"prices": parse_microsoft_prices(_fetch_text(MICROSOFT_URL))}),
+        ("gemini", lambda: {
+            "token_prices": parse_gemini_token_prices(_fetch_text(GEMINI_URL), today=today),
+        }),
+        ("tinfoil", lambda: {
+            "request_prices": parse_tinfoil_request_prices(_fetch_text(TINFOIL_URL)),
+        }),
+    ]
+
+
+def _review(before: dict[str, Any], updates: Updates, today: date) -> None:
+    """Reject a 2x move in either direction unless a dated transition approves it."""
+    for section, rows in updates.items():
+        for model, price in rows.items():
+            previous = before[section].get(model)
+            if previous is None:
+                raise ValueError(f"No committed speech price for {model}")
+            if section != "token_prices":
+                if price >= previous * 2 or price * 2 <= previous:
+                    raise ValueError(f"Speech price change requires review: {model}")
+                continue
+            approved_transition = approved_dated_price_transition(
+                f"{model} [google-ai-studio:google-ai-studio:{model.removeprefix('google/')}]",
+                (previous["input"], previous["output"]),
+                (price["input"], price["output"]),
+                today=today,
+            )
+            for kind, rate in price.items():
+                old = previous[kind]
+                if (rate >= old * 2 or rate * 2 <= old) and not approved_transition:
+                    raise ValueError(f"Speech price change requires review: {model} {kind}")
+
+
+def _hold_reason(exc: Exception) -> str:
+    if isinstance(exc, ValueError):
+        # Parser and review messages are this module's own text and every
+        # speech price page is public, so say exactly what did not parse.
+        return f"ValueError: {exc}"
+    return safe_exception_summary(exc)
+
+
+def refresh() -> int:
     today = datetime.now(UTC).date()
     before = json.loads(SNAPSHOT.read_text())
-    prices = {}
-    for model, url in SOURCES.items():
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        price = parse_character_price(model, response.text)
-        previous = before["prices"][model]
-        if price >= previous * 2 or price * 2 <= previous:
-            raise ValueError(f"Speech price change requires review: {model}")
-        prices[model] = price
-    for url, parser in (
-        (ELEVENLABS_URL, parse_elevenlabs_prices),
-        (MICROSOFT_URL, parse_microsoft_prices),
-    ):
-        headers = {"User-Agent": "Mozilla/5.0"} if url == ELEVENLABS_URL else {}
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        for model, price in parser(response.text).items():
-            previous = before["prices"][model]
-            if price >= previous * 2 or price * 2 <= previous:
-                raise ValueError(f"Speech price change requires review: {model}")
-            prices[model] = price
-    response = requests.get(GEMINI_URL, timeout=30)
-    response.raise_for_status()
-    token_prices = parse_gemini_token_prices(response.text, today=today)
-    for model, rates in token_prices.items():
-        previous_rates = before["token_prices"][model]
-        approved_transition = approved_dated_price_transition(
-            f"{model} [google-ai-studio:google-ai-studio:{model.removeprefix('google/')}]",
-            (previous_rates["input"], previous_rates["output"]),
-            (rates["input"], rates["output"]),
-            today=today,
-        )
-        for kind, price in rates.items():
-            previous = before["token_prices"][model][kind]
-            if (price >= previous * 2 or price * 2 <= previous) and not approved_transition:
-                raise ValueError(f"Speech price change requires review: {model} {kind}")
-    response = requests.get(TINFOIL_URL, timeout=30)
-    response.raise_for_status()
-    request_prices = parse_tinfoil_request_prices(response.text)
     if before.get("request_price_unit") != "microdollars_per_request":
         raise ValueError("Wrong speech request price unit")
-    for model, price in request_prices.items():
-        previous = before["request_prices"][model]
-        if price >= previous * 2 or price * 2 <= previous:
-            raise ValueError(f"Speech price change requires review: {model}")
-    # Fetch and validate every rate before touching the last-known-good file.
+    sources = _sources(today)
+    after: dict[str, dict[str, Any]] = {section: dict(before[section]) for section in _SECTIONS}
+    refreshed: dict[str, list[str]] = {}
+    held: dict[str, str] = {}
+    for slug, load in sources:
+        try:
+            updates = load()
+            _review(before, updates, today)
+        except Exception as exc:  # noqa: BLE001 - one source's failure holds only its own models
+            held[slug] = f"refresh failed: {_hold_reason(exc)}"
+            continue
+        for section, rows in updates.items():
+            after[section].update(rows)
+        refreshed[slug] = sorted(model for rows in updates.values() for model in rows)
+
+    if len(held) * 2 > len(sources):
+        print(
+            f"Systemic speech refresh failure: {len(held)}/{len(sources)} sources failed; "
+            "nothing published."
+        )
+        _print_held(held)
+        return 1
+
     snapshot = {
         "checked_on": today.isoformat(),
         "unit": "microdollars_per_million_input_characters",
-        "prices": prices,
-        "token_prices": token_prices,
-        "request_prices": request_prices,
+        **after,
         "request_price_unit": "microdollars_per_request",
     }
     SNAPSHOT.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+    print(f"Speech price refresh — {len(sources)} sources, {len(held)} held")
+    for slug, models in refreshed.items():
+        print(f"  {slug}: refreshed {', '.join(models)}")
+    if held:
+        _print_held(held)
+        print()
+        print(
+            "::warning title=Speech prices held for review::"
+            f"{', '.join(sorted(held))} kept their committed prices. Repair the fetch or "
+            "parser, or review the price change."
+        )
+    return 0
+
+
+def _print_held(held: dict[str, str]) -> None:
+    print()
+    print(HELD_FOR_REVIEW_HEADING)
+    for slug in sorted(held):
+        print(f"  {slug}:")
+        print(f"    {held[slug]}")
 
 
 if __name__ == "__main__":
-    refresh()
+    raise SystemExit(refresh())

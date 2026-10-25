@@ -1282,6 +1282,8 @@ def test_price_coverage_failure_blocks_commit_and_deploy() -> None:
     assert '"${JOB_STATUS}" != "success"' in workflow
     assert '"${MANIFEST_ATTENTION}" != "false"' in workflow
     assert '"${DISCOVERY_ATTENTION}" != "false"' in workflow
+    assert '"${GAP_ATTENTION}" != "false"' in workflow
+    assert "GAP_ATTENTION: ${{ steps.coverage_audit.outputs.gap_attention }}" in workflow
     assert "(coverage summary unavailable)" in workflow
     assert "Coverage audit incomplete" in workflow
     assert "Catalog publication incomplete" in workflow
