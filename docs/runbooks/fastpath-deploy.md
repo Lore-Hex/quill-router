@@ -226,6 +226,37 @@ attributes: a reset leaves the unit systemd started from disk running
 with its old arguments, as "Taking a pinned release" explains for the
 binary.
 
+## Raising the edge route weight
+
+`fastpath_edge_route_weight` (`infra/fastpath_edge_backend.tf`) is the
+share of every enclave's authorize that the control balancer's url map
+sends through the edge; the rest keeps going to the control plane
+directly. It moves one step at a time, `1 -> 5 -> 10`, each step a
+one-line change whose plan is `0 to add, 1 to change, 0 to destroy` (the
+url map only; the route's 24 s timeout in `infra/control_lb_url_map.tf`
+is untouched). The split is global: the edge's nodes and their upstream
+are in us-central1 only, so that share of European and Asian enclaves'
+authorizes crosses to us-central1 while the weight holds.
+
+Gates, read after 1 h and again after 24 h at the new weight, against the
+same hours at the previous one (the monitoring queries are the ones
+"Reading the edge" gives, grouped by backend, response code class and
+proxy continent):
+
+- Hard: no `500`-class rows on the edge backend beyond control's own
+  authorize 5xx rate in the same hours.
+- Latency, edge against control's authorize route in the same window
+  and the same proxy continent: edge p50 within 1.2x control's p50, edge
+  p99 within 1.5x control's p99.
+- Request counts on the edge backend rise about in proportion to the
+  weight; both nodes `HEALTHY`; no `TR Fast path` alert; the decide
+  shadow's `dropped` stays 0.
+
+A gate failing means the previous weight (or 0, which is R0), the same
+one-line change merged and applied; the balancer takes it at once. Keep
+the shadow's comparison counts from before the step apart from those
+after it.
+
 ## Turning the edge policy and the decide shadow on
 
 The edge polls Python's signed edge policy
