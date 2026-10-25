@@ -289,6 +289,13 @@ class Port:
             require(svc.policy_enabled() and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
             require(not svc.journal.days[day].sealing, "closed_day")
+            # Signal demand only; the evidence worker owns all cap I/O. Keep
+            # the existing refusal/loss path when this request has no permits.
+            if svc.allocation_day != day:
+                svc.allocation_day = day
+                svc.allocation_failures = 0
+                svc.next_allocate = svc.store.clock()+svc.allocation_jitter(60.)
+            svc.allocation_requested = True
             if terminal:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
                 svc.journal.terminal_permits[day] -= 1
@@ -742,7 +749,12 @@ class Service:
         self.unknown_batches: set[Reservation] = set()
         self.unknown: tuple[str, list[Row], Row, Row | None] | None = None
         self.next_allocate = float("-inf")
-        self.next_flush = float("-inf")
+        self.allocation_day: str | None = None
+        self.allocation_requested = False
+        self.allocation_failures = 0
+        # Dephase the five-second evidence cadence too: otherwise simultaneous
+        # boots round the continuous allocation jitter back onto shared ticks.
+        self.next_flush = store.clock()+self.allocation_jitter(5.)
         self.previous_closure: str | None = None
         self.last_closure_ack: dict[str, Any] | None = None
         self.folded_us = 0
@@ -1506,6 +1518,12 @@ class Service:
     def maintain(self) -> None:
         self.drive(self.maintenance())
 
+    def allocation_jitter(self, seconds: float) -> float:
+        # A distinct boot UUID spreads a simultaneous fleet restart. Include
+        # the day and attempt so retries and midnight do not repeat one phase.
+        seed = f"{self.journal.boot}/{self.allocation_day}/{self.allocation_failures}"
+        return seconds*int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big")/2**64
+
     def maintenance(self) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
         deadline = self.store.clock()+FLUSH_SECONDS
@@ -1519,19 +1537,26 @@ class Service:
                 return
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
-            allocate = self.store.clock() >= self.next_allocate and (terminal or event)
+            allocate = (self.allocation_requested and self.allocation_day == day
+                        and self.store.clock() >= self.next_allocate and (terminal or event))
             if allocate:
                 self.next_allocate = self.store.clock()+5
         if allocate:
             try:
                 yield partial(self.store.allocate, day, terminal=terminal, event=event, budget=Budget(deadline, self.store.clock))
                 with self.lock:
+                    self.allocation_requested = False
+                    self.allocation_failures = 0
                     if event:
                         self.journal.grant(day, RESERVATION_BLOCK)
                     if terminal:
                         self.journal.terminal_permits[day] = self.journal.terminal_permits.get(day, 0)+RESERVATION_BLOCK
-            except Exception:
+            except Exception as error:
                 with self.lock:
+                    if isinstance(error, ContentionLoss):
+                        self.allocation_failures += 1
+                        self.next_allocate = self.store.clock()+5+self.allocation_jitter(
+                            min(60., 5.*2**min(4, self.allocation_failures)))
                     target = self.counters[day]["diagnostics"]
                     self._counter_cells(day, target, {"cap_unavailable": target.get("cap_unavailable", 0)+1})
         yield from self._flush(deadline)
