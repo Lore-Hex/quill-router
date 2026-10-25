@@ -50,7 +50,7 @@ from trusted_router.routing_snapshot import (
     EPOCH_SECONDS,
     CatalogInputs,
     Plane,
-    RoutingSnapshotV1,
+    RoutingSnapshotV2,
     canonical_snapshot_bytes,
     compile_routing_snapshot,
     snapshot_settings_from,
@@ -71,7 +71,7 @@ def _instant(seconds: int) -> datetime:
     return EPOCH + timedelta(seconds=seconds)
 
 
-def _compile(settings: Settings, inputs: CatalogInputs) -> RoutingSnapshotV1:
+def _compile(settings: Settings, inputs: CatalogInputs) -> RoutingSnapshotV2:
     return compile_routing_snapshot(
         at=LIVE_AT, horizon=HORIZON, settings=snapshot_settings_from(settings),
         source_revision="test", plane=Plane(cloud="gcp", region="us-central1"), inputs=inputs,
@@ -99,7 +99,7 @@ def catalog_clock() -> Iterator[None]:
 
 
 @pytest.fixture(scope="module")
-def live(settings: Settings, catalog_clock: None) -> tuple[RoutingSnapshotV1, CatalogInputs]:
+def live(settings: Settings, catalog_clock: None) -> tuple[RoutingSnapshotV2, CatalogInputs]:
     inputs = CatalogInputs.live(settings)
     assert inputs.catalog_resolved_at == LIVE_AT
     return _compile(settings, inputs), inputs
@@ -316,14 +316,14 @@ def test_providers_and_models(live) -> None:
 # --- model and provider spellings -------------------------------------------------------------
 
 
-def _strip_variant(snapshot: RoutingSnapshotV1, raw: str) -> tuple[str, dict[str, str]]:
+def _strip_variant(snapshot: RoutingSnapshotV2, raw: str) -> tuple[str, dict[str, str]]:
     for variant in snapshot.aliases.variant_suffixes:
         if raw.endswith(variant.suffix):
             return raw[: -len(variant.suffix)], {variant.preference: variant.value}
     return raw, {}
 
 
-def _resolve(snapshot: RoutingSnapshotV1, model_id: str) -> str:
+def _resolve(snapshot: RoutingSnapshotV2, model_id: str) -> str:
     aliases = snapshot.aliases
     for rewrite in aliases.router_prefix_rewrites:
         if model_id.startswith(rewrite.prefix):
@@ -344,7 +344,7 @@ def _resolve(snapshot: RoutingSnapshotV1, model_id: str) -> str:
     return model_id
 
 
-def _spellings(snapshot: RoutingSnapshotV1) -> list[str]:
+def _spellings(snapshot: RoutingSnapshotV2) -> list[str]:
     ids = [m.id for m in snapshot.models]
     out = {
         "", "nope/model", "gpt-unknown-2025-01-01", "trustedrouter/auto-routing",
@@ -374,7 +374,7 @@ def test_model_spellings_resolve_as_routing_resolves_them(live) -> None:
     assert rewritten > 100
 
 
-def _provider_filter(snapshot: RoutingSnapshotV1, items: list[str]) -> list[str] | int:
+def _provider_filter(snapshot: RoutingSnapshotV2, items: list[str]) -> list[str] | int:
     aliases, providers = snapshot.aliases, {p.slug for p in snapshot.providers}
     out: list[str] = []
     for item in items:
@@ -431,7 +431,7 @@ def _python_requested(body: dict[str, Any], settings: Settings) -> Any:
     return ids, normalized
 
 
-def _requested(snapshot: RoutingSnapshotV1, raws: list[str]) -> Any:
+def _requested(snapshot: RoutingSnapshotV2, raws: list[str]) -> Any:
     """The composition rule docs/design/routing-snapshot-v1.md gives Go."""
     entries = {r.id: r for r in snapshot.requested_models}
     ids: list[str] = []
@@ -652,7 +652,7 @@ ALLOWED_FIELDS = frozenset({
     "models.supports_embeddings", "models.supports_decide", "models.context_length",
     "endpoints", "endpoints.id", "endpoints.model_id", "endpoints.provider",
     "endpoints.usage_type", "endpoints.upstream_model", "endpoints.supported_parameters",
-    "endpoints.input_modalities", "endpoints.privacy", "endpoints.privacy.stores_content",
+    "endpoints.input_modalities", "endpoints.context_length", "endpoints.privacy", "endpoints.privacy.stores_content",
     "endpoints.privacy.meets", "endpoints.gateway_regions", "endpoints.gateway_regions.only",
     "endpoints.gateway_regions.deny", "endpoints.gateway_regions.requires_explicit_origin",
     "endpoints.catalog_valid_until", "endpoints.retired_at", "endpoints.epochs",
@@ -732,7 +732,7 @@ def _schema_paths(model: type[BaseModel], prefix: str = "") -> set[str]:
 
 
 def test_the_schema_carries_only_allowlisted_fields() -> None:
-    paths = _schema_paths(RoutingSnapshotV1)
+    paths = _schema_paths(RoutingSnapshotV2)
     assert paths == ALLOWED_FIELDS, (
         f"new fields {sorted(paths - ALLOWED_FIELDS)}; gone {sorted(ALLOWED_FIELDS - paths)}"
     )

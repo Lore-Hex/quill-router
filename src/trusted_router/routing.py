@@ -507,12 +507,12 @@ def fetch_route_endpoint_candidates(
 
 def routing_pool_context_length(model_id: str, settings: Settings | None = None) -> int:
     """The context window /v1/models may publish for a routing pool: the
-    largest window among the models the pool routes to, or 0 when it routes
-    to none. Routing sends a request only to models whose window holds it
+    largest effective window among the routes in the pool, or 0 when it routes
+    to none. Routing sends a request only to hosts whose window holds it
     (candidates_fitting_context), so a request up to this size has a model in
     the pool and a larger one has none."""
     return max(
-        (model.context_length for model, _endpoint in routing_pool_routes(
+        (endpoint.effective_context_length(model) for model, endpoint in routing_pool_routes(
             model_id, settings or _app_settings(),
         )),
         default=0,
@@ -525,24 +525,24 @@ def candidates_fitting_context(
     prompt_tokens: int,
     completion_tokens: int,
 ) -> list[tuple[Model, ModelEndpoint]]:
-    """The candidates whose model's context window holds the request.
+    """The candidates whose model and host context windows hold the request.
 
     `prompt_tokens` is the estimate the hold is reserved on (the gateway's
     chars/4 count of the messages, plus a custom model's hidden prompt), and
     `completion_tokens` is the max_tokens the caller set, or 0 when it set
     none: without one a provider answers in whatever room the window leaves.
-    A model whose window the catalog does not know (0) is kept. When no
+    A route with neither window known (0) is kept. When no
     candidate fits, the request is a 400 in OpenAI's context-length wording.
     """
     needed = prompt_tokens + completion_tokens
     fitting = [
         (model, endpoint)
         for model, endpoint in candidates
-        if model.context_length <= 0 or needed <= model.context_length
+        if not (window := endpoint.effective_context_length(model)) or needed <= window
     ]
     if candidates and not fitting:
         raise context_length_error(
-            max(model.context_length for model, _endpoint in candidates),
+            max(endpoint.effective_context_length(model) for model, endpoint in candidates),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )

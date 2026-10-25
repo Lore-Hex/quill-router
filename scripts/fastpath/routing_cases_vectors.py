@@ -4,7 +4,7 @@ Each case is a request evaluated by ``trusted_router.authorize_candidates`` (the
 candidate pipeline authorize runs) over the routing-snapshot fixture catalog:
 the synthetic models, endpoints, rank evidence and rank preferences that
 scripts/fastpath/routing_snapshot_vectors.py compiles into
-fastpath/testdata/routing_snapshot_v1.body.json. It maps to the candidate
+fastpath/testdata/routing_snapshot_v2.body.json. It maps to the candidate
 endpoint ids in order, the model estimate in microdollars, the normalized
 service tier and the Stage D reason, or to the refusal's status, type and
 message. Nothing here reads the live catalog or the wall clock, so the hourly
@@ -58,7 +58,7 @@ from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 
 OUTPUT = ROOT / "fastpath" / "testdata" / "routing_cases_v1.json"
 GENERATOR = "scripts/fastpath/routing_cases_vectors.py"
-SNAPSHOT = "fastpath/testdata/routing_snapshot_v1.body.json"
+SNAPSHOT = "fastpath/testdata/routing_snapshot_v2.body.json"
 REGIONS = ("us-central1", "us-east4", "europe-west4", "us-west1")
 PRIMARY_REGION = "us-central1"
 # What a request in the E2 cohort brings to the Stage D decision beyond the
@@ -346,6 +346,10 @@ def cases() -> list[dict[str, Any]]:
     add("context_window_of_the_filtered", {"model": GLM, "models": [FLASH], "provider": {"only": ["deepseek"]}, "estimated_input_tokens": 70_000})
     add("context_unknown_window_kept", {"model": GEMINI, "models": [FLASH], "estimated_input_tokens": 100_000})
     add("context_before_region", {"model": BEDROCK, "estimated_input_tokens": 200_000})
+    add("host_context_at_limit", {"model": GLM, "estimated_input_tokens": 99_999, "max_tokens": 1, "output_tokens": 1})
+    add("host_context_one_over", {"model": GLM, "estimated_input_tokens": 100_000, "max_tokens": 1, "output_tokens": 1})
+    add("host_context_pinned", {"model": GLM, "estimated_input_tokens": 100_001, "provider": {"only": ["wafer"]}})
+    add("host_context_no_fallback", {"model": GLM, "estimated_input_tokens": 100_001, "provider": {"order": ["wafer", "together"], "allow_fallbacks": False}})
     add("spaced_model_and_route", {"model": f"  {GLM} ", "models": [f" {FLASH}"], "route_type": " chat.completions ",
                                    "stream": True})
     return out

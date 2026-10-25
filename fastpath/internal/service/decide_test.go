@@ -207,7 +207,7 @@ func newSigningPython(t *testing.T, w decideWorld) *signingPython {
 		t.Fatal(err)
 	}
 	py := &signingPython{private: private, public: public, policy: w.policy}
-	raw := readGolden(t, "routing_snapshot_v1.body.json")
+	raw := readGolden(t, "routing_snapshot_v2.body.json")
 	var fields struct {
 		CompiledAt     int64             `json:"compiled_at"`
 		SourceRevision string            `json:"source_revision"`
@@ -259,7 +259,7 @@ func (py *signingPython) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/routing-snapshot":
 		out, _ := json.Marshal(map[string]any{"v": 1, "kind": "tr-routing-snapshot-publication",
-			"manifest": py.jws("tr-routing-snapshot-v1", py.claims), "body": base64.StdEncoding.EncodeToString(py.snapshot),
+			"manifest": py.jws("tr-routing-snapshot-v2", py.claims), "body": base64.StdEncoding.EncodeToString(py.snapshot),
 			"refresh_at": time.Now().Unix() + 60})
 		_, _ = w.Write(out)
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/edge-policy":

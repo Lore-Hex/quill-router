@@ -1,4 +1,4 @@
-"""E2 routing snapshot v1; no gateway imports or activation side effects.
+"""E2 routing snapshot v2; no gateway imports or activation side effects.
 
 Compiles the catalog facts Go needs to reproduce Python's authorize candidates
 and prices (docs/design/fast-admission-enclave-direct.md, E2 and §4.1) into one
@@ -76,7 +76,7 @@ from trusted_router.stage_d import PRICING_ROUNDING, endpoint_pricing_candidate
 if TYPE_CHECKING:
     from trusted_router.config import Settings
 
-SNAPSHOT_VERSION: Final = 1
+SNAPSHOT_VERSION: Final = 2
 SNAPSHOT_KIND: Final = "tr-routing-snapshot"
 EPOCH_SECONDS: Final = 3_600
 MAX_HORIZON_SECONDS = 24 * 3_600
@@ -239,6 +239,7 @@ class EndpointEntry(Frozen):
     upstream_model: Identity
     supported_parameters: Identities
     input_modalities: Identities = Field(min_length=1)
+    context_length: UInt
     privacy: Privacy
     gateway_regions: GatewayRegions
     catalog_valid_until: Int64 | None
@@ -351,8 +352,8 @@ class Fees(Frozen):
     token_rounding: Literal["half_up_per_million"]
 
 
-class RoutingSnapshotV1(Frozen):
-    v: Literal[1]
+class RoutingSnapshotV2(Frozen):
+    v: Literal[2]
     kind: Literal["tr-routing-snapshot"]
     compiled_at: UInt
     not_after: UInt
@@ -708,6 +709,7 @@ def _endpoint_entry(endpoint: ModelEndpoint, starts: list[int]) -> EndpointEntry
         upstream_model=endpoint.upstream_id or endpoint.model_id,
         supported_parameters=tuple(sorted(set(endpoint.supported_parameters))),
         input_modalities=tuple(sorted(set(endpoint.input_modalities or ("text",)))),
+        context_length=endpoint.context_length,
         privacy=Privacy(
             stores_content=endpoint_stores_content(endpoint),
             meets=tuple(
@@ -847,7 +849,7 @@ def compile_routing_snapshot(
     source_revision: str,
     plane: Plane,
     inputs: CatalogInputs,
-) -> RoutingSnapshotV1:
+) -> RoutingSnapshotV2:
     """Freeze the catalog for [at, not_after); refuse rather than approximate."""
     if type(at) is not int or type(horizon) is not int or at < 0:
         raise SnapshotRefused("at and horizon must be integer seconds")
@@ -857,7 +859,7 @@ def compile_routing_snapshot(
     not_after = _not_after(at, horizon, inputs)
     starts = _epoch_starts(at, not_after)
     _refuse_off_hour_price_changes(inputs.endpoints, starts, not_after)
-    return RoutingSnapshotV1(
+    return RoutingSnapshotV2(
         v=SNAPSHOT_VERSION,
         kind=SNAPSHOT_KIND,
         compiled_at=at,
@@ -897,14 +899,14 @@ def compile_routing_snapshot(
     )
 
 
-def canonical_snapshot_bytes(snapshot: RoutingSnapshotV1) -> bytes:
+def canonical_snapshot_bytes(snapshot: RoutingSnapshotV2) -> bytes:
     """ASCII JSON, lexical keys, compact separators, no trailing newline."""
     return canonical_bytes(snapshot)
 
 
-def snapshot_digest(snapshot: RoutingSnapshotV1) -> str:
+def snapshot_digest(snapshot: RoutingSnapshotV2) -> str:
     return hashlib.sha256(canonical_snapshot_bytes(snapshot)).hexdigest()
 
 
-def parse_routing_snapshot(raw: bytes | str) -> RoutingSnapshotV1:
-    return RoutingSnapshotV1.model_validate_json(raw)
+def parse_routing_snapshot(raw: bytes | str) -> RoutingSnapshotV2:
+    return RoutingSnapshotV2.model_validate_json(raw)

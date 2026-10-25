@@ -1,15 +1,15 @@
-# Routing snapshot v1
+# Routing snapshot v2
 
-Status: published dark. E2's routing snapshot
+Status: versioned upgrade of the published E2 routing snapshot
 ([`fast-admission-enclave-direct.md`](fast-admission-enclave-direct.md), E2
 and §4 hard parts 1, 2 and 7): a compiler, a signer and golden files, the Go
 reader and evaluator that reproduce Python's candidates from them (see "What
-Go evaluates"), and a publisher behind a setting that is off (see
-"Publishing"). Off, nothing at runtime imports the Python modules: no route,
+Go evaluates"), and a publisher behind a setting that defaults off (see
+"Publishing"). When off, nothing at runtime imports the Python modules: no route,
 no publisher. `tests/test_routing_snapshot.py` checks in a subprocess that
 importing `trusted_router.main` loads neither module nor the publisher, and a
 Go test checks that no Go package but the edge imports the evaluator. The
-edge polls the snapshot and compares in shadow behind flags that are off
+edge polls the snapshot and compares in shadow behind flags that default off
 (see "The edge's poll and shadow comparator").
 
 | File | Role |
@@ -17,8 +17,8 @@ edge polls the snapshot and compares in shadow behind flags that are off
 | `src/trusted_router/routing_snapshot.py` | Schema, `compile_routing_snapshot`, `CatalogInputs.live`, canonical bytes, digest |
 | `src/trusted_router/routing_snapshot_signing.py` | Manifest claims, `RoutingSnapshotSigner`, `verify_manifest` |
 | `scripts/fastpath/routing_snapshot_vectors.py` | Synthetic catalog, golden files, the test key |
-| `fastpath/testdata/routing_snapshot_v1.body.json` | The golden body: exact canonical bytes, no trailing newline |
-| `fastpath/testdata/routing_snapshot_v1.manifest.json` | The golden manifest: JWS, test public key, kid, issuer, audience |
+| `fastpath/testdata/routing_snapshot_v2.body.json` | The golden body: exact canonical bytes, no trailing newline |
+| `fastpath/testdata/routing_snapshot_v2.manifest.json` | The golden manifest: JWS, test public key, kid, issuer, audience |
 | `fastpath/internal/routingsnapshot` | Go: `Verify` (manifest and strict body), `Snapshot.Evaluate` (candidates and estimate), `Cost` |
 | `tests/test_fastpath_routing_snapshot_vectors.py` | Staleness, signature refusals, fail-closed compiles |
 | `tests/test_routing_snapshot.py` | Live-catalog properties, determinism, field allowlist, dormancy |
@@ -64,7 +64,7 @@ caps): those come from the separate per-workspace cache and key snapshot.
 
 ## Schema
 
-Top level: `v` (1), `kind` (`"tr-routing-snapshot"`), `compiled_at`,
+Top level: `v` (2), `kind` (`"tr-routing-snapshot"`), `compiled_at`,
 `not_after`, `epoch_seconds` (3600), `source_revision`, `plane` `{cloud,
 region}`, `settings`, `providers`, `models`, `endpoints`, `aliases`,
 `requested_models`, `decision_chains`, `ranking`, `fees`. The snapshot is
@@ -90,26 +90,28 @@ looked up in).
 
 **models[]**, catalog order: `id`, `provider`, `supports_chat`,
 `supports_embeddings`, `supports_decide` (the three facts authorize branches
-on), and `context_length` (`Model.context_length`, the window
-`routing.candidates_fitting_context` holds a chat request to; 0 is unknown,
-and the filter keeps such a model whatever the request's size). The window is
-the model's, not an endpoint's: the filter reads nothing else, and no
-max-output field. It is a registry fact fixed at import, so it needs no epoch.
+on), and `context_length` (`Model.context_length`, the advertised model
+window; 0 is unknown). Routing uses the smaller positive value of this and
+the endpoint's window, falling back to the known one if only one is known.
+Only a route with both windows unknown remains unbounded. These are registry
+facts fixed at import, so they need no epoch.
 
-*Adding `context_length` to v1.* It is an additive field inside v1, not a v2.
-No snapshot has been published or consumed: nothing compiles one on a
-schedule, and the Go reader is not wired. Both decoders take exactly the
-schema's fields, so the change fails closed in both directions: the readers
-before it (`parse_routing_snapshot` with `extra="forbid"`, Go's `Parse`)
-refuse a body that carries `context_length` (an unknown field, checked
-against the merged code: `$.models[0].context_length: unknown field` and
-pydantic's `extra_forbidden`), and the readers after it refuse a body without
-it (a missing field; `TestParseRefusals` holds Go to it). A refused snapshot
-is never evaluated; every request goes to Python. A v2 would rename the
-manifest `typ`, the golden files and every reference for no reader's
-benefit. Once snapshots are published, a shape change bumps `v` and `typ`
-instead, so a reader can tell a newer snapshot from a corrupt one in its
-logs; the fail-closed property does not depend on it.
+*Migration from v1.* V2 adds required `endpoints[].context_length`, and
+bumps both the body/manifest `v` and the JWS `typ` to
+`tr-routing-snapshot-v2`. V1 readers reject V2; V2 readers reject V1 and
+missing or negative host windows. The outer publication envelope and the
+independent edge-policy schema remain V1; the signing key purpose is unchanged.
+This document retains its existing path for inbound links.
+
+Upgrade readers before publishing V2, or first verify local edge decisions
+are disabled and remain disabled throughout the migration. An old reader can
+retain its last good V1 snapshot until `not_after`; a rejected poll does not
+immediately discard it. Such a reader must never make live routing decisions
+after host limits are activated. A V2 reader with only V1 available passes
+requests to Python until it receives V2. Replace nodes with the lease-drain
+procedure in `docs/runbooks/fastpath-deploy.md`, verify running binaries and
+V2 acceptance, and only then restore local decisions or shadow comparisons.
+No version or signature check is weakened during migration.
 
 **endpoints[]**, `MODEL_ENDPOINTS` order: every endpoint the registry built
 at its import instant (`catalog_registry.CATALOG_RESOLVED_AT`), including ones
@@ -121,6 +123,10 @@ reason that does not depend on time, at every instant of the window.
 
 - `id`, `model_id`, `provider`, `usage_type` (`"Credits"` or `"BYOK"`),
   `upstream_model` (`upstream_id or model_id`, the response's value).
+- `context_length`: the host's declared window, or 0 if unknown. Native
+  provider declarations take precedence over imported aggregator windows.
+  The effective minimum of model and host is also returned by the public
+  per-model endpoints API; the model's headline window is unchanged.
 - `supported_parameters` and `input_modalities`, sorted; `input_modalities`
   is `["text"]` where the catalog has none (`endpoint_supports_input_modalities`).
 - `privacy`: `stores_content` (`endpoint_stores_content`, for
@@ -273,7 +279,7 @@ refuses (`SnapshotRefused`) rather than approximate:
 
 The body (about 3 MB for the live catalog) exceeds `detached_jws`'s 64 KiB
 token bound, so the compact JWS signs a manifest: header `{"alg":"EdDSA",
-"kid", "typ":"tr-routing-snapshot-v1"}`, purpose `routing-snapshot`, claims
+"kid", "typ":"tr-routing-snapshot-v2"}`, purpose `routing-snapshot`, claims
 `{v, sha256, size, compiled_at, not_after, source_revision, plane, iss, aud}`.
 `verify_manifest(token, keys, body, now=..., expected_plane=...,
 expected_aud=...)` checks the signature, type, purpose and issuer; that the
@@ -645,7 +651,7 @@ edge imports it, to poll the snapshot and compare in shadow.
 
 **Verify** checks a manifest as `verify_manifest` does, in its order: the
 compact JWS (at most 64 KiB, strict base64url, a header that is exactly the
-canonical `{alg EdDSA, kid, typ tr-routing-snapshot-v1}`); exactly one
+canonical `{alg EdDSA, kid, typ tr-routing-snapshot-v2}`); exactly one
 accepted key with that kid, of purpose `routing-snapshot`; its Ed25519
 signature; the public test key (by kid or by public key) refused unless the
 caller sets `AllowTestKey`; claims that are exactly the v1 fields with strict
@@ -704,10 +710,10 @@ the authorize body: the enclave counts the messages (chars/4) and sends it.
 Go receives that number and does not reproduce the heuristic; it is the same
 number Python routes and prices on, so there is nothing to derive. Go then
 does what `candidates_fitting_context` does, on the sorted candidates before
-the gateway-region rule: keep a candidate whose model's window is 0 or at
-least prompt plus completion; if none is kept, refuse with OpenAI's
+the gateway-region rule: keep a candidate whose effective model/host window
+is 0 or at least prompt plus completion; if none is kept, refuse with OpenAI's
 context-length error (400 `context_length_exceeded`, `param` `messages`)
-naming the largest window among the candidates, in the wording with or
+naming the largest effective window among the candidates, in the wording with or
 without the completion as Python's has it. The estimate prices
 `output_estimate`: `max_tokens`, else `max_completion_tokens`, else
 `max_output_tokens`, else 512. A `max_*` below 1 or a negative prompt
@@ -754,7 +760,7 @@ It passes to Python, with the reason, and never guesses:
   to the extent that a 1,000-token priority request is refused as unavailable.
 - An estimate, or a `sort=price` headline sum, outside int64.
 
-Against `routing_cases_v1.json` (198 cases), Go answers 124 and refuses 49
+Against `routing_cases_v1.json` (202 cases), Go answers 127 and refuses 50
 exactly as Python (candidates and order, estimate, service tier and Stage D
 reason; or status, type, message and param), and passes 25 to Python. The test
 lists each passed case with its reason and fails if Go answers one of them or
