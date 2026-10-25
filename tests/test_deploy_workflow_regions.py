@@ -319,9 +319,11 @@ def test_secondaries_ramp_serially() -> None:
 
     assert "needs: [deploy]" in rollout
     _assert_rollout_secondaries_requires_successful_deploy(workflow)
-    assert "timeout-minutes: 55" in rollout
+    # Three sequential routing drains (15 minutes each, bounded at 20) must
+    # fit alongside the existing canaries and completion gates.
+    assert "timeout-minutes: 85" in rollout
     first_step = rollout.index("- name: Import production deployment mutex fence")
-    checkout = rollout.index("- uses: actions/checkout@v4")
+    checkout = rollout.index("- uses: actions/checkout@v7")
     assert first_step < checkout
     assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_OPERATION" in rollout
     assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_GENERATION" in rollout
@@ -430,10 +432,13 @@ def test_billing_path_gate_only_attributes_errors_to_candidate_revision() -> Non
 def test_superseded_push_stops_before_production_mutation() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     confirm = workflow.index("confirm-current-main:")
-    deploy = workflow.index("\n  deploy:", confirm)
+    admit = workflow.index("\n  admit-cloud:", confirm)
+    deploy = workflow.index("\n  deploy:", admit)
     mutation = workflow.index("- name: Capture pre-deploy revisions", deploy)
 
-    assert confirm < deploy < mutation
+    # The check precedes the lease (2026-10-22): a superseded run skips before
+    # it waits for or holds the production mutex.
+    assert confirm < admit < deploy < mutation
     assert 'git/ref/heads/main" --jq' in workflow[confirm:deploy]
     assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
     assert (
@@ -459,8 +464,8 @@ def test_rollback_capture_uses_the_sole_serving_revision() -> None:
 def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     sync = workflow.index("sync-runtime-secrets:")
-    confirm = workflow.index("confirm-current-main:", sync)
-    section = workflow[sync:confirm]
+    end = workflow.index("\n  confirm-still-on-main:", sync)
+    section = workflow[sync:end]
 
     assert "needs: [gate-on-ci, admit-cloud]" in section
     assert "trustedrouter-aws-access-key-id" in section
@@ -488,10 +493,10 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
     assert "cloud_run_probe_tag_reconcile" in rollout
     assert '"${base_url}/ready"' in rollout
     verify = staged.index("probe tag already resolves to warmed revision")
-    reconcile = staged.index("cloud_run_probe_tag_reconcile")
+    reconcile = staged.index("cloud_run_probe_tag_reconcile", staged.index("configure_probe_tag()"))
     assert verify < reconcile
 
-    watchdog_start = staged.index('python3 "${SCRIPT_DIR}/watchdog.py"')
+    watchdog_start = staged.index('python3 "${SCRIPT_DIR}/watchdog.py"', staged.index("start_watchdog()"))
     watchdog_background = staged.index("&", watchdog_start)
     shift = staged.index('shift_traffic "$stage_pct"', watchdog_background)
     gate = staged.index(': >"$WATCHDOG_GATE_FILE"', shift)
@@ -501,6 +506,9 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
     final_baseline = staged.index("start_final_baseline")
     final_shift = staged.rindex("shift_traffic 100")
     assert final_baseline < final_shift
+    final_capture = staged.rindex("\nstart_final_baseline\n")
+    final_ready = staged.index("\nfinish_final_baseline\n", final_capture)
+    assert final_capture < final_ready < final_shift
 
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     assert "final-watchdog-baseline-us-central1.json" in workflow

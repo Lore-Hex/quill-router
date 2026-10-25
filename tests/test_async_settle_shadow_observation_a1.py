@@ -25,7 +25,12 @@ from trusted_router.async_settle_shadow_journal import (
     RESERVATION_BLOCK,
 )
 from trusted_router.async_settle_shadow_v2_a1_health import validate_publisher_final
-from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore, UnknownCommit
+from trusted_router.storage_gcp_shadow_observation import (
+    OBSERVER_READ_RPC_SECONDS,
+    Budget,
+    ObservationStore,
+    UnknownCommit,
+)
 
 
 def test_selected_v2_does_not_mutate_shared_adapter(tmp_path):
@@ -421,6 +426,10 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
         return SessionPB(name=db.name+"/sessions/new")
     db.database_role = None
     db.spanner_api.create_session = create
+    def delete(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["retry"] is None
+    db.spanner_api.delete_session = delete
     def query(**kwargs):
         calls.append(kwargs)
         if checkout == "expired_session" and len(calls) == 1:
@@ -431,9 +440,11 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
         return iter([response])
     db.spanner_api.execute_streaming_sql = query
     db.sessions_manager = Sessions(db)
-    db.snapshot = lambda: SnapshotCheckout(db)
+    db.snapshot = lambda **options: SnapshotCheckout(db, **options)
     store = ObservationStore(db, clock=clock.monotonic, wall=lambda: NOW_US/1e6)
-    cap = .25 if consumer == "health" else .5 if consumer == "observe" else 1.
+    # The fleet-health read's RPC deadline is the generous observer deadline
+    # (2026-10-23 API-failure alerts); its 250 ms limit is the install cut-off.
+    cap = OBSERVER_READ_RPC_SECONDS if consumer == "health" else .5 if consumer == "observe" else 1.
     if checkout == "expired_session":
         db._sessions_manager = db.sessions_manager
         db.sessions_manager.session = db.session
@@ -451,7 +462,7 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
     budget = Budget(10.+cap, clock.monotonic)
     def read():
         if consumer == "observe":
-            return store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget)
+            return store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget, claim_at_ns=NOW_US*1000)
         if consumer == "evidence":
             return store.read(CLOSURE_KIND, "2026-10-12/issuer", budget)
         # The public reader starts its own 250ms budget before checkout.
@@ -462,7 +473,7 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
                 read()
             assert len(calls) == 1 and db.sessions_manager.session is None
             read()
-            assert len(calls) == 3  # A later operation gets a fresh session; no hidden retry.
+            assert len(calls) == 4  # Cleanup precedes replacement on the later operation.
         elif checkout == "expired" and consumer != "health" or checkout == "contended":
             with pytest.raises((TimeoutError, RuntimeError)):
                 read()
@@ -532,7 +543,7 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
     db, clock, _ = sdk_database.__wrapped__(monkeypatch, shadow_deadline_clock)
     db.database_role = None
     db.sessions_manager = Sessions(db)
-    db.snapshot = lambda: SnapshotCheckout(db)
+    db.snapshot = lambda **options: SnapshotCheckout(db, **options)
     rows = {}
     calls = []
     rpc_times = []
@@ -589,7 +600,7 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
     budget = Budget(clock.monotonic()+.5, clock.monotonic)
     with rpc_scope(budget.deadline, .5, clock.monotonic), observe_spanner_rpcs(durations.append):
         assert store.claim("issuer", NOW_US//2_000_000, NOW_US, budget)
-        value = store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget)
+        value = store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget, claim_at_ns=NOW_US*1000)
         assert value["observed_at_ns"] == NOW_US*1000+123
         assert store.publish(value, budget)
     assert calls == ["session", "query", "commit", "query", "query", "query", "commit"]
@@ -600,7 +611,7 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
     budget = Budget(clock.monotonic()+.5, clock.monotonic)
     with rpc_scope(budget.deadline, .5, clock.monotonic), observe_spanner_rpcs(durations.append):
         assert store.claim("issuer", NOW_US//2_000_000, NOW_US, budget)
-        value = store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget)
+        value = store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget, claim_at_ns=NOW_US*1000)
         assert store.publish(value, budget)
     assert calls == ["query", "commit", "query", "query", "query", "commit"]
     (tmp_path/"publisher-rpcs.json").write_text(json.dumps(dict(cold_cycle_rpc_count=len(cold),
@@ -644,7 +655,8 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
             assert trace["rpc_elapsed_us"] == sum(expected)
             assert trace["cycle_us"] == (sum(expected) if outcome != "missed" else None)
             if outcome == "lost_claim":
-                assert trace["claim_at_ns"] == NOW_US*1000
+                assert trace["claim_at_ns"] is None
+                assert trace["rpc_count"] == 1  # Committed claim snapshot, no transaction.
         histogram = publisher["rpc_us"]
         expected_counts = [0]*len(histogram["counts"])
         for elapsed_us in expected:
@@ -842,13 +854,13 @@ def test_observation_uses_unresolved_snapshot_not_scalar_clock(monkeypatch):
     svc.store.database.server_ns = NOW_US*1000+123
     seen = []
     real = svc.store.snapshot_query
-    def query(statement, budget, cap):
+    def query(statement, budget, cap, **options):
         seen.append(statement[0])
         assert "tr_settle_outbox" in statement[0] and "CURRENT_TIMESTAMP" not in statement[0]
-        return real(statement, budget, cap)
+        return real(statement, budget, cap, **options)
     monkeypatch.setattr(svc.store, "snapshot_query", query)
     value = svc.store.observe("issuer", "us-central1", "a"*40,
-        NOW_US//2_000_000, Budget(logical_time()+.5, logical_time))
+        NOW_US//2_000_000, Budget(logical_time()+.5, logical_time), claim_at_ns=NOW_US*1000)
     assert len(seen) == 1 and "CURRENT_TIMESTAMP" not in seen[0]
     assert "tr_settle_outbox" in seen[0]
     assert value["observed_at_ns"] == NOW_US*1000+123
@@ -902,8 +914,8 @@ def test_each_publisher_stage_uncertainty_is_failure(monkeypatch, stage, fault):
     svc = service()
     svc.store.wall = lambda: NOW_US/1e6
     real = getattr(svc.store, stage)
-    def operation(*args):
-        result = real(*args)
+    def operation(*args, **kwargs):
+        result = real(*args, **kwargs)
         if fault == "late":
             logical_time.advance(.500001)
             return result

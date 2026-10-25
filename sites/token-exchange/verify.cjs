@@ -5,7 +5,8 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 (async () => {
-  const markets = JSON.parse(fs.readFileSync(path.join(__dirname, 'markets.json')));
+  const allMarkets = JSON.parse(fs.readFileSync(path.join(__dirname, 'markets.json')));
+  const markets = allMarkets.filter(market => market.slug !== 'new-york');
   const output = process.argv[2] || '/tmp/token-exchange-build';
   const browser = await chromium.launch({ headless: true });
   const tracking = new Map();
@@ -48,7 +49,7 @@ const assert = require('node:assert/strict');
       assert(await mainNav.isVisible());
       await page.locator('.market-picker > summary').click();
       const marketNav = page.getByRole('navigation', {name:'Market directory', exact:true});
-      assert.equal(await marketNav.getByRole('link').count(), markets.length);
+      assert.equal(await marketNav.getByRole('link').count(), allMarkets.length);
       assert.equal(await marketNav.locator('[aria-current="page"]').textContent(), market.region);
       assert.equal(await marketNav.getByRole('link', {name:'Riyadh', exact:true}).count(), 1);
       await page.keyboard.press('Escape');
@@ -68,10 +69,11 @@ const assert = require('node:assert/strict');
         assert((await page.request.get(url)).ok(), `${market.slug} artwork ${url} did not resolve at ${width}`);
       }
       assert.equal(await page.locator('.hero-provider-track').evaluate(el => getComputedStyle(el).animationName), 'none');
-      assert.equal(await page.locator('.hero-provider-group:first-child a').count(), 6);
+      assert.deepEqual(await page.locator('.hero-provider-group:first-child a span').allTextContents(),
+        ['OpenAI', 'Databricks', 'Anthropic', 'Mistral', 'Google Vertex AI', 'DeepSeek', 'xAI']);
       assert.equal(await page.locator('.hero-provider-group[aria-hidden="true"] a:not([tabindex="-1"])').count(), 0);
       const footerNav = page.getByRole('navigation', {name:'Exchange markets', exact:true});
-      assert.equal(await footerNav.getByRole('link').count(), markets.length);
+      assert.equal(await footerNav.getByRole('link').count(), allMarkets.length);
       assert.equal(await footerNav.locator('[aria-current="page"]').textContent(), market.region);
       await footerNav.scrollIntoViewIfNeeded();
       if (await footerNav.evaluate(el => el.scrollWidth > el.clientWidth + 2)) {
@@ -128,7 +130,7 @@ const assert = require('node:assert/strict');
   });
   for (const [width, height] of [[390,700], [320,600]]) {
     await mobile.setViewportSize({width,height});
-    await mobile.goto('http://127.0.0.1:8089/new-york/');
+    await mobile.goto('http://127.0.0.1:8089/london/');
     await mobile.evaluate(() => document.fonts.ready);
     const initial = await heroGeometry();
     await mobile.evaluate(() => window.scrollTo({top:120,behavior:'instant'}));
@@ -144,7 +146,7 @@ const assert = require('node:assert/strict');
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await mobile.close();
   const fallback = await newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
-  await fallback.goto('http://127.0.0.1:8089/new-york/');
+  await fallback.goto('http://127.0.0.1:8089/london/');
   assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
   assert.equal(await fallback.getByRole('button', {name:'Menu',exact:true}).isVisible(), false);
   assert(await fallback.locator('.supplier-art').isVisible());
@@ -170,7 +172,7 @@ const assert = require('node:assert/strict');
     if (body.email === 'nope@invalid') return route.fulfill({status:422, headers:{...cors, 'Content-Type':'application/json'}, body:JSON.stringify({ok:false, error:'invalid_email'})});
     return route.fulfill({status:200, headers:{...cors, 'Content-Type':'application/pdf'}, body:Buffer.from('%PDF-1.4\n%stand-in\n')});
   });
-  await brochure.goto('http://127.0.0.1:8089/new-york/?utm_source=linkedin&utm_campaign=ny-launch&secret=dropped');
+  await brochure.goto('http://127.0.0.1:8089/london/?utm_source=linkedin&utm_campaign=ny-launch&secret=dropped');
   await brochure.getByRole('link', {name:'Get the buyer deck', exact:true}).first().click();
   await brochure.waitForFunction(() => location.hash === '#brochure');
   const form = brochure.locator('#brochure-form');

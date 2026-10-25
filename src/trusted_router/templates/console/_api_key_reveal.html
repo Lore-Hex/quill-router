@@ -7,7 +7,7 @@
 <div class="signup-reveal console-key-reveal" data-copy-secret-scope>
   {% if show_agent %}
   <section class="agent-quickstart" aria-labelledby="{{ id_prefix }}-agent-heading">
-    <h3 id="{{ id_prefix }}-agent-heading">Paste this into your coding agent.</h3>
+    <h3 id="{{ id_prefix }}-agent-heading">Paste this short message into a Claude Code, Codex, or your favorite agent chat.</h3>
     <div class="agent-message-row">
       <div class="agent-message" id="{{ id_prefix }}-agent-message" data-copy-lines>
         {{ agent_chat_prompt(raw_key) }}

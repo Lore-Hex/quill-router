@@ -11,10 +11,10 @@ from . import admin as admin
 from . import adyen as adyen
 from . import broadcast_queue as broadcast_queue
 from . import chat_browser_key as chat_browser_key
+from . import fastpath_snapshot as fastpath_snapshot
 from . import federation as federation
 from . import fetch_image as fetch_image
 from . import gateway as gateway
-from . import lightning as lightning
 from . import paypal as paypal
 from . import reconcile as reconcile
 from . import routable as routable
@@ -48,7 +48,21 @@ def register_gateway_internal_routes(router: APIRouter) -> None:
     fetch_image.register(router)
     reconcile.register(router)
     federation.register(router)
-    lightning.register(router)
+
+
+def register_routing_snapshot_routes(router: APIRouter) -> None:
+    """Register the fast path's routing snapshot poll; only when publishing is on."""
+    fastpath_snapshot.register(router)
+
+
+def register_edge_policy_routes(router: APIRouter) -> None:
+    """Register the fast path's edge policy poll; only when publishing is on.
+
+    Imported here, not above: off, the route module is never loaded.
+    """
+    from . import fastpath_edge_policy
+
+    fastpath_edge_policy.register(router)
 
 
 def register_operator_internal_routes(router: APIRouter) -> None:
@@ -75,9 +89,11 @@ def register_internal_routes(router: APIRouter) -> None:
 
 __all__ = [
     "register_control_internal_routes",
+    "register_edge_policy_routes",
     "register_external_webhook_routes",
     "register_gateway_internal_routes",
     "register_internal_routes",
     "register_observer_internal_routes",
     "register_operator_internal_routes",
+    "register_routing_snapshot_routes",
 ]

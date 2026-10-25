@@ -8,12 +8,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WIF_PROVIDER = "projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github"
-KNOWN_WIF_ALLOWLIST_EXCEPTIONS = {
-    ".github/workflows/deploy-growth-sync.yml": (
-        "Uses the provider as tr-deploy but is not admitted; the IAM fix requires "
-        "an operator decision (Lore-Hex/quill-router#1416)."
-    ),
-}
+KNOWN_WIF_ALLOWLIST_EXCEPTIONS: dict[str, str] = {}
 # Fixed action identities, not prefixes or a list inferred at scan time. New
 # actions need review here; these do not authenticate to the GCP WIF provider.
 KNOWN_NON_GCP_AUTH_ACTIONS = {
@@ -61,7 +56,7 @@ def test_schema_audit_workflow_pins_schedule_identity_permissions_and_emulator()
         "workload_identity_provider": WIF_PROVIDER,
         "service_account": "tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com",
     }
-    assert steps[0]["uses"] == "actions/checkout@v4"
+    assert steps[0]["uses"] == "actions/checkout@v7"
     assert any(step.get("uses") == "google-github-actions/setup-gcloud@v3" for step in steps)
     assert any(step.get("uses") == "astral-sh/setup-uv@v7" and step.get("with") == {"version": "latest"} for step in steps)
     assert any(step.get("run") == "uv sync --frozen" for step in steps)
@@ -305,7 +300,7 @@ def _assert_workflows_using_gcp_wif_provider_are_allowlisted(root: Path) -> None
 
 
 def test_all_workflows_using_gcp_wif_provider_are_allowlisted():
-    assert set(KNOWN_WIF_ALLOWLIST_EXCEPTIONS) == {".github/workflows/deploy-growth-sync.yml"}
+    assert not KNOWN_WIF_ALLOWLIST_EXCEPTIONS
     _assert_workflows_using_gcp_wif_provider_are_allowlisted(ROOT)
 
 
@@ -327,14 +322,12 @@ def test_wif_allowlist_rejects_another_unlisted_workflow(wif_repository_copy: Pa
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
 
 
-def test_wif_allowlist_rejects_an_admitted_known_exception(wif_repository_copy: Path):
-    terraform = wif_repository_copy / "infra/gcp_wif.tf"
-    terraform.write_text(terraform.read_text().replace(
-        "quill_router_workflow_refs = [",
-        'quill_router_workflow_refs = [\n'
-        '    "${local.github_owner}/quill-router/.github/workflows/deploy-growth-sync.yml@refs/heads/main",',
-        1,
-    ))
+def test_wif_allowlist_rejects_an_admitted_known_exception(wif_repository_copy: Path, monkeypatch):
+    monkeypatch.setitem(
+        KNOWN_WIF_ALLOWLIST_EXCEPTIONS,
+        ".github/workflows/deploy-growth-sync.yml",
+        "Regression fixture: an admitted workflow must not remain an exception.",
+    )
 
     with pytest.raises(AssertionError, match=r"Remove stale .*\.github/workflows/deploy-growth-sync\.yml"):
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
@@ -431,7 +424,7 @@ def test_wif_environment_file_references_are_unresolved(wif_repository_copy: Pat
     script = f'echo "WIF={WIF_PROVIDER}" >> "{reference}"'
     write = {'run': script, 'shell': 'bash'}
     if field == 'with':
-        write = {'uses': 'actions/checkout@v4', 'with': {'path': script}}
+        write = {'uses': 'actions/checkout@v7', 'with': {'path': script}}
     elif field == 'env':
         write = {'run': f'echo "WIF={WIF_PROVIDER}" >> "$ENV_FILE"', 'shell': 'bash', 'env': {'ENV_FILE': reference}}
     if writer != 'direct':
@@ -719,8 +712,12 @@ def test_wif_reusable_workflow_unresolved_provider_fails(wif_repository_copy: Pa
 
 
 @pytest.mark.parametrize('change', ['delete', 'remove-auth', 'other-provider'])
-def test_wif_allowlist_rejects_non_consuming_known_exception(wif_repository_copy: Path, change):
-    path = wif_repository_copy / '.github/workflows/deploy-growth-sync.yml'
+def test_wif_allowlist_rejects_non_consuming_known_exception(wif_repository_copy: Path, change, monkeypatch):
+    relative_path = '.github/workflows/test-exception.yml'
+    path = wif_repository_copy / relative_path
+    path.write_text(yaml.safe_dump(_auth_workflow()))
+    monkeypatch.setitem(KNOWN_WIF_ALLOWLIST_EXCEPTIONS, relative_path, 'Regression fixture')
+    _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
     if change == 'delete':
         path.unlink()
     else:
@@ -728,7 +725,7 @@ def test_wif_allowlist_rejects_non_consuming_known_exception(wif_repository_copy
         if change == 'remove-auth':
             workflow['jobs']['audit']['steps'] = [{'run': 'true'}]
         path.write_text(yaml.safe_dump(workflow))
-    with pytest.raises(AssertionError, match=r'Remove stale .*deploy-growth-sync\.yml'):
+    with pytest.raises(AssertionError, match=r'Remove stale .*test-exception\.yml'):
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
 
 

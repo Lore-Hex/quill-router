@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from typing import Any, Protocol
 
+from clickhouse.delivery_history import write_history
 from clickhouse.ingest_operational_outbox import (
     OperationalOutboxRow,
     normalise_operational_event,
@@ -143,27 +144,6 @@ def verify_delivery(
     }
 
 
-def _write_history(path: Path, result: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=16)
-    history: list[dict[str, Any]] = []
-    if path.exists():
-        for line in path.read_text().splitlines():
-            try:
-                row = json.loads(line)
-                checked = dt.datetime.fromisoformat(
-                    str(row["checked_at"]).replace("Z", "+00:00")
-                )
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                continue
-            if checked >= cutoff:
-                history.append(row)
-    history.append(result)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in history))
-    os.replace(temporary, path)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=5000)
@@ -196,7 +176,7 @@ def main() -> int:
     result["checked_at"] = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
     result["window_start"] = start.isoformat().replace("+00:00", "Z")
     result["window_end"] = end.isoformat().replace("+00:00", "Z")
-    _write_history(args.history_file, result)
+    write_history(args.history_file, result)
     print(json.dumps(result, sort_keys=True))
     return 0 if result["ok"] else 1
 

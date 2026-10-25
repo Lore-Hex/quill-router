@@ -1174,6 +1174,8 @@ async def openai_chat_pong_probe(
         # phase if they're ever reached.
         "max_tokens": 128,
         "temperature": 0,
+        # Exercise OpenCode's OpenAI-compatible request shape, not just bare PONG.
+        "store": False,
         "metadata": {"trustedrouter_synthetic": "true"},
     }
     started = time.perf_counter()
@@ -2905,7 +2907,14 @@ def _warm_path_served(
     if target.attested:
         content_type = headers.get("content-type", "").casefold()
         return status == 200 and content_type.startswith("application/cbor") and bool(body)
-    return status == 200 and body == b'{"status":"ok"}'
+    if status != 200:
+        return False
+    try:
+        health = json.loads(body)
+    except ValueError:
+        return False
+    # Provider diagnostics are independent of the gateway's health status.
+    return isinstance(health, dict) and health.get("status") == "ok"
 
 
 def _warm_path_reachable(

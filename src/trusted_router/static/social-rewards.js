@@ -50,18 +50,15 @@
     icon.className = "social-rewards-icon";
     icon.dataset.platform = id;
     icon.setAttribute("aria-hidden", "true");
-    if (id === "github") {
-      const img = document.createElement("img");
-      img.src = "/static/provider-logos/github-mark.png";
-      img.alt = "";
-      icon.append(img);
-    } else {
+    {
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", "0 0 24 24");
       const path = document.createElementNS(svg.namespaceURI, "path");
       path.setAttribute("fill", "currentColor");
       path.setAttribute("d", id.startsWith("x_")
-        ? "M18.9 2H22l-6.8 7.8L23.2 22h-6.3L12 14.6 5.5 22H2.3l8.2-9.4L.8 2h6.5l4.4 6.7L18.9 2Zm-1.1 18h1.7L6.4 3.9H4.6L17.8 20Z"
+        ? "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
+        : id === "github"
+          ? "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
         : id === "linkedin"
           ? "M20.4 2H3.6C2.7 2 2 2.7 2 3.6v16.8c0 .9.7 1.6 1.6 1.6h16.8c.9 0 1.6-.7 1.6-1.6V3.6c0-.9-.7-1.6-1.6-1.6ZM8 19H5V9.5h3V19ZM6.5 8.2a1.7 1.7 0 1 1 0-3.4 1.7 1.7 0 0 1 0 3.4ZM19 19h-3v-4.6c0-1.1 0-2.5-1.5-2.5s-1.8 1.2-1.8 2.4V19h-3V9.5h2.9v1.3h.1c.4-.8 1.4-1.6 2.8-1.6 3 0 3.5 2 3.5 4.5V19Z"
           : "M23 7s-.2-1.7-.9-2.4c-.9-.9-1.9-.9-2.4-1C16.4 3.4 12 3.4 12 3.4s-4.4 0-7.7.2c-.5.1-1.5.1-2.4 1C1.2 5.3 1 7 1 7S.8 9 .8 11v2c0 2 .2 4 .2 4s.2 1.7.9 2.4c.9.9 2.1.9 2.6 1 1.9.2 7.5.2 7.5.2s4.4 0 7.7-.2c.5-.1 1.5-.1 2.4-1 .7-.7.9-2.4.9-2.4s.2-2 .2-4v-2c0-2-.2-4-.2-4ZM9.7 15.5v-7l6.4 3.5-6.4 3.5Z");
@@ -112,16 +109,10 @@
     if (keyCard) {
       keyCard.hidden = !state.eligible || !state.enabled;
       const claimed = (state.actions || []).filter((action) => action.claimed).length;
-      keyCard.querySelector("[data-rewards-key-title]").textContent = total > 0 && claimed === total
-        ? "All available rewards claimed." : !state.enabled ? "Rewards are paused."
-          : claimed ? "Keep earning extra tokens." : "Earn extra API credit.";
-      keyCard.querySelector("[data-rewards-key-description]").textContent = total > 0 && claimed === total
-        ? "All available rewards have been added to your signup workspace."
-        : !state.enabled ? "Your progress is saved. Check back to finish your rewards."
-          : claimed ? `${total - claimed} rewards left to claim. Pick up where you left off.`
-            : "Earn API credit by following us on social.";
-      keyCard.querySelector("[data-rewards-open]").textContent = total > 0 && claimed === total || !state.enabled
-        ? "View rewards" : "Earn extra tokens";
+      const opener = keyCard.querySelector("[data-rewards-open]");
+      const label = opener.querySelector("[data-rewards-label]") || opener;
+      label.textContent = total > 0 && claimed === total || !state.enabled
+        ? "View rewards" : "Earn API credit for a follow";
     }
     openers.forEach((button) => { button.hidden = !(state.eligible && state.enabled); });
     if (!state.enabled && dialog.open) dialog.close();
@@ -135,6 +126,11 @@
     const actions = state.actions || [];
     const count = actions.filter((action) => action.claimed).length;
     dialog.querySelector("[data-rewards-progress]").textContent = `${count} of ${total} rewards claimed`;
+    if (total > 0) {
+      const thousands = total * 200;
+      const upTo = thousands >= 1000 ? `${thousands / 1000}M` : `${thousands}K`;
+      dialog.querySelector("h2").textContent = `Earn up to ${upTo} tokens of API credit`;
+    }
     dialog.querySelector("[data-rewards-meter]").max = total || 1;
     dialog.querySelector("[data-rewards-meter]").value = count;
     Array.from(list.children).forEach((row) => {
@@ -238,7 +234,7 @@
     dialog.querySelector("h2").focus();
   }
   function canAutoOpen() {
-    return !document.querySelector(".console-key-reveal") && !document.querySelector("dialog[open]");
+    return !document.querySelector("[data-key-onboarding]") && !document.querySelector("dialog[open]");
   }
   async function refresh(auto = false) {
     if (refreshing) { refreshAgain = true; return; }

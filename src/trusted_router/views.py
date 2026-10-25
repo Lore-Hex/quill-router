@@ -31,7 +31,7 @@ def _auth_styles_version() -> str:
     # change with their bytes.
     static_dir = Path(__file__).parent / "static"
     content = b"".join(
-        (static_dir / name).read_bytes() for name in ("tokens.css", "auth.css", "charter.css")
+        (static_dir / name).read_bytes() for name in ("tokens.css", "brand.css", "auth.css", "charter.css")
     )
     return hashlib.sha256(content).hexdigest()[:16]
 
@@ -73,6 +73,34 @@ def _format_datetime_iso(value: int | float | str | None) -> str:
     return dt.datetime.fromtimestamp(ts, tz=dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _timestamp(value: object) -> dt.datetime | None:
+    """A Unix timestamp (int or float) as an aware datetime; anything else
+    (None, strings, booleans) is "unknown"."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        return dt.datetime.fromtimestamp(value, tz=dt.UTC)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _format_datetime_date(value: object) -> str:
+    """Render a Unix timestamp as a short date, `May 24, 2026`, for the
+    Credits page payment list; the machine-readable form is beside it."""
+    moment = _timestamp(value)
+    if moment is None:
+        return "—"
+    return f"{moment.strftime('%b')} {moment.day}, {moment.year}"
+
+
+def _format_datetime_iso8601(value: object) -> str:
+    """Render a Unix timestamp as a `<time datetime>` value in UTC."""
+    moment = _timestamp(value)
+    if moment is None:
+        return ""
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 @lru_cache(maxsize=1)
 def _env() -> Environment:
     env = Environment(
@@ -82,6 +110,8 @@ def _env() -> Environment:
     )
     env.filters["uptime_pct"] = _format_uptime
     env.filters["datetime_iso"] = _format_datetime_iso
+    env.filters["datetime_date"] = _format_datetime_date
+    env.filters["datetime_iso8601"] = _format_datetime_iso8601
     env.filters["seo_title"] = seo_title
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url

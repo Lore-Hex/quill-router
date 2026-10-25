@@ -15,6 +15,7 @@ from trusted_router.pricing import provider_manifest_price_profile_is_valid
 EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
         "abliterate",
+        "abliteration",
         "meta",
         "aion-labs",
         "akashml",
@@ -22,6 +23,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "inception",
         "mancer",
         "nextbit",
+        "nextbit-eu",
         "reka",
         "sail-research",
         "sambanova",
@@ -37,8 +39,11 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "hixtube",
+        "muna",
+        "coralbricks",
         "boundless",
         "zro",
         "byteplus",
@@ -55,8 +60,8 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "recraft",
         "relace",
         "stepfun",
-        "system1models",
-        "system1models-eu",
+        "decisionmodelsio",
+        "decisionmodelsio-eu",
     }
 )
 PROVIDER_MANIFEST_MAX_AGE_DAYS = 14
@@ -81,7 +86,10 @@ def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
     image_price = row.get("decision_image_input_price_per_m")
     return (
         isinstance(model_id, str)
-        and re.fullmatch(r"system1models(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+        and (
+            re.fullmatch(r"decisionmodelsio(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+            or (model_id == "cloudflare/clef-flash" and row.get("upstream_id") == "clef-flash")
+        )
         and (
             hold is None
             or (isinstance(hold, str) and hold in DECISION_CONTRACT_HOLDS and row.get("routable") is False)
@@ -248,7 +256,7 @@ def provider_manifest_canary_quarantine_valid_until(
         if row.get("routable") is not False:
             return EXPIRED_PROVIDER_MANIFEST
         allowed_reasons = _CANARY_QUARANTINE_REASONS
-        if provider_slug in {"system1models", "system1models-eu"}:
+        if provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"}:
             allowed_reasons |= DECISION_CONTRACT_HOLDS
         if row.get("routable_reason") not in allowed_reasons:
             return EXPIRED_PROVIDER_MANIFEST

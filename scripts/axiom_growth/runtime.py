@@ -17,6 +17,9 @@ from scripts.axiom_growth import gateway_attempts
 from scripts.axiom_growth import model as m
 
 MAX_EVENTS = 300_000
+MAX_GATEWAY_WINDOWS = 12
+MAX_GATEWAY_PAGES = 20
+GATEWAY_SECONDS = 60
 
 
 def complete(result):
@@ -37,6 +40,50 @@ def content_hash(row):
     # Progress timestamps must not cause every unchanged journey to be reingested.
     body = {k: v for k, v in row.items() if k not in {'exported_at', 'observed_through', 'billing_owner_observed_at'}}
     return m.digest(json.dumps(body, sort_keys=True, separators=(',', ':')))
+
+
+def collect_gateway(state, io, now, end, journeys, daily, owners):
+    """Replay complete windows only, within the original per-run source budget."""
+    candidates = {}
+
+    def project_audits(checkpoint, audits, observed_through):
+        updated = copy.deepcopy(journeys)
+        attempts = gateway_attempts.snapshots(audits, updated, observed_through)
+        attempts = gateway_attempts.pre_activation_attempts(attempts, daily, updated)
+        if owners is not None:
+            m.link_billing_accounts(attempts, owners, updated)
+        gateway_attempts.link_first_attempts(updated, attempts)
+        gateway_attempts.preserve_milestones(checkpoint, updated)
+        return updated, attempts
+
+    status = 'unavailable'
+    try:
+        # Preserve evidence already in a stalled checkpoint before any pruning.
+        updated, attempts = project_audits(state, state.get('gateway_audits', []),
+            m.date(state.get('gateway_watermark', end.isoformat())))
+        journeys[:] = updated
+        candidates.update({r['event_id']: r for r in attempts})
+        for _ in range(MAX_GATEWAY_WINDOWS):
+            checkpoint = dict(state)
+            audits = gateway_attempts.collect(checkpoint, io, now, end)
+            observed = m.date(checkpoint['gateway_watermark'])
+            updated, attempts = project_audits(checkpoint, audits, observed)
+            state.update(gateway_audits=checkpoint['gateway_audits'],
+                         gateway_watermark=checkpoint['gateway_watermark'],
+                         gateway_milestones=checkpoint['gateway_milestones'])
+            journeys[:] = updated
+            candidates.update({r['event_id']: r for r in attempts})
+            status = 'current' if observed >= end else 'catching_up'
+            if status == 'current':
+                break
+    except Exception as exc:  # noqa: BLE001 - acquisition keeps running during audit-source failure.
+        # A partial window never advances its cursor. Earlier complete windows
+        # may commit, but only after the shared ingest and checkpoint succeed.
+        if not isinstance(exc, gateway_attempts.AuditBudgetExceeded):
+            status = 'unavailable'
+        print(json.dumps({'event': 'growth.gateway_collection_failed',
+                          'error_class': type(exc).__name__}), flush=True)
+    return list(candidates.values()), status
 
 
 def cycle(state, io, now):
@@ -90,30 +137,12 @@ def cycle(state, io, now):
             billing_status = 'stale' if owners else 'unavailable'
             print(json.dumps({'event': 'growth.billing_directory_failed',
                               'error_class': type(exc).__name__}), flush=True)
-    candidates = list(events.values()) + daily_rows + journeys
     gateway_status = 'disabled'
+    attempts = []
     if os.environ.get('GROWTH_GATEWAY_ATTEMPTS_ENABLED') == 'true':
-        previous_audits = state.get('gateway_audits', [])
-        previous_gateway_watermark = state.get('gateway_watermark')
-        try:
-            audits = gateway_attempts.collect(state, io, now, end)
-            attempts = gateway_attempts.snapshots(audits, journeys, end)
-            attempts = gateway_attempts.pre_activation_attempts(attempts, daily_rows, journeys)
-            if owners is not None:
-                m.link_billing_accounts(attempts, owners, journeys)
-            gateway_attempts.link_first_attempts(journeys, attempts)
-            candidates += attempts
-            gateway_status = 'current'
-        except Exception as exc:  # noqa: BLE001 - keep acquisition exporting during audit-source failure.
-            state['gateway_audits'] = previous_audits
-            if previous_gateway_watermark is None:
-                state.pop('gateway_watermark', None)
-            else:
-                state['gateway_watermark'] = previous_gateway_watermark
-            gateway_status = 'unavailable'
-            print(json.dumps({'event': 'growth.gateway_collection_failed',
-                              'error_class': type(exc).__name__}), flush=True)
+        attempts, gateway_status = collect_gateway(state, io, now, end, journeys, daily_rows, owners)
     gateway_attempts.preserve_milestones(state, journeys)
+    candidates = list(events.values()) + daily_rows + journeys + attempts
     hashes = {r['event_id']: content_hash(r) for r in candidates}
     changed = [{**r, 'exported_at': now.isoformat()} for r in candidates
                if hashes[r['event_id']] != state.get('hashes', {}).get(r['event_id'])]
@@ -240,13 +269,21 @@ class Sources:
         return values
 
     def gateway_audits(self, start, end):
+        if not hasattr(self, 'gateway_deadline'):
+            self.gateway_deadline = time.monotonic() + GATEWAY_SECONDS
+            self.gateway_pages = 0
         view = f'projects/{self.project}/locations/global/buckets/tr-growth-source/views/_AllLogs'
         body = {'resourceNames': [view], 'filter': gateway_attempts.source_filter() +
                 f' timestamp>="{start.isoformat()}" timestamp<"{end.isoformat()}"',
                 'pageSize': 1000, 'orderBy': 'timestamp asc'}
         rows = []
-        for _ in range(20):
-            result = self.google('POST', 'https://logging.googleapis.com/v2/entries:list', json=body).json()
+        while self.gateway_pages < MAX_GATEWAY_PAGES:
+            remaining = self.gateway_deadline - time.monotonic()
+            if remaining <= 0:
+                raise gateway_attempts.AuditBudgetExceeded('Gateway audit time budget exceeded')
+            self.gateway_pages += 1
+            result = self.google('POST', 'https://logging.googleapis.com/v2/entries:list',
+                                 json=body, timeout=min(10, remaining)).json()
             for entry in result.get('entries', []):
                 row = gateway_attempts.project(entry)
                 if row is not None:
@@ -254,7 +291,7 @@ class Sources:
             if not result.get('nextPageToken'):
                 return rows
             body['pageToken'] = result['nextPageToken']
-        raise ValueError('Gateway audit pagination budget exceeded')
+        raise gateway_attempts.AuditBudgetExceeded('Gateway audit pagination budget exceeded')
 
     def billing_owners(self):
         sql = """SELECT workspace_fingerprint, billing_account_fingerprint,

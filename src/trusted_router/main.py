@@ -74,14 +74,15 @@ from trusted_router.routes.identity_verify import register_identity_verify_route
 from trusted_router.routes.inference import register_inference_routes
 from trusted_router.routes.internal import (
     register_control_internal_routes,
+    register_edge_policy_routes,
     register_external_webhook_routes,
     register_gateway_internal_routes,
     register_internal_routes,
     register_observer_internal_routes,
     register_operator_internal_routes,
+    register_routing_snapshot_routes,
 )
 from trusted_router.routes.keys import register_key_routes
-from trusted_router.routes.lightning_support import register_lightning_support_routes
 from trusted_router.routes.mcp import register_mcp_routes
 from trusted_router.routes.mcp_advisor import register_advisor_mcp_routes
 from trusted_router.routes.notify import register_notify_public_routes, register_notify_routes
@@ -132,6 +133,7 @@ _ACQUISITION_CLOUD_FIELDS = (
     "page_path",
     "device_category",
     "reward_action",
+    "cta", "position", "form", "destination_host",
     "reward_placement",
     "observation_id",
     "site_domain",
@@ -301,11 +303,27 @@ def create_app(
     if surface in {"combined", "internal"} and settings.speculative_provider_shadow_enabled:
         from trusted_router.services.speculation_shadow import install
         install(app, settings)
+    if surface in {"combined", "internal"} and settings.routing_snapshot_publish_enabled:
+        # E2 publish dark: off by default, and off means neither snapshot
+        # module is imported (tests/test_routing_snapshot.py).
+        from trusted_router.services.routing_snapshot_publisher import (
+            install as install_routing_snapshot,
+        )
+        install_routing_snapshot(app, settings)
+    if surface in {"combined", "internal"} and settings.edge_policy_publish_enabled:
+        # E2 P2 publish dark: off means no edge-policy module is imported
+        # (tests/test_edge_policy_publish.py).
+        from trusted_router.services.edge_policy_publisher import (
+            install as install_edge_policy,
+        )
+        install_edge_policy(app, settings)
     if surface in {"combined", "internal"}:
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
         app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
-        if settings.async_settle_shadow_policy == "shadow-v2" and settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
+        # An expired v2 canary installs nothing: not v2, and not v1 either,
+        # because v1 still requires the raw policy pin to be empty.
+        if settings.effective_async_settle_shadow_policy() == "shadow-v2" and settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
             from trusted_router.services.async_settle_shadow_health import (
                 install as install_shadow_health,
             )
@@ -867,7 +885,6 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_custom_model_routes(router)
         register_user_model_routes(router)
         register_key_routes(router)
-        register_lightning_support_routes(router)
         register_oauth_app_routes(router)
         register_oauth_authorized_app_routes(router)
         register_oauth_key_routes(router)
@@ -906,6 +923,10 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_observer_internal_routes(router)
     if surface in {"combined", "internal"} and settings.operator_token:
         register_operator_internal_routes(router)
+    if surface in {"combined", "internal"} and settings.routing_snapshot_publish_enabled:
+        register_routing_snapshot_routes(router)
+    if surface in {"combined", "internal"} and settings.edge_policy_publish_enabled:
+        register_edge_policy_routes(router)
     return router
 
 

@@ -187,16 +187,17 @@ def test_card_checkout_uses_separate_credit_and_processing_fee_line_items(
         "TrustedRouter credits",
         "Payment processing fee",
     ]
-    assert [item["price_data"]["unit_amount"] for item in line_items] == [2_500, 106]
+    assert [item["price_data"]["unit_amount"] for item in line_items] == [2_500, 159]
     assert captured["metadata"]["credit_amount_microdollars"] == "25000000"
-    assert captured["metadata"]["processing_fee_cents"] == "106"
-    assert captured["metadata"]["charge_amount_cents"] == "2606"
+    assert captured["metadata"]["processing_fee_cents"] == "159"
+    assert captured["metadata"]["charge_amount_cents"] == "2659"
+    assert captured["metadata"]["fee_multiplier_basis_points"] == "15000"
     assert captured["payment_intent_data"]["metadata"] == captured["metadata"]
 
     data = response.json()["data"]
     assert data["amount_microdollars"] == 25_000_000
-    assert data["processing_fee_microdollars"] == 1_060_000
-    assert data["total_microdollars"] == 26_060_000
+    assert data["processing_fee_microdollars"] == 1_590_000
+    assert data["total_microdollars"] == 26_590_000
 
 
 def test_small_card_checkout_applies_fee_floor(
@@ -228,10 +229,10 @@ def test_small_card_checkout_applies_fee_floor(
     assert response.status_code == 201, response.text
     assert [item["price_data"]["unit_amount"] for item in captured["line_items"]] == [
         300,
-        80,
+        120,
     ]
     assert captured["metadata"]["fee_minimum_cents"] == "80"
-    assert response.json()["data"]["processing_fee_microdollars"] == 800_000
+    assert response.json()["data"]["processing_fee_microdollars"] == 1_200_000
 
 
 def test_small_stablecoin_checkout_keeps_lower_rail_fee(
@@ -263,7 +264,7 @@ def test_small_stablecoin_checkout_keeps_lower_rail_fee(
     assert response.status_code == 201, response.text
     assert [item["price_data"]["unit_amount"] for item in captured["line_items"]] == [
         300,
-        5,
+        8,
     ]
     assert captured["metadata"]["fee_minimum_cents"] == "0"
 
@@ -329,11 +330,11 @@ def test_stablecoin_checkout_uses_stablecoin_fee_schedule(
     assert captured["payment_method_types"] == ["crypto"]
     assert [item["price_data"]["unit_amount"] for item in captured["line_items"]] == [
         2_500,
-        39,
+        59,
     ]
-    assert captured["metadata"]["processing_fee_cents"] == "39"
+    assert captured["metadata"]["processing_fee_cents"] == "59"
     assert captured["payment_intent_data"]["metadata"] == captured["metadata"]
-    assert response.json()["data"]["total_microdollars"] == 25_390_000
+    assert response.json()["data"]["total_microdollars"] == 25_590_000
 
 
 def test_ach_checkout_uses_bank_account_and_capped_fee_schedule(
@@ -372,14 +373,14 @@ def test_ach_checkout_uses_bank_account_and_capped_fee_schedule(
     assert "setup_future_usage" not in captured["payment_intent_data"]
     assert [item["price_data"]["unit_amount"] for item in captured["line_items"]] == [
         2_500,
-        21,
+        32,
     ]
     assert captured["metadata"]["payment_method"] == "ach"
     assert captured["metadata"]["fee_max_cents"] == "500"
     assert response.json()["data"]["mode"] == "stripe_ach"
     assert response.json()["data"]["amount_microdollars"] == 25_000_000
-    assert response.json()["data"]["processing_fee_microdollars"] == 210_000
-    assert response.json()["data"]["total_microdollars"] == 25_210_000
+    assert response.json()["data"]["processing_fee_microdollars"] == 320_000
+    assert response.json()["data"]["total_microdollars"] == 25_320_000
 
 
 def test_ach_checkout_reuses_existing_stripe_customer(
@@ -423,7 +424,7 @@ def test_ach_checkout_reuses_existing_stripe_customer(
     assert "customer_creation" not in captured
     assert [item["price_data"]["unit_amount"] for item in captured["line_items"]] == [
         100_000,
-        500,
+        750,
     ]
 
 
@@ -569,9 +570,11 @@ def test_ach_async_failure_never_credits_or_replaces_saved_card(
     assert account.stripe_payment_method_id == "pm_saved_card"
 
 
+@pytest.mark.parametrize("fee_cents", [106, 159])
 def test_checkout_webhook_credits_only_requested_principal_when_total_includes_fee(
     client: TestClient,
     user_headers: dict[str, str],
+    fee_cents: int,
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     before = live_credit_summary(workspace_id)
@@ -583,15 +586,15 @@ def test_checkout_webhook_credits_only_requested_principal_when_total_includes_f
         "data": {
             "object": {
                 "mode": "payment",
-                "amount_total": 2_606,
+                "amount_total": 2_500 + fee_cents,
                 "payment_intent": "pi_checkout_with_processing_fee",
                 "payment_status": "paid",
                 "customer": "cus_fee",
                 "metadata": {
                     "workspace_id": workspace_id,
                     "credit_amount_microdollars": "25000000",
-                    "processing_fee_cents": "106",
-                    "charge_amount_cents": "2606",
+                    "processing_fee_cents": str(fee_cents),
+                    "charge_amount_cents": str(2_500 + fee_cents),
                 },
             }
         },
@@ -642,9 +645,11 @@ def test_checkout_webhook_rejects_principal_larger_than_total_charge(
     assert after["total_credits"] == before["total_credits"]
 
 
+@pytest.mark.parametrize("fee_cents", [91, 137])
 def test_auto_refill_webhook_validates_charge_but_credits_only_principal(
     client: TestClient,
     user_headers: dict[str, str],
+    fee_cents: int,
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     before = live_credit_summary(workspace_id)
@@ -658,15 +663,15 @@ def test_auto_refill_webhook_validates_charge_but_credits_only_principal(
             "data": {
                 "object": {
                     "id": "pi_refill_with_processing_fee",
-                    "amount": 2_091,
+                    "amount": 2_000 + fee_cents,
                     "metadata": {
                         "workspace_id": workspace_id,
                         "payment_method": "card",
                         "auto_refill": "true",
                         "amount_microdollars": "20000000",
                         "credit_amount_microdollars": "20000000",
-                        "processing_fee_cents": "91",
-                        "charge_amount_cents": "2091",
+                        "processing_fee_cents": str(fee_cents),
+                        "charge_amount_cents": str(2_000 + fee_cents),
                     },
                 }
             },

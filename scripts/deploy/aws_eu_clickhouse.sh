@@ -19,10 +19,12 @@
 # and is deliberately not attempted here — a single node that demonstrably
 # ingests beats three that are half-wired.
 #
-# Private on purpose. App Runner egress is DEFAULT (AWS-managed NAT with
-# dynamic addresses), so a public ClickHouse could not be restricted by
-# source IP and would be protected by a password alone. Instead the service
-# gets a VPC connector and ClickHouse listens only inside the VPC.
+# Private on purpose: ClickHouse listens only inside the VPC. The control
+# plane's ECS tasks (tr-cp-euw3, scripts/deploy/aws_ecs_control_plane.sh)
+# run in this VPC's subnets, and the node's security group admits 8123 from
+# the VPC, so they reach it directly. (The App Runner service this used to
+# serve needed a VPC connector, which this script created; App Runner is
+# retired and the step went with it on 2026-10-20.)
 set -euo pipefail
 
 REGION="${REGION:-eu-west-3}"                  # Paris: same region as tr-eu.
@@ -34,11 +36,15 @@ VOLUME_GB="${VOLUME_GB:-100}"
 NAME="${NAME:-tr-eu-clickhouse-1}"
 SG_NAME="${SG_NAME:-tr-eu-clickhouse-sg}"
 SECRET_ID="${SECRET_ID:-quill/tr-eu-clickhouse-password}"
+READER_SECRET_ID="${READER_SECRET_ID:-quill/tr-eu-clickhouse-read-password}"
 ROLE_NAME="${ROLE_NAME:-tr-eu-clickhouse-role}"
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-tr-eu-clickhouse-instance-profile}"
 CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"   # DSQL, matches the drain installer.
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 
 # ---------------------------------------------------------------------------
 # 1. Password. Generated once and kept in Secrets Manager, never echoed.
@@ -47,10 +53,27 @@ if aws secretsmanager describe-secret --region "$REGION" --secret-id "$SECRET_ID
   log "reusing existing ClickHouse password secret"
 else
   log "creating ClickHouse password secret"
+  (umask 077; openssl rand -base64 32 | tr -d '\n/+=' | head -c 40 > "$WORK/password")
   aws secretsmanager create-secret --region "$REGION" --name "$SECRET_ID" \
-    --secret-string "$(openssl rand -base64 32 | tr -d '\n/+=' | head -c 40)" >/dev/null
+    --secret-string "file://$WORK/password" >/dev/null
+  rm -f "$WORK/password"
 fi
-CH_PASSWORD="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET_ID" --query SecretString --output text)"
+
+if aws secretsmanager describe-secret --region "$REGION" --secret-id "$READER_SECRET_ID" >/dev/null 2>&1; then
+  log "reusing existing ClickHouse read password secret"
+else
+  log "creating ClickHouse read password secret"
+  (umask 077; openssl rand -base64 32 | tr -d '\n/+=' | head -c 40 > "$WORK/read-password")
+  aws secretsmanager create-secret --region "$REGION" --name "$READER_SECRET_ID" \
+    --secret-string "file://$WORK/read-password" >/dev/null
+  rm -f "$WORK/read-password"
+fi
+READER_SECRET_ARN="$(aws secretsmanager describe-secret --region "$REGION" \
+  --secret-id "$READER_SECRET_ID" --query ARN --output text)"
+[ -n "$READER_SECRET_ARN" ] && [ "$READER_SECRET_ARN" != None ] || {
+  echo "Could not resolve ClickHouse read password secret ARN" >&2
+  exit 1
+}
 
 # The standalone schema, DERIVED (see the helper for why a literal list rots).
 # Built before the node so a bad set fails here rather than half-way through a
@@ -58,6 +81,8 @@ CH_PASSWORD="$(aws secretsmanager get-secret-value --region "$REGION" --secret-i
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/deploy/_clickhouse_single_node_schema.sh
 . "$(dirname "${BASH_SOURCE[0]}")/_clickhouse_single_node_schema.sh"
+# shellcheck source=scripts/deploy/_clickhouse_single_node_reader.sh
+. "$(dirname "${BASH_SOURCE[0]}")/_clickhouse_single_node_reader.sh"
 SCHEMA_FILES=()
 while IFS= read -r _schema; do
   SCHEMA_FILES+=("$_schema")
@@ -83,6 +108,24 @@ if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
   done
 fi
 log "security group: $SG_ID"
+READER_SETUP="$(cat <<READER
+reader_python=python3
+if [ -x /opt/tr-clickhouse/venv/bin/python ]; then
+  reader_python=/opt/tr-clickhouse/venv/bin/python
+fi
+reader_hash=\$("\$reader_python" - <<'PYEOF'
+import hashlib
+import boto3
+password = boto3.client('secretsmanager', region_name='${REGION}').get_secret_value(
+    SecretId='${READER_SECRET_ID}')['SecretString']
+if not password:
+    raise SystemExit('ClickHouse read password secret is empty')
+print(hashlib.sha256(password.encode()).hexdigest())
+PYEOF
+)
+$(single_node_reader_setup "$VPC_CIDR")
+READER
+)"
 
 # ---------------------------------------------------------------------------
 # 3. IAM: a least-privilege role for THIS node, created here so it exists.
@@ -94,7 +137,7 @@ log "security group: $SG_ID"
 # (~40 of them), the Cloudflare token, the cross-cloud SA key, and the ability
 # to decrypt with any key in the account including the CloudTrail CMK.
 # Thirty days of CloudTrail showed this node using exactly one secret and one
-# key. The role below is that observed set and nothing more.
+# key. The role below adds only the separate control-plane reader secret.
 #
 # It is created HERE rather than by hand because a control that lives only in
 # live cloud state dies with the resource: the role was split by CLI once, and
@@ -120,12 +163,18 @@ JSON
 # expire, presenting as an unrelated outage. Every other role in this account
 # uses hard StringEquals because every other one is a service principal
 # (ecs-tasks, apprunner, events, cloudtrail) that does populate it.
+#
+# DsqlOutboxDrain's dsql:DbConnect also serves the delivery verifier's
+# tr_verifier role. IAM cannot narrow it to one Postgres role; that boundary is
+# each role's AWS IAM GRANT mapping (scripts/deploy/aws_eu_tr_verifier_role.sql).
 
 ROLE_POLICY="$(cat <<JSON
 {"Version":"2012-10-17","Statement":[
  {"Sid":"OwnPasswordSecretOnly","Effect":"Allow",
   "Action":["secretsmanager:GetSecretValue","secretsmanager:DescribeSecret"],
   "Resource":"arn:aws:secretsmanager:$REGION:$ACCOUNT:secret:$SECRET_ID-*"},
+ {"Sid":"ControlReaderPasswordSecretOnly","Effect":"Allow",
+  "Action":["secretsmanager:GetSecretValue"],"Resource":"$READER_SECRET_ARN"},
  {"Sid":"DecryptSecretsManagerKeyOnly","Effect":"Allow",
   "Action":["kms:Decrypt","kms:DescribeKey"],"Resource":"$SM_KEY_ARN"},
  {"Sid":"DsqlOutboxDrain","Effect":"Allow","Action":["dsql:DbConnect"],
@@ -189,6 +238,7 @@ if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
   # so nothing breaks at the moment of the swap. That same property is why a
   # BROKEN role here would fail late — hence the role above grants the set that
   # CloudTrail shows this node actually using, rather than a guess.
+  # shellcheck disable=SC2016 # Backticks are JMESPath literals.
   CUR_ASSOC="$(aws ec2 describe-iam-instance-profile-associations --region "$REGION" \
     --filters "Name=instance-id,Values=$INSTANCE_ID" \
     --query 'IamInstanceProfileAssociations[?State==`associated`].[AssociationId,IamInstanceProfile.Arn]' \
@@ -215,10 +265,10 @@ else
   log "launching $NAME from $AMI"
   USER_DATA="$(cat <<USERDATA
 #!/bin/bash
-set -eux
+set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y apt-transport-https ca-certificates dirmngr gnupg curl
+apt-get install -y apt-transport-https ca-certificates dirmngr gnupg curl python3-boto3
 
 GNUPGHOME=\$(mktemp -d)
 GNUPGHOME=\$GNUPGHOME gpg --no-default-keyring --keyring /usr/share/keyrings/clickhouse-keyring.gpg \
@@ -243,11 +293,21 @@ cat > /etc/clickhouse-server/config.d/listen.xml <<XML
 </clickhouse>
 XML
 
+CH_PASSWORD=\$(python3 - <<'PYEOF'
+import boto3
+password = boto3.client('secretsmanager', region_name='${REGION}').get_secret_value(
+    SecretId='${SECRET_ID}')['SecretString']
+if not password:
+    raise SystemExit('ClickHouse password secret is empty')
+print(password, end='')
+PYEOF
+)
+umask 077
 cat > /etc/clickhouse-server/users.d/default-password.xml <<XML
 <clickhouse>
   <users>
     <default>
-      <password>${CH_PASSWORD}</password>
+      <password>\${CH_PASSWORD}</password>
       <networks><ip>${VPC_CIDR}</ip><ip>127.0.0.1</ip></networks>
     </default>
   </users>
@@ -265,7 +325,7 @@ systemctl restart clickhouse-server
 
 # Apply the standalone schema HERE rather than printing it for someone to run.
 # It used to be step 1 of NEXT_STEPS, described as a human step needing the
-# ClickHouse password -- but this script already read that password from Secrets
+# ClickHouse password -- but the node already read that password from Secrets
 # Manager to write users.d above, so the only thing the human step added was a
 # chance to run a stale command. The set it told you to apply was the glob
 # clickhouse/00 star .sql, which silently stopped matching at 010.
@@ -276,14 +336,16 @@ cat > /root/operational_schema.sql <<'SQLEOF'
 ${OPERATIONAL_SCHEMA}
 SQLEOF
 for attempt in \$(seq 1 60); do
-  if CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then
+  if CLICKHOUSE_PASSWORD="\$CH_PASSWORD" clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then
     break
   fi
   sleep 5
 done
-CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default \
+CLICKHOUSE_PASSWORD="\$CH_PASSWORD" clickhouse-client --user default --database default \
   --multiquery < /root/operational_schema.sql
 rm -f /root/operational_schema.sql
+unset CH_PASSWORD
+${READER_SETUP}
 USERDATA
 )"
   INSTANCE_ID="$(aws ec2 run-instances --region "$REGION" \
@@ -302,24 +364,30 @@ PRIVATE_IP="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INS
   --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)"
 log "instance $INSTANCE_ID at $PRIVATE_IP"
 
-# ---------------------------------------------------------------------------
-# 5. App Runner VPC connector, so tr-eu can reach a PRIVATE ClickHouse.
-# ---------------------------------------------------------------------------
-CONNECTOR_ARN="$(aws apprunner list-vpc-connectors --region "$REGION" \
-  --query "VpcConnectors[?VpcConnectorName=='tr-eu-vpc' && Status=='ACTIVE'].VpcConnectorArn | [0]" \
-  --output text 2>/dev/null || true)"
-if [ -z "$CONNECTOR_ARN" ] || [ "$CONNECTOR_ARN" = "None" ]; then
-  log "creating App Runner VPC connector"
-  CONNECTOR_ARN="$(aws apprunner create-vpc-connector --region "$REGION" \
-    --vpc-connector-name tr-eu-vpc \
-    --subnets "$SUBNET_ID" --security-groups "$SG_ID" \
-    --query 'VpcConnector.VpcConnectorArn' --output text)"
+# User-data only runs at first boot. Converge the reader on existing nodes too,
+# fetching and hashing the secret on the node; SSM carries only its name.
+if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
+  python3 -c 'import json,sys; json.dump({"commands": [sys.stdin.read()]}, sys.stdout)' \
+    > "$WORK/reader.json" <<REMOTE
+set -eu
+${READER_SETUP}
+REMOTE
+  COMMAND_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE_ID" \
+    --document-name AWS-RunShellScript --comment "clickhouse: install control-plane reader" \
+    --parameters "file://$WORK/reader.json" --query 'Command.CommandId' --output text)"
+  aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" \
+    --instance-id "$INSTANCE_ID" 2>/dev/null || true
+  COMMAND_STATUS="$(aws ssm get-command-invocation --region "$REGION" --command-id "$COMMAND_ID" \
+    --instance-id "$INSTANCE_ID" --query Status --output text)"
+  [ "$COMMAND_STATUS" = Success ] || {
+    echo "ClickHouse reader install failed: status=$COMMAND_STATUS command-id=$COMMAND_ID" >&2
+    exit 1
+  }
 fi
-log "vpc connector: $CONNECTOR_ARN"
+unset READER_SETUP
 
 echo
 echo "CLICKHOUSE_PRIVATE_URL=http://${PRIVATE_IP}:8123"
-echo "VPC_CONNECTOR_ARN=${CONNECTOR_ARN}"
 echo "INSTANCE_ID=${INSTANCE_ID}"
 
 # ---------------------------------------------------------------------------
@@ -352,12 +420,16 @@ NEXT_STEPS=$(cat <<NEXT
 The node is up WITH ITS SCHEMA APPLIED, but the AWS cloud is NOT complete. Run
 these, in order, and this script will exit 0 the next time it is run:
 
-  1. redeploy the control plane so settle enqueues and the outbox is readable.
-     Its own knobs, not the TR_* names — it builds those:
-       CLICKHOUSE_URL=http://${PRIVATE_IP}:8123 \\
-       VPC_CONNECTOR_ARN=${CONNECTOR_ARN} \\
-       bash scripts/deploy/aws_eu_control_plane.sh
-     (EgressConfiguration=VPC follows from a non-empty VPC_CONNECTOR_ARN.)
+  1. redeploy the control plane with the AWS deploy
+     (.github/workflows/deploy-aws-control-plane.yml, which runs
+     scripts/deploy/aws_ecs_control_plane.sh): it carries each service task
+     definition forward and pins TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true,
+     which is what makes settle enqueue. Only tr-cp-euw3 (Paris) reads this
+     node: there TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL must be
+       http://${PRIVATE_IP}:8123
+     with user tr_control_read and the password in
+     quill/tr-eu-clickhouse-read-password. eu-west-1 needs no ClickHouse
+     setting; it cannot reach this address.
 
   2. install the process that actually MOVES rows — the step that was missed:
        bash scripts/deploy/aws_eu_clickhouse_drain_install.sh

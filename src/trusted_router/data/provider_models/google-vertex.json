@@ -1,10 +1,10 @@
 {
-  "_about": "Vertex-native publisher discovery with independent standard global pricing. New chat routes require a successful generateContent probe in the TrustedRouter project. Specialized APIs and models without complete prices or model limits remain explicitly held. AI Studio metadata supplies model limits, never proof of Vertex availability or prices.",
+  "_about": "Vertex-native discovery from publishers/google/models and publishers/anthropic/models with independent standard global pricing. New chat routes require a successful generateContent (Gemini) or rawPredict (Claude) probe in the TrustedRouter project. Specialized APIs, incomplete prices or limits, and publisher-specific privacy exceptions remain held. First-party metadata supplies model limits, never proof of Vertex availability or prices.",
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-10-18T17:34:11Z",
-  "model_count": 30,
+  "generated_at": "2026-10-21T17:19:58Z",
+  "model_count": 43,
   "models": [
     {
       "id": "google/gemini-3.6-flash",
@@ -73,7 +73,7 @@
       "max_output_tokens": 65536,
       "features": [],
       "canary_status_code": 200,
-      "canary_verified_at": "2026-09-20T03:14:17.183201+00:00",
+      "canary_verified_at": "2026-10-21T14:39:40.198802+00:00",
       "routable": true,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2500000,
@@ -99,7 +99,7 @@
       "max_output_tokens": 65536,
       "features": [],
       "canary_status_code": 200,
-      "canary_verified_at": "2026-09-20T03:14:17.717946+00:00",
+      "canary_verified_at": "2026-10-21T14:39:40.773083+00:00",
       "routable": true,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
@@ -163,7 +163,7 @@
       "max_output_tokens": 65536,
       "features": [],
       "canary_status_code": 200,
-      "canary_verified_at": "2026-09-20T03:14:19.926691+00:00",
+      "canary_verified_at": "2026-10-21T14:39:43.122481+00:00",
       "routable": true,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
@@ -628,7 +628,7 @@
       "routable_reason": "unsupported-vertex-api"
     },
     {
-      "display_name": "google/gemini-4-argon",
+      "display_name": "Gemini 4 Argon",
       "title": "gemini-4-argon",
       "model_type": "chat",
       "input_modalities": [
@@ -643,8 +643,15 @@
       "status": 1,
       "id": "google/gemini-4-argon",
       "upstream_id": "gemini-4-argon",
-      "routable": false,
-      "routable_reason": "unsupported-vertex-api"
+      "routable": true,
+      "context_length": 1048576,
+      "max_output_tokens": 32768,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-10-21T14:39:45.403721+00:00",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000
     },
     {
       "display_name": "google/gemini-3.5-transcribe",
@@ -683,6 +690,411 @@
       "upstream_id": "gemini-3.5-transcribe-live",
       "routable": false,
       "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "Claude Fable 5",
+      "title": "claude-fable-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-fable-5",
+      "upstream_id": "claude-fable-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 403,
+      "routable": false,
+      "routable_reason": "vertex-publisher-policy-review",
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 50000000,
+      "cached_input_token_price_per_m": 1000000
+    },
+    {
+      "display_name": "Claude Fable 5.1",
+      "title": "claude-fable-5-1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-fable-5.1",
+      "upstream_id": "claude-fable-5-1",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling"
+      ],
+      "canary_status_code": 403,
+      "routable": false,
+      "routable_reason": "vertex-publisher-policy-review",
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 50000000,
+      "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "Claude Haiku 4.5",
+      "title": "claude-haiku-4-5@20251001",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-4.5",
+      "upstream_id": "claude-haiku-4-5@20251001",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Claude Haiku 5.5",
+      "title": "claude-haiku-5-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-5.5",
+      "upstream_id": "claude-haiku-5-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "vertex-publisher-policy-review",
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 10000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 100000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 500000,
+          "cached_input_token_price_per_m": 10000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 50000
+        }
+      ]
+    },
+    {
+      "display_name": "Claude Opus 4.5",
+      "title": "claude-opus-4-5@20251101",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.5",
+      "upstream_id": "claude-opus-4-5@20251101",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.6",
+      "title": "claude-opus-4-6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.6",
+      "upstream_id": "claude-opus-4-6",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.7",
+      "title": "claude-opus-4-7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.7",
+      "upstream_id": "claude-opus-4-7",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.8",
+      "title": "claude-opus-4-8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.8",
+      "upstream_id": "claude-opus-4-8",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 5",
+      "title": "claude-opus-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5",
+      "upstream_id": "claude-opus-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "vertex-publisher-policy-review",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 5.5",
+      "title": "claude-opus-5-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5.5",
+      "upstream_id": "claude-opus-5-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling"
+      ],
+      "routable": false,
+      "routable_reason": "vertex-publisher-policy-review"
+    },
+    {
+      "display_name": "Claude Sonnet 4.6",
+      "title": "claude-sonnet-4-6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.6",
+      "upstream_id": "claude-sonnet-4-6",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 200,
+      "routable": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000,
+      "canary_verified_at": "2026-10-21T17:19:57.539034+00:00"
+    },
+    {
+      "display_name": "Claude Sonnet 5",
+      "title": "claude-sonnet-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5",
+      "upstream_id": "claude-sonnet-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Claude Sonnet 5.5",
+      "title": "claude-sonnet-5-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5.5",
+      "upstream_id": "claude-sonnet-5-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling"
+      ],
+      "canary_status_code": 404,
+      "routable": false,
+      "routable_reason": "vertex-publisher-policy-review",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000
     }
   ],
   "price_scale": "microdollars_per_million"

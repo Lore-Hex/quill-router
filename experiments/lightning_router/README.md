@@ -1,5 +1,8 @@
 # LightningRouter funding experiment
 
+Retired on October 22, 2026. This source is retained for financial audit and
+recovery, not production use. See [the retirement record](../../docs/lightning-retirement.md).
+
 [Source and community support](https://github.com/Lore-Hex/lightning-router) |
 [Issues](https://github.com/Lore-Hex/lightning-router/issues) |
 [Discord](https://discord.gg/FREVts9KAG) |

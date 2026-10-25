@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -475,64 +477,110 @@ def test_replicated_migrate_only_accepts_on_cluster_alter_files() -> None:
         assert re.search(r"ALTER TABLE +tr\.spend_lease_shadow +ON CLUSTER +trustedrouter", text), name
 
 
+MIGRATION_017 = "clickhouse/017_regional_coverage_replicated.sql"
+REPLICAS_QUERY = "SELECT hostName() FROM clusterAllReplicas('trustedrouter', system.one) ORDER BY 1 FORMAT TSV"
+TABLES_QUERY = (
+    "SELECT hostName() FROM clusterAllReplicas('trustedrouter', system.tables) "
+    "WHERE database = 'tr' AND name = 'spend_lease_shadow' ORDER BY 1 FORMAT TSV"
+)
+ALL_REPLICAS = "tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3"
+APPLIED = "10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t0\t\t1\t0\n10.128.0.34\t9000\t0\t\t0\t0"
+
+# A gcloud that records each call's argv and stdin, and answers a statement by
+# what it reads: the script now sends SQL on the ssh session's stdin, which
+# the shared deploy harness drains unread.
+RECORDING_GCLOUD = r"""#!/usr/bin/env bash
+set -euo pipefail
+d="$STUB_DIR"
+n=$(( $(find "$d" -maxdepth 1 -name 'call.*.stdin' | wc -l) + 1 ))
+printf '%s\0' "$@" > "$d/call.$n.argv"
+cat > "$d/call.$n.stdin"
+case " $* " in *" projects describe "*) echo 44325983244; exit 0 ;; esac
+statement="$(cat "$d/call.$n.stdin")"
+if [ -f "$d/fail_on" ] && [[ "$statement" == *"$(cat "$d/fail_on")"* ]]; then exit 46; fi
+case "$statement" in
+  *"system.one"*) cat "$d/replicas" ;;
+  *"name = 'second_table'"*) cat "$d/present_second" 2>/dev/null || cat "$d/present" ;;
+  *"system.tables"*) cat "$d/present" ;;
+  *) cat "$d/statuses" ;;
+esac
+"""
+
+
 def _run_replicated_migrate(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     *,
     present_on: str,
     apply: bool,
-    statuses: str = "10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t0\t\t1\t0\n10.128.0.34\t9000\t0\t\t0\t0",
-):
-    from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture
-
-    script = "scripts/deploy/clickhouse_replicated_migrate.sh"
-    monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
-        responses=(
-            (r"projects describe.*projectNumber", "44325983244"),
-            (r"compute ssh .*clusterAllReplicas.*system\.one", "tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3"),
-            (r"compute ssh .*clusterAllReplicas.*system\.tables", present_on),
-            # printf %q escapes the space in the shipped SQL ("ADD\ COLUMN").
-            (r"compute ssh .*ADD.COLUMN", statuses),
-        ),
-    ))
-    isolated = DeployScriptHarness(tmp_path / "replicated-migrate")
-    args = ["clickhouse/017_regional_coverage_replicated.sql"]
-    if apply:
-        args.insert(0, "--apply")
-    return isolated.run(script, args=tuple(args))
-
-
-def test_replicated_migrate_refuses_when_a_target_table_is_missing_on_a_replica(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_replicated_migrate(
-        tmp_path, monkeypatch, present_on="tr-clickhouse-1", apply=True,
+    statuses: str = APPLIED,
+    migration: str = MIGRATION_017,
+    present_second: str | None = None,
+    fail_on: str | None = None,
+) -> SimpleNamespace:
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    gcloud = stub / "gcloud"
+    gcloud.write_text(RECORDING_GCLOUD)
+    gcloud.chmod(0o755)
+    (stub / "replicas").write_text(ALL_REPLICAS + "\n")
+    (stub / "present").write_text(present_on + "\n")
+    (stub / "statuses").write_text(statuses + "\n")
+    if present_second is not None:
+        (stub / "present_second").write_text(present_second + "\n")
+    if fail_on is not None:
+        (stub / "fail_on").write_text(fail_on)
+    args = ["--apply", migration] if apply else [migration]
+    run = subprocess.run(  # noqa: S603 - the script under test, from the checkout
+        ["bash", str(ROOT / "scripts/deploy/clickhouse_replicated_migrate.sh"), *args],  # noqa: S607
+        cwd=ROOT,
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}", "STUB_DIR": str(stub),
+             "PROJECT_ID": "quill-cloud-proxy"},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    count = len(list(stub.glob("call.*.stdin")))
+    argvs = [(stub / f"call.{n}.argv").read_bytes().decode().split("\0")[:-1] for n in range(1, count + 1)]
+    stdins = [(stub / f"call.{n}.stdin").read_text() for n in range(1, count + 1)]
+    return SimpleNamespace(returncode=run.returncode, stdout=run.stdout, stderr=run.stderr,
+                           calls=argvs, stdins=stdins)
+
+
+def _migration_017() -> str:
+    # The script reads the file through $(cat ...), which drops trailing newlines.
+    return (ROOT / MIGRATION_017).read_text().rstrip("\n")
+
+
+def _applied(run: SimpleNamespace, sql: str | None = None) -> bool:
+    return (sql or _migration_017()) in run.stdins
+
+
+def test_replicated_migrate_refuses_when_a_target_table_is_missing_on_a_replica(tmp_path: Path) -> None:
+    run = _run_replicated_migrate(tmp_path, present_on="tr-clickhouse-1", apply=True)
     assert run.returncode != 0
     assert "tr.spend_lease_shadow is missing on tr-clickhouse-2 tr-clickhouse-3" in run.stderr
     assert "CREATE TABLE IF NOT EXISTS tr.spend_lease_shadow ON CLUSTER trustedrouter" in run.stderr
-    assert not any(re.search(r"ADD.COLUMN", " ".join(call)) for call in run.calls)
+    assert REPLICAS_QUERY in run.stdins and TABLES_QUERY in run.stdins
+    assert not _applied(run)
 
 
-def test_replicated_migrate_applies_when_every_replica_has_the_table(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_replicated_migrate(
-        tmp_path, monkeypatch,
-        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=True,
-    )
+def test_replicated_migrate_applies_when_every_replica_has_the_table(tmp_path: Path) -> None:
+    run = _run_replicated_migrate(tmp_path, present_on=ALL_REPLICAS, apply=True)
     assert run.returncode == 0, run.stderr
     assert "present on all 3 replicas of trustedrouter" in run.stdout
-    assert any(re.search(r"ADD.COLUMN", " ".join(call)) for call in run.calls)
-    assert "applied clickhouse/017_regional_coverage_replicated.sql on every replica" in run.stdout
+    assert _applied(run)
+    assert f"applied {MIGRATION_017} on every replica" in run.stdout
+    # No SQL rides the command line: the remote command is the same for every
+    # statement, and none of the migration's text is in any argv.
+    commands = {arg for call in run.calls for arg in call if arg.startswith("--command=")}
+    assert len(commands) == 1, commands
+    assert not any("spend_lease_shadow" in arg for call in run.calls for arg in call)
 
 
-def test_replicated_migrate_fails_on_a_non_zero_replica_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_replicated_migrate_fails_on_a_non_zero_replica_status(tmp_path: Path) -> None:
     run = _run_replicated_migrate(
-        tmp_path, monkeypatch,
-        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=True,
+        tmp_path, present_on=ALL_REPLICAS, apply=True,
         statuses="10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t60\tCode: 60. DB::Exception: Could not find table\t1\t0",
     )
     assert run.returncode != 0
@@ -540,13 +588,114 @@ def test_replicated_migrate_fails_on_a_non_zero_replica_status(
     assert "10.128.0.28: Code: 60" in run.stderr
 
 
-def test_replicated_migrate_dry_run_checks_without_applying(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_replicated_migrate(
-        tmp_path, monkeypatch,
-        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=False,
-    )
+def test_replicated_migrate_dry_run_checks_without_applying(tmp_path: Path) -> None:
+    run = _run_replicated_migrate(tmp_path, present_on=ALL_REPLICAS, apply=False)
     assert run.returncode == 0, run.stderr
     assert "dry-run" in run.stdout
-    assert not any(re.search(r"ADD.COLUMN", " ".join(call)) for call in run.calls)
+    assert REPLICAS_QUERY in run.stdins and TABLES_QUERY in run.stdins
+    assert not _applied(run)
+
+
+def _two_table_migration(tmp_path: Path) -> Path:
+    migration = tmp_path / "901_two_tables_replicated.sql"
+    migration.write_text(
+        "ALTER TABLE tr.spend_lease_shadow ON CLUSTER trustedrouter ADD COLUMN IF NOT EXISTS a Int64 DEFAULT 0;\n"
+        "ALTER TABLE tr.second_table ON CLUSTER trustedrouter ADD COLUMN IF NOT EXISTS b Int64 DEFAULT 0;\n"
+    )
+    return migration
+
+
+def test_replicated_migrate_checks_every_table_of_a_migration(tmp_path: Path) -> None:
+    """The presence checks run inside a `while read` over the migration's
+    targets; ssh reads its own piped statement, never the loop's input, so the
+    second table is checked too and its absence refuses the apply."""
+    migration = _two_table_migration(tmp_path)
+    run = _run_replicated_migrate(
+        tmp_path, present_on=ALL_REPLICAS, present_second="tr-clickhouse-1",
+        apply=True, migration=str(migration),
+    )
+    assert run.returncode != 0
+    assert "tr.second_table is missing on tr-clickhouse-2 tr-clickhouse-3" in run.stderr
+    assert sum("system.tables" in statement for statement in run.stdins) == 2
+    assert not _applied(run, migration.read_text().rstrip("\n"))
+
+
+@pytest.mark.parametrize("fail_on", ["system.one", "name = 'spend_lease_shadow'", "ADD COLUMN"])
+def test_replicated_migrate_stops_on_a_failed_remote_command(tmp_path: Path, fail_on: str) -> None:
+    """A remote failure at any step (replica listing, presence check, apply)
+    stops the script with that status and never reports the migration applied."""
+    run = _run_replicated_migrate(tmp_path, present_on=ALL_REPLICAS, apply=True, fail_on=fail_on)
+    assert run.returncode == 46, run.stderr
+    assert "applied" not in run.stdout
+
+
+def test_replicated_migrate_statement_survives_both_remote_shells(tmp_path: Path) -> None:
+    """On the node, gcloud's --command runs through the login shell's `bash -c`
+    and then `sudo sh -c '...'`, with the ssh session's stdin. Run exactly the
+    script's command string through both here, with the statement the script
+    sent on stdin, sudo, the env file and clickhouse-client stubbed (their
+    absolute paths swapped for temporary ones, which quoting does not touch),
+    and require ClickHouse to receive the migration byte for byte. The quoting
+    this replaced (printf %q inside sh's single quotes) failed at the first
+    `'` of every query, presence checks included."""
+    migration = tmp_path / "900_quoting_replicated.sql"
+    migration.write_text(
+        "-- the table's (owner's) note: $HOME `date` \"double\" \\backslash; 'unbalanced\n"
+        "ALTER TABLE tr.spend_lease_shadow ON CLUSTER trustedrouter\n"
+        "    ADD COLUMN IF NOT EXISTS note String DEFAULT 'it''s (fine)';\n"
+    )
+    sql = migration.read_text().rstrip("\n")
+    run = _run_replicated_migrate(
+        tmp_path, present_on=ALL_REPLICAS, apply=True, migration=str(migration),
+    )
+    assert run.returncode == 0, run.stderr
+    # The transcript names each statement and the node it ran on, in plain text.
+    assert f"tr-clickhouse-1: {sql}" in run.stderr
+    sent = run.stdins.index(sql)
+    [command] = [arg.removeprefix("--command=") for arg in run.calls[sent] if arg.startswith("--command=")]
+
+    node = tmp_path / "node"
+    (node / "bin").mkdir(parents=True)
+    env_file = node / "tr-clickhouse-ingest.env"
+    env_file.write_text("CH_PASSWORD='fixture-only'\n")
+    received, argv = node / "stdin.sql", node / "argv"
+    client = node / "clickhouse-client"
+    client.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {argv}\ncat > {received}\nexit 7\n')
+    sudo = node / "bin" / "sudo"
+    sudo.write_text('#!/bin/sh\nexec "$@"\n')
+    for executable in (client, sudo):
+        executable.chmod(0o755)
+    remote = command.replace("/etc/tr-clickhouse-ingest.env", str(env_file)).replace(
+        "/usr/bin/clickhouse-client", str(client)
+    )
+    login = subprocess.run(  # noqa: S603 - the script's own command string is the subject
+        ["bash", "-c", remote],  # noqa: S607 - bash from PATH, as the node's login shell
+        input=run.stdins[sent],
+        env={"PATH": f"{node / 'bin'}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # clickhouse-client's own exit status is the command's (the stub exits 7).
+    assert login.returncode == 7, login.stderr
+    assert received.read_text() == sql
+    passed = argv.read_text().splitlines()
+    assert "--multiquery" in passed
+    assert "--query" not in passed
+    assert passed[passed.index("--password") + 1] == "fixture-only"
+
+
+def test_the_old_quoting_breaks_on_the_first_quote() -> None:
+    """The control: the shape this replaced fails in the login shell before
+    ClickHouse is reached, for the presence check's own query."""
+    quoted = subprocess.run(  # noqa: S603 - reproducing the replaced quoting
+        ["bash", "-c", 'printf %q "$1"', "_", REPLICAS_QUERY],  # noqa: S607
+        capture_output=True, text=True, check=True,
+    ).stdout
+    old = f"sudo sh -c 'true --query {quoted}'"
+    login = subprocess.run(  # noqa: S603
+        ["bash", "-n", "-c", old],  # noqa: S607
+        capture_output=True, text=True, check=False,
+    )
+    assert login.returncode != 0
+    assert "unexpected" in login.stderr

@@ -101,13 +101,23 @@ async def test_async_queued_trace_frontier(later):
         for i in range(1, later+1):
             wall[0], mono[0] = NOW_US+i*m.SLOT_US, 100.+2*i
             svc.tick(wall[0])
-            assert entries(svc) == []
+            if i == 1:
+                assert entries(svc) == []
+            else:
+                assert entries(svc)[0]["outcome"] == "failed"
+                assert entries(svc)[0]["unknown_outcome"]
+                audit(svc.state, NOW_US//m.SLOT_US, wall[0])
+        if later > 1:
+            # The original queued job expired; finish the newest opportunity.
+            svc.submit_publisher(svc.state.job.slot, wall[0])
     finally:
         release.set()
     await svc.publisher_job
     held.result()
     assert [e["slot"] for e in entries(svc)] == list(range(NOW_US//m.SLOT_US, NOW_US//m.SLOT_US+later+1))
-    assert all(e["outcome"] == "missed" for e in entries(svc))
+    assert [e["outcome"] for e in entries(svc)] == [
+        "failed" if later > 1 and i % 2 == 0 and i < later-1 else "missed"
+        for i in range(later+1)]
 
 
 @pytest.mark.asyncio
@@ -205,12 +215,14 @@ def test_reply_identity_precedes_all_mutation():
     svc.tick(NOW_US, publisher=True)
     slot = NOW_US//m.SLOT_US
     original = svc.state
-    for trace, generation in ((dict(missed(svc, slot), day="2026-10-13"), 0),
-                              (missed(svc, slot+1), 0), (missed(svc, slot), 9)):
+    for trace, generation in ((missed(svc, slot+1), 0), (missed(svc, slot), 9)):
         svc.publisher_reply(PublisherReply(trace, (), False, generation))
         assert svc.state == original and not entries(svc)
-    assert svc.publisher_faults == 3
-    svc.publisher_reply(PublisherReply(missed(svc, slot), (), False))
+    assert svc.publisher_faults == 2
+    svc.publisher_reply(PublisherReply(dict(missed(svc, slot), day="2026-10-13"), (), False))
+    assert svc.state.job is None and svc.state.days[0].failed == 1
+    assert entries(svc)[0]["outcome"] == "failed" and entries(svc)[0]["unknown_outcome"]
+    audit(svc.state, slot, NOW_US)
     completed = svc.state
     svc.publisher_reply(PublisherReply(missed(svc, slot), (), False))
     assert svc.state == completed and svc.publisher_faults == 4
@@ -429,7 +441,9 @@ async def test_malformed_async_reply_always_resolves_future(monkeypatch):
     svc.submit_publisher(NOW_US//m.SLOT_US, NOW_US)
     await svc.publisher_job
     assert svc.publisher_job.done() and svc.publisher_faults == 1
-    assert svc.state == before and svc.state.job is not None
+    assert svc.state.job is None and svc.state.days[0].failed == before.days[0].failed+1
+    assert entries(svc)[0]["outcome"] == "failed" and entries(svc)[0]["unknown_outcome"]
+    audit(svc.state, NOW_US//m.SLOT_US, NOW_US)
 
 
 @pytest.mark.asyncio
@@ -445,10 +459,15 @@ async def test_owner_dispatch_queued_across_later_opportunities():
     # On resumption it first accepts one newer wake spanning seven opportunities.
     wall[0], mono[0] = NOW_US+7*m.SLOT_US, 114.
     svc.tick(wall[0])
-    assert svc.state.days[0].pending_missed == m.MissedRun(job.slot+1, 7)
-    assert entries(svc) == []
+    assert svc.state.job.slot == job.slot+7
+    assert [e["outcome"] for e in entries(svc)] == ["failed"]+["missed"]*6
+    assert entries(svc)[0]["unknown_outcome"]
     svc.submit_publisher(job.slot, NOW_US)
+    assert svc.publisher_job is None  # The expired dispatch cannot start work.
+    svc.store.database.server_ns = wall[0]*1000
+    svc.submit_publisher(svc.state.job.slot, wall[0])
     await svc.publisher_job
     assert [entry["slot"] for entry in entries(svc)] == list(range(job.slot, job.slot+8))
-    assert all(entry["outcome"] == "missed" for entry in entries(svc))
-    assert svc.publisher_faults == 0
+    assert [entry["outcome"] for entry in entries(svc)] == ["failed"]+["missed"]*6+["published"]
+    assert svc.publisher_faults == 1
+    audit(svc.state, job.slot, wall[0])

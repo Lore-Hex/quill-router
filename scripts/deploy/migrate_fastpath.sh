@@ -2,15 +2,19 @@
 # Apply the fast admission service's own tables and indexes
 # (docs/design/fast-admission-production-rollout.md, W4), statement for
 # statement as fastpath/schema/fastpath.sql has them; a Go test,
-# fastpath/schema/migration_test.go, holds the two equal. The one table the
-# service shares, tr_credit_balance, is production's own
-# (migrate_typed_counters.sh), and this leaves it as it is.
+# fastpath/schema/migration_test.go, holds the two equal. The production
+# tables and indexes fastpath.sql copies for the emulator (tr_credit_balance,
+# tr_reservation and its indexes, tr_entities, tr_gateway_authorization) are
+# production's own (migrate_typed_counters.sh, infra.sh,
+# migrate_request_retention.sh, migrate_spend_lease.sh), and this leaves them
+# as they are.
 #
 # Idempotent: every table and index is guarded by an INFORMATION_SCHEMA
 # existence check, and every index is checked read-write on every run. The
 # tables are new and empty: nothing reads or writes them until a fast path
 # node runs, and none admits for a workspace the switch, tr_fastpath_workspace,
-# does not enable, which none is.
+# does not enable, which none is. tr_fastpath_edge_decide, empty, has no
+# workspace decide at the edge.
 #
 # A check that cannot read the schema fails the run, rather than being taken
 # for an object that is not there.
@@ -18,7 +22,7 @@
 # Each statement is its own schema update, as in the other migrations: the
 # conformance extractor (tests/conformance/spanner_schema_source.py) reads
 # one statement per dispatch. So on the first run each index is added to a
-# table made by an earlier update: fifteen updates, each waited on, and five
+# table made by an earlier update: seventeen updates, each waited on, and six
 # of them index builds, which add schema versions Spanner keeps and throttles
 # on, and whose version changes can abort a transaction in flight, which its
 # client retries. The tables are empty and nothing reads or writes them yet.
@@ -329,5 +333,17 @@ else
     CONSTRAINT tr_fastpath_member_state CHECK (state IN ('serving', 'leaving', 'withdrawn')),
     ) PRIMARY KEY (address)"
   log "tr_fastpath_member: created"
+fi
+if table_exists tr_fastpath_edge_decide; then
+  log "tr_fastpath_edge_decide: already present"
+else
+  apply_ddl "CREATE TABLE tr_fastpath_edge_decide (
+    workspace_id STRING(64) NOT NULL,
+    cloud STRING(16) NOT NULL,
+    region STRING(32) NOT NULL,
+    decide BOOL NOT NULL,
+    changed_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+    ) PRIMARY KEY (workspace_id, cloud, region)"
+  log "tr_fastpath_edge_decide: created"
 fi
 log "done"

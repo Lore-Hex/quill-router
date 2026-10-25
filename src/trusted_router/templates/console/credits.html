@@ -1,185 +1,185 @@
 {% extends "console/_layout.html" %}
+{% block head_extra %}
+  <link rel="stylesheet" href="/static/credits.css?v={{ static_version|default('local') }}">
+{% endblock %}
 {% block body %}
-<section class="panel">
-  <div class="panel-head"><h2>Credits</h2></div>
-  <div class="panel-body">
-    <div class="metrics">
-      <div class="metric"><div class="label">Available</div><div class="value">{{ credits_available }}</div><div class="sub">prepaid balance</div></div>
-      <div class="metric"><div class="label">Lifetime usage</div><div class="value">{{ credits_usage }}</div><div class="sub">total spend</div></div>
+{% import "console/_credits_icons.html" as icons %}
+<div class="credits-page">
+  <section class="credits-balance" aria-labelledby="credits-balance-title">
+    <div class="credits-balance-main">
+      <span class="credits-disc credits-disc-balance" aria-hidden="true">{{ icons.svg('wallet', 26) }}</span>
+      <div class="credits-balance-text">
+        <h2 id="credits-balance-title">Available</h2>
+        <p class="credits-balance-amount">{{ credits_available }}</p>
+      </div>
     </div>
-    <div class="button-row" style="margin-top:18px">
-      <button class="btn" type="button" data-rewards-open hidden>Social rewards</button>
-      <a class="btn" href="/console/credit-transfers">Send credits or view transfer history</a>
-    </div>
-    <div class="notice warn" style="margin-top:18px">
-      Migration credits are available by approval for qualified design partners spending more than $100 per month on LLMs. This console does not grant them automatically. Apply credits manually after approval.
-    </div>
-    {% if wallet_only_billing %}
-    <div class="notice" style="margin-top:18px">
-      Wallet-only accounts can fund with stablecoin. Add and verify an email in
-      <a href="/console/account/preferences">Preferences</a> to use cards or other payment methods.
-    </div>
-    {% endif %}
-    {% if paypal_pending %}
-    <div class="notice warn" role="status" style="margin-top:18px">
-      PayPal is reviewing your payment. No credits have been added yet.
-      Credits will be added only after PayPal confirms completion. Please do not repeat this purchase while it is pending.
-    </div>
-    {% endif %}
-    {% if identity_verification_checkout %}
-    <div class="notice" style="margin-top:18px">
-      Identity verification requires {{ verification_topup_remaining_display }} more in lifetime top-ups. With email requirements met, a successful top-up unlocks direct phone verification for US, Canadian, and most European numbers; other regions require identity verification first. Identity verification does not require a verified phone. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.
-    </div>
-    {% endif %}
-    <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
+    <a class="credits-send" href="/console/credit-transfers" aria-label="Send credits">{{ icons.svg('transfer', 18) }}<span>Send credits</span></a>
+  </section>
+
+  <section class="credits-add" aria-labelledby="credits-add-title">
+    <form class="credits-form" method="post" action="/console/credits/checkout"
+          data-checkout-form
+          data-fee-schedule="{{ checkout_fee_schedule_json }}"
+          data-paypal-minimum="{{ paypal_minimum_dollars }}">
+      <h2 id="credits-add-title">Add credits</h2>
       {% if identity_verification_checkout %}<input type="hidden" name="purpose" value="identity_verification">{% endif %}
-      <div class="row">
-        <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required data-checkout-amount data-default-minimum="1" data-paypal-minimum="{{ paypal_minimum_dollars }}"></label>
-        <label>Payment method
-          {% if wallet_only_billing %}
-          <input type="hidden" name="payment_method" value="stablecoin">
-          <input type="text" value="Stablecoin (USDC)" readonly>
-          {% else %}
-          <select name="payment_method" data-checkout-payment-method>
-            <option value="auto">Stripe card</option>
-            <option value="ach">Bank account (ACH)</option>
-            <option value="stablecoin">Stripe USDC / stablecoin</option>
-            {% if paypal_enabled %}
-            <option value="paypal">PayPal</option>
-            {% endif %}
-            {% if adyen_enabled %}
-            <option value="adyen">Adyen</option>
-            {% endif %}
-          </select>
-          {% endif %}
-        </label>
-      </div>
-      <button class="btn primary" type="submit">Continue to checkout</button>
-      <p class="form-help" data-paypal-minimum-message hidden>
-        PayPal purchases have a ${{ paypal_minimum_dollars }} minimum.
-      </p>
-      <p class="form-help">
-        {% if wallet_only_billing %}
-        Stablecoin checkout adds prepaid credits without attaching a card or bank account.
-        {% else %}
-        Card and PayPal checkouts show your credits and the same payment
-        processing fee as separate line items before you pay, with an $0.80
-        minimum fee. ACH and
-        stablecoin keep their lower rail-specific fees. ACH is 0.8%, capped
-        at $5, and can take up to four business days. Bank-funded credits
-        appear only after settlement.
-        {% endif %}
-      </p>
-    </form>
-  </div>
-</section>
+      {% if paypal_pending %}
+      <p class="credits-status" role="status">{{ icons.svg('alert', 18, 1.8) }}<span>PayPal is reviewing your payment. No credits have been added yet.</span></p>
+      {% elif checkout_error_message %}
+      <p class="credits-status" role="status">{{ icons.svg('alert', 18, 1.8) }}<span>{{ checkout_error_message }}</span></p>
+      {% endif %}
+      {% if verification_topup_line %}
+      <p class="credits-status" role="status">{{ icons.svg('shield', 18, 1.8) }}<span class="credits-num">Verification needs {{ verification_topup_remaining_display }} more in top-ups.</span></p>
+      {% endif %}
 
-{% if not wallet_only_billing or saved_payment_method %}
-<section class="panel">
-  <div class="panel-head">
-    <h2>Payment methods</h2>
-    <span class="pill {{ 'good' if has_payment_method else '' }}">
-      {{ 'saved' if has_payment_method else ('pending' if payment_method_pending else 'none saved') }}
-    </span>
-  </div>
-  <div class="panel-body">
-    <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
+      <fieldset class="credits-amounts" data-checkout-amounts>
+        <legend class="credits-sr">Amount</legend>
+        <div class="credits-segments">
+          {% for preset in checkout_presets %}
+          <label class="credits-segment">
+            <input type="radio" name="amount" value="{{ preset }}"{% if preset == checkout_selected_preset %} checked{% endif %} data-checkout-preset>
+            <span>${{ preset }}</span>
+          </label>
+          {% endfor %}
+          <label class="credits-segment">
+            <input type="radio" name="amount" value="other" data-checkout-preset>
+            <span>Other</span>
+          </label>
+        </div>
+        <span class="credits-other credits-money-field">
+          <span class="credits-money-prefix" aria-hidden="true">$</span>
+          <input type="number" name="other_amount" inputmode="numeric" min="1" max="10000" step="1" aria-label="Amount in US dollars" data-checkout-amount>
+        </span>
+      </fieldset>
+
       {% if wallet_only_billing %}
-      Wallet-only accounts cannot add or charge a card. You can remove this previously saved card below.
+      <input type="hidden" name="payment_method" value="stablecoin">
+      <span class="credits-chip">{{ icons.svg('coin') }}<span>USDC</span></span>
       {% else %}
-      Save a Stripe card for auto refill. One-time credit purchases can use a
-      card, ACH bank account, PayPal{% if adyen_enabled %}, Adyen{% endif %}, or USDC above.
-      {% if payment_method_pending %}
-      <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
-      {% endif %}
-      {% endif %}
-    </p>
-    <div data-credits-saved-payment-method aria-live="polite">
-      {% include "console/_credits_saved_payment_method.html" %}
-    </div>
-    {% if not wallet_only_billing %}
-    <div class="button-row">
-      <form method="post" action="/console/credits/payment-methods/add">
-        <button class="btn primary" type="submit">
-          {{ 'Replace card' if has_payment_method else ('Complete setup' if payment_method_pending else 'Add payment method') }}
-        </button>
-      </form>
-      {% if has_stripe_customer %}
-      <form method="post" action="/console/credits/payment-methods/manage">
-        <button class="btn" type="submit">Manage in Stripe</button>
-      </form>
-      {% endif %}
-    </div>
-    {% endif %}
-  </div>
-</section>
-{% endif %}
-
-{% if not wallet_only_billing %}
-<section class="panel">
-  <div class="panel-head">
-    <h2>Auto refill</h2>
-    <span class="pill {{ 'good' if auto_refill_enabled else '' }}">{{ 'enabled' if auto_refill_enabled else 'disabled' }}</span>
-  </div>
-  <div class="panel-body">
-    <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
-      When your available balance drops below the threshold, we'll charge
-      your saved card for the refill amount plus a separate payment processing
-      fee, then add only the refill amount to your balance. Disabling stops
-      future charges but keeps your saved payment method.
-      {% if payment_method_pending %}
-      <br><strong>Stripe is still confirming your payment method.</strong>
-      {% elif not has_payment_method %}
-      <br><strong>Add a Stripe payment method before enabling auto refill.</strong>
-      {% endif %}
-    </p>
-    <form class="form" method="post" action="/console/credits/auto-refill">
-      <label class="checkbox-row">
-        <input type="checkbox" name="enabled" value="1" {% if auto_refill_enabled %}checked{% endif %}>
-        Enable auto refill
-      </label>
-      <div class="row">
-        <label>When balance drops below (USD)
-          <input name="threshold" type="number" min="10" max="500" step="1" value="{{ auto_refill_threshold_dollars }}" required>
-        </label>
-        <label>Refill amount (USD)
-          <input name="amount" type="number" min="5" max="2000" step="1" value="{{ auto_refill_amount_dollars }}" required>
-        </label>
+      {% if has_payment_method %}
+      <div class="credits-saved" data-checkout-saved>
+        <span class="credits-chip">{{ icons.svg('card') }}<span class="credits-num" data-credits-saved-card-label>{% include "console/_credits_saved_payment_method.html" %}</span></span>
+        <button class="credits-text-button" type="button" data-checkout-change hidden>Change</button>
       </div>
-      <button class="btn primary" type="submit" {% if not has_payment_method %}disabled{% endif %}>Save</button>
-    </form>
-    {% if last_auto_refill_at %}
-    <p style="color:var(--muted);font-size:12px;margin-top:14px">
-      Last attempt: {{ last_auto_refill_at }}. {{ last_auto_refill_status }}
-    </p>
-    {% endif %}
-  </div>
-</section>
-{% endif %}
+      {% endif %}
+      <span class="credits-select" data-checkout-method-wrap>
+        <span class="credits-method-icon" aria-hidden="true">
+          <span data-method-icon="card" data-methods="auto card adyen">{{ icons.svg('card') }}</span>
+          <span data-method-icon="bank" data-methods="ach">{{ icons.svg('bank') }}</span>
+          <span data-method-icon="coin" data-methods="stablecoin">{{ icons.svg('coin') }}</span>
+          <span data-method-icon="wallet" data-methods="paypal">{{ icons.svg('paypal') }}</span>
+        </span>
+        <select name="payment_method" aria-label="Payment method" data-checkout-payment-method>
+          {% if has_payment_method %}
+          <option value="auto" data-credits-saved-card-label>{% include "console/_credits_saved_payment_method.html" %}</option>
+          <option value="card">Another card</option>
+          {% else %}
+          <option value="auto">Card</option>
+          {% endif %}
+          <option value="ach">Bank account (ACH)</option>
+          <option value="stablecoin">USDC</option>
+          {% if paypal_enabled %}
+          <option value="paypal">PayPal</option>
+          {% endif %}
+          {% if adyen_enabled %}
+          <option value="adyen">Adyen</option>
+          {% endif %}
+        </select>
+        <span class="credits-select-chevron" aria-hidden="true">{{ icons.svg('chevron', 16, 1.8) }}</span>
+      </span>
+      {% endif %}
 
-<section
-  class="panel"
-  data-credits-stripe-details-url="/console/credits/stripe-details"
->
-  <div class="panel-head">
-    <h2>Payment history</h2>
-    <span class="pill" data-credits-payment-history-count>loading</span>
+      <p class="credits-status" role="status" data-paypal-minimum-message hidden>{{ icons.svg('alert', 18, 1.8) }}<span data-paypal-minimum-text></span></p>
+
+      <dl class="credits-summary">
+        <dt>Credit</dt>
+        <dd class="credits-summary-credit" data-summary-credit>{{ checkout_summary.credit }}</dd>
+        <dt>Processing fee</dt>
+        <dd data-summary-fee>{{ checkout_summary.fee }}</dd>
+        <dt class="credits-summary-total">Total at checkout</dt>
+        <dd class="credits-summary-total" data-summary-total>{{ checkout_summary.total }}</dd>
+      </dl>
+
+      <div class="credits-actions">
+        <button class="credits-submit" type="submit" data-checkout-submit><span data-checkout-submit-label>Continue to checkout</span>{{ icons.svg('arrow', 18, 1.8) }}</button>
+        <details class="credits-fees">
+          <summary>{{ icons.svg('info', 16) }}<span>Fees</span></summary>
+          <p>Card and PayPal checkouts list the credit and the processing fee as separate line items before you pay, with a {{ stripe_paypal_minimum_fee_display }} minimum fee. Bank account (ACH) and USDC have lower fees; the ACH fee is capped at {{ stripe_ach_maximum_fee_display }}. ACH can take up to four business days, and bank-funded credit appears only after settlement.</p>
+        </details>
+      </div>
+    </form>
+  </section>
+
+  <div class="credits-rows">
+    {# Wallet-only accounts cannot add or manage cards; a card saved before
+       the account became wallet-only can still be removed here. #}
+    {% if not wallet_only_billing or has_payment_method %}
+    <div class="credits-row credits-row-methods{% if has_payment_method %} credits-row-stack{% endif %}">
+      <span class="credits-disc{% if has_payment_method %} credits-disc-on{% endif %}" aria-hidden="true">{{ icons.svg('card') }}</span>
+      {% if has_payment_method %}
+      <strong class="credits-row-title credits-num" data-credits-saved-card-label>{% include "console/_credits_saved_payment_method.html" %}</strong>
+      <span class="credits-row-controls">
+        {% if not wallet_only_billing %}
+        <form method="post" action="/console/credits/payment-methods/manage">
+          <button class="credits-link-button" type="submit"><span>Manage in Stripe</span>{{ icons.svg('external', 16) }}</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/console/credits/payment-methods/remove">
+          <button class="credits-text-button credits-muted" type="submit">Remove</button>
+        </form>
+      </span>
+      {% else %}
+      <strong class="credits-row-title">Payment methods</strong>
+      <span class="credits-row-controls">
+        <form method="post" action="/console/credits/payment-methods/add">
+          <button class="credits-link-button" type="submit"><span>{{ 'Complete setup' if payment_method_pending else 'Add a card' }}</span>{{ icons.svg('arrow', 16) }}</button>
+        </form>
+      </span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if not wallet_only_billing %}
+    <form class="credits-refill" method="post" action="/console/credits/auto-refill" data-auto-refill>
+      <div class="credits-row">
+        <span class="credits-disc{% if auto_refill_enabled %} credits-disc-on{% endif %}" aria-hidden="true">{{ icons.svg('refresh') }}</span>
+        <strong class="credits-row-title{% if not has_payment_method %} credits-muted{% endif %}" id="credits-refill-title">Auto refill</strong>
+        <span class="credits-switch-wrap">
+          <input class="credits-switch" type="checkbox" role="switch" name="enabled" value="1" aria-labelledby="credits-refill-title"{% if auto_refill_enabled %} checked{% endif %}{% if not has_payment_method %} disabled{% endif %} data-auto-refill-switch>
+        </span>
+      </div>
+      <div class="credits-refill-settings{% if auto_refill_enabled %} is-open{% endif %}" data-auto-refill-settings>
+        <label class="credits-field">
+          <span>When balance is below</span>
+          <span class="credits-money-field"><span class="credits-money-prefix" aria-hidden="true">$</span><input name="threshold" type="number" inputmode="numeric" min="10" max="500" step="1" value="{{ auto_refill_threshold_dollars }}" required></span>
+        </label>
+        <label class="credits-field">
+          <span>Refill with</span>
+          <span class="credits-money-field"><span class="credits-money-prefix" aria-hidden="true">$</span><input name="amount" type="number" inputmode="numeric" min="5" max="2000" step="1" value="{{ auto_refill_amount_dollars }}" required></span>
+        </label>
+        <span class="credits-refill-tail">
+          <span class="credits-refill-card">{{ icons.svg('card', 18) }}<span class="credits-num" data-credits-saved-card-label>{% include "console/_credits_saved_payment_method.html" %}</span></span>
+          <button class="credits-secondary" type="submit">Save</button>
+        </span>
+        {% if last_auto_refill_status %}
+        <p class="credits-refill-note">{% if last_auto_refill_at %}{{ last_auto_refill_at|datetime_iso }} · {% endif %}{{ last_auto_refill_status }}</p>
+        {% endif %}
+      </div>
+    </form>
+    {% endif %}
+
+    <button class="credits-row credits-row-button credits-row-stack credits-row-rewards" type="button" data-rewards-open hidden>
+      <span class="credits-disc credits-disc-blue" aria-hidden="true">{{ icons.svg('gift') }}</span>
+      <strong class="credits-row-title">Social rewards</strong>
+      <span class="credits-row-controls"><span class="credits-row-link"><span>Earn API credit for a follow</span>{{ icons.svg('arrow', 16) }}</span></span>
+    </button>
   </div>
-  <div
-    class="panel-body"
-    data-credits-payment-history
-    aria-busy="true"
-    aria-live="polite"
-  >
-    <p style="color:var(--muted);font-size:14px;margin:0">
-      Loading recent payments…
-    </p>
-    <noscript>
-      <p style="color:var(--muted);font-size:14px;margin-top:12px">
-        <a href="/console/credits/stripe-details">Open Stripe payment details</a>.
-        Your live balance above is unaffected.
-      </p>
-    </noscript>
-  </div>
-</section>
+
+  <section class="credits-history" aria-labelledby="credits-history-title" data-credits-stripe-details-url="/console/credits/stripe-details">
+    <h2 id="credits-history-title">Payment history</h2>
+    <div data-credits-payment-history aria-busy="true">
+      <noscript><p class="credits-quiet"><a href="/console/credits/stripe-details">Open Stripe payment details</a></p></noscript>
+    </div>
+  </section>
+</div>
 {% endblock %}

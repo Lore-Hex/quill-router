@@ -2,6 +2,18 @@
 
 BASE: `8d781cf096c43cdc29aa54c37f8d3820b80cf587`, plus the source changes recorded in `worktree-pins.json`.
 
+R0 (#1871) re-froze one more file from its worktree: the activity
+projection's writer (`storage_operational_analytics.py`) gained `app_id` and
+the two markup amounts, which the outbox payload the oracle compares now
+carries. The worktree manifest holds PR G's three files and that one; BASE
+and every other member are unchanged. The whole proof_oracle module passed
+against the new archive on both clocks (338 comparisons each, CPython
+3.12.13, six workers per clock), and the inventory regenerated from those
+twelve worker files is unchanged: **330 modules, 1,630 qualified names,
+1,665 execution entries**. A re-pin to current main is not possible yet:
+the frozen harness raises `ValueError("startup_record")` from main's newer
+`async_settle_shadow_startup_records`, so BASE stays at PR G's.
+
 PR G re-froze the touched config/authorize/handler helpers from this worktree
 without Git writes. The original F1-001 archive (`84f0a2092090e8ebf89e7eb56bc5c5d1aabfbb5d07bc73f53fc81e616e275a91`)
 passed all 85 comparisons in default-clock oracle shard 1/4 before re-freezing.

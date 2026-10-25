@@ -535,8 +535,10 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
         {"est": reservation["key_reserved_micro"], "kh": key.hash, "shard": 0, "is_byok": False})
     assert operations[-3][0:2] == ("T1 DML",
         f"INSERT INTO tr_reservation ({', '.join(RESERVATION_COLUMNS)}) "  # noqa: S608 - fixed columns
-        f"VALUES ({', '.join('@' + c for c in RESERVATION_COLUMNS)})")  # noqa: S608 - fixed columns
-    assert set(reservation) == set(RESERVATION_COLUMNS)
+        f"VALUES ({', '.join('@' + c for c in RESERVATION_COLUMNS[:-1])}, PENDING_COMMIT_TIMESTAMP())")  # noqa: S608 - fixed columns
+    # created_at is the commit's timestamp, never a bound clock reading.
+    assert RESERVATION_COLUMNS[-1] == "created_at"
+    assert set(reservation) == set(RESERVATION_COLUMNS) - {"created_at"}
     assert reservation["workspace_id"] == key.workspace_id
     assert reservation["key_hash"] == key.hash
     assert reservation["reservation_id"] == response["credit_reservation_id"]
@@ -755,7 +757,7 @@ def test_authorize_reads_topup_after_insufficient_credits(fixed_operation_catalo
         gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)
     assert raised.value.status_code == 402
     assert raised.value.detail["error"]["type"] == "insufficient_credits"
-    assert raised.value.detail["error"]["message"] == "Insufficient credits"
+    assert "upfront reservation of $0.0006" in raised.value.detail["error"]["message"]
     assert store.credit_workspace_typed_direct(
         key.workspace_id, 1_000_000, "topup-rtt", provenance=CreditProvenance.system_grant(),
     )

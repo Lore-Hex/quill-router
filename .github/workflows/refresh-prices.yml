@@ -29,7 +29,7 @@ on:
     - cron: "37 * * * *"
   workflow_dispatch: {}
 
-# One run at a time: a successful run takes about 30-45 minutes, and a run
+# One run at a time: queueing plus the complete CI matrix can exceed an hour, and a run
 # re-dispatches this workflow when main advances. GitHub keeps one pending
 # run per group; a newer run replaces an older pending one, never the one
 # in progress.
@@ -65,7 +65,7 @@ jobs:
       # unrelated AI Studio key. Production Gemini inference uses global.
       VERTEX_PROJECT_ID: quill-cloud-proxy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need full history so the auto-commit can push.
           fetch-depth: 0
@@ -185,8 +185,11 @@ jobs:
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
                       LYCEUM_API_KEY:trustedrouter-lyceum-api-key \
+                      BEDROCK_API_KEY:trustedrouter-bedrock-api-key \
                       GREENFERENCE_API_KEY:trustedrouter-greenference-api-key \
                       HIXTUBE_API_KEY:trustedrouter-hixtube-api-key \
+                      MUNA_API_KEY:trustedrouter-muna-api-key \
+                      CORALBRICKS_API_KEY:trustedrouter-coralbricks-api-key \
                       BOUNDLESS_API_KEY:trustedrouter-boundless-api-key \
                       ZRO_API_KEY:trustedrouter-zro-api-key \
                       BYTEPLUS_API_KEY:trustedrouter-byteplus-api-key \
@@ -207,6 +210,7 @@ jobs:
                       AKASHML_API_KEY:trustedrouter-akashml-api-key \
                       MANCER_API_KEY:trustedrouter-mancer-api-key \
                       ABLITERATE_API_KEY:trustedrouter-abliterate-api-key \
+                      ABLITERATION_API_KEY:trustedrouter-abliteration-api-key \
                       NSCALE_API_KEY:trustedrouter-nscale-api-key \
                       AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
                       SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \
@@ -322,6 +326,9 @@ jobs:
       - name: Record model route changes and upcoming schedules
         run: uv run python scripts/update_model_changes.py
 
+      - name: Refresh model alias parity vectors
+        run: uv run python scripts/fastpath/model_alias_vectors.py
+
       - name: Refresh measured provider routing evidence
         id: routing_evidence
         # Keep routing evidence fresh without inventing scores for new hosts.
@@ -359,6 +366,7 @@ jobs:
             src/trusted_router/data/model_changes.jsonl \
             src/trusted_router/data/model_changes_state.json \
             src/trusted_router/static/og/providers/ \
+            fastpath/testdata/model_alias_vectors_v1.json \
             scripts/pricing/parsers/
 
           if git diff --cached --quiet; then
@@ -399,7 +407,9 @@ jobs:
 
           ci_passed=""
           ci_run_id=""
-          for _ in $(seq 1 180); do
+          # Keep exact-SHA completion mandatory, but allow the full test matrix
+          # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
+          for _ in $(seq 1 480); do
             run_json=$(gh run list \
               --repo "${GITHUB_REPOSITORY}" \
               --workflow ci.yml \
@@ -424,7 +434,7 @@ jobs:
             sleep 15
           done
           if [ -z "${ci_passed}" ]; then
-            echo "generated snapshot CI did not pass within 45 minutes"
+            echo "generated snapshot CI did not pass within 120 minutes"
             exit 1
           fi
 

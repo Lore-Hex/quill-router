@@ -14,6 +14,8 @@ class EvidenceTests(unittest.TestCase):
         markets = load_markets()
         self.assertEqual(len(markets), 13)
         for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
             with self.subTest(market=market['slug']):
                 page = render(market, markets, 'test')
                 profile = market['slug'] if market['slug'] in ('new-york', 'dubai', 'europe') else 'shared-gcp'
@@ -50,6 +52,8 @@ class EvidenceTests(unittest.TestCase):
     def test_existing_page_structure_preserved(self):
         markets = load_markets()
         for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, 'test')
             self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))
             self.assertIn('exchange_market=' + market['slug'], page)

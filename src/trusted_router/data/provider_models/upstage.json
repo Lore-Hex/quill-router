@@ -63,15 +63,14 @@
       "upstream_id": "solar-pro4",
       "created": 20260806,
       "routable": true,
-      "input_token_price_per_m": 90000,
-      "output_token_price_per_m": 360000,
-      "cached_input_token_price_per_m": 18000
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
   "source": "https://api.upstage.ai/v1/models",
   "pricing_source": "https://www.upstage.ai/pricing/api",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-20T12:05:14Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3,
-  "pricing_valid_until": "2026-10-20T00:00:00+00:00"
+  "model_count": 3
 }

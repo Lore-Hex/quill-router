@@ -1,11 +1,6 @@
-name: LightningRouter experiment
+name: LightningRouter archived-source checks
 
 on:
-  pull_request:
-    paths: ["experiments/lightning_router/**", "scripts/lightning/**", "docs/*lightning*.md", "docs/bitcoin-node.md", ".github/workflows/lightning-experiment.yml"]
-  push:
-    branches: [main]
-    paths: ["experiments/lightning_router/**", "scripts/lightning/**", "docs/*lightning*.md", "docs/bitcoin-node.md", ".github/workflows/lightning-experiment.yml"]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +8,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -33,11 +28,13 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".node-version"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"

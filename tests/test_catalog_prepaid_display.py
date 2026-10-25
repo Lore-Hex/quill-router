@@ -180,9 +180,14 @@ def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot(
         for endpoint in catalog_vehicles.registry_endpoints().values()
     }
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
-        raw = json.loads(
-            (_PROVIDER_MODELS_DIR / f"{provider_slug}.json").read_text(encoding="utf-8")
-        )
+        manifest = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
+        if not manifest.exists():
+            # Registered providers can remain unpublished before their first
+            # verified catalog. No shared snapshot may activate them instead.
+            assert not _authoritative_provider_model_ids(provider_slug)
+            assert not any(provider == provider_slug for provider, _ in endpoint_pairs)
+            continue
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
         dark_models = {
             row["id"]
             for row in raw.get("models", [])
@@ -236,18 +241,25 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
 
 
 @pytest.mark.parametrize("reseller", ["gmi", "lightning", "cloudflare-workers-ai"])
-def test_anthropic_models_credits_route_first_party_only(reseller: str) -> None:
-    # Policy: Anthropic-authored (anthropic/*) models route via Anthropic
-    # directly for Credits, never resellers (which list Claude ids they mostly
-    # don't serve). BYOK survives unless the provider has an explicit all-usage
-    # operator hold, as Lightning and Cloudflare passthroughs now do.
+def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None:
+    # Anthropic-direct and verified Vertex routes are approved for Credits;
+    # unverified resellers remain blocked. BYOK survives unless the provider
+    # has an all-usage hold, as Lightning and Cloudflare passthroughs do.
     built = catalog_vehicles.registry_endpoints()
     credits_providers = {
         e.provider
         for e in built.values()
         if e.model_id.startswith("anthropic/") and e.usage_type == "Credits"
     }
-    assert credits_providers <= {"anthropic"}
+    assert credits_providers <= {"anthropic", "google-vertex"}
+    assert {
+        e.model_id for e in built.values()
+        if e.model_id.startswith("anthropic/")
+        and e.provider == "google-vertex" and e.usage_type == "Credits"
+    } == {
+        model_id for model_id in _authoritative_provider_model_ids("google-vertex")
+        if model_id.startswith("anthropic/")
+    }
     # Anthropic-direct Credits lineup stays fully routable.
     for model_id in _authoritative_provider_model_ids("anthropic"):
         assert f"{model_id}@anthropic/prepaid" in built, model_id
@@ -305,7 +317,7 @@ def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
     # that still lists the model keeps its route.
     built = catalog_vehicles.registry_endpoints()
     for endpoint_id in (
-        "minimax/minimax-m2.5@minimax/byok",
+        "minimax/minimax-m2.5@novita/byok",
         "moonshotai/kimi-k2.6@kimi/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
         "z-ai/glm-5@zai/prepaid",
@@ -582,7 +594,7 @@ def test_novita_supplemental_prices_apply_manifest_scale(
         "z-ai/glm-5.3-flash@deepinfra/prepaid",
         "z-ai/glm-5.3-flash@io-net/prepaid",
         "z-ai/glm-5.3-flash@novita/prepaid",
-        "minimax/minimax-m2.5@minimax/byok",
+        "minimax/minimax-m3.1-flash@minimax/byok",
         "moonshotai/kimi-k2.6@kimi/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
         "openai/gpt-oss-120b@together/prepaid",

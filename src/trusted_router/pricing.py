@@ -535,7 +535,7 @@ def provider_manifest_price_profile_is_valid(raw_model: object) -> bool:
     prompt = _provider_manifest_exact_integer(raw_model.get("input_token_price_per_m"))
     completion = _provider_manifest_exact_integer(raw_model.get("output_token_price_per_m"))
     model_id = raw_model.get("id")
-    if isinstance(model_id, str) and ("scaledown", model_id) in INPUT_ONLY_PROVIDER_MODELS:
+    if isinstance(model_id, str) and any(model_id == native for _, native in INPUT_ONLY_PROVIDER_MODELS):
         # The native adapter reports billable input only. A new paid output or
         # tiered contract requires an adapter review, not an automatic price edit.
         return (

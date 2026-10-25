@@ -10,15 +10,27 @@ on:
   # generated branch before advancing protected main with the checked SHA.
   workflow_dispatch: {}
 
+# One CI run per branch or pull request: a newer push cancels the run of the
+# commit it supersedes. Without this, 2026-10-20's push cadence left 60 queued
+# runs and the coverage job of every main run starved for five hours, so no run
+# concluded and the deploy gate (which needs its commit's CI run to conclude
+# success) could ship nothing. Main is exempt: every main commit keeps its own
+# run, because a later push that touches no deploy path starts no deploy of its
+# own, and the earlier commit's deploy gate would read the cancelled run as a
+# refusal and strand a valid rollout.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
 # conclusion for the SHA, and a run only concludes success when every job
 # succeeds, so the gate semantics are unchanged by the split.
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -32,7 +44,7 @@ jobs:
         run: uv run python scripts/update_model_changes.py --check
 
   spanner-emulator:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       SPANNER_EMULATOR_HOST: 127.0.0.1:9010
@@ -45,7 +57,7 @@ jobs:
           - 9010:9010
           - 9020:9020
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -100,12 +112,12 @@ jobs:
           docker logs ${{ job.services.spanner.id }}
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".node-version"
       - name: Install npm deps
         run: npm ci
       - name: TypeScript build (verify the committed .js matches its .ts)
@@ -118,9 +130,9 @@ jobs:
         run: npx stylelint "src/trusted_router/static/*.css"
 
   production-import:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -178,7 +190,7 @@ jobs:
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/merged-durations.json
         # Review the output, copy it to .test_durations, and commit.
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "12"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
@@ -213,12 +225,25 @@ jobs:
         ports:
           - 5434:5432
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
+      - name: Check out enclave source for the mandatory Sentry guard
+        uses: actions/checkout@v4
+        with:
+          repository: Lore-Hex/quill-cloud-proxy
+          ref: main
+          path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
+          persist-credentials: false
+      - name: Require and inspect enclave source
+        run: |
+          echo "TR_ENCLAVE_SOURCE_ROOT=$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" >> "$GITHUB_ENV"
+          git -C .security/quill-cloud-proxy rev-parse HEAD
+          TR_ENCLAVE_SOURCE_ROOT="$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" uv run python -m scripts.check_enclave_sentry
       # The coverage invocation executes the ordinary suite; the frozen-main
       # differential runs in proof-oracle without coverage tracing. Running a
       # separate plain pytest pass doubled CI time and delayed every guarded
@@ -295,11 +320,13 @@ jobs:
     # tests and the coverage number rather than hiding one behind the other --
     # but it still fails if any shard did, because coverage computed from a
     # partial run is not a measurement of this commit.
+    # Cancelled runs must release their concurrency slot. always() kept this
+    # job queued after superseding PR runs, blocking the replacement's CI.
     needs: test
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -370,16 +397,29 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "8"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
+      - name: Check out enclave source for the mandatory Sentry guard
+        uses: actions/checkout@v4
+        with:
+          repository: Lore-Hex/quill-cloud-proxy
+          ref: main
+          path: .security/quill-cloud-proxy
+          sparse-checkout: enclave-go
+          persist-credentials: false
+      - name: Require and inspect enclave source
+        run: |
+          echo "TR_ENCLAVE_SOURCE_ROOT=$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" >> "$GITHUB_ENV"
+          git -C .security/quill-cloud-proxy rev-parse HEAD
+          TR_ENCLAVE_SOURCE_ROOT="$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" uv run python -m scripts.check_enclave_sentry
       # Computed from _RETIREMENTS rather than hard-coded, so adding a
       # retirement moves this clock with it and no one has to remember. The
       # max() with now() keeps the clock in the future once every announced
@@ -417,7 +457,7 @@ jobs:
   # Frozen reference tracing is intentionally separate from coverage tracing.
   # Both lifecycle clocks retain the complete matrix; no cloud identity needed.
   proof-oracle:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -430,7 +470,7 @@ jobs:
         # to about two thirds of the four-group work; keep the 45-minute cap.
         shard: [1, 2, 3, 4, 5, 6]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -457,9 +497,9 @@ jobs:
           --splitting-algorithm least_duration
 
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -467,7 +507,7 @@ jobs:
         run: uv sync --frozen
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: ".node-version"
       - name: Install npm deps
         run: npm ci
       - name: Install Playwright Chromium
@@ -478,8 +518,6 @@ jobs:
         run: node --test tests/js/homepage_*.test.cjs
       - name: Browser smoke
         run: npm run test:browser
-      - name: Redesigned homepage browser smoke
-        run: npx playwright test --config playwright.homepage.config.js
 
   # The BYOK envelope ordering constraint, checked against the DIFF rather than
   # against a deploy.
@@ -505,9 +543,9 @@ jobs:
   # test_an_unchanged_write_side_is_silent_and_reads_no_network, which drives
   # the real main() with every network seam replaced by a function that raises.
   byok-format-ordering:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -544,9 +582,9 @@ jobs:
   # the pinned TLC from proofs/ on a small instance and compares every step,
   # so this job needs Java as well as Go.
   fastpath:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # The module stays on Go 1.24, the enclave's: a dependency that needs a
+    # The module stays on the patched Go 1.26 toolchain: a dependency that needs a
     # later Go fails the build rather than fetching a newer toolchain.
     env:
       GOTOOLCHAIN: local
@@ -554,10 +592,10 @@ jobs:
       run:
         working-directory: fastpath
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - uses: actions/setup-java@v4
         with:
@@ -588,7 +626,7 @@ jobs:
   # With FASTPATH_SPANNER_EMULATOR=1 an emulator that cannot be reached fails
   # the tests; the fastpath job, without it, skips them.
   fastpath-spanner:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GOTOOLCHAIN: local
@@ -604,10 +642,10 @@ jobs:
       run:
         working-directory: fastpath
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - name: Wait for the Spanner emulator (fail if unavailable)
         run: |
@@ -619,11 +657,12 @@ jobs:
           exit 1
       - name: The store against the emulator
         run: go test -race -count=1 -p 1 ./internal/store/...
-      # The owner's, the auditor's, the front door's, the service's,
-      # fastpathctl's and loadgen's tests against the store skip without the
-      # emulator, so the fastpath job runs none of them; they run here.
-      - name: The owner, the auditor, the front door, the service, fastpathctl and loadgen against the emulator
-        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/... ./cmd/fastpathctl/... ./cmd/loadgen/...
+      # The owner's, the auditor's, the front door's, the service's, the
+      # gateway state cache's, fastpathctl's and loadgen's tests against the
+      # store skip without the emulator, so the fastpath job runs none of
+      # them; they run here.
+      - name: The owner, the auditor, the front door, the service, the gateway state cache, fastpathctl and loadgen against the emulator
+        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/... ./internal/gwstate/... ./cmd/fastpathctl/... ./cmd/loadgen/...
       # The watch's store sources need the emulator; its other tests run in
       # the fastpath job too.
       - name: The watch against the emulator
@@ -635,7 +674,7 @@ jobs:
   # so the store job leaves them out; each runs here in a job of its own,
   # without the race detector, against an emulator of its own.
   fastpath-walks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 260
     strategy:
       fail-fast: false
@@ -655,10 +694,10 @@ jobs:
       run:
         working-directory: fastpath
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
       - name: Wait for the Spanner emulator (fail if unavailable)
         run: |
@@ -672,10 +711,10 @@ jobs:
         run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
 
   proofs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

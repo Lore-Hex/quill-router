@@ -137,6 +137,7 @@ from trusted_router.pricing import _customer_price
 from trusted_router.provider_lifecycle import (
     BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
     FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+    TOGETHER_NOVEMBER_6_RETIREMENT_AT,
     WAFER_KIMI_K26_RETIREMENT_AT,
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
 )
@@ -523,8 +524,8 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
     for endpoint_id in (
         "minimax/minimax-m3@minimax/prepaid",
         "minimax/minimax-m3@minimax/byok",
-        "minimax/minimax-m2.7@minimax/prepaid",
-        "minimax/minimax-m2.7-highspeed@minimax/byok",
+        "minimax/minimax-m3.1-flash@minimax/prepaid",
+        "minimax/minimax-m3.1-flash@minimax/byok",
     ):
         model_id = endpoint_id.partition("@")[0]
         row = _listed_row("minimax", model_id)
@@ -868,6 +869,7 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
         "anthropic",
         "aws",
         "bedrock",
+        "amazon-bedrock",
         "google-ai-studio",
     }
     configured = provider_slugs_requiring_reverification & set(PROVIDERS)
@@ -947,6 +949,8 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         # atlas-cloud (#244) advertises these openai/* models but its router
         # returns 400 "router not found"; provider-scoped quarantine.
         ("atlas-cloud", "openai/gpt-4.1"),
+        # Removed from /models and authenticated chat returns 400 not found (2026-10-24).
+        ("atlas-cloud", "openai/gpt-4.1-mini"),
         ("atlas-cloud", "openai/gpt-4o"),
         ("atlas-cloud", "openai/gpt-5.1-codex"),
         ("atlas-cloud", "openai/o3-pro"),
@@ -962,7 +966,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     # atlas-cloud's healthy openai routes must stay live while it lists them —
     # only the router-not-found phantoms are quarantined, not the whole openai
     # namespace.
-    for kept_model in ("openai/gpt-4.1-mini", "openai/gpt-5.5", "openai/gpt-5.6-sol"):
+    for kept_model in ("openai/gpt-5.5", "openai/gpt-5.6-sol"):
         assert [
             endpoint
             for endpoint in built.values()
@@ -1551,7 +1555,9 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         inkling = MODELS["thinkingmachines/inkling"]
         endpoints = endpoints_for_model(inkling.id)
         provider_ids = {endpoint.provider for endpoint in endpoints}
-        assert inkling.provider in provider_ids
+        # Together is Inkling's listed provider until its route retires.
+        if catalog_predates(TOGETHER_NOVEMBER_6_RETIREMENT_AT):
+            assert inkling.provider in provider_ids
         assert "thinkingmachines" in provider_ids or _delisted(
             "thinkingmachines/inkling@thinkingmachines/prepaid"
         )

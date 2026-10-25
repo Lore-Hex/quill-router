@@ -1,6 +1,6 @@
 module github.com/Lore-Hex/quill-router/fastpath
 
-go 1.26.0
+go 1.26.10
 
 require (
 	cloud.google.com/go/monitoring v1.24.3

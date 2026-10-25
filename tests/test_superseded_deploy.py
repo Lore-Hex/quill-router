@@ -1,11 +1,13 @@
-"""A superseded deploy ships when main moved only outside the deploy paths."""
+"""A superseded deploy ships unless the run waiting to replace it can deploy at once."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import shutil
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -105,21 +107,70 @@ def test_docs_only_changes_deploy() -> None:
     assert superseded.may_deploy(compare) is True
 
 
-def _fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, stdout: str, exit_code: int = 0) -> Path:
+def _fake_gh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stdout: str = "",
+    exit_code: int = 0,
+    responses: dict[str, tuple[str, int]] | None = None,
+) -> Path:
+    """Put a fake `gh` on PATH and return its call log.
+
+    `responses` maps a substring of the argv to (stdout, exit code); the first
+    matching entry answers, and `stdout`/`exit_code` answer anything unmatched.
+    The stdout `SLEEP` makes the fake hang for six seconds instead.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "gh.log"
-    (tmp_path / "gh.out").write_text(stdout)
+    table: dict[str, list[object]] = {key: list(value) for key, value in (responses or {}).items()}
+    table[""] = [stdout, exit_code]
+    (tmp_path / "gh.json").write_text(json.dumps(table))
     gh = bin_dir / "gh"
     gh.write_text(
-        "#!/bin/sh\n"
-        f'printf "%s\\n" "$*" >> "{log}"\n'
-        f'cat "{tmp_path / "gh.out"}"\n'
-        f"exit {exit_code}\n"
+        "#!/usr/bin/env python3\n"
+        "import json, sys, time\n"
+        'argv = " ".join(sys.argv[1:])\n'
+        f'open({str(log)!r}, "a").write(argv + "\\n")\n'
+        f'table = json.load(open({str(tmp_path / "gh.json")!r}))\n'
+        "matches = [key for key in table if key and key in argv]\n"
+        'out, code = table[matches[0] if matches else ""]\n'
+        'if out == "SLEEP":\n'
+        "    time.sleep(6)\n"
+        "sys.stdout.write(out + '\\n')\n"
+        "sys.exit(code)\n"
     )
     gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return log
+
+
+SOURCE_MOVED = json.dumps({"status": "ahead", "files": [{"filename": "src/trusted_router/x.py"}]})
+DESCENDS = json.dumps({"status": "ahead", "files": [{"filename": "src/trusted_router/x.py"}]})
+THIS_RUN = {"databaseId": 1, "status": "in_progress", "headSha": "aaa", "headBranch": "main", "event": "push"}
+# Newest first, as `gh run list` prints: the pending successor (a push run on main), then this run.
+WAITING_RUN = json.dumps(
+    [{"databaseId": 2, "status": "pending", "headSha": "bbb", "headBranch": "main", "event": "push"}, THIS_RUN]
+)
+# The lookups a skip needs, in order: has main moved on deploy paths, is a main push run waiting, does its
+# commit descend from BASE, is that commit still on main (here: head's parent), is its CI green.
+ON_MAIN = json.dumps({"status": "ahead", "files": [{"filename": "docs/later.md"}]})
+READY = {
+    "compare/aaa...ccc": (SOURCE_MOVED, 0),
+    "--workflow deploy.yml": (WAITING_RUN, 0),
+    "compare/aaa...bbb": (DESCENDS, 0),
+    "compare/bbb...ccc": (ON_MAIN, 0),
+    "--workflow ci.yml --commit bbb": ('[{"status": "completed", "conclusion": "success"}]', 0),
+}
+ARGS = ["--repo", "o/r", "--base", "aaa", "--head", "ccc"]
+# A hanging fake sleeps 6 s; the timeout under test must be far below that and far above the fake's own
+# interpreter start-up, which exceeded 0.3 s on a loaded machine (review round 3 saw three flakes).
+HANG_TIMEOUT = 2.0
+
+
+def _ci(status: str, conclusion: str = "") -> str:
+    return json.dumps([{"status": status, "conclusion": conclusion}])
 
 
 def test_main_deploys_when_only_docs_moved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,15 +181,237 @@ def test_main_deploys_when_only_docs_moved(tmp_path: Path, monkeypatch: pytest.M
     assert log.read_text().strip() == "api repos/Lore-Hex/quill-router/compare/aaa...bbb"
 
 
-def test_main_skips_when_a_newer_commit_touches_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_main_skips_when_the_waiting_main_push_run_has_green_ci(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = _fake_gh(tmp_path, monkeypatch, responses=READY)
+    assert superseded.main(ARGS) == 1
+    calls = log.read_text().splitlines()
+    assert calls[0] == "api repos/o/r/compare/aaa...ccc"
+    assert "run list --repo o/r --workflow deploy.yml" in calls[1]
+    assert calls[2] == "api repos/o/r/compare/aaa...bbb"
+    assert calls[3] == "api repos/o/r/compare/bbb...ccc"
+    assert "run list --repo o/r --workflow ci.yml --commit bbb" in calls[4]
+    assert len(calls) == 5
+
+
+def test_main_skips_when_the_waiting_commit_is_main_itself(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    identical = json.dumps({"status": "identical", "files": []})
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "compare/bbb...ccc": (identical, 0)})
+    assert superseded.main(ARGS) == 1
+
+
+@pytest.mark.parametrize(
+    "ci",
+    [_ci("in_progress"), _ci("queued"), _ci("completed", "failure"), "[]"],
+    ids=["running", "queued", "red", "no-ci-run"],
+)
+def test_main_deploys_when_the_waiting_run_cannot_deploy_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ci: str
 ) -> None:
-    _fake_gh(
-        tmp_path,
-        monkeypatch,
-        stdout=json.dumps({"status": "ahead", "files": [{"filename": "src/trusted_router/x.py"}]}),
+    # The waiting run's gate would hold (or refuse) for an unknown time; shipping BASE now is progress.
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow ci.yml --commit bbb": (ci, 0)})
+    assert superseded.main(ARGS) == 0
+
+
+@pytest.mark.parametrize("own_status", ["in_progress", "queued"])
+def test_main_deploys_when_no_newer_run_is_waiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, own_status: str
+) -> None:
+    # The newer run was cancelled, or the listing shows only this run itself: skipping would leave main undeployed.
+    runs = json.dumps([{**THIS_RUN, "status": own_status}])
+    log = _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (runs, 0)})
+    assert superseded.main(ARGS) == 0
+    assert "ci.yml" not in log.read_text()
+
+
+@pytest.mark.parametrize(
+    "waiting",
+    [
+        {"databaseId": 2, "status": "pending", "headSha": "bbb", "headBranch": "main", "event": "workflow_dispatch"},
+        {"databaseId": 2, "status": "pending", "headSha": "bbb", "headBranch": "feature/x", "event": "push"},
+    ],
+    ids=["manual-dispatch", "side-branch"],
+)
+def test_main_deploys_when_the_waiting_run_cannot_advance_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waiting: dict
+) -> None:
+    # A dispatch (of any revision) or a side-branch run is not main's successor even with green CI.
+    runs = json.dumps([waiting, THIS_RUN])
+    log = _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (runs, 0)})
+    assert superseded.main(ARGS) == 0
+    assert "ci.yml" not in log.read_text()
+
+
+@pytest.mark.parametrize("status", ["diverged", "behind", "identical"])
+def test_main_deploys_when_the_waiting_commit_does_not_descend_from_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    lineage = json.dumps({"status": status, "files": []})
+    log = _fake_gh(tmp_path, monkeypatch, responses={**READY, "compare/aaa...bbb": (lineage, 0)})
+    assert superseded.main(ARGS) == 0
+    assert "ci.yml" not in log.read_text()
+
+
+@pytest.mark.parametrize("status", ["diverged", "behind"])
+def test_main_deploys_when_the_waiting_commit_has_left_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    # A rerun of a run whose commit a force-push removed: it would refuse at its own ancestry check,
+    # so skipping for it would leave main undeployed.
+    gone = json.dumps({"status": status, "files": []})
+    log = _fake_gh(tmp_path, monkeypatch, responses={**READY, "compare/bbb...ccc": (gone, 0)})
+    assert superseded.main(ARGS) == 0
+    assert "ci.yml" not in log.read_text()
+
+
+@pytest.mark.parametrize(
+    "failing",
+    ["--workflow deploy.yml", "compare/aaa...bbb", "compare/bbb...ccc", "--workflow ci.yml --commit bbb"],
+    ids=["run-list-fails", "lineage-fails", "on-main-fails", "ci-lookup-fails"],
+)
+def test_main_deploys_when_a_successor_lookup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    # "Unknown" reads as "not known to be ready": BASE ships at the cost of at most one extra rollout.
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, failing: ("", 1)})
+    assert superseded.main(ARGS) == 0
+
+
+@pytest.mark.parametrize(
+    "hanging",
+    ["--workflow deploy.yml", "compare/aaa...bbb", "compare/bbb...ccc", "--workflow ci.yml --commit bbb"],
+    ids=["run-list-hangs", "lineage-hangs", "on-main-hangs", "ci-lookup-hangs"],
+)
+def test_main_deploys_when_a_successor_lookup_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hanging: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", HANG_TIMEOUT)
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, hanging: ("SLEEP", 0)})
+    assert superseded.main(ARGS) == 0
+    assert f"timed out after {HANG_TIMEOUT} s" in capsys.readouterr().err
+
+
+def test_main_skips_when_the_comparison_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The compare decides whether BASE is even on main; unknown there never deploys.
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", HANG_TIMEOUT)
+    _fake_gh(tmp_path, monkeypatch, responses={"compare/aaa...ccc": ("SLEEP", 0)})
+    assert superseded.main(ARGS) == 1
+    assert "timed out" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("status", "exit_code"), [("identical", 0), ("ahead", 0), ("behind", 1), ("diverged", 1)])
+def test_ancestry_mode_deploys_only_while_base_is_on_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str, exit_code: int
+) -> None:
+    compare = json.dumps({"status": status, "files": [{"filename": "src/trusted_router/x.py"}]})
+    log = _fake_gh(tmp_path, monkeypatch, responses={"compare/aaa...ccc": (compare, 0)})
+    assert superseded.main(["--mode", "ancestry", *ARGS]) == exit_code
+    # Ancestry asks one question of one endpoint; it never consults runs or CI.
+    assert log.read_text().strip() == "api repos/o/r/compare/aaa...ccc"
+
+
+@pytest.mark.parametrize(("stdout", "exit_code"), [("", 1), ("not json", 0), ("SLEEP", 0)], ids=["gh-fails", "garbage", "hangs"])
+def test_ancestry_mode_never_deploys_on_an_unknown_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str, exit_code: int
+) -> None:
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", HANG_TIMEOUT)
+    _fake_gh(tmp_path, monkeypatch, stdout=stdout, exit_code=exit_code)
+    assert superseded.main(["--mode", "ancestry", *ARGS]) == 1
+
+
+def _finalize_outcome(needs: dict) -> tuple[str, int]:
+    """Run finalize-cloud's step with these `needs` results; return (outcome handed to release, exit code)."""
+
+    job = _workflow()["jobs"]["finalize-cloud"]
+    step = next(step for step in job["steps"] if step.get("name") == "Finalize cloud reservation")
+    assert step["env"]["RESULTS"] == "${{ toJSON(needs) }}"
+    script = step["run"].replace(
+        "bash scripts/deploy/deploy_mutex.sh release", 'printf "release outcome=%s\\n" "$TR_DEPLOY_OUTCOME"'
     )
-    assert superseded.main(["--repo", "o/r", "--base", "aaa", "--head", "bbb"]) == 1
+    assert "deploy_mutex.sh" not in script
+    bash = shutil.which("bash")
+    assert bash is not None
+    result = subprocess.run(  # noqa: S603 - the workflow's own step, release stubbed
+        [bash, "-c", script], env={**os.environ, "RESULTS": json.dumps(needs)}, capture_output=True, text=True
+    )
+    outcome = result.stdout.split("release outcome=")[1].split()[0]
+    return outcome, result.returncode
+
+
+def _needs(**overrides: dict) -> dict:
+    names = ("admit-cloud", "migrate-schema", "sync-runtime-secrets", "confirm-current-main",
+             "confirm-still-on-main", "deploy", "rollout-secondaries", "public-surface-companion",
+             "verify-cloud-complete")
+    needs = {name: {"result": "success", "outputs": {}} for name in names}
+    needs["confirm-current-main"]["outputs"] = {"proceed": "true"}
+    needs["confirm-still-on-main"]["outputs"] = {"on_main": "true"}
+    needs.update(overrides)
+    return needs
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+def test_finalize_releases_cleanly_after_an_ancestry_refusal() -> None:
+    # Nothing shipped and the lease is not wanted by this run any more: release, do not block.
+    skipped = {"result": "skipped", "outputs": {}}
+    needs = _needs(**{
+        "confirm-still-on-main": {"result": "success", "outputs": {"on_main": "false"}},
+        "deploy": skipped, "rollout-secondaries": skipped, "public-surface-companion": skipped,
+        "verify-cloud-complete": skipped,
+    })
+    assert _finalize_outcome(needs) == ("success", 0)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+def test_finalize_blocks_the_lease_on_any_other_failure() -> None:
+    assert _finalize_outcome(_needs()) == ("success", 0)
+    skipped = {"result": "skipped", "outputs": {}}
+    cases = {
+        "deploy failed": _needs(**{"deploy": {"result": "failure", "outputs": {}}, "rollout-secondaries": skipped,
+                                   "public-surface-companion": skipped, "verify-cloud-complete": skipped}),
+        "ancestry job failed": _needs(**{"confirm-still-on-main": {"result": "failure", "outputs": {}},
+                                         "deploy": skipped, "rollout-secondaries": skipped,
+                                         "public-surface-companion": skipped, "verify-cloud-complete": skipped}),
+        "schema failed": _needs(**{"migrate-schema": {"result": "failure", "outputs": {}},
+                                   "confirm-still-on-main": skipped, "deploy": skipped,
+                                   "rollout-secondaries": skipped, "public-surface-companion": skipped,
+                                   "verify-cloud-complete": skipped}),
+        "deploy skipped while on main": _needs(**{"deploy": skipped, "rollout-secondaries": skipped,
+                                                  "public-surface-companion": skipped,
+                                                  "verify-cloud-complete": skipped}),
+    }
+    for name, needs in cases.items():
+        assert _finalize_outcome(needs) == ("failure", 1), name
+
+
+def test_base_on_main_reads_the_compare_status() -> None:
+    assert superseded.base_on_main({"status": "identical"}) is True
+    assert superseded.base_on_main({"status": "ahead"}) is True
+    for compare in ({"status": "behind"}, {"status": "diverged"}, {}, None, "ahead"):
+        assert superseded.base_on_main(compare) is False, compare
+
+
+def _run(sha: str, status: str = "pending", branch: str = "main", event: str = "push") -> dict:
+    return {"status": status, "headSha": sha, "headBranch": branch, "event": event}
+
+
+def test_pending_successor_is_the_newest_waiting_main_push_other_than_this_run() -> None:
+    runs = [_run("ccc"), _run("bbb", status="queued"), _run("aaa", status="in_progress")]
+    assert superseded.pending_successor(runs, base="aaa") == "ccc"
+    assert superseded.pending_successor([_run("zzz", status="completed")], base="aaa") is None
+    assert superseded.pending_successor([_run("aaa", status="in_progress")], base="aaa") is None
+    # GitHub may list the calling run as queued while this job runs; it is never its own successor.
+    assert superseded.pending_successor([_run("aaa", status="queued")], base="aaa") is None
+    # A dispatch or a side-branch run cannot advance main; the next eligible run still counts.
+    assert superseded.pending_successor([_run("ddd", event="workflow_dispatch"), _run("ccc")], base="aaa") == "ccc"
+    assert superseded.pending_successor([_run("ddd", branch="feature/x")], base="aaa") is None
+    assert superseded.pending_successor({"not": "a list"}, base="aaa") is None
+
+
+def test_ci_green_needs_a_completed_successful_run() -> None:
+    assert superseded.ci_green([{"status": "completed", "conclusion": "success"}]) is True
+    for runs in ([], [{"status": "in_progress", "conclusion": ""}], [{"status": "completed", "conclusion": "failure"}], "x"):
+        assert superseded.ci_green(runs) is False, runs
 
 
 @pytest.mark.parametrize(("stdout", "exit_code"), [("", 1), ("not json", 0)], ids=["gh-fails", "garbage"])
@@ -152,7 +425,7 @@ def test_main_skips_when_the_comparison_fails(
 def test_the_workflow_asks_the_script_before_skipping() -> None:
     job = _workflow()["jobs"]["confirm-current-main"]
     checkout = job["steps"][0]
-    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["uses"] == "actions/checkout@v7"
     assert checkout["with"]["sparse-checkout"] == "scripts/deploy/superseded_deploy.py"
     run = job["steps"][1]["run"]
     current = run.index('if [ "${latest_sha}" = "${GITHUB_SHA}" ]')
@@ -162,12 +435,45 @@ def test_the_workflow_asks_the_script_before_skipping() -> None:
     assert '--base "${GITHUB_SHA}" --head "${latest_sha}"' in run
 
 
+def test_the_check_runs_before_the_lease_and_before_every_production_mutation() -> None:
+    jobs = _workflow()["jobs"]
+    # The check holds nothing: it needs CI and the image, never the lease.
+    assert set(jobs["confirm-current-main"]["needs"]) <= {"gate-on-ci", "build-image"}
+    admit = jobs["admit-cloud"]
+    assert "confirm-current-main" in admit["needs"]
+    assert "needs.confirm-current-main.outputs.proceed == 'true'" in admit["if"]
+    # Everything that mutates production sits behind the lease, so a skipped
+    # run migrates no schema, rotates no secret and ships no revision.
+    for name in ("migrate-schema", "sync-runtime-secrets", "deploy"):
+        assert "admit-cloud" in jobs[name]["needs"], name
+    assert "needs.confirm-current-main.outputs.proceed == 'true'" in jobs["deploy"]["if"]
+
+
+def test_ancestry_is_rechecked_after_admission_without_giving_up_the_lease() -> None:
+    jobs = _workflow()["jobs"]
+    still = jobs["confirm-still-on-main"]
+    # After the lease and the pre-deploy mutations, right where the old check stood.
+    assert {"admit-cloud", "migrate-schema", "sync-runtime-secrets"} <= set(still["needs"])
+    run = still["steps"][1]["run"]
+    assert "superseded_deploy.py --mode ancestry" in run
+    assert '--base "${GITHUB_SHA}" --head "${latest_sha}"' in run
+    assert 'echo "on_main=false" >> "$GITHUB_OUTPUT"' in run
+    assert "confirm-still-on-main" in jobs["deploy"]["needs"]
+    assert "needs.confirm-still-on-main.outputs.on_main == 'true'" in jobs["deploy"]["if"]
+    # A refusal here must still release the lease: finalize-cloud waits for this job and runs on always().
+    final = jobs["finalize-cloud"]
+    assert "confirm-still-on-main" in final["needs"]
+    assert "always()" in final["if"] and "needs.admit-cloud.result == 'success'" in final["if"]
+
+
 def test_the_admit_wait_outlasts_a_gateway_rollout() -> None:
     job = _workflow()["jobs"]["admit-cloud"]
     acquire = next(step for step in job["steps"] if step.get("id") == "acquire_mutex")
     wait = int(acquire["env"]["TR_DEPLOY_WAIT_SECONDS"])
-    # Gateway rollouts held the gcp lease for about 2 h 20 min (2026-10-01/02).
-    assert wait >= 3 * 3600
+    # Gateway rollouts held the gcp lease for about 2 h 20 min (2026-10-01/02);
+    # with trust-page verification and a runner-queue wait before the release,
+    # one hold reached 2 h 56 min (2026-10-21/22).
+    assert wait >= 4 * 3600
     # The job must not time out before the wait does, and the lease must last
     # longer than the job that holds it.
     assert job["timeout-minutes"] * 60 > wait

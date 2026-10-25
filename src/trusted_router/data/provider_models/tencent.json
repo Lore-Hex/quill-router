@@ -154,7 +154,8 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 60000
+      "cached_input_token_price_per_m": 60000,
+      "missing_since": "2026-10-20"
     },
     {
       "display_name": "MiniMax-M3",
@@ -735,7 +736,7 @@
   ],
   "source": "https://tokenhub-intl.tencentcloudmaas.com/v1/models",
   "pricing_source": "https://intl.cloud.tencent.com/document/product/1300/78937",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-20T12:05:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 24
 }

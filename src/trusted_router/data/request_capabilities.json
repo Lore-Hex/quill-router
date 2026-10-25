@@ -3,6 +3,49 @@
   "reviewed_on": "2026-10-03",
   "contracts": [
     {
+      "providers": ["gmi"],
+      "models": ["minimax/minimax-m3.1-flash"],
+      "source": "https://api.gmi-serving.com/v1/models; checked 2026-10-23; JSON, SSE and named function tool canaries passed",
+      "tools": true
+    },
+    {
+      "providers": ["novita"],
+      "models": ["minimax/minimax-m3.1-flash"],
+      "source": "https://api.novita.ai/openai/v1/models; checked 2026-10-23; JSON, SSE and named function tool canaries passed",
+      "tools": true,
+      "vision": true
+    },
+    {
+      "providers": ["venice"],
+      "models": ["minimax/minimax-m3.1-flash"],
+      "reasoning_effort": ["low", "medium", "high", "xhigh", "max"],
+      "source": "https://api.venice.ai/api/v1/models?type=text; checked 2026-10-22; JSON and SSE canaries passed",
+      "tools": true,
+      "vision": true
+    },
+    {
+      "providers": ["together"],
+      "models": ["minimax/minimax-m3.1-flash"],
+      "source": "https://api.together.xyz/v1/models; checked 2026-10-22; JSON, SSE and named function tool canaries passed",
+      "tools": true
+    },
+    {
+      "providers": ["minimax"],
+      "models": ["minimax/minimax-m3.1-flash"],
+      "reasoning_effort": ["low", "medium", "high", "xhigh", "max"],
+      "source": "https://platform.minimax.io/docs/api-reference/text-chat-openai; checked 2026-10-19",
+      "tools": true,
+      "vision": true
+    },
+    {
+      "providers": ["inception"],
+      "models": ["inception/mercury-3"],
+      "reasoning_effort": ["low", "medium", "high"],
+      "source": "https://docs.inceptionlabs.ai/get-started/models; checked 2026-10-19; instant is a native-only value outside the gateway effort enum",
+      "tools": true,
+      "vision": false
+    },
+    {
       "providers": [
         "openai"
       ],

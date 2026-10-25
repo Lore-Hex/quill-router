@@ -21,6 +21,13 @@ class ProviderBrand:
 
 
 PROVIDER_BRANDS: dict[str, ProviderBrand] = {
+    "abliteration": ProviderBrand(
+        "https://abliteration.ai/",
+        description="Chat, vision and reasoning models with cached-input pricing. Separate from Abliterate.ai.",
+        resources=(("API documentation", "https://docs.abliteration.ai/"),
+                   ("Pricing", "https://abliteration.ai/pricing"),
+                   ("Data handling", "https://abliteration.ai/data-handling")),
+    ),
     "abliterate": ProviderBrand(
         "https://abliterate.ai/",
         description=("OpenAI-compatible chat and research models. " + ABLITERATE_ESTIMATED_USAGE_NOTICE),
@@ -28,6 +35,15 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     ),
     "aion-labs": ProviderBrand("https://www.aionlabs.ai/"),
     "akashml": ProviderBrand("https://akashml.com/"),
+    "amazon-bedrock": ProviderBrand(
+        "https://aws.amazon.com/bedrock/",
+        description="Amazon Bedrock's regional OpenAI-compatible Mantle API. Credits routes use standard-tier pricing in US East (N. Virginia).",
+        resources=(
+            ("API documentation", "https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html"),
+            ("Pricing", "https://aws.amazon.com/bedrock/pricing/"),
+            ("Data protection", "https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html"),
+        ),
+    ),
     "arcee": ProviderBrand("https://www.arcee.ai/"),
     "baidu": ProviderBrand("https://intl.cloud.baidu.com/en/product/qianfan.html"),
     "byteplus": ProviderBrand("https://www.byteplus.com/en/product/modelark"),
@@ -74,6 +90,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "mancer": ProviderBrand("https://mancer.tech/"),
     "modal": ProviderBrand("https://modal.com/"),
     "nextbit": ProviderBrand("https://nextbit256.com/"),
+    "nextbit-eu": ProviderBrand("https://nextbit256.com/"),
     "perceptron": ProviderBrand("https://perceptron.cloud/"),
     "perplexity": ProviderBrand("https://www.perplexity.ai/"),
     "reka": ProviderBrand("https://www.reka.ai/"),
@@ -86,6 +103,21 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "lyceum": ProviderBrand("https://lyceum.technology/"),
     "hixtube": ProviderBrand("https://hixtube.com/"),
     "greenference": ProviderBrand("https://greenference.com/"),
+    "muna": ProviderBrand(
+        "https://muna.ai/",
+        description="Open-weight chat, vision and reasoning models served on Muna's own inference stack.",
+        resources=(("API documentation", "https://docs.muna.ai/"),
+                   ("Models and pricing", "https://inference.muna.ai/integrations/trustedrouter/catalog"),
+                   ("Retention policy and exceptions", "https://muna.ai/zdr"),
+                   ("Data processing agreement", "https://muna.ai/dpa"),
+                   ("Service status", "https://status.muna.ai/")),
+    ),
+    "coralbricks": ProviderBrand("https://www.coralbricks.ai/", resources=(
+        ("API documentation", "https://www.coralbricks.ai/docs"),
+        ("Privacy policy", "https://www.coralbricks.ai/privacy"),
+        ("Trust center", "https://trust.coralbricks.ai/"),
+        ("Pricing", "https://www.coralbricks.ai/pricing"),
+    )),
     "boundless": ProviderBrand(
         "https://boundless.network/",
         description="OpenAI-compatible inference with model-specific input, output and cache-read pricing.",
@@ -103,14 +135,13 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
         description="Inference integration pending valid credentials and verified current pricing.",
         resources=(("Documentation", "https://hyperbolic.ai/docs/overview/overview"),),
     ),
-    # Keep public IDs and regional credentials stable across the provider rebrand.
-    "system1models": ProviderBrand(
+    "decisionmodelsio": ProviderBrand(
         "https://decisionmodels.io/",
-        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The Global route uses the peer-to-peer tier.",
+        description="Formerly System1 Models. Models use the decisionmodelsio namespace. The Global route uses the peer-to-peer tier.",
     ),
-    "system1models-eu": ProviderBrand(
+    "decisionmodelsio-eu": ProviderBrand(
         "https://decisionmodels.io/eu",
-        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The EU route remains EU-only.",
+        description="Formerly System1 Models. Models use the decisionmodelsio-eu namespace. The EU route remains EU-only.",
     ),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
@@ -228,7 +259,6 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "trustedrouter": ProviderBrand("https://trustedrouter.com/"),
     "typesafe": ProviderBrand("https://typesafe.ai/"),
     "venice": ProviderBrand("https://venice.ai/"),
-    "vercel-ai-gateway": ProviderBrand("https://vercel.com/ai-gateway"),
     "voyage": ProviderBrand("https://www.voyageai.com/"),
     "vultr": ProviderBrand("https://www.vultr.com/"),
     "wafer": ProviderBrand("https://wafer.ai/"),

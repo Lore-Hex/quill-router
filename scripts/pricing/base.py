@@ -803,6 +803,10 @@ def reconcile_manifest_tombstones(
         "provider-canary-failed",
         # A later successful Vertex admission probe may recover missing limits.
         "vertex-metadata-unavailable",
+        "vertex-price-context-incomplete",
+        # Vertex rechecks adapter support, complete pricing/limits and a live
+        # canary before recovering this machine-created classification.
+        "unsupported-vertex-api",
     }
     today = missing_date or datetime.now(UTC).date().isoformat()
     existing_ids = {
@@ -863,7 +867,7 @@ def reconcile_manifest_tombstones(
                     row.pop("routable", None)
                     row.pop("routable_reason", None)
                     row.pop("unresolved_since", None)
-                elif present_reason != "provider-canary-failed" and old_reason in {
+                elif present_reason in {None, "delisted-upstream", "awaiting-price", "price-unavailable"} and old_reason in {
                     "delisted-upstream",
                     "awaiting-price",
                 }:
@@ -904,7 +908,11 @@ def reconcile_manifest_tombstones(
             and isinstance(reason, str)
             and reason not in discovery_managed_reasons
         )
-        if model_id not in priced_ids and not operator_hold:
+        classified_hold = row.get("routable") is False and reason in {
+            "provider-canary-failed", "vertex-metadata-unavailable",
+            "vertex-price-context-incomplete", "unsupported-vertex-api",
+        }
+        if model_id not in priced_ids and not operator_hold and not classified_hold:
             row["routable"] = False
             row["routable_reason"] = "awaiting-price"
             row["unresolved_since"] = today

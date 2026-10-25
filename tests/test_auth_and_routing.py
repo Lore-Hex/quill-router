@@ -42,8 +42,8 @@ def test_stablecoin_checkout_uses_stripe_crypto_payment_method(monkeypatch) -> N
     assert metadata["workspace_id"] == data["workspace_id"]
     assert metadata["payment_method"] == "stablecoin"
     assert metadata["credit_amount_microdollars"] == "25000000"
-    assert metadata["processing_fee_cents"] == "39"
-    assert metadata["charge_amount_cents"] == "2539"
+    assert metadata["processing_fee_cents"] == "59"
+    assert metadata["charge_amount_cents"] == "2559"
 
 
 def test_trustedrouter_auto_rolls_over_to_next_provider(

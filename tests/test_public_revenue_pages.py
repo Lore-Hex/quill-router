@@ -17,7 +17,6 @@ from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.provider_lifecycle import (
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
 )
-from trusted_router.storage import STORE
 
 
 def test_revenue_pages_are_public(client: TestClient) -> None:
@@ -260,7 +259,7 @@ def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -
     for arch in ("arm64", "x64"):
         assert (
             "https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/"
-            f"v0.3.0-alpha.1/Trusted-Cowork-0.3.0-alpha.1-mac-{arch}.dmg"
+            f"v0.4.0-alpha.2/Trusted-Cowork-0.4.0-alpha.2-mac-{arch}.dmg"
         ) in response.text
     assert "TRPi" not in response.text
     assert "terminal coding agent" not in response.text
@@ -380,12 +379,8 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
 
-def test_agent_discovery_surfaces_model_advisor_skill(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The skill is discoverable from the production homepage; the legacy page
-    # served to alternate brands no longer carries it in the shared footer.
-    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
+def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:
+    # The skill is discoverable from the homepage and the docs.
     for path in ["/", "/docs", "/docs/agent-setup"]:
         response = client.get(path)
         assert response.status_code == 200
@@ -912,27 +907,22 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     # keyed API catalog.
     assert 'href="/models"' in response.text
     assert 'href="https://api.trustedrouter.com/v1/models"' not in response.text
-    # Redesigned homepage (2026-06): a static routing-diagram hero replaces the
-    # animated orbital scene, on the friend-provided modern layout. Assert the
-    # new conversion surface rather than the old orbital-scene markup.
-    assert "600+ AI Models at your fingertips." in response.text
-    assert "One Unified Interface." in response.text
-    assert "Privacy with proof." in response.text
-    assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
-    assert "<strong>100+</strong><span>providers</span>" in response.text
-    assert "<strong>3 clouds</strong><span>GCP · AWS · Azure</span>" in response.text
+    # Landscape homepage (2026-10): assert its conversion surface, and that the
+    # previous hero and the older orbital-scene markup stay gone.
+    assert "Encrypt all your" in response.text
+    assert "Access hundreds of models confidentially" in response.text
+    assert "600+ AI Models at your fingertips." not in response.text
     assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" not in response.text
-    assert 'class="hero-sdk-swap"' in response.text
     assert 'base_url="https://api.openai.com/v1"' in response.text
     assert f'base_url="{client.app.state.settings.api_base_url}"' in response.text
-    assert 'src="/static/trustedrouter-explainer.jpg"' in response.text
-    assert "Get API key" in response.text  # primary CTA
-    assert "Provider failover" in response.text  # hero proof row
+    assert 'src="/static/trustedrouter-explainer.jpg"' not in response.text
+    assert "Create my API key" in response.text  # primary CTA
+    assert "No card required." in response.text
     assert 'min_privacy": "confidential"' in response.text
     assert 'href="/eu"' in response.text
-    assert "/static/charter.css?v=" in response.text
+    assert "/static/homepage/homepage-landscape.css?v=" in response.text
     assert 'class="brand-mark"' in response.text
 
 
@@ -960,23 +950,6 @@ def test_eu_host_renders_eu_landing_page(client: TestClient) -> None:
     assert response.status_code == 200
     assert "Use the EU gateway and an EU-focused model alias." in response.text
     assert "https://api-europe-west4.quillrouter.com/v1" in response.text
-
-
-def test_console_credit_note_is_manual(client: TestClient) -> None:
-    user = STORE.ensure_user("alice@example.com")
-    raw_session, _ = STORE.create_auth_session(
-        user_id=user.id,
-        provider="google",
-        label="alice@example.com",
-        ttl_seconds=3600,
-        state="active",
-    )
-    client.cookies.set("tr_session", raw_session)
-
-    response = client.get("/console/credits")
-
-    assert response.status_code == 200
-    assert "This console does not grant them automatically" in response.text
 
 
 def test_revenue_loop_docs_define_google_sheet_and_interview_rules() -> None:

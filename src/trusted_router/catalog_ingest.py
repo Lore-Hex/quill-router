@@ -211,14 +211,11 @@ def _has_token_prices(raw_model: dict[str, Any]) -> bool:
 _EXPIRING_PROVIDER_MANIFEST_SLUGS = EXPIRING_PROVIDER_MANIFEST_SLUGS
 
 
-def _apply_provider_manifest_expiry(
-    endpoints: dict[str, ModelEndpoint],
-) -> dict[str, ModelEndpoint]:
-    """Attach one provider-scoped deadline to every manifest-backed route.
+def provider_manifest_deadlines() -> dict[str, datetime]:
+    """Each expiring provider manifest's deadline, read from the bundled files.
 
-    Some media routes are installed statically after supplemental ingestion,
-    so applying the policy at the final endpoint boundary is what guarantees
-    chat, image, video, Credits, and BYOK routes all fail closed together.
+    A function of the files alone, not of any clock: the routing snapshot's
+    publisher reads it to place its windows the same way in every process.
     """
     deadlines: dict[str, datetime] = {}
     for provider_slug in _EXPIRING_PROVIDER_MANIFEST_SLUGS:
@@ -231,6 +228,19 @@ def _apply_provider_manifest_expiry(
         deadlines[provider_slug] = (
             _provider_manifest_valid_until(provider_slug, raw) or _EXPIRED_PROVIDER_MANIFEST
         )
+    return deadlines
+
+
+def _apply_provider_manifest_expiry(
+    endpoints: dict[str, ModelEndpoint],
+) -> dict[str, ModelEndpoint]:
+    """Attach one provider-scoped deadline to every manifest-backed route.
+
+    Some media routes are installed statically after supplemental ingestion,
+    so applying the policy at the final endpoint boundary is what guarantees
+    chat, image, video, Credits, and BYOK routes all fail closed together.
+    """
+    deadlines = provider_manifest_deadlines()
 
     return {
         endpoint_id: (
@@ -266,6 +276,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "near-ai",
         "phala",
         "telnyx",
+        "tinfoil",
         "together",
         "wafer",
         "engy",
@@ -287,8 +298,12 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "hixtube",
+        "muna",
+        "abliteration",
+        "coralbricks",
         "boundless",
         "zro",
         "byteplus",
@@ -1064,8 +1079,9 @@ def _supplemental_provider_models_and_endpoints(
     endpoints: dict[str, ModelEndpoint] = {}
     for provider_slug in (
         "abliterate",
-        "system1models",
-        "system1models-eu",
+        "abliteration",
+        "decisionmodelsio",
+        "decisionmodelsio-eu",
         "novita",
         "nebius",
         "minimax",
@@ -1126,6 +1142,7 @@ def _supplemental_provider_models_and_endpoints(
         "sail-research",
         "reka",
         "nextbit",
+        "nextbit-eu",
         "akashml",
         "mancer",
         "aion-labs",
@@ -1137,8 +1154,11 @@ def _supplemental_provider_models_and_endpoints(
         "scaleway",
         "regolo",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "hixtube",
+        "muna",
+        "coralbricks",
         "boundless",
         "zro",
         "byteplus",
@@ -1151,7 +1171,7 @@ def _supplemental_provider_models_and_endpoints(
         "meta",
         "openrouter",
     ):
-        if held_decisions_only and provider_slug not in {"system1models", "system1models-eu"}:
+        if held_decisions_only and provider_slug not in {"decisionmodelsio", "decisionmodelsio-eu"}:
             continue
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
@@ -1209,8 +1229,10 @@ def _supplemental_provider_models_and_endpoints(
             embedding = raw_model.get("model_type") == "embedding"
             decision = raw_model.get("model_type") == "decision"
             if decision and (
-                provider_slug not in {"system1models", "system1models-eu"}
-                or not model_id.startswith(provider_slug + "/s1-")
+                not (
+                    (provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"} and model_id.startswith(provider_slug + "/s1-"))
+                    or (provider_slug == "regolo" and model_id == "cloudflare/clef-flash" and upstream_id == "clef-flash")
+                )
                 or not decision_manifest_price_is_valid(raw_model)
             ):
                 continue
@@ -1355,7 +1377,7 @@ def _supplemental_provider_models_and_endpoints(
                     raw_model.get("input_modalities"),
                     default=("text",),
                 ),
-                output_modalities=_modalities(
+                output_modalities=("decision",) if decision else _modalities(
                     raw_model.get("output_modalities"),
                     default=("text",),
                 ),
@@ -1672,14 +1694,13 @@ def _input_only_manifest_cost(
 
 
 # Providers through which we route Anthropic-authored (anthropic/*) models on
-# Credits. Anthropic-direct only today; add "vertex"/"bedrock" here if/when
-# first-party Claude routing through those surfaces is enabled. Resellers that
+# Credits. First-party Anthropic, Vertex, and Bedrock surfaces are allowed. Resellers that
 # merely list Claude ids are intentionally excluded (see _keep policy below).
 _ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
     # First-party Anthropic surfaces are OK for Claude Credits routing; resellers
     # are not. Vertex + Bedrock included per product decision (2026-07-18) so
     # Claude-on-Vertex/Bedrock Credits routes are permitted when they exist.
-    {"anthropic", "google-vertex", "bedrock", "aws-bedrock"}
+    {"anthropic", "google-vertex", "bedrock", "aws-bedrock", "amazon-bedrock"}
 )
 
 

@@ -3,7 +3,7 @@
 {% from "public/_catalog_privacy.html" import provider_privacy %}
 {% block body %}
 <section class="panel">
-  <div class="panel-head">
+  <div class="panel-head provider-detail-head">
     <h2 class="provider-detail-title">{{ provider_identity(provider.id, provider.name, size="large", subtitle=provider.id) }}</h2>
     <div class="catalog-privacy-summary">{% if provider.id == 'trustedrouter' %}<span class="pill">TR gateway</span>{% else %}{{ provider_privacy(provider) }}{% endif %}</div>
   </div>
@@ -16,6 +16,7 @@
     <p><strong>Gateway only.</strong> TrustedRouter's attestation covers the router. Compare <a href="/providers">upstream providers</a> for model inference privacy, or <a href="/trust">verify the gateway</a>.</p>
     {% else %}
     <p>These privacy labels describe {{ provider.name }}, the upstream model provider. Confidential requires all three: verified provider compute, end-to-end encryption and explicit zero data retention. Account and billing metadata are outside the content-retention claim.</p>
+    {% if provider.trusted_provider %}<p><a href="/docs#trusted-tier">Trusted</a> adds TrustedRouter's assessment of the operator's physical-security posture and reliability history. Tinfoil and Privatemode are the only operators in this tier.</p>{% endif %}
     {% endif %}
     <table>
       <tbody>
@@ -58,6 +59,7 @@
 <section class="provider-locations" id="inference-locations" aria-labelledby="inference-locations-heading">
   <h2 id="inference-locations-heading">Inference locations</h2>
   <p><a href="/v1/providers">Provider API</a> declarations are also available on each model's endpoint API. Direct chat and Responses replies separate advertised availability from serving location in <code>usage.inference_location</code>; the actual serving region remains unknown when not reported.</p>
+  <p><code>usage.provider_usage.gateway_region</code> identifies the TrustedRouter gateway, not the provider's inference location. A value such as <code>europe-west4</code> does not mean the model ran in Europe. <code>usage.inference_location.serving_region</code> remains <code>null</code> when the provider has not reported it. Older gateways may return the gateway-only field as <code>provider_usage.region</code>.</p>
   <p>Where the upstream GPUs execute the model, not the provider's headquarters, API ingress, or data storage. ZDR and confidential inference do not by themselves restrict geography.</p>
   <dl class="provider-location-facts">
     <dt>Declared countries or regions</dt>

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -43,7 +45,10 @@ def _new_node_fixture() -> ScriptFixture:
             ),
             (r"vm list-ip-addresses", "10.61.3.4"),
         ),
-        failures=(r"vm show", r"keyvault secret show", r"nsg rule show"),
+        failures=(
+            r"vm show", r"keyvault secret show" + "\tERROR: (SecretNotFound) Secret does not exist",
+            r"nsg rule show",
+        ),
     )
 
 
@@ -61,7 +66,6 @@ def _existing_node_fixture(*, subnet: str = EXPECTED_SUBNET) -> ScriptFixture:
             (r"vm run-command invoke", "__TR_RUNCMD_OK__"),
             (r"vm list-ip-addresses", "10.61.3.4"),
         ),
-        failures=(r"keyvault secret show",),
     )
 
 
@@ -99,6 +103,10 @@ def test_new_node_applies_the_directory_derived_single_node_migrations(
     assert "runcmd:\n  - /root/bootstrap.sh" in cloud_init
     assert "chown clickhouse:clickhouse /etc/clickhouse-server/users.d/default-password.xml" in cloud_init
     assert "chmod 640 /etc/clickhouse-server/users.d/default-password.xml" in cloud_init
+    assert "tr-azure-clickhouse-read-password?api-version=7.4" in cloud_init
+    assert "<password_sha256_hex>${reader_hash}</password_sha256_hex>" in cloud_init
+    assert "<grants><query>GRANT SELECT ON default.*</query></grants>" in cloud_init
+    assert "--user tr_control_read --database default" in cloud_init
 
 
 def test_secrets_never_enter_xtrace_or_process_argv(
@@ -119,10 +127,12 @@ def test_secrets_never_enter_xtrace_or_process_argv(
 
     calls = _joined_calls(run)
     secret_sets = [call for call in calls if "keyvault secret set" in call]
-    assert len(secret_sets) == 1
-    assert " --file " in secret_sets[0]
-    assert " --value " not in secret_sets[0]
-    assert "harness-password-that-must-not-reach-argv" not in "\n".join(calls)
+    assert len(secret_sets) == 2
+    assert all(" --file " in call and " --value " not in call for call in secret_sets)
+    observable = "\n".join((*calls, cloud_init, run.stdout, run.stderr))
+    password = "harness-password-that-must-not-reach-argv"  # noqa: S105 - leak canary
+    assert password not in observable
+    assert hashlib.sha256(password.encode()).hexdigest() not in observable
 
 
 def test_existing_node_is_validated_before_any_mutation_and_never_rotates_secret(
@@ -145,6 +155,84 @@ def test_existing_node_is_validated_before_any_mutation_and_never_rotates_secret
     assert "system.columns" in remote
     assert "workspace_id" in remote
     assert "__TR_RUNCMD_OK__" in remote
+    assert "tr-azure-clickhouse-read-password?api-version=7.4" in remote
+    assert "GRANT SELECT ON default.*" in remote
+    assert "--user tr_control_read" in remote
+
+
+@pytest.mark.parametrize("error", [
+    "ERROR: (SecretNotFound) Secret does not exist", "Code: SecretNotFound",
+])
+def test_existing_node_creates_only_the_missing_reader_secret_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: str,
+) -> None:
+    fixture = replace(
+        _existing_node_fixture(),
+        failures=(r"keyvault secret show.*tr-azure-clickhouse-read-password" + "\t" + error,),
+    )
+    harness = _harness(tmp_path, monkeypatch, fixture)
+
+    run = harness.run(SCRIPT)
+
+    assert run.returncode == 0, summarise(run)
+    calls = _joined_calls(run)
+    secret_sets = [call for call in calls if "keyvault secret set" in call]
+    assert len(secret_sets) == 1
+    assert "-n tr-azure-clickhouse-read-password --file " in secret_sets[0]
+    remote = [call for call in calls if "vm run-command invoke" in call]
+    assert len(remote) == 2
+    assert calls.index(remote[0]) < calls.index(secret_sets[0]) < calls.index(remote[1])
+
+
+@pytest.mark.parametrize("existing,secret_name", [
+    (True, "tr-azure-clickhouse-read-password"),
+    (False, "tr-azure-clickhouse-read-password"),
+    (False, "tr-azure-clickhouse-password"),
+])
+@pytest.mark.parametrize("error", [
+    "ERROR: (ServiceUnavailable) Please retry later",
+    "ERROR: (Forbidden) Access denied",
+    "ERROR: (VaultNotFound) Vault does not exist",
+    "ERROR: timed out while checking SecretNotFound",
+    "",
+])
+def test_secret_lookup_failure_does_not_create_a_password_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+    secret_name: str,
+    error: str,
+) -> None:
+    fixture = _existing_node_fixture() if existing else _new_node_fixture()
+    fixture = replace(fixture, failures=(
+        rf"keyvault secret show.*-n {secret_name} " + "\t" + error,
+        *(pattern for pattern in fixture.failures if "keyvault secret show" not in pattern),
+    ))
+    run = _harness(tmp_path, monkeypatch, fixture).run(SCRIPT)
+
+    assert run.returncode != 0
+    assert f"could not look up trquillkv/{secret_name}" in run.stderr
+    calls = _joined_calls(run)
+    assert not any("keyvault secret set" in call for call in calls)
+    assert not any("vm create" in call for call in calls)
+    assert not any("--user tr_control_read" in call for call in calls)
+
+
+def test_existing_node_reader_failure_is_not_reported_as_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = replace(
+        _existing_node_fixture(), failures=(r"--user tr_control_read",),
+    )
+    harness = _harness(tmp_path, monkeypatch, fixture)
+
+    run = harness.run(SCRIPT)
+
+    assert run.returncode != 0
+    assert "control-plane reader: run-command failed" in run.stderr
 
 
 def test_existing_node_with_wrong_subnet_refuses_and_prints_inspection_command(

@@ -65,6 +65,71 @@ def test_catalog_v2_contract_requires_full_reliability():
         p.discover(payload)
 
 
+def test_legacy_catalog_without_provider_reliability_is_rejected():
+    payload = catalog()
+    del payload["contract_version"]
+    del payload["provider"]
+    del payload["data"][0]["reliability"]
+    with pytest.raises(RuntimeError, match="Catalog v2"):
+        p.discover(payload)
+
+
+@pytest.mark.parametrize("version", [None, "1.0", "2", 2, 2.0])
+def test_catalog_requires_exact_v2_before_shared_parsing(monkeypatch, version):
+    payload = catalog()
+    payload["contract_version"] = version
+
+    def unexpected_parse(*_args, **_kwargs):
+        pytest.fail("invalid contract reached shared parser")
+
+    monkeypatch.setattr(p, "discover_provider_contract_catalog", unexpected_parse)
+    with pytest.raises(RuntimeError, match="Catalog v2"):
+        p.discover(payload)
+
+
+@pytest.mark.parametrize("provider", [None, {}, {"id": "unrelated"}, {"id": "Hixtube"}, {"id": None}])
+def test_catalog_requires_exact_provider_identity_before_shared_parsing(monkeypatch, provider):
+    payload = catalog()
+    payload["provider"] = provider
+
+    def unexpected_parse(*_args, **_kwargs):
+        pytest.fail("invalid provider identity reached shared parser")
+
+    monkeypatch.setattr(p, "discover_provider_contract_catalog", unexpected_parse)
+    with pytest.raises(RuntimeError, match="provider.id"):
+        p.discover(payload)
+
+
+def test_v2_catalog_cannot_import_another_provider_identity():
+    payload = catalog()
+    payload["provider"]["id"] = "unrelated"
+    with pytest.raises(RuntimeError, match="provider.id"):
+        p.discover(payload)
+
+
+def test_selected_deepseek_catalog_preserves_variant_limits_and_prices():
+    payload = catalog()
+    model_id = "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8"
+    payload["provider"]["regions"] = ["FI"]
+    payload["data"][0].update(
+        id=model_id, owned_by="dealignai", name="Selected DeepSeek checkpoint",
+        context_length=8192, max_output_tokens=256,
+    )
+    payload["data"][0]["pricing"].update(input="0.65", output="1.45")
+    cutoff = payload["data"][0]["lifecycle"]["retirement_at"]
+
+    prices, rows = p.discover(payload)
+
+    assert set(prices) == set(rows) == {model_id}
+    price, row = prices[model_id], rows[model_id]
+    assert (price.prompt_micro_per_m, price.completion_micro_per_m) == (650000, 1450000)
+    assert row["upstream_id"] == model_id
+    assert (row["context_length"], row["max_output_tokens"]) == (8192, 256)
+    assert row["retirement_at"] == cutoff
+    assert row["provider_reliability"]["regions"] == ["FI"]
+    assert "vision" not in row["supported_features"]
+
+
 def test_successful_v2_fetch_publishes_only_canary_verified_route(monkeypatch, tmp_path):
     monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
     monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
@@ -142,6 +207,12 @@ def test_failed_repeat_probe_cannot_be_undone_by_mass_prune_guard(monkeypatch, t
     assert raw["models"][0]["routable"] is False
     assert raw["models"][0]["routable_reason"] == "provider-canary-failed"
     assert provider_manifest_valid_until("hixtube", raw) == EXPIRED_PROVIDER_MANIFEST
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
+    publish()
+    raw = json.loads(p.MANIFEST_PATH.read_text())
+    assert raw["models"][0]["routable"] is True
+    assert "routable_reason" not in raw["models"][0]
+    assert provider_manifest_valid_until("hixtube", raw) > datetime.now(UTC)
 
 
 def test_expired_missing_model_does_not_block_healthy_replacement(monkeypatch, tmp_path):
@@ -195,6 +266,32 @@ def test_publication_preserves_operator_hold_even_after_healthy_probe(monkeypatc
     row = json.loads(p.MANIFEST_PATH.read_text())["models"][0]
     assert row["routable"] is False
     assert row.get("routable_reason") == reason
+
+
+@pytest.mark.parametrize("reason, explicit", [(None, False), (None, True), ("operator-safety-hold", True)])
+def test_publication_preserves_operator_hold_through_failed_then_healthy_probe(monkeypatch, tmp_path, reason, explicit):
+    monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "hixtube.json")
+    monkeypatch.setenv("HIXTUBE_API_KEY", "test-key")
+    monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: catalog())
+    monkeypatch.setattr(p, "probe_openai_chat", lambda **_kw: True)
+    publish()
+    raw = json.loads(p.MANIFEST_PATH.read_text())
+    held = raw["models"][0]
+    held["routable"] = False
+    if explicit:
+        held["routable_reason"] = reason
+    else:
+        held.pop("routable_reason", None)
+    p.MANIFEST_PATH.write_text(json.dumps(raw))
+
+    for healthy in (False, True):
+        monkeypatch.setattr(p, "probe_openai_chat", lambda healthy=healthy, **_kw: healthy)
+        publish()
+        row = json.loads(p.MANIFEST_PATH.read_text())["models"][0]
+        assert row["routable"] is False
+        assert row.get("routable_reason") == reason
+        if reason is None:
+            assert row == {key: value for key, value in held.items() if key != "routable_reason"}
 
 
 def test_quarantine_confirmation_requires_current_evidence(monkeypatch):
@@ -256,3 +353,24 @@ def test_registration_never_claims_confidentiality():
     root = Path(__file__).resolve().parents[1]
     assert "HIXTUBE_API_KEY:trustedrouter-hixtube-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
     assert 'ensure_secret_from_env_file "HIXTUBE_API_KEY" "trustedrouter-hixtube-api-key"' in (root / "scripts/deploy/secrets.sh").read_text()
+
+
+def test_missing_manifest_expires_own_routes_without_blocking_other_providers(monkeypatch, tmp_path):
+    from scripts import check_price_coverage
+    from trusted_router import catalog as catalog_module
+    from trusted_router import catalog_ingest
+    from trusted_router.provider_manifest_policy import EXPIRED_PROVIDER_MANIFEST
+
+    monkeypatch.setattr(catalog_module, "GATEWAY_PREPAID_PROVIDER_SLUGS", {p.SLUG})
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    monkeypatch.setattr(check_price_coverage, "_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS", {p.SLUG})
+    monkeypatch.setattr(check_price_coverage, "EXPIRING_PROVIDER_MANIFEST_SLUGS", {p.SLUG})
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    monkeypatch.setattr(catalog_ingest, "_EXPIRING_PROVIDER_MANIFEST_SLUGS", {p.SLUG})
+    warnings, _info, hard_failures = check_price_coverage.audit(
+        max_age_days=14, now=datetime.now(UTC), check_model_discovery=False,
+    )
+    assert any(row.startswith("hixtube: NO price source") for row in warnings)
+    assert not hard_failures
+    assert catalog_ingest.provider_manifest_deadlines()[p.SLUG] == EXPIRED_PROVIDER_MANIFEST
+    assert list(tmp_path.iterdir()) == []

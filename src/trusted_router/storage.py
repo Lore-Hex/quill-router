@@ -420,6 +420,8 @@ class InMemoryStore:
                     # Replaced, never merged: a declaration can be withdrawn.
                     declares_usage_heartbeat=record.declares_usage_heartbeat,
                     declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
+                    declares_idempotency_key_source=record.declares_idempotency_key_source,
+                    declares_settle_outbox=record.declares_settle_outbox,
                 )
             self.gateway_boots[record.kid] = record
             return record
@@ -4009,6 +4011,19 @@ def create_store(settings: Any, *, initialize_schema: bool = True) -> Store:
             postgres_iam_region=str(getattr(settings, "postgres_iam_region", "") or ""),
             operational_analytics_outbox_enabled=bool(
                 getattr(settings, "operational_analytics_outbox_enabled", False)
+            ),
+            record_read_backend=getattr(settings, "record_read_backend", "postgres"),
+            operational_analytics_clickhouse_url=getattr(
+                settings, "operational_analytics_clickhouse_url", ""
+            ),
+            operational_analytics_clickhouse_user=getattr(
+                settings, "operational_analytics_clickhouse_user", "tr_control_read"
+            ),
+            operational_analytics_clickhouse_password=getattr(
+                settings, "operational_analytics_clickhouse_password", ""
+            ),
+            operational_analytics_clickhouse_database=getattr(
+                settings, "operational_analytics_clickhouse_database", "tr"
             ),
             max_workspaces_per_owner=int(
                 getattr(settings, "max_workspaces_per_owner", 25)

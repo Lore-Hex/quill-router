@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime
 import hmac
 import json
+import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
@@ -23,6 +26,32 @@ from trusted_router.trust_ownership import (
     TRUST_OWNER_MUTATION_BUDGET,
     TRUST_REPLICATED_COLUMN_COUNT,
 )
+
+logger = logging.getLogger(__name__)
+
+# Longest a shadow canary expiry may lie ahead of process start-up: one UTC
+# evidence day plus a day of margin. A typo cannot leave the shadow on for weeks.
+SHADOW_CANARY_MAX_SECONDS = 48 * 3600
+_LOGGED_SHADOW_EXPIRY_ERRORS: set[str] = set()
+
+
+def parse_shadow_expiry(raw: str, now: float | None = None) -> float:
+    """Strictly parse a shadow canary expiry; raises ValueError when invalid.
+
+    Deploy tests and the activation tool use this directly. Settings instead
+    treat an invalid value as already expired, so a shadow-only typo can never
+    fail a production revision's configuration.
+    """
+    try:
+        instant = datetime.datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("async settle shadow expiry must be an ISO-8601 instant") from error
+    if instant.tzinfo is None:
+        raise ValueError("async settle shadow expiry needs an explicit UTC offset")
+    expiry = instant.timestamp()
+    if expiry - (time.time() if now is None else now) > SHADOW_CANARY_MAX_SECONDS:
+        raise ValueError("async settle shadow expiry exceeds the canary maximum")
+    return expiry
 
 # Target names the synthetic monitor already assigns itself. A configured
 # entry reusing one would quietly merge two different measurements into one
@@ -427,7 +456,6 @@ class Settings(BaseSettings):
     )
 
     environment: str = "local"
-    homepage_landscape_enabled: bool = False
     release: str = "local"
     source_revision: str = Field(default="", pattern=r"^(?:[0-9a-f]{40})?$")
     service_name: str = "trusted-router"
@@ -522,6 +550,9 @@ class Settings(BaseSettings):
     operational_analytics_clickhouse_user: str = "tr_control_read"
     operational_analytics_clickhouse_password: str = ""
     operational_analytics_clickhouse_database: str = "tr"
+    # Postgres-plane record reads. "postgres" keeps the existing behaviour;
+    # "clickhouse" enables the shared activity and usage readers per plane.
+    record_read_backend: str = "postgres"
     # Stage 1 live analytics outbox. This is intentionally off by default and
     # must remain off until the shadow ingester and reconciler are observed.
     analytics_outbox_enabled: bool = False
@@ -730,6 +761,9 @@ class Settings(BaseSettings):
     stripe_ach_fee_basis_points: int = 80
     stripe_ach_fee_fixed_cents: int = 0
     stripe_ach_fee_max_cents: int = 500
+    # Customer surcharge is 1.5x the grossed-up fee, including its floor/cap.
+    # Keep processor schedules unchanged; Adyen does not use this multiplier.
+    stripe_paypal_fee_multiplier_basis_points: int = 15_000
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
@@ -963,6 +997,14 @@ class Settings(BaseSettings):
     async_settle_shadow_health_region: str = ""
     async_settle_shadow_workspaces: str = ""
     _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Runtime stop for a shadow v2 canary: an ISO-8601 instant with an explicit
+    # UTC offset. Checked on every request and owner tick, so a canary turns
+    # itself off without a deploy. Deployed environments treat an absent value
+    # as already expired; at most SHADOW_CANARY_MAX_SECONDS ahead of start-up.
+    # An invalid value counts as expired (logged once). It gates shadow v2 only:
+    # v1 still installs when workspaces are set and the raw policy is empty.
+    async_settle_shadow_expires_at: str = ""
+    _async_settle_shadow_expiry: float | None = PrivateAttr(default=None)
     async_settle_pilot_workspaces: str = ""
     _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
@@ -978,6 +1020,22 @@ class Settings(BaseSettings):
     # Operator-owned local settlement epoch, NOT the billing pause epoch or
     # shadow grant generation. Zero means authority has not been provisioned.
     async_settle_authority_epoch: int = Field(default=0, ge=0)
+
+    # E2 routing snapshot publication (docs/design/routing-snapshot-v1.md,
+    # "Publishing"). Off by default: the internal route is not registered and
+    # neither snapshot module is imported. The key file is a Secret Manager
+    # version mounted by rollout.sh, pinned by its number; the public key and
+    # kid are its public identity, the trust anchor Go will be given, and the
+    # publisher refuses a mounted key that is not the pinned one.
+    routing_snapshot_publish_enabled: bool = False
+    routing_snapshot_private_key_file: str = ""
+    routing_snapshot_public_key: str = ""
+    routing_snapshot_kid: str = ""
+    # E2 edge policy publication (docs/design/routing-snapshot-v1.md, "The
+    # edge policy"): the live settings and accepted image digests the edge
+    # gates on, signed with the routing snapshot's key above. Off by default:
+    # the route is not registered and no edge-policy module is imported.
+    edge_policy_publish_enabled: bool = False
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
@@ -1393,6 +1451,38 @@ class Settings(BaseSettings):
         return self._async_settle_shadow_workspace_ids
 
     @model_validator(mode="after")
+    def parse_shadow_expiry(self) -> Settings:
+        raw = self.async_settle_shadow_expires_at.strip()
+        if not raw:
+            self._async_settle_shadow_expiry = None
+            return self
+        try:
+            self._async_settle_shadow_expiry = parse_shadow_expiry(raw)
+        except ValueError as error:
+            # Fail closed, never fail the revision: an invalid expiry is expired.
+            self._async_settle_shadow_expiry = float("-inf")
+            reason = str(error)
+            if reason not in _LOGGED_SHADOW_EXPIRY_ERRORS:
+                _LOGGED_SHADOW_EXPIRY_ERRORS.add(reason)
+                logger.warning("async settle shadow expiry invalid; shadow pins are off reason=%s", reason)
+        return self
+
+    def async_settle_shadow_live(self, now: float | None = None) -> bool:
+        """Whether shadow pins may act now. Monotone: once False, never True again.
+
+        Local and test environments without an expiry run unbounded; every
+        deployed environment needs an unexpired ``async_settle_shadow_expires_at``.
+        """
+        expiry = self._async_settle_shadow_expiry
+        if expiry is None:
+            return self.environment.lower() in {"local", "test"}
+        return (time.time() if now is None else now) < expiry
+
+    def effective_async_settle_shadow_policy(self, now: float | None = None) -> str:
+        """The shadow policy pin, or "" once the canary expiry has passed."""
+        return self.async_settle_shadow_policy if self.async_settle_shadow_live(now) else ""
+
+    @model_validator(mode="after")
     def parse_fastpath_pilot(self) -> Settings:
         ids = frozenset(part.strip() for part in self.fastpath_pilot_workspaces.split(",") if part.strip())
         if len(ids) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids):
@@ -1438,6 +1528,22 @@ class Settings(BaseSettings):
     def async_settle_requires_protection(self) -> Settings:
         if self.async_settle_enabled and not self.async_settle_protection:
             raise ValueError("TR_ASYNC_SETTLE_ENABLED requires TR_ASYNC_SETTLE_PROTECTION")
+        return self
+
+    @model_validator(mode="after")
+    def record_reads_require_clickhouse(self) -> Settings:
+        if self.record_read_backend not in {"postgres", "clickhouse"}:
+            raise ValueError("TR_RECORD_READ_BACKEND must be 'postgres' or 'clickhouse'")
+        if self.record_read_backend == "clickhouse" and not (
+            self.operational_analytics_clickhouse_url.strip()
+            and self.operational_analytics_clickhouse_password
+        ):
+            # Without either, the store has no reader and every record read
+            # fails; refuse the plane at startup instead.
+            raise ValueError(
+                "TR_RECORD_READ_BACKEND=clickhouse requires TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL "
+                "and TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
+            )
         return self
 
     @model_validator(mode="after")
@@ -1549,6 +1655,8 @@ class Settings(BaseSettings):
             raise ValueError("TR_RATE_LIMIT_CLIENT_IP_MODE must be 'untrusted' or 'edge_header'")
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
+        if self.stripe_paypal_fee_multiplier_basis_points < 10_000:
+            raise ValueError("TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS must be at least 10000")
         for name, value in (
             ("TR_STRIPE_CARD_FEE_BASIS_POINTS", self.stripe_card_fee_basis_points),
             (

@@ -1,30 +1,14 @@
-{% if saved_payment_method %}
-<div class="payment-method-card">
-  <div>
-    <strong>
-      {% if saved_payment_method.brand %}
-        {{ saved_payment_method.brand|capitalize }} card
-      {% else %}
-        Stripe card
-      {% endif %}
-    </strong>
-    <span>
-      {% if saved_payment_method.last4 %}
-        ending in {{ saved_payment_method.last4 }}
-      {% else %}
-        saved payment method
-      {% endif %}
-      {% if saved_payment_method.exp_month and saved_payment_method.exp_year %}
-        · expires {{ saved_payment_method.exp_month }}/{{ saved_payment_method.exp_year }}
-      {% endif %}
-      · id ...{{ saved_payment_method.id_tail }}
-    </span>
-    {% if not saved_payment_method.details_available %}
-    <span>Stripe card details are temporarily unavailable. Removal still uses the saved Stripe id.</span>
-    {% endif %}
-  </div>
-  <form method="post" action="/console/credits/payment-methods/remove">
-    <button class="btn danger" type="submit">Remove</button>
-  </form>
-</div>
-{% endif %}
+{#- The saved card's label, as one line of text: "Visa ····4242" (Stripe
+    reports brands in lower case; one of the targets is an <option>, which CSS
+    cannot re-case). Rendered into every [data-credits-saved-card-label] on
+    the Credits page and refreshed by the /stripe-details fragment once Stripe
+    answers. -#}
+{%- if saved_payment_method -%}
+{%- if saved_payment_method.brand and saved_payment_method.last4 -%}
+{{ saved_payment_method.brand|capitalize }} ····{{ saved_payment_method.last4 }}
+{%- elif saved_payment_method.last4 -%}
+Card ····{{ saved_payment_method.last4 }}
+{%- else -%}
+Saved card
+{%- endif -%}
+{%- endif -%}

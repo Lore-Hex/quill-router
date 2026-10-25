@@ -40,13 +40,16 @@ from scripts.pricing.model_ids import (
 )
 from scripts.pricing.providers import (
     abliterate,
+    abliteration,
     aion_labs,
     akashml,
+    amazon_bedrock,
     arcee,
     bfl,
     boundless,
     byteplus,
     confidential_ai,
+    coralbricks,
     decart,
     fal,
     featherless,
@@ -59,8 +62,10 @@ from scripts.pricing.providers import (
     lyceum,
     mancer,
     meta,
+    muna,
     near_ai,
     nextbit,
+    nextbit_eu,
     nscale,
     nvidia_nim,
     perplexity,
@@ -507,25 +512,30 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         nscale._canonical_id,
     ),
     ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
+    ("amazon-bedrock", amazon_bedrock.URL, ("BEDROCK_API_KEY",), amazon_bedrock.canonical_model_id),
     ("greenference", greenference.URL, ("GREENFERENCE_API_KEY",), greenference.canonical_model_id),
     ("hixtube", hixtube.URL, ("HIXTUBE_API_KEY",), hixtube.canonical_model_id),
+    ("muna", muna.URL, ("MUNA_API_KEY",), muna.canonical_model_id),
     ("boundless", boundless.URL, ("BOUNDLESS_API_KEY",), boundless.canonical_model_id),
     ("zro", zro.URL, ("ZRO_API_KEY",), zro.canonical_model_id),
     ("byteplus", byteplus.URL, ("BYTEPLUS_API_KEY",), byteplus.canonical_model_id),
-    ("system1models", system1models.URL, (), system1models.canonical_model_id),
-    ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
+    ("decisionmodelsio", system1models.URL, (), system1models.canonical_model_id),
+    ("decisionmodelsio-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
 )
 
 # Providers on the direct OpenAI catalog adapter. Their credentials are
 # available to the hourly refresh workflow, so a missing workflow secret is a
 # deployment error, not an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    abliteration,
+    coralbricks,
     meta,
     abliterate,
     upstage,
     sail_research,
     reka,
     nextbit,
+    nextbit_eu,
     akashml,
     mancer,
     aion_labs,
@@ -554,8 +564,10 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     nscale,
     nvidia_nim,
     lyceum,
+    amazon_bedrock,
     greenference,
     hixtube,
+    muna,
     boundless,
     zro,
     byteplus,
@@ -794,9 +806,12 @@ def _active_discovery_row(row: dict[str, Any]) -> bool:
         "stopped",
     }:
         return False
-    endpoints = row.get("endpoints")
+    endpoints = row.get("endpoints") or row.get("supported_endpoints")
     if isinstance(endpoints, list) and endpoints:
-        normalized = {str(value).casefold() for value in endpoints}
+        normalized = {
+            str(value).casefold().lstrip("/").removeprefix("v1/").replace(".", "/")
+            for value in endpoints
+        }
         if "chat/completions" not in normalized and "responses" not in normalized:
             return False
     output_modalities = row.get("output_modalities")
@@ -957,7 +972,8 @@ def _model_discovery_audit(
             raw_id = row.get("id") or row.get("name")
             if slug == "regolo":
                 raw_id = row.get("model_group")
-                if row.get("mode") != "chat" or str(raw_id).startswith("brick-"):
+                supported = row.get("mode") == "chat" or (row.get("mode") == "decision" and raw_id == "clef-flash")
+                if not supported or str(raw_id).startswith("brick-"):
                     continue
             if not isinstance(raw_id, str):
                 continue

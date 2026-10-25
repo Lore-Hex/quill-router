@@ -45,6 +45,54 @@ def test_duplicate_standard_section_fails_closed() -> None:
         meta._parse_prices(pricing_html() * 2)
 
 
+def model_pricing_html() -> str:
+    return """<h3>Standard mode</h3><p>No training.</p>
+    <h3>Contributor mode</h3><p>Training allowed.</p><h2>Model pricing</h2>
+    <h3>Muse Wonder</h3><p>muse-wonder-1.0</p>
+    <table><tr><th>Usage</th><th>Standard mode (per 1M tokens)</th></tr>
+    <tr><td>Input</td><td>$4</td></tr><tr><td>Output</td><td>$20</td></tr></table>
+    <h3>Muse Spark</h3><p>Standard: muse-spark-1.1, muse-spark-1.2, muse-spark-1.3.
+    Contributor: muse-spark-1.3-contributor, muse-spark-1.2-contributor.</p>
+    <table><tr><th>Usage</th><th>Standard mode (per 1M tokens)</th><th>Contributor mode (per 1M tokens)</th></tr>
+    <tr><td>Cached input</td><td>$0.15</td><td>$0.002</td></tr>
+    <tr><td>Input</td><td>$1.25</td><td>$0.10</td></tr>
+    <tr><td>Output</td><td>$4.25</td><td>$0.20</td></tr></table>
+    <h2>Rate limits</h2>"""
+
+
+def test_model_pricing_selects_spark_standard_column() -> None:
+    assert meta._parse_prices(model_pricing_html()) == meta._parse_prices(pricing_html())
+
+
+def test_model_pricing_uses_headers_not_column_position() -> None:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(model_pricing_html(), "html.parser")
+    for row in soup.select("table")[-1].select("tr"):
+        cells = row.find_all(["th", "td"])
+        row.append(cells[1].extract())
+    assert meta._parse_prices(str(soup)) == meta._parse_prices(pricing_html())
+
+
+@pytest.mark.parametrize("old,new", [
+    ("<h3>Muse Spark</h3>", "<h3>Another model</h3>"),
+    ("Standard mode (per 1M tokens)", "Standard mode (per token)"),
+    ("Contributor mode (per 1M tokens)", "Standard mode (per 1M tokens)"),
+    ("muse-spark-1.1,", "muse-spark-1.1-contributor,"),
+    ("$1.25", "$NaN"), ("$1.25", "$0"), ("$1.25", "$1.0000001"),
+    ("$0.15", "$2"),
+    ("<tr><td>Output</td><td>$4.25</td><td>$0.20</td></tr>", ""),
+])
+def test_model_pricing_changes_fail_closed(old: str, new: str) -> None:
+    with pytest.raises(RuntimeError):
+        meta._parse_prices(model_pricing_html().replace(old, new))
+
+
+def test_duplicate_model_pricing_fails_closed() -> None:
+    with pytest.raises(RuntimeError):
+        meta._parse_prices(model_pricing_html() * 2)
+
+
 @pytest.mark.parametrize("healthy", [True, False])
 def test_direct_discovery_requires_usage_and_never_admits_contributor_or_media(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, healthy: bool,

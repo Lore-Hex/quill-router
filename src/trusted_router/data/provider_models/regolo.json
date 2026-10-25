@@ -31,8 +31,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 450120,
-      "output_token_price_per_m": 2363130
+      "input_token_price_per_m": 449360,
+      "output_token_price_per_m": 2359140
     },
     {
       "display_name": "Llama-3.3-70B-Instruct",
@@ -97,8 +97,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 562650,
-      "output_token_price_per_m": 2363130
+      "input_token_price_per_m": 561700,
+      "output_token_price_per_m": 2359140
     },
     {
       "display_name": "gpt-oss-120b",
@@ -129,8 +129,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1125300,
-      "output_token_price_per_m": 4726260
+      "input_token_price_per_m": 1123400,
+      "output_token_price_per_m": 4718280
     },
     {
       "display_name": "gpt-oss-20b",
@@ -161,8 +161,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 112530,
-      "output_token_price_per_m": 472626
+      "input_token_price_per_m": 112340,
+      "output_token_price_per_m": 471828
     },
     {
       "display_name": "qwen3-coder-next",
@@ -227,8 +227,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1125300,
-      "output_token_price_per_m": 4726260
+      "input_token_price_per_m": 1123400,
+      "output_token_price_per_m": 4718280
     },
     {
       "display_name": "qwen3.5-9b",
@@ -259,8 +259,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 78771,
-      "output_token_price_per_m": 393855
+      "input_token_price_per_m": 78638,
+      "output_token_price_per_m": 393190
     },
     {
       "display_name": "qwen3.8-27b",
@@ -292,8 +292,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 562650,
-      "output_token_price_per_m": 2363130
+      "input_token_price_per_m": 561700,
+      "output_token_price_per_m": 2359140
     },
     {
       "display_name": "apertus-70b",
@@ -323,8 +323,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 450120,
-      "output_token_price_per_m": 2363130
+      "input_token_price_per_m": 449360,
+      "output_token_price_per_m": 2359140
     },
     {
       "display_name": "glm5.2",
@@ -355,13 +355,42 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 2250600,
-      "output_token_price_per_m": 5851560
+      "input_token_price_per_m": 2246800,
+      "output_token_price_per_m": 5841680
+    },
+    {
+      "display_name": "Cloudflare Clef-Flash",
+      "title": "clef-flash",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "cloudflare/clef-flash",
+      "upstream_id": "clef-flash",
+      "context_length": 65536,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Cloudflare's 9B decision model, hosted by Regolo. Returns typed answers and probabilities rather than chat text.",
+        "input_format": "POST /v1/decide: text state and 1-64 boolean/noul, choice or score questions. Text-only on this route; images and streaming are not supported.",
+        "output_format": "Verified answers and probabilities with inputTokens usage. Input-only billing; output tokens are free.",
+        "example_input": "{\"model\": \"cloudflare/clef-flash\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 168510,
+      "output_token_price_per_m": 0
     }
   ],
   "source": "https://api.regolo.ai/model_group/info",
   "pricing_source": "https://docs.regolo.ai/models/catalog/",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-21T18:38:49Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 11
+  "model_count": 12
 }

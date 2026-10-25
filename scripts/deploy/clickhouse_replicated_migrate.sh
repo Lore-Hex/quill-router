@@ -55,14 +55,23 @@ node_ssh() {
     "$@"
 }
 
-# The query travels in the ssh command line (not stdin) so that a transcript of
-# the calls shows exactly which statement ran on which node.
+# The statement travels on the ssh session's stdin into clickhouse-client
+# (--multiquery). The remote command contains no SQL, so nothing in a
+# migration needs quoting for the two shells it passes through on the node
+# (the login shell's `bash -c`, then `sudo sh -c '...'`); quoting SQL into it
+# with printf %q failed at the first `'`. clickhouse-client is exec'd, so its
+# exit status is the command's. The plain statement is printed here, before
+# the call, so the transcript shows which statement ran on which node.
 node_query() {
   local index="$1"
   local query="$2"
-  local quoted
-  quoted="$(printf '%q' "$query")"
-  node_ssh "$index" --command="sudo sh -c 'set -eu; set -a; . /etc/tr-clickhouse-ingest.env; set +a; /usr/bin/clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr --multiquery --query ${quoted}'"
+  if [ -z "$query" ]; then
+    echo "refusing an empty statement for ${NAMES[$index]}" >&2
+    exit 2
+  fi
+  printf '[clickhouse_replicated_migrate] %s: %s\n' "${NAMES[$index]}" "$query" >&2
+  printf '%s' "$query" | node_ssh "$index" \
+    --command="sudo sh -c 'set -eu; set -a; . /etc/tr-clickhouse-ingest.env; set +a; exec /usr/bin/clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr --multiquery'"
 }
 
 # Replica host names for a cluster: every replica answers clusterAllReplicas.

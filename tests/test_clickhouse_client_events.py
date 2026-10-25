@@ -169,6 +169,7 @@ def test_old_activity_payload_gets_exact_optional_defaults() -> None:
 
 def test_activity_payload_explicit_nulls_get_clickhouse_string_defaults() -> None:
     payload = activity_payload(_generation())
+    payload.update(dict.fromkeys(ACTIVITY_OPTIONAL_DEFAULTS))
     row = OperationalOutboxRow(1, COMMIT_TS, "activity", "gen-null", json.dumps(payload))
 
     [event] = normalise_operational_event(row)
@@ -312,8 +313,11 @@ def test_client_event_schemas_are_bounded_and_column_aligned() -> None:
     assert "ENGINE = ReplicatedMergeTree" in replicated
     assert single.count("ENGINE = ReplacingMergeTree") == 3
     assert "ENGINE = MergeTree" in single
+    replicated += (ROOT / "clickhouse/025_activity_generation_app_fields_replicated.sql").read_text()
+    single += (ROOT / "clickhouse/026_activity_generation_app_fields_single_node.sql").read_text()
     for column in ACTIVITY_OPTIONAL_DEFAULTS:
         assert f"ADD COLUMN IF NOT EXISTS {column}" in replicated
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in single
 
 
 def test_normalise_client_events_returns_the_expansion() -> None:
@@ -386,5 +390,12 @@ def test_ingester_column_tuples_match_the_ddl_in_order() -> None:
             for line in ddl.splitlines()
             if "ADD COLUMN IF NOT EXISTS" in line
         ]
-        assert tuple(activity_alters) == tuple(ACTIVITY_OPTIONAL_DEFAULTS)
+        app_ddl = (ROOT / "clickhouse/025_activity_generation_app_fields_replicated.sql").read_text()
+        app_alters = [
+            line.split("ADD COLUMN IF NOT EXISTS ")[1].split()[0]
+            for line in app_ddl.splitlines()
+            if "ADD COLUMN IF NOT EXISTS" in line
+        ]
+        assert (*app_alters, *activity_alters) == tuple(ACTIVITY_OPTIONAL_DEFAULTS)
+        assert all(column in ACTIVITY_COLUMNS for column in app_alters)
         assert ACTIVITY_COLUMNS[-len(activity_alters) :] == tuple(activity_alters)

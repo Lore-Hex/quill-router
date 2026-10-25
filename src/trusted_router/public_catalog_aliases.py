@@ -17,7 +17,11 @@ LEGACY_MODEL_ID_ALIASES: dict[str, str] = {
     "xiaomi/mimo-v2-flash": "xiaomimimo/mimo-v2-flash",
     "zai-org/glm-4.5": "z-ai/glm-4.5",
 }
-LEGACY_PROVIDER_PAGE_ALIASES = {"gemini": "google-ai-studio"}
+LEGACY_PROVIDER_PAGE_ALIASES = {
+    "gemini": "google-ai-studio",
+    "system1models": "decisionmodelsio",
+    "system1models-eu": "decisionmodelsio-eu",
+}
 
 
 def canonical_public_provider_slug(provider_slug: str, providers: Mapping[str, object]) -> str:

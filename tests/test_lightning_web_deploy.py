@@ -1,6 +1,24 @@
 from pathlib import Path
 
+import yaml
+
 from scripts.lightning import deploy_web
+
+
+def test_lightning_ci_uses_the_production_python_version() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/lightning-experiment.yml").read_text()
+    )
+    job = workflow["jobs"]["test"]
+    setup_uv = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("astral-sh/setup-uv@")
+    )
+    python_version = setup_uv.get("with", {}).get("python-version")
+    assert python_version == "3.12"
+    docker = (root / "experiments/lightning_router/Dockerfile").read_text()
+    assert f"FROM python:{python_version}-slim-bookworm" in docker
+    assert job["runs-on"] == "ubuntu-24.04"
 
 
 def test_web_deploy_cannot_enable_payment_or_change_main_router_url_map() -> None:

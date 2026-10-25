@@ -11,8 +11,8 @@
         "install:browsers": "playwright install chromium webkit firefox"
     },
     "devDependencies": {
-        "@playwright/test": "^1.62.1",
-        "@types/node": "^25.9.1",
+        "@playwright/test": "^1.64.1",
+        "@types/node": "^26.6.5",
         "typescript": "^7.0.2"
     }
 }

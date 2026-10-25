@@ -14,6 +14,8 @@ import pytest
 
 from clickhouse.benchmark_rows import normalise
 from clickhouse.rollup_analytics import RollupPartition, recompute_partition
+from trusted_router.operational_analytics import _generation
+from trusted_router.storage_activity import generation_events
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("TR_RUN_CLICKHOUSE_FUNCTIONAL") != "1",
@@ -35,7 +37,124 @@ def _docker(
     )
 
 
-def test_replayed_batch_collapses_under_final() -> None:
+def test_single_node_generation_projection_materializes_and_survives_merges() -> None:
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("docker executable is unavailable")
+    name = f"tr-clickhouse-projection-{uuid.uuid4().hex[:12]}"
+    image = os.environ.get("TR_CLICKHOUSE_TEST_IMAGE", "clickhouse/clickhouse-server:latest")
+    root = Path(__file__).resolve().parents[1]
+    helper = root / "scripts/deploy/_clickhouse_single_node_schema.sh"
+    derived = subprocess.run(  # noqa: S603 - fixed helper and repository path
+        ["bash", "-c", f'. "{helper}"; single_node_migrations "$1"', "_", str(root)],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    migrations = [Path(line) for line in derived.stdout.splitlines()]
+    projection = root / "clickhouse/024_activity_generation_id_projection_single_node.sql"
+    assert projection in migrations
+
+    def query(sql: str, *, check: bool = True) -> subprocess.CompletedProcess[bytes]:
+        return _docker(
+            docker,
+            "exec",
+            "-i",
+            name,
+            "clickhouse-client",
+            "--database",
+            "default",
+            "--mutations_sync=1",
+            "--multiquery",
+            input_bytes=sql.encode(),
+            check=check,
+        )
+
+    _docker(docker, "run", "--rm", "-d", "--name", name, image)
+    try:
+        for _ in range(60):
+            if query("SELECT 1", check=False).returncode == 0:
+                break
+            time.sleep(0.25)
+        else:
+            pytest.fail("ClickHouse container did not become ready")
+
+        for migration in migrations[:migrations.index(projection)]:
+            query(migration.read_text())
+        assert query(
+            "SELECT engine FROM system.tables "
+            "WHERE database = 'default' AND name = 'activity_generations'"
+        ).stdout.decode().strip() == "ReplacingMergeTree"
+
+        # The same ID under another sort key must survive FINAL as two rows.
+        query(
+            "INSERT INTO activity_generations "
+            "(generation_id, tenant_id, created_at, ingest_version) "
+            "SELECT concat('gen-projection-', toString(if(number < 32768, number, 7))), "
+            "repeat(if(number = 32768, 'b', 'a'), 64), now64(3), now64(6) "
+            "FROM numbers(32769)"
+        )
+        for _ in range(2):
+            query(projection.read_text())
+        for migration in migrations[migrations.index(projection) + 1:]:
+            query(migration.read_text())
+
+        def projection_rows() -> int:
+            return int(query(
+                "SELECT sum(rows) FROM system.projection_parts "
+                "WHERE database = 'default' AND table = 'activity_generations' "
+                "AND name = 'by_generation_id' AND active"
+            ).stdout)
+
+        assert projection_rows() == 32769
+        lookup = (
+            "SELECT tenant_id, created_at, generation_id FROM activity_generations "
+            "WHERE generation_id = 'gen-projection-7' "
+            "SETTINGS force_optimize_projection = 1 FORMAT JSONEachRow"
+        )
+        assert len(query(lookup).stdout.splitlines()) == 2
+
+        # Keep a replay in a separate part until the explicit dedup merge.
+        query("SYSTEM STOP MERGES activity_generations")
+        query(
+            "INSERT INTO activity_generations "
+            "(generation_id, tenant_id, created_at, ingest_version) "
+            "SELECT generation_id, tenant_id, created_at, now64(6) "
+            "FROM activity_generations WHERE generation_id = 'gen-projection-7' "
+            "AND tenant_id = repeat('a', 64)"
+        )
+        assert projection_rows() == 32770
+        assert len(query(lookup).stdout.splitlines()) == 3
+        assert query(
+            "SELECT count() FROM activity_generations FINAL "
+            "WHERE (tenant_id, created_at, generation_id) IN ("
+            "SELECT tenant_id, created_at, generation_id FROM activity_generations "
+            "WHERE generation_id = 'gen-projection-7')"
+        ).stdout.decode().strip() == "2"
+
+        query("SYSTEM START MERGES activity_generations")
+        query("OPTIMIZE TABLE activity_generations FINAL")
+        assert projection_rows() == 32769
+        assert len(query(lookup).stdout.splitlines()) == 2
+
+        refused = query(
+            "DELETE FROM activity_generations WHERE generation_id = 'gen-projection-7'",
+            check=False,
+        )
+        assert refused.returncode != 0
+        assert b"Code: 344" in refused.stderr
+        query(
+            "ALTER TABLE activity_generations DELETE "
+            "WHERE generation_id = 'gen-projection-7'"
+        )
+        assert projection_rows() == 32767
+        assert query(lookup).stdout == b""
+    finally:
+        _docker(docker, "rm", "-f", name, check=False)
+
+
+@pytest.mark.parametrize("standalone", [False, True], ids=["replicated", "single-node"])
+def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("docker executable is unavailable")
@@ -56,6 +175,9 @@ def test_replayed_batch_collapses_under_final() -> None:
   </keeper_server>
   <zookeeper><node><host>127.0.0.1</host><port>9181</port></node></zookeeper>
   <macros><shard>01</shard><replica>functional-1</replica></macros>
+  <remote_servers>
+    <trustedrouter><shard><replica><host>127.0.0.1</host><port>9000</port></replica></shard></trustedrouter>
+  </remote_servers>
 </clickhouse>
 """
         )
@@ -264,7 +386,10 @@ def test_replayed_batch_collapses_under_final() -> None:
             operational_schema = (
                 Path(__file__).parents[1]
                 / "clickhouse"
-                / "004_operational_analytics_replicated.sql"
+                / (
+                    "006_operational_analytics_single_node.sql" if standalone
+                    else "004_operational_analytics_replicated.sql"
+                )
             ).read_bytes()
             _docker(
                 docker,
@@ -334,6 +459,55 @@ def test_replayed_batch_collapses_under_final() -> None:
                 "SELECT count() FROM activity_generations FINAL",
             )
             assert activity_count.stdout.decode().strip() == "1"
+
+            app_migration = (
+                Path(__file__).parents[1] / "clickhouse" / (
+                    "026_activity_generation_app_fields_single_node.sql" if standalone
+                    else "025_activity_generation_app_fields_replicated.sql"
+                )
+            ).read_text().replace("tr.activity_generations", f"{database}.activity_generations")
+            for _ in range(2):
+                _docker(
+                    docker, "exec", "-i", name, "clickhouse-client",
+                    "--database", database, "--multiquery",
+                    input_bytes=app_migration.encode(),
+                )
+
+            def read_activity() -> dict:
+                result = _docker(
+                    docker, "exec", name, "clickhouse-client", "--database", database,
+                    "--query", "SELECT * FROM activity_generations FINAL FORMAT JSONEachRow",
+                )
+                [row] = [json.loads(line) for line in result.stdout.splitlines()]
+                return row
+
+            legacy = read_activity()
+            assert legacy["app_id"] is None
+            assert int(legacy["app_markup_microdollars"]) == 0
+            assert int(legacy["custom_model_markup_microdollars"]) == 0
+            public = _generation(legacy, tenant_id=activity["tenant_id"]).to_openrouter_generation()
+            assert public["app_id"] is None
+            assert public["app_markup_microdollars"] == 0
+            assert public["custom_model_markup_microdollars"] == 0
+
+            activity.update(
+                app_id="test-app", app_markup_microdollars=2, custom_model_markup_microdollars=3,
+                ingest_version="2026-07-28T12:35:01.000001Z",
+            )
+            for _ in range(2):
+                _docker(
+                    docker, "exec", "-i", name, "clickhouse-client",
+                    "--database", database, "--query",
+                    "INSERT INTO activity_generations FORMAT JSONEachRow",
+                    input_bytes=(json.dumps(activity) + "\n").encode(),
+                )
+            stored = read_activity()
+            assert "operator_cost_microdollars" not in stored
+            generation = _generation(stored, tenant_id=activity["tenant_id"])
+            public = generation.to_openrouter_generation()
+            [event] = generation_events([generation])
+            for field in ("app_id", "app_markup_microdollars", "custom_model_markup_microdollars"):
+                assert public[field] == event[field] == activity[field]
             sampled_activity = _docker(
                 docker,
                 "exec",
@@ -388,7 +562,7 @@ def test_replayed_batch_collapses_under_final() -> None:
                 "source_commit": None,
                 "cost_microdollars": 0,
                 "output_match": 1,
-                "created_at": "2026-07-28T12:34:56.789Z",
+                "created_at": dt.datetime.now(dt.UTC).isoformat(),
                 "ingest_version": "2026-07-28T12:35:00.000001Z",
             }
             synthetic_payload = (json.dumps(synthetic) + "\n").encode()

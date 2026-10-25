@@ -64,6 +64,33 @@ def test_the_workspace_id_migration_is_in_the_set() -> None:
     assert "011_workspace_directory_single_node.sql" in names
 
 
+def test_activity_app_fields_migrations_match_across_clouds() -> None:
+    replicated = (ROOT / "clickhouse/025_activity_generation_app_fields_replicated.sql").read_text()
+    single = ROOT / "clickhouse/026_activity_generation_app_fields_single_node.sql"
+    result = _derive(ROOT)
+    assert result.returncode == 0, result.stderr
+    assert single.name in {Path(line).name for line in result.stdout.split()}
+
+    def statements(text: str) -> list[str]:
+        sql = "\n".join(line for line in text.splitlines() if not line.startswith("--"))
+        return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+    cluster_statements = statements(replicated)
+    assert len(cluster_statements) == 3
+    assert all(
+        statement.startswith("ALTER TABLE tr.activity_generations ON CLUSTER trustedrouter\n")
+        for statement in cluster_statements
+    )
+    assert statements(single.read_text()) == [
+        statement.replace("tr.activity_generations ON CLUSTER trustedrouter", "activity_generations")
+        for statement in cluster_statements
+    ]
+    assert "ADD COLUMN IF NOT EXISTS app_id Nullable(String) DEFAULT NULL" in replicated
+    for field in ("app_markup_microdollars", "custom_model_markup_microdollars"):
+        assert f"ADD COLUMN IF NOT EXISTS {field} Int64 DEFAULT 0" in replicated
+    assert "operator_cost_microdollars" not in replicated
+
+
 def test_every_single_node_migration_targets_the_default_database() -> None:
     """Standalone nodes connect to `default`: the AWS control plane and drain
     installer both default CH_DATABASE to it, and so does Azure. Only GCP uses
@@ -73,6 +100,22 @@ def test_every_single_node_migration_targets_the_default_database() -> None:
     result = _derive(ROOT)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_the_generation_id_projection_follows_its_schema_dependencies() -> None:
+    result = _derive(ROOT)
+
+    assert result.returncode == 0, result.stderr
+    names = [Path(line).name for line in result.stdout.split()]
+    projection = names.index("024_activity_generation_id_projection_single_node.sql")
+    for dependency in (
+        "006_operational_analytics_single_node.sql",
+        "009_client_events_single_node.sql",
+        "011_workspace_directory_single_node.sql",
+        "013_activity_generations_workspace_id_single_node.sql",
+    ):
+        assert names.index(dependency) < projection
+    assert "023_activity_generation_id_projection_replicated.sql" not in names
 
 
 def test_a_qualified_migration_is_refused(tmp_path: Path) -> None:

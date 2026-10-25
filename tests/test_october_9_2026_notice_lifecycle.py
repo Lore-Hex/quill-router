@@ -6,7 +6,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing.providers import deepinfra, scaleway, xiaomi
+from scripts.pricing.providers import (
+    alibaba,
+    arcee,
+    crusoe,
+    deepinfra,
+    novita,
+    scaleway,
+    together,
+    xiaomi,
+)
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -21,6 +30,34 @@ class Case:
 
 
 _CASES = [
+    Case("together", "minimax/minimax-m3", "MiniMaxAI/MiniMax-M3",
+         datetime(2026, 11, 6, tzinfo=UTC), "minimax/minimax-m3.1-flash"),
+    Case("together", "thinkingmachines/inkling", "thinkingmachines/Inkling",
+         datetime(2026, 11, 6, tzinfo=UTC), "meta-models/muse-spark-open"),
+    Case("crusoe", "deepseek/deepseek-v4-pro", "deepseek-ai/DeepSeek-V4-Pro",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "deepseek/deepseek-v4.1-flash"),
+    Case("crusoe", "deepseek/deepseek-v4-flash", "deepseek-ai/Deepseek-V4-Flash",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "deepseek/deepseek-v4.1-flash"),
+    Case("crusoe", "nvidia/nemotron-3-super-120b-a12b", "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "nvidia/nemotron-3.5-super-vl"),
+    Case("crusoe", "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b", "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B",
+         datetime(2026, 10, 30, 17, tzinfo=UTC), "nvidia/nemotron-3.5-lightning-30b-a3b"),
+    Case("deepinfra", "gryphe/mythomax-l2-13b", "Gryphe/MythoMax-L2-13b",
+         datetime(2026, 10, 29, tzinfo=UTC), "sao10k/l3-8b-lunaris-v1-turbo"),
+    Case("arcee", "arcee-ai/trinity-large-thinking", "trinity-large-thinking",
+         datetime(2026, 10, 26, tzinfo=UTC), "moonshotai/kimi-k3"),
+    Case("novita", "xiaomimimo/mimo-v2.5", "xiaomimimo/mimo-v2.5",
+         datetime(2026, 10, 23, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
+    Case("novita", "xiaomimimo/mimo-v2.5-pro", "xiaomimimo/mimo-v2.5-pro",
+         datetime(2026, 10, 23, tzinfo=UTC), "xiaomi/mimo-v2.6-pro"),
+    Case("deepinfra", "nousresearch/hermes-3-llama-3.1-405b", "NousResearch/Hermes-3-Llama-3.1-405B",
+         datetime(2026, 11, 2, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
+    Case("alibaba", "qwen/qwen3.5-plus", "qwen3.5-plus",
+         datetime(2027, 1, 19, 2, tzinfo=UTC), "qwen/qwen3.8-flash"),
+    Case("alibaba", "qwen/qwen3.5-plus-2026-02-15", "qwen3.5-plus-2026-02-15",
+         datetime(2027, 1, 19, 2, tzinfo=UTC), "qwen/qwen3.8-flash"),
+    Case("alibaba", "qwen/qwen3.5-397b-a17b", "qwen3.5-397b-a17b",
+         datetime(2027, 1, 19, 2, tzinfo=UTC), "qwen/qwen3.8-flash"),
     Case("deepinfra", "openai/gpt-oss-120b-turbo", "openai/gpt-oss-120b-Turbo",
          datetime(2026, 10, 20, tzinfo=UTC), "openai/gpt-oss-120b"),
     Case("scaleway", "z-ai/glm-5.2", "glm-5.2",
@@ -41,6 +78,11 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "together": together.MANIFEST_PATH,
+    "crusoe": crusoe.MANIFEST_PATH,
+    "arcee": arcee.MANIFEST_PATH,
+    "novita": novita.MANIFEST_PATH,
+    "alibaba": alibaba.MANIFEST_PATH,
     "deepinfra": deepinfra.MANIFEST_PATH,
     "scaleway": scaleway.MANIFEST_PATH,
     "xiaomi": xiaomi.MANIFEST_PATH,

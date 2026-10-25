@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-20T12:05:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 19,
   "models": [
@@ -102,8 +102,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 180000,
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 240000,
       "input_modalities": [
         "text",
         "image",
@@ -134,7 +134,7 @@
         "reasoning",
         "json_mode"
       ],
-      "cached_input_token_price_per_m": 50000,
+      "cached_input_token_price_per_m": 46000,
       "routable": false,
       "routable_reason": "provider-billing-unavailable"
     },
@@ -483,9 +483,9 @@
         "seed",
         "max_tokens"
       ],
-      "input_token_price_per_m": 1530000,
-      "output_token_price_per_m": 12750000,
-      "cached_input_token_price_per_m": 204000
+      "input_token_price_per_m": 650000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 230000
     },
     {
       "id": "z-ai/glm-5.3-flash",
@@ -648,9 +648,9 @@
         "top_k",
         "stop"
       ],
-      "input_token_price_per_m": 270000,
-      "output_token_price_per_m": 1150000,
-      "cached_input_token_price_per_m": 9000
+      "input_token_price_per_m": 260000,
+      "output_token_price_per_m": 1170000,
+      "cached_input_token_price_per_m": 5800
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.6-Flash-RL",

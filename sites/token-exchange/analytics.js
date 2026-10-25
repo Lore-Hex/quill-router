@@ -24,17 +24,17 @@
     }
     return visitor ? {visitor_id:visitor, campaign} : {tracking_disabled:true, campaign:{}};
   }
-  window.TokenExchangeAnalytics = {context};
+  window.TokenExchangeAnalytics = {context, track};
   const sent = new Set();
-  function track(event) {
+  function track(event, properties = {}) {
     const payload = context();
-    if (payload.tracking_disabled || sent.has(event)) return;
+    if (payload.tracking_disabled || (event.startsWith("exchange.") && sent.has(event))) return;
     sent.add(event);
     try {
       Promise.resolve(fetch('https://trustedrouter.com/token-exchange/events', {
         method:'POST', mode:'cors', credentials:'omit', keepalive:true,
-        headers:{'Content-Type':'application/json'}, body:JSON.stringify({event, ...payload,
-          page: ['/providers', '/badge'].includes(location.pathname.replace(/\.html$/, ''))
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({event, ...payload, ...properties,
+          page: ['/providers', '/badge', '/confidential', '/suppliers', '/index'].includes(location.pathname.replace(/\.html$/, ''))
             ? location.pathname.replace(/\.html$/, '') : '/'}),
       })).catch(() => {});
     } catch { /* Analytics never blocks the page or brochure download. */ }

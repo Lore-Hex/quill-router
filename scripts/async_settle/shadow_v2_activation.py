@@ -207,7 +207,7 @@ def capture(plan: Plan, root: Path, out: Path, transport: ReadTransport) -> dict
 
 
 def observe_release(plan: Plan, phase: str, out: Path, transport: ReadTransport,
-                    *, polls: int = 1, sleep: Any = time.sleep) -> dict[str, Any]:
+                    *, polls: int = 1, sleep: Any = time.sleep, expires_at: str = '') -> dict[str, Any]:
     if not 1 <= polls <= plan.limits.calls_per_pass // max(1, len(plan.workflows) * 2):
         raise ValueError('release poll budget')
     files = BoundedFiles(out, plan.limits.output_bytes)
@@ -276,7 +276,8 @@ def observe_release(plan: Plan, phase: str, out: Path, transport: ReadTransport,
     # router /health surface reports status only, not deployed environment.
     missing = ['P6LivePinProjection', 'P6AttestedRegionVerification']
     missing.extend('P6ReleasedOriginal:' + name for name in sorted(required - {s.kind for s in sources}))
-    return dict(complete=False, missing=missing, calls=calls, expected_pins=pins(plan, phase))
+    return dict(complete=False, missing=missing, calls=calls,
+                expected_pins=pins(plan, phase, expires_at=expires_at))
 
 
 def trial(plan: Plan, root: Path, out: Path, transport: ReadTransport) -> dict[str, Any]:
@@ -311,7 +312,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if args.command == 'probe':
             result = probe(plan, args.phase, args.apply)
         elif args.command == 'release':
-            result = prepare(plan, args.phase, Path.cwd(), args.enclave_root, out)
+            result = prepare(plan, args.phase, Path.cwd(), args.enclave_root, out,
+                             expires_at=args.expires_at or '')
             commands = []
             for role in ('router', 'enclave'):
                 release = getattr(plan.releases, role)
@@ -321,7 +323,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             (out / 'release-review.md').write_text('Apply the emitted patch in the named repository; review exact pins and measured pre-enable PASS. Merge through existing CI and release gates. Retain close/export originals for opt-out.\n')
             result.update(complete=False, prepared=True, operator_commands=commands)
             if args.wait:
-                observed = observe_release(plan, args.phase, out, HTTPReadTransport(headers), polls=args.polls)
+                observed = observe_release(plan, args.phase, out, HTTPReadTransport(headers), polls=args.polls,
+                                           expires_at=args.expires_at or '')
                 result['observation'] = observed
                 result['missing'].extend(observed['missing'])
             else:
@@ -347,6 +350,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--polls', type=int, default=1)
     parser.add_argument('--plan-sha256')
     parser.add_argument('--enclave-root', type=Path)
+    # Required for release shadow-opt-in: the canary's runtime stop, e.g.
+    # 2026-10-24T15:30:00Z (UTC, future, at most 48 h ahead). Without it the
+    # deployed routers treat the pins as expired and do nothing.
+    parser.add_argument('--expires-at')
     args = parser.parse_args(argv)
     try:
         if args.command == 'validate-plan':

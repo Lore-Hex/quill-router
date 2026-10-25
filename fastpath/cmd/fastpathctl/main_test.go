@@ -74,7 +74,11 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		{"-database", "d", "enable", "ws", "more"}, {"-database", "d", "node"}, {"-database", "d", "node", ""},
 		{"-database", "d", "node", "a", "b"}, {"-database", "d", "closed"}, {"-database", "d", "closed", "a", "b"},
 		{"-database", "d", "leave"}, {"-database", "d", "leave", "a", "b"}, {"-database", "d", "audit"},
-		{"-database", "d", "audit", "a", "b"}} {
+		{"-database", "d", "audit", "a", "b"}, {"-database", "d", "decide"}, {"-database", "d", "decide", "on"},
+		{"-database", "d", "decide", "maybe", "ws"}, {"-database", "d", "decide", "on", ""},
+		{"-database", "d", "decide", "on", "ws", "more"}, {"-database", "d", "decide", "on", "ws", "-region", "r", "more"},
+		{"-database", "d", "decide", "on", "ws", "-cloud", "GCP"}, {"-database", "d", "-region", "", "decide", "status", "ws"},
+		{"-database", "d", "decide", "off", "ws", "-nope"}, {"-database", "d", "decide-off-all", "ws"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -167,6 +171,98 @@ func TestDisableAllTurnsEverythingOff(t *testing.T) {
 	}
 }
 
+// TestDecideSetsWhoDecidesAtTheEdge: a workspace never set does not
+// decide, exit 0; decide on sets its row for the cloud and region, gcp and
+// us-central1 unless the flags, before the command or after the workspace,
+// say otherwise; status then exits 3 for that row alone, listing every row
+// of the workspace's, and 0 once it is off again; and decide leaves the
+// switch as it was.
+func TestDecideSetsWhoDecidesAtTheEdge(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	do := func(args ...string) (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, append([]string{"-database", "d"}, args...), &out, open)
+		if err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("%q wrote %q: %v", args, out.String(), err)
+		}
+		return code, got
+	}
+	if code, got := do("decide", "status", ws); code != 0 || got["decide"] != false || got["found"] != false ||
+		len(got["rows"].([]any)) != 0 || got["cloud"] != "gcp" || got["region"] != "us-central1" {
+		t.Fatalf("a workspace never set: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "on", ws); code != 0 || got["decide"] != true || got["cloud"] != "gcp" ||
+		got["region"] != "us-central1" || got["at"] == nil {
+		t.Fatalf("decide on: exit %d, %v", code, got)
+	}
+	if code, got := do("-region", "europe-west4", "decide", "off", ws); code != 0 || got["decide"] != false ||
+		got["region"] != "europe-west4" {
+		t.Fatalf("decide off in another region: exit %d, %v", code, got)
+	}
+	code, got := do("decide", "status", ws)
+	if rows := got["rows"].([]any); code != 3 || got["decide"] != true || got["found"] != true || len(rows) != 2 ||
+		got["changed_at"] == nil {
+		t.Fatalf("a workspace that decides: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "status", ws, "-region", "europe-west4"); code != 0 || got["decide"] != false ||
+		got["found"] != true {
+		t.Fatalf("the region it does not decide in: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "status", ws, "-cloud", "aws"); code != 0 || got["decide"] != false || got["found"] != false {
+		t.Fatalf("a cloud it has no row in: exit %d, %v", code, got)
+	}
+	if code, got := do("status", ws); got["status"].(map[string]any)["Enabled"] != false || code != 0 {
+		t.Fatalf("the switch after decide on: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "off", ws, "-cloud", "gcp", "-region", "us-central1"); code != 0 || got["decide"] != false {
+		t.Fatalf("decide off: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "status", ws); code != 0 || got["decide"] != false || got["found"] != true {
+		t.Fatalf("a workspace turned off: exit %d, %v", code, got)
+	}
+}
+
+// TestDecideOffAllTurnsEveryRowOff, on a database of its own, since it
+// reaches every workspace: every row on is turned off and counted, and
+// each workspace's status then says it does not decide; the switch is left
+// on.
+func TestDecideOffAllTurnsEveryRowOff(t *testing.T) {
+	open := onOwn(t)
+	ctx := context.Background()
+	a, b := storetest.UniqueID("ws"), storetest.UniqueID("ws")
+	for _, args := range [][]string{{"enable", a}, {"decide", "on", a}, {"decide", "on", a, "-region", "europe-west4"},
+		{"decide", "on", b}, {"decide", "off", b, "-region", "us-east4"}} {
+		if code, err := run(ctx, append([]string{"-database", "d"}, args...), &bytes.Buffer{}, open); code != 0 || err != nil {
+			t.Fatalf("%q: %d %v", args, code, err)
+		}
+	}
+	var out bytes.Buffer
+	if code, err := run(ctx, []string{"-database", "d", "decide-off-all"}, &out, open); code != 0 || err != nil {
+		t.Fatalf("decide-off-all: %d %v", code, err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || got["rows_turned_off"] != float64(3) || got["at"] == nil {
+		t.Fatalf("decide-off-all wrote %q: %v", out.String(), err)
+	}
+	for _, args := range [][]string{{"decide", "status", a}, {"decide", "status", a, "-region", "europe-west4"},
+		{"decide", "status", b}} {
+		if code, err := run(ctx, append([]string{"-database", "d"}, args...), &bytes.Buffer{}, open); code != 0 || err != nil {
+			t.Errorf("%q after decide-off-all: exit %d, %v", args, code, err)
+		}
+	}
+	// The switch is apart: a is still enabled, so its status is not done.
+	if code, err := run(ctx, []string{"-database", "d", "status", a}, &bytes.Buffer{}, open); code != 3 || err != nil {
+		t.Errorf("a's switch after decide-off-all: exit %d, %v", code, err)
+	}
+}
+
 // full is an output that takes nothing.
 type full struct{}
 
@@ -177,7 +273,8 @@ func (full) Write([]byte) (int, error) { return 0, errors.New("the output is ful
 func TestAnAnswerNotWrittenIsAFailure(t *testing.T) {
 	open := onOwn(t)
 	ws := storetest.UniqueID("ws")
-	for _, args := range [][]string{{"enable", ws}, {"status", ws}, {"disable", ws}, {"disable-all"}} {
+	for _, args := range [][]string{{"enable", ws}, {"status", ws}, {"disable", ws}, {"disable-all"}, {"decide", "on", ws},
+		{"decide", "status", ws}, {"decide-off-all"}} {
 		code, err := run(context.Background(), append([]string{"-database", "d"}, args...), full{}, open)
 		if code != 1 || err == nil {
 			t.Errorf("%q with its answer not written: exit %d, %v", args, code, err)

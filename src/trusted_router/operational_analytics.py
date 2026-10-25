@@ -72,6 +72,7 @@ class OperationalAnalyticsClient:
         *,
         params: dict[str, str | int] | None = None,
         timeout_seconds: float = 20.0,
+        retry_read_disconnect: bool = False,
     ) -> list[dict[str, Any]]:
         query_params: dict[str, str] = {"database": self._database}
         for key, value in (params or {}).items():
@@ -91,6 +92,7 @@ class OperationalAnalyticsClient:
                     content=sql,
                     headers={"content-type": "text/plain; charset=utf-8"},
                 ),
+                retry_read_disconnect=retry_read_disconnect,
             )
             response.raise_for_status()
             payload = response.json()
@@ -282,9 +284,10 @@ FORMAT JSON
         rows = self._query(
             """
 SELECT
-  generation_id, request_id, key_id, model, provider, provider_name, app,
+  generation_id, request_id, key_id, model, provider, provider_name, app, app_id,
   tokens_prompt, tokens_completion, cached_input_tokens, reasoning_tokens,
-  total_cost_microdollars, usage_type, speed_tokens_per_second,
+  total_cost_microdollars, app_markup_microdollars, custom_model_markup_microdollars,
+  usage_type, speed_tokens_per_second,
   finish_reason, status, streamed, usage_estimated, elapsed_milliseconds,
   first_token_milliseconds, ttfb_milliseconds, region, user, session_id,
   http_referer, app_categories, tags, created_at
@@ -458,6 +461,7 @@ FORMAT JSON
 """,
             params={"name": name},
             timeout_seconds=PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS,
+            retry_read_disconnect=True,
         )
         if not rows:
             return None
@@ -496,9 +500,12 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         model=str(row["model"]),
         provider_name=str(row["provider_name"]),
         app=str(row["app"]),
+        app_id=str(row.get("app_id") or ""),
         tokens_prompt=int(row["tokens_prompt"]),
         tokens_completion=int(row["tokens_completion"]),
         total_cost_microdollars=int(row["total_cost_microdollars"]),
+        app_markup_microdollars=int(row.get("app_markup_microdollars") or 0),
+        custom_model_markup_microdollars=int(row.get("custom_model_markup_microdollars") or 0),
         usage_type=UsageType.coerce(row["usage_type"]),
         speed_tokens_per_second=float(row["speed_tokens_per_second"]),
         finish_reason=str(row["finish_reason"]),

@@ -41,7 +41,12 @@ from trusted_router.services.async_settle import (
 )
 from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.services.async_settle_shadow_health import Service
-from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore, UnknownCommit
+from trusted_router.storage_gcp_shadow_observation import (
+    Budget,
+    ContentionLoss,
+    ObservationStore,
+    UnknownCommit,
+)
 
 NOW_US = int(dt.datetime(2026, 10, 12, tzinfo=dt.UTC).timestamp()*1_000_000)
 
@@ -78,6 +83,8 @@ def install_scheduler(monkeypatch):
     # No wall timer is allowed to race CPU-only fake-store work.
     scheduler.timeout = lambda seconds: nullcontext()
     monkeypatch.setattr(module, "asyncio", scheduler)
+    # Timing witnesses supply an advancing wait; other offline clocks stay fixed.
+    monkeypatch.setattr(module, "sleep", lambda seconds: None, raising=False)
     return scheduler
 
 
@@ -190,6 +197,59 @@ def fake_store() -> tuple[ObservationStore, FakeSpannerDatabase]:
     db.server_ns = NOW_US*1000
     db._trusted_router_rpc_deadlines = True
     return ObservationStore(db, clock=logical_time, wall=lambda: NOW_US/1_000_000+100), db
+
+
+def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypatch):
+    from types import SimpleNamespace
+
+    from google.cloud.spanner_v1.database import Database
+    from google.cloud.spanner_v1.snapshot import Snapshot
+    from google.protobuf.timestamp_pb2 import Timestamp
+    from proto.datetime_helpers import DatetimeWithNanoseconds
+
+    seconds, nanos = 1792627200, 123456789
+    claim_ns = seconds*1_000_000_000+nanos
+    selectors = []
+    checkouts = []
+    class OfflineDatabase:
+        # Exercise the installed Database.snapshot -> SnapshotCheckout ->
+        # Snapshot path. Only session checkout and transport are fake.
+        snapshot = Database.snapshot
+        sessions_manager = SimpleNamespace(get_session=lambda _: None,
+                                           put_session=lambda session: checkouts.append(session))
+
+    def execute(snapshot, sql, **kwargs):
+        options = snapshot._build_transaction_options_pb()
+        selector = snapshot._build_transaction_selector_pb()
+        assert not snapshot._multi_use
+        assert selector._pb.WhichOneof("selector") == "single_use"
+        assert options.read_only.return_read_timestamp is True
+        assert selector.single_use == options
+        if "tr_settle_outbox" in sql:
+            bound = snapshot._min_read_timestamp
+            assert isinstance(bound, DatetimeWithNanoseconds)
+            assert bound.tzinfo is dt.UTC and bound.utcoffset() == dt.timedelta(0)
+            assert bound.nanosecond == nanos
+            read_only = options._pb.read_only
+            assert read_only.WhichOneof("timestamp_bound") == "min_read_timestamp"
+            assert read_only.min_read_timestamp == Timestamp(seconds=seconds, nanos=nanos)
+        else:
+            assert options._pb.read_only.WhichOneof("timestamp_bound") == "strong"
+            assert options.read_only.strong is True
+        selectors.append(options)
+        class Stream(list):
+            metadata = SimpleNamespace(transaction=SimpleNamespace(
+                read_timestamp=Timestamp(seconds=seconds, nanos=nanos)))
+        return Stream()
+
+    monkeypatch.setattr(Snapshot, "execute_sql", execute)
+    store = object.__new__(ObservationStore)
+    store.database, store.clock, store.wall = OfflineDatabase(), lambda: 0., lambda: float(seconds)
+    value = store.observe("publisher", "us-central1", "a"*40, seconds//2,
+                          Budget(.5, store.clock), claim_at_ns=claim_ns)
+    assert value["observed_at_ns"] == value["publisher_heartbeat_ns"] == claim_ns
+    assert store.read_shadow_health() is None
+    assert len(selectors) == len(checkouts) == 2
 
 
 def health(*, now_us: int = NOW_US, rows: list[Any] | None = None) -> dict[str, Any]:
@@ -404,7 +464,10 @@ def test_claim_fence_and_delayed_winner_fake() -> None:
     budget = Budget(logical_time()+.5, logical_time)
     slot = NOW_US//2_000_000
     assert store.claim("first", slot, NOW_US, budget)
-    assert not store.claim("second", slot, NOW_US, budget)
+    commits = db.commits
+    with pytest.raises(ContentionLoss):
+        store.claim("second", slot, NOW_US, budget)
+    assert db.commits == commits
     h = health()
     h["publisher_boot_id"] = "first"
     assert store.publish(h, budget)
@@ -412,7 +475,10 @@ def test_claim_fence_and_delayed_winner_fake() -> None:
     found = store.read_shadow_health()
     assert found is not None and found["body"] == h
     db.server_ns += 2_000_000_000
-    assert store.claim("second", slot+1, NOW_US+2_000_000, budget)
+    with pytest.raises(ContentionLoss):
+        store.claim("second", slot+1, NOW_US+2_000_000, budget)
+    db.server_ns += 2_000_000_000
+    assert store.claim("second", slot+2, NOW_US+4_000_000, budget)
     assert not store.publish(h, budget)
     assert all(kind in (HEALTH_KIND, CLAIM_KIND) for kind, _ in db.rows)
     assert db.transaction_execute_update_calls == 0
@@ -457,7 +523,8 @@ def test_native_sdk_no_retry_shared_deadline(sdk_database: Any, fault: str) -> N
         db.errors = [{"abort": Aborted("abort"), "reset": InternalServerError("RST_STREAM"),
                       "lost_reply": ServiceUnavailable("lost")}[fault]]
     started = clock.monotonic()
-    with pytest.raises(UnknownCommit):
+    from trusted_router.storage_gcp_shadow_observation import ContentionLoss
+    with pytest.raises(ContentionLoss if fault == "abort" else UnknownCommit):
         store.claim("issuer", NOW_US//2_000_000, NOW_US, Budget(started+.5, clock.monotonic))
     assert not sleeps
     assert clock.monotonic()-started <= .5
@@ -790,7 +857,7 @@ def test_late_health_commit_is_failure_but_reader_uses_observation_age(monkeypat
     svc.store.wall = lambda: NOW_US/1e6 + clock[0]
     landed: list[dict[str, Any]] = []
     monkeypatch.setattr(svc.store, "claim", lambda *args: native_claim_result(svc, True))
-    monkeypatch.setattr(svc.store, "observe", lambda *args: health())
+    monkeypatch.setattr(svc.store, "observe", lambda *args, **kwargs: health())
     def publish(value: dict[str, Any], budget: Budget) -> bool:
         clock[0] = .501
         landed.append(value)
@@ -820,7 +887,7 @@ def test_success_reply_over_budget_is_not_publication(monkeypatch: Any) -> None:
     svc.store.clock = lambda: clock[0]
     svc.store.wall = lambda: NOW_US/1e6
     monkeypatch.setattr(svc.store, "claim", lambda *args: native_claim_result(svc, True))
-    monkeypatch.setattr(svc.store, "observe", lambda *args: health())
+    monkeypatch.setattr(svc.store, "observe", lambda *args, **kwargs: health())
     def publish(*args: Any) -> bool:
         clock[0] = .500001
         return True
@@ -874,7 +941,7 @@ def test_publisher_slot_product(monkeypatch: Any) -> None:
                 return True
             return value
         monkeypatch.setattr(svc.store, "claim", lambda *a, claim=claim, svc=svc: native_claim_result(svc, outcome(claim)))
-        monkeypatch.setattr(svc.store, "observe", lambda *a, scan=scan: health() if outcome(scan) else None)
+        monkeypatch.setattr(svc.store, "observe", lambda *a, scan=scan, **kwargs: health() if outcome(scan) else None)
         monkeypatch.setattr(svc.store, "publish", lambda *a, publish=publish: outcome(publish))
         svc.publish_cycle(NOW_US//2_000_000, NOW_US)
         p = svc.counters["2026-10-12"]["publisher"]
@@ -1638,7 +1705,7 @@ def test_publisher_exact_budget_boundary(monkeypatch: Any, elapsed: float, accep
     svc.store.clock = lambda: clock[0]
     svc.store.wall = lambda: NOW_US/1e6
     monkeypatch.setattr(svc.store, "claim", lambda *args: native_claim_result(svc, True))
-    monkeypatch.setattr(svc.store, "observe", lambda *args: health())
+    monkeypatch.setattr(svc.store, "observe", lambda *args, **kwargs: health())
     def publish(*args: Any) -> bool:
         clock[0] = elapsed
         return True

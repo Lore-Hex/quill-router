@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     EmailStr,
     Field,
+    HttpUrl,
     StrictBool,
     field_validator,
     model_validator,
@@ -38,6 +40,7 @@ from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
+    MIN_PAYPAL_CHECKOUT_DOLLARS,
     MIN_PAYPAL_CHECKOUT_MICRODOLLARS,
     dollars_to_microdollars,
 )
@@ -64,6 +67,19 @@ class CreatorUsernameRequest(_Strict):
     username: str = Field(min_length=3, max_length=32)
 
 
+def validate_billing_return_url(value: str) -> str:
+    """Validate without rewriting Stripe's {CHECKOUT_SESSION_ID} placeholder."""
+    if len(value) > 2048 or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("must be an absolute HTTP(S) URL without whitespace")
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("must be an absolute HTTP(S) URL")
+    parsed = HttpUrl(value)
+    if parsed.username is not None or parsed.password is not None or "\\" in value:
+        raise ValueError("must be an absolute HTTP(S) URL without credentials")
+    return value
+
+
 class CheckoutRequest(_Lenient):
     amount: Decimal | str | int | float = Decimal("20")
     workspace_id: str | None = None
@@ -83,6 +99,11 @@ class CheckoutRequest(_Lenient):
         "adyen",
     ] = "auto"
 
+    @field_validator("success_url", "cancel_url")
+    @classmethod
+    def valid_return_url(cls, value: str | None) -> str | None:
+        return validate_billing_return_url(value) if value else None
+
     @field_validator("amount")
     @classmethod
     def amount_in_range(cls, value: Decimal | str | int | float) -> Decimal:
@@ -101,7 +122,9 @@ class CheckoutRequest(_Lenient):
             self.payment_method == "paypal"
             and dollars_to_microdollars(self.amount) < MIN_PAYPAL_CHECKOUT_MICRODOLLARS
         ):
-            raise ValueError("PayPal checkout amount must be at least 10")
+            raise ValueError(
+                f"PayPal checkout amount must be at least {MIN_PAYPAL_CHECKOUT_DOLLARS}"
+            )
         return self
 
 
@@ -307,6 +330,14 @@ class GatewayBootCapabilities(BaseModel):
 
     usage_heartbeat: StrictBool = False
     stream_open_heartbeat: StrictBool = False
+    # E4 R2. The enclave marks who chose each authorize's idempotency key
+    # (idempotency_key_source on the authorize body); without this
+    # declaration a "gateway" mark classifies as legacy.
+    idempotency_key_source: StrictBool = False
+    # E4 R2. The enclave keeps a durable outbox of frozen settle and refund
+    # terminals and redelivers them until the control plane answers. Stored
+    # and exposed on the authorize boot context; nothing gates on it yet.
+    settle_outbox: StrictBool = False
 
 
 class GatewayBootRegistrationRequest(_Strict):
@@ -373,6 +404,14 @@ class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+    # Who chose idempotency_key, as the enclave reports it ("gateway" when it
+    # minted the key itself, "client" when the caller sent one). Classified by
+    # gateway.idempotency_key_source, never trusted raw. A plain str, not a
+    # Literal, and never a 422 (see _bounded_idempotency_key_source): a value a
+    # future enclave adds must not fail an authorize. Excluded from model_dump
+    # so it stays out of the authorize body and its idempotency fingerprint: a
+    # retry that carries it replays an authorization whose original did not.
+    idempotency_key_source: str | None = Field(default=None, max_length=16, exclude=True)
     request_fingerprint: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
     model: str = Field(min_length=1)
     models: list[str] | None = None
@@ -409,6 +448,16 @@ class GatewayAuthorizeRequest(_Lenient):
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
     invocation_nonce: str | None = Field(default=None, max_length=64)
+
+    @field_validator("idempotency_key_source", mode="before")
+    @classmethod
+    def _bounded_idempotency_key_source(cls, value: Any) -> str | None:
+        """Bound the field instead of refusing the authorize: a longer string
+        is cut to 16 characters, and a value that is not a string is dropped
+        as if absent. Neither is a known value, so both classify as legacy."""
+        if isinstance(value, str):
+            return value[:16]
+        return None
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:

@@ -29,9 +29,9 @@
   };
   const dated = value => age(value) !== Infinity;
   const fresh = value => age(value) <= staleMs;
-  const lastCheck = value => {
+  const lastCheck = (value, label = 'Last checked') => {
     if (!dated(value)) return '';
-    return `Last checked ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
+    return `${label} ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
   };
   const link = (label, url) => {
     const el = node('a', label);
@@ -68,12 +68,26 @@
       col.className = 'privacy-column';
       const choice = node('div', undefined, 'privacy-choice');
       choice.append(node('h3', row.label), node('p', 'Tinfoil'));
+      if (prices.dataset.priceLayout === 'table') {
+        col.append(choice, node('div', 'Confidential + E2EE', 'privacy-provider'));
+        for (const [label, value] of [['Input / 1M', row.input], ['Output / 1M', row.output]]) {
+          const price = node('div', `$${value}`, 'privacy-price');
+          price.dataset.label = label;
+          price.setAttribute('aria-label', `${label}: $${value}`);
+          col.append(price);
+        }
+        col.target = '_blank';
+        col.rel = 'noopener';
+      } else {
       col.append(choice, node('div', 'Confidential + E2EE', 'privacy-provider'), node('div', `$${row.input} / $${row.output}`, 'privacy-price'));
+      }
       prices.append(col);
     }
     if (priceUnit) {
       priceUnit.hidden = !prices.childElementCount;
-      priceUnit.textContent = `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
+      priceUnit.textContent = prices.dataset.priceLayout === 'table'
+        ? lastCheck(payload.generated_at, 'Updated')
+        : `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
     }
     if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();

@@ -36,6 +36,7 @@ from trusted_router.async_settle_shadow_v2_schema import POLICY, require
 from trusted_router.detached_jws import canonical
 from trusted_router.storage_gcp_async_admission import HEALTH_ROW_LIMIT, unresolved_statement
 from trusted_router.storage_gcp_shadow_io import (
+    Sessions,
     configure,
     elapsed_clock,
     owned_database,
@@ -46,6 +47,13 @@ from trusted_router.storage_gcp_shadow_io import (
 WRITE_SECONDS = 2.
 READ_SECONDS = 1.
 FLUSH_SECONDS = 4.
+# Observer reads: the RPC gets a generous gRPC deadline and its stream is fully
+# consumed, so a slow tail completes OK on the server instead of ending in a
+# client DEADLINE_EXCEEDED/CANCELLED (2026-10-23: >1/min of those tripped the
+# Spanner API-failure alert). Freshness is unchanged: the observer's install
+# cut-off (250 ms health, 500 ms workspace) still rejects a late result as a
+# late_install, and health_usable still requires read_elapsed <= 250 ms.
+OBSERVER_READ_RPC_SECONDS = 2.
 T = TypeVar("T")
 Statement = tuple[str, dict[str, Any], dict[str, Any]]
 
@@ -84,6 +92,10 @@ class UnknownCommit(RuntimeError):
     pass
 
 
+class ContentionLoss(RuntimeError):
+    """The transaction lost its claim or aborted; it definitively did not commit."""
+
+
 def shadow_health_claim_read() -> Statement:
     _, params, types = entity_point_statement(CLAIM_KIND, "local/publish")
     return CLAIM_SQL, params, types
@@ -108,12 +120,25 @@ class ObservationStore:
         self.workspace_database = database
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
+        self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
         self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
         self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
         configure(self.database)
+
+    def session_ready(self) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return not isinstance(manager, Sessions) or manager.ready
+
+    def session_recovery_due(self) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+
+    def prepare_session(self, boot: str | None = None) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        return not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
 
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement
@@ -143,15 +168,39 @@ class ObservationStore:
                 return self.point(snapshot, entity_point_statement(kind, key), budget, READ_SECONDS)
 
     def transaction(self, callback: Callable[[Any], T], budget: Budget, cap: float) -> T:
+        from google.api_core.exceptions import Aborted
+
         attempted = False
         committing = False
+        aborted = False
+        loss: ContentionLoss | None = None
+        def record_abort(error: BaseException) -> None:
+            nonlocal aborted
+            seen: set[int] = set()
+            cause: BaseException | None = error
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                if isinstance(cause, Aborted):
+                    aborted = True
+                    break
+                cause = cause.__cause__
         def once(tx: Any) -> T:
-            nonlocal attempted, committing
-            require(not attempted, "transaction_retry")
+            nonlocal attempted, committing, aborted, loss
+            if attempted:
+                # Session re-enters only after ABORTED. Do not run a second attempt.
+                aborted = True
+                raise ContentionLoss("transaction_aborted")
             attempted = True
-            budget.remaining(cap)
-            result = callback(tx)
-            budget.remaining(cap)
+            try:
+                budget.remaining(cap)
+                result = callback(tx)
+                budget.remaining(cap)
+            except Exception as error:
+                # SDK rollback can replace this exception. Retain the abort now.
+                if isinstance(error, ContentionLoss):
+                    loss = error
+                record_abort(error)
+                raise
             committing = True
             return result
         try:
@@ -160,7 +209,16 @@ class ObservationStore:
                     commit_request_options={"priority": "PRIORITY_LOW"}, transaction_tag="tr_shadow_v2")
             budget.remaining(cap)
             return result
-        except Exception:
+        except ContentionLoss:
+            raise
+        except Exception as error:
+            # The bounded transport keeps SDK retry loops stopped with a plain
+            # exception, retaining ABORTED as its cause for this classification.
+            record_abort(error)
+            if loss is not None:
+                raise loss from None
+            if aborted:
+                raise ContentionLoss("transaction_aborted") from None
             if committing:
                 raise UnknownCommit("shadow_commit_unknown") from None
             raise
@@ -173,6 +231,15 @@ class ObservationStore:
         from google.cloud.spanner_v1 import COMMIT_TIMESTAMP
         tx.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
             values=[(r.kind, r.key, r.body.decode("utf-8"), (COMMIT_TIMESTAMP if r.kind == HEALTH_KIND else dt.datetime.fromtimestamp(self.wall(), dt.UTC))) for r in rows])
+
+    def read_shadow_claim(self, budget: Budget) -> dict[str, Any] | None:
+        row = self.read(CLAIM_KIND, "local/publish", budget.child(CYCLE_SECONDS))
+        return row.value() if row is not None else None
+
+    def read_shadow_publication(self, budget: Budget) -> dict[str, Any] | None:
+        """Lock-free point read of the fleet health row (same-owner renewal)."""
+        row = self.read(HEALTH_KIND, "local/fleet", budget.child(CYCLE_SECONDS))
+        return row.value() if row is not None else None
 
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
@@ -187,14 +254,20 @@ class ObservationStore:
             HEALTH_CLAIM(value)  # The contract rejects skew before any write/scan.
             self.last_claim = value
             old = Row(CLAIM_KIND, "local/publish", body.encode()).value() if body is not None else None
-            if not claim_allowed(old, slot):
-                return False
+            if (not claim_allowed(old, slot) or old is not None
+                    and old["owner_boot_id"] != boot and old["slot"] > slot-2):
+                # Returning False still sends an empty Commit and holds the
+                # hot row until it completes. A loss must roll back instead;
+                # like ABORTED it is recorded once, never retried in this slot.
+                raise ContentionLoss("slot_already_claimed")
             row = Row.build(CLAIM_KIND, "local/publish", value)
             self.write(tx, [row], budget)
             if self.startup_retention:
                 original = row.body
             return True
         landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed:
+            self.won = (boot, slot)
         if landed and self.startup_retention:
             self.startup_claim_raw = original
         return landed
@@ -213,9 +286,11 @@ class ObservationStore:
             self.startup_publication_raw = row.body
         return landed
 
-    def snapshot_query(self, statement: Statement, budget: Budget, cap: float) -> tuple[list[Any], int]:
+    def snapshot_query(self, statement: Statement, budget: Budget, cap: float,
+                       *, min_read_timestamp: Any = None) -> tuple[list[Any], int]:
         with rpc_scope(budget.deadline, cap, budget.clock):
-            with self.database.snapshot() as snapshot:
+            options = {} if min_read_timestamp is None else {"min_read_timestamp": min_read_timestamp}
+            with self.database.snapshot(**options) as snapshot:
                 sql, params, types = statement
                 require(sql in (HEALTH_SQL, UNRESOLVED_SQL), "unregistered_statement")
                 stream = snapshot.execute_sql(HEALTH_SQL if sql == HEALTH_SQL else UNRESOLVED_SQL, params=params, param_types=types, retry=None,
@@ -225,16 +300,25 @@ class ObservationStore:
             budget.remaining(cap)
             return rows, stamp
 
-    def observe(self, boot: str, region: str, revision: str, slot: int, budget: Budget) -> dict[str, Any]:
-        rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS)
+    def observe(self, boot: str, region: str, revision: str, slot: int, budget: Budget,
+                *, claim_at_ns: int) -> dict[str, Any]:
+        from google.protobuf.timestamp_pb2 import Timestamp
+        from proto.datetime_helpers import DatetimeWithNanoseconds
+
+        # proto-plus preserves nanos on the wire; api_core's similarly named
+        # datetime is marshalled as ordinary datetime and loses sub-microseconds.
+        seconds, nanos = divmod(claim_at_ns, 1_000_000_000)
+        bound = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=seconds, nanos=nanos))
+        rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS,
+                                               min_read_timestamp=bound)
         require(len(rows) <= HEALTH_ROW_LIMIT + 1, "unresolved_bound")
         return summarize(rows, boot=boot, region=region, revision=revision, slot=slot,
             observed_ns=observed_ns, age_seconds=self.wall(), row_limit=HEALTH_ROW_LIMIT)
 
     def read_shadow_health(self) -> dict[str, Any] | None:
         started = self.clock()
-        budget = Budget(started + .25, self.clock)
-        rows, read_ns = self.snapshot_query(read_shadow_health_statement(), budget, .25)
+        budget = Budget(started + OBSERVER_READ_RPC_SECONDS, self.clock)
+        rows, read_ns = self.snapshot_query(read_shadow_health_statement(), budget, OBSERVER_READ_RPC_SECONDS)
         require(len(rows) <= 1, "point_bound")
         if not rows:
             return None
@@ -242,7 +326,8 @@ class ObservationStore:
         value = Row(HEALTH_KIND, "local/fleet", body.encode()).value()
         committed_ns = timestamp_ns(committed)
         ended = self.clock()
-        budget.remaining(.25)
+        # No 250 ms budget check here: the caller's install cut-off classifies
+        # a slow reply as late, and the elapsed time travels with the value.
         return dict(body=value, committed_at_ns=committed_ns, read_at_ns=read_ns,
                     read_elapsed_ns=round((ended-started)*1_000_000_000), reply_at=ended)
 

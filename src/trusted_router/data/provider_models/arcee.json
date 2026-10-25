@@ -17,6 +17,8 @@
       "status": 1,
       "id": "arcee-ai/trinity-large-thinking",
       "upstream_id": "trinity-large-thinking",
+      "retirement_at": "2026-10-26T00:00:00Z",
+      "replacement_model_id": "moonshotai/kimi-k3",
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 250000,
@@ -274,7 +276,7 @@
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-10-18T17:34:11Z",
+  "generated_at": "2026-10-20T12:05:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }

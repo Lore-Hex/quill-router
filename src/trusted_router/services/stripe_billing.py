@@ -13,7 +13,7 @@ from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
-from trusted_router.services.stripe_fees import stripe_processing_fee
+from trusted_router.services.checkout_fees import FeeRail, rail_processing_fee
 from trusted_router.services.stripe_radar import payment_account_signals
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
@@ -40,31 +40,10 @@ def create_checkout_session(
     ach_requested = body.payment_method in {"ach", "bank", "us_bank_account"}
     if stablecoin_requested and not settings.stablecoin_checkout_enabled:
         raise api_error(400, "Stablecoin checkout is not enabled", ErrorType.BAD_REQUEST)
-    if ach_requested:
-        fee_basis_points = settings.stripe_ach_fee_basis_points
-        fee_fixed_cents = settings.stripe_ach_fee_fixed_cents
-        fee_max_cents: int | None = settings.stripe_ach_fee_max_cents
-        payment_method = "ach"
-    elif stablecoin_requested:
-        fee_basis_points = settings.stripe_stablecoin_fee_basis_points
-        fee_fixed_cents = settings.stripe_stablecoin_fee_fixed_cents
-        fee_max_cents = None
-        payment_method = "stablecoin"
-    else:
-        fee_basis_points = settings.stripe_card_fee_basis_points
-        fee_fixed_cents = settings.stripe_card_fee_fixed_cents
-        fee_minimum_cents = settings.checkout_card_fee_minimum_cents
-        fee_max_cents = None
-        payment_method = "card"
-    if ach_requested or stablecoin_requested:
-        fee_minimum_cents = 0
-    fee = stripe_processing_fee(
-        credit_amount_cents=amount_cents,
-        variable_basis_points=fee_basis_points,
-        fixed_fee_cents=fee_fixed_cents,
-        minimum_fee_cents=fee_minimum_cents,
-        max_fee_cents=fee_max_cents,
+    payment_method: FeeRail = (
+        "ach" if ach_requested else "stablecoin" if stablecoin_requested else "card"
     )
+    fee = rail_processing_fee(settings, payment_method, amount_cents)
     payment_metadata = fee.metadata(
         workspace_id=workspace_id,
         payment_method=payment_method,

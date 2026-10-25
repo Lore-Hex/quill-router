@@ -44,6 +44,10 @@
     minutes: ["deep", "thorough", "report", "agent"],
   };
   const PRIVACY_COPY = {
+    4: {
+      title: "Trusted operators only",
+      body: "Confidential inference from Tinfoil and Privatemode, selected by TrustedRouter for operator physical security and reliability history.",
+    },
     0: {
       title: "Open upstream routing",
       body: "The gateway remains attested and stores no prompt or output. Upstream retention follows the exact provider route shown.",
@@ -154,6 +158,7 @@
 
   function endpointsFor(model) {
     return model.endpoints.filter((endpoint) => {
+      if (state.privacy === 4) return endpoint.privacy_tier === 4;
       if (state.privacy === 1) return endpoint.stores_content === false;
       if (state.privacy === 2) return endpoint.zero_data_retention === true;
       if (state.privacy === 3) {
@@ -311,6 +316,7 @@
   }
 
   function tierShortLabel(tier) {
+    if (tier === 4) return "Trusted";
     if (tier >= 3) return "TEE";
     if (tier >= 2) return "ZDR";
     return "Open";
@@ -495,7 +501,9 @@
     body.appendChild(htmlElement(
       "div",
       "route-guard",
-      state.privacy >= 3
+      state.privacy === 4
+        ? "Filtered to Trusted confidential routes from Tinfoil and Privatemode."
+        : state.privacy >= 3
         ? "Filtered to verified confidential compute + E2EE + ZDR provider routes."
         : state.privacy >= 2
           ? "Filtered to provider routes with an explicit zero-retention guarantee."
@@ -531,6 +539,7 @@
 
   function recommendedRoutes() {
     const confidential = routeById("trustedrouter/confidential") || routeById("trustedrouter/e2e");
+    if (state.privacy === 4) return [routeById("trustedrouter/trusted")].filter(Boolean);
     if (state.privacy >= 3) return [confidential].filter(Boolean);
     if (state.privacy >= 2) return [routeById("trustedrouter/zdr")].filter(Boolean);
     if (state.quality === "frontier" || state.preference.quality >= 0.5) {

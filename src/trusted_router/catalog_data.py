@@ -66,6 +66,14 @@ PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
 
 PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR, not the vendor
 
+PRIVACY_TIER_TRUSTED = 4  # Confidential plus TrustedRouter's curated operator assessment
+
+# This is an explicit product allowlist, not inferred from a provider's own
+# security claims. Adding an operator requires a separate physical-security
+# and operating-history review; technical Confidential eligibility still applies.
+TRUSTED_PROVIDER_ORDER = ("tinfoil", "privatemode")
+TRUSTED_PROVIDER_SLUGS = frozenset(TRUSTED_PROVIDER_ORDER)
+
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
     "any": PRIVACY_TIER_STANDARD,
@@ -76,6 +84,7 @@ PRIVACY_TIER_ALIASES: dict[str, int] = {
     "zero_retention": PRIVACY_TIER_ZERO_RETENTION,
     "zero-retention": PRIVACY_TIER_ZERO_RETENTION,
     "confidential": PRIVACY_TIER_CONFIDENTIAL,
+    "trusted": PRIVACY_TIER_TRUSTED,
     "e2e": PRIVACY_TIER_CONFIDENTIAL,
     "e2ee": PRIVACY_TIER_CONFIDENTIAL,
     "max": PRIVACY_TIER_CONFIDENTIAL,
@@ -87,6 +96,7 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
     PRIVACY_TIER_NO_STORE: "No-store",
     PRIVACY_TIER_ZERO_RETENTION: "Zero retention",
     PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE + ZDR",
+    PRIVACY_TIER_TRUSTED: "Trusted",
 }
 
 # provider_headquarters_country records the legal home of the entity that
@@ -154,6 +164,11 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "inference account and contracting operator jurisdiction are not yet "
         "verified; the supplied credential is rejected. Excluded from jurisdiction filters."
     ),
+    "abliteration": (
+        "Checked abliteration.ai/data-handling and docs.abliteration.ai. They declare "
+        "US inference by default, but the operating entity's "
+        "headquarters country has not been independently verified. Excluded from jurisdiction filters."
+    ),
     "abliterate": (
         "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
         "a legal operating entity or headquarters country, and the terms refer "
@@ -184,7 +199,6 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "liquid",
             "mancer",
             "modal",
-            "nextbit",
             "perceptron",
             "perplexity",
             "reka",
@@ -1382,7 +1396,9 @@ PROVIDERS: dict[str, Provider] = {
             "Confidential AI (Inexorable, Inc.) publishes zero prompt/completion "
             "retention and no training on customer data. Operational and billing "
             "metadata are retained. Inference is served in the US and El Salvador. "
-            "Its public attestation covers launch/admission, not verified GPU state. "
+            "Its newer release provides TLS-bound attestation and measured GPU boot "
+            "checks. Our review of its serving policy and attested transport "
+            "integration is not complete. "
             "TrustedRouter uses its HTTPS API; these routes are ZDR, not verified "
             "end-to-end confidential inference and are excluded from the e2e filter."
         ),
@@ -1756,10 +1772,33 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's NextBit account. This route is Standard."
+            "NextBit's global API can use third-party infrastructure outside the EEA. "
+            "Its DPA permits exceptional legal retention for up to 30 days, so this "
+            "route remains Standard. Use NextBit (EU) for Spain-only processing and "
+            "zero content retention. No confidential-compute or E2EE claim is made."
         ),
-        provider_policy_url="https://nextbit256.com/",
+        provider_policy_url="https://www.nextbit256.com/docs/dpa",
+        provider_headquarters_country="ES",
+    ),
+    "nextbit-eu": Provider(
+        slug="nextbit-eu",
+        name="NextBit (EU)",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "NextBit's EU API processes inference exclusively in Spain. Its public DPA "
+            "sections 4 and 11 prohibit retaining prompts, outputs, or content logs and "
+            "using them for training; operational metadata is retained. This route uses "
+            "eu.api.nextbit256.com, never the global API. Special-category personal data "
+            "requires a separate agreement under section 13. No confidential-compute "
+            "or E2EE claim is made."
+        ),
+        provider_policy_url="https://www.nextbit256.com/docs/dpa",
+        provider_headquarters_country="ES",
     ),
     "akashml": Provider(
         slug="akashml",
@@ -1771,6 +1810,19 @@ PROVIDERS: dict[str, Provider] = {
             "is tracked for TrustedRouter's AkashML account. This route is Standard."
         ),
         provider_policy_url="https://akashml.com/",
+    ),
+    "abliteration": Provider(
+        slug="abliteration", name="Abliteration", supports_prepaid=True, supports_byok=False,
+        stores_content=False, provider_zero_data_retention=True,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy=(
+            "Core chat inference does not retain or train on prompts, completions or images. "
+            "Operational and billing metadata are retained for the account lifetime and legal requirements. "
+            "Optional web search/fetch are not ZDR and are not enabled by this integration. "
+            "US inference is the default; EU residency requires a separate arrangement. "
+            "No confidential-compute or renewable-energy claim has been verified."
+        ),
+        provider_policy_url="https://abliteration.ai/data-handling",
     ),
     "abliterate": Provider(
         slug="abliterate",
@@ -1997,12 +2049,52 @@ PROVIDERS: dict[str, Provider] = {
         provider_e2ee=False,
         provider_policy=(
             "Hixtube is an independently hosted integration pilot using the Apache-2.0 "
-            "Neocloud-in-a-Box toolkit. The initial Qwen3 0.6B CPU route uses standard "
-            "TLS, not verified confidential computing or provider-side E2EE. It is "
-            "not a frontier model or a high-availability production service. "
+            "Neocloud-in-a-Box toolkit. Its ordinary inference routes use standard "
+            "TLS, not verified confidential computing or provider-side E2EE. "
+            "Checkpoint identity, context limits and retirement are declared per route; "
+            "high availability has not been established. "
             "Routes are published only after authenticated catalog and inference checks."
         ),
         provider_policy_url="https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box",
+    ),
+    "coralbricks": Provider(
+        slug="coralbricks", name="CoralBricks", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        # Account owner confirmed the organization setting on 2026-10-14.
+        # Do not extend this opt-in to unrelated or future BYOK accounts.
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-10-14",
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_headquarters_country="US", renewable_energy_inference=False,
+        provider_policy=(
+            "Coral Bricks AI Inc. operates its own serving software on leased US infrastructure. "
+            "TrustedRouter's account owner confirmed the organization-wide No content + no metadata "
+            "setting on October 14, 2026. Zero data retention applies to new requests through "
+            "TrustedRouter-funded routes, not every CoralBricks account. Operational counters "
+            "and billing records remain; the setting does not purge previously retained data. "
+            "No training on customer content. No confidential-compute or E2EE claim. TrustedRouter "
+            "disables paid cache retention; free engine prefix caching remains active. "
+            "Custom retained-cache TTLs are not supported. Inference is not declared 100% renewable."
+        ),
+        provider_policy_url="https://trust.coralbricks.ai/",
+    ),
+    "muna": Provider(
+        slug="muna", name="Muna", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_headquarters_country="US", renewable_energy_inference=False,
+        provider_policy=(
+            "Muna (NatML Inc.) operates its own serving stack on rented US GPUs, "
+            "without reselling downstream model APIs. No training on customer content. "
+            "Its published zero-retention policy permits incidental content fragments "
+            "in diagnostic logs for up to 30 days, so these routes remain Standard, "
+            "not strict ZDR or confidential/E2EE. Shared prefix and decoded-image "
+            "caches are memory-only; prefix caching is not account-isolated. "
+            "Request and edge metadata remain for 30 days, billing records for seven years. "
+            "Renewable electricity coverage is unknown. Tools support auto/none selection; "
+            "required tool selection is not currently supported."
+        ),
+        provider_policy_url="https://muna.ai/zdr",
     ),
     "greenference": Provider(
         slug="greenference",
@@ -2025,6 +2117,21 @@ PROVIDERS: dict[str, Provider] = {
             "mix is unverified, not a 100% renewable-energy commitment."
         ),
         provider_policy_url="https://greenference.com/legal/dpa",
+    ),
+    "amazon-bedrock": Provider(
+        slug="amazon-bedrock",
+        name="Amazon Bedrock",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Direct Amazon Bedrock Mantle inference through the US East (N. Virginia) "
+            "regional endpoint. Only exact-priced, account-tested standard-tier models "
+            "are enabled. No global or cross-region inference profiles are used. "
+            "These routes are Standard: no contracted ZDR or confidential-inference "
+            "guarantee is asserted. Model-specific data-retention terms apply."
+        ),
+        provider_policy_url="https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html",
+        provider_headquarters_country="US",
     ),
     "lyceum": Provider(
         slug="lyceum",
@@ -2167,7 +2274,7 @@ PROVIDERS: dict[str, Provider] = {
             provider_policy_url="https://decisionmodels.io/legal/privacy",
             provider_headquarters_country="DE",
         )
-        for slug, tier in (("system1models", "Global"), ("system1models-eu", "EU"))
+        for slug, tier in (("decisionmodelsio", "Global"), ("decisionmodelsio-eu", "EU"))
     },
     "typesafe": Provider(
         slug="typesafe",
@@ -2185,25 +2292,6 @@ PROVIDERS: dict[str, Provider] = {
             "ZDR, confidential-compute, or E2EE claim is tracked for this route."
         ),
         provider_policy_url="https://docs.typesafe.ai/legal",
-    ),
-    "vercel-ai-gateway": Provider(
-        slug="vercel-ai-gateway",
-        name="Vercel AI Gateway",
-        # Carried for ONE modality and ONE job: the automatic fallback for
-        # TypeSafe's Jev decision model when TypeSafe's own API is down or
-        # rate limiting. Chat models are deliberately not resold through a
-        # second gateway.
-        supports_chat=False,
-        supports_prepaid=True,
-        supports_byok=False,
-        provider_policy=(
-            "Fallback route for TypeSafe AI's Jev decision model, through "
-            "Vercel AI Gateway's /v1/evaluate endpoint. A request served here "
-            "transits two third parties (Vercel, then TypeSafe). No contractual "
-            "ZDR, confidential-compute, or E2EE claim is tracked for this route."
-        ),
-        provider_policy_url="https://vercel.com/docs/ai-gateway/modalities/evaluation",
-        provider_headquarters_country="US",
     ),
     "fal": Provider(
         slug="fal",
@@ -2342,16 +2430,19 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "fortanix",
         "byteplus",
         "abliterate",
-        "system1models",
-        "system1models-eu",
+        "abliteration",
+        "decisionmodelsio",
+        "decisionmodelsio-eu",
         "lyceum",
+        "amazon-bedrock",
         "greenference",
         "hixtube",
+        "muna",
+        "coralbricks",
         "boundless",
         "zro",
         "privatemode",
         "telluvian",
-        "vercel-ai-gateway",
         "typesafe",
         "regolo",
         "anthropic",
@@ -2430,6 +2521,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sail-research",
         "reka",
         "nextbit",
+        "nextbit-eu",
         "akashml",
         "mancer",
         "aion-labs",
@@ -2526,6 +2618,8 @@ E2E_MODEL_ID = "trustedrouter/e2e"
 
 CONFIDENTIAL_MODEL_ID = "trustedrouter/confidential"
 
+TRUSTED_MODEL_ID = "trustedrouter/trusted"
+
 # Upstream privacy floors enforced by routing aliases. Keep this as the single
 # source of truth for authorization, public catalog copy, and recommendation
 # surfaces. General-purpose aliases such as auto and cheap intentionally have
@@ -2533,6 +2627,7 @@ CONFIDENTIAL_MODEL_ID = "trustedrouter/confidential"
 ROUTING_MODEL_MIN_PRIVACY_TIERS: dict[str, int] = {
     ZDR_MODEL_ID: PRIVACY_TIER_ZERO_RETENTION,
     E2E_MODEL_ID: PRIVACY_TIER_CONFIDENTIAL,
+    TRUSTED_MODEL_ID: PRIVACY_TIER_TRUSTED,
 }
 
 MONITOR_MODEL_ID = "trustedrouter/monitor"
@@ -2839,6 +2934,7 @@ META_MODEL_IDS = frozenset(
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
         CONFIDENTIAL_MODEL_ID,
+        TRUSTED_MODEL_ID,
         MONITOR_MODEL_ID,
         ARCHIMEDES_1_0_MODEL_ID,
         SOCRATES_1_0_MODEL_ID,
@@ -2987,8 +3083,9 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 )
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
-    "system1models-eu",
+    "decisionmodelsio-eu",
     "mistral",
+    "nextbit-eu",
     "regolo",
     "google-vertex",
     "openai",
@@ -3470,13 +3567,10 @@ _DECISION_SPECS: tuple[_DecisionSpec, ...] = (
         # TypeSafe budgets 32k tokens for `state` plus the longest question.
         "context_length": 32000,
         "cost_dollars_per_million": "0.042",
-        "fallback_routes": (
-            {
-                "provider": "vercel-ai-gateway",
-                "upstream_id": "typesafe-ai/jev",
-                "cost_dollars_per_million": "0.042",
-            },
-        ),
+        # Vendor only. A Vercel AI Gateway relay was wired as the failover from
+        # 2026-09-21 to 2026-10-22 and served three requests, all a launch test;
+        # it sent `state` through a second third party for no measured benefit.
+        "fallback_routes": (),
     },
 )
 
@@ -3635,6 +3729,7 @@ _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
     "gmi": frozenset(
         {
             "deepseek/deepseek-v4-pro",
+            "minimax/minimax-m3.1-flash",
             "moonshotai/kimi-k3",
             "tencent/hy4-preview",
             "z-ai/glm-5",
@@ -3953,6 +4048,15 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "inception": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Inception Labs",
+        source_url="https://www.inceptionlabs.ai/docs/terms-of-use",
+        note=(
+            "Inception AI, Inc.'s terms list its address in Redwood City, California. "
+            "This describes the model developer, not inference residency."
+        ),
+    ),
     "elevenlabs": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="ElevenLabs",
@@ -4227,6 +4331,11 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- No single creator country ---
     "sao10k": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "Sao10K": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
+    "abliteration": ModelOrigin(
+        country=None, lab_name="Abliteration (API model namespace)",
+        source_url="https://docs.abliteration.ai/models",
+        note="Provider model names do not establish a single model-creator country.",
+    ),
     "abliterate": ModelOrigin(
         country=None,
         lab_name="Abliterate (API model namespace)",
@@ -4313,7 +4422,7 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
                 "does not establish the origin of the underlying weights."
             ),
         )
-        for slug in ("system1models", "system1models-eu")
+        for slug in ("decisionmodelsio", "decisionmodelsio-eu")
     },
 }
 

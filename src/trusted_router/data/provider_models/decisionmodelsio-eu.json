@@ -1,0 +1,310 @@
+{
+  "provider": "decisionmodelsio-eu",
+  "models": [
+    {
+      "display_name": "Decision Models s1-fast (EU)",
+      "title": "s1-fast",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-fast",
+      "upstream_id": "s1-fast",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Fast open typed-decision profile for text decisions; noul/choice/score answers with probabilities in milliseconds. An alias for the current Fast version (see model_version in every response and the S1-Model-Version header); pin s1-fast-1 or s1-fast-2 to stay on one version. Inputs the current version cannot take (several questions, very long input) are answered by s1-fast-1.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\":\"decisionmodelsio-eu/s1-fast\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio-eu/s1-fast\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 21000,
+      "output_token_price_per_m": 0,
+      "decision_contract_hold": null,
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null
+    },
+    {
+      "display_name": "Decision Models s1-pro (EU)",
+      "title": "s1-pro",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-pro",
+      "upstream_id": "s1-pro",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Larger open typed-decision profile for text decisions; noul/choice/score answers with probabilities. An alias for the current Pro version: since 12 October 2026 s1-pro-3, based on vLLM-SR d3 26B (Apache-2.0), served in FP8 (see model_version in every response and the S1-Model-Version header). Pin s1-pro-3, or s1-pro-2 (the previous version, Perplexity Decider v1.1, available until at least 11 November 2026), to stay on one version. Text only; up to 3 questions per request, at most 8,192 input tokens per question including the state.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\":\"decisionmodelsio-eu/s1-pro\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio-eu/s1-pro\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 0,
+      "decision_contract_hold": null,
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": "2026-11-12T00:00:00Z"
+    },
+    {
+      "display_name": "Decision Models s1-vision (EU)",
+      "title": "s1-vision",
+      "model_type": "decision",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-vision",
+      "upstream_id": "s1-vision",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Image + text typed-decision profile: one image plus state, noul/choice/score answers with probabilities. Requests that contain an image are billed at the image_requests rate. An alias for the current Vision version (see model_version in every response and the S1-Model-Version header); pin s1-vision-1 or s1-vision-2 to stay on one version.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming. This model is not currently routable through TrustedRouter: decision-image-pricing-unsupported.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
+      },
+      "routable": false,
+      "input_token_price_per_m": 32000,
+      "output_token_price_per_m": 0,
+      "decision_contract_hold": "decision-image-pricing-unsupported",
+      "decision_image_input_price_per_m": 228000,
+      "pricing_valid_until": null,
+      "routable_reason": "decision-image-pricing-unsupported",
+      "settlement_prices": {
+        "input_token_price_per_m": 40000,
+        "output_token_price_per_m": 0
+      }
+    },
+    {
+      "display_name": "Decision Models s1-llm-auto-router (EU)",
+      "title": "s1-llm-auto-router",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-llm-auto-router",
+      "upstream_id": "s1-llm-auto-router",
+      "context_length": 0,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Fixed-schema routing classifier for LLM auto-routers: answers category, difficulty, stakes and four routing flags for one request in a single CPU pass (~26 ms). Not a general typed-decision model.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming. This model is not currently routable through TrustedRouter: decision-fixed-questions-unsupported.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
+      },
+      "routable": false,
+      "routable_reason": "decision-fixed-questions-unsupported",
+      "input_token_price_per_m": 1000,
+      "output_token_price_per_m": 0,
+      "decision_contract_hold": "decision-fixed-questions-unsupported",
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null
+    },
+    {
+      "display_name": "Decision Models quyet-1-large (EU)",
+      "title": "quyet-1-large",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/quyet-1-large",
+      "upstream_id": "quyet-1-large",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Named open typed-decision model Quyet-1.0-Large (FP8); noul/choice/score answers with probabilities. Text only, exactly one question per request, at most 8,192 input tokens and 10 options per question. Billed at its own price, see prices.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming. This model is not currently routable through TrustedRouter: decision-model-namespace-unsupported.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
+      },
+      "decision_contract_hold": "decision-model-namespace-unsupported",
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null,
+      "routable": false,
+      "routable_reason": "decision-model-namespace-unsupported",
+      "input_token_price_per_m": 38000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Models s1-fast-2 (EU)",
+      "title": "s1-fast-2",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-fast-2",
+      "upstream_id": "s1-fast-2",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Current Fast version: a 26B-A4B open typed-decision model; noul/choice/score answers with probabilities. Text only, exactly one question per request, at most 8,192 input tokens and 26 options per question. Billed at the s1-fast price.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\":\"decisionmodelsio-eu/s1-fast-2\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio-eu/s1-fast-2\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
+      },
+      "decision_contract_hold": null,
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null,
+      "routable": true,
+      "input_token_price_per_m": 21000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Models s1-pro-2 (EU)",
+      "title": "s1-pro-2",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-pro-2",
+      "upstream_id": "s1-pro-2",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Current Pro version: a 27B open typed-decision model served in NVFP4; noul/choice/score answers with probabilities. Text only; up to 3 questions per request, each answered separately, with at most 8,192 input tokens per question including the state. Billed at the s1-pro price.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\":\"decisionmodelsio-eu/s1-pro-2\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio-eu/s1-pro-2\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
+      },
+      "decision_contract_hold": null,
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": "2026-11-12T00:00:00Z",
+      "routable": true,
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Models s1-vision-2 (EU)",
+      "title": "s1-vision-2",
+      "model_type": "decision",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-vision-2",
+      "upstream_id": "s1-vision-2",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Current Vision version: one image plus state, noul/choice/score answers with probabilities. Exactly one question per request, at most 8,192 input tokens and 26 options per question. Requests that contain an image are billed at the image_requests rate.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming. This model is not currently routable through TrustedRouter: decision-image-pricing-unsupported.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
+      },
+      "decision_contract_hold": "decision-image-pricing-unsupported",
+      "decision_image_input_price_per_m": 228000,
+      "pricing_valid_until": null,
+      "routable": false,
+      "routable_reason": "decision-image-pricing-unsupported",
+      "input_token_price_per_m": 32000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Models s1-pro-3 (EU)",
+      "title": "s1-pro-3",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/s1-pro-3",
+      "upstream_id": "s1-pro-3",
+      "context_length": 8192,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Current Pro version: vLLM-SR d3 26B, an open typed-decision model (Apache-2.0, by the vLLM Semantic Router project), served in FP8; noul/choice/score answers with probabilities. Text only; up to 3 questions per request, each answered separately, with at most 8,192 input tokens per question including the state. Billed at the s1-pro price.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\":\"decisionmodelsio-eu/s1-pro-3\",\"state\":\"Mia owns a red bicycle.\",\"questions\":{\"color\":{\"type\":\"choice\",\"instructions\":\"Which color is the bicycle?\",\"criteria\":{\"red\":null,\"blue\":null}}}}",
+        "example_output": "{\"model\":\"decisionmodelsio-eu/s1-pro-3\",\"answers\":{\"color\":{\"type\":\"choice\",\"choice\":\"red\",\"probabilities\":{\"red\":0.99,\"blue\":0.01}}}}"
+      },
+      "decision_contract_hold": null,
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null,
+      "routable": true,
+      "input_token_price_per_m": 84000,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://api.decisionmodels.io/v1/models",
+  "pricing_source": "https://api.decisionmodels.io/v1/models",
+  "generated_at": "2026-10-20T12:05:14Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 9,
+  "pricing_valid_until": "2026-11-12T00:00:00Z"
+}

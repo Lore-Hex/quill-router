@@ -155,9 +155,11 @@ PROVIDER_SLUGS = [
     "sail_research",
     "reka",
     "nextbit",
+    "nextbit_eu",
     "akashml",
     "mancer",
     "abliterate",
+    "abliteration",
     "aion_labs",
     "sambanova",
     "arcee",
@@ -167,8 +169,11 @@ PROVIDER_SLUGS = [
     "scaleway",
     "regolo",
     "lyceum",
+    "amazon_bedrock",
     "greenference",
     "hixtube",
+    "muna",
+    "coralbricks",
     "boundless",
     "zro",
     "byteplus",
@@ -191,8 +196,6 @@ PROVIDER_SLUGS = [
     # manifests that the runtime embedding catalog reads directly.
     "cohere",
     "voyage",
-    # Input-only decision model read from Vercel's public model list.
-    "vercel_ai_gateway",
     # The same decision model at its vendor, read from TypeSafe's models page.
     "typesafe",
     "system1models",
@@ -202,7 +205,10 @@ PROVIDER_SLUGS = [
 # Product adapters own independent availability and prices. Aliases here map
 # Python module names to public provider identities, never across products.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
-    "system1models_eu": ("system1models-eu",),
+    "amazon_bedrock": ("amazon-bedrock",),
+    "nextbit_eu": ("nextbit-eu",),
+    "system1models": ("decisionmodelsio",),
+    "system1models_eu": ("decisionmodelsio-eu",),
     "confidential_ai": ("confidential-ai",),
     "gemini": ("google-ai-studio",),
     "google_vertex": ("google-vertex",),
@@ -212,7 +218,6 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "nvidia_nim": ("nvidia-nim",),
     "sail_research": ("sail-research",),
     "aion_labs": ("aion-labs",),
-    "vercel_ai_gateway": ("vercel-ai-gateway",),
     "io_net": ("io-net",),
     "tencent": ("tencent",),
     "near_ai": ("near-ai",),

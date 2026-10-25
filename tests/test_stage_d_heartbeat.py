@@ -141,7 +141,6 @@ def _seed(
             idempotency_scope=None,
             idempotency_fingerprint=None,
             expires_at=NOW + timedelta(seconds=30),
-            created_at=NOW,
         )
         insert_gateway_authorization(
             transaction,

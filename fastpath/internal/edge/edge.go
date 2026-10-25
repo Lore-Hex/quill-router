@@ -12,6 +12,29 @@
 // the path and the exact body. Python's further questions, whether the
 // body names the key the signature is bound to and whether the boot's
 // image digest is accepted, are Python's until the edge decides (E2).
+//
+// With a routing snapshot configured (SnapshotConfig, E2), the edge also
+// polls Python's signed routing snapshot and keeps the last good copy, and
+// with the shadow on it evaluates each authorize it passes on against that
+// copy, off the request path, and counts how Go's answer compares with
+// Python's (shadow.go). Python still decides, and its answer still reaches
+// the enclave byte for byte.
+//
+// With an edge policy configured (PolicyConfig, E2 G8), the edge also polls
+// Python's signed edge policy, the live settings it would gate on, and
+// keeps the newest copy until its not_after (policy.go).
+//
+// With the decide shadow on (DecideShadowConfig, E2 G10), the edge runs its
+// decide pipeline (decide.go) over each authorize it passes on, off the
+// request path, and compares what it would have answered with Python's
+// answer and, sampled, Python's rows (shadow_full.go). Python still
+// decides, and its answer still reaches the enclave byte for byte.
+//
+// With the decide path on (DecideConfig, E2 G11, -edge-decide), the edge
+// answers an authorize in the cohort itself: it admits it through the
+// node's front door, inserts its two rows and writes the 200, or Python's
+// 503 when the insert's outcome is not known; every other request still
+// passes to Python unchanged (decide_path.go).
 package edge
 
 import (
@@ -24,6 +47,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -92,12 +116,16 @@ const (
 	Unchecked Verdict = "unchecked"
 )
 
-// Boot is a registered enclave boot: its key id, its Ed25519 public key and
-// whether its registration was verified.
+// Boot is a registered enclave boot: its key id, its Ed25519 public key,
+// whether its registration was verified, and what the decide pipeline gates
+// on besides (decision 8 and §6 of docs/design/fast-admission-e2-decide.md):
+// the image digest it attested and whether it declared usage heartbeats.
 type Boot struct {
-	Kid       string
-	PublicKey ed25519.PublicKey
-	Verified  bool
+	Kid                    string
+	PublicKey              ed25519.PublicKey
+	Verified               bool
+	ImageDigest            string
+	DeclaresUsageHeartbeat bool
 }
 
 // Boots reads a boot by its key id: the boot and true, or false for none.
@@ -117,6 +145,35 @@ type Config struct {
 	BootWait  time.Duration
 	Clock     func() time.Time
 	Transport http.RoundTripper
+	// Serving is the node's state for the balancer's health check; nil
+	// means serving.
+	Serving func() bool
+	// Snapshot is the routing snapshot's poll and the shadow comparator;
+	// its URL nil runs neither.
+	Snapshot SnapshotConfig
+	// Policy is the edge policy's poll (policy.go); its URL nil polls
+	// nothing and the policy is always absent.
+	Policy PolicyConfig
+	// ShadowEvery is how often the comparator logs its counts (a minute
+	// when 0); Logf is where the poll and the comparator log (log.Printf
+	// when nil). Both log metadata alone.
+	ShadowEvery time.Duration
+	Logf        func(format string, args ...any)
+	// Admitter holds the node's front door once its admission node has
+	// made it (admit.go); nil, or unbound, is none, and the decide path
+	// passes everything (owner.unreachable).
+	Admitter *LateAdmitter
+	// DecideShadow, when set, runs the full-response shadow
+	// (shadow_full.go, -edge-decide-shadow): the decide pipeline over each
+	// authorize the edge passes on, compared with Python's answer and,
+	// sampled, its rows. It needs the snapshot and the policy configured.
+	// Nil runs none: no cache, no reads, no goroutines.
+	DecideShadow *DecideShadowConfig
+	// Decide, when set, runs the decide path (decide_path.go,
+	// -edge-decide): the edge admits, inserts and answers the authorizes it
+	// decides. It needs the snapshot and the policy configured. Nil answers
+	// nothing: every request passes to Python.
+	Decide *DecideConfig
 }
 
 // Edge serves the enclave's control-plane paths.
@@ -125,6 +182,16 @@ type Edge struct {
 	proxy *httputil.ReverseProxy
 	mu    sync.Mutex
 	boots map[string]cachedBoot
+	// poller and shadow are nil unless the snapshot is configured, and the
+	// shadow unless it is on.
+	poller *poller
+	shadow *shadow
+	// policy is nil unless the edge policy is configured.
+	policy *policyPoller
+	// full is nil unless the decide shadow is on, and decider unless the
+	// decide path is.
+	full    *fullShadow
+	decider *decider
 }
 
 type cachedBoot struct {
@@ -164,7 +231,50 @@ func New(cfg Config) (*Edge, error) {
 			IdleConnTimeout:     90 * time.Second,
 		}
 	}
+	if cfg.Logf == nil {
+		cfg.Logf = log.Printf
+	}
 	e := &Edge{cfg: cfg, boots: map[string]cachedBoot{}}
+	if cfg.Snapshot.URL != nil {
+		p, err := newPoller(cfg.Snapshot, cfg.Upstream, cfg.Token, cfg.Transport, cfg.Clock, cfg.Logf)
+		if err != nil {
+			return nil, err
+		}
+		e.poller = p
+		if cfg.Snapshot.Shadow {
+			e.shadow = newShadow(cfg.Logf, cfg.Clock, cfg.ShadowEvery)
+		}
+	} else if cfg.Snapshot.Shadow {
+		return nil, errors.New("edge: the shadow compares against a routing snapshot, which needs its URL")
+	}
+	if cfg.Policy.URL != nil {
+		p, err := newPolicyPoller(cfg.Policy, cfg.Upstream, cfg.Token, cfg.Transport, cfg.Clock, cfg.Logf)
+		if err != nil {
+			return nil, err
+		}
+		e.policy = p
+	}
+	if cfg.DecideShadow != nil {
+		if cfg.Snapshot.URL == nil || cfg.Policy.URL == nil {
+			return nil, errors.New("edge: the decide shadow decides from a routing snapshot and an edge policy, " +
+				"which need their URLs")
+		}
+		full, err := newFullShadow(*cfg.DecideShadow, cfg.Logf, cfg.Clock, cfg.ShadowEvery)
+		if err != nil {
+			return nil, err
+		}
+		e.full = full
+	}
+	if d := cfg.Decide; d != nil {
+		if cfg.Snapshot.URL == nil || cfg.Policy.URL == nil {
+			return nil, errors.New("edge: the decide path decides from a routing snapshot and an edge policy, " +
+				"which need their URLs")
+		}
+		if d.Cache == nil || d.Decides == nil || d.Rows == nil {
+			return nil, errors.New("edge: the decide path needs its cache, the decide table and the rows")
+		}
+		e.decider = newDecider(*d, cfg.Logf, cfg.Clock, cfg.ShadowEvery)
+	}
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""
 	e.proxy = &httputil.ReverseProxy{
@@ -186,12 +296,35 @@ func New(cfg Config) (*Edge, error) {
 				r.Out.Header.Set(VerdictHeader, string(v))
 			}
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+			if p, ok := r.Context().Value(decidePassedKey{}).(decidePassed); ok {
+				e.decider.answeredUpstream(p)
+			}
+			if call, ok := r.Context().Value(shadowKey{}).(*shadowCall); ok {
+				e.shadow.submit(comparison{call: call, passed: "python was not reached"})
+			}
+			if job, ok := r.Context().Value(fullKey{}).(*fullJob); ok {
+				job.deliver(pyAnswer{why: "not_reached"})
+			}
 			answer(w, http.StatusBadGateway, "The control plane was not reached; retry", "bad_gateway")
 		},
 		// A redirect Python builds names the upstream, which the caller
 		// cannot reach: it is given back under the authority the caller used.
 		ModifyResponse: func(resp *http.Response) error {
+			if resp.Request != nil {
+				if p, ok := resp.Request.Context().Value(decidePassedKey{}).(decidePassed); ok {
+					e.decider.answeredUpstream(p)
+					e.decider.evict(resp, p)
+				}
+				// The comparator reads a copy of the bytes as they pass;
+				// the status, the headers and the bytes are Python's.
+				if call, ok := resp.Request.Context().Value(shadowKey{}).(*shadowCall); ok {
+					e.shadow.tapResponse(resp, call)
+				}
+				if job, ok := resp.Request.Context().Value(fullKey{}).(*fullJob); ok {
+					e.full.tapFull(resp, job)
+				}
+			}
 			location := resp.Header.Get("Location")
 			if location == "" || resp.Request == nil {
 				return nil
@@ -238,11 +371,22 @@ func answer(w http.ResponseWriter, code int, message, kind string) {
 	_, _ = w.Write(body)
 }
 
-// ServeHTTP passes the request to Python with the edge's verdict in
-// VerdictHeader. A request without the internal token is passed as it is,
+// ServeHTTP answers the balancer's health check from the node's state and
+// passes other requests to Python with the edge's verdict in VerdictHeader.
+// A request without the internal token is passed as it is,
 // for Python's own 401, and reads nothing here. The enclave's requests
 // are JSON bodies with no trailers; the edge carries none.
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/internal/gateway/edge/health" {
+		code, body := http.StatusOK, `{"status":"serving"}`
+		if e.cfg.Serving != nil && !e.cfg.Serving() {
+			code, body = http.StatusServiceUnavailable, `{"status":"leaving"}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = io.WriteString(w, body)
+		return
+	}
 	if r.Host == "" {
 		// Every caller names a host (the load balancer's); a redirect for
 		// one that did not has no form that keeps its authority.
@@ -254,11 +398,26 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.proxy.ServeHTTP(w, r)
 		return
 	}
+	// An authorize to compare, when the shadow is on and a snapshot held;
+	// the decide shadow's and the decide path's one clock reading for it
+	// (decision 15), and its arrival for the decide path's budgets.
+	call := e.begin(r)
+	var at time.Time
+	arrived := time.Now()
+	if e.full != nil || e.decider != nil {
+		at = e.cfg.Clock()
+	}
 	headers := r.Header.Values(BootHeader)
 	// A boot header the request names as hop-by-hop (`Connection:
 	// X-TR-Boot-Auth`) is dropped by the proxy: Python sees none.
 	if len(headers) == 0 || listedAsHopByHop(r.Header, BootHeader) {
-		e.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent)))
+		e.passedUnread(r, BootSeen{Verdict: Absent})
+		out := r.WithContext(context.WithValue(r.Context(), verdictKey{}, Absent))
+		if call != nil {
+			out = e.shadow.attach(call, out, Absent, nil)
+		}
+		out = e.beginFull(out, at, nil, BootSeen{Verdict: Absent})
+		e.proxy.ServeHTTP(w, out)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
@@ -269,8 +428,13 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(body) > maxBody {
 		// The rest streams after what was read; the length declared stays
 		// declared, since the body is the same.
+		e.passedUnread(r, BootSeen{Verdict: Unchecked})
 		out := r.Clone(context.WithValue(r.Context(), verdictKey{}, Unchecked))
 		out.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+		if call != nil {
+			e.shadow.submit(comparison{call: call, passed: "the request body is over the comparator's bound"})
+		}
+		out = e.beginFull(out, at, nil, BootSeen{Verdict: Unchecked})
 		e.proxy.ServeHTTP(w, out)
 		return
 	}
@@ -280,14 +444,59 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/"
 	}
-	verdict := Unchecked
+	seen := BootSeen{Verdict: Unchecked}
 	if printableASCII(path) {
-		verdict = e.verdict(r.Context(), headers, r.Method, path, body)
+		seen = e.verdictOf(r.Context(), headers, r.Method, path, body)
 	}
-	out := r.Clone(context.WithValue(r.Context(), verdictKey{}, verdict))
+	verdict := seen.Verdict
+	ctx := context.WithValue(r.Context(), verdictKey{}, verdict)
+	if e.decider != nil && r.Method == http.MethodPost && authorizeRoutes[r.URL.Path] {
+		answered, passed := e.decide(w, r, at, arrived, body, seen)
+		if answered {
+			return
+		}
+		ctx = context.WithValue(ctx, decidePassedKey{}, passed)
+	}
+	out := r.Clone(ctx)
 	out.Body = io.NopCloser(bytes.NewReader(body))
 	out.ContentLength = int64(len(body))
+	if call != nil {
+		out = e.shadow.attach(call, out, verdict, body)
+	}
+	out = e.beginFull(out, at, body, seen)
 	e.proxy.ServeHTTP(w, out)
+}
+
+// Run polls the routing snapshot and the edge policy and runs the shadow
+// comparator, the decide shadow and the decide path (their decide copies
+// and counts), each on its own goroutine, until ctx ends; with none
+// configured it returns at once. ServeHTTP never waits for any.
+func (e *Edge) Run(ctx context.Context) {
+	var runs []func(context.Context)
+	if e.poller != nil {
+		runs = append(runs, e.poller.run)
+	}
+	if e.shadow != nil {
+		runs = append(runs, e.shadow.run)
+	}
+	if e.policy != nil {
+		runs = append(runs, e.policy.run)
+	}
+	if e.full != nil {
+		runs = append(runs, e.full.run)
+	}
+	if e.decider != nil {
+		runs = append(runs, e.decider.run)
+	}
+	var wg sync.WaitGroup
+	for _, run := range runs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			run(ctx)
+		}()
+	}
+	wg.Wait()
 }
 
 // listedAsHopByHop: the Connection header names the header, so the proxy
@@ -364,24 +573,34 @@ func forPython(h http.Header, name string) string {
 
 // verdict checks a boot header against the request it signs.
 func (e *Edge) verdict(ctx context.Context, headers []string, method, path string, body []byte) Verdict {
+	return e.verdictOf(ctx, headers, method, path, body).Verdict
+}
+
+// verdictOf is verdict with the boot it read: the decide pipeline tells an
+// Invalid verdict's causes apart (boot.signature, boot.missing,
+// boot.unverified) and gates on the boot's digest and heartbeat
+// declaration, without a read of its own.
+func (e *Edge) verdictOf(ctx context.Context, headers []string, method, path string, body []byte) BootSeen {
 	if len(headers) != 1 {
-		return Invalid
+		return BootSeen{Verdict: Invalid}
 	}
 	kid, sig, ok := ParseBootHeader(headers[0])
 	if !ok {
-		return Invalid
+		return BootSeen{Verdict: Invalid}
 	}
 	boot, found, err := e.boot(ctx, kid)
 	if err != nil {
-		return Unread
+		return BootSeen{Verdict: Unread, Kid: kid}
 	}
+	seen := BootSeen{Verdict: Invalid, Kid: kid, Found: found, Boot: boot}
 	if !found || !boot.Verified || boot.Kid != kid || len(boot.PublicKey) != ed25519.PublicKeySize {
-		return Invalid
+		return seen
 	}
 	if !ed25519.Verify(boot.PublicKey, Digest(method, path, body), sig) {
-		return Invalid
+		return seen
 	}
-	return Verified
+	seen.Verdict = Verified
+	return seen
 }
 
 // boot reads a boot, from the cache within its TTL, else from the reader

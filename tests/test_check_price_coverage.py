@@ -66,6 +66,7 @@ def _as_listed(
 
 _NEW_AUTOMATIC_FEED_MODELS = {
     "meta/muse-spark-1.3",
+    "abliteration/abliterated-model",
     "abliterate/abliterate-0.3-fast",
     "aion-labs/aion-3.0",
     "arcee-ai/trinity-large-thinking",
@@ -83,9 +84,9 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "z-ai/glm-5.2",
     "sakana-ai/fugu-ultra-v1.1",
     "sakana-ai/sakana-namazu-v1.0",
-    "system1models/s1-fast",
-    "system1models-eu/s1-fast",
     "qwen/qwen3-0.6b",
+    "decisionmodelsio/s1-fast",
+    "decisionmodelsio-eu/s1-fast",
 }
 _NEW_AUTOMATIC_FEED_ALIASES = {
     "deepseek-v4-flash",
@@ -99,6 +100,10 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.abliteration.ai" in url:
+        return {"data": [{"id": "abliterated-model"}]}
+    if "bedrock-mantle.us-east-1.api.aws" in url:
+        return {"data": [{"id": "openai.gpt-oss-120b", "status": "available"}]}
     if "api.meta.ai" in url:
         return {"data": [{"id": "muse-spark-1.3"}, {"id": "muse-spark-1.3-contributor"}]}
     if "ark.ap-southeast.bytepluses.com" in url:
@@ -113,6 +118,10 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "greenference/glm-5.3-flash"}]}
     if "api.hixtube.com" in url:
         return {"data": [{"id": "qwen/qwen3-0.6b"}]}
+    if "inference.muna.ai" in url:
+        return {"data": [{"id": "qwen/qwen-3.8-27b"}, {"id": "google/gemma-4-26b-a4b-it"}]}
+    if "inference.coralbricks.ai" in url:
+        return {"data": [{"id": "deepseek-v4.1-flash-fast"}]}
     if "api.inference.boundless.network" in url or "zro.moonmath.ai" in url:
         return {"data": [{"id": "glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:
@@ -171,6 +180,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "zai-org/GLM-5.2-FP8"}]}
     if "api.reka.ai" in url:
         return {"data": [{"id": "reka-edge-2603"}]}
+    if "eu.api.nextbit256.com" in url:
+        return {"data": [{"id": "gemma4:26b-a4b", "datacenters": [{"country_code": "ES"}]}]}
     if "api.nextbit256.com" in url:
         return {"data": [{"id": "deepseek:v4-flash-0731"}]}
     if "api.akashml.com" in url:
@@ -246,6 +257,8 @@ def test_elevenlabs_coverage_requires_the_hourly_speech_refresher(
     import trusted_router.catalog as catalog
 
     monkeypatch.setattr(catalog, "GATEWAY_PREPAID_PROVIDER_SLUGS", {"elevenlabs"})
+    monkeypatch.setattr(check_price_coverage, "_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS", set())
+    monkeypatch.setattr(check_price_coverage, "EXPIRING_PROVIDER_MANIFEST_SLUGS", set())
     if not refresher_present:
         monkeypatch.setattr(
             check_price_coverage, "_DEDICATED_LIVE_SCRAPERS",
@@ -1458,7 +1471,7 @@ def test_wandb_flash_ci_discovery_replay_has_no_publication_blocker(
     assert "wandb: model discovery matched catalog (1 id(s)) ✓" in info
 
 
-def test_regolo_discovery_uses_model_groups_and_excludes_nonchat_and_nested_routers(
+def test_regolo_discovery_includes_clef_and_excludes_unsupported_and_nested_routers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = next(
@@ -1472,10 +1485,12 @@ def test_regolo_discovery_uses_model_groups_and_excludes_nonchat_and_nested_rout
         fetch_text=lambda _url: "Supported Models: GLM-5.2",
         fetch_json=lambda _url, _env_names: {"data": [
             {"model_group": "glm5.2", "mode": "chat"},
+            {"model_group": "clef-flash", "mode": "decision"},
+            {"model_group": "unknown-decision", "mode": "decision"},
             {"model_group": "brick-fast", "mode": "chat"},
             {"model_group": "embedding-new", "mode": "embedding"},
         ]},
         published_model_ids=set(),
     )
     assert not any(warning.startswith("regolo:") for warning in warnings), warnings
-    assert "regolo: model discovery matched catalog (1 id(s)) ✓" in info
+    assert "regolo: model discovery matched catalog (2 id(s)) ✓" in info

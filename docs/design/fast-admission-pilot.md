@@ -138,12 +138,15 @@ deploy; the fast path's switch changes at once.
   `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0,
   CREDITS the sum of the workspace's `total_credits` at the time. It counts
   the workspace's synchronous holds in flight beside its leases' (#1821,
-  running from 2026-10-17 05:10Z). On `tr-fastpath-1`,
+  running from 2026-10-17 05:10Z). On `tr-fastpath-7` (on `tr-fastpath-1`
+  until that node was retired on 2026-10-20, then on `tr-fastpath-3` and
+  `tr-fastpath-5` until each was retired in turn),
   `/var/tmp/pilot-audit-hourly.sh` runs it for each workspace in the set
   every hour, logs to `/var/tmp/pilot-audit.log`, and writes an alert of
   kind `other` on any problem, which **TR Fast path: other** notifies; a
   funding it cannot read is logged and waits for the next hour. Like the
-  watches, it does not survive the node's reset: it is restarted after.
+  watches, it does not survive the node's reset or replacement: it is
+  started again on the node that carries it.
 - The counter reconciler's combined identity on the workspace
   (`storage_gcp_counter_reconcile.py`): reservations and bookings of the
   leases with the synchronous holds.

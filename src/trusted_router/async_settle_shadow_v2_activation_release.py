@@ -16,12 +16,45 @@ MONEY_OFF = dict(TR_ASYNC_SETTLE_ENABLED='false', TR_ASYNC_SETTLE_PROTECTION='fa
                  TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED='false')
 
 
-def pins(plan: Plan, phase: str) -> dict[str, dict[str, str]]:
+# Mirrors trusted_router.config.SHADOW_CANARY_MAX_SECONDS (v2 modules do not
+# import config; a test pins the two equal). The router treats a farther
+# expiry as expired, so the tool refuses to write one.
+CANARY_MAX_SECONDS = 48 * 3600
+
+
+def canary_expiry(expires_at: str, now: float | None = None) -> str:
+    """Opt-in requires a future UTC expiry the router will accept.
+
+    Deployed routers treat pins without a valid expiry as expired, so an
+    opt-in without one would be a silent no-op.
+    """
+    import time
+    from datetime import datetime
+
+    if not expires_at:
+        raise ValueError('shadow canary expiry required for opt-in')
+    if not expires_at.endswith('Z'):
+        raise ValueError('shadow canary expiry must be a UTC instant ending in Z')
+    try:
+        expiry = datetime.fromisoformat(expires_at[:-1] + '+00:00').timestamp()
+    except ValueError as error:
+        raise ValueError('shadow canary expiry must be an ISO-8601 instant') from error
+    current = time.time() if now is None else now
+    if expiry <= current:
+        raise ValueError('shadow canary expiry already passed')
+    if expiry - current > CANARY_MAX_SECONDS:
+        raise ValueError('shadow canary expiry exceeds the canary maximum')
+    return expires_at
+
+
+def pins(plan: Plan, phase: str, *, expires_at: str = '') -> dict[str, dict[str, str]]:
     if phase not in ('shadow-opt-in', 'shadow-opt-out'):
         raise ValueError('release phase required')
     active = phase == 'shadow-opt-in'
     return dict(router={**MONEY_OFF,
         'TR_ASYNC_SETTLE_SHADOW_POLICY': 'shadow-v2' if active else '',
+        # The canary's runtime stop; opt-out clears it with the other pins.
+        'TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT': canary_expiry(expires_at) if active else '',
         'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': plan.workspace if active else '',
         'TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION': plan.schedule.primary if active else '',
         # Keep the export destination through close/export/retention on opt-out.
@@ -48,8 +81,8 @@ def patch(original: str, path: str, desired: dict[str, str]) -> str:
 
 
 def prepare(plan: Plan, phase: str, router_root: Path, enclave_root: Path | None,
-            out: Path) -> dict[str, Any]:
-    desired = pins(plan, phase)
+            out: Path, *, expires_at: str = '') -> dict[str, Any]:
+    desired = pins(plan, phase, expires_at=expires_at)
     missing = []
     for role, root in (('router', router_root), ('enclave', enclave_root)):
         release = getattr(plan.releases, role)

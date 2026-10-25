@@ -172,6 +172,11 @@ def test_settings_and_create_store_pass_iam_configuration(
         # the operational-analytics outbox stays off unless a deployment turns
             # it on, exactly like the Spanner path.
             "operational_analytics_outbox_enabled": False,
+            "record_read_backend": "postgres",
+            "operational_analytics_clickhouse_url": "",
+            "operational_analytics_clickhouse_user": "tr_control_read",
+            "operational_analytics_clickhouse_password": "",
+            "operational_analytics_clickhouse_database": "tr",
             "max_workspaces_per_owner": 25,
             "trust_qualifying_providers": frozenset({"stripe", "x402"}),
             "trust_tier3_min_days": 30,

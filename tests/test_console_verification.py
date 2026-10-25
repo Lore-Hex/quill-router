@@ -211,10 +211,6 @@ def test_verification_copy_describes_independent_checks() -> None:
     assert "available without a verified phone once email and funding requirements are met" in public
     assert "other regions require identity verification first" in public
     assert 'class="pill">in order' not in public
-    client, _, _ = _console()
-    credits = client.get("/console/credits?purpose=identity_verification").text
-    assert "US, Canadian, and most European numbers; other regions require identity verification first" in credits
-    assert "Identity verification does not require a verified phone" in credits
     docs = (root / "docs/sign-in-with-trustedrouter.md").read_text()
     assert "identity does not imply a verified phone" in docs
     assert "other regions require identity verification first" in docs
@@ -252,7 +248,6 @@ def test_round3_regional_copy_and_links() -> None:
     root = Path(__file__).resolve().parents[1]
     paths = [
         "src/trusted_router/templates/console/settings.html",
-        "src/trusted_router/templates/console/credits.html",
         "src/trusted_router/templates/console/account/verification.html",
         "src/trusted_router/templates/public/user_models_docs.html",
         "src/trusted_router/templates/public/notify.html",

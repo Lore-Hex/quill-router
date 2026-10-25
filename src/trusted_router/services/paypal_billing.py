@@ -24,11 +24,11 @@ from trusted_router.money import (
     money_pair,
 )
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.checkout_fees import rail_processing_fee
 from trusted_router.services.stripe_fees import (
     CREDITS_LINE_ITEM_NAME,
     PROCESSING_FEE_LINE_ITEM_NAME,
     ProcessingFee,
-    stripe_processing_fee,
 )
 from trusted_router.storage import STORE
 from trusted_router.storage_models import CreditProvenance
@@ -81,12 +81,8 @@ def create_paypal_checkout_session(
 ) -> dict[str, Any]:
     credit_amount_cents = dollars_to_cents(body.amount)
     amount_microdollars = dollars_to_microdollars(body.amount)
-    fee = stripe_processing_fee(
-        credit_amount_cents=credit_amount_cents,
-        variable_basis_points=settings.stripe_card_fee_basis_points,
-        fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
-        minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
-    )
+    # PayPal purchases are priced on the card schedule.
+    fee = rail_processing_fee(settings, "card", credit_amount_cents)
     workspace = STORE.get_workspace(workspace_id)
     if workspace is None:
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)

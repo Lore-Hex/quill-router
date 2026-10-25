@@ -1,6 +1,6 @@
 # TrustedRouter homepage
 
-The marketing homepage ported into the application, served at `/` when `TR_HOMEPAGE_LANDSCAPE_ENABLED=true`. The setting defaults to false; `scripts/deploy/rollout.sh` enables it for production. Alternate brands keep the legacy page. The reference design lives in the marketing handoff (`SPEC.md`, `DECISIONS.md`, competitor research) and is not a second implementation.
+The marketing homepage ported into the application, served at `/` for every brand (TrustedRouter, UptimeRouter, AllyRouter). It went live behind a rollout setting on 2026-10-03; the setting and the previous homepage (`templates/dashboard.html`) were removed on 2026-10-18 once the conversion analysis showed no lasting difference, so there is one homepage and nothing to switch on. The reference design lives in the marketing handoff (`SPEC.md`, `DECISIONS.md`, competitor research) and is not a second implementation.
 
 ## Where things live
 
@@ -13,7 +13,7 @@ The marketing homepage ported into the application, served at `/` when `TR_HOMEP
 | `src/trusted_router/static/homepage/components.css` | Primary/secondary buttons and `.action-link`. |
 | `src/trusted_router/static/homepage/homepage.js`, `status.js` | Catalog filters, model search dialog, migration tabs, copy buttons, disclosures, tooltips, analytics events; live status dot. `dashboard.js` (shared) handles sign-in and returning-user chrome. |
 | `src/trusted_router/homepage.py` | Template context: live catalog rows and prices from the model directory, pricing comparison, asset digest for cache busting. |
-| `src/trusted_router/dashboard.py` | Chooses the template by flag and brand, sets the social image. |
+| `src/trusted_router/dashboard.py` | `dashboard_html` renders the homepage for the requested brand and sets the social image. |
 | `src/trusted_router/routes/acquisition.py` | Allowlist of `home.*` analytics event names. |
 | `docs/homepage/social-card.html` | Source of `static/homepage/social-card-v1.jpg` (1200×630). |
 | `docs/homepage/evidence/2026-09-30-gateway/` | Gateway attestation capture behind the request module. |
@@ -37,7 +37,6 @@ Static files are loaded into memory at process start, so restart the server afte
 
 ```bash
 TR_ENVIRONMENT=local TR_STORAGE_BACKEND=memory TR_RATE_LIMIT_ENABLED=false \
-TR_HOMEPAGE_LANDSCAPE_ENABLED=true \
 TR_GOOGLE_CLIENT_ID=preview-only TR_GOOGLE_CLIENT_SECRET=not-a-real-secret \
 TR_GITHUB_CLIENT_ID=preview-only TR_GITHUB_CLIENT_SECRET=not-a-real-secret \
 uvicorn trusted_router.main:app --app-dir src --host 127.0.0.1 --port 3001
@@ -50,7 +49,7 @@ Dummy OAuth IDs are required to render all three sign-in options; without them t
 ```bash
 uv run pytest tests/test_homepage_landscape.py tests/test_homepage_analytics.py tests/test_public_surface_deploy.py
 node --test tests/js/homepage_*.test.cjs
-npx playwright test --config playwright.homepage.config.js
+npx playwright test tests/browser/homepage.spec.js
 ```
 
 QA rule: compare against main under equivalent configuration (providers enabled, same cookies). A dialog opening is not proof that sign-in works.

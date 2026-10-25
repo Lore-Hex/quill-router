@@ -156,6 +156,10 @@ def install(operator: Operator) -> None:
 
 
 def main() -> None:
+    raise SystemExit("LightningRouter was retired on 2026-10-22. Alert provisioning is disabled.")
+
+
+def _historical_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", required=True)
     parser.add_argument("--apply", action="store_true")

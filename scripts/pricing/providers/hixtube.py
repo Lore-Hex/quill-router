@@ -32,6 +32,11 @@ def canonical_model_id(native_id: str) -> str:
 
 
 def discover(payload: object) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
+    if not isinstance(payload, dict) or payload.get("contract_version") != "2.0":
+        raise RuntimeError("hixtube: Catalog v2 contract is required")
+    provider = payload.get("provider")
+    if not isinstance(provider, dict) or provider.get("id") != SLUG:
+        raise RuntimeError("hixtube: provider.id must be hixtube")
     prices, rows = discover_provider_contract_catalog(payload, upstream_id_map={})
     if not prices or (errors := validate(prices, [])):
         raise RuntimeError("hixtube: no active priced chat models" if not prices else "; ".join(errors))
@@ -101,9 +106,13 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     # A refresh must never stretch a 24h pilot into the normal stale-price window.
     with tempfile.TemporaryDirectory(dir=MANIFEST_PATH.parent, prefix=".hixtube-") as directory:
         candidate = Path(directory) / MANIFEST_PATH.name
+        curated_ids: set[str] = set()
         if MANIFEST_PATH.exists():
             previous = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
             for row in previous["models"]:
+                if row.get("routable") is False and row.get("routable_reason") is None:
+                    curated_ids.add(row["id"])
+                    row.pop("routable_reason", None)
                 # Only our retirement marker can recover this way. Fresh
                 # discovery already validated the cutoff, price and canary.
                 if (row.get("routable_reason") == "pilot-retired"
@@ -118,10 +127,12 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
                 if row.get("routable_reason") == "provider-canary-failed"
             },
         )
-        # A catalog mass-prune guard must not override a direct failed probe.
+        # Keep the shared writer's reasonless curated holds untouched while
+        # ensuring a mass-prune guard cannot override a direct failed probe.
+        checked = _DISCOVERED_ROWS.keys() - curated_ids
         set_manifest_model_canary_states(
-            candidate, checked_model_ids=_DISCOVERED_ROWS,
-            healthy_model_ids={model_id for model_id, row in _DISCOVERED_ROWS.items() if row.get("routable") is True},
+            candidate, checked_model_ids=checked,
+            healthy_model_ids={model_id for model_id in checked if _DISCOVERED_ROWS[model_id].get("routable") is True},
         )
         raw = json.loads(candidate.read_text(encoding="utf-8"))
         now = datetime.now(UTC)

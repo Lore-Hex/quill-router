@@ -68,13 +68,19 @@ async def test_revocation_after_admission_and_during_io(monkeypatch):
     svc.loop = asyncio.get_running_loop()
     svc.store.wall, svc.store.clock = lambda: NOW_US/1e6, lambda: 100.
     svc.tick(NOW_US, publisher=True)
+    # An incumbent has no post-admission wait; follower revocation is tested separately.
+    svc.incumbent_slot = NOW_US//m.SLOT_US-1
     released, continue_claim, inside, finish = asyncio.Event(), threading.Event(), asyncio.Event(), threading.Event()
     lock = svc.admission_lock
     class Gate:
         def __enter__(self):
             return lock.__enter__()
         def __exit__(self, *args):
-            lock.__exit__(*args)
+            self.release()
+        def acquire(self, *, timeout):
+            return lock.acquire(timeout=timeout)
+        def release(self):
+            lock.release()
             if threading.get_ident() != svc.owner_thread:
                 svc.loop.call_soon_threadsafe(released.set)
                 assert continue_claim.wait(5), "post-admission gate not released"
@@ -136,10 +142,14 @@ async def test_admission_samples_inside_lock(monkeypatch):
     entered, release = asyncio.Event(), threading.Event()
     class Gate:
         def __enter__(self):
+            return lock.__enter__()
+        def acquire(self, *, timeout):
             if threading.get_ident() != svc.owner_thread:
                 svc.loop.call_soon_threadsafe(entered.set)
                 assert release.wait(5)
-            return lock.__enter__()
+            return lock.acquire(timeout=timeout)
+        def release(self):
+            lock.release()
         def __exit__(self, *args):
             return lock.__exit__(*args)
     svc.admission_lock = Gate()

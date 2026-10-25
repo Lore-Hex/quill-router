@@ -13,12 +13,7 @@ from tests.route_inventory import route_methods
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
-from trusted_router.og import (
-    OG_DESCRIPTION,
-    OG_TITLE,
-    og_image_svg,
-    pricing_og_image_svg,
-)
+from trusted_router.og import og_image_svg, pricing_og_image_svg
 from trusted_router.routes.workspaces import MAX_WORKSPACE_MEMBER_MUTATIONS
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
@@ -337,16 +332,16 @@ def test_local_key_file_accepts_operator_aliases(tmp_path: Path) -> None:
 def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None:
     dashboard = client.get("/")
     assert dashboard.status_code == 200
-    # Marketing page hero + key surfaces stay real. The one-line SDK swap
-    # demonstrates migration without displacing trust evidence lower down.
-    assert "Get API key" in dashboard.text
-    assert "End-to-End Encrypted AI gateway" in dashboard.text
-    assert "CHANGE ONE LINE" in dashboard.text.upper()
+    # Landscape homepage: hero, conversion surfaces and the migration module
+    # stay real. The one-line base_url swap demonstrates migration without
+    # displacing the verification evidence lower down.
+    assert "Encrypt all your" in dashboard.text
+    assert "Create my API key" in dashboard.text
+    assert "No card required." in dashboard.text
+    assert "Move over with one" in dashboard.text
     assert 'base_url="https://api.openai.com/v1"' in dashboard.text
-    assert 'base_url="https://api.trustedrouter.com/v1"' in dashboard.text
-    assert "3 clouds" in dashboard.text
-    assert "GCP · AWS · Azure" in dashboard.text
-    assert "GCP, AWS, and Azure" in dashboard.text
+    assert f'base_url="{client.app.state.settings.api_base_url}"' in dashboard.text
+    assert "Three clouds, visible fallback" in dashboard.text
     assert "world-map.svg" not in dashboard.text
     assert "trustedrouter/auto" in dashboard.text  # routing model
     assert "$25 USDC" not in dashboard.text
@@ -375,6 +370,8 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert 'id="workspaceSelect"' not in dashboard.text
     assert 'id="keyReveal"' not in dashboard.text
     assert "Model Marketplace" not in dashboard.text
+    # The previous homepage's hero must not come back.
+    assert "600+ AI Models at your fingertips" not in dashboard.text
     # Sign-in modal is present (MetaMask is always available; OAuth providers
     # are conditional on settings, so we don't assert their buttons by default).
     assert 'id="signinModal"' in dashboard.text
@@ -382,8 +379,9 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert 'data-action="open-signin"' in dashboard.text
     # Static assets are release-cache-busted so a redeployed page does not
     # render with a day-old browser-cached CSS file.
-    assert '<script src="/static/dashboard.js?v=' in dashboard.text
-    assert 'href="/static/dashboard.css?v=' in dashboard.text
+    assert '<script defer src="/static/dashboard.js?v=' in dashboard.text
+    assert 'href="/static/tokens.css?v=' in dashboard.text
+    assert 'href="/static/homepage/application.css?v=' in dashboard.text
 
     providers_page = client.get("/providers", headers={"accept": "text/html"})
     assert providers_page.status_code == 200
@@ -566,20 +564,23 @@ def test_dashboard_emits_open_graph_and_twitter_card(client: TestClient) -> None
     assert '<link rel="icon" href="/favicon.ico" sizes="any">' in dashboard.text
     assert '<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">' in dashboard.text
     assert '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">' in dashboard.text
+    title = "TrustedRouter: The AI router that shows its work"
+    description = "Verifiably confidential compute through a single OpenAI-compatible API. Hundreds of models, zero-retention routes and provider failover, no prompt logs."
+    social_card = "https://trustedrouter.com/static/homepage/social-card-v1.jpg"
     assert 'property="og:type" content="website"' in dashboard.text
-    assert f'property="og:title" content="{OG_TITLE}"' in dashboard.text
-    assert f'property="og:description" content="{OG_DESCRIPTION}"' in dashboard.text
+    assert f'property="og:title" content="{title}"' in dashboard.text
+    assert f'property="og:description" content="{description}"' in dashboard.text
     assert 'property="og:url" content="https://trustedrouter.com/"' in dashboard.text
-    assert 'property="og:image" content="https://trustedrouter.com/og.png"' in dashboard.text
-    assert 'property="og:image:type" content="image/png"' in dashboard.text
+    assert f'property="og:image" content="{social_card}"' in dashboard.text
+    assert 'property="og:image:type" content="image/jpeg"' in dashboard.text
     assert 'property="og:image:width" content="1200"' in dashboard.text
     assert 'property="og:image:height" content="630"' in dashboard.text
     assert 'name="twitter:card" content="summary_large_image"' in dashboard.text
-    assert f'name="twitter:title" content="{OG_TITLE}"' in dashboard.text
-    assert f'name="twitter:description" content="{OG_DESCRIPTION}"' in dashboard.text
-    assert 'name="twitter:image" content="https://trustedrouter.com/og.png"' in dashboard.text
-    assert '<meta name="description"' in dashboard.text
-    assert "<title>TrustedRouter" in dashboard.text
+    assert f'name="twitter:title" content="{title}"' in dashboard.text
+    assert f'name="twitter:description" content="{description}"' in dashboard.text
+    assert f'name="twitter:image" content="{social_card}"' in dashboard.text
+    assert f'<meta name="description" content="{description}">' in dashboard.text
+    assert f"<title>{title}</title>" in dashboard.text
 
 
 def test_og_svg_copy_matches_current_positioning() -> None:
@@ -1178,15 +1179,9 @@ def test_sentry_scrubs_sensitive_fields() -> None:
 
 
 def test_no_sentry_in_enclave_code() -> None:
-    root = Path(__file__).resolve().parents[2]
-    enclave = root / "quill-cloud-proxy" / "enclave-go"
-    if not enclave.exists():
-        return
-    for path in enclave.rglob("*"):
-        if path.is_file() and (path.suffix == ".go" or path.name.startswith("Dockerfile")):
-            text = path.read_text(encoding="utf-8", errors="ignore").lower()
-            assert "sentry" not in text
-            assert "58539b11263132bcb70ea30f0b92e0f4" not in text
+    from scripts.check_enclave_sentry import check_enclave, configured_enclave
+
+    check_enclave(configured_enclave())
 
 
 def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(

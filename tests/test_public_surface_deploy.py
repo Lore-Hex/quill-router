@@ -29,7 +29,6 @@ IMAGE = (
 )
 BASE_ENV = {
     "TR_ENVIRONMENT": "production",
-    "TR_HOMEPAGE_LANDSCAPE_ENABLED": "true",
     "TR_SERVICE_SURFACE": "public",
     "TR_RELEASE": "cb16dcc",
     "TR_TRUSTED_DOMAIN": "trustedrouter.com",
@@ -551,6 +550,8 @@ def test_routed_failing_region_does_not_promote_it(tmp_path: Path) -> None:
     assert run.returncode != 0
     assert "us-central1" in run.stderr
     assert "/robots.txt" in run.stderr
+    assert "FLEET IS SPLIT" not in run.stderr
+    assert "JSONDecodeError" not in run.stderr
     traffic = _traffic_calls(run)
     assert any("--to-revisions=trusted-router-public-active=100" in call for call in traffic)
     assert not any("candidate-us-central1=100" in " ".join(call) for call in traffic)
@@ -569,6 +570,8 @@ def test_region_three_failure_restores_every_earlier_public_promotion(
     )
 
     assert run.returncode != 0
+    assert "FLEET IS SPLIT" not in run.stderr
+    assert "JSONDecodeError" not in run.stderr
     traffic = _traffic_calls(run)
     for region in ("us-central1", "us-east4"):
         assert any(

@@ -1,0 +1,15 @@
+/* Map the shared chart styles to NYTE's existing brand tokens. */
+.token-index{--font-display:var(--sans);--font-mono:var(--mono);--text-display:var(--t1);--text-body:var(--t2);--text-muted:var(--t3);--text-accent:var(--mint);--border-hairline:var(--rule-soft);--border-default:var(--rule);--surface-card:var(--panel);--surface-raised:var(--selected);--sage:var(--mint);--clay:#e7ad94;--gold:#e1ce96;--r-panel:6px;--r-control:6px}
+.token-index .ti-inner{width:100%;max-width:1280px;padding-inline:var(--gutter)}
+.token-index h1{font-size:clamp(44px,4.8vw,70px);font-weight:650;line-height:1.03;letter-spacing:-.05em}
+.token-index h2{font-size:clamp(32px,3.3vw,46px);font-weight:600;line-height:1.1;letter-spacing:-.04em}
+.token-index .ti-card h3{font-weight:550;letter-spacing:-.02em}
+.token-index .ti-hero{padding-top:80px}
+.token-index .ti-note a,.index-actions a:not(.btn){text-decoration:underline;text-underline-offset:5px}
+.index-supply{padding-block:64px;border-block:1px solid var(--rule-soft)}
+.index-actions{align-items:center;margin:28px 0}
+.index-actions .btn{flex:none}
+.index-actions a{min-height:44px;display:inline-flex;align-items:center}
+.token-index .index-small{font-size:14px;max-width:760px;color:var(--t3)}
+.ti-button,.ti-chip{min-height:44px}.ti-chart .ti-svg{overflow:visible}
+@media(max-width:600px){.token-index .ti-hero{padding-top:56px}}

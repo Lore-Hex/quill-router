@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from tests.test_service_surfaces import _app
 from tests.test_video_derived_routing import MODEL, URL, payload, request
 from tests.test_video_execution_replay import main_fingerprint, resolution_only_fingerprint
+from trusted_router import authorize_candidates
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway, video_jobs
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -111,7 +112,7 @@ def test_legacy_concurrent_authorize(monkeypatch, changed_identity, backend):
                                    idempotency_key="legacy-race", request_fingerprint="a" * 64,
                                    max_tokens=300_000, additional_cost_reservation_microdollars=900_000)
     settings = Settings(environment="test")
-    original_route = gateway.video_route_endpoint_candidates
+    original_route = authorize_candidates.video_route_endpoint_candidates
     winner = None
     holds_after_winner = None
     hold_calls = []
@@ -127,12 +128,12 @@ def test_legacy_concurrent_authorize(monkeypatch, changed_identity, backend):
     def route(*args, **kwargs):
         nonlocal winner, holds_after_winner
         # Restore before the nested call so only the loser pauses in routing.
-        monkeypatch.setattr(gateway, "video_route_endpoint_candidates", original_route)
+        monkeypatch.setattr(authorize_candidates, "video_route_endpoint_candidates", original_route)
         winner = gateway._authorize_gateway_sync(request("venice"), body, settings)["data"]
         holds_after_winner = list(hold_calls)
         return original_route(*args, **kwargs)
 
-    monkeypatch.setattr(gateway, "video_route_endpoint_candidates", route)
+    monkeypatch.setattr(authorize_candidates, "video_route_endpoint_candidates", route)
     loser_body = body.model_copy(update={"request_fingerprint": ("b" if changed_identity else "a") * 64})
     if changed_identity:
         with pytest.raises(HTTPException) as error:

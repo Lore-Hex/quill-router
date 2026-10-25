@@ -42,6 +42,15 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # Authenticated https://api.akashml.com/v1/models, verified 2026-10-20:
+        # Kimi K3 cache-read now equals its $1.20/M input price (was $0.30/M).
+        # Other axes fell, and the native route identity is unchanged.
+        (
+            "moonshotai/kimi-k3 [akashml:akashml:moonshotai/Kimi-K3] cached-input",
+            "prompt",
+            Decimal("0.0000003"),
+            Decimal("0.0000012"),
+        ),
         # Tencent's Singapore USD table, verified 2026-10-12:
         # https://intl.cloud.tencent.com/document/product/1300/78937
         # Step 5 Preview is $1 input / $2.70 output / $0.05 cached per M.

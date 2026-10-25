@@ -316,6 +316,29 @@ def test_reka_does_not_assign_family_prices_to_new_versions() -> None:
     assert reka._parse_pricing("| **Reka Flash 3** | $0.10 | $0.10 |") == {}
 
 
+def test_reka_uses_model_api_rates_without_the_retired_html_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REKA_API_KEY", "test-secret")
+    monkeypatch.setattr(
+        _direct_openai, "fetch_json", lambda *_args, **_kwargs: {"data": [
+            {"id": "reka-edge-2603", "context_length": 16384, "pricing": {
+                "prompt": "0.0000001", "completion": "0.0000001", "input_cache_read": "0",
+            }},
+            # Unreviewed native names must not acquire a guessed model identity.
+            {"id": "unknown-family", "pricing": {"prompt": "0.1", "completion": "0.2"}},
+        ]},
+    )
+    monkeypatch.setattr(_direct_openai, "models_requiring_canary", lambda *_args: set())
+    monkeypatch.setattr(reka, "fetch_html", lambda _url: "# Current rates\nRead GET /v1/models.")
+    result = reka.fetch()
+    assert set(result.prices) == {"reka/reka-edge-2603"}
+    assert result.prices["reka/reka-edge-2603"] == ModelPrice(
+        100_000, 100_000, prompt_cached_micro_per_m=0,
+    )
+    assert result.fetched_url == reka.URL
+
+
 def test_sail_parser_uses_asap_not_discounted_completion_windows() -> None:
     source = (FIXTURE_DIR / "sail-research.html").read_text(encoding="utf-8")
     prices = sail_research._parse_pricing(source)

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from clickhouse.verify_spanner_delivery import verify_delivery
 from trusted_router.storage_gcp_operational_analytics_outbox import activity_payload
 from trusted_router.storage_models import Generation
@@ -277,10 +279,12 @@ def test_the_lookup_finds_sort_keys_by_generation_then_reads_rows_by_key() -> No
     assert "SELECT tenant_id, created_at, generation_id FROM activity_generations WHERE generation_id IN (SELECT id FROM wanted)" in sql
 
 
-def test_the_projection_migration_matches_the_lookup() -> None:
+@pytest.mark.parametrize("variant", ["023_replicated", "024_single_node"])
+def test_the_projection_migration_matches_the_lookup(variant: str) -> None:
+    number, topology = variant.split("_", 1)
     migration = (
         Path(__file__).resolve().parents[1]
-        / "clickhouse/023_activity_generation_id_projection_replicated.sql"
+        / f"clickhouse/{number}_activity_generation_id_projection_{topology}.sql"
     ).read_text()
     assert "MODIFY SETTING deduplicate_merge_projection_mode = 'rebuild'" in migration
     assert (
@@ -288,20 +292,25 @@ def test_the_projection_migration_matches_the_lookup() -> None:
         "    (SELECT generation_id, tenant_id, created_at ORDER BY generation_id)"
     ) in migration
     assert "MATERIALIZE PROJECTION by_generation_id" in migration
-    # The replicated-migration applier only accepts ON CLUSTER statements.
+    # Each migration must target the database and topology its applier uses.
     statements = [line for line in migration.splitlines() if line.startswith("ALTER TABLE")]
-    assert statements and all(
-        line == "ALTER TABLE tr.activity_generations ON CLUSTER trustedrouter" for line in statements
+    target = (
+        "ALTER TABLE tr.activity_generations ON CLUSTER trustedrouter"
+        if topology == "replicated"
+        else "ALTER TABLE activity_generations"
     )
+    assert statements and all(line == target for line in statements)
 
 
-def test_the_projection_migration_leaves_lightweight_deletes_refused() -> None:
+@pytest.mark.parametrize("variant", ["023_replicated", "024_single_node"])
+def test_the_projection_migration_leaves_lightweight_deletes_refused(variant: str) -> None:
     # 'rebuild' let projection reads return a deleted row until the next merge,
     # and 'drop' left the touched part without its projection (26.7.1.1315).
     # Deletions on this table use ALTER TABLE ... DELETE instead.
+    number, topology = variant.split("_", 1)
     migration = (
         Path(__file__).resolve().parents[1]
-        / "clickhouse/023_activity_generation_id_projection_replicated.sql"
+        / f"clickhouse/{number}_activity_generation_id_projection_{topology}.sql"
     ).read_text()
     sql = "\n".join(line for line in migration.splitlines() if not line.lstrip().startswith("--"))
     assert "lightweight_mutation_projection_mode" not in sql

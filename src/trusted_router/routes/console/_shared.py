@@ -12,6 +12,7 @@ re-importing helpers.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -19,6 +20,7 @@ from fastapi import Depends, HTTPException, Request
 
 from trusted_router.auth import SESSION_COOKIE_NAME, SettingsDep
 from trusted_router.config import Settings
+from trusted_router.dashboard import _static_version
 from trusted_router.domains import request_api_base_url
 from trusted_router.money import format_money_display
 from trusted_router.request_limits import enforce_authenticated_rate_limit
@@ -28,7 +30,10 @@ from trusted_router.storage import (
     User,
     Workspace,
 )
+from trusted_router.typed_balance import live_credit_summary
 from trusted_router.views import render_template
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -96,8 +101,24 @@ def render(
     shared selector.
     """
     active = str(context.get("active") or "")
+    if "credits_available" not in context:
+        # Reuse the Credits helper: on Spanner this reads credit metadata plus
+        # bounded typed shards. Credits supplies its summary to avoid duplicate reads.
+        try:
+            summary = live_credit_summary(ctx.workspace.id)
+        except Exception as exc:
+            # Optional display only: never substitute a zero balance on read failure.
+            logger.warning("Console header balance unavailable: %s", type(exc).__name__)
+            context["credits_available"] = None
+        else:
+            available = summary["available"] if summary else 0
+            context["credits_available"] = format_money_display(available)
+            context["credits_empty"] = available <= 0
     return render_template(
         template,
+        # Every console stylesheet and script must change URL with the release.
+        # Omitting this silently selects the templates' permanent v=local URL.
+        static_version=_static_version(settings),
         api_base_url=context.pop("api_base_url", ctx.api_base_url),
         user=ctx.user,
         user_email=ctx.user.email,

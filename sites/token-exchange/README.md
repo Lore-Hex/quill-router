@@ -45,6 +45,63 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ## Build and Test
 
+### Spot exchange API
+
+New York's `/confidential#start` includes the quickstart from `nyte-v2/api.html`, using
+`api.confidential.nytokenexchange.com/v1` with explicit confidential routing.
+`api.nytokenexchange.com/v1` is the general catalog endpoint. Both use the
+existing TrustedRouter key, balance and request semantics; `nyte/*` aliases
+canonicalize to `trustedrouter/*`. Account management stays on trustedrouter.com.
+The documentation is at https://trustedrouter.com/docs#nyte-api.
+
+These API names terminate inside quill-cloud-proxy's attested gateway. Its DNS
+reconciler publishes each name only after TLS and attestation qualification,
+including the confidential policy probe where required. Website deployment
+does not create API records or terminate prompt traffic. Preserve the website's
+apex/www routing and Certificate Manager authorization records. Publish the
+quickstart as live only after both API origins pass production tests. Verify
+strict TLS-bound attestation, receipt-key evidence, missing/weaker privacy
+rejections and a completed streamed `nyte/auto` request. Certificate issuance
+also requires the enclave's existing TXT-writer role to cover the two delegated
+NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publish
+DNS records to bypass qualification.
+
+The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
+New York's homepage, `/confidential`, `/suppliers`, `/providers`, and `/index`; its shared
+assets are under `assets/nyte-v2/`. Back up live objects before an authorized
+release and preserve concurrent content and unrelated market pages.
+
+### NYTE Token Index and open-source supplier stack
+
+`https://nytokenexchange.com/index` uses the same published data and chart assets
+as `https://trustedrouter.com/index`. The build reads the public literal-data
+module `src/trusted_router/content/token_index.py` and copies its public chart
+assets unchanged. It makes no database or network calls. Keep its snapshot date
+visible; the index is provisional and is not an executable supplier quote.
+`/index.html` remains the homepage; do not publish the index page at that path.
+
+New York's navigation links `/index`. Its `/suppliers#open-stack` section invites
+operators to list spare inference capacity under their provider identity and
+links the Apache-2.0 neocloud stack and existing supplier onboarding.
+The stack is pre-alpha; confidential serving requires independent hardware
+and software qualification, not merely installing the software.
+
+Run `node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089`
+alongside the existing browser checks. The Index now uses the NYTE shared shell;
+its release also needs the matching `assets/nyte-v2/` and `assets/analytics.js`,
+in addition to `assets/index-page.css`, `assets/token-index.css`,
+`assets/token-index.js` and `assets/token-index/`. Publish extensionless page
+objects (`index`, `confidential`, `suppliers`) as `text/html`. Back up live objects,
+preserve unrelated markets and concurrent content, and use generation
+preconditions on every upload.
+
+Release the public catalogue JSON/CORS support before the redesigned homepage:
+`deploy.py` checks that `/v1/models/count` and `/v1/providers` are readable from
+the NYTE origin before publishing. The `nyte.*` analytics events also require
+the collector and the separately dispatched marketing-worker/source-filter
+update in `.github/workflows/deploy-growth-sync.yml`. Local preview success
+does not verify an authenticated confidential inference request or its attestation.
+
 ### Public New York media kit
 
 `https://nytokenexchange.com/media-kit` (also `/media-kit.html`) is the public
@@ -81,7 +138,9 @@ approved founder photography, the existing press contact is
 ### Private provider deck request page
 
 `https://nytokenexchange.com/providers` is a public, request-only landing
-page. Its email link opens a request to `providers@trustedrouter.com`; it does
+page, rendered from `nyte-v2/providers.html` with the shared NYTE header,
+footer, and design tokens. `/suppliers` is the supply-side overview; `/providers`
+is its private-deck request destination. Its email link opens a request to `providers@trustedrouter.com`; it does
 not submit a form, automatically send mail, or deliver a download. The team
 reviews requests and shares the deck privately. Never add the confidential PDF,
 slide images, or a publicly resolvable deck URL to the build or storage bucket.
@@ -94,7 +153,8 @@ It stays in the private outreach workflow, never in this source tree or build.
 The request is reviewed manually; it is not an automated attachment-delivery flow.
 
 For a narrow update, publish only the built `providers` and `providers.html` objects and
-`new-york/sitemap.xml` after the repository and site checks. Do not sync a stale
+`new-york/sitemap.xml` and required `assets/nyte-v2/` styles/scripts after the
+repository and site checks. Do not sync a stale
 full build over other markets. Both objects use a five-minute public cache.
 
 ### NYTE Privacy Secured seal
@@ -174,9 +234,12 @@ authorized operator. Do not broaden service-account IAM as part of a site deploy
    records and active DNSSEC delegations fail closed. Add any additional
    registrar records to the target zone and verify them before delegation.
 4. Run `deploy.py publish --state /path/to/state --output /tmp/token-exchange-build`.
-   This uploads public assets, validates a merged URL map and requests Google-managed
-   certificates for every hostname that no managed certificate on the HTTPS proxy lists.
-   The pre-deploy URL map is saved once for rollback; existing routing remains.
+   This uploads public assets, checks that the control load balancer routes
+   every host and requests Google-managed certificates for every hostname that
+   no managed certificate on the HTTPS proxy lists. Routing is Terraform's:
+   `infra/control_lb_url_map.tf` reads `markets.json`, so a new market's routing
+   is its entry in that file, merged and applied by infra before publish, which
+   refuses while a host is unrouted and writes no routing itself.
    When the HTTPS proxy has a certificate map (`infra/control_lb_certificate_map.tf`),
    the proxy serves that map's certificates and ignores its classic ones. Then
    publish requests and attaches no certificate, and it refuses before any change

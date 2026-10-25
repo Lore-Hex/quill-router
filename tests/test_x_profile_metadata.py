@@ -5,17 +5,11 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 
-@pytest.mark.parametrize(
-    ("path", "landscape"),
-    [("/", False), ("/", True), ("/docs", True), ("/blog", True)],
-)
+@pytest.mark.parametrize("path", ["/", "/docs", "/blog"])
 def test_public_pages_credit_company_x_account_and_link_next_to_discord(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
     path: str,
-    landscape: bool,
 ) -> None:
-    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", landscape)
     response = client.get(path)
     assert response.status_code == 200
     page = BeautifulSoup(response.text, "html.parser")

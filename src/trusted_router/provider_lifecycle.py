@@ -64,6 +64,13 @@ DEEPINFRA_GRANITE_42_RETIREMENT_AT = datetime(2026, 10, 18, 0, 0, tzinfo=UTC)
 DEEPINFRA_INKLING_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT = datetime(2026, 10, 20, 0, 0, tzinfo=UTC)
 SCALEWAY_GLM_52_RETIREMENT_AT = datetime(2026, 11, 16, 0, 0, tzinfo=UTC)
+DEEPINFRA_HERMES_3_405B_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
+DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
+TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
+# 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
+CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
+# 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
+ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
 XIAOMI_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
@@ -71,6 +78,8 @@ GOOGLE_VERTEX_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2027, 1, 28, 0, 0, tzinfo
 NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
+NOVITA_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
+ARCEE_TRINITY_LARGE_THINKING_RETIREMENT_AT = datetime(2026, 10, 26, 0, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
@@ -196,6 +205,24 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # Official FAQ observed 2026-10-19 marks these retired even though the
+    # list API still advertises them. Other providers are unaffected.
+    # https://platform.minimax.io/docs/faq/models
+    _Retirement(
+        provider="minimax",
+        model_ids=frozenset({
+            "minimax/minimax-m2", "minimax/minimax-m2.1",
+            "minimax/minimax-m2.1-highspeed", "minimax/minimax-m2.5",
+            "minimax/minimax-m2.5-highspeed", "minimax/minimax-m2.7",
+            "minimax/minimax-m2.7-highspeed",
+        }),
+        upstream_ids=frozenset({
+            "MiniMax-M2", "MiniMax-M2.1", "MiniMax-M2.1-highspeed",
+            "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+        }),
+        effective_at=datetime(2026, 10, 19, tzinfo=UTC),
+    ),
     # The supported-models page checked on 2026-10-07 states these models
     # are already past end of life. Use that fixed observation date rather
     # than inventing earlier dates or waiting for the catalog bot to delist.
@@ -949,6 +976,128 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"openai/gpt-oss-120b-Turbo"}),
         effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-oss-120b",),
+    ),
+    # Together's October 23 notices remove MiniMax M3 and Inkling from its
+    # serverless API on 2026-11-06 (date only; 00:00 UTC conservatively).
+    # Retire only Together's routes; other providers' routes stay.
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"minimax/minimax-m3"}),
+        upstream_ids=frozenset({"MiniMaxAI/MiniMax-M3"}),
+        effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
+        replacement_model_ids=("minimax/minimax-m3.1-flash",),
+    ),
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"thinkingmachines/inkling", "thinkingmachines/inkling-1m"}),
+        upstream_ids=frozenset({"thinkingmachines/Inkling"}),
+        effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
+        replacement_model_ids=("meta-models/muse-spark-open",),
+    ),
+    # Crusoe's October 23 notice deprecates these serverless models at
+    # 2026-10-30 10:00 PT and then routes requests to different replacement
+    # models at the replacements' prices. Retire Crusoe's routes instead of
+    # accepting the substitution; its "V4 Flash 0731" is the route Crusoe
+    # serves as Deepseek-V4-Flash. Other providers' routes stay.
+    _Retirement(
+        provider="crusoe",
+        model_ids=frozenset({"deepseek/deepseek-v4-pro"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Pro"}),
+        effective_at=CRUSOE_OCTOBER_30_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash",),
+    ),
+    _Retirement(
+        provider="crusoe",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        upstream_ids=frozenset({"deepseek-ai/Deepseek-V4-Flash"}),
+        effective_at=CRUSOE_OCTOBER_30_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash",),
+    ),
+    _Retirement(
+        provider="crusoe",
+        model_ids=frozenset({"nvidia/nemotron-3-super-120b-a12b"}),
+        upstream_ids=frozenset({"nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"}),
+        effective_at=CRUSOE_OCTOBER_30_RETIREMENT_AT,
+        replacement_model_ids=("nvidia/nemotron-3.5-super-vl",),
+    ),
+    _Retirement(
+        provider="crusoe",
+        model_ids=frozenset({"nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"}),
+        upstream_ids=frozenset({"nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B"}),
+        effective_at=CRUSOE_OCTOBER_30_RETIREMENT_AT,
+        replacement_model_ids=("nvidia/nemotron-3.5-lightning-30b-a3b",),
+    ),
+    # DeepInfra's October 22 notice deprecates MythoMax L2 13B on 2026-10-29
+    # and redirects later requests to the different L3 8B Lunaris Turbo
+    # weights. Retire DeepInfra's route at 00:00 UTC (date only).
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"gryphe/mythomax-l2-13b"}),
+        upstream_ids=frozenset({"Gryphe/MythoMax-L2-13b"}),
+        effective_at=DEEPINFRA_MYTHOMAX_RETIREMENT_AT,
+        replacement_model_ids=("sao10k/l3-8b-lunaris-v1-turbo",),
+    ),
+    # DeepInfra's October 19 notice deprecates Hermes 3 405B on 2026-11-02
+    # and redirects later requests to the different DeepSeek V4.1 Flash
+    # weights. Retire DeepInfra's route at 00:00 UTC (date only).
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"nousresearch/hermes-3-llama-3.1-405b"}),
+        upstream_ids=frozenset({"NousResearch/Hermes-3-Llama-3.1-405B"}),
+        effective_at=DEEPINFRA_HERMES_3_405B_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    # Arcee's October 22 notice deprecates Trinity Large Thinking on
+    # 2026-10-26 (date only; 00:00 UTC conservatively) and lists models that
+    # remain available; quote the first one listed, Kimi K3.
+    _Retirement(
+        provider="arcee",
+        model_ids=frozenset({"arcee-ai/trinity-large-thinking"}),
+        upstream_ids=frozenset({"trinity-large-thinking"}),
+        effective_at=ARCEE_TRINITY_LARGE_THINKING_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3",),
+    ),
+    # Novita's October 22 notice retires MiMo V2.5 and V2.5 Pro at
+    # 2026-10-23 00:00 UTC and recommends the V2.6 Flash and Pro models.
+    # Retire only Novita's routes; other providers' V2.5 routes stay.
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"xiaomimimo/mimo-v2.5"}),
+        upstream_ids=frozenset({"xiaomimimo/mimo-v2.5"}),
+        effective_at=NOVITA_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-flash",),
+    ),
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"xiaomimimo/mimo-v2.5-pro"}),
+        upstream_ids=frozenset({"xiaomimimo/mimo-v2.5-pro"}),
+        effective_at=NOVITA_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-pro",),
+    ),
+    # Alibaba Model Studio's October 19 notice decommissions legacy Qwen3.5
+    # Plus snapshots and Qwen3.5 397B-A17B at 2027-01-19 10:00 UTC+8 and
+    # recommends Qwen3.8 Flash. Retire only Alibaba's routes; other
+    # providers' Qwen3.5 routes stay.
+    _Retirement(
+        provider="alibaba",
+        model_ids=frozenset(
+            {
+                "qwen/qwen3.5-plus",
+                "qwen/qwen3.5-plus-2026-02-15",
+                "qwen/qwen3.5-plus-2026-04-20",
+                "qwen/qwen3.5-397b-a17b",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "qwen3.5-plus",
+                "qwen3.5-plus-2026-02-15",
+                "qwen3.5-plus-2026-04-20",
+                "qwen3.5-397b-a17b",
+            }
+        ),
+        effective_at=ALIBABA_QWEN35_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-flash",),
     ),
     # Scaleway's October 16 notice: GLM 5.2 reaches end of life on
     # 2026-11-16 and later requests are redirected to the different GLM 5.3

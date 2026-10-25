@@ -4,8 +4,8 @@
 # caller owns authentication, PROJECT_ID, gc(), and log().
 #
 # Source of truth: the live Cloud Armor policies (trusted-router-legacy-edge,
-# trusted-router-public-edge, trusted-router-internal-edge,
-# lightning-router-funding) are declared in infra/cloud_armor.tf, which an
+# trusted-router-public-edge, trusted-router-internal-edge) are declared
+# in infra/cloud_armor.tf, which an
 # owner applies. Do not point _reconcile_cloud_armor_policy at one of those
 # policies: it would be a second writer, and the next Terraform apply would
 # revert it. The defaults below match the live legacy-edge thresholds
