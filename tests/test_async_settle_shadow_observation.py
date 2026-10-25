@@ -1335,6 +1335,11 @@ def test_unreconciled_decrease_needs_exact_readback() -> None:
 def test_port_counter_demand_and_terminal_permits() -> None:
     from trusted_router.async_settle_shadow_v2_evidence import COUNTS
     svc = service()
+    # Event demand arms allocation while keeping Port.lost clear, so the
+    # invalid counter fold below must still set that sticky flag itself.
+    assert svc.port.reserve(NOW_US+100_000_000) is None
+    assert not svc.port.lost.is_set()
+    logical_time.now = svc.next_allocate
     svc.maintain()
     day = "2026-10-12"
     assert svc.journal.terminal_permits[day] == RESERVATION_BLOCK
@@ -1371,6 +1376,8 @@ def test_all_four_money_primitives_are_unreachable(monkeypatch: Any) -> None:
     svc.store.wall = lambda: NOW_US/1e6+100
     svc.store.database.server_ns = (NOW_US+100_000_000)*1000
     svc.publish_cycle((NOW_US+100_000_000)//2_000_000, NOW_US+100_000_000)
+    assert svc.port.reserve(NOW_US+100_000_000, terminal=True) is None
+    logical_time.now = svc.next_allocate
     svc.maintain()
     assert svc.counters["2026-10-12"]["publisher"]["publications"] == 1
     assert all(spy.call_count == 0 for spy in calls)
