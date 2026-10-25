@@ -43,8 +43,11 @@ def test_serialized_fleet_survives_aborted_writer():
     assert result["max_60_slot_commits"] <= 1.1
 
 
-def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, spacing=.1):
-    storage, shell = modules("3e5485a650011699bb19f5d500f6221c7eed85c4" if baseline else None)
+ROUND_TWO = "c2e8139b19d510b5af4db5489da2aef9f55a0c7d"
+
+
+def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, spacing=.1, ref=None):
+    storage, shell = modules("origin/main" if baseline else ref)
     clock = Clock()
     start = NOW_US/1e6
     clock.now = start
@@ -84,7 +87,7 @@ def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, sp
                     errors.append(type(caught).__name__)
                 attempts.append(clock.now-started)
                 if error is None:
-                    grants[index] = clock.now
+                    grants.setdefault(index, clock.now)
                 clock.schedule(clock.now, lambda: resume(work, index, value, error))
 
             with clock.condition:
@@ -99,13 +102,14 @@ def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, sp
             services.append(svc)
             def request():
                 demands[index] = clock.now
-                assert svc.port.reserve(round(clock.now*1e6), terminal=True) is None
-                assert svc.port.lost.is_set()  # Existing refusal accounting.
+                reservation = svc.port.reserve(round(clock.now*1e6), terminal=True)
+                if reservation is None:
+                    assert svc.port.lost.is_set()  # Existing refusal accounting.
             if demand:
                 clock.schedule(clock.now+.2, request)
             # run() polls every 10 ms; preserve that quantization.
             first_tick = start+math.ceil((max(clock.now, svc.next_flush)-start)*100)/100
-            for tick in range(25):
+            for tick in range(100):
                 clock.schedule(first_tick+tick*5, lambda: resume(svc.maintenance(), index))
 
         for index in range(count):
@@ -121,6 +125,7 @@ def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, sp
         value = json.loads(cap)
         assert value["terminal_reserved"] == value["event_reserved"] == 100*len(writes)
     result = dict(processes=count, demand=demand, spacing=spacing, writes=len(writes),
+                  granted_processes=len(grants),
                   first_5s=sum(t < 5 for t in writes),
                   peak_5s=max((sum(t <= w < t+5 for w in writes) for t in writes), default=0),
                   max_lock_wait_ms=1000*max((tx.lock_wait for tx in db.transactions), default=0),
@@ -128,43 +133,57 @@ def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, sp
                   contention_losses=errors.count("ContentionLoss"),
                   max_attempt_ms=1000*max(attempts, default=0),
                   max_demand_to_attempt_s=max((first_attempts[i]-stamp for i, stamp in demands.items()), default=0),
-                  max_demand_to_grant_s=max((grants[i]-stamp for i, stamp in demands.items()), default=0),
+                  max_demand_to_grant_s=max((max(0, grants[i]-stamp) for i, stamp in demands.items()), default=0),
                   last_write_s=max(writes, default=0))
-    print(json.dumps(dict(baseline=baseline, **result), sort_keys=True))
+    print(json.dumps(dict(baseline=baseline, ref=ref, **result), sort_keys=True))
     return result
 
 
-def test_restart_positive_control(monkeypatch):
+@pytest.mark.parametrize("ref", [ROUND_TWO, None])
+def test_restart_positive_control(monkeypatch, ref):
     before = cap_allocation_fleet(monkeypatch, 26, baseline=True)
-    after = cap_allocation_fleet(monkeypatch, 26)
+    after = cap_allocation_fleet(monkeypatch, 26, ref=ref)
     assert before["first_5s"] >= 20
-    assert after["writes"] == after["budget_exhaustions"] == 0
+    assert after["writes"] == (0 if ref == ROUND_TWO else 26)  # No idle refills.
+    assert after["budget_exhaustions"] == 0
 
 
+@pytest.mark.parametrize("ref", [ROUND_TWO, None])
 @pytest.mark.parametrize("count,spacing", [(26, .1), (40, .1), (26, 0.), (40, 0.)])
-def test_restart_with_cohort_demand(monkeypatch, count, spacing):
-    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=spacing)
-    assert result["writes"] == count
-    assert result["first_5s"] > 5
-    assert (result["writes"]+result["contention_losses"])/60 <= 1
+def test_restart_with_cohort_demand(monkeypatch, count, spacing, ref):
+    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=spacing, ref=ref)
+    assert result["granted_processes"] == count
+    if ref == ROUND_TWO:
+        assert result["writes"] == count
+        assert result["first_5s"] > 5
+        assert (result["writes"]+result["contention_losses"])/60 <= 1
+    else:
+        assert count <= result["writes"] <= 2*count
+        assert result["first_5s"] >= 1  # Simultaneous eager starts contend immediately.
     assert result["max_lock_wait_ms"] < 200
     assert result["max_attempt_ms"] < 2000
     assert result["max_demand_to_attempt_s"] <= 5.01
     assert result["budget_exhaustions"] == 0
 
 
-@pytest.mark.parametrize("round_one", [True, False])
-def test_first_demand_next_tick_loss_control(monkeypatch, round_one):
-    # Execute the committed round-1 implementation as the positive control.
-    _, shell = modules("587c15eb407d6bc075964034da94596ec1238b89" if round_one else None)
+@pytest.mark.parametrize("ref", ["587c15eb407d6bc075964034da94596ec1238b89", ROUND_TWO, "origin/main", None])
+def test_first_demand_next_tick_loss_control(monkeypatch, ref):
+    # Retain round 1 and compare committed round 2, main and the worktree.
+    _, shell = modules(ref)
+    round_one = ref == "587c15eb407d6bc075964034da94596ec1238b89"
+    delayed = round_one or ref == ROUND_TWO
     monkeypatch.setattr(shell.Counters.__init__.__globals__["uuid"], "uuid4", lambda: UUID(int=1))
     store, _ = fake_store()
     svc = shell.Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
         async_settle_shadow_workspaces="ws", source_revision="a"*40), store)
     day = "2026-10-12"
     started = logical_time()
-    first_tick = started+math.ceil((svc.next_flush-started)*100)/100
-    assert started+.2 < first_tick < started+5
+    first_tick = started+math.ceil((max(started, svc.next_flush)-started)*100)/100
+    if delayed:
+        assert started+.2 < first_tick < started+5
+    else:
+        assert first_tick == started
+    svc.next_flush = first_tick
     losses, requests, allocations = [], [], []
     real_loss, real_allocate = svc.journal.loss, svc.store.allocate
 
@@ -173,8 +192,10 @@ def test_first_demand_next_tick_loss_control(monkeypatch, round_one):
         real_loss(day)
 
     def allocate(*args, **kwargs):
+        result = real_allocate(*args, **kwargs)
+        logical_time.advance(.073)  # Same fixed 20+20+33 ms costs as the lock witness.
         allocations.append(logical_time())
-        return real_allocate(*args, **kwargs)
+        return result
 
     monkeypatch.setattr(svc.journal, "loss", loss)
     monkeypatch.setattr(svc.store, "allocate", allocate)
@@ -182,9 +203,9 @@ def test_first_demand_next_tick_loss_control(monkeypatch, round_one):
         # First request at +200 ms, then every 100 ms for the following 5 s.
         for index in range(51):
             stamp = started+.2+index/10
-            if svc.next_flush <= stamp:
-                logical_time.now = first_tick
-                svc.next_flush = first_tick+5
+            if svc.next_flush+.073 <= stamp:
+                logical_time.now = max(started, svc.next_flush)
+                svc.next_flush = logical_time()+5
                 svc.maintain()  # Real allocation AND flush, including sticky-loss folding.
             logical_time.now = stamp
             reservation = svc.port.reserve(NOW_US+round((stamp-started)*1e6), terminal=True)
@@ -192,23 +213,24 @@ def test_first_demand_next_tick_loss_control(monkeypatch, round_one):
             if reservation is not None:
                 assert svc.port.finalize(reservation, event_for(reservation)) is not None
                 assert svc.port.complete(reservation)
-        after_tick = [admitted for stamp, admitted in requests if stamp > first_tick]
+        after_tick = [admitted for stamp, admitted in requests if stamp > first_tick+.073]
         assert after_tick
         assert not any(admitted for stamp, admitted in requests if stamp < first_tick)
         if round_one:
             assert svc.next_allocate > started+5.2
             assert not allocations and not any(after_tick)
         else:
-            assert allocations == [first_tick]
+            assert allocations[0] == pytest.approx(first_tick+.073)
             assert all(after_tick)
-        # The first refusal must remain evidence loss. Removing the delay cannot
-        # make this boot-day loss-free without changing the refusal contract.
-        assert losses == [(first_tick, day)]
-        logical_time.now = first_tick+5
+        # Refusal remains sticky in the delayed controls; eager startup adds none.
+        assert len(losses) == int(delayed)
+        assert svc.port.lost.is_set() == delayed
+        logical_time.now = max(logical_time(), first_tick+5)
         svc.maintain()
-        assert losses == [(first_tick, day)]  # No additional loss after the tick.
-        assert svc.journal.days[day].losses == 1
-        print(json.dumps(dict(round_one=round_one, first_tick_s=first_tick-started,
+        assert len(losses) == int(delayed)
+        assert svc.journal.days[day].losses == int(delayed)
+        print(json.dumps(dict(ref=ref, first_tick_s=first_tick-started,
+            first_grant_s=allocations[0]-started if allocations else None,
             refused=sum(not admitted for _, admitted in requests),
             admitted=sum(admitted for _, admitted in requests), journal_losses=len(losses)), sort_keys=True))
     finally:
@@ -219,9 +241,9 @@ def test_first_demand_next_tick_loss_control(monkeypatch, round_one):
 @pytest.mark.parametrize("terminal", [False, True])
 def test_demand_refusal_then_grant_and_refill(terminal):
     svc = service()
-    assert 100 <= svc.next_flush < 105
+    assert svc.next_flush == float("-inf")
     day = "2026-10-12"
-    svc.maintain()
+    # A request before the owner has run still follows the existing refusal path.
     assert not svc.journal.permits and not svc.journal.terminal_permits
     assert svc.port.reserve(NOW_US, terminal=terminal) is None
     assert svc.port.lost.is_set() if terminal else svc.journal.days[day].losses == 1
@@ -269,3 +291,64 @@ def test_failed_allocation_retains_demand_without_grant(monkeypatch, error):
     svc.maintain()
     assert svc.journal.permits[day] == svc.journal.terminal_permits[day] == 100
     assert svc.allocation_failures == 0 and not svc.allocation_requested
+
+
+@pytest.mark.parametrize("count", [26, 40])
+@pytest.mark.parametrize("ref", ["origin/main", ROUND_TWO, None])
+def test_simultaneous_restart_comparison(monkeypatch, count, ref):
+    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0., ref=ref)
+    assert result["granted_processes"] == count
+    assert count <= result["writes"] <= 2*count
+    assert result["budget_exhaustions"] == 0
+    assert result["max_attempt_ms"] < 2000
+
+
+@pytest.mark.parametrize("ref", ["origin/main", ROUND_TWO, None])
+def test_rollover_refusal_window_control(monkeypatch, ref):
+    _, shell = modules(ref)
+    store, _ = fake_store()
+    boundary = NOW_US+86_400_000_000
+    started = logical_time()
+    monkeypatch.setattr(store, "wall", lambda: boundary/1e6+logical_time()-started-.2)
+    svc = shell.Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
+        async_settle_shadow_workspaces="ws", source_revision="a"*40), store)
+    real_allocate = store.allocate
+    grants = []
+
+    def allocate(*args, **kwargs):
+        result = real_allocate(*args, **kwargs)
+        logical_time.advance(.073)
+        grants.append(logical_time()-started-.2)
+        return result
+
+    monkeypatch.setattr(store, "allocate", allocate)
+    try:
+        # An established busy process has just run maintenance 200 ms before
+        # midnight. The owner opens the new day at midnight, before traffic.
+        svc.tick(boundary-200_000, publisher=False)
+        svc.port.reserve(boundary-200_000, terminal=True)
+        svc.maintain()
+        logical_time.now = started+.2
+        svc.tick(boundary, publisher=False)
+        requests = []
+        next_tick = started+5
+        for index in range(52):
+            stamp = started+.2+index/10
+            if next_tick+.073 <= stamp:
+                logical_time.now = next_tick
+                svc.maintain()
+                next_tick += 5
+            logical_time.now = stamp
+            reservation = svc.port.reserve(boundary+index*100_000, terminal=True)
+            requests.append(reservation is not None)
+            if reservation is not None:
+                assert svc.port.finalize(reservation, event_for(reservation)) is not None
+                assert svc.port.complete(reservation)
+        assert not any(requests[:49]) and all(requests[49:])
+        assert grants[-1] == pytest.approx(4.873)
+        assert svc.port.lost.is_set()
+        print(json.dumps(dict(rollover_ref=ref, first_grant_s=grants[-1],
+            refused=requests.count(False), admitted=requests.count(True)), sort_keys=True))
+    finally:
+        for executor in (svc.evidence_executor, svc.publisher_executor, svc.session_executor):
+            executor.shutdown(wait=True)

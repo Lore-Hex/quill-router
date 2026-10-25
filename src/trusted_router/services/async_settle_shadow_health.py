@@ -752,9 +752,9 @@ class Service:
         self.allocation_day: str | None = None
         self.allocation_requested = False
         self.allocation_failures = 0
-        # Dephase the five-second evidence cadence so first-demand allocations
-        # do not all contend on one tick after a simultaneous fleet restart.
-        self.next_flush = store.clock()+self.allocation_jitter(5.)
+        # The first owner tick must provision permits before cohort traffic.
+        # Only contention retries are dephased; refills remain demand-gated.
+        self.next_flush = float("-inf")
         self.previous_closure: str | None = None
         self.last_closure_ack: dict[str, Any] | None = None
         self.folded_us = 0
@@ -1535,6 +1535,11 @@ class Service:
         with self.lock:
             if self.journal.stopped:
                 return
+            if self.allocation_day is None:
+                # Owner startup is demand for the first block, just as on the
+                # eager baseline. Subsequent days/refills require port demand.
+                self.allocation_day = day
+                self.allocation_requested = True
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
             allocate = (self.allocation_requested and self.allocation_day == day
