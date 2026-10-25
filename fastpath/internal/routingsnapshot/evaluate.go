@@ -278,7 +278,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		return pass("headline prices whose sum exceeds int64")
 	}
 
-	// candidates_fitting_context: the models whose window holds the prompt
+	// candidates_fitting_context: the model and host windows hold the prompt
 	// and the completion; an unknown window (0) holds anything. When none
 	// does, OpenAI's context-length error names the largest window.
 	needed := prompt + completionTokens
@@ -286,6 +286,9 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	window := int64(0)
 	for _, i := range candidates {
 		length := s.models[s.Endpoints[i].ModelID].ContextLength
+		if host := s.Endpoints[i].ContextLength; host > 0 && (length == 0 || host < length) {
+			length = host
+		}
 		window = max(window, length)
 		if length <= 0 || needed <= length {
 			fitting = append(fitting, i)

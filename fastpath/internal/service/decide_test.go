@@ -207,8 +207,9 @@ func newSigningPython(t *testing.T, w decideWorld) *signingPython {
 		t.Fatal(err)
 	}
 	py := &signingPython{private: private, public: public, policy: w.policy}
-	raw := readGolden(t, "routing_snapshot_v1.body.json")
+	raw := readGolden(t, "routing_snapshot_v2.body.json")
 	var fields struct {
+		V              int64             `json:"v"`
 		CompiledAt     int64             `json:"compiled_at"`
 		SourceRevision string            `json:"source_revision"`
 		Plane          map[string]string `json:"plane"`
@@ -237,7 +238,7 @@ func newSigningPython(t *testing.T, w decideWorld) *signingPython {
 	// A manifest's claims, as canonical JSON: sorted keys, compact.
 	py.claims = map[string]any{"aud": edge.SnapshotAudience, "compiled_at": moved.CompiledAt, "iss": edge.SnapshotIssuer,
 		"not_after": moved.NotAfter, "plane": fields.Plane, "sha256": hex.EncodeToString(sum[:]),
-		"size": len(py.snapshot), "source_revision": fields.SourceRevision, "v": 1}
+		"size": len(py.snapshot), "source_revision": fields.SourceRevision, "v": fields.V}
 	py.server = httptest.NewServer(http.HandlerFunc(py.serve))
 	t.Cleanup(py.server.Close)
 	return py
@@ -259,7 +260,7 @@ func (py *signingPython) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/routing-snapshot":
 		out, _ := json.Marshal(map[string]any{"v": 1, "kind": "tr-routing-snapshot-publication",
-			"manifest": py.jws("tr-routing-snapshot-v1", py.claims), "body": base64.StdEncoding.EncodeToString(py.snapshot),
+			"manifest": py.jws("tr-routing-snapshot-v2", py.claims), "body": base64.StdEncoding.EncodeToString(py.snapshot),
 			"refresh_at": time.Now().Unix() + 60})
 		_, _ = w.Write(out)
 	case r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/edge-policy":

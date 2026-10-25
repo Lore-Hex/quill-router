@@ -17,6 +17,7 @@ without the window check (the behaviour on main), or a smaller request.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, cast
 
 import pytest
@@ -238,13 +239,94 @@ def test_each_pool_publishes_a_window_routing_can_serve_and_no_more(pool):
     except HTTPException:
         assert published == model.context_length
         return
-    windows = [candidate.context_length for candidate, _endpoint in candidates]
+    windows = [endpoint.effective_context_length(candidate) for candidate, endpoint in candidates]
     assert published == max(windows)
     reached = candidates_fitting_context(candidates, prompt_tokens=published, completion_tokens=0)
     assert reached and all(
-        candidate.context_length <= 0 or candidate.context_length >= published
-        for candidate, _endpoint in reached
+        endpoint.effective_context_length(candidate) <= 0
+        or endpoint.effective_context_length(candidate) >= published
+        for candidate, endpoint in reached
     )
     if all(window > 0 for window in windows):
         with pytest.raises(HTTPException):
             candidates_fitting_context(candidates, prompt_tokens=published + 1, completion_tokens=0)
+
+
+@pytest.fixture
+def different_host_windows(monkeypatch):
+    model_id = "fixture/minimax-flash"
+    _serve(monkeypatch, model_id, 1_048_576, "novita")
+    _serve(monkeypatch, model_id, 1_048_576, "deepinfra")
+    for endpoint in catalog.endpoints_for_model(model_id):
+        window = 1_000_000 if endpoint.provider == "novita" else 1_048_576
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, endpoint.id, replace(endpoint, context_length=window))
+    return model_id, _settings(model_id)
+
+
+@pytest.mark.parametrize("prompt,completion,hosts", [
+    (999_999, 1, {"novita", "deepinfra"}),
+    (1_000_000, 0, {"novita", "deepinfra"}),
+    (1_000_000, 1, {"deepinfra"}),
+    (1_048_575, 1, {"deepinfra"}),
+])
+def test_same_model_filters_each_hosts_window(different_host_windows, prompt, completion, hosts):
+    model_id, settings = different_host_windows
+    candidates = list(chat_route_endpoint_candidates({"model": model_id}, settings))
+    fitted = candidates_fitting_context(candidates, prompt_tokens=prompt, completion_tokens=completion)
+    assert {endpoint.provider for _, endpoint in fitted} == hosts
+
+
+@pytest.mark.parametrize("route_type", ["chat.completions", "responses"])
+def test_host_limit_applies_before_no_fallback_selection(different_host_windows, route_type):
+    model_id, settings = different_host_windows
+    client, key_hash = _client_and_key(settings)
+    response = _authorize(
+        client, key_hash, "host-window", model=model_id, route_type=route_type,
+        estimated_input_tokens=1_000_000, max_tokens=1,
+        provider={"order": ["novita", "deepinfra"], "allow_fallbacks": False},
+    )
+    assert response.status_code == 200, response.text
+    candidates = response.json()["data"]["route_candidates"]
+    assert len(candidates) == 1
+    assert candidates[0]["provider"] == "deepinfra"
+
+
+def test_pinned_smaller_host_rejects_before_reservation(different_host_windows):
+    model_id, settings = different_host_windows
+    client, key_hash = _client_and_key(settings)
+    store = cast(InMemoryStore, STORE)
+    reservations = len(store.api_keys.reservations)
+    response = _authorize(
+        client, key_hash, "pinned-small", model=model_id,
+        estimated_input_tokens=1_000_000, max_completion_tokens=1,
+        provider={"only": ["novita"], "allow_fallbacks": False},
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "context_length_exceeded"
+    assert "1000000 tokens" in response.json()["error"]["message"]
+    assert len(store.api_keys.reservations) == reservations
+
+
+def test_endpoint_listing_reports_host_specific_windows(different_host_windows, client):
+    model_id, _ = different_host_windows
+    rows = client.get(f"/v1/models/{model_id}/endpoints").json()["data"]
+    assert {row["provider"]: row["context_length"] for row in rows} == {
+        "novita": 1_000_000, "deepinfra": 1_048_576,
+    }
+    assert catalog.MODELS[model_id].context_length == 1_048_576
+
+
+@pytest.mark.parametrize("model_window,host_window,expected", [
+    (1_048_576, 1_000_000, 1_000_000),
+    (1_000_000, 1_048_576, 1_000_000),
+    (1_048_576, 0, 1_048_576),
+    (0, 1_000_000, 1_000_000),
+    (0, 0, 0),
+])
+def test_effective_window_never_widens_known_limits(model_window, host_window, expected):
+    from trusted_router.catalog_data import ModelEndpoint
+
+    model = Model(id=SMALL, name=SMALL, provider="novita", context_length=model_window)
+    endpoint = ModelEndpoint(id="fixture", model_id=SMALL, provider="novita", usage_type="Credits",
+                             context_length=host_window)
+    assert endpoint.effective_context_length(model) == expected

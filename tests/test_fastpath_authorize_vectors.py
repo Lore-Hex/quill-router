@@ -38,7 +38,7 @@ from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "fastpath" / "testdata" / "authorize_cases_v1.json"
 FINGERPRINTS = ROOT / "fastpath" / "testdata" / "authorize_fingerprint_v1.json"
-SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v1.body.json"
+SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v2.body.json"
 GENERATOR = ROOT / "scripts" / "fastpath" / "authorize_vectors.py"
 CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
 

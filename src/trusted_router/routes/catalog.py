@@ -655,7 +655,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "provider_name": PROVIDERS[endpoint.provider].name,
                     "endpoint_id": endpoint.id,
                     "provider": endpoint.provider,
-                    "context_length": model.context_length,
+                    "context_length": endpoint.effective_context_length(_model),
                     "pricing": _endpoint_pricing_payload(endpoint),
                     "usage_type": endpoint.usage_type,
                     "upstream_id": endpoint.upstream_id,

@@ -465,6 +465,15 @@ class ModelEndpoint:
     catalog_valid_until: datetime | None = None
     # Customer microdollars per million output tokens, including standard markup.
     output_token_price_per_m_by_resolution: dict[str, int] | None = None
+    # Host-specific window; 0 preserves the legacy model-window fallback.
+    context_length: int = 0
+
+    def effective_context_length(self, model: Model) -> int:
+        """A host may narrow, but never widen, the advertised model window."""
+        return min(
+            (window for window in (self.context_length, model.context_length) if window > 0),
+            default=0,
+        )
 
     @property
     def is_byok(self) -> bool:

@@ -208,7 +208,7 @@ func policyOf(t *testing.T, f authorizeFile, c authorizeCase) *routingsnapshot.E
 }
 
 var parsedSnapshot = sync.OnceValues(func() (*routingsnapshot.Snapshot, error) {
-	raw, err := readTestdata("routing_snapshot_v1.body.json")
+	raw, err := readTestdata("routing_snapshot_v2.body.json")
 	if err != nil {
 		return nil, err
 	}
