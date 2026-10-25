@@ -183,7 +183,8 @@
       "routable": true,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 28000
+      "cached_input_token_price_per_m": 28000,
+      "missing_since": "2026-10-25"
     },
     {
       "display_name": "GLM 5.3 Flash",
@@ -276,7 +277,7 @@
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-25T14:36:27Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }
