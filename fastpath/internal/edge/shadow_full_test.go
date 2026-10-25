@@ -43,6 +43,8 @@ type recordingCache struct {
 	evicted    []string
 	workspaces []string
 	slow       time.Duration
+	// more is added to the cache's own counts, as a test makes them grow.
+	more gwstate.Counters
 }
 
 func (c *recordingCache) Lookup(lookupHash string, now time.Time) gwstate.Read {
@@ -53,10 +55,25 @@ func (c *recordingCache) Lookup(lookupHash string, now time.Time) gwstate.Read {
 }
 
 func (c *recordingCache) Counters() gwstate.Counters {
+	var n gwstate.Counters
 	if inner, ok := c.KeyCache.(cacheCounters); ok {
-		return inner.Counters()
+		n = inner.Counters()
 	}
-	return gwstate.Counters{}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n.Unrefreshed += c.more.Unrefreshed
+	n.Dropped += c.more.Dropped
+	n.ReadFailures += c.more.ReadFailures
+	return n
+}
+
+// grow adds to the cache's counts.
+func (c *recordingCache) grow(unrefreshed, dropped, failures int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.more.Unrefreshed += unrefreshed
+	c.more.Dropped += dropped
+	c.more.ReadFailures += failures
 }
 
 func (c *recordingCache) Evict(lookupHash string) {
@@ -130,6 +147,11 @@ func storedRows(t *testing.T, c authorizeCase) store.AuthorizationForCompare {
 	}}
 	if len(r) > 0 {
 		rs, _ := r["settled"].(bool)
+		// The commit's timestamp (§5): some instant after the arrival.
+		committed := spanner.NullTime{}
+		if r["created_at"] == "commit_timestamp" {
+			committed = spanner.NullTime{Time: out.Authorization.CreatedAt.Add(3 * time.Millisecond), Valid: true}
+		}
 		out.Reservation = &store.StoredReservation{
 			ReservationID: str(r, "reservation_id"), WorkspaceID: nstr(r, "workspace_id"), KeyHash: nstr(r, "key_hash"),
 			WsShard: nint(r, "ws_shard"), CreditShard: num(r, "credit_shard"), KeyShard: nint(r, "key_shard"),
@@ -137,7 +159,7 @@ func storedRows(t *testing.T, c authorizeCase) store.AuthorizationForCompare {
 			ActualMicro: nint(r, "actual_micro"), HoldUsageType: nstr(r, "hold_usage_type"),
 			SettledUsageType: nstr(r, "settled_usage_type"), AuthorizationID: nstr(r, "authorization_id"), Settled: rs,
 			IdempotencyScope: nstr(r, "idempotency_scope"), IdempotencyFingerprint: nstr(r, "idempotency_fingerprint"),
-			CreatedAt: ntime(r, "created_at_us"), ExpiresAt: ntime(r, "expires_at_us"), TerminalAt: ntime(r, "terminal_at_us"),
+			CreatedAt: committed, ExpiresAt: ntime(r, "expires_at_us"), TerminalAt: ntime(r, "terminal_at_us"),
 		}
 	}
 	return out
@@ -150,6 +172,8 @@ type fakePython struct {
 	server    *httptest.Server
 	transport *http.Transport
 	respond   atomic.Pointer[func(http.ResponseWriter)]
+	// hits counts the requests that reached it.
+	hits atomic.Int64
 }
 
 func newFakePython(t *testing.T) *fakePython {
@@ -157,6 +181,7 @@ func newFakePython(t *testing.T) *fakePython {
 	py := &fakePython{transport: &http.Transport{DisableCompression: true, MaxIdleConnsPerHost: 4}}
 	py.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
+		py.hits.Add(1)
 		(*py.respond.Load())(w)
 	}))
 	t.Cleanup(func() {
@@ -285,10 +310,10 @@ func pythonsLegacyAnswer(t *testing.T, f authorizeFile, c authorizeCase, replay 
 	t.Helper()
 	in, _ := caseInputs(t, f, c)
 	d := Decide(in)
-	if d.Shadow == nil {
+	if d.ForShadow() == nil {
 		t.Fatalf("%s: no decision to stand for Python's answer: %q", c.Name, d.Pass)
 	}
-	composed, err := d.Shadow.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	composed, err := d.ForShadow().Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,6 +336,12 @@ func pythonOfCase(t *testing.T, f authorizeFile, c authorizeCase) (func(http.Res
 		}
 		return answerWith(200, []byte(e.Response)), ClassAgreeFull
 	case "unavailable":
+		if e.Python.Status != 0 {
+			// Python failed outright where Go answers the 503 (a
+			// FailedPrecondition it counts permanent, §8.4).
+			return answerWith(e.Python.Status, []byte(`{"detail":"Internal Server Error"}`)),
+				ClassPythonError + "." + fmt.Sprint(e.Python.Status)
+		}
 		return answerWith(503, []byte(e.Response), "Retry-After", "1"), ClassPythonUnavailable
 	}
 	kind := ""
@@ -542,14 +573,14 @@ func TestEachDifferenceIsCountedByItsField(t *testing.T) {
 	in, _ := caseInputs(t, f, c)
 	in.Mint = Mint{} // Go's own ids, not Python's
 	d := Decide(in)
-	if d.Shadow == nil {
+	if d.ForShadow() == nil {
 		t.Fatal(d.Pass)
 	}
 	golden := c.Expect.Response
 	if got := compareFull(d, pyAnswer{status: 200, body: []byte(golden)}); got.class != ClassAgreeFull {
 		t.Fatalf("the golden: %+v", got)
 	}
-	composed, _ := d.Shadow.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	composed, _ := d.ForShadow().Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
 	if string(composed.Render(c.Expect.timing(), false)) == golden {
 		t.Fatal("Go's own ids render Python's bytes: the substitution is not tested")
 	}
@@ -631,10 +662,10 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 	in, _ := caseInputs(t, f, c)
 	in.Mint = Mint{}
 	d := Decide(in)
-	if d.Shadow == nil || d.Shadow.Identity.Presented {
+	if d.ForShadow() == nil || d.ForShadow().Identity.Presented {
 		t.Fatalf("not a minted-key decision: %q", d.Pass)
 	}
-	if outcome, fields := compareRows(d.Shadow, storedRows(t, c), nil, time.Second); outcome != "agree" || len(fields) != 0 {
+	if outcome, fields := compareRows(d.ForShadow(), storedRows(t, c), nil, time.Second); outcome != "agree" || len(fields) != 0 {
 		t.Fatalf("the golden rows: %s %v", outcome, fields)
 	}
 	set := func(s string) spanner.NullString { return spanner.NullString{StringVal: s, Valid: true} }
@@ -660,6 +691,12 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"stage_d_reason":"not_streaming"`,
 				`"stage_d_reason":"stage_d_disabled"`, 1))
 		}, "differ", []string{"row.payload.stage_d_reason"}},
+		{"the reservation's created_at NULL", func(r *store.AuthorizationForCompare) {
+			r.Reservation.CreatedAt = spanner.NullTime{}
+		}, "differ", []string{"row.reservation.created_at"}},
+		{"the reservation committed at another instant", func(r *store.AuthorizationForCompare) {
+			r.Reservation.CreatedAt.Time = r.Reservation.CreatedAt.Time.Add(-time.Hour)
+		}, "agree", nil},
 		{"an earlier expiry", func(r *store.AuthorizationForCompare) {
 			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(-time.Microsecond)
 		}, "differ", []string{"row.reservation.expires_at"}},
@@ -683,14 +720,12 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 		}, "moved_on_differ", []string{"row.idempotency_fingerprint"}},
 		{"created past the answer", func(r *store.AuthorizationForCompare) {
 			r.Authorization.CreatedAt = r.Authorization.CreatedAt.Add(2*time.Second + time.Millisecond)
-			r.Reservation.CreatedAt.Time = r.Authorization.CreatedAt
 			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(2*time.Second + time.Millisecond)
 			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"created_at":"2026-10-19T02:00:00Z"`,
 				`"created_at":"2026-10-19T02:00:02.001000Z"`, 1))
 		}, "differ", []string{"row.created_at_skew"}},
 		{"created before the arrival", func(r *store.AuthorizationForCompare) {
 			r.Authorization.CreatedAt = r.Authorization.CreatedAt.Add(-time.Second - time.Microsecond)
-			r.Reservation.CreatedAt.Time = r.Authorization.CreatedAt
 			r.Reservation.ExpiresAt.Time = r.Reservation.ExpiresAt.Time.Add(-time.Second - time.Microsecond)
 			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"created_at":"2026-10-19T02:00:00Z"`,
 				`"created_at":"2026-10-19T01:59:58.999999Z"`, 1))
@@ -716,7 +751,7 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 			rows.Reservation = &copied
 		}
 		v.change(&rows)
-		outcome, fields := compareRows(d.Shadow, rows, nil, time.Second)
+		outcome, fields := compareRows(d.ForShadow(), rows, nil, time.Second)
 		if outcome != v.outcome || strings.Join(fields, ",") != strings.Join(v.want, ",") {
 			t.Errorf("%s: %s %v, want %s %v", v.name, outcome, fields, v.outcome, v.want)
 		}
@@ -726,16 +761,16 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 	pin, _ := caseInputs(t, f, presented)
 	pin.Mint = Mint{}
 	pd := Decide(pin)
-	if pd.Shadow == nil || !pd.Shadow.Identity.Presented {
+	if pd.ForShadow() == nil || !pd.ForShadow().Identity.Presented {
 		t.Fatalf("not a presented-key decision: %q", pd.Pass)
 	}
 	rows := storedRows(t, presented)
-	if outcome, fields := compareRows(pd.Shadow, rows, nil, time.Second); outcome != "agree" {
+	if outcome, fields := compareRows(pd.ForShadow(), rows, nil, time.Second); outcome != "agree" {
 		t.Fatalf("the presented key's golden rows: %s %v", outcome, fields)
 	}
 	rows.Authorization.Payload = spanner.NullString{Valid: true, StringVal: strings.Replace(rows.Authorization.Payload.StringVal,
 		`"idempotency_key":"`, `"idempotency_key":"x`, 1)}
-	if outcome, fields := compareRows(pd.Shadow, rows, nil, time.Second); outcome != "differ" ||
+	if outcome, fields := compareRows(pd.ForShadow(), rows, nil, time.Second); outcome != "differ" ||
 		strings.Join(fields, ",") != "row.payload.idempotency_key" {
 		t.Fatalf("another presented key: %s %v", outcome, fields)
 	}

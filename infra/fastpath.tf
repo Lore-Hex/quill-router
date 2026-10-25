@@ -22,11 +22,12 @@ locals {
   # #1969's edge flags (-edge-snapshot-url, -public-key, -kid, -plane and
   # -edge-shadow); the first release a node with the snapshot attributes
   # below may run. Its fastpath/ tree is main's as of f12f8967d.
-  # 6dd7cdc08: the merge of #2028, the edge's decide pipeline and its
-  # full-response shadow (G10) on G8's edge policy poll; the first release
-  # that takes -edge-policy-url and -edge-decide-shadow, which the nodes'
-  # policy attributes below pass (stage I1).
-  fastpath_release        = "6dd7cdc08198b9e5b4442ebd4b6c498e511bd2ab"
+  # 2d90fa113: main after #2040, with G10's decide pipeline and shadow
+  # (#2027/#2028), G11's decide path (#2030, off by flag), the reservation
+  # commit timestamp (#2038) and G12's per-period counts (#2039); it takes
+  # -edge-policy-url and -edge-decide-shadow, which the nodes' policy
+  # attributes below pass (stage I1).
+  fastpath_release        = "2d90fa113678233b9edcdf9d0ea833ace37b6c94"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"

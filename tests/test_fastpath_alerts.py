@@ -44,8 +44,11 @@ def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
     # The service labels each alert with its kind and writes it at the
     # journal's err priority, which the agent maps to ERROR.
     # The auditor's alerts by their message's kind; the edge's decide shadow
-    # names its own kind (edge.AlertWouldAdmit) through the same line.
+    # and decide path name their own kinds through the same line.
     assert "writeAlertOf(w, subject, what, auditor.AlertKind(what))" in service
+    assert "edgeAlert := func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }" in service
+    assert "decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}" in service
+    assert "decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}" in service
     assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": kind}' in service
     assert 'fmt.Fprintln(w, "<3>"+string(line))' in service
     # A policy per kind, each matching all three parts at once: the log, its
@@ -66,11 +69,21 @@ def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
     kinds = re.findall(r'^\tAlert\w+:\s+"(\w+)",$', alerts, re.M)
     assert len(kinds) == len(re.findall(r"^\tAlert\w+\s+= ", alerts, re.M)) == 13
     assert 'return "other"' in alerts
-    # The edge's decide shadow raises its own kind through the service's
-    # alert line (writeAlertOf).
-    edge = _read("fastpath", "internal", "edge", "shadow_full.go")
-    edge_kinds = re.findall(r'^const Alert\w+ = "(\w+)"$', edge, re.M)
-    assert edge_kinds == ["edge_would_admit_python_refused"]
+    # The edge's decide shadow and decide path raise their own kinds through
+    # the service's alert line (writeAlertOf): a const line each, or a line
+    # of a const block, in any of the edge's files.
+    edge_kinds = [
+        kind
+        for path in sorted((ROOT / "fastpath" / "internal" / "edge").glob("*.go"))
+        if not path.name.endswith("_test.go")
+        for kind in re.findall(r'^(?:const |\t)Alert\w+\s+= "(\w+)"$', path.read_text(encoding="utf-8"), re.M)
+    ]
+    assert sorted(edge_kinds) == [
+        "edge_decide_pass_slow",
+        "edge_decide_unavailable",
+        "edge_decide_unavailable_sustained",
+        "edge_would_admit_python_refused",
+    ]
     kinds += edge_kinds
     # Each kind its own policy, so a kind that keeps firing cannot use up
     # another's daily notifications.

@@ -209,6 +209,7 @@ jobs:
                       AKASHML_API_KEY:trustedrouter-akashml-api-key \
                       MANCER_API_KEY:trustedrouter-mancer-api-key \
                       ABLITERATE_API_KEY:trustedrouter-abliterate-api-key \
+                      ABLITERATION_API_KEY:trustedrouter-abliteration-api-key \
                       NSCALE_API_KEY:trustedrouter-nscale-api-key \
                       AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
                       SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \
@@ -259,7 +260,7 @@ jobs:
         # script returned non-zero.
         run: |
           set -o pipefail
-          uv run python -m scripts.pricing.speech
+          uv run python -m scripts.pricing.speech | tee /tmp/speech-summary.txt
           uv run python -m scripts.pricing.transcription
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
 
@@ -290,17 +291,24 @@ jobs:
       - name: Price-source coverage audit
         id: coverage_audit
         # Capture the complete report before failing. The explicit gate below
-        # prevents commit and deploy while the always-run reconciliation step
-        # still updates the durable GitHub issue.
+        # prevents commit and deploy only when the audit itself fails; a
+        # required-model gap is provider-scoped, annotated as an error and
+        # tracked by the always-run reconciliation step while every provider
+        # still publishes its refreshed prices.
         continue-on-error: true
         if: always()
         run: |
           set +e
           set -o pipefail
-          uv run python -m scripts.check_price_coverage --strict-model-discovery \
+          uv run python -m scripts.check_price_coverage --annotate-model-discovery-gaps \
             | tee /tmp/coverage-summary.txt \
             | tee -a "$GITHUB_STEP_SUMMARY"
           rc=${PIPESTATUS[0]}
+          if grep -qE '^::error title=Model discovery coverage gap::' /tmp/coverage-summary.txt; then
+            echo "gap_attention=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gap_attention=false" >> "$GITHUB_OUTPUT"
+          fi
           if grep -qE '::warning title=Price/model coverage gap::.*live scraper fallback manifest' \
               /tmp/coverage-summary.txt; then
             echo "manifest_attention=true" >> "$GITHUB_OUTPUT"
@@ -523,6 +531,7 @@ jobs:
           COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}
           MANIFEST_ATTENTION: ${{ steps.coverage_audit.outputs.manifest_attention }}
           DISCOVERY_ATTENTION: ${{ steps.coverage_audit.outputs.discovery_attention }}
+          GAP_ATTENTION: ${{ steps.coverage_audit.outputs.gap_attention }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -537,13 +546,16 @@ jobs:
           if [ "${JOB_STATUS}" != "success" ] || \
              [ "${COVERAGE_OUTCOME}" != "success" ] || \
              [ "${MANIFEST_ATTENTION}" != "false" ] || \
-             [ "${DISCOVERY_ATTENTION}" != "false" ]; then
+             [ "${DISCOVERY_ATTENTION}" != "false" ] || \
+             [ "${GAP_ATTENTION}" != "false" ]; then
             {
               if [ "${JOB_STATUS}" != "success" ] && \
                  [ "${COVERAGE_OUTCOME}" = "success" ]; then
                 echo "The hourly workflow did not complete successfully, so its clean working-tree audit is not evidence that the published catalog is healthy. The last known-good catalog remains live."
               elif [ "${COVERAGE_OUTCOME}" = "failure" ]; then
-                echo "The hourly price refresh was blocked before commit and deploy because the price/model coverage audit found an unsafe gap. The last known-good catalog remains live."
+                echo "The hourly price refresh was blocked before commit and deploy because the price/model coverage audit itself failed. The last known-good catalog remains live."
+              elif [ "${GAP_ATTENTION}" = "true" ]; then
+                echo "The hourly refresh completed. One or more providers list a required model that has no published price. The gap is provider-scoped: every provider, including the one with the gap, still refreshed its existing routes and prices. Add a price source for the model, or classify it in that provider's manifest; this issue closes on the next clean audit."
               elif [ "${MANIFEST_ATTENTION}" = "true" ]; then
                 echo "The hourly refresh completed, but one or more provider manifests are approaching or past their provider-scoped route deadline. Those routes fail closed independently; unrelated providers continue refreshing."
               elif [ "${DISCOVERY_ATTENTION}" = "true" ]; then
@@ -571,7 +583,9 @@ jobs:
                [ "${COVERAGE_OUTCOME}" = "success" ]; then
               echo "::warning title=Catalog publication incomplete::The existing discovery issue remains open because this run did not publish a validated catalog."
             elif [ "${COVERAGE_OUTCOME}" = "failure" ]; then
-              echo "::error title=Model discovery coverage gap::Catalog publication was blocked; unresolved coverage is tracked in GitHub Issues."
+              echo "::error title=Coverage audit failed::Catalog publication was blocked; the audit failure is tracked in GitHub Issues."
+            elif [ "${GAP_ATTENTION}" = "true" ]; then
+              echo "::warning title=Model discovery coverage gap::Provider-scoped gaps are tracked in GitHub Issues; every provider still published."
             elif [ "${MANIFEST_ATTENTION}" = "true" ]; then
               echo "::warning title=Provider manifest expiry::Provider-scoped route expiry is tracked in GitHub Issues."
             elif [ "${DISCOVERY_ATTENTION}" = "true" ]; then
@@ -598,7 +612,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          summary=/tmp/refresh-summary.txt
+          # Language-model providers (refresh.py) and speech price sources
+          # (speech.py) hold independently and report under the same heading.
+          summaries=""
+          for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt; do
+            if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
+              summaries="${summaries} ${summary}"
+            fi
+          done
           title="[bot] Provider prices held for review"
           issue_number=$(gh issue list \
             --repo "${GITHUB_REPOSITORY}" \
@@ -606,7 +627,7 @@ jobs:
             --search "${title} in:title" \
             --json number,title \
             --jq "map(select(.title == \"${title}\"))[0].number // empty")
-          if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
+          if [ -n "${summaries}" ]; then
             {
               echo "These providers had a price spike or refresh failure. The hourly refresh kept their committed manifests and prices (or kept them absent), while other providers refreshed. A majority of providers failing aborts publication for the whole run."
               echo
@@ -615,7 +636,9 @@ jobs:
               echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo
               echo '```'
-              sed -n '/^Held for price review/,/^$/p' "${summary}"
+              for summary in ${summaries}; do
+                sed -n '/^Held for price review/,/^$/p' "${summary}"
+              done
               echo '```'
             } > /tmp/held-issue.md
             if [ -n "${issue_number}" ]; then

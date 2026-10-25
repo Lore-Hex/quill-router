@@ -37,8 +37,9 @@ func Stage(in ComposeInput) (Staged, error) {
 		return Staged{}, composeErr("no clock reading")
 	}
 	// One clock reading (decision 15), as a Python datetime holds it: UTC,
-	// to the microsecond. created_at, the payload's created_at and
-	// expires_at all derive from it.
+	// to the microsecond. The authorization's created_at, the payload's
+	// created_at and expires_at all derive from it; the reservation's
+	// created_at is the commit's timestamp (ReservationRow).
 	in.At = in.At.UTC().Truncate(time.Microsecond)
 	in.Candidates = slices.Clone(in.Candidates)
 	in.Regions = slices.Clone(in.Regions)
@@ -132,7 +133,6 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 			IdempotencyScope:       in.IdempotencyScope,
 			IdempotencyFingerprint: in.IdempotencyFingerprint,
 			ExpiresAt:              in.At.Add(reservationTTL),
-			CreatedAt:              in.At,
 		},
 		inserted: s.inserted,
 		readBack: s.readBack,

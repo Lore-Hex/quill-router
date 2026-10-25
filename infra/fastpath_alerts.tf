@@ -36,9 +36,10 @@ locals {
     ],
     [for subscription in google_pubsub_subscription.fastpath_archive : subscription.name],
   )
-  # Every kind of fastpath/internal/auditor/alerts.go, the edge's
-  # (fastpath/internal/edge/shadow_full.go, AlertWouldAdmit), and "other",
-  # which the service gives an alert of no kind it knows. A policy each: Cloud
+  # Every kind of fastpath/internal/auditor/alerts.go, the edge's (the Alert
+  # constants of fastpath/internal/edge: shadow_full.go's decide shadow and
+  # decide_path.go's decide path), and "other", which the service gives an
+  # alert of no kind it knows. A policy each: Cloud
   # Monitoring sends a policy at most 20 notifications a day, so a kind that
   # keeps firing cannot use up a money fault's.
   fastpath_alert_kinds = toset([
@@ -56,6 +57,9 @@ locals {
     "drain_overdue",
     "pending_work_overdue",
     "edge_would_admit_python_refused",
+    "edge_decide_unavailable",
+    "edge_decide_unavailable_sustained",
+    "edge_decide_pass_slow",
     "other",
   ])
 }

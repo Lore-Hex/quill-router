@@ -621,17 +621,28 @@ def test_former_expensive_exemptions_use_ingress_bucket(path: str) -> None:
     assert limited.json()["error"]["type"] == "rate_limited"
 
 
-def test_health_route_uses_the_same_source_admission_bucket() -> None:
+def test_health_probes_bypass_an_exhausted_untrusted_source_bucket() -> None:
+    # Behind the AWS NLB every request shares one `untrusted` source bucket,
+    # so a client burst must not 429 the balancer's own GET /health probe.
     app = create_app(
-        Settings(environment="test", rate_limit_ip_per_window=1),
+        _production_settings(rate_limit_client_ip_mode="untrusted", rate_limit_ip_per_window=2),
+        configure_store_arg=False,
         init_observability=False,
     )
     client = TestClient(app)
 
-    assert client.get("/health").status_code == 200
-    limited = client.get("/health")
+    for _ in range(2):
+        assert client.post("/v1/chat/completions", json={}).status_code != 429
+    limited = client.post("/v1/chat/completions", json={})
     assert limited.status_code == 429
     assert limited.json()["error"]["type"] == "rate_limited"
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/v1/health").status_code == 200
+    # Still exhausted for everything else, including the look-alike that is
+    # not a route: an exempt /healthz would be an unmetered 404-render path.
+    assert client.get("/healthz").status_code == 429
+    assert client.post("/v1/chat/completions", json={}).status_code == 429
 
 
 @pytest.mark.parametrize("environment", ["production", "canary", "staging"])

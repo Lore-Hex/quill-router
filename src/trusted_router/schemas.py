@@ -330,6 +330,14 @@ class GatewayBootCapabilities(BaseModel):
 
     usage_heartbeat: StrictBool = False
     stream_open_heartbeat: StrictBool = False
+    # E4 R2. The enclave marks who chose each authorize's idempotency key
+    # (idempotency_key_source on the authorize body); without this
+    # declaration a "gateway" mark classifies as legacy.
+    idempotency_key_source: StrictBool = False
+    # E4 R2. The enclave keeps a durable outbox of frozen settle and refund
+    # terminals and redelivers them until the control plane answers. Stored
+    # and exposed on the authorize boot context; nothing gates on it yet.
+    settle_outbox: StrictBool = False
 
 
 class GatewayBootRegistrationRequest(_Strict):

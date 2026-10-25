@@ -597,6 +597,8 @@ def test_direct_provider_operator_hold_survives_canary_and_relist(
 def test_arcee_access_holds_match_manifest_and_leave_other_routes_available() -> None:
     holds = arcee.CATALOG.spec.operator_hold_reasons
     assert holds == {
+        "deepseek/deepseek-v4-flash": "provider-access-unavailable",
+        "deepseek/deepseek-v4-flash-latest": "provider-access-unavailable",
         "deepseek/deepseek-v4-pro": "provider-access-unavailable",
         "thinkingmachines/inkling-small": "provider-access-unavailable",
     }
@@ -611,6 +613,45 @@ def test_arcee_access_holds_match_manifest_and_leave_other_routes_available() ->
     }
     assert not routed.intersection(holds)
     assert "moonshotai/kimi-k3" in routed
+    assert "deepseek/deepseek-v4.1-flash" in routed
+    assert any(
+        endpoint.provider != "arcee"
+        for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.model_id == "deepseek/deepseek-v4-flash"
+    )
+
+
+def test_arcee_delisted_flash_stays_held_on_relist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    native_id = "deepseek/deepseek-v4-flash-latest"
+    model_id = "deepseek/deepseek-v4-flash"
+    manifest = tmp_path / "arcee.json"
+    manifest.write_text(arcee.MANIFEST_PATH.read_text(), encoding="utf-8")
+    live_rows = [
+        {"id": native_id, "pricing": {"prompt": "0.00000014", "completion": "0.00000028"}},
+        {"id": "deepseek/deepseek-v4-pro-0813", "pricing": {"prompt": "0.00000132", "completion": "0.00000396"}},
+        {"id": "moonshotai/kimi-k3", "pricing": {"prompt": "0.000003", "completion": "0.000015"}},
+    ]
+    probed: list[str] = []
+
+    def probe(**kwargs: object) -> bool:
+        probed.append(str(kwargs["model"]))
+        return True
+
+    monkeypatch.setenv("ARCEE_API_KEY", "test-only")
+    monkeypatch.setattr(_direct_openai, "fetch_json", lambda *_args, **_kwargs: {"data": live_rows})
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
+    provider = DirectOpenAIProvider(arcee.CATALOG.spec, manifest_path=manifest)
+    result = provider.fetch()
+    provider.write_provider_manifest(result)
+    rows = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+
+    for held in (model_id, native_id):
+        assert rows[held]["routable"] is False
+        assert rows[held]["routable_reason"] == "provider-access-unavailable"
+    assert native_id not in probed
+    assert rows["moonshotai/kimi-k3"]["routable"] is True
 
 
 def test_direct_provider_normalization_is_the_single_audit_policy() -> None:
@@ -1282,6 +1323,8 @@ def test_price_coverage_failure_blocks_commit_and_deploy() -> None:
     assert '"${JOB_STATUS}" != "success"' in workflow
     assert '"${MANIFEST_ATTENTION}" != "false"' in workflow
     assert '"${DISCOVERY_ATTENTION}" != "false"' in workflow
+    assert '"${GAP_ATTENTION}" != "false"' in workflow
+    assert "GAP_ATTENTION: ${{ steps.coverage_audit.outputs.gap_attention }}" in workflow
     assert "(coverage summary unavailable)" in workflow
     assert "Coverage audit incomplete" in workflow
     assert "Catalog publication incomplete" in workflow

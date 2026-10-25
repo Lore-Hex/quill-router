@@ -166,24 +166,28 @@ type fullShadow struct {
 	totals   *fullTally
 	critical int
 	differs  int
+	// cacheAt is the cache's counts at the last line, which logs the
+	// period's: the cache keeps running totals.
+	cacheAt gwstate.Counters
 }
 
 // fullTally is one snapshot's and policy's counts: the classes, the
 // fields that differ (differ.<field>, row.<column>), the row read-backs by
-// outcome, the decide row's gate for the requests Go would decide, and the
-// answers Python made from a read-back.
+// outcome, the decide row's gate for the requests Go would decide and
+// their classes (cohort), and the answers Python made from a read-back.
 type fullTally struct {
-	classes, fields, rows, decide map[string]int
-	readBack                      int
+	classes, fields, rows, decide, cohort map[string]int
+	readBack                              int
 }
 
 func newFullTally() *fullTally {
-	return &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{}}
+	return &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{},
+		cohort: map[string]int{}}
 }
 
 func (t *fullTally) clone() *fullTally {
 	return &fullTally{classes: clonedCounts(t.classes), fields: clonedCounts(t.fields), rows: clonedCounts(t.rows),
-		decide: clonedCounts(t.decide), readBack: t.readBack}
+		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), readBack: t.readBack}
 }
 
 func clonedCounts(m map[string]int) map[string]int {
@@ -411,7 +415,7 @@ func (sh *fullShadow) follow(job *fullJob) {
 	r := sh.safeCompare(decided, a)
 	sh.evict(decided, a, job.in.Request.Body)
 	if r.rows && sh.sample() {
-		sh.readRows(decided.Shadow, &r, a.latency)
+		sh.readRows(decided.ForShadow(), &r, a.latency)
 	}
 	sh.record(job.digest, r)
 	sh.release(job.held + decodedHeld + job.finished())
@@ -461,7 +465,7 @@ type pythonIDs struct {
 // same.
 func compareFull(d Decided, a pyAnswer) fullResult {
 	read := a.why == ""
-	if d.Shadow == nil {
+	if d.ForShadow() == nil {
 		reason := d.Pass
 		switch {
 		case strings.HasPrefix(reason, "cache."):
@@ -489,7 +493,7 @@ func compareFull(d Decided, a pyAnswer) fullResult {
 	refusal := errorOf(a)
 	switch {
 	case a.status == http.StatusOK:
-		return compareAnswer(d.Shadow, a.body, r)
+		return compareAnswer(d.ForShadow(), a.body, r)
 	case a.status == http.StatusConflict && refusal.kind == "conflict":
 		// Another body under the key: Go's insert would have found the
 		// scope taken and passed (insert.scope_taken).
@@ -983,7 +987,9 @@ var settleStable = map[string]bool{
 
 // reservationDifferences: every column of tr_reservation; expires_at is
 // Python's at least Go's (Python reads its clock again for it, §5) and at
-// most the request's latency and rowSkew later.
+// most the request's latency and rowSkew later. created_at is the commit's
+// timestamp on either path (§5), which no reading of Go's names: it is
+// compared as present, not by value.
 func reservationDifferences(g gwauth.ReservationRow, p *store.StoredReservation, latency time.Duration,
 	moved bool) []string {
 	if p == nil {
@@ -1009,7 +1015,7 @@ func reservationDifferences(g gwauth.ReservationRow, p *store.StoredReservation,
 		{"settled", false, p.Settled},
 		{"idempotency_scope", g.IdempotencyScope, ns(p.IdempotencyScope, p.IdempotencyScope.StringVal)},
 		{"idempotency_fingerprint", g.IdempotencyFingerprint, ns(p.IdempotencyFingerprint, p.IdempotencyFingerprint.StringVal)},
-		{"created_at", g.CreatedAt.UnixMicro(), ns(p.CreatedAt, p.CreatedAt.Time.UnixMicro())},
+		{"created_at", true, p.CreatedAt.Valid},
 		{"terminal_at", nil, ns(p.TerminalAt, p.TerminalAt.Time)},
 	}
 	for _, c := range cols {
@@ -1051,6 +1057,7 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 				gate = "on"
 			}
 			tally.decide[gate]++
+			boundedTo(tally.cohort, r.class, maxShadowReasons*4)
 		}
 		if r.readBack {
 			tally.readBack++
@@ -1115,28 +1122,32 @@ func (sh *fullShadow) flush() {
 			}
 		}
 		sh.logf("fastpath edge decide shadow: %s agree_full=%d differ=%d would_admit_python_refused=%d read_back=%d "+
-			"classes=%s fields=%s rows=%s decide=%s", d, t.classes[ClassAgreeFull], t.classes[ClassDifferAny], would,
-			t.readBack, jsonOf(t.classes), jsonOf(t.fields), jsonOf(t.rows), jsonOf(t.decide))
+			"classes=%s fields=%s rows=%s decide=%s cohort=%s", d, t.classes[ClassAgreeFull], t.classes[ClassDifferAny],
+			would, t.readBack, jsonOf(t.classes), jsonOf(t.fields), jsonOf(t.rows), jsonOf(t.decide), jsonOf(t.cohort))
 	}
+	// Every count of the line is the period's, the cache's too: its own
+	// are totals, so the line logs what they grew by since the last.
 	line := "fastpath edge decide shadow: dropped=%d evictions=%d"
 	args := []any{sh.dropped.Swap(0), sh.periodEvictions.Swap(0)}
 	if c, ok := sh.cfg.Cache.(cacheCounters); ok {
-		n := c.Counters()
+		n, was := c.Counters(), sh.cacheAt
+		sh.cacheAt = n
 		line += " cache_unrefreshed=%d cache_dropped=%d cache_read_failures=%d"
-		args = append(args, n.Unrefreshed, n.Dropped, n.ReadFailures)
+		args = append(args, n.Unrefreshed-was.Unrefreshed, n.Dropped-was.Dropped, n.ReadFailures-was.ReadFailures)
 	}
 	sh.logf(line, args...)
 	sh.tallies, sh.critical, sh.differs = map[string]*fullTally{}, 0, 0
 }
 
 // DecideShadowCounts are the full-response shadow's counts since the edge
-// started: by class, by field, by row read-back outcome and by the decide
-// row's gate, and the answers Python made from a read-back, the requests
+// started: by class, by field, by row read-back outcome, by the decide
+// row's gate and, of the requests Go would decide, by class (Cohort), and
+// the answers Python made from a read-back, the requests
 // not followed (dropped) and the cache evictions Python's refusals made.
 type DecideShadowCounts struct {
-	Classes, Fields, Rows, Decide map[string]int
-	ReadBack                      int
-	Dropped, Evictions            int64
+	Classes, Fields, Rows, Decide, Cohort map[string]int
+	ReadBack                              int
+	Dropped, Evictions                    int64
 }
 
 // DecideShadowCounts are the counts now; zero with the shadow off.
@@ -1148,8 +1159,9 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	sh.mu.Lock()
 	t := sh.totals.clone()
 	sh.mu.Unlock()
-	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, ReadBack: t.readBack,
-		Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
+	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
+		ReadBack: t.readBack,
+		Dropped:  sh.dropped.Load(), Evictions: sh.evictions.Load()}
 }
 
 // DecideShadowOn reports the full-response shadow configured.

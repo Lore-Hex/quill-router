@@ -15,6 +15,7 @@ from trusted_router.pricing import provider_manifest_price_profile_is_valid
 EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
         "abliterate",
+        "abliteration",
         "meta",
         "aion-labs",
         "akashml",
