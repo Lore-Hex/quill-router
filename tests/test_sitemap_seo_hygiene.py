@@ -112,7 +112,7 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
             left_id, right_id = path[len(comparison_prefix):].split("/vs/", 1)
             left_name = dashboard._hero_model_name(dashboard.MODELS[left_id])
             right_name = dashboard._hero_model_name(dashboard.MODELS[right_id])
-            identity = f"{left_name} vs {right_name}"
+            identity = " ".join(f"{left_name} vs {right_name}".split())
             if not parser.title.startswith(identity):
                 issues.append(f"{path}: comparison title lost model identity")
             if len(parser.title) > 60 and parser.title != identity:

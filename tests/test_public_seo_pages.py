@@ -1463,7 +1463,7 @@ def test_long_comparison_titles_preserve_model_identity_in_all_metadata(
 
     _serve_glm_51(monkeypatch)
     names = {
-        "moonshotai/kimi-k2.6": "MoonshotAI: Kimi K2.6 Long Context Preview 2026",
+        "moonshotai/kimi-k2.6": "MoonshotAI: Kimi K2.6  Long Context Preview 2026 ",
         "z-ai/glm-5.1": "Z.ai: GLM 5.1 Reasoning Extended Context 2026",
     }
     for model_id, name in names.items():

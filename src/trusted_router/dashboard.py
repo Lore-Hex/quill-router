@@ -2397,8 +2397,8 @@ def _provider_hero(provider: Provider, credits_model_count: int) -> tuple[str, s
 
 
 def _seo_comparison_title(left: Model, right: Model) -> str:
-    left_name = _hero_model_name(left)
-    right_name = _hero_model_name(right)
+    left_name = " ".join(_hero_model_name(left).split())
+    right_name = " ".join(_hero_model_name(right).split())
     base = f"{left_name} vs {right_name}"
     detailed_suffix = ": Price, Speed & Context"
     compact_suffix = ": Price & Speed"
