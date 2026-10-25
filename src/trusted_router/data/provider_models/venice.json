@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
   "provider": "venice",
   "source": "https://api.venice.ai/api/v1/models?type=text",
-  "generated_at": "2026-10-25T14:36:27Z",
+  "generated_at": "2026-10-25T17:52:07Z",
   "model_count": 49,
   "models": [
     {
@@ -868,7 +868,9 @@
       "max_output_tokens": 32768,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 150000,
-      "missing_since": "2026-10-25"
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen 3.6 27B",

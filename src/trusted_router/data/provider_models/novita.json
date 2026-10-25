@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-10-25T14:36:27Z",
+  "generated_at": "2026-10-25T17:52:07Z",
   "model_count": 173,
   "models": [
     {
@@ -2848,7 +2848,9 @@
       "retirement_at": "2026-10-23T00:00:00Z",
       "replacement_model_id": "xiaomi/mimo-v2.6-pro",
       "cached_input_token_price_per_m": 43,
-      "missing_since": "2026-10-25"
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "zai-org/autoglm-phone-9b-multilingual",
@@ -3950,11 +3952,12 @@
       "created": 1780040346,
       "context_length": 1048576,
       "max_output_tokens": 131072,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1680,
       "output_token_price_per_m": 3360,
       "cached_input_token_price_per_m": 34,
-      "missing_since": "2026-10-25"
+      "missing_since": "2026-10-25",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-4.7-h",
