@@ -355,7 +355,8 @@ def test_four_path_scenario_axes(env, monkeypatch, scenario):
 
 
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
-def test_provider_hold_preserves_legacy_settlement_state(env, monkeypatch, kind):
+@pytest.mark.parametrize('archive', ['HELD_PREPAID_SETTLEMENT_ENDPOINTS', 'HELD_POLICY_SETTLEMENT_ENDPOINTS'])
+def test_provider_hold_preserves_legacy_settlement_state(env, monkeypatch, kind, archive):
     from trusted_router import catalog_registry
 
     body, auth, _ = prepare(env, kind=kind)
@@ -370,7 +371,7 @@ def test_provider_hold_preserves_legacy_settlement_state(env, monkeypatch, kind)
     expected = (settled.finalized_cost_microdollars, settled.finalization_outcome)
     expected_credit = copy.deepcopy(_typed_credit(env[1], 'ws-v1'))
     restore(env[1], initial)
-    monkeypatch.setattr(catalog_registry, 'HELD_PREPAID_SETTLEMENT_ENDPOINTS', dict(endpoints))
+    monkeypatch.setattr(catalog_registry, archive, dict(endpoints))
     endpoints.clear()
     result = client.post(url, json=legacy_body(body))
     assert result.status_code == 200, result.text

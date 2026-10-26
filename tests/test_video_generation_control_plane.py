@@ -69,6 +69,8 @@ NATIVE_VIDEO_PROVIDERS = {
 }
 
 NATIVE_ONLY_VIDEO_MODELS = {
+    "openai/sora-2",
+    "openai/sora-2-pro",
     "minimax/h3-max",
     "x-ai/grok-imagine-video",
     "decart/lucy-2.5",
@@ -155,16 +157,14 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
     assert MODELS["minimax/h3-max"].input_modalities == ("text", "image")
 
 
-def test_sora_video_authorizes_direct_openai_before_standard_fallback() -> None:
+def test_sora_video_has_no_reseller_fallback() -> None:
     for model_id in ("openai/sora-2", "openai/sora-2-pro"):
         direct = endpoint_for_id(f"{model_id}@openai/prepaid")
         fallback = endpoint_for_id(f"{model_id}@venice/prepaid")
         assert direct is not None
-        assert fallback is not None
+        assert fallback is None
         assert endpoint_privacy_tier(direct) == PRIVACY_TIER_STANDARD
         assert endpoint_stores_content(direct) is True
-        assert endpoint_privacy_tier(fallback) == PRIVACY_TIER_STANDARD
-        assert endpoint_stores_content(fallback) is True
 
 
 def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
@@ -306,13 +306,24 @@ def test_video_idempotency_binds_request_not_fresh_provider_quote(
     assert mismatch.status_code == 409
 
 
+@pytest.mark.parametrize("policy_held", [False, True])
 def test_video_job_state_is_content_free_idempotent_and_key_scoped(
     client: TestClient,
     inference_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+    policy_held: bool,
 ) -> None:
     auth = _authorize_video(client, inference_key)
     endpoint = endpoint_for_id(str(auth["endpoint_id"]))
     assert endpoint is not None
+    if policy_held:
+        from trusted_router.catalog_registry import (
+            HELD_POLICY_SETTLEMENT_ENDPOINTS,
+            MODEL_ENDPOINTS,
+        )
+
+        monkeypatch.setitem(HELD_POLICY_SETTLEMENT_ENDPOINTS, endpoint.id, endpoint)
+        monkeypatch.delitem(MODEL_ENDPOINTS, endpoint.id)
     prepare_body = {
         "job_id": "job-0123456789abcdef",
         "authorization_id": auth["authorization_id"],
