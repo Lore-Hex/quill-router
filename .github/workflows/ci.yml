@@ -76,9 +76,10 @@ jobs:
         # main plus one generated commit). A shallow fetch of the base is
         # enough: `git diff` compares two trees and needs no history between
         # them, and the repository's history is too large to clone each time.
-        # --no-renames: with rename detection a code file moved onto a data
-        # path is reported only by its destination; without it the diff is a
-        # deletion of the code path and the classifier runs the full matrix.
+        # --no-renames: with move detection on, a code file moved onto a
+        # data path is reported only by its destination; with it off the
+        # diff is a deletion of the code path and the classifier runs the
+        # full matrix.
         # --raw: the classifier sees modes and status, so a symlink, a
         # submodule or an executable at a data path is not data either.
         # The base counts as validated only through a completed, successful
