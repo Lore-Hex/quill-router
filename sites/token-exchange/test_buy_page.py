@@ -1,4 +1,6 @@
 """Public reserved tokens inquiries: static build, index references and privacy boundaries."""
+import json
+import re
 import runpy
 import subprocess
 import tempfile
@@ -87,6 +89,70 @@ class BuyPageTests(unittest.TestCase):
         self.assertNotIn('JSON.stringify', script)
         self.assertIn('history[push', script)
 
+    def test_pricing_visibility_executes_production_update(self) -> None:
+        script = (HERE / 'nyte-v2/buy.js').read_text()
+        update = script.split('  function update() {', 1)[1].split('\n  function fieldsValid(', 1)[0]
+        # Use every rendered price line, including its no-JS hidden state.
+        prices = re.findall(r'<span class="buy-price"([^>]*)>(.*?)</span>', self.page)
+        self.assertEqual(len(prices), 4)
+        self.assertIn('name="unit" value="blocks" checked', self.page)
+        self.assertIn('<p class="buy-fine" id="buy-price-caption">', self.page)
+        for attrs, _ in prices:
+            self.assertNotIn('hidden', attrs)
+        harness = 'const prices = ' + json.dumps([
+            {'hidden': 'hidden' in attrs, 'textContent': text} for attrs, text in prices
+        ]) + ';\n'
+        harness += r'''
+const assert = require('node:assert/strict');
+const fields = Object.fromEntries(['grades','model-fields','model','block-fields','rate-field',
+  'total','price-caption','as-of'].map(id => [id, {hidden:false, disabled:false, textContent:''}]));
+fields.blocks = {valueAsNumber:3, validity:{valid:true}};
+fields['as-of'].textContent = 'October 19, 2026';
+let unit = 'blocks', underlying = 'index', grade = 'AAA';
+const grades = {AAA:1799, A:890, B:166, C:28};
+const get = id => fields[id];
+const selected = name => ({value:{unit, underlying, grade}[name], dataset:{price:grades[grade]}});
+const priceLines = selector => {
+  assert.equal(selector, '.buy-price');
+  return prices;
+};
+fields.grades.querySelectorAll = priceLines;
+const flow = {querySelector: () => ({})};
+const money = new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0});
+const catalogue = () => {};
+'''
+        harness += 'function update() {' + update
+        harness += r'''
+for (const nonBlock of ['throughput', 'unsure']) {
+  for (grade of Object.keys(grades)) {
+    unit = 'blocks';
+    update();
+    assert.equal(fields.total.hidden, false);
+    assert(fields.total.textContent.includes(money.format(3 * grades[grade])));
+    unit = nonBlock;
+    update();
+    assert.equal(fields.grades.hidden, false, `${unit}: grades remain visible`);
+    assert.equal(fields.grades.disabled, false, `${unit}: grades remain selectable`);
+    for (const price of prices) assert.equal(price.hidden, true, `${unit}: hide ${price.textContent}`);
+    assert.equal(fields['price-caption'].hidden, true, `${unit}: hide pricing caption`);
+    assert.equal(fields.total.hidden, true, `${unit}: hide indicative total`);
+    const visiblePricing = [...prices, fields.total].filter(node => !node.hidden);
+    assert(!visiblePricing.some(node => node.textContent.includes('$')));
+    unit = 'blocks';
+    update();
+    for (const price of prices) assert.equal(price.hidden, false, 'restore all four prices');
+    assert.equal(fields['price-caption'].hidden, false);
+    assert.equal(fields.total.hidden, false);
+  }
+}
+underlying = 'model';
+update();
+assert.equal(fields.grades.hidden, true);
+assert.equal(fields.total.hidden, true);
+'''
+        result = subprocess.run(['node', '-e', harness], check=False, capture_output=True, text=True)  # noqa: S603,S607 — fixed local test harness
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_start_month_defaults_in_local_time_and_is_optional_without_js(self) -> None:
         self.assertIn('id="buy-start" type="month">', self.page)
         script = (HERE / 'nyte-v2/buy.js').read_text()
@@ -123,13 +189,14 @@ for (const [year, month, day, expected] of [
         harness = r'''
 const assert = require('node:assert/strict');
 const fields = Object.fromEntries(Object.entries({model:'vendor/model & special', provider:'A/B',
-  blocks:'3', term:'6', start:'2027-02', company:'Research & Co + 東京', name:'José & Ada',
+  blocks:'3', rate:'1000', term:'6', start:'2027-02', company:'Research & Co + 東京', name:'José & Ada',
   email:'jose+capacity@example.com'}).map(([key,value]) => [key,{value}]));
 for (const key of ['calendly-link','summary','calendar']) fields[key] = {};
 let iframe;
 fields.calendar.replaceChildren = value => { iframe = value; };
 const get = key => fields[key];
-const selected = key => ({value:{unit:'blocks',underlying:'model'}[key]});
+let unit = 'blocks', underlying = 'model';
+const selected = key => ({value:{unit,underlying,grade:'AAA'}[key], dataset:{price:'1799'}});
 const clean = value => value.trim().replace(/\s+/g, ' ');
 const document = {createElement: () => ({})};
 '''
@@ -156,6 +223,17 @@ for (const term of ['1', '3', '6', '12']) {
   const expected = `term: ${term} ${term === '1' ? 'month' : 'months'};`;
   assert(fields.summary.textContent.includes(expected));
   assert(new URL(iframe.src).searchParams.get('a1').includes(expected));
+}
+for (unit of ['throughput', 'unsure']) {
+  for (underlying of ['index', 'model']) {
+    scheduling();
+    const summary = new URL(iframe.src).searchParams.get('a1');
+    assert(summary.includes(`Unit: ${unit};`));
+    assert(summary.includes(unit === 'throughput' ? '1000 tokens per second' : 'quantity: to discuss'));
+    assert(!/\$|USD|1,799|1799|indicative|as of/i.test(summary), 'no price in Calendly a1');
+    assert.equal(fields.summary.textContent, summary);
+    assert.equal(fields['calendly-link'].href, iframe.src);
+  }
 }
 '''
         subprocess.run(['node', '-e', harness], check=True, capture_output=True, text=True)  # noqa: S603,S607 — fixed local test harness

@@ -54,6 +54,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function update() {
     const unit = selected('unit').value;
     const index = selected('underlying').value === 'index';
+    const showPrices = index && unit === 'blocks';
+    get('grades').querySelectorAll('.buy-price').forEach(price => { price.hidden = !showPrices; });
+    get('price-caption').hidden = !showPrices;
     get('grades').hidden = !index;
     get('model-fields').hidden = index;
     get('grades').disabled = !index;
@@ -63,7 +66,8 @@ document.addEventListener('DOMContentLoaded', () => {
     get('rate-field').hidden = unit !== 'throughput';
     const quantity = get('blocks').valueAsNumber;
     flow.querySelector('[data-block-delta="-1"]').disabled = !Number.isFinite(quantity) || quantity <= 1;
-    if (index && unit === 'blocks' && get('blocks').validity.valid) {
+    get('total').hidden = !showPrices || !get('blocks').validity.valid;
+    if (!get('total').hidden) {
       get('total').textContent = `Indicative total: ${money.format(quantity * Number(selected('grade').dataset.price))} USD · ${quantity.toLocaleString('en-US')} × 1B-token blocks over the selected term. As of ${get('as-of').textContent}. Indicative, not an executable quote.`;
     } else {
       get('total').textContent = 'Pricing is discussed on the call. No indicative total is shown for throughput, a specific model, or an undecided request.';
