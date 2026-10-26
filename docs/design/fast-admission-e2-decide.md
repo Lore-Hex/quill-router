@@ -1573,7 +1573,7 @@ letter: disjoint files, built in parallel.
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
 | I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, the I2 gates |
-| G15a to G15c, P5, P6, I3 | 6 | The edge decides async-v1 requests with Python's admission-off answer: [`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6 | G13 |
+| G15a to G15c, P5, P6, I3, I4 | 6 | The edge decides async-v1 requests with Python's admission-off answer: [`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6 | G13 |
 
 **The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
 `-edge-decide-shadow`, off by default) runs `Decide` for each authorize the
@@ -1737,8 +1737,12 @@ fields past the line's bound, which could hide either); zero
 not name a `cache_affinity_key`, those being `affinity`'s) recorded. `fastpathwatch
 edge` prints each figure. Requests carrying `X-TR-Settlement-Mode` pass with
 `header.settlement_async` and are not comparable until G15c is pinned;
-their share of `followed` is read from the shadow's count lines (G15c's
-watch prints it), and the I2 decision records it as the traffic I2 does not cover
-([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6.2).
+the I2 decision records two figures, `settlement_header_share` (header
+passes in `classes` over `followed`) and
+`affinity_settlement_header_share` (header passes in `affinity` over all
+of `affinity`), read from the shadow's count lines until G15c's watch
+prints them. They are lower bounds on async-v1 traffic among the requests
+the shadow followed, not the share I2 does not cover
+([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §5, §6.2).
 `decide on` for an operator-owned workspace first, then the pilot
 workspace.
