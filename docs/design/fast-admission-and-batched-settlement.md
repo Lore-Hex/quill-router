@@ -598,7 +598,11 @@ lease's expiry minus a skew allowance.
    computes today, so a hold is the same amount on both paths (§4.13).
 3. At the owner, check the workspace's state from a cache with a short maximum
    age (pause, trust, debt, revocation). Then hold r against the lease; e
-   is the ceiling the rows carry and the heartbeat cuts a stream at.
+   is the ceiling the rows carry and Python's Stage D heartbeat cuts a
+   stream at. The owner's heartbeat bounds a running charge by the lease's
+   hold, r, so a stream admitted under a lease would be cut at r: both
+   front doors keep streams out of the lease cohort until an admission
+   carries e beside r.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
    settle and refund:
    - the authorization ID `A` and the generation ID;
@@ -1788,13 +1792,15 @@ which §4.11 now lists.
   route; for a user-provided model, partner billing and a video it is the
   estimate. A catalog text route's settle bills what the provider reports,
   capped at neither figure (a video's, a user-provided model's and
-  Polyphemus's settle are held to the estimate), so an in-flight request's
-  uncovered cost is `max(0, actual - reservation)`: while the provider
-  honours the budget, at most the estimate minus the reservation, the
-  output past 16,384 tokens at the selected candidate's rate (a candidate
-  cheaper than the priciest can pass 16,384 tokens without passing the
-  reservation). With the input estimate exact, it can still pass the
-  estimate (quill-cloud-proxy `29be0fdd`, quill-router `7ea04fa7`):
+  Polyphemus's settle are held to the estimate), and nothing in authorize
+  bounds that charge (cache-creation premiums and counts above the budget
+  settle in full), so an in-flight request's uncovered cost,
+  `max(0, actual - reservation)`, has no bound of its own. The split
+  raises it by at most the estimate minus the reservation against a
+  single hold at the estimate (a candidate cheaper than the priciest can
+  pass 16,384 tokens without passing the reservation). With the input
+  estimate exact, a charge can still pass the estimate
+  (quill-cloud-proxy `29be0fdd`, quill-router `7ea04fa7`):
   - **The ceiling sent to the provider is above the estimate.** With no
     caller limit, adaptive-thinking Anthropic models are sent 32,000 tokens
     (#440), about sixty times a 512-token hold, and OpenAI-compatible

@@ -2063,9 +2063,11 @@ def _authorize_gateway_sync_impl(
         )
         try:
             with gateway_phase("store_ms", after="post_commit_ms"):
+                # A key cap counts outstanding spend ceilings: the key takes
+                # the estimate, the workspace's credits the reservation.
                 key_limit_reservation = STORE.reserve_key_limit(
                     api_key.hash,
-                    reservation,
+                    estimate,
                     usage_type=reservation_usage_type,
                 )
             window_decision = key_limit_reservation.window_decision

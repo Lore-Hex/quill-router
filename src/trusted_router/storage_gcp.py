@@ -5521,8 +5521,10 @@ class SpannerStore(OperationalAnalyticsReads):
         )
 
         usage = UsageType.coerce(reservation_usage_type)
-        # The counters and caps take the reservation (the credit hold); the
-        # authorization row keeps the estimate (the spend ceiling).
+        # The credit counters take the reservation (the credit hold); the key
+        # caps, windows and counters take the estimate (a key cap counts
+        # outstanding spend ceilings); the authorization row keeps the
+        # estimate (the spend ceiling).
         hold = estimate if reservation is None else reservation
         key_counter_shards = key_usage_shard_count({"usage_shard_count": key_usage_shards})
         key_shard_candidates = randomized_credit_shards(key_counter_shards)
@@ -5615,7 +5617,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 self._database,
                 self._param_types,
                 key_hash=key_hash,
-                estimate=hold,
+                estimate=estimate,
                 window_limits=window_limits,
                 shard_count=key_counter_shards,
                 idempotency_scope=scope,
@@ -5638,7 +5640,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 self._database,
                 self._param_types,
                 key_hash=key_hash,
-                estimate=hold,
+                estimate=estimate,
                 has_credit_candidate=has_credit_candidate,
                 shard_count=key_counter_shards,
                 idempotency_scope=scope,

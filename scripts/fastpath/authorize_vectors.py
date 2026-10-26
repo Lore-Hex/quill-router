@@ -898,8 +898,8 @@ def cases() -> list[dict[str, Any]]:
     for tokens_out in (HOLD_OUTPUT_TOKENS - 1, HOLD_OUTPUT_TOKENS, HOLD_OUTPUT_TOKENS + 1, 131_072):
         add(f"answer:estimate:hold_cap:{FLASH}:1000+{tokens_out}",
             body={"model": FLASH, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
-    add(f"answer:estimate:hold_cap:{GEMINI}:7680+max_tokens:131072",
-        body={"model": GEMINI, "estimated_input_tokens": 7_680, "max_output_tokens": None, "max_tokens": 131_072})
+    add(f"answer:estimate:hold_cap:{GEMINI}:8000+max_tokens:131072",
+        body={"model": GEMINI, "estimated_input_tokens": 8_000, "max_output_tokens": None, "max_tokens": 131_072})
     for field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
         add(f"answer:output_field:{field}", body={"max_output_tokens": None, field: 2_048})
     add("answer:output_default_512", body={"max_output_tokens": None})

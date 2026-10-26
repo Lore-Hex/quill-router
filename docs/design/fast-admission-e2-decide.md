@@ -540,22 +540,31 @@ budget is at most 16,384. Every reader of either, and which it reads:
 
 | Reader | Figure |
 |---|---|
-| Admission against the available balance (`reserve_credit`, `reserve_credit_with_pause`, the memory and Postgres `reserve`), the typed counters' `reserved`, the key lifetime cap and spend windows (`reserve_key`, `reserve_strict_key`, `key_window_limit_decision`, `key_lifetime_cap_precheck`, `credit_exhaustion_precheck`), the reservation row's `credit_reserved_micro` and `key_reserved_micro`, and their release at settle, refund and reap (`storage_gcp_counter_dml`, `storage_gcp_authorize` settle) | reservation |
-| The fast path's lease: `_fastpath_admission` and the edge's admit (`frontdoor.AuthorizeOf.Estimate`, the owner's `Admission.Estimate`, the hold row's `Estimate`), the drain's raise (charge minus hold) and the Go reaper's cap on an abandoned hold's charge | reservation (the reaper charges an abandoned stream at most the hold) |
+| Workspace credit admission against the available balance (`reserve_credit`, `reserve_credit_with_pause`, `credit_exhaustion_precheck`, the memory and Postgres `reserve`), the typed credit counters' `reserved`, the reservation row's `credit_reserved_micro`, and its release at settle, refund and reap (`storage_gcp_counter_dml`, `storage_gcp_authorize` settle; the outbox resolves the reservation by id and releases the recorded hold) | reservation |
+| Key admission: the lifetime cap, the spend windows and the strict windows (`reserve_key`, `reserve_strict_key`, `key_window_limit_decision`, `key_lifetime_cap_precheck`, the memory and Postgres `reserve_key_limit`), the key counters' reserved and the reservation row's `key_reserved_micro`, released at settle, refund and reap as recorded | estimate: a key cap is a promise to the key's owner that outstanding spend ceilings count against it (docs/routing-controls-20260927.md, "Strict spending"); the key counter carries what it admitted, so its release is the recorded hold, symmetric as before. The edge has no key gate: a capped, windowed or strict key passes to Python (`key.key_cap`, `key.key_window`, `key.budget_strict`) |
+| The fast path's lease: `_fastpath_admission` and the edge's admit (`frontdoor.AuthorizeOf.Estimate`, the owner's `Admission.Estimate`, the hold row's `Estimate`, the signed envelope), the drain's raise (`max(charge - hold, 0)`), the owner's and the record's bound on a heartbeat's running charge, and the Go reaper's cap on an abandoned hold's charge | reservation. The owner accepts no heartbeat whose running charge passes the hold, so a stream admitted under a lease would be cut at the reservation: both front doors keep streams out of the lease cohort (Python `fastpath_frontdoor` reason `stream`, Go `gwauth.ReasonStream`) until an admission carries the ceiling beside the hold; an abandoned hold is charged its last accepted snapshot, at most the reservation (Python's snapshot reaper charges the recorded running charge and releases the recorded hold) |
 | The insufficient-credits 402 and its `billing.insufficient_credits` line (`reserved_microdollars`, beside the estimate) | reservation |
-| The authorization row's `estimated_microdollars` (Python and `gwauth.AuthorizationRow`), the payload's `estimated_microdollars`, the 200's `estimated_cost` and `estimated_cost_microdollars` (Python and `gwauth/response.go`, so the shadow's byte comparison of the 200 is unchanged), and the replay of a stored authorization | estimate |
+| The authorization row's `estimated_microdollars` (Python and `gwauth.AuthorizationRow`; `storage_gcp_request_records` readback), the payload's `estimated_microdollars`, the 200's `estimated_cost` and `estimated_cost_microdollars` (Python and `gwauth/response.go`, so the shadow's byte comparison of the 200 and of the rows is unchanged; the shadow compares no reservation, the goldens' `reservation_microdollars` does), the replay of a stored authorization, the fast path settle's full-record money metadata (`fastpath_settle`), and the `billing.authorize_contention` and `authorize_conflict_after_escrow` diagnostics | estimate |
 | Stage D: the gateway's `cap_micro` (`_gateway_stage_d_payload`), the heartbeat's `cap_micro` and its `usage_exceeds_cap` refusal (`storage_gcp_stage_d._cap_micro`), which cut a stream whose running charge passes it | estimate |
-| A video's settle ceiling (`Video token cost exceeds the authorized reservation`), a user-provided model's settle cap, the Polyphemus mixed-rollout clamp, the transcription and speech quote checks, and the `billing.settlement_exceeded_reservation` log | estimate (equal to the reservation for every one of these but the log) |
-| The deferred (federated) outstanding counter, incremented and released by the same row value | estimate (conservative; no row carries the reservation) |
+| A video's settle ceiling (`Video token cost exceeds the authorized reservation`), a user-provided model's settle cap, the Polyphemus mixed-rollout clamp, the Fetch fee check, the token-billed transcription and speech ceilings, and the `billing.settlement_exceeded_reservation` log | estimate (equal to the reservation for every one of these but the log) |
+| The fixed-quote transcription and speech checks | `additional_cost_reservation_microdollars`, the frozen quote, neither figure (it can differ from both: a quote with app markup) |
+| The deferred (federated) outstanding counter on the Postgres plane, incremented by the row value and released by it at settle, refund and reap | estimate (conservative; no row carries the reservation). The in-memory store increments its counter and has no matching adjustment, which predates this change |
+| Counter reconciliation and resharding (`storage_gcp_counter_reconcile`) | the recorded holds, old full-estimate ones included |
 | `stage_d_max_output_tokens` and the token ceiling `_usage_exceeds_authorized_tokens` | the whole budget, as before |
 
 A catalog text route's settle is capped at neither figure (the video,
-user-provided and Polyphemus settles above are held to the estimate), so
-an in-flight request's uncovered cost is `max(0, actual - reservation)`:
-while the provider honours the budget, at most the estimate minus the
-reservation, the output past 16,384 tokens at the selected candidate's rate
+user-provided and Polyphemus settles above are held to the estimate), and
+nothing in authorize bounds the actual charge: cache-creation premiums,
+provider-reported counts above the budget and a price tier the prompt
+estimate missed all settle in full, so an exact prompt with an output
+within the budget can still settle above the estimate. An in-flight
+request's uncovered cost is `max(0, actual - reservation)`, with no bound
+of its own. What the split changes is bounded: against a single hold at
+the estimate it was `max(0, actual - estimate)`, so the split raises the
+uncovered cost of a request by at most the estimate minus the reservation
 (a candidate cheaper than the priciest can pass 16,384 tokens without
-passing the reservation). The reservation is not in the 200 body or on the authorization row;
+passing the reservation, and only the output past 16,384 tokens at the
+selected candidate's rate reaches that difference). The reservation is not in the 200 body or on the authorization row;
 the goldens (§10.1) record it as `reservation_microdollars` from what the
 front door was asked.
 

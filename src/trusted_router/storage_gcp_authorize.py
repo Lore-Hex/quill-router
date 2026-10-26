@@ -601,11 +601,14 @@ def authorize_atomic(
         if speculative and len(counts) > key_index and counts[key_index] == 0:
             raise _RetrySequentialKeyReserve("speculative key hold missed")
 
-    # The hold the counters and caps take: the reservation when the caller
-    # separates it from the estimate (authorize_candidates.hold_output_tokens:
-    # at most HOLD_OUTPUT_TOKENS of the output budget), else the estimate.
-    # The authorization row the builders write keeps the estimate, the
-    # spend ceiling.
+    # The CREDIT hold: the reservation when the caller separates it from the
+    # estimate (authorize_candidates.hold_output_tokens: at most
+    # HOLD_OUTPUT_TOKENS of the output budget), else the estimate. The KEY
+    # takes the estimate in every path (lifetime cap, spend windows, strict
+    # windows, its recorded hold): a key cap is a promise to the key's owner
+    # that outstanding spend ceilings count against it, and the settle
+    # releases the recorded key hold, so the key counter carries what it
+    # admitted. The authorization row the builders write keeps the estimate.
     hold = estimate if reservation is None else reservation
 
     def txn(transaction: Any) -> dict:
@@ -663,7 +666,7 @@ def authorize_atomic(
             from trusted_router.storage_gcp_strict_budget import reserve_strict_key
 
             key_result, strict_decision = reserve_strict_key(
-                transaction, pt, key_hash, hold, is_byok=is_byok,
+                transaction, pt, key_hash, estimate, is_byok=is_byok,
                 enforce_windows=enforce_strict_windows,
             )
             selected_key_shard = UNSHARDED
@@ -687,7 +690,7 @@ def authorize_atomic(
                     transaction,
                     pt,
                     key_hash,
-                    hold,
+                    estimate,
                     is_byok=is_byok,
                     shard=candidate,
                 )
@@ -703,7 +706,7 @@ def authorize_atomic(
                 raise _Reject(
                     AuthorizeOutcome.KEY_LIMIT_EXCEEDED if saw_key_row else AuthorizeOutcome.KEY_MISSING
                 )
-        key_hold = hold if key_result == KEY_ACCEPTED else 0
+        key_hold = estimate if key_result == KEY_ACCEPTED else 0
 
         reservation_statement = reservation_insert_statement(
             pt,
@@ -743,7 +746,7 @@ def authorize_atomic(
             ))
         if speculative:
             statements.append(reserve_key_statement(
-                pt, key_hash, hold, is_byok=is_byok, shard=selected_key_shard,
+                pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
             ))
         # Credit before key; no client RPC between these locks and commit.
         # A zero does not stop Batch DML: check the prefix before INSERT errors.

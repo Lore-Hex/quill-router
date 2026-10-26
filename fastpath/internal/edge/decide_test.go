@@ -1226,7 +1226,7 @@ func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 	if estimate, reservation := figures(flash + "16383"); reservation >= bound || estimate != reservation {
 		t.Errorf("a 16,383 budget: reservation %d, want below %d; estimate %d, want the reservation", reservation, bound, estimate)
 	}
-	if estimate, reservation := figures("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:7680+max_tokens:131072"); reservation >= estimate {
+	if estimate, reservation := figures("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:8000+max_tokens:131072"); reservation >= estimate {
 		t.Errorf("max_tokens 131,072: reservation %d, want below the estimate %d", reservation, estimate)
 	}
 }

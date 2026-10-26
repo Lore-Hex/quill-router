@@ -38,7 +38,7 @@ def _figures(client: TestClient, key_hash: str, workspace_id: str, field: str, b
     response = client.post(
         "/v1/internal/gateway/authorize",
         json={
-            "api_key_hash": key_hash, "model": MODEL, "estimated_input_tokens": 7_680,
+            "api_key_hash": key_hash, "model": MODEL, "estimated_input_tokens": 8_000,
             field: budget, "idempotency_key": f"hold-output-cap:{field}:{budget}",
         },
     )
@@ -106,8 +106,9 @@ def test_a_token_billed_video_reserves_its_whole_budget_and_settles_past_the_bou
 
 
 def test_the_typed_store_holds_the_reservation_and_records_the_estimate() -> None:
-    """The Spanner path: the counters and the reservation row take the
-    reservation, the authorization row keeps the estimate."""
+    """The Spanner path: the credit counters and the reservation row's
+    credit hold take the reservation; the key hold and the authorization
+    row keep the estimate (a key cap counts outstanding spend ceilings)."""
     store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="hold-cap-workspace", name="Hold cap", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
@@ -137,5 +138,86 @@ def test_the_typed_store_holds_the_reservation_and_records_the_estimate() -> Non
     assert db.gateway_authorizations[authorization.id]["estimated_microdollars"] == 262_244
     reservation = db.reservations[authorization.credit_reservation_id]
     assert reservation["credit_reserved_micro"] == 32_868
-    assert reservation["key_reserved_micro"] == 32_868
+    assert reservation["key_reserved_micro"] == 262_244
     assert db.typed[CREDIT_BALANCE_TABLE][(workspace.id, 0)]["reserved"] == 32_868
+
+
+def _capped_key_store(**key_limits: int | bool):  # type: ignore[no-untyped-def]
+    store, db = make_fake_store(request_record_write_mode="typed")
+    workspace = Workspace(id="key-cap-workspace", name="Key cap", owner_user_id="user-1")
+    store._write_entity("workspace", workspace.id, workspace)
+    store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace.id, 0)] = {
+        "workspace_id": workspace.id, "shard": 0, "total_credits": 10_000_000, "total_usage": 0,
+        "reserved": 0, "source_updated_at": None, "updated_at": None,
+    }
+    _raw, key = store.create_api_key(workspace_id=workspace.id, creator_user_id=None, name="capped", **key_limits)
+    return store, db, workspace, key
+
+
+def _typed_authorize(store, workspace, key, *, estimate: int, reservation: int, **extra):  # type: ignore[no-untyped-def]
+    endpoint = effective_endpoint(
+        next(endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.usage_type == "Credits")
+    )
+    model = MODELS[endpoint.model_id]
+    outcome, _authorization = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, estimate=estimate, reservation=reservation,
+        has_credit_candidate=True, reservation_usage_type=UsageType.CREDITS,
+        model_id=model.id, provider=endpoint.provider, requested_model_id=model.id,
+        candidate_model_ids=[model.id], region="us-central1", endpoint_id=endpoint.id,
+        candidate_endpoint_ids=[endpoint.id], idempotency_key=None,
+        idempotency_fingerprint="f" * 64, expires_at=datetime.now(UTC) + timedelta(hours=2), **extra,
+    )
+    return outcome
+
+
+# A 100-token prompt at 1 per million and a 131,072-token budget at 2 per
+# million: the estimate is 262,244, the reservation 32,868. A key cap of
+# 32,868 is a promise to the key's owner, and the estimate is what the
+# request can spend: the cap refuses it, as it did when the hold was the
+# estimate, while the workspace's credits are asked only for the reservation.
+ESTIMATE, RESERVATION = 262_244, 32_868
+
+
+def test_a_key_lifetime_cap_compares_the_estimate() -> None:
+    store, db, workspace, key = _capped_key_store(limit_microdollars=RESERVATION)
+    assert _typed_authorize(store, workspace, key, estimate=ESTIMATE, reservation=RESERVATION) == "key_limit_exceeded"
+    assert db.typed[CREDIT_BALANCE_TABLE][(workspace.id, 0)]["reserved"] == 0
+    assert not db.typed.get("tr_reservation", {})
+    assert _typed_authorize(store, workspace, key, estimate=RESERVATION, reservation=RESERVATION) == "accepted"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_key_daily_window_compares_the_estimate(strict: bool) -> None:
+    store, db, workspace, key = _capped_key_store(limit_daily_microdollars=RESERVATION, budget_strict=strict)
+    limits = {"strict_budget": True} if strict else {"window_limits": {"daily": RESERVATION}}
+    outcome = _typed_authorize(store, workspace, key, estimate=ESTIMATE, reservation=RESERVATION, **limits)
+    assert outcome == "key_window_limit_exceeded:daily"
+    assert db.typed[CREDIT_BALANCE_TABLE][(workspace.id, 0)]["reserved"] == 0
+    assert not db.typed.get("tr_reservation", {})
+    assert _typed_authorize(store, workspace, key, estimate=RESERVATION, reservation=RESERVATION, **limits) == "accepted"
+
+
+def test_a_key_spend_limit_compares_the_estimate_on_the_legacy_path(
+    client: TestClient, user_headers: dict[str, str],
+) -> None:
+    """The in-memory (legacy) path: the key limit sits between the
+    reservation and the estimate, so the whole-budget request is refused
+    for the key's limit and the at-the-bound one is admitted."""
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "capped", "limit": 0.5}).json()
+    key_hash = created["data"]["hash"]
+
+    def authorize(budget: int) -> int:
+        response = client.post("/v1/internal/gateway/authorize", json={
+            "api_key_hash": key_hash, "model": MODEL, "estimated_input_tokens": 8_000, "max_tokens": budget,
+            "idempotency_key": f"key-limit:{budget}",
+        })
+        return response.status_code
+
+    assert authorize(HOLD_OUTPUT_TOKENS) == 200
+    refused = client.post("/v1/internal/gateway/authorize", json={
+        "api_key_hash": key_hash, "model": MODEL, "estimated_input_tokens": 8_000, "max_tokens": 131_072,
+        "idempotency_key": "key-limit:131072",
+    })
+    assert refused.status_code == 402, refused.text
+    assert refused.json()["error"]["type"] == "key_limit_exceeded"
