@@ -143,7 +143,7 @@ def test_anonymous_and_api_keys_cannot_close_accounts(client, account):
     assert not STORE.get_user(account[0].id).disabled
 
 
-@pytest.mark.parametrize("token", ["", "garbage", "1.invalid", "0." + "0" * 64, "\u00e9"])
+@pytest.mark.parametrize("token", ["", "garbage", "1.invalid", "0." + "0" * 64, "\u00e9", "9" * 4000])
 def test_final_cannot_skip_first_confirmation(client, account, token):
     response = client.post("/console/account/delete/confirm",
                            data={**payload(client), "final_token": token, "confirm_close": "yes"},

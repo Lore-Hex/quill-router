@@ -35,6 +35,8 @@ def _final_token(session: AuthSession, issued: int) -> str:
 
 
 def _valid_final_token(session: AuthSession, token: str) -> bool:
+    if len(token) > 96:
+        return False
     try:
         issued = int(token.split(".", 1)[0])
     except ValueError:
