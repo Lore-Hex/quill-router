@@ -357,8 +357,9 @@ generation. So the true property is:
   with some serving instances. Turning admission on: an old instance
   signs a fresh off-policy, the edge answers `async_eligible: false` to a
   request a new instance would have ticketed. Turning it off: the edge
-  can hold a new on-policy and pass a request an old instance answers
-  with a ticket, which is Python answering, not the edge.
+  can hold an old instance's fresh on-policy and pass a request, which
+  Python then answers (with a ticket if an old instance takes it, without
+  one if a new instance does): Python answering, not the edge.
 
 The operator rule: **the disagreement is a missed optimisation only,
 never money, and needs no interlock.** The only answer the edge gives on
@@ -368,7 +369,7 @@ uses today (§3.5); a request the edge passes is answered by Python as
 before. A rollout costs some requests their async settlement for its
 duration, nothing else. For measurement only, a Python rollout that
 changes admission during the I3 soak restarts the soak's sample (§6.2),
-because it mixes shape C into the comparison (`python_async_admitted`).
+because it mixes shape C into the comparison (`async_python_admitted`).
 
 ## 4. The options
 
@@ -482,20 +483,48 @@ decision gate like `body.cache_affinity`, and the shadow compares it:
   not Go's: A against B is a request, catalog or runtime fact
   disagreeing). Python answering shape C means Python's admission was on
   while the edge's policy said off (§3.6): counted
-  `python_async_admitted` and not compared.
+  `async_python_admitted` and not compared.
 - **Affinity requests.** An async-v1 request naming a
-  `cache_affinity_key` is counted in `affinity` (`shadow_full.go:1106`),
-  as `affinity_cold` or `affinity_warm`; both compare the whole 200, and
-  the async members do not depend on candidate order (the snapshot is
-  sorted by `endpoint_id`), so they must match there too.
+  `cache_affinity_key` is counted in `affinity` (`shadow_full.go:1106-1110`),
+  as `affinity_cold`, `affinity_warm` or `differ` (`shadow_full.go:620-629`),
+  and today an affinity `differ` records no field. Affinity can change the
+  candidate set, not only its order: with `allow_fallbacks` false Python
+  re-ranks before keeping one endpoint (`authorize_candidates.py:415-422`),
+  and the warm comparator accepts that substitution
+  (`fastpath/internal/edge/affinity.go:109-133`, `warmOf`). The billing
+  snapshot is built from the candidates kept, so a warm answer's async
+  members can differ from the cold ones in kind, not only in bytes: with
+  `model` `openai/gpt-5-mini`, fallbacks off, the cold choice
+  `openai/gpt-5-mini@openai/prepaid` (a valid billing candidate) and the
+  remembered `openai/gpt-5-mini@azure/prepaid` (provider `azure`, refused
+  by `Candidate`), Python's warm 200 carries shape A where the cold one
+  carries B. So the shadow compares an affinity answer's async members
+  against Go's async additions rebuilt from the candidates the comparison
+  used: the cold candidates for `affinity_cold`, `warmOf`'s candidates for
+  `affinity_warm` (the same restaging that comparison already does for
+  the rest of the 200), and the cold candidates for an affinity `differ`.
 - **The rows:** compared as for any request (§2.5).
-- **Counts:** every async-v1 result is also counted by shape under
-  `async=` on the count line (`async.snapshot`,
-  `async.false_only.<reason>`, `async.admission`, `async.off`), whichever
-  map holds its class, and `async_members_agree` and `async_members_differ`
-  count the async-v1 requests whose 200 was compared (agree or differ in
-  `classes`, or affinity cold or warm) by whether the async members
-  matched.
+- **Counts** (G15c), each a map on the shadow's count line, keyed so that
+  every I3 figure is one printed number. The population `pop` is `plain`
+  (no `cache_affinity_key`) or `affinity`:
+  - `async_seen.<pop>`: every followed request whose header list is
+    exactly `["async-v1"]`, counted as soon as the strict parse has read
+    the body, whatever reason it later passes with or whether Python's
+    answer is read; `async_seen.unparsed` for one whose body the edge did
+    not read (a boot failure, or a body the parse refuses before it knows
+    the affinity key).
+  - `async_compared.<pop>.agree` and `async_compared.<pop>.differ`: an
+    async-v1 request that Go composed and whose Python 200 was read and
+    compared, by whether the async members alone matched (rebuilt as above
+    for `affinity`), independent of the whole 200's class. A request
+    unread, refused, stale or passed before the compose is in neither.
+  - `async_fields.<pop>.<field>`: each async member that differed
+    (`differ.async_eligible`, `differ.billing_snapshot`,
+    `differ.billing_snapshot_hash`, `differ.async_shape`), for both
+    populations, an affinity `differ` included.
+  - `async_shape.<pop>.<shape>`: Go's composed shape (`snapshot`,
+    `false_only.<reason>`), and `async_python_admitted.<pop>` for a
+    Python shape C (not compared).
 
 For shape C, when (b) exists, the rules G16 must keep: decode both
 tickets; the header equal but `kid`; the claims equal but `iat`, `exp`,
@@ -518,29 +547,29 @@ used: it counted an affinity request that carried the header as
 is that accounting change; the fleet's async-v1 volume, the enclave's
 async log events per hour, was flat).
 
-Two figures, each over one denominator, as G15c's watch will print them:
+Two settlement-header pass shares, each over one denominator, as G15c's
+watch will print them:
 
 | Figure | Numerator | Denominator | Value |
 |---|---|---|---|
-| `settlement_header_share` | `classes` entries ending `header.settlement_async` | `followed` (the watch's sum of `classes`, `cmd/fastpathwatch/edge.go:177`) | 2.4% |
-| `affinity_settlement_header_share` | `affinity` entries ending `header.settlement_async` | the sum of `affinity` | 45.2% |
+| `settlement_header_pass_share` | `classes` entries ending `header.settlement_async` | `followed` (the watch's sum of `classes`, `cmd/fastpathwatch/edge.go:177`) | 2.4% |
+| `affinity_settlement_header_pass_share` | `affinity` entries ending `header.settlement_async` | the sum of `affinity` | 45.2% |
 
-Over both maps together, header passes were 14.7% of all results, and 88%
-of the header passes were affinity requests. What these figures are and
-are not:
+Over both maps together, settlement-header passes were 14.7% of all
+results, and 88% of them were affinity requests. They are the share of
+results passed under that reason, and only that:
 
-- They are observed pass shares, lower bounds on async-v1 traffic: the
-  shadow counts a request once, under the first reason it trips, and
-  `header.settlement_async` comes after `boot.*` and every other request
-  reason (`gwauth/cohort_request.go:72-118`), so a streamed request with
-  the header counts as `body.stream`; a header pass whose Python answer was
-  not read counts as `unread.*` (`shadow_full.go:490-502`; none in the
-  window).
-- They include any other header value (`sync`, two values), which Python
-  treats as no header.
-- They are not the share of traffic I2 excludes because of the header:
-  the affinity part passes `body.cache_affinity` after the compose in any
-  case (§1 item 5).
+- any `X-TR-Settlement-Mode` value counts (`gwauth/cohort_request.go:114-117`),
+  `sync` and repeated values included, which Python treats as no header;
+- a request with the header that trips an earlier reason is counted under
+  that reason (`body.stream`, `body.internal_model`, `boot.*`,
+  `cohort_request.go:72-118`), and one whose Python answer was not read
+  under `unread.*` (`shadow_full.go:490-502`; none in the window).
+
+So they say neither how much traffic is async-v1 nor how much I2 leaves
+out because of the header. G15c's `async_seen.<pop>` (§4.4) counts exact
+`async-v1` before any exclusion; its share of followed is the async-v1
+figure, and it is the one the I3 duration estimate (§6.2) needs.
 
 **Python's `async_eligible`:** the gateway logs no per-request async
 outcome. It answers true for no request today, by construction and by
@@ -579,9 +608,9 @@ G15c, together with the Go that reads it.
 |---|---|---|---|---|
 | G15a | The policy parser accepts an optional `async_settle` object (four bools) and the snapshot parser an optional per-epoch `billing_valid` (bool). Absent is unknown; `null`, a non-bool or any other unknown member still refuses | `fastpath/internal/routingsnapshot/edgepolicy.go`, `snapshot.go`, their tests | hand-built bodies with and without each member | tests; absent accepted, `null` and a fifth member refused |
 | P5 | Python publishes both, after G15a is pinned on every node: `async_settle` (§3.4; `EdgePolicyV1` extended, the runtime read at signing, the `fastpath_edge_decide_async` setting, `false` in `rollout.sh`); `raw_prices_valid` factored out of `build_snapshot` and published per epoch as `billing_valid` (§3.2) | `src/trusted_router/edge_policy.py`, `services/edge_policy_publisher.py`, `billing_snapshot.py`, `routing_snapshot.py`, `config.py`, `scripts/deploy/rollout.sh`, their tests; the contract's §4 table and `routing-snapshot-v1.md` | `edge_policy_v1.{body,manifest}.json` and the routing snapshot body and manifest regenerated by their generators; a compiler test with a `0.5` request price and a float tier rate publishing `billing_valid: false` | the nodes' pinned release includes G15a (`fastpathwatch edge` shows no `cache.policy` or `cache.snapshot` rise after the deploy) |
-| P6 | Python async goldens in a new file Go does not read yet: the generator runs Python's authorize with `X-TR-Settlement-Mode: async-v1` and a test runtime (a test ticket key, epoch 1, a journal region, admission off) | `scripts/fastpath/authorize_vectors.py`, `tests/test_fastpath_authorize_vectors.py` | `fastpath/testdata/authorize_async_cases_v1.json`, the same case shape as `authorize_cases_v1.json`: shape B (one and several candidates, a tiered price, both providers, candidates out of route order, no `invocation_nonce`); shape A for each §2.3 branch the cohort can reach (an extra member, each non-chat route type, absent `route_type`, `input_modalities` present and `null`, a non-ordinary parameter, a partner model, a mixed-provider candidate set, `billing_valid` false, `ticket_authority` false, `typed_records` false); admission on as pass `policy.async_admission`; `edge_decide` false as pass `async.off`; the file's header carries Python's ordinary-parameter set | the generator's own test; every expected 200 from Python's real `_gateway_authorize_response` |
+| P6 | Python async goldens in a new file Go does not read yet: the generator runs Python's authorize with `X-TR-Settlement-Mode: async-v1` and a test runtime (a test ticket key, epoch 1, a journal region, admission off) | `scripts/fastpath/authorize_vectors.py`, `tests/test_fastpath_authorize_vectors.py` | `fastpath/testdata/authorize_async_cases_v1.json`, the same case shape as `authorize_cases_v1.json`: shape B (one and several candidates, a tiered price, candidates out of route order, no `invocation_nonce`, and a mixed-provider set, `openai/gpt-4.1@openai/prepaid` with `anthropic/claude-sonnet-4.5@anthropic/prepaid`, which `build_snapshot` accepts since each candidate is validated alone); shape A for each §2.3 branch the cohort can reach (an extra member, each non-chat route type, absent `route_type`, `input_modalities` present and `null`, a non-ordinary parameter, a partner model, a candidate set including `openai/gpt-5-mini@azure/prepaid`, whose provider `Candidate` refuses, `billing_valid` false, `ticket_authority` false, `typed_records` false); the affinity case of §4.4 (`openai/gpt-5-mini`, fallbacks off, a remembered `@azure/prepaid`): Python's warm 200 in shape A beside the cold one in shape B, seeded as the contract's §10.1 affinity cases seed a session; admission on as pass `policy.async_admission`; `edge_decide` false as pass `async.off`; the file's header carries Python's ordinary-parameter set | the generator's own test; every expected 200 from Python's real `_gateway_authorize_response` |
 | G15b | `gwauth`: the request records undeclared members, `input_modalities` presence, `requested_parameters` and the exact header; `async.go` builds the billing snapshot from the composed candidates' epoch prices and `billing_valid`, validates it as §3.2, hashes it with the canonical encoder and returns shape A (with its reason) or B; the renderer splices it after `stage_d` | `fastpath/internal/gwauth/request.go`, `async.go`, `async_test.go`, `response.go` | P6's file, compose only | every P6 case byte for byte through the compose; a Go test holds the ordinary set equal to P6's; fuzzing the builder against the cases' inputs |
-| G15c | `edge`: an exactly-one `async-v1` request no longer passes at the request stage; `policy.async_admission` and `async.unpublished` (no `async_settle` or no `billing_valid`) sit with the keyless policy gates; `async.off` is a decision gate after the compose while `edge_decide` is false; the shadow compares the async members and counts them (§4.4); `fastpathwatch edge` prints `settlement_header_share`, `affinity_settlement_header_share`, the `async=` classes, `async_members_agree`, `async_members_differ` and `python_async_admitted` | `fastpath/internal/gwauth/cohort_request.go`, `fastpath/internal/edge/decide.go`, `shadow_full.go`, `fastpath/cmd/fastpathwatch/edge.go`, `docs/runbooks/fastpath-watch.md`; `scripts/fastpath/authorize_vectors.py` | `authorize_cases_v1.json`: its one exact-`async-v1` case (`pass:header.settlement_async`) is regenerated with header `sync`, still that pass, in this same PR; P6's file now also through `Decide` | the decide-path tests; G11's budget test unchanged (the snapshot is built in the compose, no I/O) |
+| G15c | `edge`: an exactly-one `async-v1` request no longer passes at the request stage; `policy.async_admission` and `async.unpublished` (no `async_settle` or no `billing_valid`) sit with the keyless policy gates; `async.off` is a decision gate after the compose while `edge_decide` is false; the shadow compares the async members and counts them (§4.4); `fastpathwatch edge` prints `settlement_header_pass_share`, `affinity_settlement_header_pass_share`, the share of `async_seen`, and every §6.2 I3 figure as one number | `fastpath/internal/gwauth/cohort_request.go`, `fastpath/internal/edge/decide.go`, `shadow_full.go`, `fastpath/cmd/fastpathwatch/edge.go`, `docs/runbooks/fastpath-watch.md`; `scripts/fastpath/authorize_vectors.py` | `authorize_cases_v1.json`: its one exact-`async-v1` case (`pass:header.settlement_async`) is regenerated with header `sync`, still that pass, in this same PR; P6's file now also through `Decide` | the decide-path tests; G11's budget test unchanged (the snapshot is built in the compose, no I/O) |
 | I3 | Re-pin the nodes to G15c with `edge_decide` false; soak (§6.2) | node attributes | | §6.2 |
 | I4 | `fastpath_edge_decide_async=true` in `rollout.sh`, a Python deploy; the decide-path runbook gains the async rows | `scripts/deploy/rollout.sh`, `docs/runbooks/fastpath-edge-decide.md` | | §6.2's I3 gate |
 | G16 | Design only: option (b), when the operator schedules admission on | a sibling design doc | | |
@@ -591,15 +620,13 @@ G15c, together with the Go that reads it.
 **Until G15c is pinned**, I2's gate reads as it does, with one sentence
 added to the contract's "I2 gates": requests carrying
 `X-TR-Settlement-Mode` pass with `header.settlement_async` and are not
-comparable; the I2 decision records the two figures of §5,
-`settlement_header_share` (header passes in `classes` over `followed`) and
-`affinity_settlement_header_share` (header passes in `affinity` over all
-of `affinity`), read from the shadow's count lines as §5 reads them until
-G15c's watch prints them. They are lower bounds on async-v1 traffic
-among the requests the shadow followed, not the share of traffic I2 does
-not cover: a streamed request with the header counts as `body.stream`, and
-an affinity request passes `body.cache_affinity` after the compose in any
-case.
+comparable; the I2 decision records the two settlement-header pass
+shares of §5, `settlement_header_pass_share` (those passes in `classes`
+over `followed`) and `affinity_settlement_header_pass_share` (those passes
+in `affinity` over all of `affinity`), read from the shadow's count lines
+as §5 reads them until G15c's watch prints them. They are pass shares
+under one reason, not the async-v1 share of traffic and not the share I2
+does not cover (§5).
 
 **The dark sequence.** G15c lands with async deciding off, and only a
 published switch turns it on:
@@ -614,25 +641,47 @@ published switch turns it on:
    request it follows.
 3. The I3 gate, read with `fastpathwatch edge -since` the last node's
    restart onto G15c, over the same span and digest rules as the
-   contract's I2 sample: at least 2,000 async-v1 requests whose 200 was
-   compared (`async_members_agree` plus `async_members_differ`), of which
-   at least 500 not naming a `cache_affinity_key`
-   (`agree_full` plus `differ` with the header); `async_members_agree` at
-   least 99.5% of them with every difference explained; zero
-   `differ.billing_snapshot_hash`; zero unexplained
-   `differ.billing_snapshot`, `differ.async_eligible` and
-   `differ.async_shape`; zero `python_async_admitted` (admission off
-   throughout: a Python rollout that changes admission restarts the
-   sample, §3.6); the cohort's own I2 bars still met.
-4. I4: `fastpath_edge_decide_async=true` through a Python deploy. The edge
-   sees it within the policy's 60 s once every instance runs the new
-   revision; during that rollout some policies say off, which only passes
-   (§3.6). Decided async-v1 requests are no longer compared for decided
+   contract's I2 sample. Each line is one number the watch prints (§4.4):
+   - `async_compared` (the sum of `async_compared.*.*`) at least 2,000;
+   - `async_compared.plain` (`async_compared.plain.agree` plus
+     `async_compared.plain.differ`) at least 250;
+   - `async_compared.plain.agree` over `async_compared.plain`, and
+     `async_compared.affinity.agree` over `async_compared.affinity`, each
+     at least 99.5%, every difference explained;
+   - `async_fields.*.differ.billing_snapshot_hash` zero, in both
+     populations;
+   - `async_fields.*.differ.billing_snapshot`, `...differ.async_eligible`
+     and `...differ.async_shape` zero beyond the explained price-epoch
+     boundary cases;
+   - `async_python_admitted` (both populations) zero: admission off
+     throughout; a Python rollout that changes admission restarts the
+     sample (§3.6);
+   - the cohort's own I2 bars still met.
+
+   Why 250 plain: the async members come from one builder over the
+   composed candidates in both populations, so the 2,000 test the builder;
+   the plain minimum tests what only plain requests exercise, the gates
+   that decide them and the whole 200 around the members. At the measured
+   mix (12% of settlement-header passes plain) 2,000 compared requests
+   bring about 240 plain ones, so 250 is met at about the same time as the
+   total; 500 would need about 4,167 in all. How long that takes is not
+   known yet: the §5 shares count passes, not requests Go would compose and
+   compare (most followed results pass `evaluate.pass` before the compose,
+   and the settlement-header passes include `sync`). The I3 runbook entry
+   reads `async_compared` per day after the first full day at the
+   current edge weight and records the projected date; a projection past
+   14 days goes back to this design rather than lowering the bars.
+4. I4: `fastpath_edge_decide_async=true` through a Python deploy. The
+   edge takes it from the first policy it verifies from a new instance;
+   during the rollout some fresh policies still say off, which only
+   passes (§3.6), and if every fetch fails the held copy expires within
+   60 s and the edge passes everything. Decided async-v1 requests are no longer compared for decided
    workspaces (they are answered, §4.4); workspaces without a decide row
    keep feeding the comparison (`decide.off`).
 5. The off switches: `fastpathctl decide off` for a workspace (seconds,
    the contract's decision 17), or `fastpath_edge_decide_async=false`
-   (a Python deploy, then at most 60 s), or admission on (async-v1 passes
+   (a Python deploy; the edge stops deciding async at its first verified
+   policy from a new instance, or when its copy expires), or admission on (async-v1 passes
    `policy.async_admission`).
 
 Turning admission on later makes async-v1 requests pass

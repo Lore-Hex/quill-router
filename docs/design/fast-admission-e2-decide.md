@@ -1737,12 +1737,14 @@ fields past the line's bound, which could hide either); zero
 not name a `cache_affinity_key`, those being `affinity`'s) recorded. `fastpathwatch
 edge` prints each figure. Requests carrying `X-TR-Settlement-Mode` pass with
 `header.settlement_async` and are not comparable until G15c is pinned;
-the I2 decision records two figures, `settlement_header_share` (header
-passes in `classes` over `followed`) and
-`affinity_settlement_header_share` (header passes in `affinity` over all
-of `affinity`), read from the shadow's count lines until G15c's watch
-prints them. They are lower bounds on async-v1 traffic among the requests
-the shadow followed, not the share I2 does not cover
+the I2 decision records two settlement-header pass shares,
+`settlement_header_pass_share` (those passes in `classes` over
+`followed`) and `affinity_settlement_header_pass_share` (those passes in
+`affinity` over all of `affinity`), read from the shadow's count lines
+until G15c's watch prints them. They are pass shares under one reason
+(any header value counts, and a request tripping an earlier reason is
+counted there), not the async-v1 share of traffic and not the share I2
+does not cover
 ([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §5, §6.2).
 `decide on` for an operator-owned workspace first, then the pilot
 workspace.
