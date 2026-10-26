@@ -1,7 +1,7 @@
 """The routing-snapshot golden files are what the Python compiler and signer write now.
 
 fastpath/internal/routingsnapshot holds the Go reader to
-fastpath/testdata/routing_snapshot_v2.{body,manifest}.json; this test holds the
+fastpath/testdata/routing_snapshot_v3.{body,manifest}.json; this test holds the
 files to `trusted_router.routing_snapshot`, so a change to the schema, the
 compiler or a catalog rule it reads fails here until the files follow.
 """
@@ -69,7 +69,7 @@ def _manifest() -> dict:
 
 def test_the_golden_files_are_what_the_python_compiler_writes_now() -> None:
     stale = (
-        "fastpath/testdata/routing_snapshot_v2.*.json is stale: run "
+        "fastpath/testdata/routing_snapshot_v3.*.json is stale: run "
         "`uv run python scripts/fastpath/routing_snapshot_vectors.py` and check the Go reader"
     )
     assert _body() == GENERATOR.render_body(), stale

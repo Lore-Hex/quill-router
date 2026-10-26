@@ -264,6 +264,7 @@ jobs:
           uv run python -m scripts.pricing.speech | tee /tmp/speech-summary.txt
           uv run python -m scripts.pricing.transcription
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
+          uv run python -m scripts.pricing.openrouter_reasoning
 
       - name: Sanity-check for price spikes + record deltas
         run: |
@@ -372,6 +373,7 @@ jobs:
           # Stage the snapshot AND any self-healed parser modules.
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
+            src/trusted_router/data/openrouter_reasoning.json \
             src/trusted_router/data/speech_pricing.json \
             src/trusted_router/data/transcription_pricing.json \
             src/trusted_router/data/provider_routing_evidence.json \

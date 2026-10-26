@@ -1041,9 +1041,10 @@ func jsonBool(raw json.RawMessage) (*bool, bool) {
 var knownProviderReasons = map[string]bool{}
 
 func init() {
-	for _, name := range []string{"min_privacy", "max_price", "preferred_max_latency", "preferred_min_throughput",
-		"require_parameters", "data_collection spelling", "sort shape", "sort is not printable ASCII", "sort spelling",
-		"usage spelling", "jurisdiction spelling", "zdr is not a boolean"} {
+	for _, name := range []string{"min_privacy is not printable ASCII", "min_privacy is not a string",
+		"max_price", "preferred_max_latency", "preferred_min_throughput", "data_collection spelling",
+		"sort shape", "sort is not printable ASCII", "sort spelling", "usage spelling",
+		"jurisdiction spelling", "zdr is not a boolean"} {
 		knownProviderReasons["provider."+name] = true
 	}
 	for _, field := range []string{"order", "only", "ignore"} {

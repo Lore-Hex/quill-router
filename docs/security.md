@@ -169,15 +169,22 @@ or any attested workload image. The FastAPI control plane initializes Sentry
 with request bodies disabled and scrubbers for auth headers, API keys, BYOK
 keys, prompt fields, output fields, cookies, and Stripe raw payloads.
 
-Sentry also has a client-side flood gate so one noisy issue cannot burn the
-monthly error budget before an operator can respond. By default each Cloud Run
-process sends at most 3 events per fingerprint and 50 total events per hour
+Sentry also has a client-side flood gate to bound repetitive reporting. By
+default each Cloud Run process sends at most 3 events per fingerprint and 50
+total error events per hour
 (`TR_SENTRY_FLOODGATE_MAX_EVENTS_PER_FINGERPRINT`,
 `TR_SENTRY_FLOODGATE_MAX_EVENTS_PER_WINDOW`,
-`TR_SENTRY_FLOODGATE_WINDOW_SECONDS`). The process-level cap drops repeats but
-still lets the first event for a new fingerprint through so new issues remain
-discoverable. This is an emergency backstop; keep a Sentry project quota/PAYG
-cap as the global protection. To temporarily drop all new Sentry events during
+`TR_SENTRY_FLOODGATE_WINDOW_SECONDS`). Logs use a separate bounded gate so they
+cannot consume exception capacity. Structured router HTTP errors are grouped
+by route and error details, excluding per-request timing and request IDs.
+Distinct errors are admitted while the process budget remains; once that
+budget is exhausted, even a new fingerprint is dropped until the next window.
+
+These limits multiply across processes and reset on restarts. They are not a
+fleet-wide monthly allowance and cannot guarantee staying within Sentry's
+included volume. Monitor Sentry usage and retain an explicit project/PAYG cap.
+Resolving or deleting an issue does not restore already consumed capacity.
+To temporarily drop all new Sentry events during
 an incident, set
 `TR_SENTRY_FLOODGATE_MAX_EVENTS_PER_WINDOW=0` and redeploy.
 

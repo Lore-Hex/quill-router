@@ -129,6 +129,8 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if existing_user is None:
             require_new_account_creation(settings)
         user = existing_user or STORE.create_wallet_user(body.address)
+        if user.disabled:
+            raise api_error(403, "This account is closed. Contact security@trustedrouter.com for assistance.", ErrorType.FORBIDDEN)
         workspaces = STORE.list_workspaces_for_user(user.id)
         workspace = workspaces[0] if workspaces else STORE.create_workspace(
             user.id,

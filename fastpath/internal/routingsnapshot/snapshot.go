@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-// The literals of the v2 schema (src/trusted_router/routing_snapshot.py).
+// The literals of the v3 schema (src/trusted_router/routing_snapshot.py).
 const (
-	snapshotVersion  = 2
+	snapshotVersion  = 3
 	snapshotKind     = "tr-routing-snapshot"
 	epochSeconds     = 3600
 	maxHorizon       = 24 * 3600
@@ -34,7 +34,7 @@ const datedSuffixPattern = `-\d{4}-\d{2}-\d{2}$`
 
 var datedSuffix = regexp.MustCompile(datedSuffixPattern)
 
-// Snapshot is a parsed v1 routing snapshot body. Every exported field is a
+// Snapshot is a parsed v3 routing snapshot body. Every exported field is a
 // field of the wire schema; Parse refuses a body with any other field, a
 // missing field, a float, a duplicate key or a lone surrogate.
 type Snapshot struct {
@@ -50,6 +50,7 @@ type Snapshot struct {
 	Models          []Model             `json:"models"`
 	Endpoints       []Endpoint          `json:"endpoints"`
 	Aliases         Aliases             `json:"aliases"`
+	Parameters      Parameters          `json:"parameters"`
 	RequestedModels []RequestedModel    `json:"requested_models"`
 	DecisionChains  map[string][]string `json:"decision_chains"`
 	Ranking         Ranking             `json:"ranking"`
@@ -141,6 +142,12 @@ type Epoch struct {
 	StartsAt int64    `json:"starts_at"`
 	Headline Headline `json:"headline"`
 	Price    Price    `json:"price"`
+	// BillingValid is optional (docs/design/fast-admission-e2-g15-async.md
+	// section 3.2): whether every raw price value of the effective endpoint
+	// at starts_at is a strict non-negative int64, as build_snapshot checks
+	// before it builds the async billing snapshot. Nil is unpublished
+	// (unknown); present, it is a bool, never null. Nothing reads it yet.
+	BillingValid *bool `json:"billing_valid,omitempty"`
 }
 
 // Headline is an endpoint's effective headline rates, which sort=price
@@ -200,6 +207,23 @@ type Aliases struct {
 	ProviderAliases      map[string]string   `json:"provider_aliases"`
 	ProviderGroupAliases map[string][]string `json:"provider_group_aliases"`
 	RouterProviderSlugs  []string            `json:"router_provider_slugs"`
+	// PrivacyTiers maps each accepted provider.min_privacy spelling to the
+	// requirement value it asks for (0 asks for nothing); any other spelling
+	// is a 400.
+	PrivacyTiers map[string]int64 `json:"privacy_tiers"`
+}
+
+// Parameters is routing's request-parameter tables: CapabilityRequired
+// (CAPABILITY_REQUIRED_PARAMETERS: a parameter that decides the kind of
+// answer, to the route declarations that take it), Aliases
+// (_PARAMETER_CAPABILITY_ALIASES: what provider.require_parameters accepts
+// for a requested name) and RouteDeclared (_ROUTE_DECLARED_CAPABILITIES: the
+// declaration sets a route is held to when another route of its model
+// declares them). Every list is sorted and unique.
+type Parameters struct {
+	CapabilityRequired map[string][]string `json:"capability_required"`
+	Aliases            map[string][]string `json:"aliases"`
+	RouteDeclared      [][]string          `json:"route_declared"`
 }
 
 type PrefixRewrite struct {
@@ -425,7 +449,9 @@ func surrogates(raw []byte) error {
 
 // shape holds a generically decoded value to a Go type: every struct is an
 // object with exactly its exported fields' JSON names, null only where the
-// field is a pointer, and every scalar of its declared kind.
+// field is a pointer, and every scalar of its declared kind. A pointer field
+// tagged omitempty is optional: it may be absent (nil), but present it is
+// never null.
 func shape(value any, t reflect.Type, path string) error {
 	if t.Kind() == reflect.Pointer {
 		if value == nil {
@@ -448,11 +474,21 @@ func shape(value any, t reflect.Type, path string) error {
 			if !field.IsExported() {
 				continue
 			}
-			name := strings.Split(field.Tag.Get("json"), ",")[0]
+			name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+			optional := options == "omitempty"
+			if optional && field.Type.Kind() != reflect.Pointer {
+				return fmt.Errorf("%s.%s: an optional field must be a pointer", path, name)
+			}
 			names[name] = true
 			item, present := object[name]
 			if !present {
+				if optional {
+					continue
+				}
 				return fmt.Errorf("%s.%s: missing", path, name)
+			}
+			if optional && item == nil {
+				return fmt.Errorf("%s.%s: null where a value is required", path, name)
 			}
 			if err := shape(item, field.Type, path+"."+name); err != nil {
 				return err
@@ -552,6 +588,26 @@ func (s *Snapshot) validate() error {
 	}
 	if !sortedUnique(a.RouterProviderSlugs) {
 		return errors.New("router_provider_slugs must be sorted and unique")
+	}
+	for spelling, requirement := range a.PrivacyTiers {
+		if requirement < 0 || requirement > 4 {
+			return fmt.Errorf("privacy tier %q asks for an unknown requirement", spelling)
+		}
+	}
+	for name, table := range map[string]map[string][]string{
+		"capability_required": s.Parameters.CapabilityRequired, "aliases": s.Parameters.Aliases,
+	} {
+		for key, values := range table {
+			if len(values) == 0 || !sortedUnique(values) {
+				return fmt.Errorf("parameters.%s[%s] must be sorted, unique and non-empty", name, key)
+			}
+		}
+	}
+	for i, capability := range s.Parameters.RouteDeclared {
+		if len(capability) == 0 || !sortedUnique(capability) ||
+			(i > 0 && slices.Compare(s.Parameters.RouteDeclared[i-1], capability) >= 0) {
+			return errors.New("parameters.route_declared must be sorted, unique and non-empty")
+		}
 	}
 	s.providers = make(map[string]*Provider, len(s.Providers))
 	slugs := make([]string, len(s.Providers))

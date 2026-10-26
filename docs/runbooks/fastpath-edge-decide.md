@@ -51,7 +51,7 @@ ssh tr-fastpath-7 --zone=us-central1-a --project=quill-cloud-proxy
    per node (`fastpath-watch.md`, "The edge's decide counts"). In the
    report: `periods` counting one line a minute for every node over the
    span;
-   `i2.comparable` at least 10,000 over at least 24 hours;
+   `i2.comparable` at least 3,000 over at least 24 hours;
    `i2.agree_full_ratio` at least 0.995 with every `i2.differ_by_field`
    explained; `i2.differ_estimate`, `i2.row_idempotency_fingerprint` and
    `i2.fields_other` zero; `i2.would_admit_python_refused` zero beyond

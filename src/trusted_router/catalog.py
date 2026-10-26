@@ -246,6 +246,7 @@ from trusted_router.provider_lifecycle import (
 )
 from trusted_router.provider_locations import inference_location_metadata, provider_geography
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
+from trusted_router.reasoning_metadata import reasoning_metadata
 from trusted_router.request_capabilities import (
     endpoint_capabilities,
     model_capabilities,
@@ -1015,6 +1016,20 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         },
         "per_request_limits": None,
         "supported_parameters": list(supported_parameters),
+        # OpenRouter's per-model effort metadata, narrowed to what the gateway
+        # honors on every route this model can be served from.
+        **(
+            {"reasoning": reasoning}
+            if (
+                reasoning := reasoning_metadata(
+                    model.id,
+                    supported_parameters,
+                    ((endpoint.provider, endpoint.upstream_id) for endpoint in endpoints),
+                )
+            )
+            is not None
+            else {}
+        ),
         "trustedrouter": tr_block,
     }
 

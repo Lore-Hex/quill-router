@@ -71,7 +71,7 @@ func goldenHeld(t *testing.T) *held {
 		PublicKey string `json:"public_key_b64url"`
 		JWS       string `json:"jws"`
 	}
-	if err := json.Unmarshal(testdata(t, "routing_snapshot_v2.manifest.json"), &m); err != nil {
+	if err := json.Unmarshal(testdata(t, "routing_snapshot_v3.manifest.json"), &m); err != nil {
 		t.Fatal(err)
 	}
 	public, err := base64.RawURLEncoding.DecodeString(m.PublicKey)
@@ -173,7 +173,7 @@ func withFields(t *testing.T, request json.RawMessage, fields map[string]any) []
 // estimate, the Stage D reason, or the refusal's status, type, message and
 // param) or is passed to Python for a reason with no request value in it;
 // none differs. The counts are the evaluator's (routing-snapshot-v1.md,
-// "What Go evaluates"): 127 answered and 50 refused alike, 25 passed.
+// "What Go evaluates"): 175 answered and 71 refused alike, 19 passed.
 func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 	h := goldenHeld(t)
 	classes := map[string]int{}
@@ -192,8 +192,8 @@ func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 			t.Errorf("%s: %+v", c.Name, r)
 		}
 	}
-	if classes[ClassAgree] != 177 || classes[ClassPassed] != 25 {
-		t.Fatalf("classes %v, want 177 agree and 25 passed", classes)
+	if classes[ClassAgree] != 246 || classes[ClassPassed] != 19 {
+		t.Fatalf("classes %v, want 246 agree and 19 passed", classes)
 	}
 	// BYOK presence decides some cases (Gemini's BYOK endpoint) and not others.
 	if byok["determined"] == 0 || byok["consistent"] == 0 {
@@ -359,16 +359,18 @@ func TestPythonsAffinityPromotesOneEndpointWithinItsModel(t *testing.T) {
 		class   string
 		control bool
 	}{
+		// GLM 5.3's five hosts; fallback_list is V4 Flash, GLM 5.3's five
+		// hosts, then Gemini.
 		{name: "the last to the front", base: "z-ai/glm-5.3+none", key: true, class: ClassAffinity,
-			order: func(c []string) []string { return []string{c[2], c[0], c[1]} }},
+			order: func(c []string) []string { return []string{c[4], c[0], c[1], c[2], c[3]} }},
 		{name: "within the second model", base: "fallback_list", key: true, class: ClassAffinity,
-			order: func(c []string) []string { return []string{c[0], c[3], c[1], c[2], c[4]} }},
+			order: func(c []string) []string { return []string{c[0], c[5], c[1], c[2], c[3], c[4], c[6]} }},
 		{name: "without the key", base: "z-ai/glm-5.3+none", class: ClassDiffer,
-			order: func(c []string) []string { return []string{c[2], c[0], c[1]} }},
+			order: func(c []string) []string { return []string{c[4], c[0], c[1], c[2], c[3]} }},
 		{name: "two moved", base: "z-ai/glm-5.3+none", key: true, class: ClassDiffer,
-			order: func(c []string) []string { return []string{c[1], c[2], c[0]} }},
+			order: func(c []string) []string { return []string{c[1], c[2], c[0], c[3], c[4]} }},
 		{name: "into another model's run", base: "fallback_list", key: true, class: ClassDiffer,
-			order: func(c []string) []string { return []string{c[0], c[4], c[1], c[2], c[3]} }},
+			order: func(c []string) []string { return []string{c[0], c[6], c[1], c[2], c[3], c[4], c[5]} }},
 		{name: "unchanged", base: "z-ai/glm-5.3+none", key: true, class: ClassAgree,
 			order: func(c []string) []string { return c }},
 	} {
@@ -1095,7 +1097,9 @@ func TestRedactKeepsNoRequestValue(t *testing.T) {
 		`route type "videos`:                                       "route type <value>",
 		"provider.secret_field":                                    "provider.<field>",
 		"provider.order is not a list or a string":                 "provider.order is not a list or a string",
-		"provider.min_privacy":                                     "provider.min_privacy",
+		"provider.min_privacy is not printable ASCII":              "provider.min_privacy is not printable ASCII",
+		"provider.min_privacy is not a string":                     "provider.min_privacy is not a string",
+		"provider.min_privacy":                                     "provider.<field>",
 		"provider.order is a made-up field":                        "provider.<field>",
 		"OpenAI priority prompt bound":                             "OpenAI priority prompt bound",
 		"a string field that is not printable ASCII":               "a string field that is not printable ASCII",

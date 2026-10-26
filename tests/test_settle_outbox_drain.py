@@ -48,6 +48,7 @@ from trusted_router.storage_models import (
     GatewayAuthorization,
     SettleOutboxRow,
     TypedFinalizeResult,
+    Workspace,
 )
 from trusted_router.types import UsageType
 
@@ -1142,6 +1143,8 @@ def test_inline_failure_after_stripe_then_cross_minute_drain_creates_one_payment
     store, db = fake_store
     ws = "ws-auto-refill-cross-surface"
     _seed_credit(store, ws, total=1_000_000)
+    # Auto refill requires an active workspace as well as credit metadata.
+    store._write_entity("workspace", ws, Workspace(ws, "Refill test", "owner-refill-test"))
     store.update_auto_refill_settings(
         ws,
         enabled=True,

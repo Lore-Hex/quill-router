@@ -81,18 +81,16 @@ func TestThePassRules(t *testing.T) {
 			func(r *Request) { r.Model = "  " }, func(r *Request) { r.Model = " nope/x " }, Refused},
 		{"route type", "route type \"videos\"",
 			func(r *Request) { r.RouteType = ptr("videos") }, func(r *Request) { r.RouteType = ptr("responses") }, Answered},
-		{"capability parameters", "requested_parameters",
-			func(r *Request) { r.RequestedParameters = []string{"tools"} }, func(r *Request) { r.RequestedParameters = []string{" "} }, Answered},
-		{"parameters on a route they do not describe", "",
-			func(r *Request) {}, func(r *Request) {
-				r.RouteType = ptr("messages")
-				r.RequestedParameters = []string{"tools"}
-			}, Answered},
+		{"non-ASCII requested parameter", "a string field that is not printable ASCII",
+			func(r *Request) { r.RequestedParameters = []string{"tools\t"} }, func(r *Request) { r.RequestedParameters = []string{" tools "} }, Answered},
+		{"non-ASCII min_privacy", "provider.min_privacy is not printable ASCII",
+			func(r *Request) { r.Provider = json.RawMessage(`{"min_privacy":"zdr\u00a0"}`) },
+			func(r *Request) { r.Provider = json.RawMessage(`{"min_privacy":" ZDR "}`) }, Refused},
 		{"unknown provider field", "provider.foo",
 			func(r *Request) { r.Provider = json.RawMessage(`{"foo":1}`) }, func(r *Request) { r.Provider = json.RawMessage(`{}`) }, Answered},
 		{"null provider options", "",
 			func(r *Request) {}, func(r *Request) {
-				r.Provider = json.RawMessage(`{"max_price":null,"min_privacy":null,"zdr":null,"require_parameters":false}`)
+				r.Provider = json.RawMessage(`{"max_price":null,"min_privacy":null,"zdr":null,"require_parameters":false,"preferred_max_latency":null}`)
 			}, Answered},
 		{"sort spelling", "provider.sort spelling",
 			func(r *Request) { r.Provider = json.RawMessage(`{"sort":"fastest"}`) }, func(r *Request) { r.Provider = json.RawMessage(`{"sort":" Latency "}`) }, Answered},
@@ -261,5 +259,69 @@ func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 	if got := s.Evaluate(r); got.Outcome != Answered || got.Reservation != got.ModelEstimate || got.Reservation <= bound {
 		t.Errorf("a stream with max_tokens 131,072: reservation %d, want the estimate %d (above %d): %+v",
 			got.Reservation, got.ModelEstimate, bound, got.Refusal)
+	}
+}
+
+// TestTheParameterTablesAreData: the capability rules are read from the
+// snapshot's tables, not copied into Go. With structured output held to its
+// route declarations too, a request for tools and response_format pinned to
+// Together (which declares response_format only) and Fireworks (tools only)
+// has a route for each parameter but none for both: Python's "together"
+// refusal. The expected answers are Python's, from routing_cases_vectors.py's
+// evaluate with routing._ROUTE_DECLARED_CAPABILITIES patched the same way;
+// with the golden tables the same request keeps Fireworks.
+func TestTheParameterTablesAreData(t *testing.T) {
+	request := func() Request {
+		r := baseRequest()
+		r.Model = "z-ai/glm-5.3"
+		r.RequestedParameters = []string{"tools", "response_format"}
+		r.Provider = json.RawMessage(`{"only":["together","fireworks"]}`)
+		return r
+	}
+	s := goldenSnapshot(t)
+	if got := s.Evaluate(request()); got.Outcome != Answered ||
+		strings.Join(got.Candidates, ",") != "z-ai/glm-5.3@fireworks/prepaid" {
+		t.Fatalf("golden tables: %+v %+v", got, got.Refusal)
+	}
+	s.Parameters.RouteDeclared = [][]string{{"response_format", "structured_outputs"}, {"tools"}}
+	want := Refusal{Status: 400, Type: "model_not_supported", Param: "response_format",
+		Message: "No route for the requested model supports these parameters together: response_format, tools"}
+	if got := s.Evaluate(request()); got.Outcome != Refused || *got.Refusal != want {
+		t.Fatalf("structured output route-declared: %+v %+v", got, got.Refusal)
+	}
+	only := request()
+	only.RequestedParameters = []string{"response_format"}
+	if got := s.Evaluate(only); got.Outcome != Answered ||
+		strings.Join(got.Candidates, ",") != "z-ai/glm-5.3@together/prepaid" || got.ModelEstimate != 2640 {
+		t.Fatalf("response_format alone: %+v %+v", got, got.Refusal)
+	}
+}
+
+// TestANonStringMinPrivacyIsRefusedOnlyWhenNoSpellingCouldBeIt: Python looks
+// up str(value).strip().lower(), so a number or boolean is the 400 while no
+// accepted spelling is a str Python could make of one; a table with such a
+// spelling sends it to Python.
+func TestANonStringMinPrivacyIsRefusedOnlyWhenNoSpellingCouldBeIt(t *testing.T) {
+	s := goldenSnapshot(t)
+	for _, value := range []string{`2`, `true`, `[]`, `{}`, `-1`, `1.5`} {
+		r := baseRequest()
+		r.Provider = json.RawMessage(`{"min_privacy":` + value + `}`)
+		if got := s.Evaluate(r); got.Outcome != Refused || got.Refusal.Message != minPrivacyMessage {
+			t.Errorf("%s: %+v", value, got)
+		}
+	}
+	for _, spelling := range []string{"true", "false", "2", "-1", "1.5", "inf", "nan"} {
+		if !spelledByNonString(map[string]int64{"zdr": 2, spelling: 2}) {
+			t.Errorf("%q could be a non-string's str", spelling)
+		}
+	}
+	if spelledByNonString(s.Aliases.PrivacyTiers) {
+		t.Fatal("the golden spellings include one a non-string could spell")
+	}
+	s.Aliases.PrivacyTiers = map[string]int64{"zdr": 2, "true": 2}
+	r := baseRequest()
+	r.Provider = json.RawMessage(`{"min_privacy":true}`)
+	if got := s.Evaluate(r); got.Outcome != PassToPython || got.Reason != "provider.min_privacy is not a string" {
+		t.Errorf("a table spelling \"true\": %+v", got)
 	}
 }
