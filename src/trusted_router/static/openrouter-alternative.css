@@ -1,0 +1,182 @@
+/* /openrouter-alternative v2.1 page CSS (OA-18). Uses existing design-system tokens only.
+   Load after the existing stylesheets on this page only. */
+.v2-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.v2-head{margin:56px 0 16px}
+.v2-head h2{margin:0}
+.v2-table-note{margin:0;padding:12px 16px 16px;color:var(--text-muted);font-size:13px;line-height:1.5}
+.v2-price-body{padding-top:16px;padding-bottom:4px}
+.v2-price-body h3{margin:20px 0 6px;font-size:17px}
+.v2-price-body .v2-table-note{padding:0 0 12px}
+.openrouter-alternatives-table th[scope=row],.v2-saving-table th[scope=row]{font-weight:550;text-align:left;text-transform:none;letter-spacing:normal;font-size:14px;font-family:inherit}
+.v2-row-tr th,.v2-row-tr td{background:var(--surface-raised);color:var(--text-display)}
+.v2-row-ref th,.v2-row-ref td{color:var(--text-muted)}
+.v2-price-table,.v2-saving-table{width:100%}
+.v2-price-table th[scope=row],.v2-saving-table th[scope=row]{text-align:left;font-weight:550}
+.v2-saving-table td{font-variant-numeric:tabular-nums}
+.v2-dates{margin:6px 0 0;color:var(--text-muted);font-size:13px;letter-spacing:.02em}
+.v2-quote{margin:20px 0 4px;padding:4px 0 4px 18px;border-left:2px solid var(--sage)}
+.v2-quote p{margin:0 0 6px;color:var(--text-display);font-size:17px;line-height:1.5}
+.v2-quote .v2-quote-cite{color:var(--text-muted);font-size:13px}
+.v2-matrix-table{width:100%}
+.v2-matrix-table th[scope=row]{text-align:left;font-weight:550}
+@media (max-width:720px){
+  .v2-stack{min-width:0 !important;width:100%}
+  .v2-stack thead{display:none}
+  .v2-stack tr{display:block;padding:12px 16px;border-top:1px solid var(--border-hairline)}
+  .v2-stack th[scope=row]{display:block;padding:0 0 6px;font-size:15px;border:0}
+  .v2-stack td{display:grid;grid-template-columns:minmax(0,42%) minmax(0,1fr);gap:12px;padding:5px 0;border:0}
+  .v2-stack td::before{content:attr(data-label);color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;line-height:1.6}
+}
+/* Keep dated section headings inside the narrowest supported viewport. */
+@media (max-width:720px){
+  .panel-head{flex-wrap:wrap}
+}
+/* Keep inline citations identifiable without relying on color alone. */
+.marketing-copy .microcopy a,
+[aria-labelledby="sources-heading"] a{text-decoration:underline;text-underline-offset:2px}
+
+/* Dates support the comparison headings without competing as badges. */
+.v2-section-date{color:var(--text-muted);font-size:13px;font-weight:400;line-height:1.5}
+
+/* Reading layout scoped to this page; shared brand typography, colors and navigation. */
+.openrouter-article main.public-wrap{max-width:1160px;padding:0 24px 72px;gap:0}
+.openrouter-article main>section,.openrouter-article main>.v2-head{width:100%;max-width:720px;margin:64px auto 0;padding:0}
+.openrouter-article main>.public-hero{display:block;margin:0 auto;padding:56px 0 8px;border:0;background:none;box-shadow:none;overflow:visible}
+.openrouter-article .public-hero::before{display:none}
+.openrouter-article .public-hero h1{max-width:none;font-size:42px;line-height:1.14;letter-spacing:-.025em;margin:10px 0 18px}
+.openrouter-article .v2-dates{font-size:14px;margin:0 0 22px}
+.openrouter-article .public-hero .lead{font-size:20px;line-height:1.7;max-width:none;margin:0}
+.openrouter-article main>.panel,.openrouter-article .quote-feature,.openrouter-article .marketing-copy,.openrouter-article .marketing-card{background:none;border:0;box-shadow:none;border-radius:0}
+.openrouter-article .panel-head{padding:0 0 20px;border:0;align-items:baseline;gap:8px 24px}
+.openrouter-article main h2{font-size:30px;line-height:1.25;letter-spacing:-.025em;margin:0}
+.openrouter-article main h3{font-size:23px;line-height:1.3;margin:0 0 14px}
+.openrouter-article .panel-body{padding:0;max-width:none}
+.openrouter-article .panel-body p,.openrouter-article .marketing-card p,.openrouter-article .quote-feature p,.openrouter-article .marketing-copy p{font-size:20px;line-height:1.75;margin:0 0 24px;color:var(--text-body)}
+.openrouter-article .v2-quote{margin:32px 0;padding:0 0 0 22px}
+.openrouter-article .v2-quote p{font-size:22px;line-height:1.6}
+.openrouter-article .v2-quote .v2-quote-cite{font-size:14px;line-height:1.6;margin-bottom:0}
+.openrouter-article main>.v2-head{margin-bottom:24px}
+.openrouter-article main>.marketing-grid{display:block;margin-top:0}
+.openrouter-article .marketing-card{padding:0;margin:0 0 40px}
+.openrouter-article .marketing-card:last-child{margin-bottom:0}
+.openrouter-article .marketing-card h3{margin-bottom:10px}
+.openrouter-article .marketing-card p{margin-bottom:12px}
+.openrouter-article .seo-evidence-head .eyebrow{padding:0}
+.openrouter-article .quote-feature{display:block}
+.openrouter-article .quote-feature>div:first-child{margin-bottom:24px}
+.openrouter-article main>section:has(>.model-table-wrap){max-width:1112px}
+.openrouter-article .model-table-wrap{border:1px solid var(--border-hairline);background:var(--surface-card)}
+.openrouter-article .v2-price-body{max-width:720px;margin:28px auto 0}
+.openrouter-article .v2-table-note{padding:16px 0 0;font-size:14px;line-height:1.6}
+.openrouter-article .v2-price-body .v2-table-note{font-size:14px;line-height:1.6;padding-top:0}
+.openrouter-article .marketing-split{display:block}
+.openrouter-article .marketing-copy{padding:0}
+.openrouter-article .marketing-copy h2{margin-bottom:20px}
+.openrouter-article .marketing-copy .microcopy{font-size:14px;line-height:1.6}
+.openrouter-article .copy-terminal{margin-top:24px}
+.openrouter-article .cta-band{border-top:1px solid var(--border-hairline);border-bottom:1px solid var(--border-hairline);padding:28px 0;display:flex;flex-wrap:wrap;gap:20px;background:none}
+.openrouter-article .cta-band .microcopy{width:100%}
+.openrouter-article main>.seo-evidence{max-width:1112px;border-top:1px solid var(--border-hairline);padding-top:36px}
+.openrouter-article [aria-labelledby="sources-heading"] li{font-size:16px;line-height:1.7;margin-bottom:16px}
+.openrouter-article [aria-labelledby="sources-heading"] .panel-body>p{font-size:16px;line-height:1.7}
+.openrouter-article .faq-panel details{padding:18px 0}
+.openrouter-article .faq-panel summary{font-size:18px;line-height:1.5}
+.openrouter-article main p code{overflow-wrap:anywhere}
+@media(max-width:720px){
+.openrouter-article main.public-wrap{padding:0 20px 48px}
+.openrouter-article main>section,.openrouter-article main>.v2-head{margin-top:48px;margin-bottom:0}
+.openrouter-article main>.public-hero{padding-top:32px;margin-top:0;margin-bottom:0}
+.openrouter-article .public-hero h1{font-size:34px}
+.openrouter-article .public-hero .lead,.openrouter-article .panel-body p,.openrouter-article .marketing-card p,.openrouter-article .quote-feature p,.openrouter-article .marketing-copy p{font-size:18px;line-height:1.7}
+.openrouter-article main h2{font-size:26px}
+.openrouter-article main h3{font-size:22px}
+.openrouter-article .v2-quote .v2-quote-cite,.openrouter-article .marketing-copy .microcopy,.openrouter-article .v2-price-body .v2-table-note{font-size:14px}
+.openrouter-article .panel-head{display:block}
+.openrouter-article .v2-section-date{display:block;margin-top:10px}
+.openrouter-article .cta-band{padding:24px 0}
+}
+
+/* Headings remain distinct from the larger reading text. */
+.openrouter-article main h2,
+.openrouter-article main h3 {
+  color: var(--text-display);
+  font-weight: 650;
+}
+.openrouter-article .quote-feature h3 {
+  margin-top: 32px;
+}
+.openrouter-article .quote-feature h3:first-child {
+  margin-top: 0;
+}
+.openrouter-article .marketing-grid {
+  border: 0;
+}
+
+/* Bordered surfaces need their own inset, independent of section spacing. */
+.openrouter-article main > .cta-band {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 32px;
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-card);
+}
+.openrouter-article .cta-band h2 {
+  font-size: 28px;
+  line-height: 1.3;
+  margin: 0 0 12px;
+}
+.openrouter-article .cta-band span {
+  color: var(--text-body);
+  font-size: 18px;
+  line-height: 1.6;
+  margin: 0;
+}
+.openrouter-article .cta-band .microcopy {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.openrouter-article .link-list {
+  gap: 12px;
+}
+.openrouter-article .link-list li {
+  padding: 20px 24px;
+}
+.openrouter-article .link-list a {
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 650;
+}
+.openrouter-article .link-list span {
+  font-size: 16px;
+  line-height: 1.5;
+  margin-top: 8px;
+}
+.openrouter-article .copy-terminal pre {
+  display: block;
+  margin: 0;
+  padding: 24px;
+  min-height: 0;
+  overflow-x: auto;
+}
+.openrouter-article .v2-price-body h3 {
+  margin-bottom: 16px;
+}
+.openrouter-article .v2-price-body p:last-child,
+.openrouter-article .marketing-card p:last-child,
+.openrouter-article .panel-body p:last-child {
+  margin-bottom: 0;
+}
+@media (max-width: 720px) {
+  .openrouter-article main > .cta-band { padding: 24px; }
+  .openrouter-article .cta-band h2 { font-size: 26px; }
+  .openrouter-article .link-list li { padding: 20px; }
+  .openrouter-article .copy-terminal pre { padding: 20px; }
+}
+
+/* One gap per topic boundary; keep section titles attached to their content. */
+.openrouter-article main > .v2-head { margin-bottom: 24px; }
+.openrouter-article main > .v2-head + .marketing-grid { margin-top: 0; }
+.openrouter-article .quote-feature p:last-child { margin-bottom: 0; }
+.openrouter-article .v2-price-body + .model-table-wrap { margin-top: 24px; }
