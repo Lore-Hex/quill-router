@@ -1184,6 +1184,37 @@ def _console_client_for_test() -> tuple[TestClient, str]:
     return client, raw_token
 
 
+def test_credits_page_shows_the_balance_and_what_requests_in_flight_hold(monkeypatch) -> None:
+    """The headline is what the workspace has: credits minus usage. A hold for
+    a request in flight is a worst-case estimate that is released when the
+    request settles, so it is shown as its own line, not subtracted from the
+    headline in silence. A customer with $3.71 and two requests in flight
+    holding $2.97 saw "$0.74" and asked what was wrong with the billing."""
+    from trusted_router.routes.console import credits as credits_module
+
+    monkeypatch.setattr(credits_module, "list_workspace_payments", lambda **_: [])
+    summary = {
+        "total_credits": 25_150_000,
+        "total_usage": 21_440_000,
+        "reserved": 2_970_000,
+        "available": 740_000,
+    }
+    monkeypatch.setattr(credits_module, "live_credit_summary", lambda _workspace_id: summary)
+    client, _ = _console_client_for_test()
+    resp = client.get("/console/credits")
+    assert resp.status_code == 200, resp.text[:300]
+    assert ">Balance<" in resp.text
+    assert "$3.71" in resp.text
+    assert "$2.97 held by requests in flight" in resp.text
+    assert "$0.74 can start new requests now" in resp.text
+
+    # Nothing in flight: the headline alone, no held line.
+    summary["reserved"] = 0
+    summary["available"] = 3_710_000
+    resp = client.get("/console/credits")
+    assert "$3.71" in resp.text and "held by requests in flight" not in resp.text
+
+
 def test_credits_page_renders_payment_history_section(monkeypatch) -> None:
     """The credits page must include a 'Payment history' section, even
     when there are no payments yet. The 2026-05-24 user feedback was

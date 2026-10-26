@@ -9,8 +9,11 @@
     <div class="credits-balance-main">
       <span class="credits-disc credits-disc-balance" aria-hidden="true">{{ icons.svg('wallet', 26) }}</span>
       <div class="credits-balance-text">
-        <h2 id="credits-balance-title">Available</h2>
-        <p class="credits-balance-amount">{{ credits_available }}</p>
+        <h2 id="credits-balance-title">Balance</h2>
+        <p class="credits-balance-amount">{{ credits_balance }}</p>
+        {% if credits_reserved_nonzero %}
+        <p class="credits-balance-held">{{ credits_reserved }} held by requests in flight, released as each one settles; {{ credits_available }} can start new requests now.</p>
+        {% endif %}
       </div>
     </div>
     <a class="credits-send" href="/console/credit-transfers" aria-label="Send credits">{{ icons.svg('transfer', 18) }}<span>Send credits</span></a>
