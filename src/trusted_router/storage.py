@@ -725,7 +725,9 @@ class InMemoryStore:
         return self.auth_session_store.set_workspace(raw_token, workspace_id)
 
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None:
-        return self.auth_session_store.get_by_raw(raw_token)
+        session = self.auth_session_store.get_by_raw(raw_token)
+        user = self.get_user(session.user_id) if session else None
+        return session if user and not user.disabled else None
 
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
@@ -771,6 +773,9 @@ class InMemoryStore:
         trial_credit_microdollars: int | None = None,
     ) -> Workspace:
         with self._lock:
+            owner = self.users.get(owner_user_id)
+            if owner is not None and owner.disabled:
+                raise ValueError("account_closed")
             owned = sorted(
                 workspace_id
                 for owner_id, workspace_id in self.owner_workspaces
@@ -1177,6 +1182,10 @@ class InMemoryStore:
     def get_user(self, user_id: str) -> User | None:
         with self._lock:
             return self.users.get(user_id)
+
+    def close_user_account(self, user_id: str) -> User | None:
+        from trusted_router.storage_account_closure import close_memory
+        return close_memory(self, user_id)
 
     def find_user_by_email(self, email: str) -> User | None:
         with self._lock:
