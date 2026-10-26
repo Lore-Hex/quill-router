@@ -271,6 +271,10 @@ the shadow). Only a script from stage I1 on reads them, so they reach the
 fleet as the snapshot's did: nodes 7 and 8 added beside 5 and 6, which are
 then drained, leave the backend one apply before their removal, and are
 removed.
+From stage I2's script on, `fastpath-edge-decide` is read the same way and
+passes `-edge-decide`, the decide path (`fastpath-edge-decide.md`); nodes
+7 and 8 run I1's script, which does not read it, so it reaches the fleet
+as I1's attributes did, through nodes added under new names.
 Python publishes the policy first (`EDGE_POLICY_PUBLISH_ENABLED` in
 `rollout.sh`); until then the poll answers 404 and the edge keeps polling,
 admission unaffected. The shadow is turned on only once the policy has been

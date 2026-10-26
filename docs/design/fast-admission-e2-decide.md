@@ -1563,11 +1563,11 @@ letter: disjoint files, built in parallel.
 | G9 | 2 | `store/gatewayauth.go`: §8.4 | G2 |
 | P3 | 2 | Python settles Go-shaped rows (test only): settle, refund, disposition, reaper, replay (same key and fingerprint replays, another body 409s), drain | P1 |
 | G10 | 3 | `edge/decide.go` pipeline and full-response shadow, `-edge-decide-shadow` (false) | G4 to G9 |
-| I1 | 3 | Shadow on: node attributes, `TR_EDGE_POLICY_PUBLISH_ENABLED=true`; then at least 7 days of soak | G10 |
+| I1 | 3 | Shadow on: node attributes, `TR_EDGE_POLICY_PUBLISH_ENABLED=true`; then the shadow's sample ("I2 gates" below) | G10 |
 | G11 | 4 | Decide path (`edge/decide_path.go`): admit, insert, answer; per-lookup-hash in-flight limit (`edge/inflight.go`); `-edge-decide` (false); the store's one read-back and drain (§8.4); emulator end-to-end test | G10 |
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
-| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, soak |
+| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, the I2 gates |
 
 **The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
 `-edge-decide-shadow`, off by default) runs `Decide` for each authorize the
@@ -1694,9 +1694,21 @@ the edge or 25 s in all `edge_decide_pass_slow`; each kind has its policy
 (`infra/fastpath_alerts.tf`) and runbook row
 (`docs/runbooks/fastpath-alerts.md`).
 
-**I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
-the comparable requests (`agree_full` plus `differ`: Go would answer and
-Python answered a 200 that is not a replay) with every difference
+**I2 gates:** a sample, not a calendar. The shadow has compared at least
+10,000 comparable requests (`agree_full` plus `differ`: Go would answer
+and Python answered a 200 that is not a replay; `affinity_cold` and
+`affinity_warm` are not comparable), spanning at least 24 hours of wall
+clock and at least three distinct policy digests and two distinct
+snapshot digests, all read with `fastpathwatch edge -since` the start of
+the current release's soak: the counts from before a node re-pin or a
+route weight change are kept apart and do not count, so `-since` is the
+later of the release's first serving minute and the last weight change,
+and the sample starts over from there. The calendar bound measured time,
+not evidence; the sample bound measures what the gate reads. The report
+sums the shadow's lines over their digests, so the distinct digests of
+the span are read from the lines' `snapshot=` and `policy=`
+(`docs/runbooks/fastpath-watch.md`). Then `agree_full` at least 99.5% of
+the comparable requests with every difference
 explained; every other cohort-eligible request (Go would answer, each
 counted by its decide row's gate) accounted for by class
 (`cohort_by_class`: Python's errors, unavailable answers and unread

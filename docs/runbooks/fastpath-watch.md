@@ -125,8 +125,16 @@ the I2 gates of `docs/design/fast-admission-e2-decide.md` (§11) are judged
 by. It stops nothing, and needs logging read access only:
 
 ```bash
-fastpathwatch edge -project quill-cloud-proxy -since 2026-10-17T00:00:00Z -until 2026-10-24T00:00:00Z
+fastpathwatch edge -project quill-cloud-proxy -since 2026-10-24T00:00:00Z
 ```
+
+`-since` is the start of the sample the gates read, in RFC 3339: the
+later of the current release's first serving minute and the last route
+weight change, since the counts from before a node re-pin or a weight
+change are kept apart and do not count (§11); `-until` is now when not
+given. The gates are a sample, not a calendar: at least 10,000 comparable
+requests over at least 24 hours and at least three policy and two snapshot
+digests, and the ratios and zero counts below.
 
 Each minute every node logs one line of its decide path's counts
 (`fastpath edge decide: ...`, with `-edge-decide`) and, with
@@ -177,6 +185,17 @@ the API's 60 reads a minute, and backs off (doubling, six tries) on a 429
 or a 5xx: a week of three nodes is about 90 pages. Exit
 2 is its usage: `-project` and `-since` (RFC 3339) are needed, `-until` is
 now when not given.
+
+The report sums the shadow's lines over their digests. The distinct
+digests of the span, which the gate counts, are read from the lines
+themselves, each line's `snapshot=` and `policy=` (one line a minute a
+node for each pair the minute compared under):
+
+```bash
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide shadow: snapshot=" AND timestamp>="2026-10-24T00:00:00Z"' \
+  --project=quill-cloud-proxy --format='value(jsonPayload.MESSAGE)' \
+  | grep -o 'snapshot=[^ ]* policy=[^ ]*' | sort | uniq -c
+```
 
 The lines themselves, to read a minute's by eye:
 
