@@ -284,7 +284,15 @@ removed.
 From stage I2's script on, `fastpath-edge-decide` is read the same way and
 passes `-edge-decide`, the decide path (`fastpath-edge-decide.md`); nodes
 7 and 8 run I1's script, which does not read it, so it reaches the fleet
-as I1's attributes did, through nodes added under new names.
+as I1's attributes did: nodes 9 and 10 added beside 7 and 8 with the
+attribute `false`, 7 and 8 then drained, out of the backend one apply
+before their removal, and removed. A node added under a new name has its
+edge instance group and its backend entry from the apply that adds it,
+and the balancer sends to it only once the health check reports it
+`HEALTHY`, which it does once the node's edge serves: check that, and start
+the pilot's watches and audit loop on the new node ("Turning the edge
+on"), before the old node is marked leaving. The switch to `true` is a
+later metadata change, taken as the shadow's is (below).
 Python publishes the policy first (`EDGE_POLICY_PUBLISH_ENABLED` in
 `rollout.sh`); until then the poll answers 404 and the edge keeps polling,
 admission unaffected. The shadow is turned on only once the policy has been
