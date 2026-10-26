@@ -206,8 +206,13 @@ The flow, per request, in this order:
     deciding off after 60 s (availability only). Eviction is sooner when Python answers
     the key a 401, 402 or 403, or the workspace a pause 503, on any request
     the edge passes. The cohort is pilot workspaces only, and the operator's
-    immediate lever is `fastpathctl decide-off-all` (honoured within one
-    5 s copy interval). Before I2, `docs/runbooks/fastpath-turn-off.md`
+    immediate lever is `fastpathctl decide-off-all`: a node whose reads
+    succeed sees the change within 10 s of the commit, up to 5 s until its
+    next read and the read's 5 s budget (`DecideEvery`, `decideCopy.run`);
+    a node whose read fails keeps the copy it held, and decides nothing
+    (`cache.decide`) once that copy is 15 s old, measured from the start
+    of its last successful read (`DecideView.gate`). Before I2,
+    `docs/runbooks/fastpath-turn-off.md`
     (G2's paragraph) makes `fastpathctl decide off` the first step of any
     abuse pause or key revocation for a decided workspace. A revocation feed
     (a change stream or a Python-published epoch) is E4's, with capped keys.
@@ -1685,8 +1690,12 @@ class too (`cohort`), and the cache affinity requests it measured by class
 `affinity_warm` over `affinity_cold` plus `affinity_warm`, the figure §1
 item 5's revisit reads) (`docs/runbooks/fastpath-watch.md`). The decide path counts
 its unavailable answers by the insert's gRPC code (`store` returns it with
-the outcome), so a clock ahead of Spanner's (`failed_precondition`, §8.4)
-or a Spanner incident is told from a lost commit answer. A period with an
+the outcome): the code is the transaction's error as `ClassifyInsert`
+read it, not a cause, and no code says whether the commit applied (§8.4);
+`failed_precondition` can follow a re-sent commit Spanner no longer
+remembers, and `deadline_exceeded` the local deadline or the
+transaction's own, so several nodes answering unavailable at once point
+at what they share, Spanner among it, without proving it. A period with an
 unavailable answer raises `edge_decide_unavailable`, three such periods
 with no 200 between them `edge_decide_unavailable_sustained` (a period
 that answered nothing neither adds to the run nor ends it), and a pass past decision 12's 1 s at

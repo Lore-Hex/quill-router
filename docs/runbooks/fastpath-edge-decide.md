@@ -79,7 +79,9 @@ ssh tr-fastpath-7 --zone=us-central1-a --project=quill-cloud-proxy
    (I1), `TR_FASTPATH_PILOT_ENABLED=true` and the workspace in
    `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/rollout.sh`); a
    workspace the policy's pilot set does not name passes
-   `policy.not_pilot_workspace` (§3). The workspace is enabled on the
+   `policy.not_pilot_workspace` once its key and workspace facts are read
+   and eligible (§3; `decide.go`, `policyPass` runs after the key's and
+   the workspace's gates). The workspace is enabled on the
    switch (`fastpathctl -database $DB enable WORKSPACE`, idempotent;
    `fastpath-p1.md`): for one the switch does not enable the front door
    answers `Off`, which the decide path passes `owner.off`
@@ -302,34 +304,60 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   does not prove and whose read-back found no row of ours
   (`fastpath/internal/store/gatewayauth.go`, `ClassifyInsert`, `Unknown`);
   the code is what the transaction returned, not a cause, and none of them
-  says whether the commit applied. `deadline_exceeded` is the insert's
-  1.5 s reached, which is also how `Unavailable`, `Aborted` and
-  `ResourceExhausted` end, since the client retries them to the deadline.
-  `failed_precondition` is Spanner's for a commit it no longer remembers
-  as well as for a timestamp in the future; the reservation's `created_at`
-  is the commit's own timestamp, so a clock ahead of Spanner's does not by
-  itself produce it (`gatewayauth_test.go`,
-  `TestAClockAheadOfTheCommitInserts`), and the node's clock is still the
-  first thing to read (`fastpath-alerts.md`). The enclave's retry finds the
-  row through Python's replay if the commit applied, or inserts. One, from
-  one node, is read and kept; `edge_decide_unavailable_sustained` is the
-  way back, then the cause.
+  says whether the commit applied. `deadline_exceeded` can be the insert's
+  local 1.5 s deadline reached with the commit begun, or a deadline error
+  the transaction itself returned sooner (the insert takes the
+  transaction's result as it comes and keeps its code,
+  `InsertLeasedAuthorization`, `errorCode`); the client retries
+  `Unavailable`, `Aborted` and `ResourceExhausted` within the deadline, so
+  failures that persist end there too, and the code alone establishes
+  neither the cause nor whether the commit applied. `failed_precondition`
+  can follow a re-sent commit Spanner no longer remembers, one that
+  applied included, as well as a timestamp in the future; the
+  reservation's `created_at` is the commit's own timestamp, so a clock
+  ahead of Spanner's does not by itself produce it (`gatewayauth_test.go`,
+  `TestAClockAheadOfTheCommitInserts`), and the node's clock is one thing
+  to read, not what the code proves (`fastpath-alerts.md`). The enclave's
+  retry finds the row through Python's replay if the commit applied, or
+  inserts. One, from one node, is read and kept;
+  `edge_decide_unavailable_sustained` is the way back, then the cause.
 - `decide.counts.refunded` and `refund_failed`: a refund per pass after an
   admit (`insert.scope_taken`, `insert.failed`, `compose.refused`);
   `refund_failed` 0. A refund not sent ends with the lease, as Python's
   does.
 - `decide.by_name.passed`, by §3 reason, over every authorize the edge
-  read, whichever workspace's: `policy.not_pilot_workspace` for every
-  workspace outside Python's pilot set (the policy's gates come before the
-  key's, `decide.go`, `policyPass`), `decide.off` for a pilot workspace
-  with no row on, and the request, key and cache reasons at the shares the
-  soak's shadow counted (`cache.*` at `i2.stale_rate`). `insert.scope_taken`
-  is a request whose idempotency scope another authorization took first,
-  which Python then answers as a replay or a 409 (`gatewayauth.go`,
-  `ScopeTaken`). `owner.busy` and `budget.spent` are the owner's load and
-  the decide budget; `owner.off` is the switch. `owner.invalid`,
-  `owner.failed`, `owner.unreachable`, `insert.failed`, `compose.refused`
-  and `inflight.key` are each a thing to explain.
+  read, whichever workspace's. Each request counts the first gate it
+  tripped, in `Decide`'s order (`decide.go`): the path, the boot, the
+  request's parse (`body.*`, `header.*`), the policy and snapshot caches,
+  the policy's gates that need no key (`policy.pilot_off`,
+  `policy.not_pilot_workspace` for an empty pilot set,
+  `policy.pilot_region`), the key's cache and facts (`cache.key`,
+  `key.*`), the workspace's (`workspace.*`, `cache.workspace`), the merged
+  tags, then `policyPass` (`policy.not_pilot_workspace` for a workspace
+  the set does not name, `policy.records_not_durable` and the rest), the
+  models and the evaluator, the compose, and the decide row last
+  (`decide.off` for a request that passed everything before it while the
+  copy was fresh, `cache.decide` while it was stale). So a request of a
+  workspace outside the pilot set counts `policy.not_pilot_workspace`
+  only when its key and workspace facts were fresh and eligible, and a
+  pilot workspace's with no row on counts `decide.off` only when nothing
+  earlier passed it. The shadow runs the same pipeline, so expect each
+  reason at the share the soak's shadow counted it (`cache.*` at
+  `i2.stale_rate`); a reason the soak never counted is the thing to
+  explain. After the pipeline, from the decide path alone
+  (`decide_path.go`): `inflight.key` when the lookup hash's in-flight
+  count was at the policy's limit; `owner.unreachable` when no admitter
+  was bound; `budget.spent` when the 1.5 s decide budget was spent before
+  or during the admit; `owner.off`, `owner.busy`, `owner.invalid` and
+  `owner.failed` by the front door's answer (`Off` is the switch);
+  `compose.refused` when `Finish` refused; `insert.scope_taken` when the
+  commit reported `AlreadyExists` and the one read-back found no
+  authorization row under our id, or one naming another reservation
+  (`gatewayauth.go`, `InsertLeasedAuthorization`), after which the edge
+  refunds and passes to Python, the count establishing no
+  idempotency-scope collision by itself; `insert.failed` when the commit
+  was proven not applied. Each of the last group past the share the
+  owner's load explains is a thing to explain.
 - `decide.by_name.slow`: `at_edge` and `in_all` 0 (decision 12;
   `edge_decide_pass_slow`).
 - The shadow's figures are now of the passes alone: a request Go answers
