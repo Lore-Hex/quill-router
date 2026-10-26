@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from build import build
+from nyte_v2 import render_nyte
 
 
 class CoworkTests(unittest.TestCase):
@@ -17,13 +18,27 @@ class CoworkTests(unittest.TestCase):
             self.assertIn('rel="canonical" href="https://nytokenexchange.com/trusted-cowork"', page)
             for arch in ("arm64", "x64"):
                 self.assertIn(f"v0.4.0-alpha.3/Trusted-Cowork-0.4.0-alpha.3-mac-{arch}.dmg", page)
-            self.assertIn("Current release: 0.4.0-alpha.3", page)
+            self.assertIn("Release 0.4.0-alpha.3", page)
             self.assertNotIn("v0.4.0-alpha.2/", page)
-            self.assertIn("The default is <code>nyte/confidential</code>", page)
-            for text in ("nyte/confidential", "fails closed", "data collection", "deny", "Tools require your approval"):
+            for text in ("nyte/confidential", "fails closed", "Data collection", "deny", "asks before each tool runs"):
                 self.assertIn(text, page)
             self.assertNotIn("nyte/auto", page)
-            self.assertTrue((root / "assets/trusted-cowork-icon.png").is_file())
-            self.assertTrue((root / "assets/trusted-cowork.css").is_file())
+            self.assertTrue((root / "assets/nyte-v2/cowork.css").is_file())
             self.assertIn("https://nytokenexchange.com/trusted-cowork", (root / "new-york/sitemap.xml").read_text())
             self.assertNotIn("/trusted-cowork", (root / "london/sitemap.xml").read_text())
+
+            self.assertTrue((root / "assets/nyte-v2/photos/cowork-clouds-2400.webp").is_file())
+            self.assertIn('data-nyte-page="cowork"', page)
+            self.assertNotIn("Operated by Lore Hex", page)
+            self.assertNotIn("Illustrative session.", page)
+            self.assertIn('class="cw-screenshot"', page)
+            self.assertTrue((root / "assets/nyte-v2/photos/cowork-app.png").is_file())
+            self.assertRegex(page, r'/assets/nyte-v2/cowork\.css\?v=[0-9a-f]{12}')
+            self.assertEqual(page.count('href="https://github.com/Lore-Hex/confidential-cowork-desktop"'), 1)
+
+    def test_shared_navigation(self):
+        for name in ("home", "api", "sup", "providers", "cowork"):
+            page = render_nyte(name)
+            self.assertEqual(page.count('>Trusted Cowork</a>'), 1)
+            self.assertLess(page.index('>Confidential API</a>'), page.index('>Trusted Cowork</a>'))
+            self.assertLess(page.index('>Trusted Cowork</a>'), page.index('>Index</a>'))

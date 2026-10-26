@@ -92,6 +92,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PRIVACY_TIER_LABELS,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
+    PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
     PRIVATE_PROXY_MODEL_TARGETS,
     PROFESSIONAL_MODEL_ID,
@@ -143,6 +144,9 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_QUALITY_MODEL_ORDER,
     TIER_MODEL_ORDERS,
     TREV_1_0_MODEL_ID,
+    TRUSTED_MODEL_ID,
+    TRUSTED_PROVIDER_ORDER,
+    TRUSTED_PROVIDER_SLUGS,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
@@ -440,6 +444,15 @@ def _meta_price_range(
     the request lands on whatever model the router picks — so we
     surface the range so /v1/models doesn't show a misleading $0."""
     candidates = meta_candidate_models(model_id)
+    if model_id == TRUSTED_MODEL_ID:
+        values = [
+            getattr(endpoint, attr)
+            for candidate in candidates
+            for endpoint in endpoints_for_model(candidate.id)
+            if endpoint.usage_type == "Credits"
+            and endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED)
+        ]
+        return (min(values), max(values)) if values else (0, 0)
     if model_id == POLYPHEMUS_MODEL_ID:
         # Generation is separate from the selector's prompt-token charge.
         # Publish its price envelope, with the selector rate exposed below.
@@ -619,6 +632,18 @@ def _routing_pool_discovery(model: Model) -> tuple[tuple[str, ...], tuple[str, .
     return routing_pool_discovery(model.id)
 
 
+def published_context_length(model: Model) -> int:
+    """The context window a model's public rows show. A routing pool shows
+    the largest window among the models it routes to, since routing sends a
+    request only to models whose window holds it; a pool that routes to
+    nothing keeps its declared window. Every other model shows its own."""
+    if orchestration_role(model.id) != "routing_pool":
+        return model.context_length
+    from trusted_router.routing import routing_pool_context_length
+
+    return routing_pool_context_length(model.id) or model.context_length
+
+
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
@@ -627,6 +652,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     # A routing pool has no routes of its own; it publishes what a request
     # naming it is sure to get on the routes it can reach.
     pool_parameters, pool_modalities = _routing_pool_discovery(model)
+    context_length = published_context_length(model)
     # Discovery fields are a union over the model's own routes. A private
     # proxy (for example a named decision model) is served through another
     # model's routes, so it keeps its own declarations instead.
@@ -809,6 +835,11 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # confidential" without re-deriving from raw posture flags.
         "privacy_tier": _model_max_privacy_tier(model, endpoints),
         "privacy_tier_label": PRIVACY_TIER_LABELS[_model_max_privacy_tier(model, endpoints)],
+        **({
+            "routing_tier": "Trusted",
+            "required_provider_slugs": list(TRUSTED_PROVIDER_ORDER),
+            "required_privacy_tier": PRIVACY_TIER_TRUSTED,
+        } if model.id == TRUSTED_MODEL_ID else {}),
         "open_weights": model_open_weights(model),
         "prompt_price_microdollars_per_million_tokens": prompt_min,
         "completion_price_microdollars_per_million_tokens": completion_min,
@@ -961,7 +992,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             if model.documentation is not None
             else f"{model.name} via TrustedRouter"
         ) + (f". {usage_estimation['description']}" if usage_estimation else ""),
-        "context_length": model.context_length,
+        "context_length": context_length,
         "architecture": {
             "modality": (
                 "text->embedding"
@@ -978,7 +1009,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "pricing": pricing,
         **({"supported_voices": list(SPEECH_MODELS[model.id].voices)} if model.id in SPEECH_MODELS else {}),
         "top_provider": {
-            "context_length": model.context_length,
+            "context_length": context_length,
             "max_completion_tokens": None,
             "is_moderated": False,
         },
@@ -1014,6 +1045,7 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
+        "trusted_provider": provider_privacy_tier(provider) == PRIVACY_TIER_TRUSTED,
         "provider_policy_url": provider.provider_policy_url,
         "provider_headquarters_country": provider.provider_headquarters_country,
         "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,

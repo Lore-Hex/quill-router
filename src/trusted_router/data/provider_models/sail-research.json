@@ -197,9 +197,9 @@
       "upstream_id": "moonshotai/Kimi-K3",
       "created": 1700000000,
       "routable": true,
-      "input_token_price_per_m": 2500000,
-      "output_token_price_per_m": 12500000,
-      "cached_input_token_price_per_m": 250000
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
     },
     {
       "display_name": "zai-org/GLM-5.3",
@@ -292,7 +292,7 @@
   ],
   "source": "https://api.sailresearch.com/v1/models",
   "pricing_source": "https://docs.sailresearch.com/pricing",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-26T06:59:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13
 }

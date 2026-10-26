@@ -9,6 +9,8 @@ import shutil
 from pathlib import Path
 from string import Template
 
+from nyte_v2 import render_nyte
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SOURCE = ROOT / "src/trusted_router"
@@ -46,7 +48,7 @@ def render_token_index() -> str:
             f' {escape(grade["name"])}</h3><p>{escape(grade["use"])}</p>'
             f'<p class="ti-label">Example models</p><ul>{examples}</ul></article>'
         )
-    return Template((HERE / "index-page.html").read_text()).substitute(
+    content = Template((HERE / "index-page.html").read_text()).substitute(
         version=version, as_of=escape(data["as_of"]), as_of_iso=escape(data["as_of_iso"]),
         value=f'${data["quotes"]["ALL"]["value"]:,}',
         change=change(data["quotes"]["ALL"]["change_7d"]),
@@ -54,6 +56,16 @@ def render_token_index() -> str:
         grades_alt=escape(data["chart_alt"]["grades"], quote=True),
         tiles="".join(tiles), cards="".join(cards),
     )
+    return render_nyte(
+        "index", content=content,
+        image_url="https://nytokenexchange.com/assets/token-index/nyte-dark.png",
+        extra_head=(
+            f'<link rel="stylesheet" href="/assets/token-index.css?v={version}">'
+            f'<link rel="stylesheet" href="/assets/index-page.css?v={version}">'
+            f'<script src="/assets/token-index.js?v={version}" defer></script>'
+        ),
+    )
+
 
 
 def build_token_index(output: Path) -> None:

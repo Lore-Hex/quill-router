@@ -75,6 +75,107 @@ elif [ -n "$edge_upstream$edge_token_secret" ]; then
   echo "fastpath: the edge needs both its upstream and its token secret; the startup script stops here" | systemd-cat -t fastpath -p err
   exit 1
 fi
+# The edge's routing snapshot and shadow comparator (docs/design/
+# routing-snapshot-v1.md, E2) run when the instance's metadata names the
+# snapshot's URL, the manifest key's public key and kid, and its plane, all
+# four, on a node whose edge runs; fastpath-edge-shadow "true" adds the
+# comparator. None of them is set by default, so a node polls nothing and
+# compares nothing. The pinned release must take the flags before any of
+# these attributes is set (tests/test_fastpath_p1.py). Each value goes into
+# the unit's command line, so it is held to the characters a URL, a key, a
+# kid and a plane need (a comma between a rotation's two keys and kids): no
+# space, quote or systemd specifier.
+# The edge policy (docs/design/fast-admission-e2-decide.md section 4, E2 G8)
+# is polled when fastpath-edge-policy-url names it, on the same upstream and
+# verified with the snapshot's key, kid and plane, so it needs the snapshot;
+# fastpath-edge-decide-shadow "true" adds the full-response decide shadow
+# (G10), which needs both. fastpath-edge-decide "true" adds the decide path
+# (G11, -edge-decide: the edge answers the authorizes of the workspaces the
+# decide table names, stage I2, docs/runbooks/fastpath-edge-decide.md),
+# which needs the policy too; absent or "false", the default, the edge
+# answers nothing.
+snapshot_url="$(attribute fastpath-edge-snapshot-url)" || exit 1
+snapshot_public_key="$(attribute fastpath-edge-snapshot-public-key)" || exit 1
+snapshot_kid="$(attribute fastpath-edge-snapshot-kid)" || exit 1
+snapshot_plane="$(attribute fastpath-edge-snapshot-plane)" || exit 1
+edge_shadow="$(attribute fastpath-edge-shadow)" || exit 1
+policy_url="$(attribute fastpath-edge-policy-url)" || exit 1
+decide_shadow="$(attribute fastpath-edge-decide-shadow)" || exit 1
+decide="$(attribute fastpath-edge-decide)" || exit 1
+snapshot_flags=""
+if [ -n "$snapshot_url$snapshot_public_key$snapshot_kid$snapshot_plane" ]; then
+  if [ -z "$edge_flags" ] || [ -z "$snapshot_url" ] || [ -z "$snapshot_public_key" ] || [ -z "$snapshot_kid" ] || [ -z "$snapshot_plane" ]; then
+    echo "fastpath: the routing snapshot needs the edge and its URL, public key, kid and plane, all four; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  for value in "$snapshot_url" "$snapshot_public_key" "$snapshot_kid" "$snapshot_plane" "$policy_url"; do
+    case "$value" in
+      *[!A-Za-z0-9._:/,-]*)
+        echo "fastpath: a routing snapshot or edge policy attribute holds a character the unit cannot carry; the startup script stops here" | systemd-cat -t fastpath -p err
+        exit 1 ;;
+    esac
+  done
+  # The poll carries the internal token, so the edge polls its own upstream
+  # alone and refuses to start on any other scheme or host; that refusal
+  # would stop the whole process, admission with it, restarted into the same
+  # refusal, so the script refuses first and the unit keeps what it had.
+  snapshot_origin="$(printf '%s' "$snapshot_url" | cut -d/ -f1-3)"
+  upstream_origin="$(printf '%s' "$edge_upstream" | cut -d/ -f1-3)"
+  case "$upstream_origin" in
+    *@*)
+      echo "fastpath: the edge's upstream carries userinfo, which the routing snapshot's poll refuses; the startup script stops here" | systemd-cat -t fastpath -p err
+      exit 1 ;;
+  esac
+  if [ "$snapshot_origin" != "$upstream_origin" ] || [ -n "$(printf '%s' "$snapshot_url" | cut -d/ -f2)" ]; then
+    echo "fastpath: the routing snapshot's URL is not on the edge's upstream; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  if [ -n "$policy_url" ] && { [ "$(printf '%s' "$policy_url" | cut -d/ -f1-3)" != "$upstream_origin" ] || [ -n "$(printf '%s' "$policy_url" | cut -d/ -f2)" ]; }; then
+    echo "fastpath: the edge policy's URL is not on the edge's upstream; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  snapshot_flags="-edge-snapshot-url $snapshot_url -edge-snapshot-public-key $snapshot_public_key -edge-snapshot-kid $snapshot_kid -edge-snapshot-plane $snapshot_plane"
+  case "$edge_shadow" in
+    true) snapshot_flags="$snapshot_flags -edge-shadow" ;;
+    ""|false) ;;
+    *)
+      echo "fastpath: fastpath-edge-shadow is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+      exit 1 ;;
+  esac
+  if [ -n "$policy_url" ]; then
+    snapshot_flags="$snapshot_flags -edge-policy-url $policy_url"
+  fi
+  case "$decide_shadow" in
+    true)
+      if [ -z "$policy_url" ]; then
+        echo "fastpath: the edge's decide shadow needs the edge policy's URL; the startup script stops here" | systemd-cat -t fastpath -p err
+        exit 1
+      fi
+      snapshot_flags="$snapshot_flags -edge-decide-shadow" ;;
+    ""|false) ;;
+    *)
+      echo "fastpath: fastpath-edge-decide-shadow is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+      exit 1 ;;
+  esac
+  case "$decide" in
+    true)
+      if [ -z "$policy_url" ]; then
+        echo "fastpath: the edge's decide path needs the edge policy's URL; the startup script stops here" | systemd-cat -t fastpath -p err
+        exit 1
+      fi
+      snapshot_flags="$snapshot_flags -edge-decide" ;;
+    ""|false) ;;
+    *)
+      echo "fastpath: fastpath-edge-decide is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+      exit 1 ;;
+  esac
+elif [ -n "$edge_shadow" ] && [ "$edge_shadow" != "false" ]; then
+  echo "fastpath: the edge's shadow needs the routing snapshot; the startup script stops here" | systemd-cat -t fastpath -p err
+  exit 1
+elif [ -n "$policy_url" ] || { [ -n "$decide_shadow" ] && [ "$decide_shadow" != "false" ]; } || { [ -n "$decide" ] && [ "$decide" != "false" ]; }; then
+  echo "fastpath: the edge policy, the decide shadow and the decide path need the routing snapshot; the startup script stops here" | systemd-cat -t fastpath -p err
+  exit 1
+fi
 install -d /opt/fastpath
 for binary in fastpath fastpathctl; do
   gcloud storage cp "gs://${release_bucket}/fastpath/$release/$binary" "/opt/fastpath/$binary.new"
@@ -107,7 +208,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager $edge_flags
+  -subscriptions auditor,stager $edge_flags $snapshot_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30

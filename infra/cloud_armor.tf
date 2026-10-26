@@ -277,97 +277,6 @@ resource "google_compute_security_policy" "internal_edge" {
   }
 }
 
-import {
-  to = google_compute_security_policy.lightning_funding
-  id = "projects/quill-cloud-proxy/global/securityPolicies/lightning-router-funding"
-}
-
-resource "google_compute_security_policy" "lightning_funding" {
-  name        = "lightning-router-funding"
-  description = "Lightning funding ingress limits"
-  type        = "CLOUD_ARMOR"
-
-  rule {
-    action      = "throttle"
-    priority    = 900
-    description = ""
-    preview     = false
-    match {
-      expr {
-        expression = "request.method == 'POST' && (request.path == '/api/invoices' || (request.path == '/api/l402/funding' && (!has(request.headers['authorization']) || request.headers['authorization'] == '')))"
-      }
-    }
-    rate_limit_options {
-      conform_action = "allow"
-      exceed_action  = "deny(429)"
-      enforce_on_key = "IP"
-      rate_limit_threshold {
-        count        = 20
-        interval_sec = 900
-      }
-    }
-  }
-
-  rule {
-    action      = "throttle"
-    priority    = 950
-    description = ""
-    preview     = false
-    match {
-      expr {
-        expression = "request.path == '/api/account' || request.path == '/api/usage' || request.path == '/api/feedback' || request.path == '/api/l402/funding'"
-      }
-    }
-    rate_limit_options {
-      conform_action = "allow"
-      exceed_action  = "deny(429)"
-      enforce_on_key = "IP"
-      rate_limit_threshold {
-        count        = 20
-        interval_sec = 60
-      }
-    }
-  }
-
-  rule {
-    action      = "throttle"
-    priority    = 1000
-    description = ""
-    preview     = false
-    match {
-      expr {
-        expression = "true"
-      }
-    }
-    rate_limit_options {
-      conform_action = "allow"
-      exceed_action  = "deny(429)"
-      enforce_on_key = "IP"
-      rate_limit_threshold {
-        count        = 180
-        interval_sec = 60
-      }
-    }
-  }
-
-  rule {
-    action      = "allow"
-    priority    = 2147483647
-    description = "default rule"
-    preview     = false
-    match {
-      versioned_expr = "SRC_IPS_V1"
-      config {
-        src_ip_ranges = ["*"]
-      }
-    }
-  }
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
 check "control_backend_uses_legacy_edge" {
   data "google_compute_backend_service" "control" {
     name = "trusted-router-control-backend"
@@ -387,16 +296,5 @@ check "public_backend_uses_public_edge" {
   assert {
     condition     = endswith(coalesce(data.google_compute_backend_service.public.security_policy, "-"), "/securityPolicies/${google_compute_security_policy.public_edge.name}")
     error_message = "trusted-router-public-backend no longer uses the trusted-router-public-edge Cloud Armor policy."
-  }
-}
-
-check "lightning_backend_uses_lightning_funding" {
-  data "google_compute_backend_service" "lightning" {
-    name = "lightning-router-web"
-  }
-
-  assert {
-    condition     = endswith(coalesce(data.google_compute_backend_service.lightning.security_policy, "-"), "/securityPolicies/${google_compute_security_policy.lightning_funding.name}")
-    error_message = "lightning-router-web no longer uses the lightning-router-funding Cloud Armor policy."
   }
 }

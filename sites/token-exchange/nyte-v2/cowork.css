@@ -1,0 +1,61 @@
+.cw-hero{position:relative;min-height:min(80svh,700px);display:flex;align-items:center;padding:40px 0 96px;isolation:isolate}
+.cw-photo{background-image:url(photos/cowork-clouds-2400.webp);background-position:center 45%}
+.cw-hero::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(5,7,6,.45) 0%,rgba(5,7,6,0) 22%,rgba(5,7,6,0) 72%,#050706 100%),linear-gradient(90deg,rgba(5,7,6,.84) 0%,rgba(5,7,6,.7) 34%,rgba(5,7,6,.22) 56%,rgba(5,7,6,.08) 100%)}
+.cw-hero .wrap{width:100%}
+.cw-hero .inner{width:min(560px,100%)}
+.cw-hero h1{margin-bottom:22px;text-shadow:0 2px 24px rgba(5,7,6,.5)}
+.cw-hero .lede{margin-bottom:34px;color:var(--on-photo);text-shadow:0 1px 12px rgba(5,7,6,.7)}
+.cw-meta{margin-top:24px;font:400 14px/1.7 var(--mono);color:var(--on-photo);text-shadow:0 1px 12px rgba(5,7,6,.7)}
+.cw-flow{grid-template-columns:1fr;gap:40px;margin-top:48px}
+ol.cw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;list-style:none;counter-reset:v;margin:0;padding:0}
+.cw-steps li{counter-increment:v;display:grid;grid-template-columns:44px minmax(0,1fr);padding:20px 0;border-top:1px solid var(--rule)}
+.cw-steps li{border-bottom:1px solid var(--rule)}
+.cw-steps li::before{content:counter(v);display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--strong);border-radius:50%;font:500 13px var(--mono);color:var(--t1)}
+.cw-steps b{display:block;font-size:18px;font-weight:550;letter-spacing:-.015em}
+.cw-steps span{display:block;margin-top:4px;color:#E6F1EC;font-weight:450}
+.cw-screenshot{margin:0;min-width:0}
+.cw-screenshot img{display:block;width:100%;height:auto;border:1px solid var(--rule);border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.cw-boundary{margin-top:24px;font-size:19px;font-weight:450;color:var(--t1);max-width:33em}
+.cw-rules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:48px 0 40px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.cw-rules>div{padding:26px 24px}
+.cw-rules>div:first-child{padding-left:0}
+.cw-rules>div+div{border-left:1px solid var(--rule-soft)}
+.cw-rules span{display:block;font:400 11px/1.7 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--t3)}
+.cw-rules b{display:block;margin-top:10px;font:500 20px/1.5 var(--mono);color:var(--t1);overflow-wrap:anywhere}
+.cw-faq details p{color:var(--t1);font-weight:450}
+.cw-faq details a{color:var(--link);text-decoration:underline;text-decoration-color:var(--link-ul);text-underline-offset:4px}
+.cw-download{padding:96px 0;background:var(--bg-alt);border-top:1px solid var(--rule-soft);text-align:center}
+.cw-download h2{font-size:clamp(38px,4.2vw,58px)}
+.cw-download p{margin:24px 0 32px;font-size:19px;color:var(--t2)}
+.cw-download .btns{justify-content:center}
+@media(max-width:1000px){
+  .cw-flow{grid-template-columns:1fr;gap:28px}
+  ol.cw-steps{grid-template-columns:1fr;gap:0}
+  .cw-steps li{border-bottom:0}
+  .cw-steps li:last-child{border-bottom:0;padding-bottom:0}
+  .cw-rules{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cw-rules>div:nth-child(n+3){border-top:1px solid var(--rule-soft)}
+  .cw-rules>div:nth-child(3){padding-left:0;border-left:0}
+}
+@media(max-width:600px){
+  .cw-hero{display:block;min-height:0;padding:0}
+  .cw-banner{position:relative;inset:auto;z-index:auto;height:160px;background-position:60% 60%;background-size:cover}
+  .cw-banner::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 60%,var(--bg))}
+  .cw-hero::before{content:none}
+  .cw-hero .inner{padding:0 0 32px}
+  .cw-intro{display:flex;flex-direction:column;min-height:calc(100svh - var(--header) - 160px);padding:12px 0 24px}
+  .cw-hero .cw-intro .btns{margin-top:auto}
+  .cw-meta{margin-top:24px}
+  .cw-hero h1,.cw-hero .lede,.cw-meta{text-shadow:none}
+  .cw-hero h1{margin-bottom:14px}
+  .cw-hero .lede{margin-bottom:20px}
+  .cw-hero .btns{gap:10px}
+  .cw-flow{margin-top:32px}
+  .cw-screenshot{margin-inline:calc(-1 * var(--gutter))}
+  .cw-screenshot img{border-radius:0;border-left:0;border-right:0}
+  .cw-hero .btns,.cw-download .btns{flex-direction:column}
+  .cw-hero .btns .btn,.cw-download .btns .btn{flex:auto;width:100%;min-height:50px}
+  .cw-rules>div{padding:26px 14px}
+  .cw-rules b{font-size:16px}
+  .cw-download{padding:64px 0}
+}

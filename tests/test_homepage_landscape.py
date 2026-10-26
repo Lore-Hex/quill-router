@@ -24,7 +24,7 @@ def test_homepage_is_the_landscape_page_for_every_brand() -> None:
     alternate = dashboard.dashboard_html(settings, brand_name="UptimeRouter")
     assert 'class="hero-promises"' in alternate
     assert 'property="og:site_name" content="UptimeRouter"' in alternate
-    assert "<title>UptimeRouter: The AI router that shows its work</title>" in alternate
+    assert "<title>UptimeRouter: Encrypt all your AI chats</title>" in alternate
     assert "600+ AI Models at your fingertips" not in alternate
 
 
@@ -154,12 +154,18 @@ def test_homepage_social_card_is_fetchable_for_every_brand(client: TestClient) -
     page = BeautifulSoup(client.get("/").text, "html.parser")
     url = page.select_one('meta[property="og:image"]')["content"]
     assert url.startswith("https://")
-    assert url.endswith("/static/homepage/social-card-v1.jpg")
+    assert url.endswith("/static/homepage/social-card-v2.jpg")
     assert page.select_one('meta[name="twitter:image"]')["content"] == url
     assert page.select_one('meta[property="og:image:width"]')["content"] == "1200"
     assert page.select_one('meta[property="og:image:height"]')["content"] == "630"
-    assert page.select_one('meta[property="og:image:alt"]')["content"]
-    image = client.get("/static/homepage/social-card-v1.jpg")
+    headline = page.select_one("#top h1").get_text(" ", strip=True)
+    description = page.select_one("#top .sub").get_text(" ", strip=True)
+    assert page.select_one('meta[property="og:title"]')["content"] == f"TrustedRouter: {headline}"
+    assert page.select_one('meta[property="og:description"]')["content"] == description
+    image_alt = f"TrustedRouter — {headline}. A river winds through a mountain valley."
+    assert page.select_one('meta[property="og:image:alt"]')["content"] == image_alt
+    assert page.select_one('meta[name="twitter:image:alt"]')["content"] == image_alt
+    image = client.get("/static/homepage/social-card-v2.jpg")
     assert image.status_code == 200
     assert image.headers["content-type"].startswith("image/jpeg")
     assert image.content.startswith(b"\xff\xd8\xff")

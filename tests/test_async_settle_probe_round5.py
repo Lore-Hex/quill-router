@@ -452,7 +452,8 @@ def test_tripwire_constructed_reference_controls(scratch_source, reference, reas
         path.write_text(old)
 
 
-def test_real_generation_consumer_inventory(monkeypatch):
+@pytest.mark.parametrize("clock", ["00:00:01", "00:04:59", "12:00:01", "23:59:59"])
+def test_real_generation_consumer_inventory(monkeypatch, clock):
     """The cohort is real, synthetic-attributed traffic: generation records and
     lookup; its own workspace activity/usage; shared operational outbox,
     delivery heartbeat and public analytics freshness; archival, repair and
@@ -470,7 +471,8 @@ def test_real_generation_consumer_inventory(monkeypatch):
     from tests.async_settle_probe_consumers import CONSUMERS, consumer_snapshots
 
     query_log = []
-    before, after = consumer_snapshots(monkeypatch, query_log)
+    now = dt.datetime.fromisoformat(f"2026-10-22T{clock}+00:00")
+    before, after = consumer_snapshots(monkeypatch, query_log, now=now)
     # Source execution is part of the evidence contract, even if hand-built
     # replacement inputs would happen to produce identical output values.
     coverage_queries = [q for q in query_log if "synthetic, count() AS requests" in q]

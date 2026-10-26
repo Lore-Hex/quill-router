@@ -152,7 +152,9 @@ def test_shadow_observation_native_slot_race(shadow_emulator_resources: Any, bac
         try:
             if not contender_store.claim(boot, slot, now_us, budget):
                 return None
-            value = contender_store.observe(boot, "us-central1", "a"*40, slot, budget)
+            assert contender_store.last_claim is not None
+            value = contender_store.observe(boot, "us-central1", "a"*40, slot, budget,
+                                             claim_at_ns=contender_store.last_claim["claim_at_ns"])
             assert contender_store.publish(value, budget), _diagnostics()
             return value
         except Exception:
@@ -215,14 +217,18 @@ def test_shadow_observation_native_empty_nonempty_metadata(shadow_emulator_resou
     database, _ = shadow_emulator_resources
     store = ObservationStore(database)
     slot = int(time.time())//2
-    empty = store.observe("reader", "us-central1", "a"*40, slot, Budget(time.monotonic()+.5))
+    empty = store.observe("reader", "us-central1", "a"*40, slot, Budget(time.monotonic()+.5),
+                          claim_at_ns=slot*2_000_000_000)
     assert empty["observed_at_ns"] > 0 and empty["backlog_count"] == 0, _diagnostics()
     identity = uuid4().hex
     with database.batch() as batch:
         batch.insert(table="tr_settle_outbox", columns=("authorization_id", "intent_kind", "settle_origin", "actual_cost_micro", "status", "created_at"),
             values=[(identity, "settle", "typed", 1, "dead", dt.datetime.now(dt.UTC))])
     try:
-        nonempty = store.observe("reader", "us-central1", "a"*40, slot, Budget(time.monotonic()+.5))
+        # The bounded snapshot must include the fixture's just-committed insert.
+        from trusted_router.storage_gcp_shadow_io import timestamp_ns
+        nonempty = store.observe("reader", "us-central1", "a"*40, slot, Budget(time.monotonic()+.5),
+                                 claim_at_ns=timestamp_ns(batch.committed))
         assert nonempty["observed_at_ns"] > empty["observed_at_ns"], _diagnostics()
         assert nonempty["backlog_count"] == empty["backlog_count"]+1, _diagnostics()
         assert nonempty["dead_count"] == empty["dead_count"]+1, _diagnostics()

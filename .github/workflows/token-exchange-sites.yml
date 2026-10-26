@@ -11,6 +11,7 @@ on:
       - 'tests/test_token_exchange_evidence.py'
       - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
+      - '.node-version'
   push:
     branches: [main]
     paths:
@@ -23,6 +24,7 @@ on:
       - 'tests/test_token_exchange_evidence.py'
       - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
+      - '.node-version'
 permissions:
   contents: read
 jobs:
@@ -43,9 +45,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version-file: '.node-version'
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --frozen --no-dev
       - run: npm install --prefix /tmp/exchange-browser playwright@1.63.0
@@ -65,6 +67,7 @@ jobs:
             sleep 1
           done
           node sites/token-exchange/verify.cjs /tmp/token-exchange-build
+          node sites/token-exchange/verify-nyte-v2.cjs /tmp/token-exchange-build
           node sites/token-exchange/verify-badge.cjs http://127.0.0.1:8089
           node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089
           node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089

@@ -8,6 +8,7 @@
   {% include "_favicon.html" %}
   <link rel="preload" href="/static/homepage/archivo.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/tokens.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/brand.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}&amp;flow=console-navigation-v2">
@@ -44,6 +45,12 @@
         <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
       </div></details>
     </div>
+    {% if credits_available %}
+    <a class="console-balance{% if credits_empty %} is-empty{% endif %}" href="/console/credits" title="API credit {{ credits_available }}" aria-label="API credit {{ credits_available }}. Add credits">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8V5H4a2 2 0 0 0 0 4h17v11H4a2 2 0 0 1-2-2V7m19 6h-6v4h6"/></svg>
+      <span>{{ credits_available }}</span>
+    </a>
+    {% endif %}
     <button class="console-menu-toggle" type="button" aria-controls="console-navigation" aria-expanded="false" hidden>Menu</button>
   </header>
   <div class="console-shell">
@@ -99,13 +106,13 @@
     <main class="console-main">
       <header class="console-page-head">
         <h1>{{ page_title }}</h1>
-        {% if page_subtitle and active != "api-keys" %}<p>{{ page_subtitle }}</p>{% endif %}
+        {% if page_subtitle and (active != "api-keys" or api_keys_classic|default(false)) %}<p>{{ page_subtitle }}</p>{% endif %}
       </header>
       <div class="console-page-body">
         {% block body %}{% endblock %}
       </div>
     </main>
   </div>
-  {% if not provider_mode %}{% include "console/_social_rewards.html" %}{% endif %}
+  {% if not provider_mode and not api_keys_classic|default(false) %}{% include "console/_social_rewards.html" %}{% endif %}
 </body>
 </html>

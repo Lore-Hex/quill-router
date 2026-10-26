@@ -330,6 +330,14 @@ class GatewayBootCapabilities(BaseModel):
 
     usage_heartbeat: StrictBool = False
     stream_open_heartbeat: StrictBool = False
+    # E4 R2. The enclave marks who chose each authorize's idempotency key
+    # (idempotency_key_source on the authorize body); without this
+    # declaration a "gateway" mark classifies as legacy.
+    idempotency_key_source: StrictBool = False
+    # E4 R2. The enclave keeps a durable outbox of frozen settle and refund
+    # terminals and redelivers them until the control plane answers. Stored
+    # and exposed on the authorize boot context; nothing gates on it yet.
+    settle_outbox: StrictBool = False
 
 
 class GatewayBootRegistrationRequest(_Strict):
@@ -396,6 +404,14 @@ class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+    # Who chose idempotency_key, as the enclave reports it ("gateway" when it
+    # minted the key itself, "client" when the caller sent one). Classified by
+    # gateway.idempotency_key_source, never trusted raw. A plain str, not a
+    # Literal, and never a 422 (see _bounded_idempotency_key_source): a value a
+    # future enclave adds must not fail an authorize. Excluded from model_dump
+    # so it stays out of the authorize body and its idempotency fingerprint: a
+    # retry that carries it replays an authorization whose original did not.
+    idempotency_key_source: str | None = Field(default=None, max_length=16, exclude=True)
     request_fingerprint: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
     model: str = Field(min_length=1)
     models: list[str] | None = None
@@ -432,6 +448,16 @@ class GatewayAuthorizeRequest(_Lenient):
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
     invocation_nonce: str | None = Field(default=None, max_length=64)
+
+    @field_validator("idempotency_key_source", mode="before")
+    @classmethod
+    def _bounded_idempotency_key_source(cls, value: Any) -> str | None:
+        """Bound the field instead of refusing the authorize: a longer string
+        is cut to 16 characters, and a value that is not a string is dropped
+        as if absent. Neither is a known value, so both classify as legacy."""
+        if isinstance(value, str):
+            return value[:16]
+        return None
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:

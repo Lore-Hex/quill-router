@@ -22,12 +22,13 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache
 from itertools import product
 from time import perf_counter
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -35,6 +36,10 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router import catalog as model_catalog
+from trusted_router import openai_service_tiers as _openai_service_tiers
+from trusted_router import provider_contracts as _provider_contracts
+from trusted_router import routing as _routing
+from trusted_router import stage_d as _stage_d
 from trusted_router.acquisition import (
     record_free_credit_exhausted_safely,
     record_successful_api_call_safely,
@@ -49,11 +54,25 @@ from trusted_router.app_markup_billing import (
     app_markup_payout_event_id,
 )
 from trusted_router.auth import SettingsDep, is_api_key_expired
+from trusted_router.authorize_candidates import (
+    ADDITIONAL_COST_ROUTE_TYPES as _ADDITIONAL_COST_ROUTE_TYPES,
+)
+from trusted_router.authorize_candidates import (
+    CandidateRequest,
+    NamedChainRefusal,
+    finish_candidates,
+    plan_route,
+    resolve_candidates,
+)
+from trusted_router.authorize_candidates import (
+    endpoint_cost_microdollars as _endpoint_cost_microdollars,
+)
+from trusted_router.authorize_candidates import (
+    endpoint_cost_microdollars_from_document as _endpoint_cost_microdollars_from_document,
+)
 from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
-    DECIDE_PATH,
     MODELS,
-    NAMED_DECISION_MODEL_PROVIDERS,
     PRIVATE_PROXY_MODEL_TARGETS,
     PROVIDERS,
     Model,
@@ -102,14 +121,8 @@ from trusted_router.gateway_timing import (
     timed_gateway_sync,
     worker_continuation,
 )
-from trusted_router.money import money_pair
+from trusted_router.money import format_money_precise, money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
-from trusted_router.openai_service_tiers import (
-    OPENAI_PRIORITY_MAX_PROMPT_TOKENS,
-    OPENAI_SERVICE_TIERS,
-    openai_priority_cost_microdollars,
-    openai_priority_pricing,
-)
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
@@ -128,7 +141,6 @@ from trusted_router.pricing import (
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_contracts import (
     SAKANA_FUGU_MODEL_ID,
-    provider_model_available_from_gateway_region,
 )
 from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_types import estimate_tokens_from_text
@@ -150,21 +162,12 @@ from trusted_router.request_attribution import (
 from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, validate_tags
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
-    _apply_endpoint_provider_filters,
+    RoutePreferences,
     _required_privacy_postures,
     canonical_model_id,
-    chat_route_endpoint_candidates,
-    decide_route_endpoint_candidates,
-    embeddings_route_endpoint_candidates,
     endpoint_supports_input_modalities,
-    fetch_route_endpoint_candidates,
-    image_route_endpoint_candidates,
-    normalize_routing_inputs,
     provider_route_preferences,
     resolved_route_preferences,
-    speech_route_endpoint_candidates,
-    transcription_route_endpoint_candidates,
-    video_route_endpoint_candidates,
 )
 from trusted_router.routing_state import ROUTING_STATE
 from trusted_router.schemas import (
@@ -221,9 +224,6 @@ from trusted_router.stage_d import (
     endpoint_pricing_document,
     parse_pricing_snapshot,
 )
-from trusted_router.stage_d import (
-    endpoint_cost_microdollars_from_document as _stage_d_document_cost,
-)
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -258,6 +258,7 @@ from trusted_router.storage_models import (
     ByokProviderConfig,
     CustomModelMarkupPayout,
     GatewayAuthorization,
+    Reservation,
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
@@ -295,6 +296,31 @@ from trusted_router.web_fetch import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The frozen-main oracles (tests/fakes/shadow_main_routes_internal_gateway.py.txt)
+# compile main's route functions against this module's globals. These are the
+# names that code read before the candidate pipeline moved to
+# authorize_candidates; the live route does not use them.
+DECIDE_PATH = model_catalog.DECIDE_PATH
+NAMED_DECISION_MODEL_PROVIDERS = model_catalog.NAMED_DECISION_MODEL_PROVIDERS
+OPENAI_PRIORITY_MAX_PROMPT_TOKENS = _openai_service_tiers.OPENAI_PRIORITY_MAX_PROMPT_TOKENS
+OPENAI_SERVICE_TIERS = _openai_service_tiers.OPENAI_SERVICE_TIERS
+openai_priority_cost_microdollars = _openai_service_tiers.openai_priority_cost_microdollars
+openai_priority_pricing = _openai_service_tiers.openai_priority_pricing
+provider_model_available_from_gateway_region = (
+    _provider_contracts.provider_model_available_from_gateway_region
+)
+_apply_endpoint_provider_filters = _routing._apply_endpoint_provider_filters
+chat_route_endpoint_candidates = _routing.chat_route_endpoint_candidates
+decide_route_endpoint_candidates = _routing.decide_route_endpoint_candidates
+embeddings_route_endpoint_candidates = _routing.embeddings_route_endpoint_candidates
+fetch_route_endpoint_candidates = _routing.fetch_route_endpoint_candidates
+image_route_endpoint_candidates = _routing.image_route_endpoint_candidates
+normalize_routing_inputs = _routing.normalize_routing_inputs
+speech_route_endpoint_candidates = _routing.speech_route_endpoint_candidates
+transcription_route_endpoint_candidates = _routing.transcription_route_endpoint_candidates
+video_route_endpoint_candidates = _routing.video_route_endpoint_candidates
+_stage_d_document_cost = _stage_d.endpoint_cost_microdollars_from_document
 
 _LOG_VALUE_MAX_CHARS = 120
 
@@ -346,16 +372,6 @@ _BOOT_WIRE_ATTESTATION_KINDS = {
     "gcp": GCP_ATTESTATION_KIND,
 }
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
-_ADDITIONAL_COST_ROUTE_TYPES = frozenset(
-    {
-        "responses.web_search.planner",
-        "chat.completions.web_search.planner",
-        "images",
-        "audio.speech",
-        "audio.transcriptions",
-        "videos",
-    }
-)
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
     "parasail": 5_000,
@@ -426,23 +442,47 @@ _SETTLE_REPAIR_FIELDS = frozenset(
 # fast-admission-enclave-direct.md, E1) puts its verdict on the boot
 # signature in this header: the signature alone, which this route checks
 # the same way (verify_boot_signature) beside its own verification, and
-# compares. A verdict the edge could not reach (unread, unchecked) is no
+# compares. A verdict with nothing to compare (unread, unchecked: the edge
+# could not reach one; absent: the request carried no signature) is no
 # disagreement.
 _EDGE_BOOT_VERDICT_HEADER = "x-tr-edge-boot"
 _EDGE_BOOT_VERDICTS_DECIDED = frozenset({"verified", "invalid"})
+_EDGE_BOOT_VERDICTS = _EDGE_BOOT_VERDICTS_DECIDED | {"unread", "unchecked", "absent"}
 
 
 def _compare_edge_boot_verdict(request: Request, kid: str, signed: bool) -> None:
-    """An observation: nothing it does reaches the response."""
+    """An observation: nothing it does reaches the response.
+
+    Each authorize that came through the edge (it carries the verdict
+    header) and reaches this comparison is counted, as agree, differ or
+    skipped (nothing to compare: unread, unchecked, absent or other; split it by
+    the edge= label), so the absence of
+    disagreements can be told from the absence of comparisons; a
+    disagreement is also a warning. A call rejected before it (internal
+    token, key, admission limits) is not counted, and neither is one the
+    edge forwarded without a verdict (its own token check failed)."""
     try:
         verdict = request.headers.get(_EDGE_BOOT_VERDICT_HEADER)
-        if verdict is None or verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+        if verdict is None:
             return
-        if (verdict == "verified") != signed:
+        python = "verified" if signed else "invalid"
+        if verdict not in _EDGE_BOOT_VERDICTS:
+            verdict, result = "other", "skipped"
+        elif verdict not in _EDGE_BOOT_VERDICTS_DECIDED:
+            result = "skipped"
+        else:
+            result = "agree" if (verdict == "verified") == signed else "differ"
+        logger.info(
+            "fastpath edge boot verdict compared result=%s edge=%s python=%s",
+            result,
+            verdict,
+            python,
+        )
+        if result == "differ":
             logger.warning(
                 "fastpath edge boot verdict differs edge=%s python=%s kid=%s path=%s",
                 verdict,
-                "verified" if signed else "invalid",
+                python,
                 kid,
                 request.url.path,
             )
@@ -523,6 +563,12 @@ def _register_gateway_boot_sync(
             declares_stream_open_heartbeat=bool(
                 body.capabilities is not None and body.capabilities.stream_open_heartbeat
             ),
+            declares_idempotency_key_source=bool(
+                body.capabilities is not None and body.capabilities.idempotency_key_source
+            ),
+            declares_settle_outbox=bool(
+                body.capabilities is not None and body.capabilities.settle_outbox
+            ),
         )
         stored = STORE.observe_gateway_boot(record)
     except ValueError as exc:
@@ -595,17 +641,55 @@ async def settle_gateway(
 ) -> dict[str, Any]:
     """Run one settlement off-loop behind the process-local per-key gate."""
     require_internal_gateway(request, settings)
+    boot_auth = await _terminal_boot_auth_input(request)
     if settings.async_settle_shadow_workspace_ids:
         from trusted_router.services.async_settle_shadow import observe_entry
         return await observe_entry(request, body, settings, background_tasks,
             lambda: run_in_threadpool(_settle_gateway_with_admission_sync, body,
-                settings=settings, background_tasks=background_tasks, _shadow_request=request), kind="settle")
+                settings=settings, background_tasks=background_tasks, _shadow_request=request,
+                _boot_auth=boot_auth), kind="settle")
     return await run_in_threadpool(
         _settle_gateway_with_admission_sync,
         body,
         settings=settings,
         background_tasks=background_tasks,
+        _boot_auth=boot_auth,
     )
+
+
+async def refund_gateway(
+    request: Request,
+    body: GatewaySettleRequest,
+    settings: Settings,
+    background_tasks: BackgroundTasks | None = None,
+) -> dict[str, Any]:
+    """Run one refund off-loop; the settle path with ``success=False``."""
+    require_internal_gateway(request, settings)
+    boot_auth = await _terminal_boot_auth_input(request)
+    if settings.async_settle_shadow_workspace_ids:
+        from trusted_router.services.async_settle_shadow import observe_entry
+        return await observe_entry(request, body, settings, background_tasks,
+            lambda: run_in_threadpool(_settle_gateway_authorization, body, success=False,
+                settings=settings, background_tasks=background_tasks, _shadow_request=request,
+                _boot_auth=boot_auth), kind="refund")
+    return await run_in_threadpool(
+        _settle_gateway_authorization,
+        body,
+        success=False,
+        settings=settings,
+        background_tasks=background_tasks,
+        _boot_auth=boot_auth,
+    )
+
+
+async def _terminal_boot_auth_input(request: Request) -> tuple[Request, bytes]:
+    try:
+        raw_body = await request.body()
+    except RuntimeError:
+        # Direct unit callers may construct a Request without an ASGI receive
+        # channel. Real routed requests always provide the exact cached bytes.
+        raw_body = b""
+    return request, raw_body
 
 
 async def heartbeat_gateway(
@@ -709,6 +793,58 @@ def _gateway_boot_auth_accepted(
         # The authorization-time kid is immutable. Membership in the live set
         # is intentionally not re-applied to an in-flight stream.
         accepted_image_digests=({boot.image_digest} if boot is not None else frozenset()),
+    )
+
+
+def _terminal_boot_auth_outcome(
+    boot_auth: tuple[Request, bytes] | None,
+    authorization: GatewayAuthorization,
+    *,
+    kind: str,
+) -> str:
+    """E4 R3 (durable-settle-outbox §9.2): ``X-TR-Boot-Auth`` on a terminal.
+
+    The outbox sweeper replays a frozen settle or refund signed by the
+    AUTHORIZING boot (``kid`` == ``authorization.stage_d_boot_kid``); the
+    sender need not be that boot. Absent header: the unsigned behaviour, as
+    every enclave sends terminals today. Authorization without a boot kid:
+    the header is ignored, not refused (settles were never signed before
+    #595). A present header that fails the heartbeat verifier, or names
+    another kid, is refused before any disposition read or money write, so
+    the retry with a correct header settles exactly once.
+    """
+    if boot_auth is None:
+        return "absent"
+    request, raw_body = boot_auth
+    headers = request.headers.getlist("X-TR-Boot-Auth")
+    if not headers:
+        return "absent"
+    presented = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
+    presented_kid = presented.kid if presented is not None else "-"
+    if not authorization.stage_d_boot_kid:
+        logger.info(
+            "gateway.terminal_boot_auth_ignored authorization_id=%s kind=%s kid=%s "
+            "reason=no_boot_kid",
+            _log_value(authorization.id),
+            kind,
+            _log_value(presented_kid),
+        )
+        return "ignored_no_boot_kid"
+    if _gateway_boot_auth_accepted(request, authorization, raw_body):
+        return "verified"
+    logger.warning(
+        "gateway.terminal_boot_auth_refused authorization_id=%s kind=%s kid=%s "
+        "authorizing_kid=%s",
+        _log_value(authorization.id),
+        kind,
+        _log_value(presented_kid),
+        _log_value(authorization.stage_d_boot_kid),
+    )
+    raise api_error(
+        401,
+        "Gateway boot was not accepted",
+        ErrorType.UNAUTHORIZED,
+        extra={"reason": "boot_not_accepted"},
     )
 
 
@@ -849,6 +985,11 @@ def _authorize_gateway_sync(
         "boot_auth": boot_auth,
         "boot_verified": False,
         "heartbeat_declared": False,
+        # E4 R2: what the boot declared at registration. The idempotency
+        # key source classifier reads the first; nothing reads the second yet.
+        "idempotency_key_source_declared": False,
+        "settle_outbox_declared": False,
+        "image_digest": "",
     }
     return _authorize_gateway_sync_impl(request, body, settings, boot_context)
 
@@ -908,6 +1049,13 @@ def _authorize_gateway_sync_impl(
         boot_context["heartbeat_declared"] = bool(
             boot is not None and boot.declares_usage_heartbeat
         )
+        boot_context["idempotency_key_source_declared"] = bool(
+            boot is not None and boot.declares_idempotency_key_source
+        )
+        boot_context["settle_outbox_declared"] = bool(
+            boot is not None and boot.declares_settle_outbox
+        )
+        boot_context["image_digest"] = boot.image_digest if boot is not None else ""
         # Over the path as the server decoded it, which is what the edge
         # signs over too; request.url.path is that path after URL parsing
         # (control characters removed, a '?' or '#' it contains ending it).
@@ -1077,6 +1225,7 @@ def _authorize_gateway_sync_impl(
     if not catalog_video_request:
         prepare_model()
     presented_idempotency_key = _gateway_idempotency_key(request, body)
+    _observe_idempotency_key_source(request, body, presented_idempotency_key, boot_context)
     request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
     _require_native_batch_route_binding(body.route_type, request_idempotency_key)
     partner_mode = _partner_billing_mode_or_error(
@@ -1108,7 +1257,7 @@ def _authorize_gateway_sync_impl(
         elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
             raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
         if body.additional_cost_reservation_microdollars and (
-            _is_web_search_restricted_model(route_model_id)
+            _is_web_search_restricted_model(route_model_id, body_dict.get("models"))
             or _is_web_search_restricted_provider(body_dict.get("provider"))
         ):
             raise api_error(
@@ -1319,62 +1468,17 @@ def _authorize_gateway_sync_impl(
     if catalog_video_request:
         prepare_live_routing()
 
-    normalized_routing = normalize_routing_inputs(
-        body_dict,
-        settings,
-        resolved_region=region,
+    candidate_request = CandidateRequest(
+        route_type=body.route_type,
+        route_model_id=route_model_id,
+        routing_body=body_dict,
+        body_region=body.region,
+        video_resolution=body.video_resolution,
+        video_allowed_providers=video_allowed_providers,
+        custom_model=custom_model is not None,
     )
-    route_preferences = normalized_routing.preferences
-    requested_model = MODELS.get(route_model_id) if route_model_id else None
-    is_embeddings_request = (
-        requested_model is not None
-        and requested_model.supports_embeddings
-        and not requested_model.supports_chat
-    )
-    # Hosted decision models dispatch on the MODEL, like embeddings: a native
-    # decision request names an ordinary chat model and takes the chat arm.
-    is_decide_request = (
-        requested_model is not None
-        and requested_model.supports_decide
-        and not requested_model.supports_chat
-    )
-    named_decision_chain = NAMED_DECISION_MODEL_PROVIDERS.get(route_model_id or "")
-    supports_live_routing = (
-        body.route_type in {"chat.completions", "responses", "messages"}
-        and named_decision_chain is None
-        and not (is_image_request or is_video_request or is_embeddings_request or is_decide_request)
-    )
-    if not supports_live_routing and (
-        route_preferences.preferred_max_latency or route_preferences.preferred_min_throughput
-    ):
-        raise api_error(
-            501,
-            "Performance preferences currently require a synchronous text-generation endpoint",
-            "not_supported_in_alpha",
-        )
-    if (is_decide_request or named_decision_chain is not None) and body.route_type != "decide":
-        # A decision model has no chat surface. Jev would fail at the provider,
-        # and a named model like trev-1.0 would silently become a plain chat
-        # alias for its backing model on whichever host is cheapest -- not the
-        # thing the name promises. Say so instead.
-        raise api_error(
-            400,
-            f"{route_model_id} is a decision model: call POST {DECIDE_PATH}",
-            ErrorType.MODEL_NOT_SUPPORTED,
-        )
-    if named_decision_chain is not None:
-        # A caller excluding the entire pinned chain is an invalid request,
-        # not an outage. Check policy before live regional availability so a
-        # genuinely unavailable permitted host still returns retryable 503.
-        permitted_hosts = set(named_decision_chain) - route_preferences.ignore
-        if route_preferences.only:
-            permitted_hosts.intersection_update(route_preferences.only)
-        if not permitted_hosts:
-            raise api_error(
-                400,
-                f"Provider filters exclude every supported host for {route_model_id}",
-                ErrorType.BAD_REQUEST,
-            )
+    route_plan = plan_route(candidate_request, settings, region=region)
+    route_preferences = route_plan.preferences
     effective_route_preferences = route_preferences
     if not catalog_video_request:
         # Main prepares and validates creator models before fingerprinting.
@@ -1392,6 +1496,12 @@ def _authorize_gateway_sync_impl(
     # request at one tariff and bill it at another whenever a scheduled price
     # change fell between them.
     pricing_effective_at = dt.datetime.now(dt.UTC)
+    # The prompt estimate the hold is reserved on; chat routing also sends a
+    # request only to models whose window holds it.
+    input_tokens = body.estimated_input_tokens
+    if custom_model is not None and custom_model.hidden_prompt.strip():
+        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
+    user_model_candidate = None
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1414,127 +1524,68 @@ def _authorize_gateway_sync_impl(
                 "User-provided models cannot meet a provider privacy floor",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
-        endpoint_candidates = [_user_model_gateway_candidate(user_model)]
-    elif is_video_request:
-        endpoint_candidates = video_route_endpoint_candidates(
-            normalized_routing,
-            defer_no_fallback_selection=True,
-            video_resolution=body.video_resolution,
-            pricing_effective_at=pricing_effective_at,
-            allowed_providers=video_allowed_providers,
-        )
-    elif is_fetch_request:
-        endpoint_candidates = fetch_route_endpoint_candidates(normalized_routing)
-    elif is_transcription_request:
-        if custom_model is not None:
-            raise api_error(400, "Custom models do not support transcription", ErrorType.MODEL_NOT_SUPPORTED)
-        endpoint_candidates = transcription_route_endpoint_candidates(normalized_routing)
-    elif is_speech_request:
-        if custom_model is not None:
-            raise api_error(400, "Custom models do not support speech", ErrorType.MODEL_NOT_SUPPORTED)
-        endpoint_candidates = speech_route_endpoint_candidates(normalized_routing)
-    elif is_image_request:
-        if custom_model is not None:
-            raise api_error(
-                400,
-                "Custom models do not support image generation",
-                ErrorType.MODEL_NOT_SUPPORTED,
-            )
-        endpoint_candidates = image_route_endpoint_candidates(
-            normalized_routing,
-            defer_no_fallback_selection=True,
-        )
-    elif is_decide_request:
-        resolved_candidates = decide_route_endpoint_candidates(
-            normalized_routing,
-            defer_no_fallback_selection=True,
-        )
-        effective_route_preferences = resolved_candidates.effective_preferences
-        endpoint_candidates = resolved_candidates
-    elif is_embeddings_request:
-        endpoint_candidates = embeddings_route_endpoint_candidates(
-            normalized_routing,
-            defer_no_fallback_selection=True,
-        )
-        if not endpoint_candidates:
-            raise api_error(400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED)
-    else:
-        resolved_candidates = chat_route_endpoint_candidates(
-            normalized_routing,
-            defer_no_fallback_selection=True,
-        )
-        effective_route_preferences = resolved_candidates.effective_preferences
-        endpoint_candidates = resolved_candidates
-        if not endpoint_candidates:
-            raise api_error(
-                400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
-            )
-    endpoint_candidates = [
-        (candidate_model, candidate_endpoint)
-        for candidate_model, candidate_endpoint in endpoint_candidates
-        if provider_model_available_from_gateway_region(
-            candidate_endpoint.provider,
-            candidate_endpoint.model_id,
-            # Bedrock needs an explicit, upgraded gateway origin; missing
-            # metadata must not inherit the receiving control plane's region.
-            # Preserve legacy region fallback for already-deployed providers.
-            body.region or ("" if candidate_endpoint.provider == "amazon-bedrock" else region),
-        )
-    ]
+        user_model_candidate = _user_model_gateway_candidate(user_model)
+    resolved_candidates = resolve_candidates(
+        route_plan, candidate_request, region=region, at=pricing_effective_at,
+        user_model_candidate=user_model_candidate,
+        prompt_tokens=input_tokens,
+        completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
+    )
+    effective_route_preferences = resolved_candidates.effective_preferences
+    endpoint_candidates = resolved_candidates.candidates
     byok_configs = _byok_configs_for_candidates(
         endpoint_candidates, workspace.id,
         folded_rows=folded_byok,
     )
-    endpoint_candidates = _eligible_gateway_endpoint_candidates(
-        endpoint_candidates, workspace.id, byok_configs,
-    )
-    if named_decision_chain is not None:
-        # The chain is part of what the name means (and of its advertised
-        # price), so it is enforced HERE, not merely requested by the gateway:
-        # only the pinned hosts, in the pinned order, whatever the request's
-        # provider preferences say.
-        chain_rank = {provider: rank for rank, provider in enumerate(named_decision_chain)}
-        endpoint_candidates = sorted(
-            (
-                candidate
-                for candidate in endpoint_candidates
-                if candidate[1].provider in chain_rank and not candidate[1].is_byok
-            ),
-            key=lambda candidate: chain_rank[candidate[1].provider],
+    byok_providers = _byok_present_providers(endpoint_candidates, workspace.id, byok_configs)
+    additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
+    if is_transcription_request:
+        additional_cost_reservation = transcription_quote
+
+    def rerank(
+        candidates: list[tuple[Model, ModelEndpoint]], preferences: RoutePreferences,
+    ) -> list[tuple[Model, ModelEndpoint]]:
+        # Process-local health and session affinity: outside the pure pipeline.
+        return ROUTING_STATE.rank(
+            candidates, preferences, region=region,
+            session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
+            if body.cache_affinity_key else None,
         )
-        if not endpoint_candidates:
-            # Establish request compatibility independently of availability.
-            # endpoints_for_model drops expired/retired routes, so use the
-            # catalog entries (at effective prices) before those exclusions.
-            # An available but request-excluded host says nothing about a
-            # compatible host's outage. BYOK is never part of a named chain.
-            pinned_credit_candidates = [
-                (MODELS[candidate_endpoint.model_id], effective_endpoint(candidate_endpoint))
-                for candidate_endpoint in model_catalog.MODEL_ENDPOINTS.values()
-                if candidate_endpoint.model_id in normalized_routing.model_ids
-                and candidate_endpoint.provider in chain_rank
-                and not candidate_endpoint.is_byok
-            ]
-            # Reuse relaxation over the resolver's full backing candidates;
-            # recomputing it over just pinned hosts would broaden the policy.
-            if pinned_credit_candidates and not _apply_endpoint_provider_filters(
-                pinned_credit_candidates, effective_route_preferences
-            ):
-                logger.info(
-                    "billing.authorize_named_chain_filtered_by_request workspace_id=%s "
-                    "request_id=%s model=%s region=%s",
-                    workspace.id,
-                    getattr(request.state, "request_id", None),
-                    _log_value(route_model_id),
-                    _log_value(region),
+
+    try:
+        candidate_outcome = finish_candidates(
+            route_plan,
+            resolved_candidates,
+            route_type=body.route_type,
+            byok_providers=byok_providers,
+            estimated_input_tokens=input_tokens,
+            output_tokens=body.output_estimate,
+            service_tier=body.service_tier,
+            additional_cost_reservation=additional_cost_reservation,
+            video_resolution=body.video_resolution,
+            at=pricing_effective_at,
+            user_model_prices=(
+                (
+                    user_model.prompt_price_microdollars_per_million_tokens,
+                    user_model.completion_price_microdollars_per_million_tokens,
                 )
-                raise api_error(
-                    400,
-                    f"No host in the {route_model_id} chain matches the request's routing "
-                    "filters; the chain's hosts are fixed, so relax the usage, privacy, "
-                    "jurisdiction or provider filters",
-                    ErrorType.BAD_REQUEST,
-                )
+                if user_model is not None else None
+            ),
+            partner_mode=partner_mode,
+            rerank=rerank,
+            stream=bool(body.stream),
+        )
+    except NamedChainRefusal as refusal:
+        if refusal.event == "filtered":
+            logger.info(
+                "billing.authorize_named_chain_filtered_by_request workspace_id=%s "
+                "request_id=%s model=%s region=%s",
+                workspace.id,
+                getattr(request.state, "request_id", None),
+                _log_value(route_model_id),
+                _log_value(region),
+            )
+        else:
             logger.warning(
                 "billing.authorize_named_chain_unavailable workspace_id=%s request_id=%s "
                 "model=%s region=%s",
@@ -1543,96 +1594,20 @@ def _authorize_gateway_sync_impl(
                 _log_value(route_model_id),
                 _log_value(region),
             )
-            raise api_error(
-                503,
-                f"No host in the {route_model_id} chain is available; retry shortly",
-                ErrorType.SERVICE_UNAVAILABLE,
-                headers={"Retry-After": "2"},
-            )
-    input_tokens = body.estimated_input_tokens
-    if custom_model is not None and custom_model.hidden_prompt.strip():
-        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
-    service_tier = _requested_service_tier_or_error(body.service_tier)
-    endpoint_candidates = _service_tier_endpoint_candidates_or_error(
-        endpoint_candidates,
-        service_tier=service_tier,
-        estimated_input_tokens=input_tokens,
-    )
-    additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
-    if is_transcription_request:
-        additional_cost_reservation = transcription_quote
-    if additional_cost_reservation:
-        if body.route_type not in _ADDITIONAL_COST_ROUTE_TYPES:
-            raise api_error(
-                400,
-                "additional cost reservations require a supported hosted tool or media route",
-                ErrorType.BAD_REQUEST,
-            )
-        # Hosted tools and asynchronous media are operator-funded, so their
-        # fixed cost must settle against Credits rather than a BYOK route.
-        endpoint_candidates = [
-            (candidate_model, candidate_endpoint)
-            for candidate_model, candidate_endpoint in endpoint_candidates
-            if UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
-        ]
-    if supports_live_routing:
-        endpoint_candidates = ROUTING_STATE.rank(
-            endpoint_candidates, effective_route_preferences, region=region,
-            session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
-            if body.cache_affinity_key else None,
-        )
-    # ``allow_fallbacks=false`` removes alternate models in the resolver, but
-    # provider selection must happen after regional, workspace/BYOK, and
-    # service-tier eligibility. Truncating the raw catalog first can pin an
-    # unusable endpoint and reject a model another eligible provider serves.
-    if not route_preferences.allow_fallbacks:
-        endpoint_candidates = endpoint_candidates[:1]
-    if not endpoint_candidates:
-        raise api_error(
-            400,
-            "No authorized route candidates are available for this workspace",
-            ErrorType.PROVIDER_NOT_SUPPORTED,
-        )
-    model, endpoint = endpoint_candidates[0]
-
+        raise refusal.error from None
+    endpoint_candidates = candidate_outcome.candidates
+    service_tier = candidate_outcome.service_tier
+    model, endpoint = candidate_outcome.model, candidate_outcome.endpoint
     output_tokens = body.output_estimate
-    model_estimate = (
-        custom_model_cost_microdollars(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            prompt_price=user_model.prompt_price_microdollars_per_million_tokens,
-            completion_price=user_model.completion_price_microdollars_per_million_tokens,
-        )
-        if user_model is not None
-        else partner_cost_microdollars(
-            partner_mode,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
-        if partner_mode is not None
-        else max(
-            _endpoint_cost_microdollars_from_document(
-                endpoint_pricing_document((candidate_endpoint,)),
-                candidate_endpoint.id,
-                input_tokens,
-                output_tokens,
-            )
-            if body.video_resolution is not None
-            else _endpoint_cost_microdollars(
-                candidate_endpoint,
-                input_tokens,
-                output_tokens,
-                effective_at=pricing_effective_at,
-                service_tier=service_tier,
-                reserve_auto=True,
-            )
-            for _candidate_model, candidate_endpoint in endpoint_candidates
-        )
-    )
+    # Two figures (authorize_candidates.hold_output_tokens): the estimate is
+    # the spend ceiling, the reservation is the credit hold. Every adjustment
+    # below applies to both; they part only in the output tokens priced.
+    model_estimate = candidate_outcome.model_estimate
+    model_reservation = candidate_outcome.model_reservation
     model_usage_type = UsageType.for_endpoint(endpoint)
     if (is_transcription_request and not transcription_spec.token_billed) or (is_speech_request and not speech_spec.token_billed):
         # Duration/characters are not tokens. The complete frozen quote is held below.
-        model_estimate = 0
+        model_estimate = model_reservation = 0
     has_credit_candidate = any(
         UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
         for _candidate_model, candidate_endpoint in endpoint_candidates
@@ -1643,6 +1618,7 @@ def _authorize_gateway_sync_impl(
     )
     if receipt_fee_basis_points and user_model is None and partner_mode is None:
         model_estimate = signed_receipt_price_microdollars(model_estimate, receipt_fee_basis_points)
+        model_reservation = signed_receipt_price_microdollars(model_reservation, receipt_fee_basis_points)
     custom_model_markup_basis_points = (
         int(custom_model.markup_basis_points) if custom_model is not None else 0
     )
@@ -1654,9 +1630,17 @@ def _authorize_gateway_sync_impl(
             model_estimate,
             custom_model_markup_basis_points,
         )
+        model_reservation += custom_model_markup_microdollars(
+            model_reservation,
+            custom_model_markup_basis_points,
+        )
     # Video candidates are either fixed-quote or output-token billed. Reserve
     # the largest possible route charge, not the sum of mutually exclusive routes.
     estimate = max(model_estimate, additional_cost_reservation) if is_video_request else model_estimate + additional_cost_reservation
+    reservation = (
+        max(model_reservation, additional_cost_reservation) if is_video_request
+        else model_reservation + additional_cost_reservation
+    )
     broadcast_destinations = [
         payload
         for destination in _broadcast_destinations_for_authorize(workspace.id)
@@ -1682,6 +1666,7 @@ def _authorize_gateway_sync_impl(
         # Settle-side caps compare against this frozen hold. If authorize held
         # only the base, those caps would claw the app markup back at settle.
         estimate += app_markup_microdollars(estimate, app_markup_basis_points)
+        reservation += app_markup_microdollars(reservation, app_markup_basis_points)
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -1824,7 +1809,8 @@ def _authorize_gateway_sync_impl(
             settings,
             workspace_id=workspace.id,
             authorization_id=authorization_id,
-            estimate=estimate,
+            # The lease holds the reservation; the row keeps the estimate.
+            estimate=reservation,
             stream=bool(body.stream),
             standard_endpoint_pricing=standard_endpoint_pricing,
             # Every candidate priced in credits: a BYOK fallback books no
@@ -1839,10 +1825,7 @@ def _authorize_gateway_sync_impl(
             app_markup=app_markup_basis_points > 0,
             # The leased settle writes its records, its resolved intent and
             # its activity row in one commit: it needs the durable outboxes.
-            records_durable=settings.settle_outbox_enabled
-            and callable(
-                getattr(getattr(_typed_store, "_operational_analytics_outbox", None), "activity_insert_statement", None)
-            ),
+            records_durable=_fastpath.records_durable(settings.settle_outbox_enabled, _typed_store),
         )
 
         def release_after_error() -> None:
@@ -1859,6 +1842,7 @@ def _authorize_gateway_sync_impl(
                     key_hash=api_key.hash,
                     authorization_id=authorization_id,
                     estimate=estimate,
+                    reservation=reservation,
                     has_credit_candidate=has_credit_candidate,
                     reservation_usage_type=reservation_usage_type,
                     model_id=model.id,
@@ -2028,7 +2012,10 @@ def _authorize_gateway_sync_impl(
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
             record_free_credit_exhausted_safely(workspace.id)
-            raise _insufficient_credits_error(workspace)
+            raise _insufficient_credits_error(
+                workspace, reservation=reservation, estimate=estimate, body=body, input_tokens=input_tokens,
+                key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
+            )
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             release_user_model_slot_after_error()
             if window_decision is None:
@@ -2077,6 +2064,8 @@ def _authorize_gateway_sync_impl(
         )
         try:
             with gateway_phase("store_ms", after="post_commit_ms"):
+                # A key cap counts outstanding spend ceilings: the key takes
+                # the estimate, the workspace's credits the reservation.
                 key_limit_reservation = STORE.reserve_key_limit(
                     api_key.hash,
                     estimate,
@@ -2117,13 +2106,14 @@ def _authorize_gateway_sync_impl(
             if _is_native_batch_route(body.route_type)
             else None
         )
+        credit_reservation: Reservation | None = None
         if has_credit_candidate:
             try:
                 with gateway_phase("store_ms", after="post_commit_ms"):
                     credit_reservation = STORE.reserve(
                         workspace.id,
                         api_key.hash,
-                        estimate,
+                        reservation,
                         idempotency_key=request_idempotency_key,
                         key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
                     )
@@ -2151,7 +2141,11 @@ def _authorize_gateway_sync_impl(
                         key_limit_reservation.reserved_microdollars,
                         usage_type=reservation_usage_type,
                     )
-                    raise _insufficient_credits_error(workspace) from exc
+                    raise _insufficient_credits_error(
+                        workspace, reservation=reservation, estimate=estimate, body=body,
+                        input_tokens=input_tokens, key_id=api_key.hash,
+                        request_id=getattr(request.state, "request_id", None),
+                    ) from exc
                 settlement = _DEFERRED_HOME_SETTLEMENT
                 authorization_expires_at = _deferred_expires_at(settings)
 
@@ -2274,6 +2268,67 @@ def _authorize_gateway_sync_impl(
         except BaseException:
             release_user_model_slot_after_error()
             raise
+        if authorization.id != authorization_id:
+            release_user_model_slot_after_error()
+
+            def refund_replay_hold(
+                refund: Callable[[], Any], event_name: str, reserved_microdollars: int
+            ) -> None:
+                try:
+                    refund()
+                except Exception as exc:
+                    outcome = "rolled_back" if isinstance(exc, StoreConflict) else "unknown"
+                    logger.error(
+                        "%s workspace_id=%s request_id=%s "
+                        "key_hash=%s reserved_microdollars=%s error_class=%s outcome=%s",
+                        event_name,
+                        _log_value(workspace.id),
+                        _log_value(getattr(request.state, "request_id", None)),
+                        _log_value(api_key.hash[:12]),
+                        reserved_microdollars,
+                        type(exc).__name__,
+                        outcome,
+                    )
+
+            # Stores own the conflict retry budget; an unknown commit outcome makes
+            # a blind retry risk double refunds. Durable recovery needs attempt-scoped
+            # key holds in the stores, which this change does not add.
+            if key_limit_reservation.reserved_microdollars > 0:
+                refund_replay_hold(
+                    functools.partial(
+                        STORE.refund_key_limit,
+                        api_key.hash,
+                        key_limit_reservation.reserved_microdollars,
+                        usage_type=reservation_usage_type,
+                    ),
+                    "billing.replay_key_refund_failed",
+                    key_limit_reservation.reserved_microdollars,
+                )
+            # Only this workspace/key/idempotency slot can receive our reservation, and
+            # the winner already owns it (a replay writes nothing; pointers are only
+            # replaced by an armed pause rejection), so no later attempt can attach an
+            # unreferenced hold. Holds ONLY once no worker predating the scoped
+            # reservation index is running: such a worker hands reservations out by the
+            # bare idempotency key. Do not deploy this before that rollout has drained.
+            if (
+                credit_reservation_id is not None
+                and credit_reservation_id != authorization.credit_reservation_id
+                and credit_reservation is not None
+                and credit_reservation.workspace_id == workspace.id
+                and credit_reservation.key_hash == api_key.hash
+            ):
+                refund_replay_hold(
+                    functools.partial(STORE.refund, credit_reservation_id),
+                    "billing.replay_credit_refund_failed",
+                    credit_reservation.amount_microdollars,
+                )
+            if authorization.idempotency_fingerprint != request_fingerprint:
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            return _replay_response(authorization)
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider, byok_configs) if model_usage_type.is_byok() else None
     )
@@ -2565,19 +2620,7 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
-        require_internal_gateway(request, settings)
-        if settings.async_settle_shadow_workspace_ids:
-            from trusted_router.services.async_settle_shadow import observe_entry
-            return await observe_entry(request, body, settings, background_tasks,
-                lambda: run_in_threadpool(_settle_gateway_authorization, body, success=False,
-                    settings=settings, background_tasks=background_tasks, _shadow_request=request), kind="refund")
-        return await run_in_threadpool(
-            _settle_gateway_authorization,
-            body,
-            success=False,
-            settings=settings,
-            background_tasks=background_tasks,
-        )
+        return await refund_gateway(request, body, settings, background_tasks)
 
     router.route_class = legacy_route_class
 
@@ -2715,6 +2758,93 @@ def _gateway_idempotency_key(request: Request, body: GatewayAuthorizeRequest) ->
     return key
 
 
+# The shape of the key the enclave mints when the caller sent none
+# (enclave-go internal/trustedrouter authorizationIdempotencyKey).
+_GATEWAY_MINTED_IDEMPOTENCY_KEY = re.compile(r"tr-gateway-[0-9a-f]{32}")
+
+
+def idempotency_key_source(
+    body: GatewayAuthorizeRequest,
+    presented_key: str | None,
+    *,
+    boot_verified: bool,
+    capability_declared: bool,
+) -> Literal["gateway", "client", "legacy"]:
+    """Who chose this authorize's idempotency key, as far as the router can tell.
+
+    ``gateway`` only when the enclave says it minted the key, the presented
+    key has the minted shape, the request's boot signature verified, and that
+    boot declared ``capabilities.idempotency_key_source`` at registration: a
+    boot that never declared the mark cannot have its key treated as
+    unkeyed on the strength of a body field alone. ``client`` when the
+    enclave says the caller sent the key. Anything else (absent, a value this
+    router does not know, or a ``gateway`` claim that fails a check) is
+    ``legacy``: today's treatment. Only ``gateway`` may ever be treated as
+    unkeyed, and nothing consumes the result yet. The field is outside the
+    idempotency fingerprint, so this never changes a replay.
+    """
+    raw = body.idempotency_key_source
+    if raw == "gateway":
+        if (
+            boot_verified
+            and capability_declared
+            and presented_key is not None
+            and _GATEWAY_MINTED_IDEMPOTENCY_KEY.fullmatch(presented_key) is not None
+        ):
+            return "gateway"
+        return "legacy"
+    if raw == "client":
+        return "client"
+    return "legacy"
+
+
+def _observe_idempotency_key_source(
+    request: Request,
+    body: GatewayAuthorizeRequest,
+    presented_key: str | None,
+    boot_context: dict[str, Any],
+) -> None:
+    """An observation: the source split per boot image, nothing it does
+    reaches the response. Logs categories and the image digest only, never
+    the key, its raw source value, or any request content."""
+    try:
+        boot_verified = bool(boot_context.get("boot_verified"))
+        capability_declared = bool(boot_context.get("idempotency_key_source_declared"))
+        source = idempotency_key_source(
+            body,
+            presented_key,
+            boot_verified=boot_verified,
+            capability_declared=capability_declared,
+        )
+        raw = body.idempotency_key_source
+        declared = "absent" if raw is None else raw if raw in {"gateway", "client"} else "other"
+        image_digest = str(boot_context.get("image_digest") or "") if boot_verified else ""
+        logger.info(
+            "gateway.idempotency_key_source source=%s declared=%s image_digest=%s",
+            source,
+            declared,
+            _log_value(image_digest or "-"),
+        )
+        if declared == "gateway" and source != "gateway":
+            if (
+                presented_key is None
+                or _GATEWAY_MINTED_IDEMPOTENCY_KEY.fullmatch(presented_key) is None
+            ):
+                reason = "key_shape"
+            elif not boot_verified:
+                reason = "boot_unverified"
+            else:
+                reason = "capability_undeclared"
+            logger.warning(
+                "gateway.idempotency_key_source_mismatch reason=%s image_digest=%s request_id=%s",
+                reason,
+                _log_value(image_digest or "-"),
+                getattr(request.state, "request_id", None),
+            )
+    except Exception:  # noqa: BLE001 - an observation must not change the response
+        return
+
+
 def _video_allowed_providers_header(
     request: Request, route_type: str | None, *, validate_catalog: bool = True,
 ) -> frozenset[str] | None:
@@ -2793,6 +2923,9 @@ def _gateway_authorize_fingerprint(
             "api_key_hash",
             "api_key_lookup_hash",
             "idempotency_key",
+            # Excluded from model_dump already; a backstop so a dump path
+            # that forgets exclude=True still cannot fork a fingerprint.
+            "idempotency_key_source",
             "spend_lease_admission",
         }
     }
@@ -3251,7 +3384,10 @@ def _deferred_expires_at(settings: Settings) -> str:
     return expires.isoformat().replace("+00:00", "Z")
 
 
-def _insufficient_credits_error(workspace: Any) -> Exception:
+def _insufficient_credits_error(
+    workspace: Any, *, reservation: int, estimate: int, body: GatewayAuthorizeRequest,
+    input_tokens: int, key_id: str, request_id: str | None,
+) -> Exception:
     """402, but say WHICH plane the money is on when that is the real answer.
 
     A federated workspace is a SHADOW of one on the home plane, and credits
@@ -3278,6 +3414,15 @@ def _insufficient_credits_error(workspace: Any) -> Exception:
     The message stays true whether the customer never transferred or
     transferred and then spent it, because both have the same fix.
     """
+    # Do not read balances again here: a later snapshot would race other holds
+    # and add database work to every denial. Log only known, content-free facts.
+    logger.info(
+        "billing.insufficient_credits workspace_id=%s key_id=%s request_id=%s "
+        "model=%s reserved_microdollars=%d estimated_microdollars=%d estimated_input_tokens=%d "
+        "output_token_budget=%d",
+        _log_value(workspace.id), _log_value(key_id), _log_value(request_id),
+        _log_value(body.model), reservation, estimate, input_tokens, body.output_estimate,
+    )
     if getattr(workspace, "federated_home", ""):
         return api_error(
             402,
@@ -3287,7 +3432,14 @@ def _insufficient_credits_error(workspace: Any) -> Exception:
             "spendable here.",
             ErrorType.CREDITS_NOT_ON_THIS_PLANE,
         )
-    return api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+    return api_error(
+        402,
+        f"Insufficient credits for this request's upfront reservation of {format_money_precise(reservation)}. "
+        "The reservation covers the estimated input, output-token limit, and any additional usage costs; "
+        "it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, "
+        "or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits.",
+        ErrorType.INSUFFICIENT_CREDITS,
+    )
 
 
 def _api_key_for_gateway_lookup(
@@ -3530,14 +3682,22 @@ def _force_credit_routes(body: dict[str, Any], *, error_message: str) -> None:
         body["provider"] = {"usage": "credits"}
 
 
-def _is_web_search_restricted_model(model_id: str) -> bool:
+def _is_web_search_restricted_model(model_id: str, fallback_models: Any = None) -> bool:
+    if isinstance(fallback_models, list) and any(
+        isinstance(candidate, str) and _is_web_search_restricted_model(candidate)
+        for candidate in fallback_models
+    ):
+        return True
     model = model_id.strip().lower()
+    if model.startswith("nyte/"):
+        model = "trustedrouter/" + model.removeprefix("nyte/")
     return any(
-        model == prefix or model.startswith(f"{prefix}-") or model.startswith(f"{prefix}/")
+        model == prefix or model.startswith((f"{prefix}-", f"{prefix}/", f"{prefix}:"))
         for prefix in (
             "trustedrouter/zdr",
             "trustedrouter/e2e",
             "trustedrouter/confidential",
+            "trustedrouter/trusted",
             "trustedrouter/eu",
             "trustedrouter/green",
         )
@@ -3547,46 +3707,46 @@ def _is_web_search_restricted_model(model_id: str) -> bool:
 def _is_web_search_restricted_provider(provider: Any) -> bool:
     if not isinstance(provider, dict):
         return False
+    if str(provider.get("min_privacy") or "").strip().lower() == "trusted":
+        return True
     return str(provider.get("data_collection") or "").strip().lower() == "deny" or (
         str(provider.get("jurisdiction") or "").strip().lower() == "eu"
     )
 
 
 def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
-    """Accumulate successful provider failovers in Sentry as warnings.
-
-    Each event means one provider route failed pre-output and the attested
-    gateway routed around it — harmless individually, invisible in aggregate
-    until now. A model+provider pair that accumulates these is a dead default
-    route (GMI/nemotron 2026-07-15, GMI/kimi-k3 2026-07-16): alert on volume,
-    then demote the route (see _PROVIDER_UNSERVED_CREDITS_MODELS).
-    Grouping: message embeds model + failed providers, so each pair gets its
-    own Sentry issue whose event count IS the accumulation signal.
-    """
+    """Keep every recovery in logs and bounded representative warnings in Sentry."""
     try:
-        import sentry_sdk
+        from trusted_router.sentry_config import capture_recovered_failover_warning
 
         failures = [f for f in (getattr(body, "route_failures", None) or []) if isinstance(f, str)][
             :8
         ]
         providers = sorted({f.split("|", 1)[0] for f in failures if f})
         model = body.selected_model or body.model or "unknown"
-        with sentry_sdk.push_scope() as scope:
-            scope.set_level("warning")
-            scope.set_tag("failover.model", model[:100])
-            if providers:
-                scope.set_tag("failover.failed_providers", ",".join(providers)[:200])
-            scope.set_context(
-                "route_failover",
-                {
-                    "fallbacks": getattr(body, "route_fallbacks", None),
-                    "failures": failures,
-                    "served_by": body.selected_endpoint or body.endpoint,
-                },
-            )
-            sentry_sdk.capture_message(
-                f"provider failover: {model} routed around {','.join(providers) or 'unknown'}"
-            )
+        failed_providers = ",".join(providers) or "unknown"
+        # Do not put raw upstream errors in logs. These fixed routing fields
+        # preserve the volume signal even when repeat Sentry events are sampled.
+        logger.info("gateway.provider_failover", extra={
+            "failover_model": model[:100],
+            "failed_providers": failed_providers[:200],
+            "fallbacks": getattr(body, "route_fallbacks", None),
+            "served_by": body.selected_endpoint or body.endpoint,
+        })
+        capture_recovered_failover_warning({
+            "level": "warning",
+            "message": f"provider failover: {model} routed around {failed_providers}",
+            "fingerprint": ["recovered-provider-failover", model[:100], failed_providers[:200]],
+            "tags": {
+                "failover.model": model[:100],
+                "failover.failed_providers": failed_providers[:200],
+            },
+            "contexts": {"route_failover": {
+                "fallbacks": getattr(body, "route_fallbacks", None),
+                "failures": failures,
+                "served_by": body.selected_endpoint or body.endpoint,
+            }},
+        })
     except Exception:  # noqa: BLE001 - observability must never break settlement
         logger.warning("route fallback sentry report failed", exc_info=True)
 
@@ -3725,17 +3885,23 @@ def _settle_gateway_with_admission_sync(
     background_tasks: BackgroundTasks | None = None,
     _shadow_request: Request | None = None,
     _authorization: GatewayAuthorization | None = None,
+    _boot_auth: tuple[Request, bytes] | None = None,
+    _boot_auth_outcome: str | None = None,
 ) -> dict[str, Any]:
     with gateway_phase("key_lookup_ms", after="routing_ms"):
         authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
+        _boot_auth, authorization, kind="settle"
+    )
     if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_settle_hook(settings, _shadow_request, body, authorization, once),
             lambda: _settle_gateway_with_admission_sync(body, settings=settings,
-                background_tasks=background_tasks, _authorization=authorization))
+                background_tasks=background_tasks, _authorization=authorization,
+                _boot_auth_outcome=boot_auth_outcome))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -3767,6 +3933,7 @@ def _settle_gateway_with_admission_sync(
             settings=settings,
             background_tasks=background_tasks,
             _authorization=authorization,
+            _boot_auth_outcome=boot_auth_outcome,
         )
     finally:
         _SETTLE_ADMISSION.release(subject)
@@ -3781,6 +3948,8 @@ def _settle_gateway_authorization(
     background_tasks: BackgroundTasks | None = None,
     _authorization: GatewayAuthorization | None = None,
     _shadow_request: Request | None = None,
+    _boot_auth: tuple[Request, bytes] | None = None,
+    _boot_auth_outcome: str | None = None,
 ) -> dict[str, Any]:
     timing_start = perf_counter()
     # getattr: some callers/tests build the settle body via model_construct,
@@ -3791,12 +3960,16 @@ def _settle_gateway_authorization(
         authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
+        _boot_auth, authorization, kind="settle" if success else "refund"
+    )
     if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_refund_hook(settings, _shadow_request, body, authorization, once, success=success),
             lambda: _settle_gateway_authorization(body, success=success, settings=settings,
-                background_tasks=background_tasks, _authorization=authorization))
+                background_tasks=background_tasks, _authorization=authorization,
+                _boot_auth_outcome=boot_auth_outcome))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -4900,7 +5073,7 @@ def _settle_gateway_authorization(
     logger.info(
         "settle timing authorization_id=%s success=%s origin=%s total_ms=%.1f "
         "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f "
-        "commit_path=%s one_commit_ms=%.1f",
+        "commit_path=%s one_commit_ms=%.1f boot_auth=%s",
         authorization.id,
         success,
         "typed" if is_typed else "legacy",
@@ -4918,6 +5091,7 @@ def _settle_gateway_authorization(
             else "fallback" if one_commit_attempted else "two_commit"
         ),
         one_commit_ms,
+        boot_auth_outcome,
     )
     return {
         "data": {
@@ -5624,18 +5798,23 @@ def _byok_configs_for_candidates(
     return {provider: STORE.get_byok_provider(workspace_id, provider) for provider in providers}
 
 
-def _eligible_gateway_endpoint_candidates(
+def _byok_present_providers(
     candidates: list[tuple[Model, ModelEndpoint]],
     workspace_id: str,
     byok_configs: dict[str, Any] | None = None,
-) -> list[tuple[Model, ModelEndpoint]]:
-    out: list[tuple[Model, ModelEndpoint]] = []
-    for model, endpoint in candidates:
+) -> frozenset[str]:
+    """Providers of BYOK candidates whose credentials the workspace holds.
+
+    One lookup per BYOK candidate, in candidate order, as admission has
+    always made them; the pure pipeline keeps a BYOK candidate iff its
+    provider is in this set.
+    """
+    present: set[str] = set()
+    for _model, endpoint in candidates:
         usage_type = UsageType.for_endpoint(endpoint)
-        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider, byok_configs) is None:
-            continue
-        out.append((model, endpoint))
-    return out
+        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider, byok_configs) is not None:
+            present.add(endpoint.provider)
+    return frozenset(present)
 
 
 def _get_byok_provider(
@@ -5727,19 +5906,6 @@ def _endpoint_for_id_compat(endpoint_id: str) -> ModelEndpoint | None:
     return endpoint_for_id(f"{model_id}@{provider}/{usage_suffix}")
 
 
-def _requested_service_tier_or_error(service_tier: str | None) -> str | None:
-    if service_tier is None:
-        return None
-    normalized = service_tier.strip().lower()
-    if normalized not in OPENAI_SERVICE_TIERS:
-        raise api_error(
-            400,
-            "service_tier must be default, auto, or priority",
-            ErrorType.BAD_REQUEST,
-        )
-    return normalized
-
-
 # Providers name the ordinary, non-expedited tier differently. Anthropic
 # reports usage.service_tier="standard"; OpenAI reports "default". They mean
 # the same thing and price the same, so both settle as "default".
@@ -5762,38 +5928,6 @@ def _actual_service_tier_or_error(service_tier: str | None) -> str | None:
             ErrorType.BAD_REQUEST,
         )
     return normalized
-
-
-def _service_tier_endpoint_candidates_or_error(
-    candidates: list[tuple[Model, ModelEndpoint]],
-    *,
-    service_tier: str | None,
-    estimated_input_tokens: int,
-) -> list[tuple[Model, ModelEndpoint]]:
-    if service_tier is None:
-        return candidates
-    openai_candidates = [
-        (model, endpoint) for model, endpoint in candidates if endpoint.provider == "openai"
-    ]
-    if service_tier in {"auto", "priority"}:
-        openai_candidates = [
-            (model, endpoint)
-            for model, endpoint in openai_candidates
-            if openai_priority_pricing(endpoint.model_id) is not None
-        ]
-    if service_tier == "priority" and estimated_input_tokens > OPENAI_PRIORITY_MAX_PROMPT_TOKENS:
-        raise api_error(
-            400,
-            "OpenAI Priority processing does not support prompts over 272000 tokens",
-            ErrorType.BAD_REQUEST,
-        )
-    if not openai_candidates:
-        raise api_error(
-            400,
-            f"OpenAI {service_tier} processing is unavailable for the requested model",
-            ErrorType.MODEL_NOT_SUPPORTED,
-        )
-    return openai_candidates
 
 
 def _is_native_batch_route(route_type: str | None) -> bool:
@@ -5948,69 +6082,6 @@ def _provider_price_tier_input_tokens(
     if endpoint.provider == "sakana" and endpoint.model_id == SAKANA_FUGU_MODEL_ID:
         return reported_input_tokens
     return None
-
-
-def _endpoint_cost_microdollars(
-    endpoint: ModelEndpoint,
-    input_tokens: int,
-    output_tokens: int,
-    *,
-    cache_read_tokens: int = 0,
-    cache_creation_tokens: int = 0,
-    price_tier_input_tokens: int | None = None,
-    effective_at: datetime | str | None = None,
-    service_tier: str | None = None,
-    reserve_auto: bool = False,
-) -> int:
-    """input_tokens must be the UNCACHED prompt tokens when cache counts
-    are passed — cached reads/writes bill at the provider-specific
-    multiple of the prompt price (see catalog.cache_token_prices_microdollars)."""
-    endpoint = effective_endpoint(endpoint, at=effective_at)
-    # A reseller may echo its upstream's tier; it does not change the
-    # reseller's authorized catalog tariff. Only direct OpenAI routes use
-    # OpenAI Priority prices, regardless of the publisher in model_id.
-    if endpoint.provider == "openai" and (
-        service_tier == "priority" or (service_tier == "auto" and reserve_auto)
-    ):
-        return openai_priority_cost_microdollars(
-            endpoint.model_id,
-            input_tokens,
-            output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_creation_tokens=cache_creation_tokens,
-        )
-    document = endpoint_pricing_document((endpoint,))
-    return _endpoint_cost_microdollars_from_document(
-        document,
-        endpoint.id,
-        input_tokens,
-        output_tokens,
-        cache_read_tokens=cache_read_tokens,
-        cache_creation_tokens=cache_creation_tokens,
-        price_tier_input_tokens=price_tier_input_tokens,
-    )
-
-
-def _endpoint_cost_microdollars_from_document(
-    document: dict[str, Any],
-    endpoint_id: str,
-    input_tokens: int,
-    output_tokens: int,
-    *,
-    cache_read_tokens: int = 0,
-    cache_creation_tokens: int = 0,
-    price_tier_input_tokens: int | None = None,
-) -> int:
-    """The Stage D cost path, with the frozen document as its sole price input."""
-    return _stage_d_document_cost(
-        document,
-        endpoint_id,
-        input_tokens,
-        output_tokens,
-        cache_read_tokens=cache_read_tokens,
-        cache_creation_tokens=cache_creation_tokens,
-        price_tier_input_tokens=price_tier_input_tokens,
-    )
 
 
 def _partner_billing_mode_or_error(

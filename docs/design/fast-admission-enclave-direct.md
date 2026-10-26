@@ -94,11 +94,15 @@ watch, and a way back that needs no deploy.
   passes `-edge-address` (its own port), `-edge-upstream` (Python's
   internal surface) and `-edge-token-secret` (the internal token, a pinned
   Secret Manager version, the same secret Python holds); `-edge-boot-wait`
-  bounds the boot read. Nothing passes them yet. The edge itself answers
+  bounds the boot read. Nodes 3 and 4 pass them (`infra/fastpath.tf`, the
+  startup script). The edge itself answers
   `/internal/gateway/edge/health` without a token: 200 `{"status":"serving"}`
   while serving, 503 `{"status":"leaving"}` once the node begins leaving.
-- **Switch and way back:** the load balancer route, and an edge
-  "pass everything" flag. Nothing durable changes.
+- **Switch and way back:** the load balancer route's weight. The edge
+  decides nothing in E1, so it needs no "pass everything" flag. Nothing
+  durable changes. The balancer cannot see a workspace, so the route sends a
+  share of every workspace's authorize, not only the pilot's (#1903); every
+  region's share lands on the us-central1 edge and Python.
 - **Measured:** the edge's added latency (under 1 ms p50); the verdict's
   parity with Python's own check of the same signature
   (`verify_boot_signature`), logged on any difference;
@@ -268,8 +272,8 @@ long-tail backend behind the edge.
 
 E1 first, as a pull request series: the edge's token and boot checks with
 Python's own test vectors, the proxy, the load balancer backend and route
-in Terraform, the drain at retirement, then the route for the pilot's two
-workspaces' enclaves. E2's shadow comparator and the routing snapshot
+in Terraform, the drain at retirement, then the route: a 1% share of every
+workspace's authorize, since the balancer cannot route by workspace. E2's shadow comparator and the routing snapshot
 compiler in Python start alongside, since the snapshot's format is the long
 pole. Nothing beyond E1 is scheduled until E1 has run a week on the pilot
 cohort with parity.

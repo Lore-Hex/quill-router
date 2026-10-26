@@ -18,7 +18,7 @@ print(render('console/'+sys.argv[1]+'.html', settings=Settings(environment='test
 }
 
 for (const kind of ['api_keys', 'welcome']) for (const width of [390, 1280]) {
-  test(`brand fonts and colors on ${kind} and rewards at ${width}px`, async ({ page }, testInfo) => {
+  test(`brand fonts and colors on ${kind} at ${width}px`, async ({ page }, testInfo) => {
     const html = fixture(kind);
     await page.route('https://brand.test/**', route => {
       const url = new URL(route.request().url());
@@ -34,11 +34,6 @@ for (const kind of ['api_keys', 'welcome']) for (const width of [390, 1280]) {
     await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(10, 16, 13)');
     expect(await page.evaluate(() => document.fonts.check('16px Archivo'))).toBe(true);
     await page.screenshot({path:testInfo.outputPath(`${kind}-${width}.png`),fullPage:true});
-    await page.locator('[data-rewards-api-keys]').click();
-    await expect(page.locator('[data-rewards-progress]')).toHaveText('0 of 4 rewards claimed');
-    await expect(page.locator('#social-rewards-title')).toHaveCSS('font-family','Archivo, Arial, sans-serif');
-    await expect(page.locator('#social-rewards-title')).toHaveCSS('color','rgb(237, 248, 245)');
-    await expect(page.locator('#social-rewards')).toHaveCSS('background-color','rgb(10, 16, 13)');
-    await page.screenshot({path:testInfo.outputPath(`rewards-${kind}-${width}.png`),fullPage:true});
+    await expect(page.locator('[data-rewards-api-keys]')).toHaveCount(0);
   });
 }

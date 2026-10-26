@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-10-20T12:05:14Z",
-  "model_count": 50,
+  "generated_at": "2026-10-26T06:59:20Z",
+  "model_count": 52,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -1272,6 +1272,60 @@
       ],
       "input_modalities": [
         "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "display_name": "DeepSeek V4.1 Flash 1017",
+      "title": "deepseek/deepseek-v4.1-flash-1017",
+      "created": 1792629387,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "display_name": "MiniMax-M3.1-Flash",
+      "title": "minimax/minimax-m3.1-flash",
+      "created": 1792638115,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"

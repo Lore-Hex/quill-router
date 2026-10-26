@@ -427,85 +427,6 @@ body.console {
   color: var(--red);
 }
 
-.console-key-reveal {
-  width: 100%;
-  max-width: 760px;
-  min-width: 0;
-  color: var(--ink);
-}
-
-.key-reveal-section {
-  display: grid;
-  gap: 8px;
-}
-
-.agent-quickstart {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.agent-quickstart + .key-reveal-section {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--good-border);
-}
-
-.agent-quickstart h3 {
-  min-width: 0;
-  max-width: 100%;
-  margin: 0;
-  color: var(--ink);
-  font-size: 14px;
-  line-height: 1.45;
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-}
-
-.agent-message-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: start;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.agent-message {
-  display: grid;
-  gap: 10px;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  margin: 0;
-  padding: 12px;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  background: var(--panel);
-  color: var(--ink);
-  border: 1px solid var(--good-border);
-  border-radius: 7px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.agent-message > div {
-  min-width: 0;
-}
-
-.agent-message .agent-message-key {
-  display: block;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  overflow-wrap: anywhere;
-}
-
 .table-scroll {
   overflow-x: auto;
 }
@@ -810,10 +731,6 @@ body.console {
   border-radius: inherit;
 }
 
-.keys-table {
-  min-width: 860px;
-}
-
 .key-create-panel {
   background: transparent;
 }
@@ -1060,9 +977,6 @@ body.console {
   .secret-row {
     grid-template-columns: 1fr;
   }
-  .agent-message-row {
-    grid-template-columns: 1fr;
-  }
   /* Topbar: children (brand / workspace selector / user cluster) overflow a
      phone width when forced onto one line — wrap into rows instead of
      clipping the workspace Switch control off-screen. */
@@ -1070,43 +984,7 @@ body.console {
     flex-wrap: wrap;
     gap: 10px 16px;
   }
-  /* Keys table -> stacked cards: each row becomes a bordered block, each cell
-     a labeled line (data-col drives the label), so budgets/actions stay usable
-     on a phone instead of overflowing horizontally. */
-  .keys-table {
-    min-width: 0;
-  }
-  .keys-table thead {
-    display: none;
-  }
-  .keys-table,
-  .keys-table tbody,
-  .keys-table tr,
-  .keys-table td {
-    display: block;
-    width: 100%;
-  }
-  .keys-table tr {
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 10px 12px;
-    margin-bottom: 12px;
-  }
-  .keys-table td {
-    border-bottom: 0;
-    padding: 6px 0;
-  }
-  .keys-table td[data-col]::before {
-    content: attr(data-col);
-    display: block;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 2px;
-  }
-  .key-budget-grid {
+    .key-budget-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .key-budget-form {
@@ -1152,164 +1030,9 @@ body.console {
 }
 
 /* Key onboarding --------------------------------------------------------- */
-.activation-flow {
-  display: grid;
-  gap: 18px;
-  width: 100%;
-  max-width: 880px;
-}
-
-.activation-key-panel {
-  border-color: var(--good-border);
-}
-
-.activation-key-panel .panel-head h2 {
-  text-wrap: balance;
-}
-
-.activation-key-panel .console-key-reveal {
-  max-width: none;
-}
-
-.activation-onboarding-agent + .console-key-reveal {
-  margin-top: 14px;
-}
-
-.activation-code-panel[hidden] {
-  display: none;
-}
-
-.activation-code-head {
-  display: flex;
-  align-items: center;
-}
-
-.activation-tabs {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  margin-bottom: 12px;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
-}
-
-.activation-tab {
-  min-height: 40px;
-  flex: 0 0 auto;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 8px 11px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 650;
-  cursor: pointer;
-  transition-property: background-color, border-color, color, transform;
-  transition-duration: 140ms;
-  transition-timing-function: ease-out;
-}
-
-.activation-tab:hover {
-  background: var(--soft);
-  color: var(--ink);
-}
-
-.activation-tab[aria-selected="true"] {
-  border-color: var(--line);
-  background: var(--panel2);
-  color: var(--ink);
-}
-
-.activation-tab:active {
-  transform: scale(0.96);
-}
-
-.activation-code-panel {
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel2);
-  overflow: hidden;
-}
-
-.activation-code-head {
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 52px;
-  padding: 8px 10px 8px 14px;
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-}
-
-.activation-code-head .btn {
-  min-height: 36px;
-  flex: 0 0 auto;
-}
-
-.activation-code-panel pre {
-  display: grid;
-  gap: 10px;
-  min-height: 112px;
-  max-height: 320px;
-  margin: 0;
-  padding: 16px;
-  overflow: auto;
-  background: var(--panel);
-  color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre;
-}
-
-.activation-code-panel .copy-status {
-  min-height: 0;
-  margin: 0;
-  padding: 0 14px;
-}
-
-.activation-code-panel .copy-status:not(:empty) {
-  min-height: 32px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.activation-console-link {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
-  font-size: 13px;
-}
 
 .activation-expired-panel {
   max-width: 680px;
-}
-
-@media (max-width: 700px) {
-  .activation-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    overflow: visible;
-  }
-
-  .activation-tab {
-    width: 100%;
-    white-space: normal;
-  }
-
-  .activation-code-head {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px;
-  }
-
-  .activation-code-head .btn {
-    width: 100%;
-    justify-content: center;
-  }
 }
 
 /* Field help under a form input: what the field means, and for prices what the
@@ -1418,20 +1141,9 @@ body.console {
 }
 
 /* Key management: summaries first, editing on demand. */
-.key-rewards-invitation { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 24px; margin-bottom: 28px; border: 1px solid var(--tr-color-panel-mint-divider); border-left: 3px solid var(--tr-color-accent-base); border-radius: var(--tr-radius-control); background: var(--tr-color-surface-selected); }
-.key-rewards-invitation[hidden] { display: none; }
-.key-rewards-copy h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; }
-.key-rewards-copy > p:last-child { margin: 0; color: var(--muted); font-size: 13px; }
-.key-rewards-invitation > .btn { flex-shrink: 0; min-height: 44px; background: var(--tr-color-panel-mint-bg); color: var(--tr-color-panel-mint-ink); border-color: var(--tr-color-panel-mint-divider); }
-
-@media (max-width: 720px) {
-  .key-rewards-invitation { align-items: flex-start; flex-direction: column; gap: 16px; padding: 18px; margin-bottom: 24px; }
-  .key-rewards-copy h2 { font-size: 21px; }
-}
 .key-list-panel { background: transparent; border: 0; }
 .key-list-panel > .panel-head { padding: 0 0 18px; }
 .key-list-panel > .panel-body { padding: 0; }
-.key-label { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
 .key-list-panel .key-budget-current { margin: 0 0 8px; font-size: 13px; }
 .key-limit-editor > summary,
 .key-spending-options > summary { cursor: pointer; color: var(--tr-color-text-primary); font-size: 13px; padding: 8px 0; }
@@ -1447,52 +1159,11 @@ body.console {
 .key-create-panel .form > .btn { align-self: flex-start; width: auto; }
 
 @media (max-width: 720px) {
-  .key-list-panel .keys-table tr { border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 16px 0; }
-  .key-list-panel .keys-table td[data-col="Key"]::before,
-  .key-list-panel .keys-table td[data-col="Actions"]::before { display: none; }
-  .key-list-panel .keys-table td[data-col="Key"] strong { font-size: 16px; }
   .key-limit-editor[open] { min-width: 0; }
   .key-spending-options .key-budget-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Give onboarding tasks room without nesting another outlined card. */
-.activation-flow { gap: 28px; }
-.activation-setup-panel { border: 0; background: transparent; box-shadow: none; }
-.activation-setup-panel > .panel-head { padding: 0 0 16px; border: 0; }
-.activation-setup-panel > .panel-body { padding: 0; }
-
-/* Key reveal and setup surfaces. */
-.activation-key-panel { border: 0; background: transparent; box-shadow: none; }
-.activation-key-panel > .panel-head { padding: 0 0 16px; border: 0; }
-.activation-key-panel > .panel-body { padding: 0; }
-.activation-key-panel .console-key-reveal { padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; }
-.activation-key-panel .signup-reveal-head { display: none; }
-.activation-key-panel .copy-status:empty { display: none; }
-.activation-key-panel .signup-foot { margin-top: 12px; }
-
-.activation-setup-summary { cursor: pointer; padding: 16px 0; color: var(--tr-color-text-primary); font-size: 14px; font-weight: 400; }
-.activation-setup-panel[open] > .panel-body { padding-top: 12px; }
-
 .key-create-panel[hidden] { display: none; }
-
-.key-first-onboarding { max-width: 720px; gap: 0; }
-.key-first-onboarding > .panel { margin: 0; }
-.key-first-onboarding .activation-key-panel > .panel-head { padding-bottom: 12px; }
-.key-first-onboarding .activation-key-panel h2 { font-size: 14px; font-weight: 400; color: var(--muted); }
-.key-first-onboarding .activation-setup-panel { margin-top: 8px; }
-.key-first-onboarding .activation-setup-summary { padding: 12px 0 12px 16px; min-height: 44px; box-sizing: border-box; border: 0; width: fit-content; max-width: 100%; color: var(--muted); position: relative; list-style: none; }
-.key-first-onboarding .activation-setup-summary::-webkit-details-marker { display: none; }
-.key-first-onboarding .activation-setup-summary::before { content: ""; position: absolute; left: 2px; top: 18px; width: 6px; height: 6px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(-45deg); }
-.key-first-onboarding .activation-setup-panel[open] > summary::before { transform: rotate(45deg); }
-.key-first-onboarding .activation-setup-summary:hover { color: var(--tr-color-text-primary); }
-.key-first-onboarding .activation-tabs { flex-wrap: wrap; }
-.key-first-onboarding .secret-copy-btn { background: var(--tr-color-panel-mint-bg); color: var(--tr-color-panel-mint-ink); border-color: var(--tr-color-panel-mint-divider); }
-.key-first-onboarding .key-rewards-invitation { flex-direction: column; align-items: flex-start; gap: 12px; margin: 36px 0 0; background: color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base)); border: 1px solid var(--tr-color-line-rule); border-radius: var(--tr-radius-control); padding: 18px 24px; }
-.key-first-onboarding .key-rewards-copy h2 { font-size: 18px; color: var(--tr-color-accent-base); }
-.key-first-onboarding .key-rewards-invitation > .btn { background: transparent; color: var(--tr-color-text-secondary); border: 1px solid var(--tr-color-line-control); padding: 10px 16px; min-height: 44px; text-decoration: none; }
-.key-first-onboarding > .activation-console-link { justify-content: flex-start; justify-self: start; margin-top: 8px; padding: 12px 20px; min-height: 48px; background: transparent; color: var(--tr-color-text-primary); border: 2px solid var(--tr-color-accent-base); font-weight: 600; }
-
-.key-first-onboarding .activation-onboarding-agent pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Console-only navigation. Page content and rewards retain their own styles. */
 .console-utilities { margin-left:auto; display:flex; align-items:center; gap:24px; }
@@ -1549,19 +1220,14 @@ body.console {
 }
 
 /* Brighter key-page surfaces and readable supporting copy from the brand kit. */
-body.console:has(.key-first-onboarding), body.console:has(.key-list-panel) {
+body.console:has(.key-list-panel) {
   --bg: var(--tr-color-surface-bg-alt);
   --ink: var(--tr-color-text-primary);
   --muted: var(--tr-color-text-secondary);
 
   background: var(--tr-color-surface-bg-alt);
 }
-body.console .console-main:has(.key-first-onboarding),
 body.console .console-main:has(.key-list-panel) { background: var(--tr-color-surface-bg-alt); }
-.key-first-onboarding .activation-key-panel h2,
-.key-first-onboarding .activation-setup-summary { color: var(--tr-color-text-secondary); }
-.key-first-onboarding .secret-row code { background: var(--tr-color-surface-panel-inset); color: var(--tr-color-text-primary); }
-.key-first-onboarding > .activation-console-link:hover { background: var(--tr-color-surface-hover); border-color: var(--tr-color-accent-hover); }
 
 /* Separate navigation, key management and optional rewards with tonal surfaces. */
 .console-topbar .console-topnav > a,
@@ -1575,17 +1241,6 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 .key-list-panel { background: var(--tr-color-surface-panel-raised); }
 .key-list-panel > .panel-head { padding: 20px 24px; }
 .key-list-panel > .panel-body { padding: 0 16px 16px; }
-.key-list-panel + .key-create-panel + .key-rewards-invitation { margin-top: 32px; }
-.key-rewards-invitation {
-  background: color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base));
-  border-left: 3px solid var(--tr-color-line-strong);
-}
-.key-rewards-invitation > .btn {
-  background: transparent;
-  color: var(--tr-color-accent-base);
-  border-color: var(--tr-color-line-control);
-}
-.key-first-onboarding .key-rewards-invitation { border-left: 3px solid var(--tr-color-line-strong); }
 .social-rewards-list p, .social-rewards-foot p { color: var(--tr-color-text-secondary); }
 
 @media (max-width: 600px) {
@@ -1602,8 +1257,6 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   opacity: .18;
   mask-image: linear-gradient(90deg, transparent 20%, #000 55%, transparent 85%);
 }
-.key-rewards-invitation,
-.key-first-onboarding .key-rewards-invitation,
 .social-rewards-head {
   position: relative;
   isolation: isolate;
@@ -1615,7 +1268,6 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
     radial-gradient(ellipse at 92% -25%, oklch(from var(--tr-color-accent-base) 72% calc(c * 3) h / .75), transparent 56%),
     color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base));
 }
-.key-rewards-invitation::before,
 .social-rewards-head::before {
   content: "";
   position: absolute;
@@ -1627,7 +1279,6 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   mask-image: linear-gradient(100deg, transparent 45%, #000);
 }
 /* Cropped contours stay in the corner and dissolve above the progress bar. */
-.key-rewards-invitation::after,
 .social-rewards-head::after {
   content: "";
   position: absolute;
@@ -1645,23 +1296,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 }
 
 @media (max-width: 600px) {
-  .key-rewards-invitation::after,
   .social-rewards-head::after { --reward-arc-x: calc(100% + 65px); }
-}
-/* Keep optional rewards compact on return visits too; its action stays on the
-   quiet side of the artwork instead of sitting over the brightest color. */
-.key-rewards-invitation {
-  max-width: 720px;
-  box-sizing: border-box;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-}
-.key-rewards-copy h2 { font-size: 18px; }
-.key-rewards-invitation > .btn,
-.key-first-onboarding .key-rewards-invitation > .btn {
-  border-color: var(--tr-color-line-strong);
-  color: var(--tr-color-text-primary);
 }
 
 @media (min-width: 801px) {
@@ -1679,15 +1314,7 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   min-height: 44px;
   white-space: normal;
 }
-/* Status is information, not a control: no pill border or button surface. */
-.key-state { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tr-color-text-secondary); }
-.key-state::before { content: ""; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--tr-color-accent-base); }
-.key-state-disabled::before { background: transparent; box-sizing: border-box; border: 1px solid var(--tr-color-text-tertiary); }
 .key-actions .btn { min-height: 44px; }
-
-@media (max-width: 720px) {
-  .key-list-panel .keys-table td[data-col="Actions"] { padding-top: 12px; }
-}
 
 /* One geometric disclosure marker across the console navigation. */
 .console-header-menu summary::after {
@@ -1722,3 +1349,24 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
 }
 .social-rewards-icon[data-platform="linkedin"] { color: #0a66c2; }
 .social-rewards-icon[data-platform="youtube"] { color: #ff0033; }
+
+/* Header balance chip: the workspace's available credit on every console page. */
+.console-balance { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px 0 10px; border-radius: 999px; background: color-mix(in srgb, var(--tr-color-accent-base) 16%, transparent); color: var(--tr-color-accent-base); font-size: 13px; font-weight: 600; letter-spacing: 0.1px; text-decoration: none; white-space: nowrap; }
+.console-balance svg { width: 16px; height: 16px; flex-shrink: 0; }
+.console-balance span { overflow: hidden; text-overflow: ellipsis; }
+.console-balance:hover { background: color-mix(in srgb, var(--tr-color-accent-base) 26%, transparent); color: var(--tr-color-accent-hover); }
+.console-balance.is-empty { background: color-mix(in srgb, var(--tr-color-status-degraded) 16%, transparent); color: var(--tr-color-status-degraded); }
+.console-balance.is-empty:hover { background: color-mix(in srgb, var(--tr-color-status-degraded) 26%, transparent); }
+.console-balance:focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 3px; }
+
+@media (min-width: 801px) {
+  .console-topbar:has(.console-balance) > .console-utilities { margin-left: 0; }
+}
+
+@media (max-width: 800px) {
+  .console-topbar .console-balance { margin-left: auto; margin-right: -2px; min-width: 0; }
+}
+
+@media (max-width: 360px) {
+  .console-topbar:has(.console-balance) { padding-inline: 12px; column-gap: 8px; }
+}

@@ -695,6 +695,7 @@ def exchange_site_touch(page_url: str, campaign: dict[str, str]) -> dict[str, st
 
 def log_exchange_site_funnel_event(
     request: Request, event: str, touch: dict[str, str], *, visitor_id: str | None = None,
+    properties: dict[str, str] | None = None,
 ) -> None:
     if _privacy_signal_enabled(request) or acquisition_request_is_automated(request):
         return
@@ -707,9 +708,30 @@ def log_exchange_site_funnel_event(
             ),
             "site_domain": touch.get("referer_host", ""),
             "page_path": touch.get("page_path", "/"),
+            **(properties or {}),
             **_safe_touch_log_fields(touch),
         },
     )
+
+
+def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, record: bool = True) -> str:
+    """Record only a rendered, actionable treatment, using already-loaded IDs."""
+    context = request_attribution(request)
+    if context is None or context.first_touch.get('experiment_id') != ONBOARDING_EXPERIMENT_ID:
+        return ''
+    cell = context.first_touch.get('experiment_cell_id', '')
+    if not valid_experiment_identity(ONBOARDING_EXPERIMENT_ID, cell):
+        return ''
+    if not record:
+        return cell
+    log.info('acquisition.experiment_exposed', extra={
+        'event': 'acquisition.experiment_exposed',
+        'anonymous_fingerprint': _fingerprint(context.anonymous_id),
+        'account_fingerprint': _fingerprint('tr-account:' + user_id),
+        'workspace_fingerprint': _fingerprint(workspace_id),
+        **_safe_touch_log_fields(context.first_touch),
+    })
+    return cell
 
 
 def pageview_attribution_fields(request: Request) -> dict[str, object]:

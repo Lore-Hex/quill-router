@@ -17,8 +17,8 @@ function evidence() {
   const checked = dateMode === 'missing' ? null : dateMode === 'future' ? new Date(Date.now()+86400000).toISOString() : mode === 'stale' ? new Date(Date.now() - 5 * 86400000).toISOString() : stamp();
   const component = (id, name, percent, status) => ({id, name, status, last_checked_at: checked, uptime_24h_percent: percent, sample_count_24h: 1000, history: [{bucket_start: checked, status:historyState, sample_count: 1000}]});
   return {generated_at: stamp(), prices: [
+    {model:'deepseek/deepseek-v4.1-flash', label:'DeepSeek V4.1 Flash 1017', provider:'tinfoil', input:'0.68575', output:'1.52975'},
     {model:'z-ai/glm-5.3-flash', label:'GLM 5.3 Flash', provider:'tinfoil', input:'0.07385', output:'0.2532'},
-    {model:'deepseek/deepseek-v4.1-flash', label:'DeepSeek V4.1 Flash', provider:'tinfoil', input:'0.68575', output:'1.52975'},
     {model:'openai/gpt-oss-120b', label:'GPT OSS 120B', provider:'tinfoil', input:'0.15825', output:'0.633'}],
     components: omitComponents ? [] : [component('canonical_api','Canonical API',99.9485,states[0]), component('us_east4_regional_api','US East Regional API',99.6910,states[1])],
     attestation_check: component('attestation','Attestation',100,attestationState), release: {platform:'gcp-confidential-space', image_digest:'sha256:'+'a'.repeat(64),source_commit:'12345678'}};
@@ -30,7 +30,7 @@ const feed = http.createServer((req,res) => {
 });
 const site = http.createServer((req,res) => {
   let file = decodeURIComponent(new URL(req.url,'http://localhost').pathname);
-  if (file === '/') file = req.headers.host.startsWith('nytokenexchange.com') ? '/new-york/index.html' : '/london/index.html';
+  if (file === '/') file = req.headers.host.startsWith('nytokenexchange.com') ? '/confidential.html' : '/london/index.html';
   const target = path.join(output,file);
   if (!target.startsWith(path.resolve(output)+path.sep) || !fs.existsSync(target)) {res.writeHead(404);res.end();return;}
   const type = target.endsWith('.js') ? 'text/javascript' : target.endsWith('.css') ? 'text/css' : target.endsWith('.html') ? 'text/html' : 'application/octet-stream';
@@ -54,7 +54,8 @@ const site = http.createServer((req,res) => {
       await page.goto(`http://${domain}:8091/`);
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));
       assert.match(await page.locator('[data-live-services]').textContent(),/99.69%/);
-      assert.match(await page.locator('[data-live-prices]').textContent(),/\$0.07385 \/ \$0.2532/);
+      assert.match(await page.locator('[data-live-prices]').textContent(),/\$0.07385(?: \/ )?\$0.2532/);
+      assert.equal(await page.locator('[data-live-prices] h3').first().textContent(),'DeepSeek V4.1 Flash 1017');
       assert(!((await page.locator('[data-live-services]').textContent()).includes('Model Inference')));
       for (const width of [320,390,1440]) {
         await page.setViewportSize({width,height:1000});
@@ -73,7 +74,7 @@ const site = http.createServer((req,res) => {
       assert.equal(await page.locator('.service-history').count(),0);
       assert.equal(await page.locator('.health-bar').count(),0);
       assert.match(await page.locator('[data-live-caption]').textContent(),/service status/);
-      assert(await page.getByRole('link',{name:'Service status',exact:true}).isVisible());
+      assert(await page.getByRole('link',{name:/^(Service status|Live status)/}).isVisible());
     };
     mode='stale';await reload(pages[0]);await quiet(pages[0]);
     assert.equal(await pages[0].locator('[data-live-attestation]').textContent(),'');
@@ -147,7 +148,8 @@ const site = http.createServer((req,res) => {
     await retained.goto('http://nytokenexchange.com:8091/');
     await retained.waitForFunction(()=>document.querySelector('.service-history'));
     assert.equal(await retained.locator('.build-digest').count(),1);
-    assert.match(await retained.locator('[data-live-price-unit]').textContent(),/Last checked/);
+    assert.equal(await retained.locator('[data-live-price-unit]').textContent(),
+      `Updated ${retainedBase.toISOString().replace('T',' ').replace(/\.\d+Z$/,' UTC')}`);
     await retained.clock.runFor(61000);
     await quiet(retained);
     assert.equal(await retained.locator('.build-digest').count(),0);

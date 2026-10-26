@@ -75,6 +75,21 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
     return DeployScriptHarness(tmp_path_factory.mktemp("deploy-harness"))
 
 
+@pytest.mark.parametrize("backend", ["clickhouse", "postgres"])
+def test_ecs_record_reads_resolve_only_paris_reader_metadata(
+    harness: DeployScriptHarness, backend: str,
+) -> None:
+    run = harness.run("scripts/deploy/aws_ecs_control_plane.sh", extra_env={"TR_RECORD_READ_BACKEND_EU_WEST_3": backend})
+    assert run.returncode == 0, summarise(run)
+    lookups = [call for call in run.calls if call[:2] == ["aws", "secretsmanager"]]
+    assert lookups == ([] if backend == "postgres" else [[
+        "aws", "secretsmanager", "describe-secret", "--region", "eu-west-3",
+        "--secret-id", "quill/tr-eu-clickhouse-read-password", "--query", "ARN", "--output", "text",
+    ]])
+    assert not any(call[:3] == ["aws", "secretsmanager", "get-secret-value"] for call in run.calls)
+    assert run.gate_ran_for("aws")
+
+
 def _settings_from_containerapp_mutation(call: list[str]) -> Settings:
     if "--set-env-vars" in call:
         start = call.index("--set-env-vars") + 1
@@ -447,6 +462,19 @@ def test_secondary_ramp_never_routes_to_job_start_snapshot_after_pin(
     ]
 
 
+def test_secondary_ramp_cannot_retire_an_unprotected_zero_minimum_revision(
+    tmp_path: Path,
+) -> None:
+    run = _run_secondary_ramp(
+        tmp_path, traffic=_default_secondary_traffic(),
+        overrides={"HARNESS_CLOUD_RUN_REVISION_MIN": "0"},
+    )
+    assert run.returncode != 0
+    assert "trusted-router-01302-eunew=100" not in _regional_traffic_updates(run, "europe-west4")
+    assert _regional_traffic_updates(run, "europe-west4")[-1] == "trusted-router-01300-euold=100"
+    assert not _regional_traffic_updates(run, "us-east4")
+
+
 def test_secondary_ramp_refuses_older_new_revision_without_traffic_mutation(
     tmp_path: Path,
 ) -> None:
@@ -657,13 +685,15 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
-def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabling_money_paths(
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabling_money_paths(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
+    no_traffic: str,
 ) -> None:
     from unittest.mock import Mock
 
     from trusted_router import main, storage
-    from trusted_router.config import in_v2_cohort
+    from trusted_router.config import in_v2_cohort, parse_shadow_expiry
     from trusted_router.services import (
         async_settle,
         async_settle_shadow,
@@ -671,18 +701,26 @@ def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabli
         async_settle_shadow_health,
     )
 
+    # Stale inherited values must never leak into the rendered pins.
     run = harness.run(
         "scripts/deploy/rollout.sh",
         extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
-                   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES": "stale-opt-in"},
+                   "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+                   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES": "stale-opt-in",
+                   "TR_ASYNC_SETTLE_SHADOW_POLICY": "stale-policy",
+                   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION": "stale-region",
+                   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT": "2026-10-25T20:00:00Z"},
     )
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     assert rendered["TR_SERVING_REGION"] == region
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == "162e441a-5d13-414f-92bd-7c6cd805faa3"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == "shadow-v2"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == "us-central1"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == "2026-11-04T12:00:00Z"
+    # The canary stop must be a valid, unexpired instant when this deploys (parse_shadow_expiry is strict).
+    assert parse_shadow_expiry(rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"]) > time.time()
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
     assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
     assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"
@@ -696,6 +734,7 @@ def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabli
         async_settle_enabled=rendered["TR_ASYNC_SETTLE_ENABLED"],
         async_settle_protection=rendered["TR_ASYNC_SETTLE_PROTECTION"],
         settle_outbox_fast_drain_enabled=rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"],
+        async_settle_shadow_expires_at=rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"],
     )
 
     class ForbiddenBackend:
@@ -707,7 +746,7 @@ def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabli
     # so this checks selection without constructing observers or starting workers.
     monkeypatch.setattr(storage, "typed_billing_store", lambda _: backend)
     monkeypatch.setattr(async_settle, "load_runtime", Mock(return_value=None))
-    v1_install = Mock(side_effect=AssertionError("shadow v2 must not install the v1 observer"))
+    v1_install = Mock(side_effect=AssertionError("the v2 canary must not install the v1 observer"))
     health_install = Mock()
     cohort_install = Mock()
     monkeypatch.setattr(async_settle_shadow, "install", v1_install)
@@ -716,15 +755,15 @@ def test_rollout_opts_out_shadow_observers_and_preserves_evidence_without_enabli
 
     app = main.create_app(config, configure_store_arg=False, init_observability=False)
     v1_install.assert_not_called()
-    health_install.assert_not_called()
-    cohort_install.assert_not_called()
+    health_install.assert_called_once_with(app, config, backend)
+    cohort_install.assert_called_once_with(app, config, backend)
     assert not hasattr(app.state, "async_settle_shadow")
     assert not config.async_settle_enabled
     assert not config.async_settle_protection
     assert not config.settle_outbox_fast_drain_enabled
-    assert config.async_settle_shadow_workspace_ids == set()
-    assert not in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
-                           config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
+    assert config.async_settle_shadow_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
+                        config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
     assert not in_v2_cohort(config.async_settle_shadow_policy, "stale-opt-in",
                            config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
 
@@ -3888,6 +3927,207 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in deploy)
     bindings = deploy[deploy.index(secret_flag) + 1].split(",")
     assert "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest" in bindings
+
+
+_ROUTING_SNAPSHOT_PUBLIC_KEY = "U1I1REk6JqeFqKq5ZGH0P8b1b_OEwbFG0lCOkYL-jjY"
+
+
+def _routing_snapshot_bindings(deploy: list[str]) -> list[str]:
+    secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in deploy)
+    return [
+        binding for binding in deploy[deploy.index(secret_flag) + 1].split(",")
+        if "routing-snapshot" in binding
+    ]
+
+
+def test_rollout_pins_routing_snapshot_publishing_from_its_literals_without_inheritance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # E2 publishing: on, from the literals only, whatever the caller or the
+    # serving revision carries; version 1 of the key, pinned by number.
+    hostile = {
+        "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+        "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/old/signing.pem",
+        "TR_ROUTING_SNAPSHOT_KID": "old-kid",
+        "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": _ROUTING_SNAPSHOT_PUBLIC_KEY,
+        "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+        "ROUTING_SNAPSHOT_KEY_VERSION": "7",
+    }
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        rendered = _cloud_run_job_env(deploy)
+        assert {name: rendered[name] for name in hostile if name.startswith("TR_")} == {
+            "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true",
+            "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE": "/secrets/routing-snapshot/signing.pem",
+            "TR_ROUTING_SNAPSHOT_KID": "tr-routing-snapshot-2026-10a",
+            "TR_ROUTING_SNAPSHOT_PUBLIC_KEY": "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM",
+        }
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:1"
+        ]
+        settings = Settings(**{
+            "routing_snapshot_publish_enabled": rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"],
+        })
+        assert settings.routing_snapshot_publish_enabled is True
+    # The code's own default stays off: only the rollout literal turns it on.
+    assert Settings().routing_snapshot_publish_enabled is False
+
+
+def _edit_routing_snapshot_literals(harness: Any, **literals: str) -> None:
+    script = harness.mirror / "scripts" / "deploy" / "rollout.sh"
+    text = script.read_text()
+    for name, value in literals.items():
+        line = re.search(rf"^{name}=.*$", text, re.MULTILINE)
+        assert line is not None, name
+        text = text.replace(line.group(0), f'{name}="{value}"', 1)
+    script.write_text(text)
+
+
+def test_rollout_mounts_the_routing_snapshot_key_by_its_version_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(
+        isolated, ROUTING_SNAPSHOT_PUBLISH_ENABLED="false", ROUTING_SNAPSHOT_KEY_VERSION="1",
+        ROUTING_SNAPSHOT_PUBLIC_KEY=_ROUTING_SNAPSHOT_PUBLIC_KEY,
+    )
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    for deploy in _gcloud_calls(run, "run", "deploy"):
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:1",
+        ]
+        rendered = _cloud_run_job_env(deploy)
+        # The key is mounted ahead of the switch; publishing stays off.
+        assert rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "false"
+        assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == "/secrets/routing-snapshot/signing.pem"
+        assert rendered["TR_ROUTING_SNAPSHOT_PUBLIC_KEY"] == _ROUTING_SNAPSHOT_PUBLIC_KEY
+
+
+def test_rollout_with_no_key_version_mounts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The way back for a rotation: publishing off and the version empty
+    # mounts no key and passes no key file. The edge policy signs with the
+    # same key, so it is off too.
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(
+        isolated, ROUTING_SNAPSHOT_PUBLISH_ENABLED="false", ROUTING_SNAPSHOT_KEY_VERSION="",
+        ROUTING_SNAPSHOT_PUBLIC_KEY="", EDGE_POLICY_PUBLISH_ENABLED="false",
+    )
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        assert _routing_snapshot_bindings(deploy) == []
+        rendered = _cloud_run_job_env(deploy)
+        assert rendered["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "false"
+        assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == ""
+        assert rendered["TR_EDGE_POLICY_PUBLISH_ENABLED"] == "false"
+
+
+@pytest.mark.parametrize("literals", [
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KEY_VERSION": ""},
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KEY_VERSION": "1",
+     "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
+    {"ROUTING_SNAPSHOT_KEY_VERSION": "latest"},
+    {"ROUTING_SNAPSHOT_PUBLISH_ENABLED": "yes"},
+], ids=["enabled-without-key", "enabled-without-public-key", "latest", "not-a-boolean"])
+def test_rollout_refuses_routing_snapshot_publishing_without_a_pinned_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, literals: dict[str, str],
+) -> None:
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(isolated, **literals)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode != 0
+    assert "refusing rollout" in run.stderr and "routing snapshot" in run.stderr.lower()
+    assert _gcloud_calls(run, "run", "deploy") == []
+
+
+def test_rollout_publishes_routing_snapshots_with_a_pinned_key_when_turned_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Positive control for the refusals above: the documented switch deploys.
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(
+        isolated, ROUTING_SNAPSHOT_PUBLISH_ENABLED="true", ROUTING_SNAPSHOT_KEY_VERSION="2",
+        ROUTING_SNAPSHOT_PUBLIC_KEY=_ROUTING_SNAPSHOT_PUBLIC_KEY,
+    )
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    for deploy in _gcloud_calls(run, "run", "deploy"):
+        assert _cloud_run_job_env(deploy)["TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED"] == "true"
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:2",
+        ]
+
+
+def test_rollout_pins_edge_policy_publishing_from_its_literal_without_inheritance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # E2 I1: on, from the literal only, whatever the caller or the serving
+    # revision carries, beside the routing snapshot key it signs with.
+    hostile = {"TR_EDGE_POLICY_PUBLISH_ENABLED": "false", "EDGE_POLICY_PUBLISH_ENABLED": "false"}
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        rendered = _cloud_run_job_env(deploy)
+        assert rendered["TR_EDGE_POLICY_PUBLISH_ENABLED"] == "true"
+        assert rendered["TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE"] == "/secrets/routing-snapshot/signing.pem"
+        assert _routing_snapshot_bindings(deploy) == [
+            "/secrets/routing-snapshot/signing.pem=trustedrouter-routing-snapshot-signing-key:1"
+        ]
+        settings = Settings(edge_policy_publish_enabled=rendered["TR_EDGE_POLICY_PUBLISH_ENABLED"])
+        assert settings.edge_policy_publish_enabled is True
+    # The code's own default stays off: only the rollout literal turns it on.
+    assert Settings().edge_policy_publish_enabled is False
+
+
+def test_rollout_turns_edge_policy_publishing_off_with_its_literal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The way back: false renders false, the key still mounted.
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(isolated, EDGE_POLICY_PUBLISH_ENABLED="false")
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        assert _cloud_run_job_env(deploy)["TR_EDGE_POLICY_PUBLISH_ENABLED"] == "false"
+
+
+@pytest.mark.parametrize("literals", [
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "", "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_KID": ""},
+    # The key mounted by its version while snapshot publishing is off, its
+    # public key not pinned: load_signer refuses that, so the route would
+    # answer 503 signer-unavailable for good.
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "1", "ROUTING_SNAPSHOT_PUBLIC_KEY": ""},
+    {"EDGE_POLICY_PUBLISH_ENABLED": "true", "ROUTING_SNAPSHOT_PUBLISH_ENABLED": "false",
+     "ROUTING_SNAPSHOT_KEY_VERSION": "1", "ROUTING_SNAPSHOT_PUBLIC_KEY": "not-a-key"},
+    {"EDGE_POLICY_PUBLISH_ENABLED": "yes"},
+], ids=["enabled-without-key", "enabled-without-kid", "enabled-without-public-key", "enabled-with-a-malformed-public-key",
+        "not-a-boolean"])
+def test_rollout_refuses_edge_policy_publishing_without_the_routing_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, literals: dict[str, str],
+) -> None:
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, dict(_LIVE_PRIMARY_ENV))
+    _edit_routing_snapshot_literals(isolated, **literals)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode != 0
+    assert "refusing rollout: edge policy publishing" in run.stderr
+    assert _gcloud_calls(run, "run", "deploy") == []
 
 
 def test_rollout_pins_dormant_drain_knobs_without_inheritance(

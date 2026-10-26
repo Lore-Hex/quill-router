@@ -305,7 +305,7 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     value = source_filter()
     assert '=~' not in value
     assert '\\' not in value
-    assert value.count('jsonPayload.event=') == 40
+    assert value.count('jsonPayload.event=') == len(m.BROWSER_EVENTS | m.CONVERSION_EVENTS)
     for name in m.BROWSER_EVENTS | m.CONVERSION_EVENTS:
         assert f'jsonPayload.event="{name}"' in value
     assert 'resource.type="cloud_run_revision"' in value

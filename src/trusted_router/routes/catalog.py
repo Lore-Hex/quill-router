@@ -549,8 +549,11 @@ def register_catalog_routes(router: APIRouter) -> None:
             "architecture.input_modalities. Some routes declare less than the model supports. "
             "reasoning_effort is the ordered union of verified values, [] when every route "
             "is verified to reject effort, otherwise null. null means not verified; [] means "
-            "do not send reasoning_effort. Default routing does not filter by parameters. "
-            "With provider.require_parameters: true, routing keeps only routes whose own "
+            "do not send reasoning_effort. Default routing filters by tools, tool_choice and "
+            "response_format, which decide what kind of response comes back: it skips a route "
+            "the catalog says lacks the capability and answers 400 naming the parameter when "
+            "no route is left. Other parameters are filtered only with "
+            "provider.require_parameters: true, which keeps only routes whose own "
             "supported_parameters include every parameter sent. Check the per-route values "
             "first: trustedrouter.endpoints[].capabilities (with ?include=endpoints) or "
             "trustedrouter.capabilities from GET /v1/models/{author}/{slug}/endpoints, "
@@ -561,7 +564,9 @@ def register_catalog_routes(router: APIRouter) -> None:
             "A routing pool such as trustedrouter/auto lists a parameter in supported_parameters "
             "only when every model it can route to has a pool route that accepts it, and lists "
             "the input modalities any of its routes accepts; routing sends image input only to "
-            "routes that accept images. "
+            "routes that accept images. Its context_length is the largest window among the "
+            "models it routes to; chat routing sends a request only to models whose window "
+            "holds the estimated prompt plus max_tokens. "
             "The list omits per-route detail: trustedrouter.endpoints and the model-level "
             "trustedrouter.provider_policy text (trustedrouter.provider_policy_url remains). "
             "Add ?include=endpoints for rows with both. "
@@ -616,7 +621,9 @@ def register_catalog_routes(router: APIRouter) -> None:
         )
 
     @router.get("/models/count")
-    async def models_count(request: Request) -> dict[str, dict[str, int]]:
+    async def models_count(request: Request, response: Response) -> dict[str, dict[str, int]]:
+        # Anonymous public catalogue data, readable by static exchange sites.
+        response.headers["Access-Control-Allow-Origin"] = "*"
         return {"data": {"count": len(_public_model_shapes(request))}}
 
     @router.get("/models/picker")
@@ -648,7 +655,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "provider_name": PROVIDERS[endpoint.provider].name,
                     "endpoint_id": endpoint.id,
                     "provider": endpoint.provider,
-                    "context_length": model.context_length,
+                    "context_length": endpoint.effective_context_length(_model),
                     "pricing": _endpoint_pricing_payload(endpoint),
                     "usage_type": endpoint.usage_type,
                     "upstream_id": endpoint.upstream_id,
@@ -756,7 +763,9 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/providers")
-    async def providers() -> dict[str, list[dict[str, Any]]]:
+    async def providers(response: Response) -> dict[str, list[dict[str, Any]]]:
+        # No credentials are needed or allowed for cross-origin catalogue reads.
+        response.headers["Access-Control-Allow-Origin"] = "*"
         return {
             "data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]
         }

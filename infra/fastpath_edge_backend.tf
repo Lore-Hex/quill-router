@@ -1,10 +1,12 @@
 # The edge's load balancer backend (docs/design/fast-admission-enclave-direct.md,
 # E1): the fast path nodes on the edge's port, grouped per zone, health-checked
 # on the edge's own answer, behind the control load balancer's proxy with the
-# same Cloud Armor policy the control backend carries for /internal today. No
-# route sends traffic here yet; the path rule for /internal/gateway/* is the
-# switch, added to control_lb_url_map.tf on its own, and reverting it is the
-# way back.
+# same Cloud Armor policy the control backend carries for /internal today. The
+# control load balancer sends a weighted share of the exact path
+# /internal/gateway/authorize here (control_lb_url_map.tf,
+# local.fastpath_edge_route_weight below); a weight of 0 is the way back.
+# Traffic flows, so wait for a node to turn UNHEALTHY before stopping it
+# (docs/runbooks/fastpath-deploy.md).
 #
 # The health check is the edge's /internal/gateway/edge/health, 200 while the
 # node serves and 503 once SIGUSR1 marks it leaving, so the backend follows
@@ -16,13 +18,20 @@
 # local.fastpath_edge_port is infra/fastpath.tf's; the nodes' unit reads it too.
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
+  # Each node of infra/fastpath.tf has a group here and is a backend; none
+  # is retiring (5 and 6 left once 7 and 8 served and reported HEALTHY,
+  # one apply before their removal, stage I1).
   fastpath_edge_retiring = []
   # The share, in percent, of the enclave's authorize calls the control load
-  # balancer sends through the edge (infra/control_lb_url_map.tf). 0 until
-  # Python counts every comparison of the edge's verdict (#1904) on the
-  # serving revision: before that, a share through the edge has no parity
-  # evidence (an edge whose boot reads fail looks like perfect agreement).
-  fastpath_edge_route_weight = 0
+  # balancer sends through the edge (infra/control_lb_url_map.tf). 1 once
+  # Python counted every comparison of the edge's verdict (#1904) on the
+  # serving revision, so the share has parity evidence: agree, differ and
+  # skipped lines, and no lines at all from an edge whose token is stale.
+  # 0 is the way back. Held at 0 from 2026-10-22 05:33Z until the authorize
+  # alerts (docs/incidents/2026-10-22-authorize-edge-deadline.md) were
+  # explained: the route's own timeout, and the enclave's settle retry,
+  # which no longer overlaps the settle it retries.
+  fastpath_edge_route_weight = 5
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.
@@ -93,11 +102,11 @@ resource "google_compute_backend_service" "fastpath_edge" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = "HTTP"
   port_name             = "edge"
-  # Under the enclave's authorize budget (a 25 s response-header timeout,
-  # 28 s in all, three attempts): a stalled upstream answers 504 at 8 s,
-  # which the enclave retries, rather than outliving the budget as a
-  # transport error it does not. Authorize through the balancer over a day
-  # of 2026-10-20: p99 2.85 s, max 5.8 s of 3,000.
+  # Applies only where no route timeout is set. The one route to this
+  # backend, /internal/gateway/authorize, sets 24 s (control_lb_url_map.tf),
+  # which governs: billing's 20 s budget plus cleanup must finish before the
+  # balancer cuts the call off (docs/incidents/2026-10-22-authorize-edge-
+  # deadline.md).
   timeout_sec     = 8
   health_checks   = [google_compute_health_check.fastpath_edge.id]
   security_policy = google_compute_security_policy.legacy_edge.id

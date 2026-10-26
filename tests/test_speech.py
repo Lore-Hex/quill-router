@@ -433,7 +433,12 @@ def test_speech_price_refresh_preserves_snapshot_on_failure(
     from scripts.pricing import speech
 
     snapshot = tmp_path / "speech.json"
-    before = json.dumps({"prices": {key: 16_000_000 for key in speech.SOURCES}})
+    before = json.dumps({
+        "prices": {key: 16_000_000 for key in speech.SOURCES},
+        "token_prices": {},
+        "request_prices": {},
+        "request_price_unit": "microdollars_per_request",
+    })
     snapshot.write_text(before)
     monkeypatch.setattr(speech, "SNAPSHOT", snapshot)
 
@@ -444,8 +449,9 @@ def test_speech_price_refresh_preserves_snapshot_on_failure(
             pass
 
     monkeypatch.setattr(speech.requests, "get", lambda *args, **kwargs: Response())
-    with pytest.raises(ValueError, match="Missing"):
-        speech.refresh()
+    # Only the xAI page shape parses; a strict majority of sources failing
+    # publishes nothing, so the last-known-good file is untouched.
+    assert speech.refresh() == 1
     assert snapshot.read_text() == before
 
 

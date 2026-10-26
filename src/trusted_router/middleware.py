@@ -75,6 +75,10 @@ OAUTH_KEY_EXCHANGE_CORS_HEADERS = {
     "Access-Control-Allow-Headers": "content-type",
     "Access-Control-Max-Age": "600",
 }
+# The liveness route and its /v1 mount. The AWS NLB target group checks
+# GET /health. Exactly these two: /healthz is not a route, so exempting it
+# would hand an unmetered 404-render path to anyone.
+HEALTH_PROBE_PATHS = frozenset({"/health", "/v1/health"})
 STATUS_HOST_EXACT_PATHS = frozenset(
     {
         "/",
@@ -547,6 +551,16 @@ async def _rate_limit_request(
     if not settings.rate_limit_enabled:
         return None
     path = request.url.path
+    # The liveness probe never counts against, and is never refused by, the
+    # source bucket. In `untrusted` client-ip mode normalized_client_identity
+    # returns the constant UNTRUSTED_LOAD_BALANCER_SUBJECT for every request,
+    # whatever the peer IP, so the whole deployment shares ONE bucket and a
+    # client burst that exhausts it would otherwise 429 the load balancer's
+    # own health check; the target is marked unhealthy and replaced while it
+    # is serving fine. The probe is a constant-time 200 with no storage work,
+    # so this is not the amplification surface the ingress limiter exists for.
+    if path in HEALTH_PROBE_PATHS:
+        return None
 
     bearer = get_authorization_bearer(request)
     internal_token = request.headers.get("x-trustedrouter-internal-token")

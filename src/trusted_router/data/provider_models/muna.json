@@ -1,0 +1,165 @@
+{
+  "provider": "muna",
+  "models": [
+    {
+      "display_name": "gemma-4-26b-a4b-it",
+      "title": "google/gemma-4-26b-a4b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-26b-a4b-it",
+      "upstream_id": "google/gemma-4-26b-a4b-it",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 600.0,
+        "stream_idle_timeout_seconds": 30.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "muna",
+        "status_url": "https://status.muna.ai",
+        "regions": [
+          "us"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "insufficient_quota"
+        ]
+      },
+      "input_token_price_per_m": 65000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "qwen-3.8-27b",
+      "title": "qwen/qwen-3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "qwen/qwen-3.8-27b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 600.0,
+        "stream_idle_timeout_seconds": 30.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "muna",
+        "status_url": "https://status.muna.ai",
+        "regions": [
+          "us"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "insufficient_quota"
+        ]
+      },
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1750000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "qwen-3.8-27b-uncensored",
+      "title": "orcarouter/qwen-3.8-27b-uncensored",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "orcarouter/qwen-3.8-27b-uncensored",
+      "upstream_id": "orcarouter/qwen-3.8-27b-uncensored",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 600.0,
+        "stream_idle_timeout_seconds": 30.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "muna",
+        "status_url": "https://status.muna.ai",
+        "regions": [
+          "us"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "insufficient_quota"
+        ]
+      },
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 2750000,
+      "cached_input_token_price_per_m": 80000
+    }
+  ],
+  "source": "https://inference.muna.ai/integrations/trustedrouter/catalog",
+  "generated_at": "2026-10-26T06:59:20Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 3
+}

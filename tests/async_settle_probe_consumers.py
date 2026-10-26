@@ -161,7 +161,7 @@ class ActivityDatabase:
         return httpx.Response(200, json={"data": self.select(request.content.decode(), params)})
 
 
-def consumer_snapshots(monkeypatch, query_log):
+def consumer_snapshots(monkeypatch, query_log, *, now=None):
     from clickhouse import build_public_snapshots as public_builder
     from clickhouse import calibrate_client_availability as calibration
     from clickhouse import ingest_operational_outbox as worker
@@ -186,7 +186,17 @@ def consumer_snapshots(monkeypatch, query_log):
     from trusted_router.synthetic.client_watch import evaluate_client_watch
     from trusted_router.synthetic.route_health import evaluate_route_health
 
-    now = dt.datetime.now(dt.UTC)
+    now = now or dt.datetime.now(dt.UTC)
+    from trusted_router import storage_gcp
+
+    class Clock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    now = Clock.fromisoformat(now.isoformat())
+    # Freeze only this module's clock, not datetime shared by other consumers.
+    monkeypatch.setattr(storage_gcp, "dt", SimpleNamespace(**(vars(dt) | {"datetime": Clock})))
     generation = _generation()
     generation.id = "gen-" + "e" * 32
     generation.synthetic = True
@@ -264,8 +274,10 @@ def consumer_snapshots(monkeypatch, query_log):
     )
     # Module attributes, never STORE proxy methods. No global store pollution.
     import trusted_router.storage as storage
+    from trusted_router import storage_models
 
     monkeypatch.setattr(storage, "STORE", store)
+    monkeypatch.setattr(storage_models, "utcnow", lambda: now)
     monkeypatch.setattr(status, "utcnow", lambda: now)
     monkeypatch.setattr(status, "iso_now", lambda: now.isoformat())
     monkeypatch.setattr(status, "get_settings", lambda: cfg)
@@ -386,7 +398,7 @@ def consumer_snapshots(monkeypatch, query_log):
             where = sql.split(" WHERE ", 1)[1].removesuffix(" FORMAT JSONEachRow")
             where = re.sub(
                 r"toDateTime64\('([^']+)', 3, 'UTC'\)",
-                lambda match: "'" + match[1].replace(" ", "T") + "'",
+                lambda match: "'" + dt.datetime.fromisoformat(match[1]).isoformat() + "'",
                 where,
             )
             selected = list(

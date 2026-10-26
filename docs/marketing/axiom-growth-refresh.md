@@ -73,6 +73,33 @@ The `deploy-growth-sync` workflow keeps the gateway-attempt and billing-owner
 collector flags exactly as the running job has them unless the operator picks
 `true` or `false` for that run; its summary records the before and after values.
 
+### Gateway Attempt Recovery
+
+Gateway audits have their own cursor. A stopped audit collector does not stop
+acquisition and usage export. The `tr-growth-source` Cloud Logging bucket retains
+90 days; verify that setting before relying on historical recovery. A cursor
+older than 89 days fails closed for explicit operator recovery, never jumps to
+the present, and never fabricates missing starts.
+
+Each scheduled run can replay up to twelve five-minute windows, with ten minutes
+of overlap. All windows share the existing twenty-page / 20,000-source-record
+budget and a sixty-second source deadline. Page requests use at most ten seconds.
+This runs off the inference path, with no Spanner access or additional worker.
+Dense or slow windows retry next run; incomplete pages never advance the cursor.
+The 20,000-audit checkpoint cap still fails rather than truncating records.
+
+Buffered evidence is projected before compaction. Completed pairs are retained
+through the overlap, unmatched records keep the existing three-day horizon, and
+first-attempt milestones survive in the compact checkpoint. Expiry follows the
+historical cursor while recovering, so wall time cannot erase a historical start
+before its matching end is read. Axiom ingest must succeed before checkpointing.
+
+Watch `gateway_observed_through` separately from `observed_through` in
+`growth.sync_completed`. `gateway_status=catching_up` means complete historical
+windows advanced but the gateway feed is not current. `unavailable` means a source
+or safety-bound failure. Only `current` means its cursor reached the cycle target.
+Do not call catch-up complete from a fresh acquisition heartbeat alone.
+
 To pause: pause the `trusted-router-growth-sync` Cloud Scheduler job. To roll
 back: restore its preceding image digest. Retain the checkpoint; failures are
 replay-safe. Never delete the live state to make a failing job look healthy.
@@ -83,6 +110,9 @@ feed live. Dashboard stale state and missing-data notices remain visible.
 
 The acquisition sink uses exact event-name comparisons, not a regex. Reapply
 its allowlist with `python -m scripts.axiom_growth.provision source-filter`.
+An exact match is a read-only no-op, so ordinary worker redeploys need only
+`logging.sinks.get`. A changed filter still requires an authorized operator to
+apply it; the deploy identity is not granted general sink-update access.
 During rollout an overescaped filter was caught by comparing an actual browser
 event in the primary logs with the isolated bucket. HTTP success and a worker
 heartbeat alone do not prove source delivery.

@@ -8,6 +8,8 @@
 //	fastpathctl -database projects/P/instances/I/databases/D disable-all
 //	fastpathctl -database projects/P/instances/I/databases/D node ADDRESS
 //	fastpathctl -database projects/P/instances/I/databases/D [-funded MICRO] audit WORKSPACE
+//	fastpathctl -database projects/P/instances/I/databases/D decide on|off|status WORKSPACE [-cloud gcp] [-region us-central1]
+//	fastpathctl -database projects/P/instances/I/databases/D decide-off-all
 //
 // disable revokes the workspace's open leases with the switch, and
 // disable-all turns every workspace off and revokes every open lease, the one
@@ -30,8 +32,18 @@
 // way they do not, after every run of the load (rollout P1). One thing no
 // row says is the operator's to assert: -funded MICRO holds the credit rows'
 // total credits to what funded the workspace. A command whose answer cannot
-// be written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
-// emulator instead.
+// be written exits 1.
+//
+// decide sets or reads who decides the workspace's authorizations at the
+// edge (tr_fastpath_edge_decide): on, its edge nodes of the cloud answer
+// them for the region themselves, off they pass them on, and a workspace
+// with no row decides nowhere. The cloud is gcp and the region us-central1
+// unless -cloud or -region, before the command or after the workspace, say
+// otherwise. decide status exits 0 while the workspace does not decide in
+// that cloud and region and 3 while it does, with every row of the
+// workspace's beside. decide-off-all turns every row off. Neither touches
+// the switch or the leases: disable is still what turns a workspace off.
+// With SPANNER_EMULATOR_HOST set, the client reaches the emulator instead.
 package main
 
 import (
@@ -51,7 +63,7 @@ import (
 )
 
 // notDone is status's exit code for a workspace turned off with something of
-// the fast path left of it.
+// the fast path left of it, and decide status's for a workspace that decides.
 const notDone = 3
 
 func main() {
@@ -83,6 +95,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 	database := fs.String("database", "", "the database: projects/P/instances/I/databases/D")
 	timeout := fs.Duration("timeout", 30*time.Second, "how long the command may take")
 	funded := fs.Int64("funded", -1, "audit: the micro-credits that funded the workspace, which its credit rows must sum to")
+	cloud := fs.String("cloud", "gcp", "decide: the edge plane's cloud")
+	region := fs.String("region", "us-central1", "decide: the region of the authorizations")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -90,19 +104,41 @@ func run(ctx context.Context, args []string, out io.Writer,
 		return 2, err
 	}
 	usage := errors.New("usage: fastpathctl -database D enable|disable|status|audit WORKSPACE, node|leave|closed ADDRESS, " +
-		"or disable-all")
+		"decide on|off|status WORKSPACE [-cloud C] [-region R], disable-all or decide-off-all")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
 	}
 	command, workspace := fs.Arg(0), fs.Arg(1)
+	verb := ""
+	if command == "decide" {
+		if fs.NArg() < 3 {
+			return 2, usage
+		}
+		verb, workspace = fs.Arg(1), fs.Arg(2)
+		// -cloud and -region may follow the workspace.
+		if err := fs.Parse(fs.Args()[3:]); err != nil {
+			return 2, err
+		}
+		if fs.NArg() != 0 {
+			return 2, usage
+		}
+	}
 	switch {
-	case command == "disable-all":
+	case command == "disable-all" || command == "decide-off-all":
 		if fs.NArg() != 1 {
 			return 2, usage
 		}
+	case command == "decide":
+		if verb != "on" && verb != "off" && verb != "status" {
+			return 2, fmt.Errorf("decide %q is not on, off or status", verb)
+		}
+		if err := store.CheckDecideKey(workspace, *cloud, *region); err != nil {
+			return 2, err
+		}
 	case command != "enable" && command != "disable" && command != "status" && command != "node" && command != "leave" &&
 		command != "closed" && command != "audit":
-		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed or disable-all", command)
+		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed, decide, disable-all or "+
+			"decide-off-all", command)
 	case fs.NArg() != 2 || workspace == "":
 		return 2, usage
 	}
@@ -122,6 +158,42 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 1, err
 		}
 		answer = map[string]any{"workspaces_turned_off": off, "revoked_leases": revoked, "at": at}
+	case "decide-off-all":
+		off, at, err := s.DecideOffAll(ctx)
+		if err != nil {
+			return 1, err
+		}
+		answer = map[string]any{"rows_turned_off": off, "at": at}
+	case "decide":
+		if verb != "status" {
+			at, err := s.SetDecide(ctx, workspace, *cloud, *region, verb == "on")
+			if err != nil {
+				return 1, err
+			}
+			answer = map[string]any{"workspace": workspace, "cloud": *cloud, "region": *region, "decide": verb == "on",
+				"at": at}
+			break
+		}
+		all, read, err := s.ReadDecide(ctx)
+		if err != nil {
+			return 1, err
+		}
+		rows := []store.DecideRow{}
+		for _, r := range all {
+			if r.Workspace == workspace {
+				rows = append(rows, r)
+			}
+		}
+		answer = map[string]any{"workspace": workspace, "cloud": *cloud, "region": *region, "decide": false,
+			"found": false, "rows": rows, "read_at": read}
+		for _, r := range rows {
+			if r.Cloud == *cloud && r.Region == *region {
+				answer["decide"], answer["found"], answer["changed_at"] = r.Decide, true, r.ChangedAt
+				if r.Decide {
+					code = notDone
+				}
+			}
+		}
 	case "enable", "disable":
 		revoked, at, err := s.SetWorkspace(ctx, workspace, command == "enable")
 		if err != nil {

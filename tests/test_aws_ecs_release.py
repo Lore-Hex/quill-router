@@ -14,6 +14,7 @@ from tests.deploy_script_harness import harness_timeout_scale
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_SENTINEL = "fixture-env-value-must-not-appear-in-errors"
+READER_ARN = "arn:aws:secretsmanager:eu-west-3:330422590279:secret:quill/tr-eu-clickhouse-read-password-fixture"
 
 
 def test_aws_workflow_deploys_ecs_not_retired_apprunner() -> None:
@@ -55,8 +56,8 @@ def task_definition(region: str = "eu-west-3") -> dict:
         container = payload["taskDefinition"]["containerDefinitions"][0]
         container["environment"].extend([
             {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL", "value": "http://fixture-clickhouse:8123"},
-            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER", "value": "fixture-user"},
-            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": "fixture-database"},
+            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER", "value": "default"},
+            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": "default"},
         ])
         container["secrets"].append({
             "name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
@@ -65,7 +66,7 @@ def task_definition(region: str = "eu-west-3") -> dict:
     return payload
 
 
-def expected_registration(original: dict, image: str) -> dict:
+def expected_registration(original: dict, image: str, backend: str = "postgres") -> dict:
     expected = copy.deepcopy(original["taskDefinition"])
     for field in ("taskDefinitionArn", "revision", "status"):
         expected.pop(field)
@@ -79,6 +80,16 @@ def expected_registration(original: dict, image: str) -> dict:
     expected["containerDefinitions"][0]["environment"].append(
         {"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"}
     )
+    container = expected["containerDefinitions"][0]
+    container["environment"].append({"name": "TR_RECORD_READ_BACKEND", "value": backend})
+    container["environment"].append({"name": "TR_RATE_LIMIT_IP_PER_WINDOW", "value": "6000"})
+    if backend == "clickhouse":
+        for entry in container["environment"]:
+            if entry["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER":
+                entry["value"] = "tr_control_read"
+        for secret in container["secrets"]:
+            if secret["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD":
+                secret["valueFrom"] = READER_ARN
     return expected
 
 
@@ -108,8 +119,9 @@ def test_image_release_update_enables_outbox_and_preserves_native_configuration(
     original["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = live_outbox
     before = copy.deepcopy(original)
     image = "registry/trusted-router@sha256:" + "b" * 64
-    result = load_builder()(original, image, "c" * 40, "true")
-    expected = expected_registration(original, image)
+    backend = "clickhouse" if region == "eu-west-3" else "postgres"
+    result = load_builder()(original, image, "c" * 40, "true", backend, READER_ARN)
+    expected = expected_registration(original, image, backend)
     assert result == expected
     assert original == before
 
@@ -169,6 +181,31 @@ def test_release_refuses_an_in_process_remediator_on_aws(value: str) -> None:
     assert payload == before
 
 
+def _source_admission_values(result: dict) -> list[str]:
+    env = result["containerDefinitions"][0]["environment"]
+    return [e["value"] for e in env if e["name"] == "TR_RATE_LIMIT_IP_PER_WINDOW"]
+
+
+@pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
+def test_release_adds_the_source_admission_window_when_absent(region: str) -> None:
+    # The live AWS observer definitions set no TR_RATE_LIMIT_*, so each task ran
+    # the per-client default of 240/60 s as the cap for the whole region.
+    payload = task_definition(region)
+    assert _source_admission_values(payload["taskDefinition"]) == []
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert _source_admission_values(result) == ["6000"]
+
+
+@pytest.mark.parametrize("live", ["240", "6000", ""])
+def test_release_pins_the_source_admission_window_without_duplicating_it(live: str) -> None:
+    payload = task_definition("eu-west-3")
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
+        {"name": "TR_RATE_LIMIT_IP_PER_WINDOW", "value": live}
+    )
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert _source_admission_values(result) == ["6000"]
+
+
 @pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
 def test_task_builder_refuses_to_disable_an_enabled_outbox(region: str) -> None:
     payload = task_definition(region)
@@ -197,6 +234,81 @@ def test_task_builder_refuses_invalid_required_outbox(required_outbox: str) -> N
     payload["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = required_outbox
     with pytest.raises(ValueError, match="invalid required TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"):
         load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, required_outbox)
+
+
+@pytest.mark.parametrize("backend", ["postgres", "clickhouse"])
+@pytest.mark.parametrize("live_backend", [None, "postgres", "clickhouse"])
+def test_record_read_transitions(backend: str, live_backend: str | None) -> None:
+    payload = task_definition()
+    if live_backend is not None:
+        payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
+            {"name": "TR_RECORD_READ_BACKEND", "value": live_backend}
+        )
+    before = copy.deepcopy(payload)
+    image = "registry@sha256:" + "b" * 64
+    args = (payload, image, "c" * 40, "true", backend, READER_ARN)
+    result = load_builder()(*args)
+    container = result["containerDefinitions"][0]
+    values = {e["name"]: e["value"] for e in container["environment"]}
+    assert values["TR_RECORD_READ_BACKEND"] == backend
+    assert sum(e["name"] == "TR_RECORD_READ_BACKEND" for e in container["environment"]) == 1
+    if backend == "clickhouse":
+        assert values["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER"] == "tr_control_read"
+        assert container["secrets"][-1]["valueFrom"] == READER_ARN
+    else:
+        assert values["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER"] == "default"
+        assert container["secrets"] == before["taskDefinition"]["containerDefinitions"][0]["secrets"]
+    # A subsequent clone with the same release and credentials is identical.
+    next_payload = {
+        "taskDefinition": {k: v for k, v in result.items() if k != "tags"},
+        "tags": result["tags"],
+    }
+    assert load_builder()(next_payload, *args[1:]) == result
+    assert payload == before
+
+
+@pytest.mark.parametrize("value", ["", "invalid", "CLICKHOUSE"])
+def test_record_reads_refuse_unknown_live_values(value: str) -> None:
+    payload = task_definition()
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
+        {"name": "TR_RECORD_READ_BACKEND", "value": value}
+    )
+    with pytest.raises(ValueError, match="invalid live TR_RECORD_READ_BACKEND"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
+
+
+@pytest.mark.parametrize("value", ["", "invalid", "CLICKHOUSE"])
+def test_record_reads_refuse_invalid_expectation(value: str) -> None:
+    with pytest.raises(ValueError, match="invalid required TR_RECORD_READ_BACKEND"):
+        load_builder()(task_definition(), "registry@sha256:" + "b" * 64, "c" * 40, "true", value)
+
+
+@pytest.mark.parametrize("url", [None, "", "  "])
+def test_clickhouse_record_reads_require_cloned_url(url: str | None) -> None:
+    payload = task_definition("eu-west-1")
+    if url is not None:
+        payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
+            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL", "value": url}
+        )
+    with pytest.raises(ValueError, match="cloned TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
+
+
+@pytest.mark.parametrize("arn", ["", "None", "quill/tr-eu-clickhouse-read-password"])
+def test_clickhouse_record_reads_require_reader_arn(arn: str) -> None:
+    with pytest.raises(ValueError, match="reader secret ARN"):
+        load_builder()(task_definition(), "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", arn)
+
+
+def test_record_read_grant_is_scoped_to_reader_secret_metadata() -> None:
+    policy = (ROOT / "infra/aws_ecs_control_reader.tf").read_text()
+    assert 'data "aws_secretsmanager_secret" "tr_eu_clickhouse_control_reader"' in policy
+    assert 'name = "quill/tr-eu-clickhouse-read-password"' in policy
+    assert 'role = "tr-cp-exec"' in policy
+    assert 'Action   = "secretsmanager:GetSecretValue"' in policy
+    assert 'Resource = data.aws_secretsmanager_secret.tr_eu_clickhouse_control_reader.arn' in policy
+    assert "aws_secretsmanager_secret_version" not in policy
+    assert "*" not in policy
 
 
 CLI_STUB = r'''#!/usr/bin/env python3
@@ -249,6 +361,12 @@ elif tool == "aws":
         print("ASIARENEWED\trenewed-secret\trenewed-session")
     elif op == "ecr get-login-password": print("fixture-password")
     elif op == "ecr describe-images": print(digest)
+    elif op == "secretsmanager describe-secret":
+        assert args[args.index("--secret-id") + 1] == "quill/tr-eu-clickhouse-read-password"
+        assert args[args.index("--query") + 1] == "ARN"
+        if os.environ.get("ECS_READER_LOOKUP_FAILS"): sys.exit(254)
+        print(os.environ.get("ECS_READER_ARN", "arn:aws:secretsmanager:" + region
+              + ":330422590279:secret:quill/tr-eu-clickhouse-read-password-fixture"))
     elif op == "ecs describe-services":
         service = {"taskDefinition": "old:19",
             "deploymentController": {"type": "ECS"},
@@ -360,7 +478,7 @@ def run_ecs_fixture(
     # A developer's or runner's own AWS credentials and OIDC request variables
     # never reach the copied script; tests that need them pass them in.
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("TR_CLOUD_", "TR_DEPLOY_", "TR_ECS_", "ECS_", "ACTIONS_ID_TOKEN_", "AWS_"))}
+           if not k.startswith(("TR_CLOUD_", "TR_DEPLOY_", "TR_ECS_", "TR_RECORD_READ_BACKEND_", "ECS_", "ACTIONS_ID_TOKEN_", "AWS_"))}
     result = subprocess.run(  # noqa: S603 - copied script, all cloud and image tools stubbed
         [shutil.which("bash") or "/bin/bash", str(scripts / "aws_ecs_control_plane.sh")],
         env={**env, "PATH": f"{bin_dir}:{env['PATH']}", "ECS_STATE": str(state),
@@ -368,11 +486,16 @@ def run_ecs_fixture(
              "ECS_READER_COUNTS": str(reader_counts),
              "ECS_REGISTRATIONS": str(tmp_path / "registrations"),
              "ECS_UNLOCK": str(unlock), "ECS_FAIL_REGION": failure,
-             "HARNESS_VERIFIER_RC": str(verifier_rc), **(extra_env or {})},
+             "HARNESS_VERIFIER_RC": str(verifier_rc),
+             # The state once Paris moves to ClickHouse reads (its own
+             # change, after the reader-secret grant applies); the shipped
+             # default is pinned by test_paris_ships_on_postgres_until_the_grant.
+             "TR_RECORD_READ_BACKEND_EU_WEST_3": "clickhouse", **(extra_env or {})},
         capture_output=True, text=True, check=False, timeout=timeout * harness_timeout_scale(),
     )
     recorded = [json.loads(line) for line in calls.read_text().splitlines()]
     assert ENV_SENTINEL not in result.stdout + result.stderr
+    assert not any(c[:3] == ["aws", "secretsmanager", "get-secret-value"] for c in recorded)
     return result, recorded
 
 
@@ -382,7 +505,8 @@ def assert_registrations_preserve_regional_configuration(tmp_path: Path) -> None
     assert [region for region, _ in registrations] == ["eu-west-1", "eu-west-3"]
     for region, registered in registrations:
         image = f"330422590279.dkr.ecr.{region}.amazonaws.com/trusted-router@sha256:" + "b" * 64
-        assert registered == expected_registration(definitions[region], image)
+        backend = "clickhouse" if region == "eu-west-3" else "postgres"
+        assert registered == expected_registration(definitions[region], image, backend)
 
 
 def test_superseded_queued_promotion_is_clean_noop(tmp_path: Path) -> None:
@@ -576,10 +700,104 @@ def test_ecs_rollout_enables_the_legacy_ireland_outbox(tmp_path: Path) -> None:
     assert ["verify_cloud_complete.sh", "aws"] in recorded
 
 
+def test_ecs_record_reads_revert_paris_by_the_default_alone(tmp_path: Path) -> None:
+    definitions = {region: task_definition(region) for region in ("eu-west-1", "eu-west-3")}
+    paris = definitions["eu-west-3"]["taskDefinition"]["containerDefinitions"][0]
+    paris["environment"].append({"name": "TR_RECORD_READ_BACKEND", "value": "clickhouse"})
+    for entry in paris["environment"]:
+        if entry["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER":
+            entry["value"] = "tr_control_read"
+    paris["secrets"][-1]["valueFrom"] = READER_ARN
+    result, calls = run_ecs_fixture(tmp_path, definitions=definitions, extra_env={
+        "TR_RECORD_READ_BACKEND_EU_WEST_3": "postgres",
+    })
+    assert result.returncode == 0, result.stderr
+    registrations = dict(json.loads(line) for line in (tmp_path / "registrations").read_text().splitlines())
+    assert not any(c[:2] == ["aws", "secretsmanager"] for c in calls)
+    updated = registrations["eu-west-3"]["containerDefinitions"][0]
+    expected = copy.deepcopy(paris)
+    expected["image"] = updated["image"]
+    for entry in expected["environment"]:
+        if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
+            entry["value"] = "c" * 40
+        elif entry["name"] == "TR_RECORD_READ_BACKEND":
+            entry["value"] = "postgres"
+    expected["environment"].append({"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"})
+    expected["environment"].append({"name": "TR_RATE_LIMIT_IP_PER_WINDOW", "value": "6000"})
+    # Postgres reads, with the reader's credentials kept as they were.
+    assert updated == expected
+
+
+def _paris_clickhouse(payload: dict) -> dict:
+    return payload["taskDefinition"]["containerDefinitions"][0]
+
+
+@pytest.mark.parametrize("conflict", ["plain-password", "user-secret", "backend-secret", "duplicate-secret"])
+def test_clickhouse_record_reads_refuse_conflicting_credential_sources(conflict: str) -> None:
+    payload = task_definition("eu-west-3")
+    container = _paris_clickhouse(payload)
+    password = next(s for s in container["secrets"] if s["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
+    if conflict == "plain-password":
+        container["environment"].append({"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD", "value": "x"})
+        match = "conflicting ClickHouse record-read"
+    elif conflict == "user-secret":
+        container["secrets"].append({"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER", "valueFrom": READER_ARN})
+        match = "conflicting ClickHouse record-read"
+    elif conflict == "backend-secret":
+        container["secrets"].append({"name": "TR_RECORD_READ_BACKEND", "valueFrom": READER_ARN})
+        match = "conflicting ClickHouse record-read"
+    else:
+        container["secrets"].append(dict(password))
+        match = "duplicate secret references"
+    with pytest.raises(ValueError, match=match):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
+
+
+def test_clickhouse_record_reads_add_the_reader_secret_when_none_is_cloned() -> None:
+    payload = task_definition("eu-west-3")
+    container = _paris_clickhouse(payload)
+    container["secrets"] = [
+        s for s in container["secrets"] if s["name"] != "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
+    ]
+    others = copy.deepcopy(container["secrets"])
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)
+    secrets = result["containerDefinitions"][0]["secrets"]
+    assert secrets == [*others, {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD", "valueFrom": READER_ARN}]
+
+
+@pytest.mark.parametrize("fault", ["no_url", "lookup_failed", "missing_arn"])
+def test_ecs_record_reads_refuse_incomplete_reader_configuration(tmp_path: Path, fault: str) -> None:
+    definitions = {region: task_definition(region) for region in ("eu-west-1", "eu-west-3")}
+    extra_env = {}
+    if fault == "no_url":
+        paris = definitions["eu-west-3"]["taskDefinition"]["containerDefinitions"][0]
+        paris["environment"] = [e for e in paris["environment"] if e["name"] != "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL"]
+    elif fault == "lookup_failed":
+        extra_env["ECS_READER_LOOKUP_FAILS"] = "1"
+    else:
+        extra_env["ECS_READER_ARN"] = "None"
+    result, calls = run_ecs_fixture(tmp_path, definitions=definitions, extra_env=extra_env)
+    assert result.returncode != 0
+    mutations = [c for c in calls if c[:3] in (
+        ["aws", "ecs", "register-task-definition"], ["aws", "ecs", "update-service"],
+    )]
+    assert [(c[2], c[c.index("--region") + 1]) for c in mutations] == [
+        ("register-task-definition", "eu-west-1"), ("update-service", "eu-west-1"),
+    ]
+
+
+def test_ecs_ireland_clickhouse_override_requires_its_own_url(tmp_path: Path) -> None:
+    result, calls = run_ecs_fixture(tmp_path, extra_env={"TR_RECORD_READ_BACKEND_EU_WEST_1": "clickhouse"})
+    assert result.returncode != 0
+    assert "cloned TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL" in result.stderr
+    assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in calls)
+
+
 @pytest.mark.parametrize(("full_table", "short_table"), [
     ("REGIONS=(eu-west-1 eu-west-3)", "REGIONS=(eu-west-1)"),
     ("SERVICES=(tr-cp-euw1 tr-cp-euw3)", "SERVICES=(tr-cp-euw1)"),
     ('EXPECTED_OUTBOX=("$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")', "EXPECTED_OUTBOX=(true)"),
+    ('EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" "${TR_RECORD_READ_BACKEND_EU_WEST_3:-postgres}")', "EXPECTED_RECORD_READ_BACKEND=(postgres)"),
 ])
 def test_ecs_rollout_refuses_misaligned_tables_before_registration(
     tmp_path: Path, full_table: str, short_table: str,
@@ -595,7 +813,7 @@ def test_ecs_rollout_refuses_misaligned_tables_before_registration(
     script.write_text(text.replace(full_table, short_table))
     result, recorded = run_ecs_fixture(tmp_path / "run", source_root=source_root)
     assert result.returncode != 0
-    assert "REGIONS, SERVICES, and EXPECTED_OUTBOX must have the same length" in result.stderr
+    assert "REGIONS, SERVICES, EXPECTED_OUTBOX, and EXPECTED_RECORD_READ_BACKEND must have the same length" in result.stderr
     assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in recorded)
     assert not any(c[:3] == ["aws", "ecs", "update-service"] for c in recorded)
 
@@ -685,3 +903,28 @@ def test_ecs_rollout_accepts_legacy_and_future_breaker_fields(tmp_path: Path, fu
     updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
     assert [c[c.index("--region") + 1] for c in updates] == ["eu-west-1", "eu-west-3"]
     assert_registrations_preserve_regional_configuration(tmp_path)
+
+
+def test_paris_ships_on_postgres_until_the_grant() -> None:
+    """A Paris task referencing the reader secret before tr-cp-exec may read
+    it fails to start, and the release updates Ireland first, so Paris's
+    default moves to clickhouse only in a change after that grant
+    (infra/aws_ecs_control_reader.tf) has applied."""
+    script = (ROOT / "scripts/deploy/aws_ecs_control_plane.sh").read_text()
+    assert (
+        'EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" '
+        '"${TR_RECORD_READ_BACKEND_EU_WEST_3:-postgres}")'
+    ) in script
+
+
+@pytest.mark.parametrize("database", [None, "tr", "fixture-database"])
+def test_clickhouse_record_reads_refuse_a_database_the_reader_cannot_read(database: str | None) -> None:
+    """The reader is granted SELECT on default.* only: a cloned task that reads
+    any other database would answer every record read with an access error."""
+    payload = task_definition("eu-west-3")
+    env = payload["taskDefinition"]["containerDefinitions"][0]["environment"]
+    env[:] = [entry for entry in env if entry["name"] != "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE"]
+    if database is not None:
+        env.append({"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": database})
+    with pytest.raises(ValueError, match="TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=default"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true", "clickhouse", READER_ARN)

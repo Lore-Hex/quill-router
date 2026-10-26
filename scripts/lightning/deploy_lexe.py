@@ -50,6 +50,10 @@ def validate_activation(revisions: list[dict[str, Any]], image: str) -> None:
 
 
 def main() -> None:
+    raise SystemExit("LightningRouter was retired on 2026-10-22. Deployment is disabled.")
+
+
+def _historical_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", required=True)
     parser.add_argument("--image", required=True)

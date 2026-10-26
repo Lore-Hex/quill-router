@@ -20,6 +20,44 @@ NEW_TOKEN_PRICES = {
 MICROSOFT_ARTICLE = Path(__file__).parent / "fixtures/pricing/microsoft_speech_article_2026-10-12.html"
 
 
+def mistral_audio_pricing_html() -> str:
+    return """<table><tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr>
+    <tr><td>Voxtral TTS 3</td><td>$13 /M Chars</td><td>$1.3 /M Chars</td><td>-</td></tr>
+    <tr><td>Voxtral TTS</td><td>$16 /M Chars</td><td>$1.6 /M Chars</td><td>-</td></tr></table>"""
+
+
+def test_mistral_audio_pricing_selects_exact_model_and_input_tariff() -> None:
+    assert speech.parse_character_price("mistralai/voxtral-mini-tts-2603", mistral_audio_pricing_html()) == 16_000_000
+
+
+def test_mistral_audio_pricing_follows_input_header() -> None:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(mistral_audio_pricing_html(), "html.parser")
+    for row in soup.select("tr"):
+        cells = row.find_all(["th", "td"])
+        row.append(cells[1].extract())
+    assert speech.parse_character_price("mistralai/voxtral-mini-tts-2603", str(soup)) == 16_000_000
+
+
+def test_mistral_audio_pricing_allows_link_icon_not_other_model_suffixes() -> None:
+    html = mistral_audio_pricing_html().replace("Voxtral TTS</td>", 'Voxtral TTS <span>&#8599;</span></td>')
+    assert speech.parse_character_price("mistralai/voxtral-mini-tts-2603", html) == 16_000_000
+
+
+@pytest.mark.parametrize("old,new", [
+    ("<th>Input</th>", "<th>Unknown</th>"),
+    ("<th>Cached input</th>", "<th>Input</th>"),
+    ("<td>Voxtral TTS</td>", "<td>Voxtral TTS 2</td>"),
+    ("$16 /M Chars", "$16 /M Tokens"),
+    ("$16 /M Chars", "$0 /M Chars"),
+    ("$16 /M Chars", "$16.0000001 /M Chars"),
+])
+def test_mistral_audio_pricing_fails_closed(old: str, new: str) -> None:
+    with pytest.raises(ValueError):
+        speech.parse_character_price("mistralai/voxtral-mini-tts-2603", mistral_audio_pricing_html().replace(old, new))
+
+
 def _freeze_today(monkeypatch: pytest.MonkeyPatch, today: date) -> None:
     class Clock(datetime):
         @classmethod
@@ -85,18 +123,106 @@ def refresh_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pa
     return snapshot, pages
 
 
-def test_tinfoil_request_tariffs_refresh(refresh_sources):
+def _held_section(output: str) -> list[str]:
+    """The lines refresh-prices.yml copies into the held-price issue."""
+    lines = output.splitlines()
+    start = lines.index(speech.HELD_FOR_REVIEW_HEADING) + 1
+    end = lines.index("", start) if "" in lines[start:] else len(lines)
+    return lines[start:end]
+
+
+def test_tinfoil_request_tariffs_refresh(refresh_sources, capsys):
     path, pages = refresh_sources
-    speech.refresh()
+    assert speech.refresh() == 0
     snapshot = json.loads(path.read_text())
     assert snapshot["request_price_unit"] == "microdollars_per_request"
     assert snapshot["request_prices"] == {"qwen/qwen3-tts": 10000, "mistralai/voxtral-4b-tts-2603": 2000}
     assert "qwen/qwen3-tts" not in snapshot["prices"]
-    before = path.read_bytes()
+    assert speech.HELD_FOR_REVIEW_HEADING not in capsys.readouterr().out
     pages[speech.TINFOIL_URL] = pages[speech.TINFOIL_URL].replace('"requestPrice": 0.01', '"requestPrice": 0.03')
-    with pytest.raises(ValueError, match="requires review"):
-        speech.refresh()
-    assert path.read_bytes() == before
+    assert speech.refresh() == 0
+    assert _held_section(capsys.readouterr().out) == [
+        "  tinfoil:",
+        "    refresh failed: ValueError: Speech price change requires review: qwen/qwen3-tts",
+    ]
+    assert json.loads(path.read_text())["request_prices"] == snapshot["request_prices"]
+
+
+def test_unrecognized_mistral_unit_names_the_cell_text() -> None:
+    # The 2026-10-24 refresh run died on this row with only the model name in
+    # the log; the reason must say what the page served.
+    html = "<table><tr><td>Voxtral TTS</td><td>-</td><td>-</td><td>—</td></tr></table>"
+    with pytest.raises(ValueError) as excinfo:
+        speech.parse_character_price("mistralai/voxtral-mini-tts-2603", html)
+    assert str(excinfo.value) == (
+        "Unrecognized speech billing unit for mistralai/voxtral-mini-tts-2603: '—'"
+    )
+
+
+def test_unrecognized_mistral_unit_holds_only_mistral(
+    refresh_sources: tuple[Path, dict[str, str]], capsys: pytest.CaptureFixture[str],
+) -> None:
+    snapshot, pages = refresh_sources
+    previous = json.loads(snapshot.read_text())
+    pages[speech.SOURCES["mistralai/voxtral-mini-tts-2603"]] = (
+        "<table><tr><td>Voxtral TTS</td><td>-</td><td>-</td><td>—</td></tr></table>"
+    )
+    grok_url = speech.SOURCES["x-ai/grok-voice-tts-1.0"]
+    pages[grok_url] = pages[grok_url].replace("$15", "$20")
+
+    assert speech.refresh() == 0
+
+    after = json.loads(snapshot.read_text())
+    assert after["prices"]["mistralai/voxtral-mini-tts-2603"] == previous["prices"]["mistralai/voxtral-mini-tts-2603"]
+    assert after["prices"]["x-ai/grok-voice-tts-1.0"] == 20_000_000
+    assert after["checked_on"] != previous["checked_on"]
+    assert {**after, "prices": previous["prices"], "checked_on": previous["checked_on"]} == previous
+    out = capsys.readouterr().out
+    assert _held_section(out) == [
+        "  mistral:",
+        "    refresh failed: ValueError: Unrecognized speech billing unit for "
+        "mistralai/voxtral-mini-tts-2603: '—'",
+    ]
+    assert "::warning title=Speech prices held for review::mistral kept their committed prices." in out
+    assert "  xai: refreshed x-ai/grok-voice-tts-1.0" in out
+
+
+def test_majority_of_speech_sources_failing_publishes_nothing(
+    refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    snapshot, _ = refresh_sources
+    before = snapshot.read_bytes()
+    get = speech.requests.get
+    down = {
+        speech.SOURCES["mistralai/voxtral-mini-tts-2603"],
+        speech.SOURCES["x-ai/grok-voice-tts-1.0"],
+        speech.ELEVENLABS_URL,
+        speech.MICROSOFT_URL,
+    }
+
+    def reject(url: str, **kwargs: object) -> requests.Response:
+        if url in down:
+            response = requests.Response()
+            response.status_code = 503
+            return response
+        return get(url, **kwargs)
+
+    monkeypatch.setattr(speech.requests, "get", reject)
+    assert speech.refresh() == 1
+    assert snapshot.read_bytes() == before
+    out = capsys.readouterr().out
+    assert "Systemic speech refresh failure: 4/6 sources failed; nothing published." in out
+    assert _held_section(out) == [
+        "  elevenlabs:",
+        "    refresh failed: HTTPError status=503",
+        "  microsoft:",
+        "    refresh failed: HTTPError status=503",
+        "  mistral:",
+        "    refresh failed: HTTPError status=503",
+        "  xai:",
+        "    refresh failed: HTTPError status=503",
+    ]
 
 
 @pytest.mark.parametrize("change", ["unit", "missing", "duplicate", "conflicting", "zero", "precision", "unlabelled"])
@@ -118,11 +244,27 @@ def test_microsoft_article_fail_closed(change: str) -> None:
         speech.parse_microsoft_prices(html)
 
 
-def test_microsoft_fetch_failure_preserves_snapshot(
+MICROSOFT_MODELS = ("microsoft/mai-voice-2.1", "microsoft/mai-voice-2.1-flash")
+
+
+def _assert_only_microsoft_held(
+    snapshot: Path, previous: dict[str, object], output: str, reason: str,
+) -> None:
+    after = json.loads(snapshot.read_text())
+    prices = after["prices"]
+    assert {model: prices[model] for model in MICROSOFT_MODELS} == {
+        model: previous["prices"][model] for model in MICROSOFT_MODELS  # type: ignore[index]
+    }
+    assert {**after, "checked_on": previous["checked_on"]} == previous
+    assert _held_section(output) == ["  microsoft:", f"    refresh failed: {reason}"]
+
+
+def test_microsoft_fetch_failure_holds_only_microsoft(
     refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     snapshot, _ = refresh_sources
-    before = snapshot.read_bytes()
+    previous = json.loads(snapshot.read_text())
     get = speech.requests.get
 
     def reject(url: str, **kwargs: object) -> requests.Response:
@@ -133,18 +275,21 @@ def test_microsoft_fetch_failure_preserves_snapshot(
         return get(url, **kwargs)
 
     monkeypatch.setattr(speech.requests, "get", reject)
-    with pytest.raises(requests.HTTPError):
-        speech.refresh()
-    assert snapshot.read_bytes() == before
+    assert speech.refresh() == 0
+    _assert_only_microsoft_held(snapshot, previous, capsys.readouterr().out, "HTTPError status=403")
 
 
-def test_microsoft_missing_price_preserves_snapshot(refresh_sources: tuple[Path, dict[str, str]]) -> None:
+def test_microsoft_missing_price_holds_only_microsoft(
+    refresh_sources: tuple[Path, dict[str, str]], capsys: pytest.CaptureFixture[str],
+) -> None:
     snapshot, pages = refresh_sources
-    before = snapshot.read_bytes()
+    previous = json.loads(snapshot.read_text())
     pages[speech.MICROSOFT_URL] = pages[speech.MICROSOFT_URL].replace("$15", "Unavailable")
-    with pytest.raises(ValueError):
-        speech.refresh()
-    assert snapshot.read_bytes() == before
+    assert speech.refresh() == 0
+    _assert_only_microsoft_held(
+        snapshot, previous, capsys.readouterr().out,
+        "ValueError: Missing or conflicting Microsoft speech tariff: mai-voice-2.1-flash",
+    )
 
 
 @pytest.mark.parametrize("today", [date(2026, 12, 31), date(2027, 1, 1), date(2027, 1, 2)])
@@ -167,8 +312,9 @@ def test_refresh_publishes_dated_gemini_transition(
 
 
 @pytest.mark.parametrize("change", ["early", "input_only", "output_only", "wrong_old", "next_doubling", "character"])
-def test_refresh_rejects_unapproved_doubling(
-    refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch, change: str,
+def test_refresh_holds_unapproved_doubling(
+    refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], change: str,
 ) -> None:
     snapshot, pages = refresh_sources
     today = date(2026, 12, 31) if change == "early" else date(2027, 1, 1)
@@ -195,10 +341,22 @@ def test_refresh_rejects_unapproved_doubling(
     else:
         url = speech.SOURCES["x-ai/grok-voice-tts-1.0"]
         pages[url] = pages[url].replace("$15", "$30")
-    before_bytes = snapshot.read_bytes()
-    with pytest.raises(ValueError, match="Speech price change requires review"):
-        speech.refresh()
-    assert snapshot.read_bytes() == before_bytes
+    previous = json.loads(snapshot.read_text())
+    held_slug = "xai" if change == "character" else "gemini"
+    assert speech.refresh() == 0
+    after = json.loads(snapshot.read_text())
+    # The unapproved move holds its own source; every other source published
+    # (on 2027-01-01 Gemini's approved dated transition still lands).
+    assert after["prices"] == previous["prices"]
+    assert after["request_prices"] == previous["request_prices"]
+    assert after["token_prices"] == (
+        NEW_TOKEN_PRICES if held_slug == "xai" else previous["token_prices"]
+    )
+    assert after["checked_on"] == today.isoformat()
+    held = _held_section(capsys.readouterr().out)
+    assert held[0] == f"  {held_slug}:"
+    assert held[1].startswith("    refresh failed: ValueError: Speech price change requires review: ")
+    assert len(held) == 2
 
 
 @pytest.mark.parametrize("today, change", [

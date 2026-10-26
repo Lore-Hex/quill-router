@@ -230,6 +230,10 @@ def test_together_probe_retains_callable_expected_model_omitted_from_feed(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    # Probe mechanics, not lifecycle: Together retires MiniMax M3 on 2026-11-06.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: datetime(2026, 11, 5, tzinfo=UTC),
+    )
     monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
     monkeypatch.setattr(together.httpx, "Client", _MissingM3TogetherClient)
     manifest_path = tmp_path / "together.json"
@@ -270,6 +274,10 @@ def test_together_probe_retains_callable_expected_model_omitted_from_feed(
 def test_together_probe_allows_definitively_unavailable_model_to_retire(
     monkeypatch: MonkeyPatch,
 ) -> None:
+    # Probe mechanics, not lifecycle: Together retires MiniMax M3 on 2026-11-06.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: datetime(2026, 11, 5, tzinfo=UTC),
+    )
     class UnavailableClient(_MissingM3TogetherClient):
         probe_status = 400
         probe_payload = {"error": {"code": "model_not_available"}}
@@ -286,6 +294,10 @@ def test_together_probe_allows_definitively_unavailable_model_to_retire(
 def test_together_probe_ambiguous_failure_preserves_last_known_good(
     monkeypatch: MonkeyPatch,
 ) -> None:
+    # Probe mechanics, not lifecycle: Together retires MiniMax M3 on 2026-11-06.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: datetime(2026, 11, 5, tzinfo=UTC),
+    )
     class ThrottledClient(_MissingM3TogetherClient):
         probe_status = 503
         probe_payload = {"error": {"code": "upstream_unavailable"}}
@@ -301,6 +313,10 @@ def test_together_refresh_adds_new_started_serverless_chat_models(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    # Probe mechanics, not lifecycle: Together retires MiniMax M3 on 2026-11-06.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: datetime(2026, 11, 5, tzinfo=UTC),
+    )
     monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
     monkeypatch.setattr(together.httpx, "Client", _FakeTogetherClient)
     manifest_path = tmp_path / "together.json"

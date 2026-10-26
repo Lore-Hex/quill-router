@@ -8,6 +8,15 @@
     "route_mode": "Prepaid",
     "slug": "abliterate"
   },
+  "abliteration": {
+    "card_version": 2,
+    "model_count": 4,
+    "name": "Abliteration",
+    "privacy": "Zero retention",
+    "route_count": 4,
+    "route_mode": "Prepaid",
+    "slug": "abliteration"
+  },
   "aion-labs": {
     "card_version": 2,
     "model_count": 6,
@@ -55,19 +64,19 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 6,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "arcee"
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 81,
+    "model_count": 71,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 81,
+    "route_count": 71,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -109,10 +118,10 @@
   },
   "boundless": {
     "card_version": 2,
-    "model_count": 16,
+    "model_count": 17,
     "name": "Boundless",
     "privacy": "Policy documented",
-    "route_count": 16,
+    "route_count": 17,
     "route_mode": "Prepaid",
     "slug": "boundless"
   },
@@ -145,10 +154,10 @@
   },
   "cloudflare-workers-ai": {
     "card_version": 2,
-    "model_count": 27,
+    "model_count": 28,
     "name": "Cloudflare Workers AI",
     "privacy": "Policy documented",
-    "route_count": 27,
+    "route_count": 28,
     "route_mode": "Prepaid",
     "slug": "cloudflare-workers-ai"
   },
@@ -169,6 +178,15 @@
     "route_count": 1,
     "route_mode": "Prepaid",
     "slug": "confidential-ai"
+  },
+  "coralbricks": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "CoralBricks",
+    "privacy": "Zero retention",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "coralbricks"
   },
   "crusoe": {
     "card_version": 2,
@@ -206,12 +224,30 @@
     "route_mode": "Prepaid",
     "slug": "decart"
   },
+  "decisionmodelsio": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "Decision Models (Global)",
+    "privacy": "Policy documented",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "decisionmodelsio"
+  },
+  "decisionmodelsio-eu": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "Decision Models (EU)",
+    "privacy": "Policy documented",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "decisionmodelsio-eu"
+  },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 92,
+    "model_count": 91,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 176,
+    "route_count": 174,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -262,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 35,
+    "model_count": 36,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 35,
+    "route_count": 36,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -280,10 +316,10 @@
   },
   "friendli": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 5,
     "name": "FriendliAI",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 10,
     "route_mode": "Prepaid + BYOK",
     "slug": "friendli"
   },
@@ -292,25 +328,25 @@
     "model_count": 78,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 84,
+    "route_count": 85,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
   "google-vertex": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 14,
     "name": "Google Vertex AI",
     "privacy": "Zero retention",
-    "route_count": 12,
+    "route_count": 14,
     "route_mode": "Prepaid",
     "slug": "google-vertex"
   },
@@ -451,10 +487,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 15,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -512,6 +548,15 @@
     "route_mode": "Prepaid",
     "slug": "morph"
   },
+  "muna": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Muna",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "muna"
+  },
   "near-ai": {
     "card_version": 2,
     "model_count": 0,
@@ -523,10 +568,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 28,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 50,
+    "route_count": 54,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -548,48 +593,57 @@
     "route_mode": "Prepaid",
     "slug": "nextbit"
   },
+  "nextbit-eu": {
+    "card_version": 2,
+    "model_count": 4,
+    "name": "NextBit (EU)",
+    "privacy": "Zero retention",
+    "route_count": 4,
+    "route_mode": "Prepaid",
+    "slug": "nextbit-eu"
+  },
   "novita": {
     "card_version": 2,
-    "model_count": 79,
+    "model_count": 80,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 153,
+    "route_count": 155,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 17,
+    "model_count": 20,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 17,
+    "route_count": 20,
     "route_mode": "Prepaid",
     "slug": "nscale"
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
   "openai": {
     "card_version": 2,
-    "model_count": 47,
+    "model_count": 34,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 80,
+    "route_count": 60,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
   "openrouter": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 1,
     "name": "OpenRouter",
     "privacy": "Policy documented",
-    "route_count": 2,
+    "route_count": 1,
     "route_mode": "Prepaid",
     "slug": "openrouter"
   },
@@ -604,10 +658,10 @@
   },
   "parasail": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 25,
     "name": "Parasail",
     "privacy": "Zero retention",
-    "route_count": 51,
+    "route_count": 50,
     "route_mode": "Prepaid + BYOK",
     "slug": "parasail"
   },
@@ -676,10 +730,10 @@
   },
   "regolo": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 10,
     "name": "Regolo",
     "privacy": "Zero retention",
-    "route_count": 18,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "regolo"
   },
@@ -739,10 +793,10 @@
   },
   "sambanova": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 2,
     "name": "SambaNova",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "sambanova"
   },
@@ -791,24 +845,6 @@
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
-  "system1models": {
-    "card_version": 2,
-    "model_count": 5,
-    "name": "Decision Models (Global)",
-    "privacy": "Policy documented",
-    "route_count": 5,
-    "route_mode": "Prepaid",
-    "slug": "system1models"
-  },
-  "system1models-eu": {
-    "card_version": 2,
-    "model_count": 5,
-    "name": "Decision Models (EU)",
-    "privacy": "Policy documented",
-    "route_count": 5,
-    "route_mode": "Prepaid",
-    "slug": "system1models-eu"
-  },
   "telluvian": {
     "card_version": 2,
     "model_count": 0,
@@ -820,10 +856,10 @@
   },
   "telnyx": {
     "card_version": 2,
-    "model_count": 17,
+    "model_count": 18,
     "name": "Telnyx",
     "privacy": "Zero retention",
-    "route_count": 34,
+    "route_count": 36,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },
@@ -847,19 +883,19 @@
   },
   "tinfoil": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Tinfoil",
     "privacy": "Confidential + ZDR",
-    "route_count": 20,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
   },
   "together": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },
@@ -892,21 +928,12 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 62,
+    "model_count": 63,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 106,
+    "route_count": 108,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
-  },
-  "vercel-ai-gateway": {
-    "card_version": 2,
-    "model_count": 1,
-    "name": "Vercel AI Gateway",
-    "privacy": "Policy documented",
-    "route_count": 1,
-    "route_mode": "Prepaid",
-    "slug": "vercel-ai-gateway"
   },
   "voyage": {
     "card_version": 2,
@@ -928,10 +955,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 10,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 16,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
@@ -973,10 +1000,10 @@
   },
   "zro": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 6,
     "name": "Zro (MoonMath)",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "zro"
   }

@@ -472,6 +472,7 @@ def authorize_atomic(
     workspace_id: str,
     key_hash: str,
     estimate: int,
+    reservation: int | None = None,
     has_credit_candidate: bool,
     reservation_usage_type: str,
     idempotency_scope: str | None,
@@ -600,6 +601,16 @@ def authorize_atomic(
         if speculative and len(counts) > key_index and counts[key_index] == 0:
             raise _RetrySequentialKeyReserve("speculative key hold missed")
 
+    # The CREDIT hold: the reservation when the caller separates it from the
+    # estimate (authorize_candidates.hold_output_tokens: at most
+    # HOLD_OUTPUT_TOKENS of the output budget), else the estimate. The KEY
+    # takes the estimate in every path (lifetime cap, spend windows, strict
+    # windows, its recorded hold): a key cap is a promise to the key's owner
+    # that outstanding spend ceilings count against it, and the settle
+    # releases the recorded key hold, so the key counter carries what it
+    # admitted. The authorization row the builders write keeps the estimate.
+    hold = estimate if reservation is None else reservation
+
     def txn(transaction: Any) -> dict:
         if idempotency_scope is not None:
             existing = read_reservation_by_idempotency(transaction, pt, idempotency_scope)
@@ -614,21 +625,21 @@ def authorize_atomic(
         paused = False
         if batch_credit:
             selected_credit_shard = shard_candidates[0]
-            credit_hold = estimate
+            credit_hold = hold
         elif has_credit_candidate:
             for candidate in shard_candidates:
                 if armed:
                     reserved, paused = reserve_credit_with_pause(
-                        transaction, pt, workspace_id, estimate, shard=candidate,
+                        transaction, pt, workspace_id, hold, shard=candidate,
                     )
                 else:
-                    reserved = reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate)
+                    reserved = reserve_credit(transaction, pt, workspace_id, hold, shard=candidate)
                 if reserved:
                     selected_credit_shard = candidate
                     break
             else:
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
-            credit_hold = estimate
+            credit_hold = hold
 
         if armed:
             # Batched credit checks pause in its UPDATE predicate below.
@@ -712,7 +723,6 @@ def authorize_atomic(
             idempotency_scope=idempotency_scope,
             idempotency_fingerprint=idempotency_fingerprint,
             expires_at=expires_at,
-            created_at=created_at,
         )
         if request_record_write_mode == "typed":
             assert authorization is not None
@@ -732,7 +742,7 @@ def authorize_atomic(
         statements = []
         if batch_credit:
             statements.append(reserve_credit_statement(
-                pt, workspace_id, estimate, shard=selected_credit_shard, check_pause=armed,
+                pt, workspace_id, hold, shard=selected_credit_shard, check_pause=armed,
             ))
         if speculative:
             statements.append(reserve_key_statement(

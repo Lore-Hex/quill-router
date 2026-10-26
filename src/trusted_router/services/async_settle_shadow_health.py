@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import logging
 import math
 import signal
 import threading
 from collections.abc import Callable, Generator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
+from time import sleep
 from typing import Any, TypeVar, cast
 
 from trusted_router import async_settle_shadow_lifecycle as lifecycle
@@ -37,10 +39,12 @@ from trusted_router.async_settle_shadow_journal import (
     Reservation,
     Row,
 )
+from trusted_router.async_settle_shadow_stop import RuntimeStop
 from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_result
 from trusted_router.async_settle_shadow_v2_a1_health import (
     PUBLISHER_OPERATIONS,
     PUBLISHER_SLOT_TRACE,
+    TRACE_RULES,
 )
 from trusted_router.async_settle_shadow_v2_evidence import (
     CHECKPOINT_FIELDS,
@@ -55,16 +59,32 @@ from trusted_router.detached_jws import canonical
 from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.storage_gcp_async_admission import read_admission
 from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
-from trusted_router.storage_gcp_shadow_io import observe_spanner_rpcs, rpc_scope
+from trusted_router.storage_gcp_shadow_io import (
+    SessionCheckoutTimeout,
+    SessionUnavailable,
+    observe_spanner_rpcs,
+    rpc_scope,
+)
 from trusted_router.storage_gcp_shadow_observation import (
     FLUSH_SECONDS,
+    OBSERVER_READ_RPC_SECONDS,
     Budget,
+    ContentionLoss,
     ObservationStore,
     UnknownCommit,
 )
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+# Only code-produced release reasons may appear in logs. The evidence schema
+# still accepts bounded free text, which is retained unchanged in the trace.
+PUBLISHER_RELEASE_REASONS = frozenset({
+    "invalid_event", "gone_day", "frozen_day", "unknown_slot", "invalid_start",
+    "invalid_publisher_reply", "publisher_unknown_completion", "publisher_watchdog",
+    "publisher_worker_busy", "publisher_worker_exception", "publisher_submit_failed",
+})
+# One slot lets a delayed owner callback arrive without extending any RPC budget.
+PUBLISHER_WATCHDOG_GRACE = SLOT_US / 1_000_000
 
 
 class _ObserverQuiesced(Exception):
@@ -160,7 +180,12 @@ class HealthObserver(Observer):
         self._owned(None, started, self.health_read)
 
     def _workspace(self, key: str, started: float) -> None:
-        self._owned(key, started, partial(self.read, key))
+        def read() -> Any:
+            if self.service is not None and not self.service.store.session_ready(workspace=True):
+                raise SessionUnavailable("shadow_session_unavailable")
+            with rpc_scope(self.clock()+OBSERVER_READ_RPC_SECONDS, OBSERVER_READ_RPC_SECONDS, self.clock):
+                return self.read(key)
+        self._owned(key, started, read)
 
     async def run(self) -> None:
         enabled = self.enabled
@@ -270,6 +295,13 @@ class Port:
             require(svc.policy_enabled() and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
             require(not svc.journal.days[day].sealing, "closed_day")
+            # Signal demand only; the evidence worker owns all cap I/O. Keep
+            # the existing refusal/loss path when this request has no permits.
+            if svc.allocation_day != day:
+                svc.allocation_day = day
+                svc.allocation_failures = 0
+                svc.next_allocate = svc.store.clock()
+            svc.allocation_requested = True
             if terminal:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
                 svc.journal.terminal_permits[day] -= 1
@@ -421,11 +453,97 @@ class PublisherReply:
     actual_start_mono: float | None = None
     reason: str | None = None
     originals: dict[str, Any] | None = None
+    seen_claim_slot: int | None = None
+
+
+def failed_publisher_reply(boot: str, job: lifecycle.PublisherJob,
+                           reason: str = "publisher_unknown_completion") -> PublisherReply:
+    """Unknown completion; no claim, RPC timing, or publication is inferred."""
+    # Durable released-job signature, even when Python logs are unavailable:
+    # cycle_us=0, rpc_count=0, unknown_outcome=true, claim_at_ns=null.
+    # These are missing measurements, not proof that the worker did no I/O:
+    # rejected replies and the watchdog also use this signature.
+    trace = dict(v=2, policy_version=POLICY, contract_revision="a1",
+        day=day_at(job.slot*SLOT_US), boot=boot, slot=job.slot,
+        claim_start_us=job.slot*SLOT_US, claim_at_ns=None, observed_at_ns=None,
+        publisher_heartbeat_ns=None, body_sha256=None, ack_at_us=None, cycle_us=0,
+        outcome="failed", unknown_outcome=True, late_cycle=False, rpc_count=0, rpc_elapsed_us=0,
+        release_reason=reason)
+    return PublisherReply(trace, (), False, job.generation)
+
+
+def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> float:
+    hashed = int.from_bytes(hashlib.sha256(f"{boot}:{slot}".encode()).digest()[:8], "big")
+    # Healthy incumbent: server claim stamp B+3.6ms, observation B+54ms
+    # (after claim commit), publication ack B+126ms. Discover the committed
+    # claim at 60/90/120ms; waiting for publication is unnecessary. These
+    # measurements justify a margin, not a bound on a contended claim commit.
+    # Cold candidates retain their hash spread within the observation window.
+    # Hashing reduces collisions; without a roster it cannot bound their count.
+    return (60 + 30 * (hashed % 3) if incumbent_present else 30 * (hashed % 8)) / 1000
+
+
+# Claim-row protocol (one row: CLAIM_KIND "local/publish"; one health row:
+# HEALTH_KIND "local/fleet"). The semantics the publisher must keep:
+#   S1 one winner per slot: a claim lands only over a claim for an earlier slot,
+#      and a non-owner never replaces a claim newer than slot-2 (claim()).
+#   S2 publication is fenced by the won claim of the same slot and boot, with
+#      strictly increasing slots and observations (publish()).
+#   S3 the observation lies in [boundary, boundary+250 ms] and after the claim.
+#   S4 liveness: when the holder stops publishing, some follower claims within a
+#      bounded number of slots.
+#   S5 an aborted or lost claim is never retried within its slot.
+# Only the holder may write the claim row every slot. A recent acknowledged
+# publication is a fast path; otherwise storage must name this boot before it
+# renews. K=3 permits recovery after two failed cycles, but a boot with three
+# consecutive unpublished slots yields. A holder can recover even if failed
+# claim reads left its row three slots old. Followers start at age four, so
+# renewal and takeover windows never overlap, including unknown commits.
+# Takeover uses 64 fixed hash buckets, one bucket per slot, without widening.
+# For 8-20 boots this is 0.125-0.3125 candidates per slot in expectation, not a
+# cardinality guarantee (there is no roster). Even a lone survivor gets a turn
+# within 67 slots of the final claim. S1's transaction fence handles collisions;
+# S5 forbids retry. A continuously failing holder yields after K, so S4 is
+# bounded by K+TAKEOVER_MIN_AGE+TAKEOVER_SPREAD-1 slots after last publication.
+HOLDER_FAILURE_SLOTS = 3
+TAKEOVER_SPREAD = 64
+TAKEOVER_MIN_AGE = HOLDER_FAILURE_SLOTS + 1
+
+
+def takeover_rank(boot: str, claim_slot: int) -> int:
+    hashed = hashlib.sha256(f"takeover:{boot}:{claim_slot}".encode()).digest()[:8]
+    return int.from_bytes(hashed, "big") % TAKEOVER_SPREAD
+
+
+def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
+    """Warm followers take over a stale claim in hash-ranked waves, one per slot.
+
+    Every follower reads the same stale claim, so ranks are fixed for the whole
+    takeover. Rank r gets age TAKEOVER_MIN_AGE+r, repeating every spread
+    slots. Missed turns never accumulate into a later fleet-wide wave (S4).
+    """
+    if claim is None:
+        return True
+    age = slot - claim["slot"] - TAKEOVER_MIN_AGE
+    return age >= 0 and age % TAKEOVER_SPREAD == takeover_rank(boot, claim["slot"])
+
+
+def own_publication(body: dict[str, Any] | None, boot: str, slot: int) -> bool:
+    """The fleet health row is this boot's publication for slot-1 or slot-2."""
+    return bool(body is not None and body.get("publisher_boot_id") == boot
+                and body.get("slot") in (slot-1, slot-2))
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
-                  job: lifecycle.PublisherJob, claim_us: int, admission: Service) -> PublisherReply:
-    """Worker I/O only. All inputs are captured by the owner before submission."""
+                  job: lifecycle.PublisherJob, claim_us: int, admission: Service,
+                  incumbent: bool = False, incumbent_present: bool = False,
+                  warm: bool = False) -> PublisherReply:
+    """Worker I/O only. All inputs are captured by the owner before submission.
+
+    ``warm`` records whether this boot has installed fleet health. An existing
+    claim always requires spread takeover, even for a newly started follower;
+    only an absent claim row permits immediate cold election.
+    """
     started = store.clock()
     slot = job.slot
     day = day_at(slot*SLOT_US)
@@ -439,30 +557,105 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     ack_us = None
     rpc_durations: list[int] = []
     actual_us = claim_us
+    seen_claim_slot = None
     store.last_claim = None
     def record(elapsed: int) -> None:
         rpc_durations.append(elapsed)
     def attempt() -> None:
-        nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason
-        # Scope setup may sample time or be delayed. Admission happens AFTER it.
+        nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason, seen_claim_slot
+        if not store.session_ready():
+            reason = "session_unavailable"
+            return
+        # Establish scopes before the cadence wait: setup time can fit inside
+        # the mandatory two-second cadence instead of shifting every next start.
+        # Admission still follows both setup and waiting, with revocation checks.
         with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
-            with admission.admission_lock:
+            delay = job.earliest_start_mono - store.clock()
+            if delay > 0 and job.earliest_start_mono <= job.latest_start_mono:
+                sleep(delay)
+            if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
+                raise TimeoutError("publisher_admission")
+            try:
                 generation = admission.generation
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
-                reason = ("revoked" if generation != job.generation or admission.revocation_epoch else
+                reason = ("revoked" if generation != job.generation or admission.revocation_epoch
+                    or admission.admission_job != job else
                     "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
                         and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
                 if reason is not None:
                     return
                 budget = Budget(started + CYCLE_SECONDS, store.clock)
-                attempted, outcome = True, "failures"
+            finally:
+                admission.admission_lock.release()
+            # Only a won claim or an unknown commit skips the follower delay.
+            # A definite loser remains a follower; neither hint proves ownership.
+            previous_attempt = store.claim_attempt if store.claim_unknown else store.won
+            # A known abort can retain the recent-publication fast path. Only
+            # an unknown commit needs storage reconciliation before that path.
+            fast_incumbent = incumbent and not store.claim_unknown
+            holder = (not fast_incumbent and previous_attempt is not None
+                      and previous_attempt[0] == boot and slot-HOLDER_FAILURE_SLOTS <= previous_attempt[1] < slot)
+            if not fast_incumbent and not holder:
+                # A warm takeover is already spread across slots. Keep its
+                # follower delay in the 60-120ms band; the cold 0-210ms spread
+                # can otherwise consume the observation window before claiming.
+                stagger = follower_stagger(boot, slot, incumbent_present or warm)
+                sleep(stagger)
+                # The admitted start and budget include the stagger. Recheck the
+                # owner before any I/O; a retired job remains a missed slot.
+                if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
+                    raise TimeoutError("publisher_admission")
+                try:
+                    if (admission.generation != job.generation or admission.revocation_epoch
+                            or admission.admission_job != job):
+                        reason = "revoked"
+                        return
+                    if (int(store.wall()*1_000_000) // SLOT_US != slot
+                            or not incumbent_present and store.clock() > job.latest_start_mono):
+                        reason = "outside_window"
+                        return
+                finally:
+                    admission.admission_lock.release()
+            if not store.session_ready():
+                reason = "session_unavailable"
+                return
+            attempted, outcome = True, "failures"
+            if not fast_incumbent:
+                current = store.read_shadow_claim(budget)
+                seen_claim_slot = current["slot"] if current is not None else None
+                # Followers pay one lock-free read and no Commit RPC. A local
+                # attempt/won hint is never authority, especially after timeout.
+                owner = current is not None and current["owner_boot_id"] == boot
+                renew = False
+                if owner and current is not None and slot-HOLDER_FAILURE_SLOTS <= current["slot"] < slot:
+                    publication = store.read_shadow_publication(budget)
+                    published = store.last_publication
+                    if publication is not None and publication["publisher_boot_id"] == boot:
+                        if published is None or published[0] != boot or publication["slot"] > published[1]:
+                            published = store.last_publication = (boot, publication["slot"])
+                    # Publication evidence outranks any claim/tenure anchor:
+                    # missed slots consume the allowance too. Only a boot with
+                    # no publication uses the start of its initial claim tenure.
+                    since = (published[1] + 1 if published is not None and published[0] == boot
+                             else store.unpublished_since)
+                    if since is None:
+                        since = current["slot"]
+                    store.unpublished_since = since
+                    renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
+                if not renew and (owner or incumbent_present
+                        or current is not None and current["slot"] > slot-2
+                        or (warm or current is not None) and not takeover_due(boot, slot, current)
+                        or store.clock() > job.latest_start_mono):
+                    outcome = "lost_claims"
+                    return
             if not store.claim(boot, slot, actual_us, budget):
                 outcome = "lost_claims"
                 return
             claimed = True
+            assert store.last_claim is not None
             value = store.observe(boot, region,
-                                       revision, slot, budget)
+                revision, slot, budget, claim_at_ns=store.last_claim["claim_at_ns"])
             if not store.publish(value, budget):
                 return
             budget.remaining(CYCLE_SECONDS)
@@ -471,12 +664,22 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     try:
         attempt()
     except Exception as error:
+        if isinstance(error, (SessionUnavailable, SessionCheckoutTimeout)) and not rpc_durations:
+            attempted, outcome, reason = False, "missed_slots", "session_unavailable"
         unknown = isinstance(error, UnknownCommit)
+        if isinstance(error, ContentionLoss) and not claimed:
+            outcome = "lost_claims"
     elapsed = max(0, round((store.clock()-started)*1_000_000))
     late = attempted and elapsed > round(CYCLE_SECONDS*1_000_000)
     if late:
         outcome = "failures"
     claim = store.last_claim
+    observation_failure = (value is not None and claim is not None
+                           and value["observed_at_ns"] < claim["claim_at_ns"])
+    if observation_failure:
+        # A refused observation is not valid trace evidence. Preserve the real
+        # claim and measurements; the owner/lifecycle accounts an ordinary failure.
+        value, ack_us, outcome = None, None, "failures"
     trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=boot,
         slot=slot, claim_start_us=actual_us if attempted else None,
         claim_at_ns=claim["claim_at_ns"] if claim else None,
@@ -486,6 +689,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         cycle_us=elapsed if attempted else None,
         outcome={"missed_slots": "missed", "lost_claims": "lost_claim", "publications": "published", "failures": "failed"}[outcome],
         unknown_outcome=unknown, late_cycle=late, rpc_count=len(rpc_durations), rpc_elapsed_us=sum(rpc_durations))
+    if observation_failure:
+        trace["observation_failure"] = "claim_observed_order"
     originals = None
     if admission.startup_retention and outcome == "publications" and claim is not None:
         claim_raw = store.startup_claim_raw
@@ -497,7 +702,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             originals = dict(claim_raw=claim_raw, publication_raw=publication_raw,
                 publication_elapsed_us=interval_ns // 1000, claim_at_ns=claim["claim_at_ns"],
                 published_at_ns=value["observed_at_ns"] if value else None)
-    return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason, originals)
+    return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason, originals,
+                          seen_claim_slot)
 
 
 class Service:
@@ -517,7 +723,8 @@ class Service:
         self.bases = Lane("basis", self.journal.boot, transport)
         self.traces = Lane("trace", self.journal.boot, transport)
         self.basis_tokens, self.basis_tick = 10., store.clock()
-        self.observer = HealthObserver(self.workspaces, partial(read_admission, store.workspace_database), store.read_shadow_health,
+        self.observer = HealthObserver(self.workspaces, partial(read_admission, store.workspace_database,
+            deadline_seconds=OBSERVER_READ_RPC_SECONDS), store.read_shadow_health,
             cap=settings.async_settle_pilot_cap_micro, enabled=self.enabled, policy=POLICY,
             clock=store.clock, wall=store.wall)
         cast(Any, self.observer).lock = threading.RLock()
@@ -527,6 +734,10 @@ class Service:
         # Workers linearize ordinary generation admission under this lock.
         self.admission_lock = threading.RLock()
         self.generation = 0
+        self.admission_job: lifecycle.PublisherJob | None = None
+        self.incumbent_slot: int | None = None
+        self.seen_claim_slot: int | None = None
+        self.fleet_seen = False
         # Terminal epoch: every publisher job is issued in epoch zero. Once a
         # signal revokes it, no later owner transition can reopen admission.
         self.revocation_epoch = 0
@@ -546,14 +757,23 @@ class Service:
         self.last_claim_start = float("-inf")
         self.stopped = asyncio.Event()
         self.evidence_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-evidence")
+        self.session_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-session")
+        self.session_job: Future[bool] | None = None
         self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
         self.task: asyncio.Task[None] | None = None
         self.publisher_job: asyncio.Future[Any] | None = None
+        self.publisher_worker: Future[None] | None = None
+        self.publisher_worker_active = threading.Event()
         self.flush_job: asyncio.Future[Any] | None = None
         self.counters: dict[str, dict[str, Any]] = {}
         self.unknown_batches: set[Reservation] = set()
         self.unknown: tuple[str, list[Row], Row, Row | None] | None = None
         self.next_allocate = float("-inf")
+        self.allocation_day: str | None = None
+        self.allocation_requested = False
+        self.allocation_failures = 0
+        # The first owner tick must provision permits before cohort traffic.
+        # Only contention retries are dephased; refills remain demand-gated.
         self.next_flush = float("-inf")
         self.previous_closure: str | None = None
         self.last_closure_ack: dict[str, Any] | None = None
@@ -569,9 +789,30 @@ class Service:
         self.close_finished = False
         self.close_done = asyncio.Event()
         self.ensure_day(int(store.wall()*1_000_000))
+        self.runtime_stop = RuntimeStop(store, self.journal.boot, self.latch_stop)
+        self.breaker_recorded = False
+
+    def latch_stop(self) -> None:
+        # Worker-safe terminal latches: block requests and publisher starts now.
+        # The owner publishes the generation change through the expiry path.
+        self.settings.stop_async_settle_shadow()
+        self.revocation_epoch = 1
+
+    def record_breaker(self) -> None:
+        row = self.runtime_stop.tripped
+        if row is not None and not self.breaker_recorded:
+            day = self.ensure_day(row.value()["stopped_at_us"])
+            if day in self.counters:
+                target = self.counters[day]["diagnostics"]
+                self._counter_cells(day, target, {"runtime_breaker_trips": 1,
+                    "runtime_breaker_api_failures": row.value()["failure_count"]})
+                self.breaker_recorded = True
 
     def pin(self) -> tuple[Any, ...]:
-        return (self.settings.async_settle_shadow_policy, self.settings.async_settle_shadow_workspace_ids,
+        # The effective policy includes the canary expiry: when it passes, the
+        # pin changes, the generation is revoked and run() closes as opt_out.
+        return (self.settings.effective_async_settle_shadow_policy(self.store.wall()),
+                self.settings.async_settle_shadow_workspace_ids,
                 self.settings.async_settle_enabled, self.settings.async_settle_shadow_health_region,
                 self.settings.effective_serving_region)
 
@@ -585,7 +826,7 @@ class Service:
 
     def policy_enabled(self) -> bool:
         """Request-side pin check: owner lifecycle alone publishes revocations."""
-        return (self.settings.async_settle_shadow_policy == POLICY
+        return (self.settings.effective_async_settle_shadow_policy(self.store.wall()) == POLICY
                 and self.settings.async_settle_shadow_workspace_ids == self.workspaces
                 and bool(self.workspaces) and not self.settings.async_settle_enabled)
 
@@ -632,7 +873,12 @@ class Service:
 
     def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
+        self.record_breaker()
         self.enabled()  # Publish any changed admission generation before dispatch.
+        effects: tuple[lifecycle.Effect, ...] = ()
+        job = self.state.job
+        if job is not None and self.store.clock() > job.latest_start_mono+CYCLE_SECONDS+PUBLISHER_WATCHDOG_GRACE:
+            effects = self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_watchdog"))
         if not self.state.days:
             enabled = self.contender() if publisher is None else publisher
             days = []
@@ -641,8 +887,8 @@ class Service:
                 slot = start//SLOT_US
                 days.append(lifecycle.Day(day, slot, slot-1, (start//lifecycle.DAY_US+1)*lifecycle.DAY_US//SLOT_US-1))
             self._state = lifecycle.State(days=tuple(days), publisher_enabled=enabled, generation=self.generation)
-        return self.accept(lifecycle.Tick(stamp, self.store.clock(), self.enabled() and not self.stopped.is_set()
-                                           and (publisher is True or self.contender())))
+        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock(), self.enabled() and not self.stopped.is_set()
+                                                     and (publisher is True or self.contender())))
 
     def schedule_cycle(self, slot: int, claim_us: int) -> None:
         self.assert_owner()
@@ -658,35 +904,122 @@ class Service:
         if job is None or job.slot != slot:
             return
         reply = publish_cycle(self.store, self.journal.boot, self.settings.effective_serving_region,
-            self.settings.source_revision, job, claim_us, self)
+            self.settings.source_revision, job, claim_us, self, self.is_incumbent(slot), self.has_incumbent(slot),
+            self.warm())
         self.publisher_reply(reply)
 
-    def publisher_reply(self, reply: PublisherReply) -> tuple[lifecycle.Effect, ...]:
+    def is_incumbent(self, slot: int) -> bool:
+        # An acknowledged incumbent runs immediately on consecutive slots,
+        # without follower discovery or re-election. S1 and RPC budgets remain
+        # unchanged; the storage fence still permits only one winner per slot.
         self.assert_owner()
+        if self.incumbent_slot in (slot-1, slot-2):
+            return True
+        # Durable incumbency: the installed fleet health is this boot's own
+        # publication, which publish() wrote only under this boot's won claim
+        # (S2). The owner may have rejected that reply; storage still names the
+        # holder, and treating it as a follower let the claim age out.
+        return own_publication(self._installed_health_body(), self.journal.boot, slot)
+
+    def _installed_health_body(self) -> dict[str, Any] | None:
+        health = self.observer.health
+        body = health.get("body") if isinstance(health, dict) else None
+        return body if isinstance(body, dict) else None
+
+    def warm(self) -> bool:
+        """This boot has installed fleet health, so a stale claim is a takeover."""
+        self.assert_owner()
+        self.fleet_seen = self.fleet_seen or self._installed_health_body() is not None
+        return self.fleet_seen
+
+    def has_incumbent(self, slot: int) -> bool:
+        """Recent health or a fresh claim snapshot protects the incumbent."""
+        self.assert_owner()
+        health = self.observer.health
+        return (self.is_incumbent(slot) or self.seen_claim_slot == slot-1) or bool(health is not None
+            and health["body"]["slot"] in (slot-1, slot-2))
+
+    def publisher_reply(self, reply: PublisherReply, *,
+                        job: lifecycle.PublisherJob | None = None) -> tuple[lifecycle.Effect, ...]:
+        self.assert_owner()
+        current = self.state.job
+        def invalid(group: str, error: Exception | None = None, *, release: bool = True) -> tuple[lifecycle.Effect, ...]:
+            # This diagnostic includes only field/type labels, a fixed group
+            # and rule, and an allowlisted outcome. No reply measurements or
+            # arbitrary field names/messages are interpolated.
+            fields = PUBLISHER_SLOT_TRACE.fields.keys() | PUBLISHER_SLOT_TRACE.optional_fields.keys()
+            value = reply.trace if isinstance(reply, PublisherReply) and isinstance(reply.trace, dict) else {}
+            message = str(error) if error is not None else group + "_checks"
+            safe_messages = {"evidence_schema_gap", "native-json-domain", "a1-server-slot",
+                "evidence_size", "integer", "json_encoding", "json_shape", "json_depth", "duplicate_key"} | TRACE_RULES
+            if error is not None and message not in safe_messages:
+                message = (repr(error.args[0]) if isinstance(error, KeyError) and error.args
+                    and type(error.args[0]) is str and error.args[0] in fields else "redacted_non_schema_message")
+            field_types = {key: type(value[key]).__name__ if key in value else "missing"
+                           for key in sorted(fields)}
+            # Extra field names can themselves contain payloads. Report every
+            # extra field's key/value TYPES, with an ordinal instead of its name.
+            extras = [(type(key).__name__, type(item).__name__)
+                      for key, item in value.items() if key not in fields]
+            outcome = value.get("outcome")
+            outcome = outcome if type(outcome) is str and outcome in (
+                "missed", "lost_claim", "published", "failed") else "invalid_or_missing"
+            durations = reply.rpc_durations if isinstance(reply, PublisherReply) else None
+            logger.warning("shadow_v2_publisher_reply_rejected group=%s exception_type=%s "
+                "exception_message=%s outcome=%s trace_types=%s extra_field_types=%s "
+                "reply_type=%s trace_type=%s claimed_type=%s generation_type=%s "
+                "rpc_durations_type=%s rpc_duration_element_types=%s",
+                group, type(error).__name__ if error is not None else "none", message,
+                outcome, field_types, extras, type(reply).__name__,
+                type(reply.trace).__name__ if isinstance(reply, PublisherReply) else "missing",
+                type(reply.claimed).__name__ if isinstance(reply, PublisherReply) else "missing",
+                type(reply.generation).__name__ if isinstance(reply, PublisherReply) else "missing",
+                type(durations).__name__,
+                [type(item).__name__ for item in durations] if isinstance(durations, (tuple, list)) else [])
+            if release and current is not None:
+                return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
+                    current.slot, current.generation, "invalid_publisher_reply"))
+            self.publisher_faults += 1
+            return (lifecycle.Fault("invalid_publisher_reply"),)
+        # The dispatch identity survives even a completely malformed result.
+        # A late callback must never complete the replacement job.
+        if job is not None and job != current:
+            return invalid("identity", release=False)
+        job = current
+        if (isinstance(reply, PublisherReply) and isinstance(reply.trace, dict)
+                and type(reply.trace.get("slot")) is int and type(reply.generation) is int
+                and (job is None or (reply.trace["slot"], reply.generation) != (job.slot, job.generation))):
+            return invalid("identity", release=False)
         if (not isinstance(reply, PublisherReply) or not isinstance(reply.trace, dict)
                 or type(reply.generation) is not int or type(reply.claimed) is not bool
                 or not isinstance(reply.rpc_durations, tuple)
                 or any(type(value) is not int or value < 0 for value in reply.rpc_durations)):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return invalid("type")
         trace = reply.trace
-        job = self.state.job
         # Validate the entire immutable identity before counters or ownership.
         if (job is None or trace.get("slot") != job.slot or reply.generation != job.generation
                 or trace.get("day") != day_at(job.slot*SLOT_US)):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return invalid("identity")
         day, slot = day_at(job.slot*SLOT_US), job.slot
         try:
             PUBLISHER_SLOT_TRACE(trace)
-        except (ValueError, TypeError, KeyError):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+        except (ValueError, TypeError, KeyError) as error:
+            return invalid("contract", error)
+        if trace["outcome"] == "failed" and reply.actual_start_mono is None:
+            # Unknown worker/submission failures have no observed start. The
+            # release transition owns their trace and accounting exactly once.
+            return self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
+                slot, reply.generation, trace.get("release_reason", "publisher_unknown_completion")))
         effects = self.accept(lifecycle.SlotOutcome(int(self.store.wall()*1_000_000), slot,
             trace["outcome"], generation=reply.generation, actual_start_mono=reply.actual_start_mono), trace=trace)
         if any(isinstance(e, lifecycle.Fault) for e in effects):
-            self.publisher_faults += 1
-            return (lifecycle.Fault("invalid_publisher_reply"),)
+            return effects
+        # One failed cycle does not revoke a recently acknowledged incumbent.
+        # is_incumbent bounds this grace to two slots; stale callbacks never get
+        # here, and followers cannot promote themselves from a claim alone.
+        if trace["outcome"] == "published":
+            self.incumbent_slot = slot
+        self.seen_claim_slot = reply.seen_claim_slot
         if reply.originals is not None and trace["outcome"] == "published":
             self.startup_publication = reply.originals
         if trace["outcome"] != "missed" and reply.actual_start_mono is not None:
@@ -892,8 +1225,24 @@ class Service:
         with self.lock:
             before = self.state
             self._state, effects = lifecycle.step(before, event)
+            if isinstance(event, (lifecycle.SlotOutcome, lifecycle.PublisherFailed)):
+                self.publisher_faults += sum(isinstance(e, lifecycle.Fault) for e in effects)
+            if before.job is not None and self.state.job is None:
+                for effect in effects:
+                    if isinstance(effect, lifecycle.Fault):
+                        logger.warning("shadow_v2_publisher_released slot=%s generation=%s reason=%s",
+                                       before.job.slot, before.job.generation,
+                                       effect.reason if effect.reason in PUBLISHER_RELEASE_REASONS else "other")
+                self.publishing.discard(day_at(before.job.slot*SLOT_US))
+                if self.publisher_job is not None and not self.publisher_job.done():
+                    self.publisher_job.set_result(None)
+                if isinstance(event, lifecycle.PublisherFailed) and self.publisher_worker is not None:
+                    self.publisher_worker.cancel()  # Only queued work can be cancelled.
             with self.admission_lock:
                 self.generation = self.state.generation
+                self.admission_job = self.state.job
+            if isinstance(event, lifecycle.PublisherFailed) and before.job is not None and self.state.job is None:
+                self.incumbent_slot = None
             for effect in effects:
                 if isinstance(effect, lifecycle.StartFinalClose):
                     self.journal.days[effect.day].sealing = True
@@ -906,10 +1255,18 @@ class Service:
                     claim_attempts=d.attempted, lost_claims=d.lost, publications=d.published, failures=d.failed))
             for effect in effects:
                 if isinstance(effect, lifecycle.EmitTrace):
-                    if trace is not None and effect.slot == trace["slot"]:
+                    emitted = trace if trace is not None and effect.slot == trace["slot"] else None
+                    if effect.unknown_outcome:
+                        assert before.job is not None
+                        reason = next(e.reason for e in effects if isinstance(e, lifecycle.Fault))
+                        emitted = failed_publisher_reply(self.journal.boot, before.job, reason).trace
+                        day = day_at(effect.slot*SLOT_US)
+                        self.operation(day, "unknown_outcomes")
+                        self.histogram(day, "cycle_us", 0)
+                    if emitted is not None:
                         day = day_at(effect.slot*SLOT_US)
                         try:
-                            self.traces.append(day, trace)
+                            self.traces.append(day, emitted)
                         except ValueError:
                             self.journal.loss(day)
                             self.accept(lifecycle.TraceLost(event.stamp, day, effect.slot))
@@ -941,6 +1298,7 @@ class Service:
                 value, error = operation(), None
             except Exception as caught:
                 value, error = None, caught
+            self.record_breaker()  # Include a trip from drain IO before resuming closure.
 
     async def drive_async(self, work: Generator[Callable[[], Any], Any, None]) -> None:
         self.assert_owner()
@@ -961,6 +1319,7 @@ class Service:
                 loop.call_soon_threadsafe(deliver, result.value, result.error)
             self.evidence_executor.submit(execute)
             value, error = await reply
+            self.record_breaker()
 
     def flush(self, deadline: float) -> None:
         self.drive(self._flush(min(deadline, self.termination_deadline or deadline)))
@@ -1200,6 +1559,18 @@ class Service:
     def maintain(self) -> None:
         self.drive(self.maintenance())
 
+    def allocation_jitter(self, seconds: float) -> float:
+        # A distinct boot UUID spreads a simultaneous fleet restart. Include
+        # the day and attempt so retries and midnight do not repeat one phase.
+        # Eager first attempts still burst. In the simultaneous 26/40-process
+        # lock witness, a 60 s ceiling gave 170/255 s last-grant tails; 40 s
+        # gives 165/230 s with 89/183 aborts (baseline: 350/819). These tails
+        # remain longer than baseline lock-step retries (130/200 s). Jitter
+        # reduces contention; it neither bounds fleet writes/s nor avoids all
+        # retry collisions after five-second maintenance quantization.
+        seed = f"{self.journal.boot}/{self.allocation_day}/{self.allocation_failures}"
+        return seconds*int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big")/2**64
+
     def maintenance(self) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
         deadline = self.store.clock()+FLUSH_SECONDS
@@ -1211,21 +1582,34 @@ class Service:
         with self.lock:
             if self.journal.stopped:
                 return
+            if self.allocation_day != day:
+                # Startup and rollover supply demand for the day's first block.
+                # Preserve next_allocate's throttle; same-day refills need port demand.
+                self.allocation_day = day
+                self.allocation_requested = True
+                self.allocation_failures = 0
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
-            allocate = self.store.clock() >= self.next_allocate and (terminal or event)
+            allocate = (self.allocation_requested and self.allocation_day == day
+                        and self.store.clock() >= self.next_allocate and (terminal or event))
             if allocate:
                 self.next_allocate = self.store.clock()+5
         if allocate:
             try:
                 yield partial(self.store.allocate, day, terminal=terminal, event=event, budget=Budget(deadline, self.store.clock))
                 with self.lock:
+                    self.allocation_requested = False
+                    self.allocation_failures = 0
                     if event:
                         self.journal.grant(day, RESERVATION_BLOCK)
                     if terminal:
                         self.journal.terminal_permits[day] = self.journal.terminal_permits.get(day, 0)+RESERVATION_BLOCK
-            except Exception:
+            except Exception as error:
                 with self.lock:
+                    if isinstance(error, ContentionLoss):
+                        self.allocation_failures += 1
+                        self.next_allocate = self.store.clock()+5+self.allocation_jitter(
+                            min(40., 5.*2**min(4, self.allocation_failures)))
                     target = self.counters[day]["diagnostics"]
                     self._counter_cells(day, target, {"cap_unavailable": target.get("cap_unavailable", 0)+1})
         yield from self._flush(deadline)
@@ -1240,28 +1624,63 @@ class Service:
         if job is None or job.slot != slot:
             return
         args = (self.store, self.journal.boot, self.settings.effective_serving_region,
-                self.settings.source_revision, job, stamp, self)
+                self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot),
+                self.warm())
+        if (self.publisher_worker is not None and not self.publisher_worker.cancelled()
+                and self.publisher_worker_active.is_set()):
+            # A watchdog cannot stop a running thread. Keep the one-worker
+            # executor bounded while its old call remains outstanding.
+            self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_worker_busy"))
+            return
+        fallback = failed_publisher_reply(self.journal.boot, job, "publisher_worker_exception")
         if self.loop is None:
-            self.publisher_reply(publish_cycle(*args))
+            try:
+                result = publish_cycle(*args)
+            except BaseException:
+                self.publisher_reply(fallback, job=job)
+                raise
+            self.publisher_reply(result, job=job)
             return
         loop = self.loop
         reply = loop.create_future()
         self.publisher_job = reply
+        worker_active = threading.Event()
+        worker_active.set()
+        self.publisher_worker_active = worker_active
         def deliver(result: PublisherReply) -> None:
             try:
-                self.publisher_reply(result)
+                self.publisher_reply(result, job=job)
             finally:
                 if not reply.done():
                     reply.set_result(None)
         def execute() -> None:
-            result = publish_cycle(*args)
-            loop.call_soon_threadsafe(deliver, result)
-        self.publisher_executor.submit(execute)
+            result = fallback
+            try:
+                result = publish_cycle(*args)
+            except BaseException:
+                logger.exception("shadow_v2_publisher_failed slot=%s generation=%s", job.slot, job.generation)
+                raise
+            finally:
+                # Delivery can run before the executor marks its Future done.
+                worker_active.clear()
+                loop.call_soon_threadsafe(deliver, result)
+        try:
+            self.publisher_worker = self.publisher_executor.submit(execute)
+        except Exception:
+            worker_active.clear()
+            deliver(failed_publisher_reply(self.journal.boot, job, "publisher_submit_failed"))
+            raise
 
     async def run(self) -> None:
         self.assert_owner()
         self.loop = asyncio.get_running_loop()
+        if self.policy_enabled():
+            await asyncio.to_thread(self.runtime_stop.poll)
+        self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                lambda: not self.close_finished)
         while not self.stopped.is_set() and self.enabled():
+            if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
+                self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
             now = self.store.clock()
             now_us = int(self.store.wall()*1_000_000)
             for effect in self.tick(now_us):
@@ -1271,6 +1690,7 @@ class Service:
                 self.next_flush = now+5
                 self.flush_job = self.loop.create_task(self.drive_async(self.maintenance()))
             await asyncio.sleep(.01)
+        self.record_breaker()
         if not self.stopped.is_set():
             await self.close("opt_out", from_loop=True)
 
@@ -1306,6 +1726,8 @@ class Service:
         signal.signal(signal.SIGTERM, stop)
 
     def start(self) -> None:
+        if self.enabled() and not self.runtime_stop.poll():
+            return
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
@@ -1387,15 +1809,25 @@ class Service:
             self.unclosed |= bool(self.journal.days)
             if self.signal_handler is not None and signal.getsignal(signal.SIGTERM) is self.signal_handler:
                 signal.signal(signal.SIGTERM, self.previous_signal_handler)
+            self.session_executor.shutdown(wait=False, cancel_futures=True)
             self.publisher_executor.shutdown(wait=False, cancel_futures=True)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
+            if reason != "opt_out" or self.runtime_stop.tripped is None or self.runtime_stop.persisted:
+                await self.runtime_stop.close()
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
-    if (settings.async_settle_shadow_policy != POLICY or not settings.async_settle_shadow_workspace_ids
+    if (settings.effective_async_settle_shadow_policy() != POLICY or not settings.async_settle_shadow_workspace_ids
             or settings.async_settle_enabled or backend is None or not hasattr(backend, "_database")):
         return
-    service = Service(settings, ObservationStore(backend._database))
+    store = ObservationStore(backend._database)
+    service = Service(settings, store)
+    store.prepare_session(service.journal.boot)
+    if not service.runtime_stop.poll():
+        service.session_executor.shutdown(wait=False, cancel_futures=True)
+        service.publisher_executor.shutdown(wait=False, cancel_futures=True)
+        service.evidence_executor.shutdown(wait=False, cancel_futures=True)
+        return
     app.state.async_settle_shadow_observation = service
     @app.on_event("startup")
     async def start() -> None:
@@ -1403,3 +1835,4 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     @app.on_event("shutdown")
     async def stop() -> None:
         await service.close()
+        await service.runtime_stop.close()

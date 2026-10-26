@@ -1,4 +1,4 @@
-"""Discover Gemini on Vertex itself and admit only priced, canaried routes."""
+"""Discover Gemini and Claude on Vertex; admit only priced, canaried routes."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import google.auth
 import httpx
 from google.auth.transport.requests import Request
 
+from scripts.pricing import vertex_claude
 from scripts.pricing.base import ProviderPricingResult, fetch_html, fetch_json, validate
 from scripts.pricing.manifest import (
     apply_canary_results,
@@ -29,14 +30,16 @@ MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src/trusted_router/data/provider_models/google-vertex.json"
 )
-_CHAT_ID = re.compile(r"^gemini-\d+(?:\.\d+)?-(?:pro|flash(?:-lite)?)(?:-preview)?$")
+_CHAT_ID = re.compile(r"^gemini-\d+(?:\.\d+)?-(?:pro|flash(?:-lite)?|argon)(?:-preview)?$")
 _RECOVERABLE_HOLDS = frozenset(
     {
         "provider-canary-failed",
         "price-unavailable",
         "awaiting-price",
         "vertex-metadata-unavailable",
+        "vertex-price-context-incomplete",
         "delisted-upstream",
+        "unsupported-vertex-api",
     }
 )
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
@@ -55,8 +58,8 @@ def _authorization() -> tuple[dict[str, str], str]:
     return {"Authorization": f"Bearer {credentials.token}"}, project
 
 
-def _live_model_ids(headers: dict[str, str]) -> set[str]:
-    models: set[str] = set()
+def _publisher_rows(headers: dict[str, str], publisher: str) -> list[dict[str, Any]]:
+    models: list[dict[str, Any]] = []
     token: str | None = None
     seen: set[str] = set()
     for _ in range(20):
@@ -64,24 +67,40 @@ def _live_model_ids(headers: dict[str, str]) -> set[str]:
         if token:
             params["pageToken"] = token
         payload = fetch_json(
-            f"{MODELS_URL}?{urlencode(params)}", extra_headers=headers, follow_redirects=False
+            f"https://aiplatform.googleapis.com/v1beta1/publishers/{publisher}/models?{urlencode(params)}",
+            extra_headers=headers, follow_redirects=False
         )
         rows = payload.get("publisherModels") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             raise RuntimeError("google-vertex: publisherModels list missing")
         for row in rows:
             name = row.get("name") if isinstance(row, dict) else None
-            if isinstance(name, str) and name.startswith("publishers/google/models/gemini-"):
-                models.add(name.removeprefix("publishers/google/models/"))
+            if isinstance(name, str) and name.startswith(f"publishers/{publisher}/models/"):
+                models.append(row)
         token = payload.get("nextPageToken")
         if not token:
             if not models:
-                raise RuntimeError("google-vertex: empty Gemini publisher catalog")
+                raise RuntimeError(f"google-vertex: empty {publisher} publisher catalog")
             return models
         if not isinstance(token, str) or token in seen:
             raise RuntimeError("google-vertex: pagination token did not advance")
         seen.add(token)
     raise RuntimeError("google-vertex: publisher catalog exceeded 20 pages")
+
+
+def _live_model_ids(headers: dict[str, str]) -> set[str]:
+    return {
+        row["name"].removeprefix("publishers/google/models/")
+        for row in _publisher_rows(headers, "google")
+        if row["name"].startswith("publishers/google/models/gemini-")
+    }
+
+
+def _live_claude_rows(headers: dict[str, str]) -> dict[str, dict[str, Any]]:
+    rows = vertex_claude.native_rows(_publisher_rows(headers, "anthropic"))
+    if not rows:
+        raise RuntimeError("google-vertex: no recognized Claude publisher models")
+    return rows
 
 
 def _manifest_rows(path: Path) -> dict[str, dict[str, Any]]:
@@ -91,9 +110,9 @@ def _manifest_rows(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _metadata() -> dict[str, dict[str, Any]]:
-    # AI Studio provides model limits, never evidence of Vertex availability.
+    # First-party manifests provide limits, never evidence of Vertex availability.
     result: dict[str, dict[str, Any]] = {}
-    for name in ("google-vertex.json", "google-ai-studio.json"):
+    for name in ("google-vertex.json", "google-ai-studio.json", "anthropic.json"):
         path = MANIFEST_PATH.with_name(name)
         for model_id, row in _manifest_rows(path).items():
             result.setdefault(model_id, {}).update(row)
@@ -104,7 +123,7 @@ def _probe(headers: dict[str, str], project: str, native_id: str) -> tuple[bool,
     config: dict[str, Any] = {"maxOutputTokens": 128}
     if native_id.startswith("gemini-2.5-flash"):
         config["thinkingConfig"] = {"thinkingBudget": 0}
-    elif native_id.startswith("gemini-3"):
+    elif native_id.startswith(("gemini-3", "gemini-4")):
         config["thinkingConfig"] = {"thinkingLevel": "low"}
     try:
         response = httpx.post(
@@ -144,19 +163,21 @@ def fetch() -> ProviderPricingResult:
     _DISCOVERED_MANIFEST_ROWS = {}
     headers, project = _authorization()
     native_ids = _live_model_ids(headers)
-    prices = parse(fetch_html(URL))
-    unpriced = sorted(
-        f"google/{mid}"
-        for mid in native_ids
-        if _CHAT_ID.fullmatch(mid) and f"google/{mid}" not in prices
-    )
+    claude_rows = _live_claude_rows(headers)
+    html = fetch_html(URL)
+    prices = parse(html)
+    claude_tariffs = vertex_claude.parse(html) if claude_rows else {}
+    prices.update({mid: tariff.price for mid, tariff in claude_tariffs.items()})
+    chat_ids = {f"google/{mid}" for mid in native_ids if _CHAT_ID.fullmatch(mid)} | claude_rows.keys()
     metadata = _metadata()
     existing = _manifest_rows(MANIFEST_PATH)
     rows: dict[str, dict[str, Any]] = {}
-    for native_id in sorted(native_ids):
-        model_id = f"google/{native_id}"
-        row: dict[str, Any] = {"id": model_id, "upstream_id": native_id}
-        if not _CHAT_ID.fullmatch(native_id):
+    discovered = {
+        f"google/{mid}": {"id": f"google/{mid}", "upstream_id": mid}
+        for mid in native_ids
+    } | claude_rows
+    for model_id, row in sorted(discovered.items()):
+        if model_id not in chat_ids:
             # Media/live/specialized APIs require their own adapters and billing.
             row.update(routable=False, routable_reason="unsupported-vertex-api")
         else:
@@ -172,10 +193,19 @@ def fetch() -> ProviderPricingResult:
                     row[key] = source[key]
             if not row.get("context_length") or not row.get("max_output_tokens"):
                 row.update(routable=False, routable_reason="vertex-metadata-unavailable")
+            tariff = claude_tariffs.get(model_id)
+            if tariff and tariff.context_limit and row.get("context_length"):
+                if row["context_length"] > tariff.context_limit:
+                    # Context is currently a model-wide contract, not a hard
+                    # per-provider limit. Never publish a partially priced route.
+                    if row.get("routable") is not False:
+                        row.update(routable=False, routable_reason="vertex-price-context-incomplete")
+                    prices.pop(model_id, None)
         old = existing.get(model_id, {})
         if old.get("routable") is False and old.get("routable_reason") not in _RECOVERABLE_HOLDS:
             row.update(routable=False, routable_reason=old.get("routable_reason"))
         rows[model_id] = row
+    unpriced = sorted(chat_ids - prices.keys())
     candidates = {
         mid for mid, row in rows.items() if mid in prices and row.get("routable") is not False
     }
@@ -185,9 +215,15 @@ def fetch() -> ProviderPricingResult:
             for reason in _RECOVERABLE_HOLDS
         )
     )
+    checked |= {
+        mid for mid in candidates
+        if existing.get(mid, {}).get("upstream_id") != rows[mid]["upstream_id"]
+        and mid in claude_rows
+    }
     healthy: set[str] = set()
     for mid in sorted(checked):
-        ok, status = _probe(headers, project, rows[mid]["upstream_id"])
+        probe = vertex_claude.probe if mid in claude_rows else _probe
+        ok, status = probe(headers, project, rows[mid]["upstream_id"])
         rows[mid]["canary_status_code"] = status
         if ok:
             healthy.add(mid)
@@ -196,7 +232,7 @@ def fetch() -> ProviderPricingResult:
     priced = {
         mid: value
         for mid, value in prices.items()
-        if mid in rows and _CHAT_ID.fullmatch(rows[mid]["upstream_id"])
+        if mid in rows and mid in chat_ids
     }
     errors = validate(priced, [])
     if errors or not priced:

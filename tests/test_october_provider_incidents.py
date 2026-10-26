@@ -6,7 +6,7 @@ import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
-from trusted_router import catalog_ingest, provider_lifecycle
+from trusted_router import catalog_ingest, provider_contracts, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 
@@ -56,17 +56,19 @@ def test_held_perplexity_tariff_is_available_only_for_settlement() -> None:
         endpoint.usage_type == "Credits"
         and (
             endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
-            or endpoint.provider in {"system1models", "system1models-eu"}
+            or endpoint.provider in {"decisionmodelsio", "decisionmodelsio-eu"}
         )
         for endpoint in HELD_PREPAID_SETTLEMENT_ENDPOINTS.values()
     )
 
 
-@pytest.mark.parametrize("provider", ["crusoe", "sambanova"])
+@pytest.mark.parametrize("provider", ["crusoe", "sambanova", "lightning"])
 def test_rejected_operator_credentials_block_only_prepaid(
     monkeypatch: pytest.MonkeyPatch, provider: str,
 ) -> None:
     # Simulate fresh discovery claiming availability after a key rejection.
+    # Isolate credential holds from the later provider-wide security incident.
+    monkeypatch.setattr(provider_contracts, "PROVIDER_INCIDENT_HOLD_REASONS", {})
     monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {
         provider: "operator-credential-rejected",
     })
@@ -77,7 +79,7 @@ def test_rejected_operator_credentials_block_only_prepaid(
     endpoints = {
         f"{slug}/{usage}": ModelEndpoint(
             id=f"{slug}/{usage}", model_id=model, provider=slug,
-            usage_type=usage, upstream_id=model,
+            usage_type=usage, upstream_id="lightning-ai/fixture" if slug == "lightning" else model,
         )
         for slug in (provider, "novita") for usage in ("Credits", "BYOK")
     }
@@ -87,6 +89,28 @@ def test_rejected_operator_credentials_block_only_prepaid(
     assert {"novita/Credits", "novita/BYOK"} <= filtered.keys()
     monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {})
     assert catalog_ingest._filter_unserved_provider_endpoints(endpoints) == endpoints
+
+
+def test_lightning_fresh_discovery_cannot_bypass_operator_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "lightning-ai/future-model"
+    monkeypatch.setattr(provider_contracts, "PROVIDER_INCIDENT_HOLD_REASONS", {})
+    monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {
+        "lightning": "operator-credential-rejected",
+    })
+    monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
+    monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
+    endpoints = {
+        usage: ModelEndpoint(
+            id=usage, model_id=model, provider="lightning", usage_type=usage, upstream_id=model,
+        ) for usage in ("Credits", "BYOK")
+    }
+    # Even a new explicit registration must not bypass the rejected operator key.
+    assert catalog_ingest._filter_unserved_provider_endpoints(
+        endpoints, explicit_model_ids=frozenset({model}),
+    ) == {"BYOK": endpoints["BYOK"]}
 
 
 @pytest.mark.parametrize("native", ["kat-coder-pro-v2", "kat-coder-air-v2.5", "kat-coder-pro-v2.5"])
@@ -164,15 +188,24 @@ def test_streamlake_qwen3_235b_instruct_retirement_is_observation_dated_and_scop
 
 
 @pytest.mark.parametrize("usage", ["Credits", "BYOK"])
+@pytest.mark.parametrize("model,native,cutoff", [
+    ("qwen/qwen3-coder-next", "qwen3-coder-next", datetime(2026, 10, 12, 16, 4, tzinfo=UTC)),
+    ("qwen/qwen3-30b-a3b-thinking-2507", "Qwen3-30B-A3B-Thinking-2507",
+     datetime(2026, 10, 25, 17, 17, tzinfo=UTC)),
+])
 def test_stale_streamlake_qwen_catalog_cannot_reenable_retired_route(
-    monkeypatch: pytest.MonkeyPatch, usage: str,
+    monkeypatch: pytest.MonkeyPatch, usage: str, model: str, native: str, cutoff: datetime,
 ) -> None:
-    cutoff = provider_lifecycle.STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT
+    assert not provider_lifecycle.provider_model_retired(
+        "streamlake", model, native, at=cutoff - timedelta(microseconds=1),
+    )
+    assert provider_lifecycle.provider_model_retired("streamlake", model, at=cutoff)
+    assert provider_lifecycle.provider_model_retired("streamlake", "other-alias", native, at=cutoff)
+    assert not provider_lifecycle.provider_model_retired("control-provider", model, native, at=cutoff)
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
     monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
     monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
-    model = "qwen/qwen3-coder-next"
     result = ProviderPricingResult(
         slug="streamlake", source="stale_snapshot", fetched_url="https://www.streamlake.ai",
         prices={model: ModelPrice(200_000, 1_000_000)},
@@ -181,10 +214,10 @@ def test_stale_streamlake_qwen_catalog_cannot_reenable_retired_route(
     endpoints = {
         provider: ModelEndpoint(
             id=provider, provider=provider, model_id=model,
-            usage_type=usage, upstream_id="qwen3-coder-next",
+            usage_type=usage, upstream_id=native,
         )
-        for provider in ("streamlake", "novita")
+        for provider in ("streamlake", "control-provider")
     }
     assert catalog_ingest._filter_unserved_provider_endpoints(endpoints, at=cutoff) == {
-        "novita": endpoints["novita"],
+        "control-provider": endpoints["control-provider"],
     }

@@ -57,6 +57,8 @@ MANIFEST_PATH = (
 # tombstone policy so provider retirements cannot leave stale routes behind.
 EXPECTED_MODELS = [
     "minimax/minimax-m3",
+    # October 22: JSON, SSE, and tools work despite the missing endpoint row.
+    "minimax/minimax-m3.1-flash",
     "z-ai/glm-5.2",
     # Official replacement; live inference works despite a STOPPED feed row.
     "z-ai/glm-5.3-flash",
@@ -91,6 +93,7 @@ _NATIVE_TO_OR_ID = {
     "moonshotai/Kimi-K2.5": "moonshotai/kimi-k2.5",
     "MiniMaxAI/MiniMax-M2.7": "minimax/minimax-m2.7",
     "MiniMaxAI/MiniMax-M3": "minimax/minimax-m3",
+    "MiniMaxAI/MiniMax-M3.1-Flash": "minimax/minimax-m3.1-flash",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
     "zai-org/GLM-5.3-Flash": "z-ai/glm-5.3-flash",
 }

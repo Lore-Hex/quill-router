@@ -20,7 +20,7 @@
   <link rel="preload" href="/assets/archivo.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/assets/river-close.webp" as="image" fetchpriority="high">
   <link rel="stylesheet" href="/assets/exchange.css?v=$version">
-  $spot_api_styles
+
   <noscript><style>.hero-provider-track{animation:none}.hero-provider-group+.hero-provider-group{display:none}.hero-provider-row{max-width:none;width:100%;overflow-x:auto;mask-image:none;scrollbar-width:thin}.hero-provider-group a{min-width:0}</style></noscript>
   <script src="/assets/analytics.js?v=$version" defer></script>
   <script src="/assets/exchange.js?v=$version" defer></script>
@@ -35,7 +35,7 @@
     <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation" aria-label="Menu" hidden><span aria-hidden="true" class="menu-icon"></span></button>
     <nav id="primary-navigation" aria-label="Main navigation">
       <a href="#buyers">How it works</a>
-      $spot_api_link
+
       <a href="#sellers">For suppliers</a>
       <details class="market-picker market-directory"><summary>Markets <svg class="market-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m4 6 4 4 4-4"/></svg></summary><nav aria-label="Market directory">$markets</nav></details>
       <a class="button secondary nav-action" href="#brochure">Get the buyer deck</a>
@@ -54,7 +54,6 @@
         <div class="hero-provider-row"><div class="hero-provider-track">$provider_ticker</div></div>
       </div>
     </section>
-    $spot_api
     <section class="shell section" id="demo" aria-labelledby="demo-title">
       <div class="section-intro"><p class="eyebrow">See the exchange in action</p><h2 id="demo-title">One gateway.<br>Smarter model routing.</h2><p>Watch a 90-second walkthrough of routing different workloads through one gateway.</p></div>
       <video controls playsinline preload="none" poster="/assets/nyte-routing-demo-poster.jpg" aria-label="NYTE enterprise routing demonstration, with on-screen captions" style="display:block;width:100%;height:auto;aspect-ratio:16/9;margin-top:28px;border-radius:8px;background:#0b1711"><source src="/assets/nyte-routing-demo.mp4" type="video/mp4">Watch the <a href="/assets/nyte-routing-demo.mp4">NYTE routing demonstration</a>.</video>
@@ -98,7 +97,8 @@
         <article><h3>Serve real workloads</h3><p>Approved endpoints can be matched with buyer requirements. Listing and purchase volumes depend on review and demand.</p></article>
       </div>
     </section>
-    $open_stack
+
+
     <section class="shell section questions"><div><p class="eyebrow">Before you begin</p><h2>Good questions.</h2></div><div class="faq">
       <details><summary>What exactly am I buying?</summary><p>Access to model inference through TrustedRouter. AI tokens measure model inputs and outputs. This is an inference service, not a securities or cryptocurrency exchange.</p></details>
       <details><summary>Does this market guarantee local processing?</summary><p>The regional name identifies the audience for this page. Processing location, residency and provider eligibility depend on the route and agreed terms. Confirm these requirements with us before sending sensitive data.</p></details>

@@ -17,6 +17,7 @@ async function indexMime(context) {
   try {
     for (const width of [1440, 768, 390, 320]) {
       const context = await browser.newContext({viewport: {width, height: 1000}});
+      await context.route('**/token-exchange/events', route => route.fulfill({status:204}));
       await indexMime(context);
       const page = await context.newPage();
       const errors = [];
@@ -27,6 +28,15 @@ async function indexMime(context) {
       await page.evaluate(() => document.fonts.ready);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `index overflow ${width}`);
       assert.ok((await page.locator('.ti-asof').innerText()).includes('As of'));
+      assert.equal(await page.locator('#nav a[href="/index"]').getAttribute('aria-current'), 'page');
+      assert.equal(await page.locator('.site-footer').count(), 1);
+      if (width <= 880) {
+        await page.getByRole('button', {name:'Menu',exact:true}).click();
+        await page.keyboard.press('Tab');
+        assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('href')), '/confidential');
+        await page.keyboard.press('Escape');
+        assert.equal(await page.locator('#menuBtn').getAttribute('aria-expanded'), 'false');
+      }
       const first = page.locator('[data-ti-chart="nyte"]');
       const month = first.getByRole('button', {name: '1M', exact: true});
       await month.click();
@@ -43,6 +53,8 @@ async function indexMime(context) {
       const frontier = grades.getByRole('button', {name: 'Frontier', exact: true});
       await frontier.click();
       assert.equal(await frontier.getAttribute('aria-pressed'), 'false');
+      assert.ok(await page.locator('.index-actions .btn').evaluate(el => el.scrollWidth <= el.clientWidth), 'supplier CTA clipped');
+      await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({path: `${output}/nyte-index-${width}.png`, fullPage: true});
       assert.deepEqual(errors, []);
       await context.close();

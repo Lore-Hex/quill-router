@@ -10,6 +10,8 @@ package service
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +34,7 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/auditor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/owner"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/settlelog"
@@ -112,6 +116,13 @@ type Config struct {
 	// one. The front door reads its clock only for spans of time, which an
 	// offset leaves as they were, and an auditor's parts keep a true clock.
 	ClockOffset time.Duration
+
+	// edgeMade, when set, is given the edge once it is made: the tests'
+	// view of it.
+	edgeMade func(*edge.Edge)
+	// edgeClock, when set, is the edge's clock (time.Now otherwise): the
+	// tests' clock ahead of the emulator's.
+	edgeClock func() time.Time
 }
 
 // Defaults is the spike's configuration, but for what a deployment names:
@@ -162,12 +173,50 @@ type EdgeConfig struct {
 	Upstream string
 	Token    string
 	BootWait time.Duration
+	// The routing snapshot the edge polls (edge.SnapshotConfig, E2): its URL
+	// on the upstream, empty for none; the manifest keys' Ed25519 public keys
+	// in unpadded base64url and their kids, each a comma-separated list in
+	// the same order (two during a rotation); and the plane it is signed
+	// for, as cloud/region. Shadow runs the comparator against it.
+	SnapshotURL, SnapshotPublicKey, SnapshotKid, SnapshotPlane string
+	Shadow                                                     bool
+	// PolicyURL is the edge policy the edge polls (edge.PolicyConfig, E2
+	// G8) on the upstream, empty for none. It is signed with the routing
+	// snapshot's key for the same plane, so it takes SnapshotPublicKey,
+	// SnapshotKid and SnapshotPlane.
+	PolicyURL string
+	// DecideShadow runs the full-response shadow (edge.DecideShadowConfig,
+	// E2 G10): the decide pipeline over each authorize the edge passes on,
+	// compared with Python's answer and rows, logging counts alone. It needs
+	// SnapshotURL and PolicyURL. Off (the default), the key and workspace
+	// cache and the decide copy are never made.
+	DecideShadow bool
+	// Decide runs the decide path (edge.DecideConfig, E2 G11): the edge
+	// admits the authorizes it decides through the node's front door,
+	// inserts their rows and answers them. It needs SnapshotURL and
+	// PolicyURL. Off (the default), the edge answers nothing.
+	Decide bool
 }
 
 func (c Config) valid() error {
 	switch {
 	case c.Edge.Address != "" && (c.Edge.Upstream == "" || c.Edge.Token == ""):
 		return errors.New("service: an edge needs its upstream and the internal token")
+	case c.Edge.SnapshotURL != "" && c.Edge.Address == "":
+		return errors.New("service: the routing snapshot is the edge's, which needs its address")
+	case c.Edge.Shadow && c.Edge.SnapshotURL == "":
+		return errors.New("service: the edge's shadow compares against a routing snapshot, which needs its URL")
+	case c.Edge.SnapshotURL != "" && (c.Edge.SnapshotPublicKey == "" || c.Edge.SnapshotKid == "" ||
+		c.Edge.SnapshotPlane == ""):
+		return errors.New("service: the routing snapshot needs its public key, kid and plane")
+	case c.Edge.PolicyURL != "" && c.Edge.Address == "":
+		return errors.New("service: the edge policy is the edge's, which needs its address")
+	case c.Edge.PolicyURL != "" && (c.Edge.SnapshotPublicKey == "" || c.Edge.SnapshotKid == "" ||
+		c.Edge.SnapshotPlane == ""):
+		return errors.New("service: the edge policy needs the routing snapshot's public key, kid and plane")
+	case (c.Edge.DecideShadow || c.Edge.Decide) && (c.Edge.SnapshotURL == "" || c.Edge.PolicyURL == ""):
+		return errors.New("service: the edge's decide shadow and decide path decide from the routing snapshot and " +
+			"the edge policy, which need their URLs")
 	case c.Edge.Address != "" && !c.Admission:
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
@@ -249,6 +298,15 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if err != nil {
 		return err
 	}
+	// The client's session before anything else uses it: no session take
+	// of the process's ever waits, so none is served on an ended context
+	// (which ends the client's session worker for good) and none blocks the
+	// client's close (store.WarmSession). Bounded by the client's own
+	// session creations, past Run's context: a node that cannot get a
+	// session does not start.
+	if err := s.WarmSession(); err != nil {
+		return fmt.Errorf("service: the Spanner client's session: %w", err)
+	}
 	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.publish())
 	if err != nil {
 		return err
@@ -309,12 +367,68 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		MaxIdleConnsPerHost: 256,
 		IdleConnTimeout:     90 * time.Second,
 	}
-	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
-		Transport: transport, Serving: p.serving})
+	snapshot, err := snapshotConfig(cfg.Edge)
 	if err != nil {
 		_ = ln.Close()
 		return err
 	}
+	policy, err := policyConfig(cfg.Edge)
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	// The key and workspace cache and its reads exist only with the decide
+	// shadow or the decide path on; the two share it.
+	var decideShadow *edge.DecideShadowConfig
+	var decide *edge.DecideConfig
+	var cache *gwstate.Cache
+	if cfg.Edge.DecideShadow || cfg.Edge.Decide {
+		if cache, err = gwstate.NewCache(gwstate.CacheConfig{Reader: s}); err != nil {
+			_ = ln.Close()
+			return err
+		}
+	}
+	// The edge's alerts (edge.AlertWouldAdmit, the decide path's) are written
+	// as the auditor's are, each kind with a policy of its own
+	// (docs/runbooks/fastpath-alerts.md).
+	edgeAlert := func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }
+	if cfg.Edge.DecideShadow {
+		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
+	}
+	if cfg.Edge.Decide {
+		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
+	}
+	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
+		Clock: cfg.edgeClock, Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy,
+		Admitter:     &p.admitter,
+		DecideShadow: decideShadow, Decide: decide})
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	// The cache is closed (its reads ended, before the store's client
+	// closes) only after the last Lookup: once the edge's handlers have
+	// returned, the decide path's refunds and inserts have ended, and the
+	// decide shadow has compared what it followed.
+	followed := make(chan struct{})
+	if cache != nil {
+		p.run("edge decide cache", func(ctx context.Context) error {
+			cache.Run(ctx)
+			<-followed
+			cache.Close()
+			return nil
+		})
+	}
+	if cfg.edgeMade != nil {
+		cfg.edgeMade(e)
+	}
+	// The snapshot's and the policy's polls and the shadow comparator,
+	// beside the server and never in its way; with none configured this
+	// returns at once.
+	p.run("edge snapshot", func(ctx context.Context) error {
+		e.Run(ctx)
+		return nil
+	})
 	p.whenLeaving(func() { p.retiring.Store(true) })
 	handlers := &inFlight{}
 	requests, endRequests := context.WithCancel(context.Background())
@@ -341,10 +455,77 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		_ = srv.Close()
 		endRequests()
 		handlers.wait()
+		// The decide path's refunds run beside its passes, and its inserts'
+		// transactions can outlive the inserts: Run returns, and the client
+		// closes, only once both have ended, since closing the client under
+		// a transaction still waiting for its session panics. The refunds
+		// are best effort here: the owner and the front door are parts of
+		// their own and may stop first, and a refund they no longer serve
+		// fails within its 1 s, its hold ending with the lease as any refund
+		// not sent does (decision 12). The drain is short: with the session
+		// warmed no take waits, an insert's transaction ends within its
+		// 1.5 s, a refund within 1 s, all well inside the node's 30 s stop
+		// (TimeoutStopSec) after the hand-off and the server's Stopping.
+		e.WaitDecide()
+		s.WaitLeasedInserts()
+		// What the decide shadow follows ends with its requests; its reads
+		// end with them, and then the cache may close.
+		e.WaitDecideShadow()
+		close(followed)
 		transport.CloseIdleConnections()
 		return nil
 	})
 	return nil
+}
+
+// snapshotConfig is the edge's routing snapshot from the node's flags; the
+// zero config, polling nothing, when no URL is given.
+func snapshotConfig(c EdgeConfig) (edge.SnapshotConfig, error) {
+	if c.SnapshotURL == "" {
+		return edge.SnapshotConfig{}, nil
+	}
+	u, keys, err := pinned("routing snapshot", c.SnapshotURL, c)
+	if err != nil {
+		return edge.SnapshotConfig{}, err
+	}
+	return edge.SnapshotConfig{URL: u, Keys: keys, Plane: c.SnapshotPlane, Shadow: c.Shadow}, nil
+}
+
+// policyConfig is the edge policy from the node's flags: its URL, and the
+// routing snapshot's keys and plane; the zero config, polling nothing, when
+// no URL is given.
+func policyConfig(c EdgeConfig) (edge.PolicyConfig, error) {
+	if c.PolicyURL == "" {
+		return edge.PolicyConfig{}, nil
+	}
+	u, keys, err := pinned("edge policy", c.PolicyURL, c)
+	if err != nil {
+		return edge.PolicyConfig{}, err
+	}
+	return edge.PolicyConfig{URL: u, Keys: keys, Plane: c.SnapshotPlane}, nil
+}
+
+// pinned parses a document's URL and the routing snapshot key's public
+// keys and kids, each a comma-separated list in the same order.
+func pinned(what, rawURL string, c EdgeConfig) (*url.URL, []edge.SnapshotKey, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, nil, fmt.Errorf("service: the %s's URL %q is not an http or https URL", what, rawURL)
+	}
+	publics, kids := strings.Split(c.SnapshotPublicKey, ","), strings.Split(c.SnapshotKid, ",")
+	if len(publics) != len(kids) {
+		return nil, nil, errors.New("service: the routing snapshot's public keys and kids pair up")
+	}
+	var keys []edge.SnapshotKey
+	for i, public := range publics {
+		key, err := base64.RawURLEncoding.Strict().DecodeString(public)
+		if err != nil || len(key) != ed25519.PublicKeySize {
+			return nil, nil, errors.New("service: a routing snapshot public key is not 32 bytes of " +
+				"unpadded base64url")
+		}
+		keys = append(keys, edge.SnapshotKey{Kid: kids[i], PublicKey: key})
+	}
+	return u, keys, nil
 }
 
 // storeBoots reads the edge's boots from the store: production's entity
@@ -356,7 +537,8 @@ func (b storeBoots) Boot(ctx context.Context, kid string) (edge.Boot, bool, erro
 	if err != nil || !found {
 		return edge.Boot{}, false, err
 	}
-	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified}, true, nil
+	return edge.Boot{Kid: boot.Kid, PublicKey: boot.PublicKey, Verified: boot.Verified, ImageDigest: boot.ImageDigest,
+		DeclaresUsageHeartbeat: boot.DeclaresUsageHeartbeat}, true, nil
 }
 
 // lifecycle starts a process's parts with start and runs them until ctx
@@ -404,6 +586,9 @@ type parts struct {
 	leaving []func()
 	// retiring also follows Leave, which keeps the parts running.
 	retiring atomic.Bool
+	// admitter is the edge's: the admission node's front door, bound once
+	// it is made, and none on a process without one.
+	admitter edge.LateAdmitter
 
 	mu  sync.Mutex
 	err error
@@ -563,6 +748,8 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		return err
 	}
 	p.run("front door", door.Run)
+	// The edge, made before the node, admits through its front door.
+	p.admitter.Bind(door)
 
 	handlers := &inFlight{}
 	requests, endRequests := context.WithCancel(context.Background())
@@ -906,10 +1093,16 @@ var alertOutput io.Writer = os.Stderr
 // carries what the alert carries: a lease or an authorization and what
 // happened, never a record's contents.
 func writeAlert(w io.Writer, subject, what string) {
+	writeAlertOf(w, subject, what, auditor.AlertKind(what))
+}
+
+// writeAlertOf is writeAlert with its kind given: an alert that is not the
+// auditor's (edge.AlertWouldAdmit).
+func writeAlertOf(w io.Writer, subject, what, kind string) {
 	line, err := json.Marshal(map[string]any{
 		"message":                       "fastpath alert: " + what,
 		"subject":                       subject,
-		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": kind},
 	})
 	if err != nil {
 		log.Printf("alert: %s: %s", subject, what)

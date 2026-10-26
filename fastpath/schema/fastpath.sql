@@ -1,8 +1,12 @@
 -- The fast admission service's schema: its own tables, which
 -- scripts/deploy/migrate_fastpath.sh creates in production, statement for
 -- statement (docs/design/fast-admission-production-rollout.md, W4; a test
--- holds the two equal), and production's tr_credit_balance, the one table it
--- shares. The emulator's databases in CI are made from it whole.
+-- holds the two equal), and copies of the production tables and indexes it
+-- shares (tr_credit_balance, tr_reservation and its indexes by expiry, by
+-- idempotency scope and by authorization, tr_entities,
+-- tr_gateway_authorization), which the
+-- migration leaves alone. The emulator's databases in CI are made from it
+-- whole.
 --
 -- GoogleSQL, statements separated by semicolons. Section numbers are the
 -- design's (docs/design/fast-admission-and-batched-settlement.md). The
@@ -61,6 +65,65 @@ CREATE TABLE tr_reservation (
   ) PRIMARY KEY (reservation_id);
 
 CREATE INDEX tr_reservation_by_expiry ON tr_reservation (settled, expires_at);
+
+-- Production's unique index on a reservation's idempotency scope, as
+-- scripts/deploy/migrate_typed_counters.sh makes it, word for word: two
+-- authorizations of one scope cannot both land, whichever path writes them,
+-- so it is what arbitrates a retried authorization. A test holds the two
+-- equal, and the migration leaves it alone.
+CREATE UNIQUE NULL_FILTERED INDEX tr_reservation_by_idemp
+    ON tr_reservation (idempotency_scope);
+
+-- Production's index of reservations by authorization, as
+-- scripts/deploy/migrate_typed_counters.sh makes it, word for word: an
+-- authorization's reservation found from the authorization alone, as the
+-- edge reads an authorization's rows back. A test holds the two equal, and
+-- the migration leaves it alone.
+CREATE NULL_FILTERED INDEX tr_reservation_by_authorization
+    ON tr_reservation (authorization_id);
+
+-- Production's authorizations, as scripts/deploy/migrate_request_retention.sh
+-- makes the table, word for word, with every column
+-- scripts/deploy/migrate_spend_lease.sh has added to it since, in its order,
+-- so the emulator's rows meet production's columns, types and nullability.
+-- Production's 30-day row deletion policy on terminal_at is left out, as it
+-- is from tr_reservation here. The service does not write it yet; a test
+-- holds the two equal, and the migration leaves it alone.
+CREATE TABLE tr_gateway_authorization (
+    authorization_id STRING(64) NOT NULL,
+    workspace_id STRING(64) NOT NULL,
+    key_hash STRING(64) NOT NULL,
+    reservation_id STRING(64),
+    model_id STRING(256) NOT NULL,
+    provider STRING(64) NOT NULL,
+    usage_type STRING(16) NOT NULL,
+    estimated_microdollars INT64 NOT NULL,
+    settled BOOL NOT NULL DEFAULT (false),
+    created_at TIMESTAMP NOT NULL,
+    terminal_at TIMESTAMP,
+    payload STRING(MAX),
+    spend_lease_id STRING(64),
+    spend_lease_gen INT64,
+    spend_lease_allocated_micro INT64,
+    spend_lease_token STRING(MAX),
+    spend_lease_status STRING(16),
+    spend_lease_exp TIMESTAMP,
+    idempotency_fingerprint STRING(64),
+    finalization_outcome STRING(32),
+    finalized_cost_microdollars INT64,
+    spend_lease_admission_receipt STRING(MAX),
+    spend_lease_receipt_hash STRING(64),
+    started_at TIMESTAMP,
+    heartbeat_seq INT64,
+    heartbeat_at TIMESTAMP,
+    heartbeat_hash STRING(64),
+    selected_endpoint_id STRING(128),
+    delivered_usage STRING(MAX),
+    pricing_snapshot STRING(MAX),
+    stage_d_boot_kid STRING(128),
+    invocation_nonce STRING(64),
+    gateway_request_id STRING(37)
+  ) PRIMARY KEY (authorization_id);
 
 -- Production's entity table, as scripts/deploy/infra.sh creates
 -- it, word for word: the edge reads an enclave's registered boot from it
@@ -318,3 +381,23 @@ CREATE TABLE tr_fastpath_member (
   heartbeat_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
   CONSTRAINT tr_fastpath_member_state CHECK (state IN ('serving', 'leaving', 'withdrawn')),
 ) PRIMARY KEY (address);
+
+-- Who decides an authorization at the edge
+-- (docs/design/fast-admission-e2-decide.md, §9; fastpathctl decide,
+-- docs/runbooks/fastpath-turn-off.md): a workspace's edge nodes of a cloud
+-- may answer its authorizations for a region themselves only while its row
+-- here says so. A workspace with no row decides nowhere, and the table
+-- starts empty, so nobody decides; nothing reads it yet but fastpathctl.
+-- The switch, tr_fastpath_workspace, stays the one switch: this only
+-- chooses who decides for a workspace it enables, and disabling a
+-- workspace leaves its rows here as they are.
+CREATE TABLE tr_fastpath_edge_decide (
+  workspace_id STRING(64) NOT NULL,
+  -- The edge plane's cloud: gcp.
+  cloud STRING(16) NOT NULL,
+  -- The region an authorization is for, as the gateway chooses it from
+  -- the request.
+  region STRING(32) NOT NULL,
+  decide BOOL NOT NULL,
+  changed_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+) PRIMARY KEY (workspace_id, cloud, region);

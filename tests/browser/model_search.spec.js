@@ -12,7 +12,7 @@ for (const width of [1280, 390]) {
   test(`header search matches model names across punctuation at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: catalog } }));
-    await page.goto("/models");
+    await page.goto("/");
     await page.locator("[data-open-search]").first().click();
     for (const query of ["Qwen 3.8 27B", "QWEN 3-8 27B", "qwen3.8-27b", "27b qwen 3.8"]) {
       await page.locator("#model-query").fill(query);

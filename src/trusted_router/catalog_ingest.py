@@ -140,6 +140,7 @@ def _endpoint(
         provider=provider_slug,
         usage_type="BYOK" if usage_type.lower() == "byok" else "Credits",
         upstream_id=upstream_id or model.upstream_id,
+        context_length=model.context_length,
         supported_parameters=union_supported_parameters(
             model.supported_parameters,
             manifest_supported_parameters(
@@ -211,14 +212,11 @@ def _has_token_prices(raw_model: dict[str, Any]) -> bool:
 _EXPIRING_PROVIDER_MANIFEST_SLUGS = EXPIRING_PROVIDER_MANIFEST_SLUGS
 
 
-def _apply_provider_manifest_expiry(
-    endpoints: dict[str, ModelEndpoint],
-) -> dict[str, ModelEndpoint]:
-    """Attach one provider-scoped deadline to every manifest-backed route.
+def provider_manifest_deadlines() -> dict[str, datetime]:
+    """Each expiring provider manifest's deadline, read from the bundled files.
 
-    Some media routes are installed statically after supplemental ingestion,
-    so applying the policy at the final endpoint boundary is what guarantees
-    chat, image, video, Credits, and BYOK routes all fail closed together.
+    A function of the files alone, not of any clock: the routing snapshot's
+    publisher reads it to place its windows the same way in every process.
     """
     deadlines: dict[str, datetime] = {}
     for provider_slug in _EXPIRING_PROVIDER_MANIFEST_SLUGS:
@@ -231,6 +229,19 @@ def _apply_provider_manifest_expiry(
         deadlines[provider_slug] = (
             _provider_manifest_valid_until(provider_slug, raw) or _EXPIRED_PROVIDER_MANIFEST
         )
+    return deadlines
+
+
+def _apply_provider_manifest_expiry(
+    endpoints: dict[str, ModelEndpoint],
+) -> dict[str, ModelEndpoint]:
+    """Attach one provider-scoped deadline to every manifest-backed route.
+
+    Some media routes are installed statically after supplemental ingestion,
+    so applying the policy at the final endpoint boundary is what guarantees
+    chat, image, video, Credits, and BYOK routes all fail closed together.
+    """
+    deadlines = provider_manifest_deadlines()
 
     return {
         endpoint_id: (
@@ -266,6 +277,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "near-ai",
         "phala",
         "telnyx",
+        "tinfoil",
         "together",
         "wafer",
         "engy",
@@ -289,6 +301,9 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "lyceum",
         "amazon-bedrock",
         "greenference",
+        "muna",
+        "abliteration",
+        "coralbricks",
         "boundless",
         "zro",
         "byteplus",
@@ -995,6 +1010,9 @@ def _ingested_models_and_endpoints(
 
         for prompt_price, completion_price, tiers, slug, raw_ep in per_endpoint_prices:
             upstream_id = str(raw_ep.get("model_id") or model_id)
+            host_window = api_windows.get((slug, model_id), 0) or _context_window(
+                raw_ep.get("context_length")
+            )
             # A model-wide architecture is not proof that each host accepts
             # images. Keep missing endpoint declarations conservative.
             if slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
@@ -1006,6 +1024,7 @@ def _ingested_models_and_endpoints(
                     usage_type="Credits",
                     upstream_id=upstream_id,
                     supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
+                    context_length=host_window,
                     input_modalities=_modalities(
                         raw_ep.get("input_modalities"),
                         default=("text",),
@@ -1026,6 +1045,7 @@ def _ingested_models_and_endpoints(
                     usage_type="BYOK",
                     upstream_id=upstream_id,
                     supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
+                    context_length=host_window,
                     input_modalities=_modalities(
                         raw_ep.get("input_modalities"),
                         default=("text",),
@@ -1064,8 +1084,9 @@ def _supplemental_provider_models_and_endpoints(
     endpoints: dict[str, ModelEndpoint] = {}
     for provider_slug in (
         "abliterate",
-        "system1models",
-        "system1models-eu",
+        "abliteration",
+        "decisionmodelsio",
+        "decisionmodelsio-eu",
         "novita",
         "nebius",
         "minimax",
@@ -1126,6 +1147,7 @@ def _supplemental_provider_models_and_endpoints(
         "sail-research",
         "reka",
         "nextbit",
+        "nextbit-eu",
         "akashml",
         "mancer",
         "aion-labs",
@@ -1139,6 +1161,8 @@ def _supplemental_provider_models_and_endpoints(
         "lyceum",
         "amazon-bedrock",
         "greenference",
+        "muna",
+        "coralbricks",
         "boundless",
         "zro",
         "byteplus",
@@ -1151,7 +1175,7 @@ def _supplemental_provider_models_and_endpoints(
         "meta",
         "openrouter",
     ):
-        if held_decisions_only and provider_slug not in {"system1models", "system1models-eu"}:
+        if held_decisions_only and provider_slug not in {"decisionmodelsio", "decisionmodelsio-eu"}:
             continue
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
@@ -1209,8 +1233,10 @@ def _supplemental_provider_models_and_endpoints(
             embedding = raw_model.get("model_type") == "embedding"
             decision = raw_model.get("model_type") == "decision"
             if decision and (
-                provider_slug not in {"system1models", "system1models-eu"}
-                or not model_id.startswith(provider_slug + "/s1-")
+                not (
+                    (provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"} and model_id.startswith(provider_slug + "/s1-"))
+                    or (provider_slug == "regolo" and model_id == "cloudflare/clef-flash" and upstream_id == "clef-flash")
+                )
                 or not decision_manifest_price_is_valid(raw_model)
             ):
                 continue
@@ -1355,7 +1381,7 @@ def _supplemental_provider_models_and_endpoints(
                     raw_model.get("input_modalities"),
                     default=("text",),
                 ),
-                output_modalities=_modalities(
+                output_modalities=("decision",) if decision else _modalities(
                     raw_model.get("output_modalities"),
                     default=("text",),
                 ),
@@ -1399,6 +1425,7 @@ def _supplemental_provider_models_and_endpoints(
                     upstream_id=upstream_id,
                     supported_parameters=supported_parameters,
                     input_modalities=model.input_modalities,
+                    context_length=context_length,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1428,6 +1455,7 @@ def _supplemental_provider_models_and_endpoints(
                     upstream_id=upstream_id,
                     supported_parameters=supported_parameters,
                     input_modalities=model.input_modalities,
+                    context_length=context_length,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,

@@ -177,7 +177,8 @@ def test_console_identity_checkout_shows_and_preserves_the_nudge() -> None:
     )
 
     assert page.status_code == 200
-    assert "requires $25.00 more in lifetime top-ups" in page.text
+    assert "Verification needs $25.00 more in top-ups." in page.text
+    assert 'value="25" checked' in page.text
     assert 'name="purpose" value="identity_verification"' in page.text
     assert "purpose=identity_verification" in checkout.headers["location"]
 

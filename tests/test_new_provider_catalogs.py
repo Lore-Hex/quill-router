@@ -13,6 +13,7 @@ from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     PROVIDERS,
 )
+from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
 
 
 def test_digitalocean_official_pricing_uses_integer_microdollars() -> None:
@@ -163,7 +164,11 @@ def test_new_provider_manifests_create_only_eligible_routes() -> None:
     )
     assert all(
         endpoint.prompt_price_microdollars_per_million_tokens > 0
-        and endpoint.completion_price_microdollars_per_million_tokens > 0
+        and (
+            endpoint.completion_price_microdollars_per_million_tokens == 0
+            if (endpoint.provider, endpoint.model_id) in INPUT_ONLY_PROVIDER_MODELS
+            else endpoint.completion_price_microdollars_per_million_tokens > 0
+        )
         for endpoint in cloudflare
     )
 

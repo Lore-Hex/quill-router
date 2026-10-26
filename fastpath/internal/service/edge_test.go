@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
@@ -255,6 +257,211 @@ func TestAnEdgeNeedsItsUpstreamAndToken(t *testing.T) {
 	}
 }
 
+// TestAProcessWithTheSnapshotPollsItBesideTheEdge: configured, the edge's
+// routing snapshot and edge policy are polled from the upstream with the
+// internal token by the running process, and authorizes still get Python's
+// answer as it was.
+func TestAProcessWithTheSnapshotPollsItBesideTheEdge(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	polls := make(chan string, 16)
+	policyPolls := make(chan string, 16)
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/edge-policy" {
+			select {
+			case policyPolls <- r.Header.Get(edge.TokenHeader):
+			default:
+			}
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"compiling","retry_at":0}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/internal/fastpath/routing-snapshot" {
+			select {
+			case polls <- r.Header.Get(edge.TokenHeader):
+			default:
+			}
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"snapshot-refused","retry_at":0}`))
+			return
+		}
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":{"code":402}}`))
+	}))
+	defer python.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config(ln)
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: python.URL, Token: "token-1",
+		SnapshotURL: python.URL + "/internal/fastpath/routing-snapshot", SnapshotKid: "routing-snapshot-1",
+		SnapshotPublicKey: base64.RawURLEncoding.EncodeToString(public), SnapshotPlane: "gcp/us-central1", Shadow: true,
+		PolicyURL: python.URL + "/internal/fastpath/edge-policy"}
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	for what, ch := range map[string]chan string{"routing snapshot": polls, "edge policy": policyPolls} {
+		select {
+		case got := <-ch:
+			if got != "token-1" {
+				t.Fatalf("the %s poll carried %q, not the internal token", what, got)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatalf("the process did not poll the %s", what)
+		}
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	var resp *http.Response
+	eventually(t, 20*time.Second, "the edge serving", func() (bool, error) {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+edgeLn.Addr().String()+"/internal/gateway/authorize",
+			strings.NewReader(`{"model":"m"}`))
+		req.Header.Set(edge.TokenHeader, "token-1")
+		var err error
+		resp, err = client.Do(req)
+		return err == nil, nil
+	})
+	defer resp.Body.Close()
+	if answer, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusPaymentRequired || string(answer) != `{"error":{"code":402}}` {
+		t.Fatalf("python's answer: %d %s", resp.StatusCode, answer)
+	}
+}
+
+// TestTheEdgesSnapshotGoesWithTheEdgeAndItsKey: the routing snapshot is the
+// edge's, needs its key, kid and plane, and the shadow needs the snapshot;
+// with no URL the edge polls nothing, which is the default.
+func TestTheEdgesSnapshotGoesWithTheEdgeAndItsKey(t *testing.T) {
+	cfg := Defaults()
+	cfg.Admission, cfg.Address, cfg.Region, cfg.Key = true, "127.0.0.1:1", "us-central1", key
+	cfg.SettleTopic, cfg.RecordTopic = "projects/spike/topics/settle-log", "projects/spike/topics/records"
+	if cfg.Edge.SnapshotURL != "" || cfg.Edge.Shadow {
+		t.Fatalf("the defaults poll or compare: %+v", cfg.Edge)
+	}
+	public := base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	whole := EdgeConfig{Address: "127.0.0.1:2", Upstream: "http://python.internal", Token: "t",
+		SnapshotURL: "http://python.internal/internal/fastpath/routing-snapshot", SnapshotPublicKey: public,
+		SnapshotKid: "routing-snapshot-1", SnapshotPlane: "gcp/us-central1", Shadow: true}
+	cfg.Edge = whole
+	if err := cfg.valid(); err != nil {
+		t.Fatalf("a whole snapshot: %v", err)
+	}
+	snapshot, err := snapshotConfig(whole)
+	if err != nil || snapshot.URL == nil || len(snapshot.Keys) != 1 || len(snapshot.Keys[0].PublicKey) != ed25519.PublicKeySize ||
+		!snapshot.Shadow || snapshot.Keys[0].Kid != "routing-snapshot-1" || snapshot.Plane != "gcp/us-central1" {
+		t.Fatalf("the snapshot's configuration: %+v %v", snapshot, err)
+	}
+	// A rotation's two keys, paired with their kids in order.
+	rotation := whole
+	rotation.SnapshotPublicKey = public + "," + base64.RawURLEncoding.EncodeToString(append(make([]byte, 31), 1))
+	rotation.SnapshotKid = "routing-snapshot-1,routing-snapshot-2"
+	if both, err := snapshotConfig(rotation); err != nil || len(both.Keys) != 2 || both.Keys[1].Kid != "routing-snapshot-2" ||
+		both.Keys[1].PublicKey[31] != 1 {
+		t.Fatalf("a rotation's keys: %+v %v", both, err)
+	}
+	if none, err := snapshotConfig(EdgeConfig{}); err != nil || none.URL != nil || none.Shadow {
+		t.Fatalf("no URL polls nothing: %+v %v", none, err)
+	}
+	for _, c := range []struct {
+		name   string
+		change func(*EdgeConfig)
+	}{
+		{"no edge", func(e *EdgeConfig) { e.Address, e.Upstream, e.Token = "", "", "" }},
+		{"a shadow with no snapshot", func(e *EdgeConfig) { e.SnapshotURL = "" }},
+		{"no key", func(e *EdgeConfig) { e.SnapshotPublicKey = "" }},
+		{"no kid", func(e *EdgeConfig) { e.SnapshotKid = "" }},
+		{"no plane", func(e *EdgeConfig) { e.SnapshotPlane = "" }},
+	} {
+		cfg.Edge = whole
+		c.change(&cfg.Edge)
+		if err := cfg.valid(); err == nil {
+			t.Errorf("%s: valid", c.name)
+		}
+	}
+	for _, c := range []struct {
+		name   string
+		change func(*EdgeConfig)
+	}{
+		{"a short key", func(e *EdgeConfig) { e.SnapshotPublicKey = public[:20] }},
+		{"a padded key", func(e *EdgeConfig) { e.SnapshotPublicKey = public + "=" }},
+		{"another scheme", func(e *EdgeConfig) { e.SnapshotURL = "ftp://python.internal/x" }},
+		{"a key without its kid", func(e *EdgeConfig) { e.SnapshotPublicKey = public + "," + public }},
+	} {
+		edgeCfg := whole
+		c.change(&edgeCfg)
+		if _, err := snapshotConfig(edgeCfg); err == nil {
+			t.Errorf("%s: accepted", c.name)
+		}
+	}
+}
+
+// TestTheEdgesPolicyGoesWithTheEdgeAndTheSnapshotsKey: the edge policy is
+// the edge's, and is verified with the routing snapshot's key, kid and
+// plane (with or without the snapshot polled); with no URL, the default,
+// the edge polls none.
+func TestTheEdgesPolicyGoesWithTheEdgeAndTheSnapshotsKey(t *testing.T) {
+	cfg := Defaults()
+	cfg.Admission, cfg.Address, cfg.Region, cfg.Key = true, "127.0.0.1:1", "us-central1", key
+	cfg.SettleTopic, cfg.RecordTopic = "projects/spike/topics/settle-log", "projects/spike/topics/records"
+	if cfg.Edge.PolicyURL != "" {
+		t.Fatalf("the defaults poll the policy: %+v", cfg.Edge)
+	}
+	public := base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	whole := EdgeConfig{Address: "127.0.0.1:2", Upstream: "http://python.internal", Token: "t",
+		PolicyURL: "http://python.internal/internal/fastpath/edge-policy", SnapshotPublicKey: public,
+		SnapshotKid: "routing-snapshot-1", SnapshotPlane: "gcp/us-central1"}
+	cfg.Edge = whole
+	if err := cfg.valid(); err != nil {
+		t.Fatalf("a whole policy without the snapshot: %v", err)
+	}
+	policy, err := policyConfig(whole)
+	if err != nil || policy.URL == nil || policy.URL.Path != "/internal/fastpath/edge-policy" || len(policy.Keys) != 1 ||
+		policy.Keys[0].Kid != "routing-snapshot-1" || policy.Plane != "gcp/us-central1" {
+		t.Fatalf("the policy's configuration: %+v %v", policy, err)
+	}
+	if snapshot, err := snapshotConfig(whole); err != nil || snapshot.URL != nil {
+		t.Fatalf("the policy alone polls a snapshot: %+v %v", snapshot, err)
+	}
+	if none, err := policyConfig(EdgeConfig{SnapshotURL: "http://python.internal/x", SnapshotPublicKey: public,
+		SnapshotKid: "k", SnapshotPlane: "gcp/us-central1"}); err != nil || none.URL != nil {
+		t.Fatalf("no URL polls nothing: %+v %v", none, err)
+	}
+	for _, c := range []struct {
+		name   string
+		change func(*EdgeConfig)
+	}{
+		{"no edge", func(e *EdgeConfig) { e.Address, e.Upstream, e.Token = "", "", "" }},
+		{"no key", func(e *EdgeConfig) { e.SnapshotPublicKey = "" }},
+		{"no kid", func(e *EdgeConfig) { e.SnapshotKid = "" }},
+		{"no plane", func(e *EdgeConfig) { e.SnapshotPlane = "" }},
+	} {
+		cfg.Edge = whole
+		c.change(&cfg.Edge)
+		if err := cfg.valid(); err == nil {
+			t.Errorf("%s: valid", c.name)
+		}
+	}
+	for name, change := range map[string]func(*EdgeConfig){
+		"another scheme": func(e *EdgeConfig) { e.PolicyURL = "ftp://python.internal/x" },
+		"no host":        func(e *EdgeConfig) { e.PolicyURL = "http:///internal/fastpath/edge-policy" },
+		"a short key":    func(e *EdgeConfig) { e.SnapshotPublicKey = public[:20] },
+	} {
+		edgeCfg := whole
+		change(&edgeCfg)
+		if _, err := policyConfig(edgeCfg); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
 // TestAFailedProcessIsNotServing: a part's failure ends the parts without
 // their leaving, so the edge's answer follows the parts' context too.
 func TestAFailedProcessIsNotServing(t *testing.T) {
@@ -336,5 +543,294 @@ func TestAnEdgeThatCannotListenFailsBeforeTheNodeJoins(t *testing.T) {
 	}
 	if _, err := edgeLn.Accept(); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("the supplied listener was not closed: %v", err)
+	}
+}
+
+// TestTheEdgeAdmitsThroughTheNodesFrontDoorOnceItIsMade: the edge is made
+// before the admission node and holds no admitter then; once the node has
+// started, the edge's admitter is the node's own front door, which answers
+// from the node's switch (no workspace is on, so Off) and checks what it is
+// asked (Invalid).
+func TestTheEdgeAdmitsThroughTheNodesFrontDoorOnceItIsMade(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ln, edgeLn := listen(t), listen(t)
+	cfg := config(ln)
+	cfg.Auditor = false
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: "http://python.invalid",
+		Token: "token-1"}
+	made := make(chan *edge.Edge, 1)
+	var before edge.Admitter
+	cfg.edgeMade = func(e *edge.Edge) {
+		before = e.Admitter()
+		made <- e
+	}
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	var e *edge.Edge
+	select {
+	case e = <-made:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the edge was not made")
+	}
+	if before != nil {
+		t.Fatalf("the edge held an admitter before the admission node started: %T", before)
+	}
+	if e.DecideShadowOn() {
+		t.Fatal("the decide shadow is on by default")
+	}
+	var door *frontdoor.FrontDoor
+	eventually(t, 20*time.Second, "the edge's admitter", func() (bool, error) {
+		a := e.Admitter()
+		if a == nil {
+			return false, nil
+		}
+		d, ok := a.(*frontdoor.FrontDoor)
+		if !ok {
+			return false, fmt.Errorf("the edge's admitter is a %T, not the front door", a)
+		}
+		door = d
+		return true, nil
+	})
+	ctx := context.Background()
+	if got := door.Authorize(ctx, frontdoor.AuthorizeOf{Workspace: storetest.UniqueID("ws"), Request: "r", Estimate: 1,
+		Boot: []byte("boot")}); got.Status != frontdoor.Off {
+		t.Fatalf("a workspace the switch has off: %+v", got)
+	}
+	if got := door.Authorize(ctx, frontdoor.AuthorizeOf{}); got.Status != frontdoor.Invalid {
+		t.Fatalf("an empty authorize: %+v", got)
+	}
+	if got := door.Refund(ctx, frontdoor.RefundOf{Envelope: "not-an-envelope", Money: []byte("{}")}); got.Status !=
+		frontdoor.Invalid {
+		t.Fatalf("a refund of no envelope: %+v", got)
+	}
+}
+
+// TestAnEdgeWithNoAdmissionNodeHoldsNoAdmitter: the edge's parts alone, with
+// no admission node beside them (which Run refuses, so the parts run here
+// as Run runs them), serve with no admitter bound, and the edge answers
+// none rather than failing.
+func TestAnEdgeWithNoAdmissionNodeHoldsNoAdmitter(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ln, edgeLn := listen(t), listen(t)
+	defer ln.Close()
+	cfg := config(ln)
+	cfg.Admission = false
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: "http://python.invalid",
+		Token: "token-1"}
+	made := make(chan *edge.Edge, 1)
+	cfg.edgeMade = func(e *edge.Edge) { made <- e }
+	s, err := store.New(shared, cfg.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan *parts, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- lifecycle(ctx, func(p *parts) {
+			if err := p.edge(cfg, s); err != nil {
+				p.startFailed(ctx, err)
+			}
+			started <- p
+		})
+	}()
+	p := <-started
+	<-p.armed
+	var e *edge.Edge
+	select {
+	case e = <-made:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the edge was not made")
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	eventually(t, 20*time.Second, "the edge serving", func() (bool, error) {
+		resp, err := client.Get("http://" + edgeLn.Addr().String() + "/internal/gateway/edge/health")
+		if err != nil {
+			return false, nil
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK, nil
+	})
+	if a := e.Admitter(); a != nil {
+		t.Fatalf("an edge with no admission node holds a %T", a)
+	}
+	if a := p.admitter.Load(); a != nil {
+		t.Fatalf("the process's holder holds a %T", a)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the process did not stop")
+	}
+}
+
+// TestTheDecideShadowNeedsTheSnapshotAndThePolicy: -edge-decide-shadow
+// decides from both, so it is refused without either; off is the default.
+func TestTheDecideShadowNeedsTheSnapshotAndThePolicy(t *testing.T) {
+	cfg := Defaults()
+	if cfg.Edge.DecideShadow {
+		t.Fatal("the defaults run the decide shadow")
+	}
+	cfg.Admission, cfg.Address, cfg.Region, cfg.Key = true, "127.0.0.1:1", "us-central1", key
+	cfg.SettleTopic, cfg.RecordTopic = "projects/spike/topics/settle-log", "projects/spike/topics/records"
+	public := base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	whole := EdgeConfig{Address: "127.0.0.1:2", Upstream: "http://python.internal", Token: "t",
+		SnapshotURL: "http://python.internal/internal/fastpath/routing-snapshot",
+		PolicyURL:   "http://python.internal/internal/fastpath/edge-policy", SnapshotPublicKey: public,
+		SnapshotKid: "routing-snapshot-1", SnapshotPlane: "gcp/us-central1", DecideShadow: true}
+	cfg.Edge = whole
+	if err := cfg.valid(); err != nil {
+		t.Fatalf("a whole decide shadow: %v", err)
+	}
+	for name, change := range map[string]func(*EdgeConfig){
+		"no snapshot": func(e *EdgeConfig) { e.SnapshotURL = "" },
+		"no policy":   func(e *EdgeConfig) { e.PolicyURL = "" },
+	} {
+		cfg.Edge = whole
+		change(&cfg.Edge)
+		if err := cfg.valid(); err == nil {
+			t.Errorf("%s: valid", name)
+		}
+	}
+}
+
+// TestTheDecideShadowRunsOnlyWithItsFlag: with -edge-decide-shadow the
+// process makes the edge's decide shadow over its cache and store, and it
+// stops with the process.
+func TestTheDecideShadowRunsOnlyWithItsFlag(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"compiling","retry_at":0}`))
+	}))
+	defer python.Close()
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, edgeLn := listen(t), listen(t)
+	cfg := config(ln)
+	cfg.Auditor = false
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: python.URL, Token: "token-1",
+		SnapshotURL: python.URL + "/internal/fastpath/routing-snapshot", SnapshotKid: "routing-snapshot-1",
+		SnapshotPublicKey: base64.RawURLEncoding.EncodeToString(public), SnapshotPlane: "gcp/us-central1",
+		PolicyURL: python.URL + "/internal/fastpath/edge-policy", DecideShadow: true}
+	made := make(chan *edge.Edge, 1)
+	cfg.edgeMade = func(e *edge.Edge) { made <- e }
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	select {
+	case e := <-made:
+		if !e.DecideShadowOn() {
+			t.Fatal("-edge-decide-shadow made no decide shadow")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the edge was not made")
+	}
+}
+
+// TestTheEdgesAlertIsAnAlertLineOfItsKind: the decide shadow's critical
+// class is written as the auditor's alerts are (an err-priority JSON line),
+// labelled with its own kind for its own policy.
+func TestTheEdgesAlertIsAnAlertLineOfItsKind(t *testing.T) {
+	var b strings.Builder
+	writeAlertOf(&b, "snapshot=s policy=p", "the edge would have answered an authorize Python refused: x",
+		edge.AlertWouldAdmit)
+	line := b.String()
+	if !strings.HasPrefix(line, "<3>{") || !strings.Contains(line, `"fastpath_alert":"edge_would_admit_python_refused"`) ||
+		!strings.Contains(line, `"subject":"snapshot=s policy=p"`) {
+		t.Fatalf("the line: %s", line)
+	}
+	b.Reset()
+	writeAlert(&b, "s", "something else")
+	if !strings.Contains(b.String(), `"fastpath_alert":"other"`) {
+		t.Fatalf("the auditor's path: %s", b.String())
+	}
+}
+
+// TestAProcessStopsWhileTheDecideShadowFollowsARequest: a process told to
+// stop while an authorize is with Python (and the decide shadow follows
+// it) answers it, compares it, and only then closes the cache, stopping
+// cleanly.
+func TestAProcessStopsWhileTheDecideShadowFollowsARequest(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	arrived := make(chan struct{}, 1)
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"compiling","retry_at":0}`))
+			return
+		}
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
+		time.Sleep(time.Second)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":401,"message":"Invalid API key","type":"invalid_api_key","source":"router"}}`))
+	}))
+	defer python.Close()
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, edgeLn := listen(t), listen(t)
+	cfg := config(ln)
+	cfg.Auditor = false
+	cfg.Edge = EdgeConfig{Address: edgeLn.Addr().String(), Listener: edgeLn, Upstream: python.URL, Token: "token-1",
+		SnapshotURL: python.URL + "/internal/fastpath/routing-snapshot", SnapshotKid: "routing-snapshot-1",
+		SnapshotPublicKey: base64.RawURLEncoding.EncodeToString(public), SnapshotPlane: "gcp/us-central1",
+		PolicyURL: python.URL + "/internal/fastpath/edge-policy", DecideShadow: true}
+	made := make(chan *edge.Edge, 1)
+	cfg.edgeMade = func(e *edge.Edge) { made <- e }
+	stop := start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	var e *edge.Edge
+	select {
+	case e = <-made:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the edge was not made")
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	answered := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+edgeLn.Addr().String()+"/internal/gateway/authorize",
+			strings.NewReader(`{"api_key_lookup_hash":"lookup-1","model":"m"}`))
+		req.Header.Set(edge.TokenHeader, "token-1")
+		req.Header.Set("Content-Type", "application/json")
+		// A boot header the edge reads the body for, though it does not
+		// verify: the body names the key Python's 401 evicts.
+		req.Header.Set(edge.BootHeader, "kid=boot-unknown")
+		resp, err := client.Do(req)
+		if err != nil {
+			answered <- 0
+			return
+		}
+		resp.Body.Close()
+		answered <- resp.StatusCode
+	}()
+	select {
+	case <-arrived:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the authorize did not reach Python")
+	}
+	stop() // fails the test if the process does not stop cleanly
+	if got := <-answered; got != http.StatusUnauthorized {
+		t.Fatalf("the enclave got %d, not Python's 401", got)
+	}
+	got := e.DecideShadowCounts()
+	if got.Classes["passed.boot.signature"] != 1 || got.Evictions != 1 {
+		t.Fatalf("the followed request was not compared before the stop: %+v", got)
 	}
 }

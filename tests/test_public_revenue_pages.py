@@ -17,7 +17,6 @@ from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.provider_lifecycle import (
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
 )
-from trusted_router.storage import STORE
 
 
 def test_revenue_pages_are_public(client: TestClient) -> None:
@@ -932,23 +931,6 @@ def test_eu_host_renders_eu_landing_page(client: TestClient) -> None:
     assert response.status_code == 200
     assert "Use the EU gateway and an EU-focused model alias." in response.text
     assert "https://api-europe-west4.quillrouter.com/v1" in response.text
-
-
-def test_console_credit_note_is_manual(client: TestClient) -> None:
-    user = STORE.ensure_user("alice@example.com")
-    raw_session, _ = STORE.create_auth_session(
-        user_id=user.id,
-        provider="google",
-        label="alice@example.com",
-        ttl_seconds=3600,
-        state="active",
-    )
-    client.cookies.set("tr_session", raw_session)
-
-    response = client.get("/console/credits")
-
-    assert response.status_code == 200
-    assert "This console does not grant them automatically" in response.text
 
 
 def test_revenue_loop_docs_define_google_sheet_and_interview_rules() -> None:

@@ -11,11 +11,13 @@ import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from scripts.pricing.base import ModelPrice, PriceTier
 
-_MODEL = re.compile(r"^Gemini (\d+(?:\.\d+)?) (Pro|Flash(?:[ -]Lite)?)( Preview| Cyber)?$", re.I)
+_MODEL = re.compile(
+    r"^Gemini (\d+(?:\.\d+)?) (Pro|Flash(?:[ -]Lite)?|Argon)( Preview| Cyber)?$", re.I
+)
 _DATE = re.compile(r"\b(through|starting) ([A-Za-z]+ \d{1,2}, \d{4})\b", re.I)
 
 
@@ -27,7 +29,7 @@ def _model(label: str, today: date) -> str | None:
             period[1].lower() == "starting" and today < boundary
         ):
             return None
-        label = label[: period.start()]
+        label = label[: period.start()].rstrip(" (")
     match = _MODEL.fullmatch(label.replace("*", "").strip())
     if match is None:
         return None
@@ -42,22 +44,43 @@ def _money(value: str) -> int:
     return int(Decimal(value[1:]) * 1_000_000)
 
 
+def _table_tab(table: Tag, soup: BeautifulSoup) -> str | None:
+    """Resolve the actual tab label; neither table order nor active state is a tariff."""
+    panel = table.find_parent(attrs={"role": "tabpanel"})
+    if panel is None:
+        return None
+    label_id = panel.get("aria-labelledby")
+    label = soup.find(id=label_id) if isinstance(label_id, str) else None
+    if label is None:
+        raise ValueError("vertex: pricing tab has no label")
+    return label.get_text(" ", strip=True).lower()
+
+
 def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
     today = as_of or datetime.now(UTC).date()
     parts: dict[str, dict[str, tuple[int, int, int | None, int | None]]] = {}
-    for table in BeautifulSoup(html, "html.parser").find_all("table"):
+    soup = BeautifulSoup(html, "html.parser")
+    for table in soup.find_all("table"):
         rows = table.find_all("tr")
         if not rows:
             continue
         headers = [c.get_text(" ", strip=True).lower() for c in rows[0].find_all(["th", "td"])]
         header = " ".join(headers)
-        if headers[:2] != ["model", "type"] or "200k" not in header or "cached input" not in header:
+        if headers[:2] != ["model", "type"] or "cached input" not in header:
+            continue
+        tab = _table_tab(table, soup)
+        if tab is not None and tab not in {"standard", "standard model"}:
             continue
         if any(word in header for word in ("priority", "flex", "batch")):
             continue
         regional = len(headers) > 2 and headers[2] == "region"
         offset = 3 if regional else 2
-        if len(headers) != offset + 4:
+        tiered = "200k" in header
+        # Flat tables must positively identify the tariff. Identical headers
+        # are used in the standard, priority and batch tabs.
+        if not tiered and tab not in {"standard", "standard model"}:
+            continue
+        if len(headers) != offset + (4 if tiered else 2):
             raise ValueError("vertex: standard token table columns changed")
         model_id: str | None = None
         kind = ""
@@ -84,6 +107,8 @@ def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
             if direction is None:
                 continue
             values = cells[offset:]
+            if not tiered:
+                values = [values[0], values[0], values[1], values[1]]
             rate = (
                 _money(values[0]),
                 _money(values[1]),

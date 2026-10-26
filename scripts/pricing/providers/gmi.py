@@ -56,6 +56,7 @@ EXPECTED_MODELS = [
 _VERIFIED_PREPAID_MODELS = frozenset(
     {
         "deepseek/deepseek-v4-pro",
+        "minimax/minimax-m3.1-flash",
         "moonshotai/kimi-k3",
         "tencent/hy4-preview",
         "z-ai/glm-5",

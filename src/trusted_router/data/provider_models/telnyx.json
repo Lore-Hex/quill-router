@@ -2,9 +2,9 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-26T06:59:20Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 17,
+  "model_count": 18,
   "models": [
     {
       "display_name": "gemma-2b-it",
@@ -532,6 +532,36 @@
       ],
       "pricing_source": "https://api.telnyx.com/v2/ai/openai/models",
       "license": "mit"
+    },
+    {
+      "display_name": "Laguna-S-2.1",
+      "title": "poolside/Laguna-S-2.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "poolside/laguna-s-2.1",
+      "upstream_id": "poolside/Laguna-S-2.1",
+      "provider_service_tiers": [
+        "default"
+      ],
+      "pricing_source": "https://api.telnyx.com/v2/ai/openai/models",
+      "license": "OpenMDW-1.1",
+      "context_length": 1048576,
+      "max_output_tokens": null,
+      "provider_regions": [
+        "USA"
+      ],
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 20000
     }
   ]
 }

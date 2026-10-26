@@ -85,6 +85,31 @@ func run() error {
 	edgeTokenSecret := flag.String("edge-token-secret", "",
 		"the internal service token the enclave sends, as a Secret Manager version pinned by its number")
 	flag.DurationVar(&cfg.Edge.BootWait, "edge-boot-wait", 2*time.Second, "how long the edge's boot read may take before its verdict is unread")
+	flag.StringVar(&cfg.Edge.SnapshotURL, "edge-snapshot-url", "",
+		"the routing snapshot the edge polls on its upstream, GET /internal/fastpath/routing-snapshot "+
+			"(docs/design/routing-snapshot-v1.md, E2); empty polls none")
+	flag.StringVar(&cfg.Edge.SnapshotPublicKey, "edge-snapshot-public-key", "",
+		"the routing snapshot manifest key's Ed25519 public key, unpadded base64url, or a rotation's two separated "+
+			"by a comma; never the test key")
+	flag.StringVar(&cfg.Edge.SnapshotKid, "edge-snapshot-kid", "",
+		"the routing snapshot manifest key's kid, or a rotation's two in the public keys' order")
+	flag.StringVar(&cfg.Edge.SnapshotPlane, "edge-snapshot-plane", "",
+		"the plane the routing snapshot is signed for, as cloud/region (gcp/us-central1)")
+	flag.StringVar(&cfg.Edge.PolicyURL, "edge-policy-url", "",
+		"the signed edge policy the edge polls on its upstream, GET /internal/fastpath/edge-policy "+
+			"(docs/design/fast-admission-e2-decide.md section 4), verified with the routing snapshot's public key, kid "+
+			"and plane; empty polls none")
+	flag.BoolVar(&cfg.Edge.Shadow, "edge-shadow", false,
+		"compare Go's answer from the routing snapshot with Python's on each authorize the edge passes on, "+
+			"logging counts alone; Python still decides")
+	flag.BoolVar(&cfg.Edge.DecideShadow, "edge-decide-shadow", false,
+		"run the edge's decide pipeline over each authorize it passes on and compare the whole answer, and sampled "+
+			"rows, with Python's (docs/design/fast-admission-e2-decide.md section 11), logging counts alone; needs "+
+			"-edge-snapshot-url and -edge-policy-url; Python still decides")
+	flag.BoolVar(&cfg.Edge.Decide, "edge-decide", false,
+		"answer the authorizes the edge decides itself: admit through the node's front door, insert the rows and "+
+			"answer (docs/design/fast-admission-e2-decide.md section 1), for the workspaces the decide table names; "+
+			"needs -edge-snapshot-url and -edge-policy-url; every other request still passes to Python")
 	flag.Parse()
 
 	switch *roles {

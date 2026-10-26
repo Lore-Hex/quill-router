@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% set catalog_header_search = true %}
 {% from "public/_catalog_privacy.html" import privacy_badges, serving_provider_chip %}
 {% block hero %}
 <section class="models-page-hero">
@@ -20,17 +21,6 @@
 {% block body %}
 <section class="model-explorer" data-model-explorer data-page-size="{{ initial_page_size }}">
   <div class="model-explorer-toolbar">
-    <label class="model-search-field">
-      <span class="model-control-label">Search models</span>
-      <input
-        type="search"
-        aria-label="Search models"
-        placeholder="Search GLM, Kimi, DeepSeek, provider, or model ID"
-        autocomplete="off"
-        spellcheck="false"
-        data-model-search
-      >
-    </label>
     <label class="model-sort-field">
       <span class="model-control-label">Sort by</span>
       <select data-model-sort aria-label="Sort models">
@@ -57,14 +47,14 @@
     <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
     {% endfor %}
   </nav>
-  <p class="catalog-privacy-legend"><strong>Confidential</strong> = verified provider compute + E2EE + explicit ZDR. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#privacy-filters">Privacy routing</a></p>
+  <p class="catalog-privacy-legend"><strong>Trusted</strong> = Confidential routes from Tinfoil or Privatemode, selected for operator physical security and reliability history. <strong>Confidential</strong> = verified provider compute + E2EE + explicit ZDR. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#trusted-tier">Privacy routing</a></p>
 
   <div class="model-explorer-status">
-    <p><strong data-model-result-count>{{ models|length }} models</strong><span data-model-result-detail> in the public catalog</span></p>
+    <p><strong data-model-result-count role="status">{{ models|length }} models</strong><span data-model-result-detail> in the public catalog</span></p>
     <button class="model-clear-button" type="button" data-model-clear hidden>Clear search</button>
   </div>
 
-  <div class="model-results" data-model-results>
+  <div class="model-results" id="model-results" data-model-results>
     {% for model in models %}
     <article
       class="model-result-card"
@@ -96,7 +86,7 @@
             {% if model.e2e_available or model.zdr_available %}
             <div class="catalog-privacy-summary" aria-label="Available route privacy">
               <span class="catalog-privacy-scope">{{ 'Component routes' if model.is_meta else 'Available routes' }}</span>
-              {{ privacy_badges(model.e2e_available, model.zdr_available) }}
+              {{ privacy_badges(model.e2e_available, model.zdr_available, trusted=model.trusted_available) }}
             </div>
             {% endif %}
           </div>

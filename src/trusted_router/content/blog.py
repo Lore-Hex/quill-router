@@ -255,7 +255,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     }
   }'</code></pre>
 
-<p>The model behind that answer is <a href="/models/typesafe-ai/jev">Jev</a>, a decision model from TypeSafe AI. It answers in about 250 milliseconds at the model, and it got 29 of 29 in our eval, which is small: 29 checks on eight support tickets. We call it at TypeSafe's own API, with automatic failover to Vercel's AI Gateway. OpenRouter carries Jev too, in beta, at a path called <code>/api/alpha/decisions</code> with a yes-or-no question type spelled <code>noul</code>. We accept that path and that spelling too.</p>
+<p>The model behind that answer is <a href="/models/typesafe-ai/jev">Jev</a>, a decision model from TypeSafe AI. It answers in about 250 milliseconds at the model, and it got 29 of 29 in our eval, which is small: 29 checks on eight support tickets. We call it at TypeSafe's own API. OpenRouter carries Jev too, in beta, at a path called <code>/api/alpha/decisions</code> with a yes-or-no question type spelled <code>noul</code>. We accept that path and that spelling too.</p>
 
 <p>Eight more models answer the same route under names that rhyme with Jev. <code>trustedrouter/trev-1.0</code> is the default. It is an open-weight 120B reasoning model on the fastest hardware we could measure, it answers in about 300 milliseconds, it got 29 of 29, it fails over across four hosts, and it costs $0.00034 a decision. <code>trustedrouter/mev-1.0</code> is Mercury 2, a diffusion model, answering without deliberating in about 290 milliseconds at half of trev's price. It gets 28 of 29, because it over-rates the urgency of one ticket, and if you pass <code>reasoning_effort: "low"</code> it gets all 29 at about 600 milliseconds. The other six run from Llama 3.3 70B at about 390 milliseconds down to a small Gemma at Jev's price that takes about two seconds. All nine take the same request and answer in the same shape, so switching models means changing one string. A name is one configuration: the model, the hosts we measured it on, its reasoning setting and its output format. It runs only on those hosts, so the numbers on the <a href="/docs/decide">docs page</a> were measured on the machines that will answer you, and an improvement ships as trev-1.1, so a name you pinned keeps meaning what it meant. The route runs on the same attested gateway as the rest of TrustedRouter, with the same API key and the same billing, and it is in alpha, which is why alpha is in the path.</p>
 
@@ -1035,22 +1035,36 @@ instead of taking our word for it.</p>
 </ol>
 <p><a href="https://cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-overview">GCP Confidential Space</a> runs the gateway container on a Confidential VM with hardware isolation and remote attestation. TrustedRouter uses the production image. The public verifier rejects a debug image because Google's debug variant enables operator access that is unacceptable for sensitive production prompts.</p>
 <p>TrustedRouter also binds the attestation to the live TLS connection. The signed token covers the certificate presented on that connection and an RFC 9266 TLS exporter derived from that exact session. This matters because a valid token fetched through one connection should not be reusable to bless a different proxy connection. The verifier keeps the socket open and confirms that the follow-up request stays on the attested session.</p>
-<p>You can have an agent verify the live service now. This uses the public release record, checks out the source commit named by that release, and runs the strict verifier from the same commit. It does not pipe downloaded code straight into a shell, so the agent can inspect the verifier first.</p>
-<pre><code>release="$(mktemp)"
-curl -fsS https://trust.trustedrouter.com/gcp-release.json -o "$release"
-commit="$(jq -r '.source_commit' "$release")"
-digest="$(jq -r '.image_digest' "$release")"
+<p>You can have an agent verify the live service now. This checks the release record's signature before reading its fields, checks out its source commit, and runs the strict verifier. It requires Git, curl, jq, cosign, and uv. Read the verifier before running it.</p>
+<p>During a rolling deployment, <span class="mono">image_digest</span> names the incoming release. Other regions can still serve the previous approved image. Compare the live measurement against <span class="mono">accepted_image_digests</span> from the signed record, not just that one field. An image outside the accepted set must fail closed. The example selects a GCP endpoint because this record describes the GCP gateway.</p>
+<pre><code>set -eu
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+release="$work/gcp-release.json"
+url="https://trust.trustedrouter.com/trust/gcp-release.json"
+curl -fsS "$url" -o "$release"
+curl -fsS "$url.bundle" -o "$release.bundle"
+cosign verify-blob \
+  --bundle "$release.bundle" \
+  --certificate-identity https://github.com/Lore-Hex/quill-cloud-proxy/.github/workflows/publish-trust-gcp.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$release"
+commit="$(jq -er '.source_commit | select(type == "string") | select(test("^[0-9a-f]{7,40}$"))' "$release")"
+digests="$(jq -er '.accepted_image_digests
+  | select(type == "array" and length > 0)
+  | select(all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$")))
+  | join(",")' "$release")"
 
 git clone https://github.com/Lore-Hex/quill-cloud-proxy.git
 cd quill-cloud-proxy
-git checkout "$commit"
+git checkout --detach "$commit"
 
 # Read tools/verify-attestation.py, then run it.
 uv run --script tools/verify-attestation.py \
-  --api-host api.trustedrouter.com \
-  --expect-digest "$digest" \
+  --api-host api-us-central1.quillrouter.com \
+  --expect-digest "$digests" \
   --samples 4</code></pre>
-<p>A passing run confirms a Google-signed Confidential Space token, a fresh nonce, the expected audience and image digest, production debug state, the TLS leaf certificate, the TLS session exporter, and repeated requests on the same attested socket. The <a href="https://trust.trustedrouter.com/gcp-release.json">release record</a> names the source commit and deployed image. The repository also includes <a href="https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/tools/verify-build.sh">a full rebuild verifier</a> for an engineer who wants to compare the published binary with a local build.</p>
+<p>A passing run confirms a Google-signed Confidential Space token, a fresh nonce, the expected audience and an approved image digest, production debug state, the TLS leaf certificate, the TLS session exporter, and repeated requests on the same attested socket. The <a href="https://trust.trustedrouter.com/trust/gcp-release.json">release record</a> names the target source commit and accepted gateway images. If publication changes between fetching the record and its signature, fetch both again and repeat verification; do not bypass a failed signature check. The repository also includes <a href="https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/tools/verify-build.sh">a full rebuild verifier</a> for an engineer who wants to compare the published binary with a local build.</p>
 <p>What does that prove? It proves that the gateway at the other end of the verified TLS session is running the measured production image and that the connection is bound to that workload. The source and verifier are public, so an engineer can inspect the code paths that handle prompts, logging, settlement, and provider calls. It does not prove the code has no bugs, that your own machine is clean, or that every downstream model provider uses confidential computing.</p>
 <p>The provider boundary is the part people skip. The selected model provider normally receives the prompt. <span class="mono">provider.min_privacy = "zdr"</span> requires a route with a zero-data-retention posture. The stronger <span class="mono">provider.min_privacy = "confidential"</span> requires provider-side confidential compute and end-to-end encryption, and fails closed when no eligible route exists. The model aliases <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> and <a href="/models/trustedrouter/confidential"><span class="mono">trustedrouter/confidential</span></a> select that same stronger pool.</p>
 <p>The distinction is useful. Attestation proves the TrustedRouter gateway. A confidential provider route extends the protected path through model execution. A ZDR contract governs retention after a provider receives the data. Those are three different properties, and the <a href="/security">security page</a> and <a href="/providers">provider directory</a> expose them separately.</p>

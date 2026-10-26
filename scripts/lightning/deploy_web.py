@@ -24,6 +24,10 @@ GCLOUD = shutil.which("gcloud") or "/usr/local/bin/gcloud"
 
 
 def main() -> None:
+    raise SystemExit("LightningRouter was retired on 2026-10-22. Deployment is disabled.")
+
+
+def _historical_main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--account", required=True)
     args = parser.parse_args()

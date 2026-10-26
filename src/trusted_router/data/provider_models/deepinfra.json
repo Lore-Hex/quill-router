@@ -944,6 +944,8 @@
       "status": 1,
       "id": "gryphe/mythomax-l2-13b",
       "upstream_id": "Gryphe/MythoMax-L2-13b",
+      "retirement_at": "2026-10-29T00:00:00Z",
+      "replacement_model_id": "sao10k/l3-8b-lunaris-v1-turbo",
       "context_length": 4096,
       "max_output_tokens": 4096,
       "input_token_price_per_m": 400000,

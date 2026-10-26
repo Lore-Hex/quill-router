@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-10-20T12:05:14Z",
-  "model_count": 170,
+  "generated_at": "2026-10-26T06:59:20Z",
+  "model_count": 173,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -2845,7 +2845,12 @@
       ],
       "status": 1,
       "upstream_id": "xiaomimimo/mimo-v2.5-pro",
-      "cached_input_token_price_per_m": 43
+      "retirement_at": "2026-10-23T00:00:00Z",
+      "replacement_model_id": "xiaomi/mimo-v2.6-pro",
+      "cached_input_token_price_per_m": 43,
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "zai-org/autoglm-phone-9b-multilingual",
@@ -3489,6 +3494,40 @@
       "cached_input_token_price_per_m": 600
     },
     {
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "minimax/minimax-m3.1-flash",
+      "display_name": "MiniMax M3.1 Flash",
+      "title": "minimax/minimax-m3.1-flash",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1792406343,
+      "context_length": 1000000,
+      "max_output_tokens": 524288,
+      "routable": true,
+      "input_token_price_per_m": 1500,
+      "output_token_price_per_m": 6000,
+      "cached_input_token_price_per_m": 150
+    },
+    {
       "id": "moonshotai/kimi-k2.7-code",
       "upstream_id": "moonshotai/kimi-k2.7-code",
       "display_name": "Kimi K2.7 Code",
@@ -3885,6 +3924,8 @@
     {
       "id": "xiaomimimo/mimo-v2.5",
       "upstream_id": "xiaomimimo/mimo-v2.5",
+      "retirement_at": "2026-10-23T00:00:00Z",
+      "replacement_model_id": "xiaomi/mimo-v2.6-flash",
       "display_name": "Xiaomi MiMo V2.5",
       "title": "xiaomimimo/mimo-v2.5",
       "model_type": "chat",
@@ -3911,10 +3952,12 @@
       "created": 1780040346,
       "context_length": 1048576,
       "max_output_tokens": 131072,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1680,
       "output_token_price_per_m": 3360,
-      "cached_input_token_price_per_m": 34
+      "cached_input_token_price_per_m": 34,
+      "missing_since": "2026-10-25",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-4.7-h",
@@ -5110,6 +5153,72 @@
       "input_token_price_per_m": 3000,
       "output_token_price_per_m": 12000,
       "cached_input_token_price_per_m": 60
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "moonshotai/kimi-k3.1-pro",
+      "display_name": "Kimi K3.1 Pro",
+      "title": "moonshotai/kimi-k3.1-pro",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1792803011,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 100000,
+      "cached_input_token_price_per_m": 2000
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro-highspeed",
+      "upstream_id": "moonshotai/kimi-k3.1-pro-highspeed",
+      "display_name": "Kimi K3.1 Pro Highspeed",
+      "title": "moonshotai/kimi-k3.1-pro-highspeed",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1792803395,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 2000
     }
   ]
 }

@@ -91,6 +91,9 @@ def _seed(
     receipt_fee_basis_points: int = 0,
     stage_d_boot_kid: str | None = None,
     database: FakeSpannerDatabase | None = None,
+    estimated_microdollars: int = 300,
+    credit_reserved_micro: int = 300,
+    stage_d_max_output_tokens: int = 100,
 ) -> tuple[FakeSpannerDatabase, GatewayAuthorization]:
     authorization = GatewayAuthorization(
         id="gwa-stage-d-fixture",
@@ -99,7 +102,7 @@ def _seed(
         model_id="model",
         provider="anthropic",
         usage_type=UsageType.CREDITS,
-        estimated_microdollars=300,
+        estimated_microdollars=estimated_microdollars,
         credit_reservation_id="reservation",
         settled=settled,
         pricing_snapshot=(
@@ -115,7 +118,7 @@ def _seed(
         ),
         stage_d_reason="ok" if cohort else "not_streaming",
         stage_d_prompt_tokens=100,
-        stage_d_max_output_tokens=100,
+        stage_d_max_output_tokens=stage_d_max_output_tokens,
         stage_d_boot_kid=stage_d_boot_kid,
         app_id="app-stage-d" if app_markup_basis_points else "",
         app_markup_basis_points=app_markup_basis_points,
@@ -134,14 +137,13 @@ def _seed(
             ws_shard=0,
             credit_shard=0,
             key_shard=0,
-            credit_reserved_micro=300,
-            key_reserved_micro=300,
+            credit_reserved_micro=credit_reserved_micro,
+            key_reserved_micro=credit_reserved_micro,
             hold_usage_type="Credits",
             authorization_id=authorization.id,
             idempotency_scope=None,
             idempotency_fingerprint=None,
             expires_at=NOW + timedelta(seconds=30),
-            created_at=NOW,
         )
         insert_gateway_authorization(
             transaction,
@@ -279,6 +281,29 @@ def test_heartbeat_rejects_a_monetary_overrun_without_renewing() -> None:
     assert result.reason == "usage_exceeds_cap"
     assert db.gateway_authorizations["gwa-stage-d-fixture"]["heartbeat_seq"] == 0
     assert db.reservations["reservation"]["expires_at"] == expires_at
+
+
+def test_heartbeat_cap_is_the_estimate_not_the_reservation() -> None:
+    """The reservation prices at most HOLD_OUTPUT_TOKENS of the budget
+    (authorize_candidates.hold_output_tokens); the estimate prices the whole
+    budget and is the spend ceiling. A stream past the reservation but
+    within the estimate keeps going; one past the estimate is cut."""
+    # The fixture's test endpoint prices 1,000,000 per million prompt and
+    # 2,000,000 per million output tokens: a 100-token prompt and a
+    # 131,072-token budget estimate 262,244; the reservation prices 16,384
+    # output tokens, 32,868. 16,385 output tokens run to 32,870.
+    db, _authorization = _seed(
+        estimated_microdollars=262_244, credit_reserved_micro=32_868, stage_d_max_output_tokens=131_072,
+    )
+
+    within_the_estimate = _heartbeat(db, usage=_usage(output_tokens=16_385))
+    assert within_the_estimate.accepted is True, within_the_estimate
+    assert within_the_estimate.cap_micro == 262_244
+    assert within_the_estimate.running_micro == 32_870
+
+    past_the_estimate = _heartbeat(db, seq=2, usage=_usage(output_tokens=131_073), payload_hash="b" * 64)
+    assert past_the_estimate.accepted is False
+    assert past_the_estimate.reason == "usage_exceeds_cap"
 
 
 def test_exact_duplicate_replay_is_read_only_and_returns_same_response() -> None:

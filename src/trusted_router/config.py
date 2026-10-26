@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime
 import hmac
 import json
+import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
@@ -23,6 +26,33 @@ from trusted_router.trust_ownership import (
     TRUST_OWNER_MUTATION_BUDGET,
     TRUST_REPLICATED_COLUMN_COUNT,
 )
+
+logger = logging.getLogger(__name__)
+
+# One expiry covers the whole evidence window; renewal deploys are unacceptable.
+# Stop early via the runtime stop marker / CLI (#2053) or an opt-out PR; this
+# upper bound turns a forgotten canary off.
+SHADOW_CANARY_MAX_SECONDS = 14 * 86400
+_LOGGED_SHADOW_EXPIRY_ERRORS: set[str] = set()
+
+
+def parse_shadow_expiry(raw: str, now: float | None = None) -> float:
+    """Strictly parse a shadow canary expiry; raises ValueError when invalid.
+
+    Deploy tests and the activation tool use this directly. Settings instead
+    treat an invalid value as already expired, so a shadow-only typo can never
+    fail a production revision's configuration.
+    """
+    try:
+        instant = datetime.datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("async settle shadow expiry must be an ISO-8601 instant") from error
+    if instant.tzinfo is None:
+        raise ValueError("async settle shadow expiry needs an explicit UTC offset")
+    expiry = instant.timestamp()
+    if expiry - (time.time() if now is None else now) > SHADOW_CANARY_MAX_SECONDS:
+        raise ValueError("async settle shadow expiry exceeds the canary maximum")
+    return expiry
 
 # Target names the synthetic monitor already assigns itself. A configured
 # entry reusing one would quietly merge two different measurements into one
@@ -968,6 +998,15 @@ class Settings(BaseSettings):
     async_settle_shadow_health_region: str = ""
     async_settle_shadow_workspaces: str = ""
     _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Runtime stop for a shadow v2 canary: an ISO-8601 instant with an explicit
+    # UTC offset. Checked on every request and owner tick, so a canary turns
+    # itself off without a deploy. Deployed environments treat an absent value
+    # as already expired; at most SHADOW_CANARY_MAX_SECONDS ahead of start-up.
+    # An invalid value counts as expired (logged once). It gates shadow v2 only:
+    # v1 still installs when workspaces are set and the raw policy is empty.
+    async_settle_shadow_expires_at: str = ""
+    _async_settle_shadow_expiry: float | None = PrivateAttr(default=None)
+    _async_settle_shadow_stopped: bool = PrivateAttr(default=False)
     async_settle_pilot_workspaces: str = ""
     _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
@@ -983,6 +1022,22 @@ class Settings(BaseSettings):
     # Operator-owned local settlement epoch, NOT the billing pause epoch or
     # shadow grant generation. Zero means authority has not been provisioned.
     async_settle_authority_epoch: int = Field(default=0, ge=0)
+
+    # E2 routing snapshot publication (docs/design/routing-snapshot-v1.md,
+    # "Publishing"). Off by default: the internal route is not registered and
+    # neither snapshot module is imported. The key file is a Secret Manager
+    # version mounted by rollout.sh, pinned by its number; the public key and
+    # kid are its public identity, the trust anchor Go will be given, and the
+    # publisher refuses a mounted key that is not the pinned one.
+    routing_snapshot_publish_enabled: bool = False
+    routing_snapshot_private_key_file: str = ""
+    routing_snapshot_public_key: str = ""
+    routing_snapshot_kid: str = ""
+    # E2 edge policy publication (docs/design/routing-snapshot-v1.md, "The
+    # edge policy"): the live settings and accepted image digests the edge
+    # gates on, signed with the routing snapshot's key above. Off by default:
+    # the route is not registered and no edge-policy module is imported.
+    edge_policy_publish_enabled: bool = False
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
@@ -1396,6 +1451,44 @@ class Settings(BaseSettings):
     @property
     def async_settle_shadow_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_shadow_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_shadow_expiry(self) -> Settings:
+        raw = self.async_settle_shadow_expires_at.strip()
+        if not raw:
+            self._async_settle_shadow_expiry = None
+            return self
+        try:
+            self._async_settle_shadow_expiry = parse_shadow_expiry(raw)
+        except ValueError as error:
+            # Fail closed, never fail the revision: an invalid expiry is expired.
+            self._async_settle_shadow_expiry = float("-inf")
+            reason = str(error)
+            if reason not in _LOGGED_SHADOW_EXPIRY_ERRORS:
+                _LOGGED_SHADOW_EXPIRY_ERRORS.add(reason)
+                logger.warning("async settle shadow expiry invalid; shadow pins are off reason=%s", reason)
+        return self
+
+    def stop_async_settle_shadow(self) -> None:
+        """Process-local terminal latch shared by every shadow entry point."""
+        self._async_settle_shadow_stopped = True
+
+    def async_settle_shadow_live(self, now: float | None = None) -> bool:
+        """Whether shadow pins may act now. Monotone: once False, never True again.
+
+        Local and test environments without an expiry run unbounded; every
+        deployed environment needs an unexpired ``async_settle_shadow_expires_at``.
+        """
+        if self._async_settle_shadow_stopped:
+            return False
+        expiry = self._async_settle_shadow_expiry
+        if expiry is None:
+            return self.environment.lower() in {"local", "test"}
+        return (time.time() if now is None else now) < expiry
+
+    def effective_async_settle_shadow_policy(self, now: float | None = None) -> str:
+        """The shadow policy pin, or "" once the canary expiry has passed."""
+        return self.async_settle_shadow_policy if self.async_settle_shadow_live(now) else ""
 
     @model_validator(mode="after")
     def parse_fastpath_pilot(self) -> Settings:

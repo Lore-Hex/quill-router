@@ -363,6 +363,7 @@ async def test_google_callback_delegated_signup_starts_at_zero_without_managemen
     next_path = (
         "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor"
         "&key_label=SlopNazi&limit=5&usage_limit_type=monthly"
+        "&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256"
     )
     state = _begin_oauth(google_client, "google", next_path=next_path)
 
@@ -1067,12 +1068,13 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     URL falls through to the static fallback (one-shot reveal semantics)."""
     client, _ = console_session
     fake_raw_key = "sk-tr-v1-test-reveal-secret-abc123"  # noqa: S105 - test fixture
-    client.cookies.set("tr_pending_reveal", fake_raw_key)
+    client.cookies.set("tr_pending_reveal", fake_raw_key, domain="testserver.local", path="/console/welcome")
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "private, no-store"
     assert resp.text.count(fake_raw_key) == 2, (
-        "the raw API key must appear in the direct reveal and the optional "
+        "the raw API key must appear in the direct reveal and the visible "
         "Claude Code / Codex message"
     )
     assert 'data-copy-secret="welcome-api-key"' in resp.text
@@ -1083,12 +1085,10 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     assert agent_message is not None
     assert fake_raw_key in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert resp.text.index('id="welcome-api-key"') < resp.text.index('id="welcome-agent-message"')
-    assert 'data-action="run-first-call"' not in resp.text
-    assert 'class="activation-progress"' not in resp.text
-    assert 'id="setup-agent-tab"' in resp.text
-    assert 'aria-labelledby="setup-agent-tab" data-setup-panel' in resp.text
-    assert "data-rewards-key-card" in resp.text
+    assert resp.text.index('id="welcome-agent-message"') < resp.text.index('id="welcome-api-key"')
+    assert "Run my first API request" in resp.text
+    assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
+    assert "Claude Code, Codex" in resp.text
     assert "Python" in resp.text
     assert "JavaScript" in resp.text
     assert "curl" in resp.text
@@ -1105,6 +1105,10 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
         or "Max-Age=0" in set_cookie
         or "max-age=0" in set_cookie
     ), f"expected tr_pending_reveal cookie to be cleared; got {set_cookie!r}"
+    refreshed = client.get("/console/welcome?first=1")
+    assert fake_raw_key not in refreshed.text
+    assert "already been displayed" in refreshed.text
+    assert "data-rewards-key-card" not in resp.text
 
 
 def test_console_specific_styles_load_after_shared_charter_styles() -> None:
@@ -1151,25 +1155,17 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     )
 
     assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "private, no-store"
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
     assert resp.text.count(match.group(0)) == 2
-    assert 'data-copy-secret="created-api-key"' in resp.text
-    assert 'data-copy-template-target="created-agent-message"' in resp.text
-    assert 'data-secret-source="created-api-key"' in resp.text
-    assert 'id="created-agent-message" data-copy-lines' in resp.text
-    assert '<pre id="created-agent-message"' not in resp.text
-    agent_message = re.search(
-        r'<div class="agent-message" id="created-agent-message".*?</div>\s*</div>',
-        resp.text,
-        re.DOTALL,
-    )
+    assert 'id="created-api-key"' in resp.text
+    assert 'aria-label="Copy API key"' in resp.text
+    agent_message = re.search(r'<div class="agent-message" id="created-agent-message".*?</div>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert match.group(0) in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert "Paste this into your coding agent." in resp.text
-    assert "Paste this into your coding agent." not in agent_message.group(0)
     assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
     assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
@@ -1182,7 +1178,7 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert keys[0].limit_microdollars == 1
 
 
-def test_console_welcome_without_credits_keeps_key_and_funding_access(
+def test_console_welcome_without_credits_routes_to_funding(
     console_session: tuple[TestClient, str],
 ) -> None:
     client, _ = console_session
@@ -1196,6 +1192,11 @@ def test_console_welcome_without_credits_keeps_key_and_funding_access(
     assert response.status_code == 200
     assert fake_raw_key in response.text
     assert 'data-copy-secret="welcome-api-key"' in response.text
+    assert "Add credits before the live check" in response.text
+    assert 'class="console-balance is-empty"' in response.text
+    assert "data-rewards-key-card" not in response.text
+    assert "data-key-onboarding" not in response.text
+    assert "key-list-panel" not in response.text
     assert 'href="/console/credits"' in response.text
     assert 'data-action="run-first-call"' not in response.text
 
@@ -1256,7 +1257,7 @@ def test_console_api_key_budget_can_be_edited_and_cleared(
 
     updated_page = client.get("/console/api-keys")
     assert 'value="25.123456"' in updated_page.text
-    assert "$25.12 total limit" in updated_page.text
+    assert "Used $0.00 of $25.12" in updated_page.text
 
     cleared = client.post(
         f"/console/api-keys/{key.hash}/limit",
@@ -1491,10 +1492,10 @@ def test_console_routing_credits_settings_and_preferences_show_operational_contr
     assert "api-europe-west4.quillrouter.com" in routing.text
 
     assert credits.status_code == 200
-    assert "Stripe card" in credits.text
-    assert "Stripe USDC / stablecoin" in credits.text
+    assert '<option value="auto">Card</option>' in credits.text
+    assert '<option value="stablecoin">USDC</option>' in credits.text
     assert "Payment methods" in credits.text
-    assert "Add payment method" in credits.text
+    assert "Add a card" in credits.text
     assert "Auto refill" in credits.text
     assert "Continue to checkout" in credits.text
 
@@ -1519,10 +1520,11 @@ def test_console_credits_shows_pending_stripe_setup_state(
     credits = client.get("/console/credits")
 
     assert credits.status_code == 200
-    assert "pending" in credits.text
-    assert "Stripe setup is pending" in credits.text
     assert "Complete setup" in credits.text
-    assert "Replace card" not in credits.text
+    assert "Add a card" not in credits.text
+    assert "data-checkout-change" not in credits.text
+    assert 'data-auto-refill-switch' in credits.text
+    assert 'disabled data-auto-refill-switch' in credits.text
 
 
 def test_console_checkbox_inputs_are_not_full_width() -> None:
@@ -1558,7 +1560,7 @@ def test_console_checkout_exposes_and_enforces_paypal_minimum(
 
     assert page.status_code == 200
     assert 'data-paypal-minimum="20"' in page.text
-    assert "PayPal purchases have a $20 minimum." in page.text
+    assert '<option value="paypal">PayPal</option>' in page.text
 
     too_small = client.post(
         "/console/credits/checkout",
@@ -1679,9 +1681,10 @@ def test_console_add_payment_method_mock_saves_method(
     assert account.stripe_payment_method_id
     page = client.get("/console/credits")
     details = client.get("/console/credits/stripe-details")
-    assert "Replace card" in page.text
+    assert "data-checkout-change" in page.text
+    assert '<option value="card">Another card</option>' in page.text
     assert "Manage in Stripe" in page.text
-    assert "Test card" in details.text
+    assert "Test ····" in details.text
     assert "Remove" in page.text
 
 
@@ -1828,11 +1831,10 @@ def test_console_credits_lists_saved_stripe_card(monkeypatch) -> None:
 
     assert page.status_code == 200
     assert details.status_code == 200
-    assert "Stripe card details are temporarily unavailable" in page.text
-    assert "Visa card" in details.text
-    assert "ending in 4242" in details.text
-    assert "expires 12/2031" in details.text
-    assert "id ...e_card" in details.text
+    assert "Saved card" in page.text
+    assert "pm_console_card" not in page.text
+    assert "Visa ····4242" in details.text
+    assert "pm_console_card" not in details.text
     assert "Remove" in page.text
 
 

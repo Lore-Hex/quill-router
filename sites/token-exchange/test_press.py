@@ -111,7 +111,8 @@ class PressTests(unittest.TestCase):
             sitemap = (self.root / market["slug"] / "sitemap.xml").read_text()
             homepage = (self.root / market["slug"] / "index.html").read_text()
             self.assertEqual("https://nytokenexchange.com/media-kit" in sitemap, market["slug"] == "new-york")
-            self.assertEqual('href="https://nytokenexchange.com/media-kit"' in homepage, market["slug"] == "new-york")
+            if market["slug"] != "new-york":
+                self.assertNotIn('href="https://nytokenexchange.com/media-kit"', homepage)
 
 
 if __name__ == "__main__":

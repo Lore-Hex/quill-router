@@ -303,6 +303,13 @@ fi
 # resolver sees the exact split created by its preceding call.
 if [ -n "${HARNESS_CLOUD_RUN_TRAFFIC:-}" ] \
     && [ "${0##*/}" = "gcloud" ] \
+    && [[ " $* " == *" run revisions describe "* ]] \
+    && [[ " $* " == *" --format=json "* ]]; then
+  printf '{"metadata":{"annotations":{"autoscaling.knative.dev/minScale":"%s"}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}\n' "${HARNESS_CLOUD_RUN_REVISION_MIN:-2}"
+  exit 0
+fi
+if [ -n "${HARNESS_CLOUD_RUN_TRAFFIC:-}" ] \
+    && [ "${0##*/}" = "gcloud" ] \
     && [[ " $* " == *" run services "*" trusted-router "* ]]; then
   region=""
   previous=""
@@ -322,12 +329,14 @@ if [ -n "${HARNESS_CLOUD_RUN_TRAFFIC:-}" ] \
     for argument in "$@"; do
       case "$argument" in --update-tags=*) tag_assignment="${argument#--update-tags=}" ;; esac
     done
-    printf '%s\n' "${tag_assignment#*=}" >"${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    printf '%s\n' "${tag_assignment#*=}" >"${HARNESS_PROBE_TAG_STATE_DIR}/${region}.${tag_assignment%%=*}"
     exit 0
   fi
   if [[ " $* " == *" run services update-traffic trusted-router "* ]] \
       && [[ " $* " == *" --remove-tags="* ]]; then
-    rm -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    for argument in "$@"; do
+      case "$argument" in --remove-tags=*) rm -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}.${argument#--remove-tags=}" ;; esac
+    done
     exit 0
   fi
   if [[ " $* " == *" run services update-traffic trusted-router "* ]] \
@@ -362,15 +371,12 @@ import sys
 
 state = json.loads(pathlib.Path(sys.argv[1]).read_text())
 traffic = list(state.get(sys.argv[3], []))
-tag_path = pathlib.Path(sys.argv[2]) / sys.argv[3]
-if tag_path.is_file():
-    traffic.append(
-        {
-            "revisionName": tag_path.read_text().strip(),
-            "percent": 0,
-            "tag": "staged-probe",
-        }
-    )
+for tag in ("staged-probe", "staged-drain"):
+    tag_path = pathlib.Path(sys.argv[2]) / f"{sys.argv[3]}.{tag}"
+    if tag_path.is_file():
+        traffic.append(
+            {"revisionName": tag_path.read_text().strip(), "percent": 0, "tag": tag}
+        )
 print(json.dumps({
     "metadata": {"generation": 1, "annotations": {
         "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
@@ -1227,6 +1233,9 @@ _PUBLIC_EDGE_ROUTED_SERVICE_JSON = json.dumps(
                 "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
             }
         },
+        "status": {
+            "traffic": [{"revisionName": "trusted-router-public-active", "percent": 100}]
+        },
         "spec": {
             "template": {
                 "spec": {
@@ -1628,6 +1637,18 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             (
                 r"run services describe trusted-router-public .*--format=json",
                 _PUBLIC_EDGE_ROUTED_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-public-active .*--format=json",
+                _PUBLIC_SURFACE_PUBLIC_REVISION_JSON,
+            ),
+            (
+                r"backend-services describe trusted-router-public-backend .*--format=json",
+                json.dumps({
+                    "customRequestHeaders": [
+                        "X-TrustedRouter-Client-IP:{client_ip_address}"
+                    ],
+                }),
             ),
             (
                 r"backend-services describe trusted-router-public-backend"

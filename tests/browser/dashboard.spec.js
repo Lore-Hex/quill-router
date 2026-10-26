@@ -154,124 +154,9 @@ test("console redirects unauthenticated users and auto-opens sign-in", async ({ 
   await expect(page.locator("#signinModal")).toBeVisible();
 });
 
-test("new API key quickstart stays inside its reveal panel", async ({ page }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: async (value) => { window.__copiedAgentMessage = value; },
-        readText: async () => window.__copiedAgentMessage || "",
-      },
-    });
-  });
-  await page.route("**/console/api-keys", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "text/html",
-      body: `<!doctype html>
-        <html lang="en">
-          <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <link rel="stylesheet" href="/static/dashboard.css">
-            <link rel="stylesheet" href="/static/charter.css">
-            <link rel="stylesheet" href="/static/console.css">
-            <script defer src="/static/console.js"></script>
-          </head>
-          <body class="console">
-            <div class="console-shell">
-              <aside class="console-sidebar"></aside>
-              <main class="console-main">
-                <div class="console-page-body">
-                  <section class="panel">
-                    <div class="panel-body">
-                      <div class="signup-reveal console-key-reveal">
-                        <section class="agent-quickstart">
-                          <h3>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</h3>
-                          <div class="agent-message-row">
-                            <div class="agent-message" id="layout-agent-message" data-copy-lines>
-                            <span class="agent-prompt-line">Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital of France?"</span>
-                            <span class="agent-prompt-line">TrustedRouter API key: sk-tr-v1-layout-regression-key</span>
-                            </div>
-                            <button class="btn secret-copy-btn" type="button" data-copy-secret="layout-agent-message" aria-label="Copy complete agent message">Copy</button>
-                          </div>
-                        </section>
-                        <div class="key-reveal-section">
-                          <div class="signup-reveal-head">Your TrustedRouter API key</div>
-                          <div class="secret-row"><code id="layout-api-key">sk-tr-v1-layout-regression-key</code><button class="btn secret-copy-btn" type="button" data-copy-secret="layout-api-key">Copy</button></div>
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-              </main>
-            </div>
-          </body>
-        </html>`,
-    });
-  });
-  await page.goto("/console/api-keys");
-
-  const reveal = page.locator(".console-key-reveal");
-  const heading = reveal.locator(".agent-quickstart h3");
-  const message = reveal.locator(".agent-message");
-  const directKey = reveal.locator("#layout-api-key");
-  await expect(heading).toBeVisible();
-  await expect(message).toContainText('ask DeepSeek Flash: "What is the capital of France?"');
-  await expect(message).not.toContainText("stream the answer into this chat as it arrives");
-  await expect(message).not.toContainText("Paste this short message");
-  await expect(message).not.toContainText("Keep this agent's settings");
-  await expect(directKey).toBeVisible();
-  expect(await reveal.evaluate((element) => {
-    const agentMessage = element.querySelector(".agent-message");
-    const key = element.querySelector("#layout-api-key");
-    return Boolean(agentMessage.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING);
-  })).toBe(true);
-
-  const assertContained = async () => {
-    const layout = await reveal.evaluate((element) => {
-      const headingElement = element.querySelector(".agent-quickstart h3");
-      const messageElement = element.querySelector(".agent-message");
-      const bounds = element.getBoundingClientRect();
-      return {
-        pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
-        headingOverflow: headingElement.scrollWidth - headingElement.clientWidth,
-        messageOverflow: messageElement.scrollWidth - messageElement.clientWidth,
-        headingRight: headingElement.getBoundingClientRect().right - bounds.right,
-        messageRight: messageElement.getBoundingClientRect().right - bounds.right,
-      };
-    });
-    expect(layout.pageOverflow).toBeLessThanOrEqual(2);
-    expect(layout.headingOverflow).toBeLessThanOrEqual(1);
-    expect(layout.messageOverflow).toBeLessThanOrEqual(1);
-    expect(layout.headingRight).toBeLessThanOrEqual(1);
-    expect(layout.messageRight).toBeLessThanOrEqual(1);
-  };
-
-  await assertContained();
-  await page.setViewportSize({ width: 820, height: 900 });
-  await assertContained();
-  // A rolling multi-region deploy can briefly pair new HTML with an older
-  // console stylesheet. The message must still use normal HTML wrapping.
-  await page.evaluate(() => document.querySelector('link[href="/static/console.css"]').remove());
-  await assertContained();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await assertContained();
-  const copyButton = reveal.getByRole("button", { name: "Copy complete agent message" });
-  await expect(copyButton).toBeVisible();
-  await copyButton.click();
-  const copiedAgentMessage = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copiedAgentMessage).not.toContain("Paste this short message");
-  expect(copiedAgentMessage).not.toContain("stream the answer into this chat as it arrives");
-  expect(copiedAgentMessage).not.toContain("Keep this agent's settings");
-  expect(copiedAgentMessage).not.toContain("Use it in memory for this request");
-  expect(copiedAgentMessage).not.toContain("stream=true");
-  expect(copiedAgentMessage).not.toContain("ANTHROPIC_BASE_URL");
-  expect(copiedAgentMessage).toContain("sk-tr-v1-layout-regression-key");
-});
-
 test("delegated sign-in explains zero-credit onboarding", async ({ page }) => {
   const target = encodeURIComponent(
-    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",
+    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
   );
   await page.goto(`/?reason=signin&next=${target}`);
 
@@ -288,7 +173,7 @@ test("delegated sign-in explains zero-credit onboarding", async ({ page }) => {
 test("delegated consent exposes funding and an editable app cap", async ({ page }) => {
   await page.setExtraHTTPHeaders({ "x-trustedrouter-user": "oauth-browser@example.com" });
   await page.goto(
-    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly",
+    "/auth?callback_url=https%3A%2F%2Fslopnazi.com%2Feditor&key_label=SlopNazi&limit=5&usage_limit_type=monthly&code_challenge=l9qsDumZjfytbJwJcNpcpBHIYjOpRMJbR1ZvanvB3dU&code_challenge_method=S256",
   );
 
   await expect(page.getByRole("heading", { name: "Authorize SlopNazi" })).toBeVisible();
@@ -464,7 +349,17 @@ test("model picker applies privacy to exact provider routes", async ({ page }) =
   await expect(picker.locator(".model-card", { hasText: "DeepSeek V4 Pro" })).toHaveCount(0);
   const routeLabels = await picker.locator(".provider-route").allTextContents();
   expect(routeLabels.length).toBeGreaterThan(0);
-  expect(routeLabels.every((label) => label.endsWith("· TEE"))).toBe(true);
+  expect(routeLabels.every((label) => /· (TEE|Trusted)$/.test(label))).toBe(true);
+
+  await picker.locator("#privacy").selectOption("4");
+  await expect(picker.locator(".route-recommendation code").first()).toHaveText(
+    "trustedrouter/trusted",
+  );
+  const trustedRouteLabels = await picker.locator(".provider-route").allTextContents();
+  expect(trustedRouteLabels.length).toBeGreaterThan(0);
+  expect(trustedRouteLabels.every((label) =>
+    /^(Tinfoil|Privatemode) · .* · Trusted$/.test(label),
+  )).toBe(true);
 
   await picker.locator("#privacy").selectOption("2");
   await expect(picker.locator(".route-recommendation code").first()).toHaveText(

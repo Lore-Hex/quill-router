@@ -36,6 +36,7 @@ from trusted_router.async_settle_shadow_v2_schema import POLICY, require
 from trusted_router.detached_jws import canonical
 from trusted_router.storage_gcp_async_admission import HEALTH_ROW_LIMIT, unresolved_statement
 from trusted_router.storage_gcp_shadow_io import (
+    Sessions,
     configure,
     elapsed_clock,
     owned_database,
@@ -46,6 +47,13 @@ from trusted_router.storage_gcp_shadow_io import (
 WRITE_SECONDS = 2.
 READ_SECONDS = 1.
 FLUSH_SECONDS = 4.
+# Observer reads: the RPC gets a generous gRPC deadline and its stream is fully
+# consumed, so a slow tail completes OK on the server instead of ending in a
+# client DEADLINE_EXCEEDED/CANCELLED (2026-10-23: >1/min of those tripped the
+# Spanner API-failure alert). Freshness is unchanged: the observer's install
+# cut-off (250 ms health, 500 ms workspace) still rejects a late result as a
+# late_install, and health_usable still requires read_elapsed <= 250 ms.
+OBSERVER_READ_RPC_SECONDS = 2.
 T = TypeVar("T")
 Statement = tuple[str, dict[str, Any], dict[str, Any]]
 
@@ -84,6 +92,10 @@ class UnknownCommit(RuntimeError):
     pass
 
 
+class ContentionLoss(RuntimeError):
+    """The transaction lost its claim or aborted; it definitively did not commit."""
+
+
 def shadow_health_claim_read() -> Statement:
     _, params, types = entity_point_statement(CLAIM_KIND, "local/publish")
     return CLAIM_SQL, params, types
@@ -105,15 +117,49 @@ def read_shadow_health_statement() -> Statement:
 class ObservationStore:
     def __init__(self, database: Any, *, clock: Callable[[], float] = elapsed_clock,
                  wall: Callable[[], float] = time.time) -> None:
-        self.workspace_database = database
+        self.workspace_database = owned_database(database, lane="workspace")
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
+        self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
+        # Scheduling hints only; neither proves ownership. Unknown commits must
+        # be reconciled from the claim row in the next slot, never retried here.
+        self.claim_attempt: tuple[str, int] | None = None
+        self.claim_unknown = False
+        self.last_publication: tuple[str, int] | None = None
+        self.unpublished_since: int | None = None
         self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
         self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
-        configure(self.database)
+        self.transport = configure(self.database)
+        self.workspace_transport = configure(self.workspace_database)
+        # Partial offline transports can exercise sessions without snapshot reads.
+        self.supports_runtime_stop = callable(getattr(self.database, "snapshot", None))
+
+    def session_ready(self, *, workspace: bool = False) -> bool:
+        database = self.workspace_database if workspace else self.database
+        manager = getattr(database, "_sessions_manager", None)
+        return not isinstance(manager, Sessions) or manager.ready
+
+    def session_recovery_due(self) -> bool:
+        return any(isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+                   for manager in (getattr(self.database, "_sessions_manager", None),
+                                   getattr(self.workspace_database, "_sessions_manager", None)))
+
+    def prepare_session(self, boot: str | None = None) -> bool:
+        manager = getattr(self.database, "_sessions_manager", None)
+        ready = not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+        workspace = getattr(self.workspace_database, "_sessions_manager", None)
+        if isinstance(workspace, Sessions) and workspace is not manager:
+            # Preserve the boot identity; the separate tr_lane label isolates
+            # reconciliation under Spanner's substring label matching.
+            workspace_boot = None if boot is None else f"{boot}-workspace"
+            workspace_ready = workspace.prepare(self.clock, workspace_boot)
+            # Prepare both even when the first lane failed or is quarantined;
+            # each retains its own five-second budget and recovery window.
+            ready = ready and workspace_ready
+        return ready
 
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement
@@ -143,15 +189,39 @@ class ObservationStore:
                 return self.point(snapshot, entity_point_statement(kind, key), budget, READ_SECONDS)
 
     def transaction(self, callback: Callable[[Any], T], budget: Budget, cap: float) -> T:
+        from google.api_core.exceptions import Aborted
+
         attempted = False
         committing = False
+        aborted = False
+        loss: ContentionLoss | None = None
+        def record_abort(error: BaseException) -> None:
+            nonlocal aborted
+            seen: set[int] = set()
+            cause: BaseException | None = error
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                if isinstance(cause, Aborted):
+                    aborted = True
+                    break
+                cause = cause.__cause__
         def once(tx: Any) -> T:
-            nonlocal attempted, committing
-            require(not attempted, "transaction_retry")
+            nonlocal attempted, committing, aborted, loss
+            if attempted:
+                # Session re-enters only after ABORTED. Do not run a second attempt.
+                aborted = True
+                raise ContentionLoss("transaction_aborted")
             attempted = True
-            budget.remaining(cap)
-            result = callback(tx)
-            budget.remaining(cap)
+            try:
+                budget.remaining(cap)
+                result = callback(tx)
+                budget.remaining(cap)
+            except Exception as error:
+                # SDK rollback can replace this exception. Retain the abort now.
+                if isinstance(error, ContentionLoss):
+                    loss = error
+                record_abort(error)
+                raise
             committing = True
             return result
         try:
@@ -160,7 +230,16 @@ class ObservationStore:
                     commit_request_options={"priority": "PRIORITY_LOW"}, transaction_tag="tr_shadow_v2")
             budget.remaining(cap)
             return result
-        except Exception:
+        except ContentionLoss:
+            raise
+        except Exception as error:
+            # The bounded transport keeps SDK retry loops stopped with a plain
+            # exception, retaining ABORTED as its cause for this classification.
+            record_abort(error)
+            if loss is not None:
+                raise loss from None
+            if aborted:
+                raise ContentionLoss("transaction_aborted") from None
             if committing:
                 raise UnknownCommit("shadow_commit_unknown") from None
             raise
@@ -174,8 +253,21 @@ class ObservationStore:
         tx.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
             values=[(r.kind, r.key, r.body.decode("utf-8"), (COMMIT_TIMESTAMP if r.kind == HEALTH_KIND else dt.datetime.fromtimestamp(self.wall(), dt.UTC))) for r in rows])
 
+    def read_shadow_claim(self, budget: Budget) -> dict[str, Any] | None:
+        row = self.read(CLAIM_KIND, "local/publish", budget.child(CYCLE_SECONDS))
+        return row.value() if row is not None else None
+
+    def read_shadow_publication(self, budget: Budget) -> dict[str, Any] | None:
+        """Lock-free point read of the fleet health row (same-owner renewal)."""
+        row = self.read(HEALTH_KIND, "local/fleet", budget.child(CYCLE_SECONDS))
+        return row.value() if row is not None else None
+
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
+        self.claim_attempt = (boot, slot)
+        self.claim_unknown = False
+        if self.unpublished_since is None:
+            self.unpublished_since = slot
         original = None
         def run(tx: Any) -> bool:
             nonlocal original
@@ -187,14 +279,26 @@ class ObservationStore:
             HEALTH_CLAIM(value)  # The contract rejects skew before any write/scan.
             self.last_claim = value
             old = Row(CLAIM_KIND, "local/publish", body.encode()).value() if body is not None else None
-            if not claim_allowed(old, slot):
-                return False
+            if (not claim_allowed(old, slot) or old is not None
+                    and old["owner_boot_id"] != boot and old["slot"] > slot-2):
+                # Returning False still sends an empty Commit and holds the
+                # hot row until it completes. A loss must roll back instead;
+                # like ABORTED it is recorded once, never retried in this slot.
+                raise ContentionLoss("slot_already_claimed")
+            if old is None or old["owner_boot_id"] != boot:
+                self.unpublished_since = slot
             row = Row.build(CLAIM_KIND, "local/publish", value)
             self.write(tx, [row], budget)
             if self.startup_retention:
                 original = row.body
             return True
-        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        try:
+            landed = self.transaction(run, budget, CYCLE_SECONDS)
+        except UnknownCommit:
+            self.claim_unknown = True
+            raise
+        if landed:
+            self.won = (boot, slot)
         if landed and self.startup_retention:
             self.startup_claim_raw = original
         return landed
@@ -209,13 +313,18 @@ class ObservationStore:
             self.write(tx, [row], budget)
             return True
         landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed:
+            self.last_publication = (value["publisher_boot_id"], value["slot"])
+            self.unpublished_since = value["slot"] + 1
         if landed and self.startup_retention:
             self.startup_publication_raw = row.body
         return landed
 
-    def snapshot_query(self, statement: Statement, budget: Budget, cap: float) -> tuple[list[Any], int]:
+    def snapshot_query(self, statement: Statement, budget: Budget, cap: float,
+                       *, min_read_timestamp: Any = None) -> tuple[list[Any], int]:
         with rpc_scope(budget.deadline, cap, budget.clock):
-            with self.database.snapshot() as snapshot:
+            options = {} if min_read_timestamp is None else {"min_read_timestamp": min_read_timestamp}
+            with self.database.snapshot(**options) as snapshot:
                 sql, params, types = statement
                 require(sql in (HEALTH_SQL, UNRESOLVED_SQL), "unregistered_statement")
                 stream = snapshot.execute_sql(HEALTH_SQL if sql == HEALTH_SQL else UNRESOLVED_SQL, params=params, param_types=types, retry=None,
@@ -225,16 +334,29 @@ class ObservationStore:
             budget.remaining(cap)
             return rows, stamp
 
-    def observe(self, boot: str, region: str, revision: str, slot: int, budget: Budget) -> dict[str, Any]:
-        rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS)
+    def observe(self, boot: str, region: str, revision: str, slot: int, budget: Budget,
+                *, claim_at_ns: int) -> dict[str, Any]:
+        from google.protobuf.timestamp_pb2 import Timestamp
+        from proto.datetime_helpers import DatetimeWithNanoseconds
+
+        # proto-plus preserves nanos on the wire; api_core's similarly named
+        # datetime is marshalled as ordinary datetime and loses sub-microseconds.
+        # Spanner reports read timestamps at microsecond precision, including
+        # when it waits for this bound. Ceil (never floor) the bound so even a
+        # read exactly at floor_us(bound) is >= the original nanosecond claim.
+        # Stored claims, historical traces and the a1 ordering rules stay exact.
+        seconds, nanos = divmod(((claim_at_ns + 999) // 1000) * 1000, 1_000_000_000)
+        bound = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=seconds, nanos=nanos))
+        rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS,
+                                               min_read_timestamp=bound)
         require(len(rows) <= HEALTH_ROW_LIMIT + 1, "unresolved_bound")
         return summarize(rows, boot=boot, region=region, revision=revision, slot=slot,
             observed_ns=observed_ns, age_seconds=self.wall(), row_limit=HEALTH_ROW_LIMIT)
 
     def read_shadow_health(self) -> dict[str, Any] | None:
         started = self.clock()
-        budget = Budget(started + .25, self.clock)
-        rows, read_ns = self.snapshot_query(read_shadow_health_statement(), budget, .25)
+        budget = Budget(started + OBSERVER_READ_RPC_SECONDS, self.clock)
+        rows, read_ns = self.snapshot_query(read_shadow_health_statement(), budget, OBSERVER_READ_RPC_SECONDS)
         require(len(rows) <= 1, "point_bound")
         if not rows:
             return None
@@ -242,7 +364,8 @@ class ObservationStore:
         value = Row(HEALTH_KIND, "local/fleet", body.encode()).value()
         committed_ns = timestamp_ns(committed)
         ended = self.clock()
-        budget.remaining(.25)
+        # No 250 ms budget check here: the caller's install cut-off classifies
+        # a slow reply as late, and the elapsed time travels with the value.
         return dict(body=value, committed_at_ns=committed_ns, read_at_ns=read_ns,
                     read_elapsed_ns=round((ended-started)*1_000_000_000), reply_at=ended)
 
@@ -358,8 +481,35 @@ class ObservationStore:
             proofs.add(proof)
         return True
 
+    def runtime_stop(self, row: Row | None, budget: Budget) -> Row | None:
+        """Reviewed stop/clear path: one key, one transaction, first stop wins.
+
+        A lost commit acknowledgement is safe to retry. Clear deletes only this
+        latch; ordinary immutable controls and retention remain unchanged.
+        """
+        from google.cloud.spanner_v1 import KeySet
+
+        if row is not None:
+            require(row.kind == CONTROL_KIND and row.key == "stop-v2", "stop_identity")
+            row.value()
+        budget = budget.child(WRITE_SECONDS)
+        def run(tx: Any) -> Row | None:
+            old = self.point(tx, entity_point_statement(CONTROL_KIND, "stop-v2"), budget, READ_SECONDS)
+            if row is None:
+                if old is not None:
+                    tx.delete("tr_entities", KeySet(keys=[(CONTROL_KIND, "stop-v2")]))
+                return None
+            if old is not None:
+                return old
+            self.write(tx, [row], budget)
+            return row
+        return self.transaction(run, budget, WRITE_SECONDS)
+
+    def read_runtime_stop(self) -> Row | None:
+        return self.read(CONTROL_KIND, "stop-v2", Budget(self.clock()+READ_SECONDS, self.clock))
+
     def control(self, row: Row, budget: Budget) -> None:
-        require(row.kind == CONTROL_KIND, "control_kind")
+        require(row.kind == CONTROL_KIND and row.key != "stop-v2", "control_kind")
         budget = budget.child(WRITE_SECONDS)
         def run(tx: Any) -> None:
             self.retention(tx, [row], budget)

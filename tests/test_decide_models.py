@@ -1,7 +1,7 @@
 """POST /v1/decide: decision models in the catalog and on gateway authorize.
 
 Two kinds of model answer the route. A HOSTED decision model (TypeSafe AI's Jev,
-at TypeSafe's own API with Vercel AI Gateway as the failover) is its own catalog
+at TypeSafe's own API, its only host) is its own catalog
 entry: no chat, input-only pricing. A NATIVE decision model is an ordinary chat model the attested gateway
 drives with strict structured output; it keeps its chat entry and authorizes as
 chat, pinned to one provider.
@@ -58,7 +58,7 @@ NAMED_IDS = [named.id for named in NAMED_DECISION_MODELS]
 AUTHORIZE = "/v1/internal/gateway/authorize"
 
 
-JEV_HOSTS = [("typesafe", "jev-latest"), ("vercel-ai-gateway", JEV)]
+JEV_HOSTS = [("typesafe", "jev-latest")]
 
 
 def _jev_built_from_its_pinned_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Model:
@@ -75,11 +75,11 @@ def _jev_built_from_its_pinned_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
 
 def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch, model: Model | None = None) -> None:
-    """Jev's routes as the builder makes them from its spec: the vendor's, then
-    the relay's. The catalog drops a route whose host's manifest goes dark, and
-    TypeSafe or Vercel delisting Jev must not fail a rule about what the spec
-    builds or how a request for Jev routes. Whether both hosts still serve it
-    is test_every_decision_spec_route_is_still_served, a provider_health check."""
+    """Jev's routes as the builder makes them from its spec: the vendor's only.
+    The catalog drops a route whose host's manifest goes dark, and TypeSafe
+    delisting Jev must not fail a rule about what the spec builds or how a
+    request for Jev routes. Whether the host still serves it is
+    test_every_decision_spec_route_is_still_served, a provider_health check."""
     from trusted_router import catalog, catalog_ingest
 
     model = model or catalog.MODELS.get(JEV) or catalog_ingest._decision_models()[JEV]
@@ -173,6 +173,11 @@ def test_every_decision_fallback_route_became_an_endpoint() -> None:
             # Azure is the only verified direct host for this preview. Never
             # substitute a different model or a relay as implicit failover.
             assert spec["provider"] == "azure" and spec["fallback_routes"] == ()
+        elif spec["id"] == JEV:
+            # TypeSafe only, by decision (2026-10-22): the Vercel relay served
+            # three requests in a month and put `state` through a second third
+            # party. A relay coming back has to be a new decision, not a drift.
+            assert spec["provider"] == "typesafe" and spec["fallback_routes"] == ()
         else:
             assert spec["fallback_routes"], f"{spec['id']} has no failover host"
         served = {(e.provider, e.upstream_id) for e in built.values() if e.model_id == spec["id"]}
@@ -322,11 +327,8 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
 def test_decide_resolver_accepts_only_decision_models(monkeypatch: pytest.MonkeyPatch) -> None:
     _serve_jev_as_built(monkeypatch)
     candidates = decide_route_endpoint_candidates({"model": JEV}, Settings(environment="test"))
-    # Vendor first by default, relay second: the order IS the failover plan.
-    assert [(m.id, e.provider) for m, e in candidates] == [
-        (JEV, "typesafe"),
-        (JEV, "vercel-ai-gateway"),
-    ]
+    # The vendor is Jev's only host: no relay carries `state` anywhere else.
+    assert [(m.id, e.provider) for m, e in candidates] == [(JEV, "typesafe")]
     with pytest.raises(Exception) as raised:  # noqa: PT011 - api_error is an HTTPException
         decide_route_endpoint_candidates(
             {"model": "openai/gpt-5.4-nano"}, Settings(environment="test")
@@ -410,8 +412,8 @@ async def test_gateway_authorizes_the_hosted_decision_model(
     payload = response.json()["data"] if "data" in response.json() else response.json()
     assert payload["provider"] == "typesafe"
     assert payload["model"] == JEV
-    # The gateway fails over by walking this list, so both hosts must be in
-    # it, in order, each with the upstream id that host understands.
+    # The gateway walks this list; Jev's is the vendor alone, with the
+    # upstream id the vendor understands.
     assert [
         (candidate["provider"], candidate["upstream_model"])
         for candidate in payload["route_candidates"]
@@ -419,17 +421,27 @@ async def test_gateway_authorizes_the_hosted_decision_model(
 
 
 @pytest.mark.asyncio
+async def test_jev_cannot_be_routed_through_the_retired_relay(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_jev_as_built(monkeypatch)
+    for provider in ({"order": ["vercel-ai-gateway"]}, {"only": ["vercel-ai-gateway"]}):
+        response = await _authorize({
+            "model": JEV,
+            "route_type": "decide",
+            "estimated_input_tokens": 400,
+            "max_output_tokens": 1,
+            "provider": provider,
+        })
+        assert response.status_code == 400, response.text
+        assert "Unknown provider" in response.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "expected"),
     [
-        # Default and an explicit vendor-first order agree.
-        (None, ["typesafe", "vercel-ai-gateway"]),
-        ({"order": ["typesafe", "vercel-ai-gateway"]}, ["typesafe", "vercel-ai-gateway"]),
-        # A caller's explicit preference still beats the default ranking.
-        ({"order": ["vercel-ai-gateway"]}, ["vercel-ai-gateway", "typesafe"]),
-        ({"only": ["vercel-ai-gateway"]}, ["vercel-ai-gateway"]),
+        (None, ["typesafe"]),
+        ({"order": ["typesafe"]}, ["typesafe"]),
         ({"only": ["typesafe"]}, ["typesafe"]),
-        ({"ignore": ["typesafe"]}, ["vercel-ai-gateway"]),
     ],
 )
 async def test_jev_host_order_follows_the_default_then_the_caller(
@@ -848,7 +860,7 @@ async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
     # outage, so a retry cannot change the answer.
     # On 2026-09-25 one new workspace's eighteen such requests were answered
     # 503 and opened "TR Gateway: billing path 5xx".
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     # Routes outside the chain that DO match each filter keep the chat model
     # behind the name routable, so the refusal is the chain's: a zero-retention
@@ -862,7 +874,7 @@ async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
     backing = _serve_on_fixture_routes(monkeypatch, OEV_1_0_MODEL_ID, hosts=(*chain, zdr_outsider))
     serve_on_fixture_route(monkeypatch, backing, chain[0], author="openai", usage_type="BYOK")
     monkeypatch.setattr(
-        gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
+        authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
         response = await _authorize(
@@ -901,8 +913,7 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
     from dataclasses import replace
     from datetime import UTC, datetime
 
-    from trusted_router import catalog
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates, catalog
 
     chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
     # Two outsiders keep the backing model routable when SambaNova's manifest
@@ -958,7 +969,7 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
     with monkeypatch.context() as unavailable:
         if outage == "region":
             unavailable.setattr(
-                gateway, "provider_model_available_from_gateway_region",
+                authorize_candidates, "provider_model_available_from_gateway_region",
                 lambda provider, _model, region: not (
                     provider == "sambanova" and region == "europe-west4"
                 ),
@@ -985,7 +996,7 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
 async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     # Only the chain serves the backing model here, and its hosts store
     # content, so deny empties every route and the resolver relaxes it.
@@ -1008,7 +1019,7 @@ async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
         logging.INFO, logger="trusted_router.routes.internal.gateway"
     ):
         unavailable.setattr(
-            gateway, "provider_model_available_from_gateway_region", lambda *_: False
+            authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: False
         )
         response = await _authorize(body)
     assert response.status_code == 503, response.text
@@ -1028,7 +1039,7 @@ async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
 async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
     region_available: bool, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     # Gev's backing resolver can satisfy deny on a non-pinned host. Its pinned
     # host cannot; a diagnostic must not independently soften that policy.
@@ -1036,7 +1047,7 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
     outsider = _an_outsider(GEV_1_0_MODEL_ID, lambda route: not endpoint_stores_content(route))
     _serve_on_fixture_routes(monkeypatch, GEV_1_0_MODEL_ID, hosts=(*chain, outsider))
     monkeypatch.setattr(
-        gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
+        authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
         response = await _authorize({
@@ -1060,10 +1071,10 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from trusted_router.routes.internal import gateway
+    from trusted_router import authorize_candidates
 
     _serve_on_fixture_routes(monkeypatch, model_id)
-    monkeypatch.setattr(gateway, "provider_model_available_from_gateway_region", lambda *_: False)
+    monkeypatch.setattr(authorize_candidates, "provider_model_available_from_gateway_region", lambda *_: False)
     response = await _authorize(
         {
             "model": model_id,

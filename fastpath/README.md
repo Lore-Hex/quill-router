@@ -22,6 +22,20 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
   from `src/trusted_router/credit_debt.py` and held to its results by
   `testdata/credit_debt_vectors.json`. `scripts/fastpath/credit_debt_vectors.py`
   writes the file, and a Python test fails when it is stale.
+- `internal/gwstate`: an API key's and its workspace's facts as the edge's
+  cohort gate reads them from production's stored JSON (E2, dark: nothing
+  imports it yet), held to the authorize route's own predicates by
+  `testdata/gateway_key_vectors_v1.json`, which
+  `scripts/fastpath/gateway_key_vectors.py` writes. The store reads them with
+  `ReadKeyContext`, one strong query by complete primary keys.
+- `internal/pyjson`: Python's JSON bytes (float repr, `json.dumps` escaping,
+  `json_body`'s sorted form, `JSONResponse`'s insertion order for error
+  bodies, and pydantic-core's `TypeAdapter.dump_json`, which FastAPI writes
+  the authorize route's 200 body with) and `isoformat()` with `Z`, for rows
+  and responses the edge will compose. It is held to CPython's and the real
+  authorize route's own output by `testdata/pyjson_vectors_v1.json`, which
+  `scripts/fastpath/pyjson_vectors.py` writes; a Python test fails when it is
+  stale. Nothing imports it yet.
 - `internal/service` and `cmd/fastpath`: the spike's one service (spike plan
   §2). A process runs an admission node's front door and owner, an auditor
   member, or both, over Spanner and Pub/Sub; its tests run whole processes

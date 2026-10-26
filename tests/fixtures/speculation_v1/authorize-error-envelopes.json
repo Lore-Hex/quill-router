@@ -22,7 +22,7 @@
       "status": 402,
       "content_type": "application/json",
       "retry_after": null,
-      "body_exact": "{\"error\":{\"code\":402,\"message\":\"Insufficient credits\",\"type\":\"insufficient_credits\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+      "body_exact": "{\"error\":{\"code\":402,\"message\":\"Insufficient credits for this request's upfront reservation of $0.0006. The reservation covers the estimated input, output-token limit, and any additional usage costs; it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits.\",\"type\":\"insufficient_credits\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
     },
     "billing_paused": {
       "path": "/internal/gateway/authorize",

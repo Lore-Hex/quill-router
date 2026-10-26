@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from scripts.pricing.providers import typesafe, vercel_ai_gateway
+from scripts.pricing.providers import typesafe
 
 JEV = "typesafe-ai/jev"
 
@@ -276,60 +276,7 @@ def test_typesafe_refuses_a_non_text_page() -> None:
         typesafe.parse(None)
 
 
-def _vercel_row(**overrides: Any) -> dict[str, Any]:
-    row: dict[str, Any] = {
-        "id": JEV,
-        "type": "evaluation",
-        "pricing": {"input": "0.000000042", "output": "0"},
-    }
-    row.update(overrides)
-    return {"data": [{"id": "openai/gpt-5", "type": "language"}, row]}
-
-
-def test_vercel_reads_the_per_token_rate_as_input_only() -> None:
-    assert _only_price(vercel_ai_gateway.parse(_vercel_row())) == (42_000, 0)
-
-
-def test_vercel_treats_a_missing_output_price_as_free() -> None:
-    assert _only_price(vercel_ai_gateway.parse(_vercel_row(pricing={"input": "0.000000042"}))) == (
-        42_000,
-        0,
-    )
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        _vercel_row(pricing={"input": "0.000000042", "output": "0.0000001"}),  # metered output
-        _vercel_row(pricing={"input": "0", "output": "0"}),  # a zero price is not a price
-        _vercel_row(pricing={}),  # no input price at all
-        _vercel_row(pricing={"input": "cheap"}),
-        _vercel_row(pricing={"input": "0.0000000000004"}),  # below a microdollar per million
-        _vercel_row(type="language"),  # no longer a decision model
-        # Vercel's other rows carry these. On this row any of them means the
-        # flat `input` rate is no longer what a request costs.
-        _vercel_row(
-            pricing={
-                "input": "0.000000042",
-                "output": "0",
-                "input_tiers": [{"cost": "0.000000084", "min": 10000}],
-            }
-        ),
-        _vercel_row(pricing={"input": "0.000000042", "output": "0", "regional": {"eu": {}}}),
-        _vercel_row(pricing={"input": "0.000000042", "output": "0", "peak_pricing": {}}),
-        _vercel_row(pricing={"input": "0.000000042", "output": "0", "service_tiers": {}}),
-        _vercel_row(pricing=None),
-        {"data": [{"id": "openai/gpt-5", "type": "language"}]},  # delisted
-        {"data": "nope"},
-        None,
-    ],
-)
-def test_vercel_refuses_to_guess(payload: object) -> None:
-    with pytest.raises(RuntimeError):
-        vercel_ai_gateway.parse(payload)
-
-
-@pytest.mark.parametrize("module", [typesafe, vercel_ai_gateway])
+@pytest.mark.parametrize("module", [typesafe])
 def test_each_manifest_is_a_decision_row_the_catalog_will_read(module: Any) -> None:
     raw = json.loads(Path(module.MANIFEST_PATH).read_text(encoding="utf-8"))
     assert raw["provider"] == module.SLUG

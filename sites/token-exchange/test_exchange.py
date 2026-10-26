@@ -4,6 +4,7 @@ import re
 import tempfile
 import unittest
 import urllib.error
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
@@ -15,6 +16,7 @@ from deploy import certificate_requests, domains, publish_certificates, unrouted
 
 RIYADH = ["riyadhtokenexchange.com", "www.riyadhtokenexchange.com"]
 REAL_BROCHURE_GAPS = deploy.brochure_gaps
+REAL_REQUIRE_NYTE_CATALOGUE = deploy.require_nyte_catalogue
 
 
 class FakeCloud:
@@ -166,6 +168,9 @@ class ExchangeTests(unittest.TestCase):
         patcher = mock.patch.object(deploy, "brochure_gaps", return_value=[])
         patcher.start()
         self.addCleanup(patcher.stop)
+        catalogue = mock.patch.object(deploy, "require_nyte_catalogue")
+        catalogue.start()
+        self.addCleanup(catalogue.stop)
 
     def test_inventory(self):
         self.assertEqual(len(load_markets()), 13)
@@ -209,9 +214,57 @@ class ExchangeTests(unittest.TestCase):
         with mock.patch.object(deploy.urllib.request, "urlopen", answer):
             self.assertEqual(REAL_BROCHURE_GAPS(), ["dubaitokenexchange.com", "tokyotokenexchange.com"])
 
+    def test_nyte_catalogue_requires_cors_and_usable_public_data(self):
+        from io import BytesIO
+
+        origin = "https://nytokenexchange.com"
+        payloads = {"models/count": {"data": {"count": 2}}, "providers": {"data": [
+            {"id": "live", "routing_status": "active"},
+            {"id": "blocked", "routing_status": "blocked"},
+        ]}}
+
+        def answer(request, timeout):
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.headers["Origin"], origin)
+            self.assertEqual(timeout, 15)
+            response = BytesIO(json.dumps(payloads[request.full_url.split("/v1/")[1]]).encode())
+            response.headers = {"Access-Control-Allow-Origin": _allowed}
+            return response
+
+        for _allowed in ("*", origin):
+            with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+                REAL_REQUIRE_NYTE_CATALOGUE()
+        for _allowed in (None, "https://unrelated.example"):
+            with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+                with self.assertRaisesRegex(RuntimeError, "models/count.*CORS support first"):
+                    REAL_REQUIRE_NYTE_CATALOGUE()
+        _allowed = "*"
+        for path, invalid in (("models/count", {"count": True}),
+                              ("models/count", {"count": -1}),
+                              ("models/count", {"count": "2"}),
+                              ("providers", [{"id": "live"}]),
+                              ("providers", [{"id": "live", "routing_status": "unknown"}])):
+            with self.subTest(path=path, invalid=invalid), mock.patch.dict(payloads, {path: {"data": invalid}}):
+                with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+                    with self.assertRaisesRegex(RuntimeError, "browser-ready"):
+                        REAL_REQUIRE_NYTE_CATALOGUE()
+        for failure in (TimeoutError("timed out"), ValueError("invalid JSON")):
+            with mock.patch.object(deploy.urllib.request, "urlopen", side_effect=failure):
+                with self.assertRaisesRegex(RuntimeError, "browser-ready"):
+                    REAL_REQUIRE_NYTE_CATALOGUE()
+
+    def test_publish_refuses_before_cloud_changes_if_catalogue_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(deploy, "require_nyte_catalogue", side_effect=RuntimeError("catalogue unavailable")), \
+                mock.patch.object(deploy, "gcloud", side_effect=AssertionError("published")):
+            with self.assertRaisesRegex(RuntimeError, "catalogue unavailable"):
+                deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
+
     def test_pages(self):
         markets = load_markets()
         for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, "test")
             self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
             self.assertIn('id="buyers"', page)
@@ -232,15 +285,27 @@ class ExchangeTests(unittest.TestCase):
             self.assertNotIn("google-analytics", page)
             self.assertIn('<script src="/assets/analytics.js?v=test" defer></script>', page)
             self.assertNotIn("$headline", page)
-            # The hero photograph and the provider marquee: one visible group of six provider links,
+            # The hero photograph and the provider marquee: one visible provider group,
             # one hidden copy that stays out of the tab order, under the relationship label.
             self.assertIn('class="hero-photo"', page)
             self.assertIn("Providers on TrustedRouter", page)
             self.assertEqual(page.count('<div class="hero-provider-group">'), 1)
             self.assertEqual(page.count('<div class="hero-provider-group" aria-hidden="true">'), 1)
-            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), 6)
+            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), len(PROVIDERS))
             for _, label in PROVIDERS:
                 self.assertEqual(page.count(f'<span>{label}</span>'), 2)
+
+    def test_databricks_is_second_in_the_provider_strip(self):
+        self.assertEqual(PROVIDERS[:2], [("openai", "OpenAI"), ("databricks", "Databricks")])
+        markets = load_markets()
+        for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
+            page = render(market, markets, "test")
+            visible = page.split('<div class="hero-provider-group">', 1)[1].split('</div>', 1)[0]
+            self.assertLess(visible.index('<span>OpenAI</span>'), visible.index('<span>Databricks</span>'))
+            self.assertLess(visible.index('<span>Databricks</span>'), visible.index('<span>Anthropic</span>'))
+            self.assertIn('src="/assets/provider-databricks.png"', visible)
 
     def test_escape(self):
         market = copy.deepcopy(load_markets()[0])
@@ -261,6 +326,8 @@ class ExchangeTests(unittest.TestCase):
         markets = load_markets()
         expected = [f'https://{m["domain"]}/' for m in markets]
         for market in markets:
+            if market["slug"] == "new-york":
+                continue  # New York v2 has dedicated page and browser coverage.
             with self.subTest(market=market["slug"]):
                 page = render(market, markets, "test")
                 self.assertLess(page.index('aria-label="Market directory"'), page.index('<main'))
@@ -505,8 +572,18 @@ class ExchangeTests(unittest.TestCase):
             build(output)
             self.assertEqual(len(list(output.glob("*/index.html"))), 13)
             for market in load_markets():
+                sitemap = ET.parse(output / market["slug"] / "sitemap.xml")  # noqa: S314 — trusted build output
+                namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+                paths = ["/"]
+                if market["slug"] == "new-york":
+                    paths += ["/confidential", "/suppliers", "/providers", "/badge", "/media-kit", "/index"]
+                self.assertEqual(
+                    [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
+                    [f'https://{market["domain"]}{path}' for path in paths],
+                )
                 self.assertIn(
-                    market["domain"], (output / market["slug"] / "sitemap.xml").read_text()
+                    f'Sitemap: https://{market["domain"]}/sitemap.xml',
+                    (output / market["slug"] / "robots.txt").read_text(),
                 )
             # Every copied asset is referenced by the built pages, styles or scripts, and nothing
             # referenced is missing.

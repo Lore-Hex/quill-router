@@ -112,6 +112,75 @@ SECRET_ENVS=(
 # Retired environment bindings remain on Cloud Run until explicitly removed.
 REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
 
+# E2 routing snapshot publication, dark (docs/design/routing-snapshot-v1.md,
+# "Publishing"). Literals here, never read from the caller or a previous
+# revision. The Ed25519 signing key is a Secret Manager version mounted as a
+# FILE and pinned by its number, never latest, so every instance and every
+# restart signs with one key; the public key beside it is that version's
+# public half, the pin the publisher checks the mounted key against and the
+# trust anchor Go is given. Version 1 was created on 2026-10-22 (runbook step
+# 2), mounted and pinned here (step 4), and publishing is on (step 5): the
+# route answers the edge's token on the combined/internal surfaces; nothing
+# consumes it until the fast path nodes carry the snapshot attributes.
+# docs/runbooks/routing-snapshot-key.md.
+ROUTING_SNAPSHOT_PUBLISH_ENABLED=true
+ROUTING_SNAPSHOT_KEY_SECRET="trustedrouter-routing-snapshot-signing-key"
+ROUTING_SNAPSHOT_KEY_VERSION="1"
+ROUTING_SNAPSHOT_KEY_PATH="/secrets/routing-snapshot/signing.pem"
+ROUTING_SNAPSHOT_KID="tr-routing-snapshot-2026-10a"
+ROUTING_SNAPSHOT_PUBLIC_KEY="oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
+if [ -n "$ROUTING_SNAPSHOT_KEY_VERSION" ] &&
+   [[ ! "$ROUTING_SNAPSHOT_KEY_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+  echo "refusing rollout: the routing snapshot key version must be a number, never latest" >&2
+  exit 1
+fi
+case "$ROUTING_SNAPSHOT_PUBLISH_ENABLED" in
+  false) ;;
+  true)
+    if [ -z "$ROUTING_SNAPSHOT_KEY_VERSION" ] ||
+       [[ ! "$ROUTING_SNAPSHOT_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+      echo "refusing rollout: routing snapshot publishing needs a pinned key version and its public key" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "refusing rollout: routing snapshot publishing must be true or false" >&2
+    exit 1
+    ;;
+esac
+ROUTING_SNAPSHOT_KEY_FILE=""
+if [ -n "$ROUTING_SNAPSHOT_KEY_VERSION" ]; then
+  SECRET_ENVS+=("${ROUTING_SNAPSHOT_KEY_PATH}=${ROUTING_SNAPSHOT_KEY_SECRET}:${ROUTING_SNAPSHOT_KEY_VERSION}")
+  ROUTING_SNAPSHOT_KEY_FILE="$ROUTING_SNAPSHOT_KEY_PATH"
+fi
+
+# E2 edge policy publication (docs/design/fast-admission-e2-decide.md section
+# 4, stage I1): the live facts the edge gates on, signed with the routing
+# snapshot key above under its own typ. A literal, never read from the caller
+# or a previous revision. On, GET /internal/fastpath/edge-policy answers the
+# edge's token on the combined surface; a poll signs at most once per 15 s per
+# instance, and an instance nobody polls signs nothing. The way back is false
+# and a deploy: the route is gone (404), the edge keeps its last copy until
+# that copy's not_after (60 s), then passes every request to Python.
+EDGE_POLICY_PUBLISH_ENABLED=true
+case "$EDGE_POLICY_PUBLISH_ENABLED" in
+  false) ;;
+  true)
+    # The publisher's signer (load_signer) needs the mounted file, the kid
+    # and the pinned public key; without any of them the route would answer
+    # 503 signer-unavailable for as long as the revision serves.
+    if [ -z "$ROUTING_SNAPSHOT_KEY_FILE" ] || [ -z "$ROUTING_SNAPSHOT_KID" ] ||
+       [[ ! "$ROUTING_SNAPSHOT_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+      echo "refusing rollout: edge policy publishing signs with the routing snapshot key, which is not mounted with its kid and public key" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "refusing rollout: edge policy publishing must be true or false" >&2
+    exit 1
+    ;;
+esac
+
 # Read the metadata inventory once. Probing every optional name with
 # `secrets describe` records an ERROR audit event for each expected missing
 # secret, which obscures real Secret Manager failures and inflates logging
@@ -185,7 +254,6 @@ add_secret_env_if_exists "TR_STAGE_D_PROBE_API_KEY" "trustedrouter-stage-d-probe
 # serving ON for this plane (unset = 403 for every peer).
 add_secret_env_if_exists "TR_FEDERATION_PEER_TOKEN" "trustedrouter-federation-peer-token"
 add_secret_env_if_exists "TR_OPERATOR_TOKEN" "trustedrouter-operator-token"
-add_secret_env_if_exists "TR_LIGHTNING_FUNDING_TOKEN" "trustedrouter-lightning-funding-token"
 # HOME side of deferred settlement: the per-peer token map
 # ("plane=token,plane=token"). Which token authenticated IS the source
 # plane's identity; the request body never carries it. Setting this is what
@@ -649,14 +717,31 @@ ENV_VARS=(
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  # Shadow v2 opted out after the 2026-10-20 session leak. Empty BOTH the
-  # policy and cohort so v1 is not selected either. Preserve the attachment
-  # destination for retained close/export evidence; re-enable only after a
-  # bounded session-lifecycle canary passes. Money and fast drain stay off.
+  # October 24: canary 3 hit its API-failure stop gate (docs/incidents/
+  # 2026-10-24-shadow-canary-api-failures.md). The repairs it required landed
+  # afterwards: the publisher's microsecond-safe observation bound, renewal
+  # after failed cycles and spread takeover (#2054), the fleet-wide runtime stop
+  # marker, operator CLI and in-process API-failure breaker (#2053), and the
+  # permit-row allocation backoff (#2058). Shadow v2 canary 4: the v2 policy,
+  # the one probe workspace and the primary health region, with the runtime
+  # expiry below as the canary's stop. Gates for the canary hour, measured from
+  # the moment the health region serves these pins: publications >= 80% after a
+  # 5-minute warm-up, unknown <= 5%, readers installed >= 80% per region,
+  # Spanner sessions bounded, no API-failure or session incident; otherwise opt
+  # out by emptying the policy, workspaces, health-region and expiry lines
+  # together (keep the bucket). Money, protection and fast drain stay off.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
-  "TR_ASYNC_SETTLE_SHADOW_POLICY="
-  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
+  "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
+  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
+  # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 14 days
+  # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
+  # checks it, so the canary turns itself off without a deploy. Deployed
+  # environments treat an empty or invalid value as expired: v2 pins without a
+  # valid one do nothing. It gates shadow v2 only; v1 still installs whenever
+  # the workspaces are set and the policy is empty. The activation tool's
+  # release shadow-opt-in requires --expires-at and opt-out clears it.
+  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-11-04T12:00:00Z"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
@@ -670,6 +755,13 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
   "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
+  # E2 routing snapshot publication: the literals of the key block above.
+  "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
+  "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"
+  "TR_ROUTING_SNAPSHOT_KID=${ROUTING_SNAPSHOT_KID}"
+  "TR_ROUTING_SNAPSHOT_PUBLIC_KEY=${ROUTING_SNAPSHOT_PUBLIC_KEY}"
+  # E2 edge policy publication: the literal of the block above.
+  "TR_EDGE_POLICY_PUBLISH_ENABLED=${EDGE_POLICY_PUBLISH_ENABLED}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

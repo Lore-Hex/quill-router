@@ -179,3 +179,12 @@ func Member(address string, epoch int64) *spanner.Mutation {
 		"address": address, "epoch": epoch, "roles": []string{"owner"}, "state": "serving",
 		"started_at": spanner.CommitTimestamp, "heartbeat_at": spanner.CommitTimestamp})
 }
+
+// Decide is the mutation that sets whether a workspace's edge nodes of a
+// cloud decide its authorizations for a region (tr_fastpath_edge_decide),
+// which a test applies as an operator's fastpathctl decide would.
+func Decide(workspace, cloud, region string, decide bool) *spanner.Mutation {
+	return spanner.InsertOrUpdateMap("tr_fastpath_edge_decide", map[string]any{
+		"workspace_id": workspace, "cloud": cloud, "region": region, "decide": decide,
+		"changed_at": spanner.CommitTimestamp})
+}

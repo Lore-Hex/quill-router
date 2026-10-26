@@ -564,9 +564,9 @@ def test_dashboard_emits_open_graph_and_twitter_card(client: TestClient) -> None
     assert '<link rel="icon" href="/favicon.ico" sizes="any">' in dashboard.text
     assert '<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">' in dashboard.text
     assert '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">' in dashboard.text
-    title = "TrustedRouter: The AI router that shows its work"
-    description = "Verifiably confidential compute through a single OpenAI-compatible API. Hundreds of models, zero-retention routes and provider failover, no prompt logs."
-    social_card = "https://trustedrouter.com/static/homepage/social-card-v1.jpg"
+    title = "TrustedRouter: Encrypt all your AI chats"
+    description = "Access hundreds of models confidentially through a single OpenAI-compatible API."
+    social_card = "https://trustedrouter.com/static/homepage/social-card-v2.jpg"
     assert 'property="og:type" content="website"' in dashboard.text
     assert f'property="og:title" content="{title}"' in dashboard.text
     assert f'property="og:description" content="{description}"' in dashboard.text
@@ -1179,15 +1179,9 @@ def test_sentry_scrubs_sensitive_fields() -> None:
 
 
 def test_no_sentry_in_enclave_code() -> None:
-    root = Path(__file__).resolve().parents[2]
-    enclave = root / "quill-cloud-proxy" / "enclave-go"
-    if not enclave.exists():
-        return
-    for path in enclave.rglob("*"):
-        if path.is_file() and (path.suffix == ".go" or path.name.startswith("Dockerfile")):
-            text = path.read_text(encoding="utf-8", errors="ignore").lower()
-            assert "sentry" not in text
-            assert "58539b11263132bcb70ea30f0b92e0f4" not in text
+    from scripts.check_enclave_sentry import check_enclave, configured_enclave
+
+    check_enclave(configured_enclave())
 
 
 def test_internal_rate_limit_guessed_tokens_share_the_ip_bucket(
