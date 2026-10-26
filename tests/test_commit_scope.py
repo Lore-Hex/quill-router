@@ -72,6 +72,23 @@ def test_everything_else_is_code(path: str) -> None:
     assert not is_data_change(raw(path))
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/trusted_router/data/openrouter_snapshot.json ",
+        " src/trusted_router/data/openrouter_snapshot.json",
+        "src/trusted_router/data/openrouter_snapshot.json\t",
+        "src/trusted_router/data/provider_models/a b.json",
+    ],
+)
+def test_a_path_with_whitespace_is_not_the_data_file(path: str) -> None:
+    """Git prints a name with a trailing space unquoted; stripping it would
+    let a file that is not the allowlisted one count as data."""
+    assert is_data_path(path) is False
+    record = f":000000 100644 0000000 1111111 A\t{path}"
+    assert is_data_change(record) is False
+
+
 def test_only_regular_file_add_modify_delete_records_are_data_changes() -> None:
     # A rename or copy record (only produced without --no-renames) is never
     # data: its source may be code, and the record names the destination.

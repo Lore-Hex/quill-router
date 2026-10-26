@@ -87,8 +87,11 @@ DATA_STATUSES = frozenset({"A", "M", "D"})
 
 
 def is_data_path(path: str) -> bool:
-    path = path.strip()
-    if not path or path.startswith("/") or ".." in path.split("/"):
+    # The path is matched as git printed it: a name with whitespace in it
+    # (git prints a trailing space unquoted) is not the allowlisted file.
+    if not path or path != path.strip() or any(c.isspace() for c in path):
+        return False
+    if path.startswith("/") or ".." in path.split("/"):
         return False
     return any(
         fnmatch.fnmatchcase(path, pattern) and path.count("/") == pattern.count("/")
