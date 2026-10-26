@@ -24,9 +24,9 @@ for endpoint in response.json()["data"]:
   <li><code>quantization</code>: the primary reviewed weight format. Unknown values are <code>null</code>.</li>
   <li><code>weight_formats</code>, <code>label</code>, <code>notes</code>: mixed formats and higher-precision exclusions.</li>
   <li><code>kv_cache_dtype</code>: the cache representation, separate from model weights. An FP8 KV cache does not establish FP8 weights.</li>
-  <li><code>model_repository</code>, <code>model_revision</code>: the source model and reviewed revision.</li>
+  <li><code>model_repository</code>, <code>model_revision</code>: the source model and reviewed revision; <code>null</code> for an unpinned provider declaration.</li>
   <li><code>reviewed_on</code>, <code>sources</code>: the review date and links to serving code and model configuration.</li>
-  <li><code>evidence_type</code>: <code>published_serving_config</code>.</li>
+  <li><code>evidence_type</code>: <code>published_serving_config</code> for reviewed pinned serving code, or <code>provider_declaration</code> for a provider's published claim without weight pins. A declaration is not an independent verification.</li>
   <li><code>runtime_verified</code>: <code>false</code>. This is not per-request proof of the weights loaded by the upstream provider.</li>
 </ul></section>
 <section class="routing-feature-section routing-feature-columns">
