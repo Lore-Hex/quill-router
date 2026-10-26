@@ -107,6 +107,10 @@ def remove_publication_guard(script: str, guard: str) -> str:
     elif guard == "unverified_commit_before_dispatch":
         before = "gh workflow run ci.yml"
         after = 'git commit --allow-empty -m "Never ran CI"\n' + before
+    elif guard == "poll_by_listing":
+        # Keep re-reading the branch listing after the run was found.
+        before = 'if [ -n "${ci_run_id}" ]; then\n    # Once the listing has found the run'
+        after = 'if false; then\n    # Once the listing has found the run'
     elif guard == "skip_branch_push":
         before = 'git push origin "HEAD:refs/heads/${BRANCH}"'
         after = f"if false; then {before}; fi"
@@ -169,13 +173,15 @@ class PublicationRepo:
         move_main: str | None = None, changed: bool = True, mutation: str | None = None,
         run_states: list[tuple[str, str | None]] | None = None,
         status_fault: str | None = None,
+        polls: list[list[dict[str, object]]] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if changed:
             snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
             snapshot.write_text('{"generated": true}\n')
             self.git("add", str(snapshot))
         states = run_states if run_states is not None else [("completed", conclusion)]
-        scenario: dict[str, object] = {"polls": [[{
+        # `polls` is the listing at each poll, verbatim; otherwise one run per poll.
+        scenario: dict[str, object] = {"polls": polls if polls is not None else [[{
             "databaseId": 1234, "headSha": self.base if wrong_sha else "$DISPATCHED_SHA",
             "status": status, "conclusion": outcome,
         }] for status, outcome in states]}
@@ -420,6 +426,58 @@ def test_publication_times_out_when_only_another_sha_passed(publication_repo: Pu
     assert_snapshot_withheld(publication_repo, result)
     assert "CI did not pass within" in result.stdout
     assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 480
+    # No run was ever found for the SHA, so there is nothing to cancel.
+    assert not any(call[:2] == ["run", "cancel"] for call in publication_repo.calls)
+
+
+def listing_with_a_second_run() -> list[list[dict[str, object]]]:
+    """Our run (1234) first; a second dispatch (5678) on the same branch and SHA
+    appears ahead of it in later listings and concludes success before ours."""
+    def ours(status: str, conclusion: str | None) -> dict[str, object]:
+        return {"databaseId": 1234, "headSha": "$DISPATCHED_SHA",
+                "status": status, "conclusion": conclusion}
+    other = {"databaseId": 5678, "headSha": "$DISPATCHED_SHA",
+             "status": "completed", "conclusion": "success"}
+    return [[ours("in_progress", None)], [other, ours("in_progress", None)],
+            [other, ours("completed", "failure")]]
+
+
+def test_poll_sticks_to_the_run_the_listing_first_selected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(polls=listing_with_a_second_run())
+    assert_snapshot_withheld(publication_repo, result)
+    assert "CI concluded 'failure'" in result.stdout
+    answers = [json.loads(event[2]) for event in publication_repo.events if event[0] == "poll"]
+    assert [answer["databaseId"] for answer in answers] == [1234, 1234, 1234]
+    repo = publication_repo.env["GITHUB_REPOSITORY"]
+    assert [call for call in publication_repo.calls if call[:2] == ["run", "view"]] == [
+        ["run", "view", "1234", "--repo", repo, "--json", "databaseId,headSha,status,conclusion"],
+    ] * 2
+    assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 1
+
+
+def test_poll_by_listing_mutation_is_detected(publication_repo: PublicationRepo) -> None:
+    # Re-reading the listing lets the other run's success publish our SHA.
+    result = publication_repo.run(polls=listing_with_a_second_run(), mutation="poll_by_listing")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.dispatched_sha
+    answers = [json.loads(event[2]) for event in publication_repo.events if event[0] == "poll"]
+    assert [answer["databaseId"] for answer in answers] == [1234, 5678]
+
+
+def test_publication_cancels_the_dispatched_run_it_stops_waiting_for(
+    publication_repo: PublicationRepo,
+) -> None:
+    # Deleting the temporary branch does not cancel its run. A run still
+    # queued when the gate gives up kept its jobs in the organization's
+    # queue after nothing could use its result (2026-10-26 starvation).
+    result = publication_repo.run(run_states=[("in_progress", None)])
+    assert_snapshot_withheld(publication_repo, result)
+    assert "CI did not pass within" in result.stdout
+    calls = publication_repo.calls
+    # Found by the listing once, then polled and cancelled by its id.
+    assert len([call for call in calls if call[:2] == ["run", "list"]]) == 1
+    assert len([call for call in calls if call[:2] == ["run", "view"]]) == 479
+    assert calls[-1] == ["run", "cancel", "1234", "--repo", publication_repo.env["GITHUB_REPOSITORY"]]
 
 
 @pytest.mark.parametrize("direction", ["forward", "backward"])
@@ -606,10 +664,17 @@ def test_price_refresh_publishes_only_after_exact_snapshot_ci() -> None:
 
 def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     # Excluding the redundant local oracle pass is safe only while the
-    # required exact-SHA CI includes every default/post-cutover proof shard.
+    # required exact-SHA CI includes every default/post-cutover proof shard
+    # for a commit that can change the oracle's result. The oracle builds its
+    # catalog from each case's fixture body, so a commit that touches only
+    # published catalog data cannot; ci.yml skips the shards for exactly that
+    # commit and runs them for a refresh that also rewrote a parser.
+    from scripts.ci.commit_scope import DATA_ONLY_CONDITION
+
     ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     job = ci["jobs"]["proof-oracle"]
-    assert "if" not in job
+    assert job["if"] == DATA_ONLY_CONDITION
+    assert job["needs"] == "scope"
     assert "continue-on-error" not in job
     assert job["strategy"]["matrix"] == {
         "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4, 5, 6],

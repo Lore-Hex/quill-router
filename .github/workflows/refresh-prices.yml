@@ -29,10 +29,11 @@ on:
     - cron: "37 * * * *"
   workflow_dispatch: {}
 
-# One run at a time: queueing plus the complete CI matrix can exceed an hour, and a run
-# re-dispatches this workflow when main advances. GitHub keeps one pending
-# run per group; a newer run replaces an older pending one, never the one
-# in progress.
+# One run at a time: queueing plus the CI run it gates on can exceed an hour,
+# and a run re-dispatches this workflow when main advances. GitHub keeps one
+# pending run per group, so a newer hourly run cancels an older run that is
+# still queued; it never cancels the one in progress, whose dispatched CI run
+# and validated snapshot would otherwise be orphaned.
 concurrency:
   group: refresh-prices
   cancel-in-progress: false
@@ -351,9 +352,15 @@ jobs:
 
       # No local test pass here. GitHub suppresses push-triggered CI for
       # GITHUB_TOKEN commits, so the commit step below dispatches ci.yml on the
-      # exact generated SHA and publishes only after that full run (lint incl.
-      # ruff/mypy/model-changes check, every test shard, coverage floor,
-      # post-cutover and proof-oracle jobs) succeeds. A local ruff/mypy/pytest
+      # exact generated SHA and publishes only after that run succeeds. ci.yml
+      # classifies the commit by its changed paths: a commit that touches only
+      # catalog data files runs lint (ruff/mypy/model-changes check), the
+      # production import, every default and post-cutover test shard and the
+      # browser smoke, and skips the jobs that read none of those files
+      # (proof-oracle, fastpath, proofs, spanner conformance, frontend, BYOK
+      # format diff, coverage floor); a commit that also touches a self-healed
+      # parser or the fastpath alias vectors runs the complete matrix. Its
+      # `CI` summary job sets the run's conclusion. A local ruff/mypy/pytest
       # pass duplicated a subset of that run and added ~2 h, during which main
       # usually moved and the validated snapshot was discarded unpublished.
       - name: Commit, verify, and push if changed
@@ -413,24 +420,37 @@ jobs:
 
           ci_passed=""
           ci_run_id=""
-          # Keep exact-SHA completion mandatory, but allow the full test matrix
+          # Keep exact-SHA completion mandatory, but allow the test matrix
           # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
           for _ in $(seq 1 480); do
-            run_json=$(gh run list \
-              --repo "${GITHUB_REPOSITORY}" \
-              --workflow ci.yml \
-              --branch "${BRANCH}" \
-              --event workflow_dispatch \
-              --json databaseId,headSha,status,conclusion \
-              --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+            if [ -n "${ci_run_id}" ]; then
+              # Once the listing has found the run, poll that run by id. A
+              # second dispatch on the same branch and SHA could otherwise be
+              # read, and on timeout cancelled, in its place.
+              run_json=$(gh run view "${ci_run_id}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --json databaseId,headSha,status,conclusion)
+              if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
+                echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
+                exit 1
+              fi
+            else
+              run_json=$(gh run list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --workflow ci.yml \
+                --branch "${BRANCH}" \
+                --event workflow_dispatch \
+                --json databaseId,headSha,status,conclusion \
+                --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+            fi
             if [ -n "${run_json}" ]; then
               status=$(jq -r .status <<<"${run_json}")
               conclusion=$(jq -r .conclusion <<<"${run_json}")
-              echo "  ci run $(jq -r .databaseId <<<"${run_json}"): status=${status} conclusion=${conclusion:-<pending>}"
+              ci_run_id=$(jq -r .databaseId <<<"${run_json}")
+              echo "  ci run ${ci_run_id}: status=${status} conclusion=${conclusion:-<pending>}"
               if [ "${status}" = "completed" ]; then
                 if [ "${conclusion}" = "success" ]; then
                   ci_passed=1
-                  ci_run_id=$(jq -r .databaseId <<<"${run_json}")
                   break
                 fi
                 echo "generated snapshot CI concluded '${conclusion}'"
@@ -441,6 +461,14 @@ jobs:
           done
           if [ -z "${ci_passed}" ]; then
             echo "generated snapshot CI did not pass within 120 minutes"
+            # Deleting the branch (the EXIT trap) does not cancel its run. A
+            # run left queued or running here keeps its jobs in the
+            # organization's Actions queue after nothing can use its result.
+            # Cancel the run polled above by id, never a fresh listing.
+            if [ -n "${ci_run_id}" ]; then
+              gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
+                echo "::warning::could not cancel ci run ${ci_run_id}"
+            fi
             exit 1
           fi
 
