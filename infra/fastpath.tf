@@ -27,7 +27,11 @@ locals {
   # commit timestamp (#2038) and G12's per-period counts (#2039); it takes
   # -edge-policy-url and -edge-decide-shadow, which the nodes' policy
   # attributes below pass (stage I1).
-  fastpath_release        = "2d90fa113678233b9edcdf9d0ea833ace37b6c94"
+  # 7f392e79d: main after #2061 (G13), with #2065's hold split: the decide
+  # shadow keeps requests carrying a cache affinity key, composes the cold
+  # order and measures Python's answer as affinity_cold or affinity_warm,
+  # so the soak compares the cohort instead of passing nearly all of it.
+  fastpath_release        = "7f392e79d87d797ebac70edc4dcebe2fcdd80916"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
