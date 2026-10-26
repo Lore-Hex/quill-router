@@ -37,23 +37,20 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
   });
 }
 
-test('Overflow controls move columns and disappear when the table fits', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
+test('Tables and code use native scrolling with boundary-aware edge cues', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/openrouter-alternative');
-  const viewport = page.locator('.model-table-wrap').first();
-  const controls = page.locator('.table-scroll-tools').first();
-  await expect(controls).toBeVisible();
-  const previous = controls.getByRole('button', { name: 'Previous table columns' });
-  const next = controls.getByRole('button', { name: 'Next table columns' });
-  await expect(previous).toBeDisabled();
-  await next.click();
-  await expect.poll(() => viewport.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
-  await expect(previous).toBeEnabled();
-  await viewport.evaluate(el => { el.scrollLeft = el.scrollWidth; });
-  await expect(next).toBeDisabled();
-  await previous.click();
-  await expect(next).toBeEnabled();
+  await expect(page.locator('.table-scroll-tools')).toHaveCount(0);
+  for (const viewport of [page.locator('.model-table-wrap').first(), page.locator('.copy-terminal pre')]) {
+    await expect(viewport).toHaveClass(/can-scroll-right/);
+    await expect(viewport).not.toHaveClass(/can-scroll-left/);
+    await viewport.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => viewport.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+    await expect(viewport).toHaveClass(/can-scroll-left/);
+    await viewport.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+    await expect(viewport).not.toHaveClass(/can-scroll-right/);
+  }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(controls).toBeHidden();
+  await expect(page.locator('.model-table-wrap').first()).not.toHaveClass(/can-scroll/);
 });
