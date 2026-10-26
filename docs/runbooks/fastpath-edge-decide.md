@@ -3,21 +3,26 @@
 Stage I2 of `docs/design/fast-admission-e2-decide.md` (§11): the Go edge
 answers a workspace's authorizes itself, writes the two rows Python's
 leased path writes, and passes everything else to Python unchanged (§1).
-A request is decided only when three things say so at once, checked in
-this order (`fastpath/internal/edge/decide.go`, `Decide`; §3): the node's
-flag `-edge-decide`, which runs the decide path at all
-(`fastpath/cmd/fastpath/main.go`, false by default); the edge policy Python
-publishes, whose pilot set must name the workspace (decision 11:
-`fastpath_pilot_enabled`, `fastpath_pilot_workspaces`,
+A request is decided only when three things say so at once: the node's
+flag `-edge-decide` (`fastpath/cmd/fastpath/main.go`, false by default),
+which the edge's handler runs the decide path under at all
+(`fastpath/internal/edge/edge.go`, `ServeHTTP`; without it `Decide` runs
+for the shadow alone); then, in `Decide`'s order (`decide.go`; §3), the
+edge policy Python publishes, whose pilot set must name the workspace
+(decision 11: `fastpath_pilot_enabled`, `fastpath_pilot_workspaces`,
 `fastpath_pilot_regions` and `records_durable`, rendered from
-`scripts/deploy/rollout.sh`'s `TR_FASTPATH_PILOT_*`); and a row of
+`scripts/deploy/rollout.sh`'s `TR_FASTPATH_PILOT_*`), and a row of
 `tr_fastpath_edge_decide` for the workspace, cloud and region that says
-`decide` (§9, decision 10), checked last so that the shadow compares a
-complete decision for a workspace not yet deciding. Everything else passes
-with a §3 reason, counted. Nothing of I1 is undone: the decide path answers
-before the shadow attaches (`fastpath/internal/edge/edge.go`, `ServeHTTP`),
-so the shadow keeps comparing every request the decide path passes, and an
-answered request is the decide path's alone.
+`decide` (§9, decision 10), checked last of the gates so that the shadow
+compares a complete decision for a workspace not yet deciding (after it
+only `body.cache_affinity`, below). Everything else passes with a §3
+reason, counted. The edge sees only the share of the enclaves' authorizes
+the control balancer's route sends it (`fastpath_edge_route_weight`,
+`infra/fastpath_edge_backend.tf`): the rest go to Python directly and the
+decide path never sees them. Nothing of I1 is undone: the decide path
+answers before the shadow attaches (`edge.go`, `ServeHTTP`), so the shadow
+keeps comparing every request the decide path passes, and an answered
+request is the decide path's alone.
 
 Throughout, `DB` is
 `projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`
@@ -42,7 +47,8 @@ ssh tr-fastpath-7 --zone=us-central1-a --project=quill-cloud-proxy
    that is a full period after the node's last change (its restart onto
    the release, or the weight's apply), found from the lines' timestamps
    per node (`fastpath-watch.md`, "The edge's decide counts"). In the
-   report: `periods` showing every node from there on, one line a minute;
+   report: `periods` counting one line a minute for every node over the
+   span;
    `i2.comparable` at least 10,000 over at least 24 hours;
    `i2.agree_full_ratio` at least 0.995 with every `i2.differ_by_field`
    explained; `i2.differ_estimate`, `i2.row_idempotency_fingerprint` and
@@ -79,13 +85,16 @@ ssh tr-fastpath-7 --zone=us-central1-a --project=quill-cloud-proxy
    (I1), `TR_FASTPATH_PILOT_ENABLED=true` and the workspace in
    `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/rollout.sh`); a
    workspace the policy's pilot set does not name passes
-   `policy.not_pilot_workspace` once its key and workspace facts are read
-   and eligible (§3; `decide.go`, `policyPass` runs after the key's and
-   the workspace's gates). The workspace is enabled on the
+   `policy.not_pilot_workspace` before any key is read when the set is
+   empty, and otherwise once its key and workspace facts are read and
+   eligible (§3; `decide.go`: the empty set is checked before the key's
+   cache, the workspace's own membership in `policyPass` after the key's
+   and the workspace's gates). The workspace is enabled on the
    switch (`fastpathctl -database $DB enable WORKSPACE`, idempotent;
-   `fastpath-p1.md`): for one the switch does not enable the front door
-   answers `Off`, which the decide path passes `owner.off`
-   (`fastpath/internal/edge/decide_path.go`, `ownerPass`). Decide rows are
+   `fastpath-p1.md`): for one the switch does not enable, a request that
+   reaches the admit is answered `Off` by the front door, which the decide
+   path passes `owner.off` (`fastpath/internal/edge/decide_path.go`,
+   `ownerPass`). Decide rows are
    us-central1 only until `rollout.sh` renders `settle_outbox_enabled`
    the same in every region (decision 11).
 4. **The alerts are quiet** over the soak: no `TR Fast path` incident
@@ -150,13 +159,19 @@ refuses it without the policy's URL and refuses any value but `true`,
 `false` or none, as it does `fastpath-edge-decide-shadow`. The flag turns
 the decide path on (`fastpath/internal/service/service.go`,
 `cfg.Edge.Decide`: the key and workspace cache, the decide copy and the
-rows' inserts, `edge.DecideConfig`). With the table all off every cohort
-request passes `decide.off` and nothing changes for traffic, so the
+rows' inserts, `edge.DecideConfig`). With the table all off, a request
+that reaches the decide row (every gate before it passed, in `Decide`'s
+order) passes `decide.off` while the node's copy is fresh and
+`cache.decide` while it is unread or stale; one naming a
+`cache_affinity_key` passes `body.cache_affinity` after the row, whatever
+it says; every other request passes at an earlier gate, as the shadow
+counted it. Nothing is answered, so nothing changes for traffic, and the
 attribute goes on first and the row after.
 
 1. Set it: `fastpath-edge-decide = "true"` in `local.fastpath_edge_snapshot`,
-   a one-line change whose plan is `0 to add, 2 to change, 0 to destroy`
-   (the two instances' metadata, applied in place). Merge and apply
+   a one-line change whose plan should read `0 to add, 2 to change, 0 to
+   destroy` (the two instances' metadata, applied in place; read the plan
+   before the apply). Merge and apply
    (workflow dispatch, `fastpath-deploy.md`).
 2. Each node takes it in turn, the other serving, as the shadow was turned
    on (`fastpath-deploy.md`, "Turning the edge policy and the decide
@@ -198,10 +213,13 @@ attribute goes on first and the row after.
    `curl -sS -o /dev/null -w '%{http_code}\n' http://ADDRESS/owner/ping`
    answers `204`; the backend reports the node `HEALTHY` again before the
    other node is touched.
-4. The decide path announces itself: within two minutes the node's journal
-   carries its first count line, `fastpath edge decide: answered=0 ...
-   passed={"decide.off":N,...}` (`decide_path.go`, `flush`, one a minute),
-   every cohort request passing `decide.off`:
+4. The decide path announces itself: at the end of its first period, a
+   minute (`newDecider`, the default `every`), the node's journal carries
+   its first count line, `fastpath edge decide: answered=0 ...
+   passed={...}` (`decide_path.go`, `flush`, one a minute), `decide.off`
+   among its reasons for the requests that reached the row while the copy
+   was fresh (`cache.decide` for any that reached it before its first
+   read), the rest at earlier gates:
 
    ```bash
    journalctl -u fastpath -n 500 | grep 'fastpath edge decide:'
@@ -228,9 +246,11 @@ calls a node's front door at `/v1/authorize` directly
 its requests reaches the edge. An operator-owned workspace serves as the
 first only with an API key of its own, named in Python's pilot set, and
 requests sent as a client sends them, through the public API with that
-key, each an enclave's authorize behind it; nothing in the repository
-sends such a request for the operator (the synthetic monitor's key is
-passed, `policy.monitor_key`). Without one, say so and put the pilot
+key, each an enclave's authorize behind it, of which the route sends the
+edge its weighted share; nothing of the fast path's tooling sends such a
+request for the operator (`loadgen` calls the front door, and the
+synthetic monitor's key is passed, `policy.monitor_key`). Without one,
+say so and put the pilot
 workspace's row on: the first evidence is then the pilot's own traffic.
 
 ```bash
@@ -239,8 +259,9 @@ fastpathctl -database $DB decide on WORKSPACE -cloud gcp -region us-central1
 
 `-cloud` and `-region` default to those (`fastpathctl`), before the command
 or after the workspace; the region is the authorizations'
-(`choose_region(body.region)`, decision 10), so a request whose region is
-another passes `decide.off`. It writes one row, `(WORKSPACE, gcp,
+(`choose_region(body.region)`, decision 10), so a request of the
+workspace whose region is another passes `decide.off` on reaching the
+row. It writes one row, `(WORKSPACE, gcp,
 us-central1, true, changed_at)`, `changed_at` the commit's timestamp
 (`store/decide.go`, `SetDecide`), and answers
 `{"workspace":"WORKSPACE","cloud":"gcp","region":"us-central1","decide":true,"at":...}`.
@@ -252,9 +273,10 @@ within 5 s and is given 5 s (`DecideEvery`, `decideCopy.run`), so within
 10 s when its reads succeed, and not until they do when they fail (the
 copy without the row is kept, then ages out at 15 s to all off). Nothing
 reads a node's copy from outside, so the node is
-seen to have taken it by what it does: the next minute's count line has
-`answered` above 0 (`read_back` counts the 200s after a read-back), and
-its `passed` no longer grows by `decide.off` for the workspace's requests:
+seen to have taken it by what it does: once the workspace sends, the next
+minute's count line has `answered` above 0 for the share of its requests
+the route sent that node (`read_back` counts the 200s after a read-back),
+and those of them that reach the row no longer count `decide.off`:
 
 ```bash
 gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide:"' \
@@ -264,8 +286,8 @@ gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" 
 
 A node whose `answered` stays 0 while the workspace sends: `decide status`
 for the row; the node's journal for `fastpath edge decide copy: read
-failed` (`decideCopy.run`: the copy held ages out after 15 s, and every
-request then passes `cache.decide`); the policy's pilot set
+failed` (`decideCopy.run`: the copy held ages out after 15 s, and a
+request that reaches the row then passes `cache.decide`); the policy's pilot set
 (`policy.not_pilot_workspace`), the switch (`owner.off`), and the rest of
 §3 by the line's `passed` reasons, each the gate a request tripped. A
 request Go answered carries Python's `timing` shape with `spanner_rpcs`
@@ -280,8 +302,8 @@ still Python's.
 ## 4. The first hour and the first day
 
 The same reads after an hour and after a day, against the hour and the
-day before `decide on` (the shadow's figures for the workspace's requests
-then, the decide path's now):
+day before `decide on` (the shadow's figures then, the decide path's now;
+neither names a workspace):
 
 ```bash
 fastpathwatch edge -project quill-cloud-proxy -since DECIDE_ON
@@ -335,15 +357,25 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   `key.*`), the workspace's (`workspace.*`, `cache.workspace`), the merged
   tags, then `policyPass` (`policy.not_pilot_workspace` for a workspace
   the set does not name, `policy.records_not_durable` and the rest), the
-  models and the evaluator, the compose, and the decide row last
+  models and the evaluator, the compose, then the decide row
   (`decide.off` for a request that passed everything before it while the
-  copy was fresh, `cache.decide` while it was stale). So a request of a
-  workspace outside the pilot set counts `policy.not_pilot_workspace`
-  only when its key and workspace facts were fresh and eligible, and a
-  pilot workspace's with no row on counts `decide.off` only when nothing
-  earlier passed it. The shadow runs the same pipeline, so expect each
-  reason at the share the soak's shadow counted it (`cache.*` at
-  `i2.stale_rate`); a reason the soak never counted is the thing to
+  copy was fresh, `cache.decide` while it was unread or stale), and after
+  the row, for a request naming a `cache_affinity_key`,
+  `body.cache_affinity` in place of the row's reason (`decide.go`, the
+  override after `DecideGate`: such a request is never admitted, whatever
+  the row says). So a request of a workspace outside the pilot set counts
+  `policy.not_pilot_workspace` before any key is read when the set is
+  empty, and otherwise only when its key and workspace facts were fresh
+  and eligible; and a pilot workspace's with no row on counts `decide.off`
+  only when nothing earlier passed it and it names no
+  `cache_affinity_key`. The decide path's `passed` is its own count, not
+  the shadow's: it counts the requests naming a `cache_affinity_key`
+  (as `body.cache_affinity`), which the shadow's classes and
+  `i2.stale_rate` leave out, and a stale decide copy is a pass here where
+  the shadow still compares the decision (`shadow_full.go`, `ForShadow`),
+  so its shares are not the shadow's rates. Read it as counts: against
+  the same node's lines of the hour before, and after a day against the
+  day before; a reason that was absent and is not is the thing to
   explain. After the pipeline, from the decide path alone
   (`decide_path.go`): `inflight.key` when the lookup hash's in-flight
   count was at the policy's limit; `owner.unreachable` when no admitter
@@ -363,8 +395,9 @@ and `audit`, below). Read, each against the line of §11 it answers to:
 - The shadow's figures are now of the passes alone: a request Go answers
   never reaches it. With one pilot workspace deciding, `i2.comparable` can
   be 0 and `i2.agree_full_ratio` null, and that is the expected shape, not
-  a failure. Where comparable requests remain (another pilot workspace's,
-  whose row is off, counted `decide.off` under the shadow's `decide=`),
+  a failure. Where comparable requests remain (a pilot workspace's that
+  reached the row with no row on, counted `decide.off` under the shadow's
+  `decide=`, or `cache.decide` with the copy stale),
   `i2.agree_full_ratio` holds its gate, and `i2.would_admit_python_refused`
   (beyond revocation lag), `i2.differ_estimate`,
   `i2.row_idempotency_fingerprint` and `i2.fields_other` are 0.
@@ -379,9 +412,20 @@ fastpathctl -database $DB status WORKSPACE
 fastpathctl -database $DB -funded CREDITS audit WORKSPACE
 ```
 
-`audit` exits 0: one winner per authorization, the charges summing to what
-the lease booked, each shard's usage not below it (`fastpathctl`, `audit`;
-`fastpath-p1.md` runs it after every run). The balancer's gates of
+`audit` exits 0 when the workspace's rows keep what it checks
+(`fastpathctl`, `audit`: `store.CheckIdentity`, `CheckWinners`,
+`CheckBookedUsage`, `AuditSums`): per credit shard, reserved is the
+remaining allocation of every open or draining lease's donors plus the
+workspace's synchronous holds, each live lease's allocation and
+consumption are its donors' sums, and the debt marks are as the signed
+sum has them; within each lease's retained packs no
+authorization is decided twice, and the packs' charges sum to what the
+lease's row books; each shard's usage is not below what the leases still
+there booked on it; and the credit rows sum to `CREDITS`. It reads the
+leases' packs and rows, not the authorizations: it does not say that
+every authorization the edge answered has a winner (a hold still open
+has none yet), nor check an authorization across leases. `fastpath-p1.md`
+runs it after every run. The balancer's gates of
 `fastpath-deploy.md`, "Raising the edge route weight" (no `500`-class rows
 on the edge backend beyond control's own, edge p50 within 1.2x and p99
 within 1.5x control's) are read at the same two marks; a request Go
@@ -424,15 +468,17 @@ untouched, and what the edge admitted settles through Python as before.
    (`fastpath-turn-off.md`): each node's copy of the switch drops the
    workspace within three seconds (`fastpath/internal/service/switch.go`,
    a copy older than three intervals enables nothing), the front door then
-   answers `Off`, which the decide path passes `owner.off`, and the
-   workspace's leases are revoked. It is the turn-off runbook's lever,
+   answers `Off` to a request that reaches the admit, which the decide
+   path passes `owner.off`, and the workspace's leases are revoked. It is
+   the turn-off runbook's lever,
    broader than decide, and leaves the decide rows as they are.
 4. **The node attribute**, `fastpath-edge-decide = "false"` in
    `infra/fastpath.tf`, applied, and each node cycled as in step 2 above,
    one at a time, the other serving: minutes to hours, the leases' drain.
    A node not yet cycled keeps `-edge-decide`, and with the rows off it
-   answers nothing and passes `decide.off`: the attribute is the way back
-   for the path, not for a workspace.
+   answers nothing: a request that reaches the row passes `decide.off`
+   (`cache.decide` with the copy stale), the rest pass earlier. The
+   attribute is the way back for the path, not for a workspace.
 5. **The route**, `fastpath_edge_route_weight = 0`
    (`infra/fastpath_edge_backend.tf`): a one-line change merged and
    applied (workflow dispatch), which the balancer takes once the url
