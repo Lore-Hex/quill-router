@@ -200,6 +200,9 @@ class _SentryFloodgate:
 
 
 _floodgate = _SentryFloodgate(SentryFloodgateConfig())
+# Logs and error events are separate Sentry products. A noisy log stream must
+# not consume the error budget before an actual exception can be reported.
+_log_floodgate = _SentryFloodgate(SentryFloodgateConfig())
 _CONTRACT_WARNING_LIMITS = SentryFloodgateConfig(
     max_events_per_fingerprint=1,
     max_events_per_window=10,
@@ -341,7 +344,7 @@ def before_send_log(
     if _is_dropped_noise(event):
         return None
     event = _scrub(event)
-    if not _floodgate.allow(event):
+    if not _log_floodgate.allow(event):
         return None
     return event
 
@@ -474,8 +477,9 @@ def _safe_route_identity(event: Mapping[str, Any]) -> str:
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:
-    global _floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
+    global _floodgate, _log_floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
     _floodgate = _SentryFloodgate(_floodgate_config(settings))
+    _log_floodgate = _SentryFloodgate(_floodgate_config(settings))
     _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS)
     _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS)
 
@@ -485,13 +489,15 @@ def reset_sentry_floodgate_for_tests(
     settings: Settings | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    global _floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
+    global _floodgate, _log_floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
     _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS, clock=clock)
     _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS, clock=clock)
     if settings is None:
         _floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)
+        _log_floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)
         return
     _floodgate = _SentryFloodgate(_floodgate_config(settings), clock=clock)
+    _log_floodgate = _SentryFloodgate(_floodgate_config(settings), clock=clock)
 
 
 def _floodgate_config(settings: Settings) -> SentryFloodgateConfig:
