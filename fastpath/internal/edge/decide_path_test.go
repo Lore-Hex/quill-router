@@ -345,7 +345,7 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 		}
 	}
 	t.Logf("%d answered, %d unavailable, %d passed (%d refunded)", answered, unavailable, passed, refunded)
-	if answered != 161 || unavailable != 3 || refunded != 7 {
+	if answered != 167 || unavailable != 3 || refunded != 7 {
 		t.Fatalf("answered %d, unavailable %d, refunded %d: not the goldens' counts", answered, unavailable, refunded)
 	}
 	// The goldens' three unavailable answers, a code each: the clock ahead

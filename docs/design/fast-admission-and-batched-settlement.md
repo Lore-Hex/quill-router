@@ -591,8 +591,9 @@ lease's expiry minus a skew allowance.
 1. Verify the boot signature and the accepted image digest, against caches with
    a maximum age.
 2. Evaluate the compiled routing snapshot (§4.10) and compute the estimate e.
-   Without `max_tokens`, it assumes 512 output tokens. It is the estimate
-   Python computes today, so a hold is the same amount on both paths (§4.13).
+   Without `max_tokens`, it assumes 512 output tokens; a budget above
+   `HOLD_OUTPUT_TOKENS` (16,384) prices 16,384. It is the estimate Python
+   computes today, so a hold is the same amount on both paths (§4.13).
 3. At the owner, check the workspace's state from a cache with a short maximum
    age (pause, trust, debt, revocation). Then hold e against the lease.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
@@ -1774,9 +1775,14 @@ which §4.11 now lists.
     fast path (§9).
 - **How far a request can outrun its hold.** The hold is the estimate: the
   estimated input at the input rate, plus the caller's `max_tokens`, or 512
-  tokens without one, at the output rate (`outputTokenEstimate` in the
+  tokens without one, bounded by `HOLD_OUTPUT_TOKENS` (16,384;
+  `authorize_candidates.hold_output_tokens`, the evaluator's
+  `HoldOutputTokens`), at the output rate (`outputTokenEstimate` in the
   enclave, `output_estimate` in Python). A settle bills what the provider
-  reports. With the input estimate exact, it can still pass the hold
+  reports, uncapped for a catalog route, so an answer past 16,384 tokens
+  outruns its hold by the excess at the output rate; a user-provided
+  model's settle is capped at its hold, which keeps the whole budget. With
+  the input estimate exact, it can still pass the hold
   (quill-cloud-proxy `29be0fdd`, quill-router `7ea04fa7`):
   - **The ceiling sent to the provider is above the estimate.** With no
     caller limit, adaptive-thinking Anthropic models are sent 32,000 tokens

@@ -716,7 +716,10 @@ context-length error (400 `context_length_exceeded`, `param` `messages`)
 naming the largest effective window among the candidates, in the wording with or
 without the completion as Python's has it. The estimate prices
 `output_estimate`: `max_tokens`, else `max_completion_tokens`, else
-`max_output_tokens`, else 512. A `max_*` below 1 or a negative prompt
+`max_output_tokens`, else 512, bounded by `HOLD_OUTPUT_TOKENS` (16,384 in
+`authorize_candidates.hold_output_tokens` and the evaluator's
+`HoldOutputTokens`): a larger budget prices 16,384 output tokens, while the
+window check above still takes the whole budget. A `max_*` below 1 or a negative prompt
 estimate (which the schema refuses) and a prompt plus completion beyond int64
 go to Python.
 

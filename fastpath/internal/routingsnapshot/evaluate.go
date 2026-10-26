@@ -59,7 +59,8 @@ type Request struct {
 	// MaxTokens, MaxCompletionTokens and MaxOutputTokens are the body's
 	// fields (nil when absent). The window must also hold max_tokens, else
 	// max_completion_tokens (max_output_tokens does not count); the estimate
-	// prices the first of the three present, else 512 (output_estimate).
+	// prices the first of the three present, else 512 (output_estimate),
+	// bounded by HoldOutputTokens.
 	MaxTokens           *int64
 	MaxCompletionTokens *int64
 	MaxOutputTokens     *int64
@@ -67,6 +68,16 @@ type Request struct {
 	// and whether the rank evidence is current.
 	At time.Time
 }
+
+// HoldOutputTokens is the output tokens a hold prices at most, Python's
+// HOLD_OUTPUT_TOKENS in src/trusted_router/authorize_candidates.py
+// (hold_output_tokens): the two must agree, or the two paths hold different
+// amounts for one request. The estimate prices min(output_estimate,
+// HoldOutputTokens); the window still has to hold the whole budget. Python's
+// bound also takes an endpoint's max_completion_tokens when the catalog
+// knows one; the v2 snapshot cannot carry it, and Python's compiler refuses
+// an endpoint that has one, so no endpoint here is bounded below this.
+const HoldOutputTokens = 16_384
 
 // Outcome says which of a Result's fields hold the answer.
 type Outcome int
@@ -189,6 +200,9 @@ func (s *Snapshot) Evaluate(req Request) Result {
 			outputTokens = *v
 		}
 	}
+	// The hold prices at most HoldOutputTokens of the budget; the window
+	// check below still takes the whole budget (completionTokens).
+	outputTokens = min(outputTokens, HoldOutputTokens)
 	completionTokens := int64(0)
 	for _, v := range []*int64{req.MaxCompletionTokens, req.MaxTokens} {
 		if v != nil {

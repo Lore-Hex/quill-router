@@ -1180,3 +1180,42 @@ func TestTheKeylessPolicyGatesAreBeforeTheLookup(t *testing.T) {
 		t.Fatalf("positive control: %d lookups", looked)
 	}
 }
+
+// TestTheHoldPricesAtMostHoldOutputTokens: through the pipeline, the
+// production shape (a max_tokens of 131,072) and the budgets either side of
+// routingsnapshot.HoldOutputTokens price what the regenerated goldens record:
+// 16,384 output tokens at and above the bound, the budget itself below it.
+func TestTheHoldPricesAtMostHoldOutputTokens(t *testing.T) {
+	f := authorizeGoldens(t)
+	estimate := func(name string) int64 {
+		t.Helper()
+		for _, c := range f.Cases {
+			if c.Name != name {
+				continue
+			}
+			in, _ := caseInputs(t, f, c)
+			d := Decide(in)
+			if d.Pass != "" || d.ForShadow() == nil {
+				t.Fatalf("%s: passed %q, want a decision", name, d.Pass)
+			}
+			if got := d.ForShadow().Estimate; got != c.Expect.Estimate {
+				t.Fatalf("%s: estimate %d, the golden's %d", name, got, c.Expect.Estimate)
+			}
+			return c.Expect.Estimate
+		}
+		t.Fatalf("%s: not a golden case", name)
+		return 0
+	}
+	flash := "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+"
+	bound := estimate(flash + "16384")
+	if got := estimate(flash + "16385"); got != bound {
+		t.Errorf("a 16,385 budget prices %d, want the bound's %d", got, bound)
+	}
+	if got := estimate(flash + "131072"); got != bound {
+		t.Errorf("a 131,072 budget prices %d, want the bound's %d", got, bound)
+	}
+	if got := estimate(flash + "16383"); got >= bound {
+		t.Errorf("a 16,383 budget prices %d, want below the bound's %d", got, bound)
+	}
+	estimate("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:7680+max_tokens:131072")
+}

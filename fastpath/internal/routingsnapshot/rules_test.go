@@ -222,3 +222,30 @@ func TestAnOmittedEstimateIsTheSchemaDefault(t *testing.T) {
 		t.Fatalf("explicit zero estimate: got %+v, want answered", r)
 	}
 }
+
+// TestTheHoldPricesAtMostHoldOutputTokens: a budget above HoldOutputTokens
+// prices HoldOutputTokens output tokens, as authorize_candidates.hold_output_tokens
+// does in Python; one below prices itself. Gemini's window is unknown, so a
+// max_tokens of 131,072 (which counts toward the window) fits.
+func TestTheHoldPricesAtMostHoldOutputTokens(t *testing.T) {
+	s := goldenSnapshot(t)
+	estimate := func(maxTokens int64) int64 {
+		t.Helper()
+		r := baseRequest()
+		r.Model, r.MaxTokens = "google/gemini-3.1-pro-preview", ptr(maxTokens)
+		got := s.Evaluate(r)
+		if got.Outcome != Answered {
+			t.Fatalf("max_tokens %d: %+v %+v", maxTokens, got, got.Refusal)
+		}
+		return got.ModelEstimate
+	}
+	bound := estimate(HoldOutputTokens)
+	for _, budget := range []int64{HoldOutputTokens + 1, 131_072} {
+		if got := estimate(budget); got != bound {
+			t.Errorf("max_tokens %d prices %d, want the bound's %d", budget, got, bound)
+		}
+	}
+	if got := estimate(HoldOutputTokens - 1); got >= bound {
+		t.Errorf("max_tokens %d prices %d, want below the bound's %d", HoldOutputTokens-1, got, bound)
+	}
+}

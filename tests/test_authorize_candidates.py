@@ -8,6 +8,7 @@ re-rank is an explicit argument that callers may leave absent.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import inspect
 import os
@@ -19,13 +20,18 @@ import pytest
 
 from trusted_router import authorize_candidates
 from trusted_router.authorize_candidates import (
+    HOLD_OUTPUT_TOKENS,
     CandidateRequest,
+    ResolvedCandidates,
+    endpoint_cost_microdollars,
     finish_candidates,
+    hold_output_tokens,
     plan_route,
     resolve_candidates,
 )
 from trusted_router.catalog import MODELS
 from trusted_router.config import Settings
+from trusted_router.custom_model_billing import custom_model_cost_microdollars
 
 ROOT = Path(__file__).resolve().parents[1]
 AT = dt.datetime(2026, 10, 21, 9, 30, tzinfo=dt.UTC)
@@ -146,3 +152,66 @@ def test_a_refused_named_chain_carries_its_log_event() -> None:
             additional_cost_reservation=0, video_resolution=None, at=AT,
         )
     assert refusal.value.event == "unavailable" and refusal.value.error.status_code == 503
+
+
+def _candidates(model: str):  # type: ignore[no-untyped-def]
+    request = _request(model)
+    plan = plan_route(request, Settings(environment="test"), region="us-central1")
+    return request, plan, resolve_candidates(plan, request, region="us-central1", at=AT)
+
+
+def _estimate(request, plan, resolved, output_tokens: int,  # type: ignore[no-untyped-def]
+              user_model_prices: tuple[int, int] | None = None) -> int:
+    return finish_candidates(
+        plan, resolved, route_type=request.route_type, byok_providers=frozenset(),
+        estimated_input_tokens=1_000, output_tokens=output_tokens, service_tier=None,
+        additional_cost_reservation=0, video_resolution=None, at=AT,
+        user_model_prices=user_model_prices,
+    ).model_estimate
+
+
+def _credits_cost(resolved, output_tokens: int) -> int:  # type: ignore[no-untyped-def]
+    return max(
+        endpoint_cost_microdollars(endpoint, 1_000, output_tokens, effective_at=AT, reserve_auto=True)
+        for _model, endpoint in resolved.candidates if endpoint.usage_type == "Credits"
+    )
+
+
+def test_a_catalog_hold_prices_at_most_hold_output_tokens() -> None:
+    request, plan, resolved = _candidates(_multi_route_chat_model())
+    at_the_bound = _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS)
+    assert at_the_bound == _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
+    assert _estimate(request, plan, resolved, 131_072) == at_the_bound
+    assert _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS + 1) == at_the_bound
+    assert _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS - 1) < at_the_bound
+
+
+def test_a_user_provided_model_keeps_the_whole_budget_in_its_hold() -> None:
+    request, plan, resolved = _candidates(_multi_route_chat_model())
+    prices = (1_000_000, 4_000_000)
+    whole = _estimate(request, plan, resolved, 131_072, user_model_prices=prices)
+    assert whole == custom_model_cost_microdollars(
+        input_tokens=1_000, output_tokens=131_072, prompt_price=prices[0], completion_price=prices[1],
+    )
+    assert whole > _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS, user_model_prices=prices)
+
+
+def test_an_endpoint_output_ceiling_below_the_bound_wins() -> None:
+    request, plan, resolved = _candidates(_multi_route_chat_model())
+    ceiling = 4_096
+    narrowed = ResolvedCandidates(
+        [(model, dataclasses.replace(endpoint, max_completion_tokens=ceiling))
+         for model, endpoint in resolved.candidates],
+        resolved.effective_preferences,
+    )
+    assert _estimate(request, plan, narrowed, 131_072) == _credits_cost(resolved, ceiling)
+    assert _estimate(request, plan, narrowed, 131_072) < _estimate(request, plan, resolved, 131_072)
+
+
+def test_hold_output_tokens_is_the_bound_both_paths_share() -> None:
+    assert hold_output_tokens(131_072) == HOLD_OUTPUT_TOKENS == 16_384
+    assert hold_output_tokens(512) == 512
+    assert hold_output_tokens(131_072, 4_096) == 4_096
+    assert hold_output_tokens(100, 4_096) == 100
+    evaluator = (ROOT / "fastpath" / "internal" / "routingsnapshot" / "evaluate.go").read_text()
+    assert f"const HoldOutputTokens = {HOLD_OUTPUT_TOKENS:_}" in evaluator

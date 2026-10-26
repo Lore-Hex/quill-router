@@ -504,7 +504,7 @@ always written. For the cohort (`storage_models.py:887-990`), every key:
 | `workspace_id`, `key_hash` | the key's |
 | `model_id`, `provider`, `endpoint_id` | the first candidate's |
 | `usage_type` | `"Credits"` |
-| `estimated_microdollars` | the model estimate |
+| `estimated_microdollars` | the model estimate: the largest candidate's price of `estimated_input_tokens` prompt tokens plus `min(output_estimate, HOLD_OUTPUT_TOKENS)` output tokens, `HOLD_OUTPUT_TOKENS` being 16,384 in both `authorize_candidates.hold_output_tokens` and the evaluator's `HoldOutputTokens` (`routingsnapshot/evaluate.go`). The window check still takes the whole budget. Python's bound also takes an endpoint's `max_completion_tokens` when the catalog knows one; the v2 snapshot cannot carry it, so the compiler refuses such an endpoint rather than let Go hold more than Python. A catalog settle is not capped at the hold (only a user-provided model's is, and its hold keeps the whole budget), so the bound raises overdraft exposure by (actual minus hold) per in-flight request |
 | `credit_reservation_id` | the reservation id |
 | `settled` | `false` |
 | `created_at` | the clock reading, `isoformat()` with `+00:00` as `Z`: no fraction when the microseconds are 0, else six digits |
@@ -1278,7 +1278,8 @@ every pass reason has at least one case, `body.content_type`,
 
 The test fake keeps any integer, so a case whose estimate is beyond int64
 (`evaluate.estimate_overflow`) records Python's 200 from the fake, where
-real Spanner refuses the commit.
+real Spanner refuses the commit. Only the prompt can overflow it: the hold
+prices at most `HOLD_OUTPUT_TOKENS` of the output budget.
 
 ### 10.2 `fastpath/testdata/authorize_fingerprint_v1.json` (P1)
 
@@ -1316,8 +1317,12 @@ Labels that require Go to pass (decision 4 and §3): `float_present`,
 `idempotency_header_repeated`, `idempotency_header_non_ascii`,
 `content_type`, `deep_nesting`, `int_over_4000_digits`, `bom`,
 `lone_surrogate` (a lone surrogate escape anywhere: §10.4 has Go refuse
-one), `estimate_overflow` (the `estimated_microdollars` Python wrote is
-beyond int64: `evaluate.estimate_overflow`).
+one). The generator also labels `estimate_overflow` (the
+`estimated_microdollars` Python wrote is beyond int64:
+`evaluate.estimate_overflow`), but no corpus body carries it: the hold
+prices at most `HOLD_OUTPUT_TOKENS` of the output budget, and the corpus
+draws no prompt that overflows and is otherwise admitted; §10.1's
+`pass:evaluate.estimate_overflow` case carries the reason.
 Descriptive labels: `null_extra` (a top-level extra `null`, dropped),
 `null_nested`, `app_categories_empty`, `input_modalities`, `extras`,
 `nested_provider`, `nested_trace`, `nested_metadata`, `unicode_extra`,

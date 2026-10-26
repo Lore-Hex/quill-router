@@ -9,7 +9,8 @@ routing code it calls, with no store, request, or process-local state:
    narrowed to those reachable from the request's gateway region.
 3. ``finish_candidates``: BYOK presence, the named decision chain, service
    tier, operator-funded costs, the caller's ``allow_fallbacks``, and the
-   largest candidate's estimate.
+   largest candidate's estimate, whose output budget ``hold_output_tokens``
+   bounds for catalog routes.
 
 The gateway reads what these need (the BYOK rows, the clock, the custom or
 user model, the partner mode) and passes it in; it applies the process-local
@@ -440,7 +441,7 @@ def finish_candidates(
             else endpoint_cost_microdollars(
                 candidate_endpoint,
                 input_tokens,
-                output_tokens,
+                hold_output_tokens(output_tokens, candidate_endpoint.max_completion_tokens),
                 effective_at=at,
                 service_tier=service_tier,
                 reserve_auto=True,
@@ -449,6 +450,39 @@ def finish_candidates(
         )
     )
     return CandidateOutcome(endpoint_candidates, service_tier, model_estimate)
+
+
+# The output tokens a catalog route's hold prices at most. The Go edge
+# prices the same hold from the routing snapshot with its own copy,
+# HoldOutputTokens in fastpath/internal/routingsnapshot/evaluate.go: the two
+# must agree, or the two paths hold different amounts for one request.
+HOLD_OUTPUT_TOKENS = 16_384
+
+
+def hold_output_tokens(output_tokens: int, endpoint_max_completion_tokens: int | None = None) -> int:
+    """The output tokens a catalog route's hold prices: ``min(the client's
+    budget, the endpoint's max_completion_tokens when known, HOLD_OUTPUT_TOKENS)``.
+
+    The client's budget (``max_tokens``, ``max_completion_tokens`` or
+    ``max_output_tokens``, else 512) is a ceiling, not a forecast. Pricing a
+    131,072-token budget held about 78 times the actual cost of a typical
+    request against the priciest candidate, and refused requests for
+    insufficient credits while the balance covered them many times over,
+    because two or three in-flight holds exceeded it. The context window
+    still has to hold the whole budget; only the price is bounded.
+
+    The settle of a catalog route is not capped at the hold (the gateway
+    clamps only a user-provided model's settle to its authorization's
+    estimate), so a lower hold raises the overdraft exposure by (actual minus
+    hold) per in-flight request, bounded by what the provider can emit past
+    16,384 tokens. User-provided models keep the full budget in their hold:
+    ``finish_candidates`` prices them before this bound, and their settle is
+    the one clamped to it.
+    """
+    bound = min(output_tokens, HOLD_OUTPUT_TOKENS)
+    if endpoint_max_completion_tokens is not None:
+        bound = min(bound, endpoint_max_completion_tokens)
+    return bound
 
 
 def _named_chain_candidates(

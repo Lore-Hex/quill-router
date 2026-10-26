@@ -807,3 +807,17 @@ def test_importing_the_app_loads_neither_snapshot_module() -> None:
         "src/trusted_router/routing_snapshot_worker.py",
         "src/trusted_router/services/routing_snapshot_publisher.py",
     ]
+
+
+def test_the_compiler_refuses_an_endpoint_with_an_output_ceiling() -> None:
+    """The v2 snapshot cannot carry max_completion_tokens, which bounds
+    Python's hold (authorize_candidates.hold_output_tokens); publishing such
+    an endpoint would let the edge hold more than Python for one request."""
+    import dataclasses
+
+    from trusted_router import routing_snapshot as rs
+    from trusted_router.catalog import endpoints_for_model
+
+    endpoint = dataclasses.replace(next(iter(endpoints_for_model("z-ai/glm-5.3"))), max_completion_tokens=4_096)
+    with pytest.raises(rs.SnapshotRefused, match="max_completion_tokens"):
+        rs._endpoint_entry(endpoint, [])

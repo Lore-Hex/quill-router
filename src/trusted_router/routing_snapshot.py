@@ -701,6 +701,15 @@ def _epochs(endpoint: ModelEndpoint, starts: list[int]) -> tuple[Epoch, ...]:
 
 
 def _endpoint_entry(endpoint: ModelEndpoint, starts: list[int]) -> EndpointEntry:
+    if endpoint.max_completion_tokens is not None:
+        # The v2 snapshot has no field for a host's output ceiling, and the
+        # Go edge prices the hold from the snapshot alone
+        # (authorize_candidates.hold_output_tokens bounds Python's by it):
+        # publishing this endpoint would let the edge hold more than Python
+        # does for the same request. Refuse until the snapshot can say so.
+        raise SnapshotRefused(
+            f"endpoint {endpoint.id} carries max_completion_tokens, which the v2 snapshot cannot carry"
+        )
     return EndpointEntry(
         id=endpoint.id,
         model_id=endpoint.model_id,
