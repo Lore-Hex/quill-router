@@ -15,7 +15,12 @@ import pytest
 
 from scripts.pricing import openrouter_reasoning
 from trusted_router import reasoning_metadata as rm
-from trusted_router.reasoning_metadata import EFFORTS, gateway_effort_limit, reasoning_metadata
+from trusted_router.reasoning_metadata import (
+    EFFORTS,
+    KEEP_SOURCE_DEFAULT,
+    gateway_effort_limit,
+    reasoning_metadata,
+)
 
 ALL = set(EFFORTS)
 
@@ -26,13 +31,16 @@ ALL = set(EFFORTS)
         # Adaptive / manual Claude: output_config.effort verbatim; minimal is not an Anthropic effort.
         ("anthropic", "claude-opus-4-8", ALL - {"minimal"}, True),
         ("anthropic", "claude-sonnet-4.6", ALL - {"minimal"}, True),
-        ("anthropic", "claude-opus-4-5-20251101", ALL - {"minimal"}, True),
-        ("amazon-bedrock", "us.anthropic.claude-fable-5", ALL - {"minimal"}, True),
+        ("azure", "claude-fable-5", ALL - {"minimal"}, True),
         ("google-vertex", "claude-opus-5", ALL - {"minimal"}, True),
+        # Opus 4.5: effort plus a budget; "max" sets no budget, so thinking is off.
+        ("anthropic", "claude-opus-4-5-20251101", {"none", "low", "medium", "high", "xhigh"}, True),
         # Budget-only Claude: xhigh duplicates high, max and minimal turn thinking off.
         ("anthropic", "claude-sonnet-4-20250514", {"none", "low", "medium", "high"}, True),
         # Vertex Gemini 2.5: budgets; minimal is low's budget; xhigh/max unmapped.
         ("google-vertex", "gemini-2.5-flash", {"none", "low", "medium", "high"}, True),
+        # An author-prefixed upstream id is resolved like the gateway's directModelID.
+        ("google-vertex", "google/gemini-2.5-flash", {"none", "low", "medium", "high"}, True),
         # Vertex Gemini 3+: levels; none becomes low, so reasoning cannot be turned off.
         ("google-vertex", "gemini-3.6-flash", {"minimal", "low", "medium", "high"}, False),
         ("google-vertex", "gemini-3-flash-preview", {"minimal", "low", "medium", "high"}, False),
@@ -43,6 +51,9 @@ ALL = set(EFFORTS)
         ("gemini", "gemini-4-argon", ALL - {"none", "minimal"}, False),
         # Kimi K3 rejects anything but low/high/max.
         ("kimi", "kimi-k3", {"low", "high", "max"}, False),
+        # Tencent TokenHub: these models are always thinking.
+        ("tencent", "glm-5.3", ALL, False),
+        ("tencent", "kimi-k2.8-preview", ALL, False),
         # Privatemode: low/high; medium for gpt-oss-120b; max for glm-*; cannot disable.
         ("privatemode", "glm-5.3", {"low", "high", "max"}, False),
         ("privatemode", "gpt-oss-120b", {"low", "medium", "high"}, False),
@@ -61,14 +72,49 @@ def test_gateway_limits_mirror_the_gateway(
     ("provider", "upstream"),
     [
         ("openai", "gpt-5.4"),  # reasoning_effort verbatim
+        # Public amazon-bedrock is the OpenAI-compatible Mantle client, not the Anthropic wire.
+        ("amazon-bedrock", "us.anthropic.claude-sonnet-4"),
+        ("azure", "gpt-5.4"),  # Azure non-Claude: OpenAI client
         ("deepinfra", "anthropic/claude-sonnet-4"),  # pass-through host: no gateway mapping
-        ("google-ai-studio", "gemini-3.6-flash"),  # below 3.7: verbatim
+        ("google-ai-studio", "gemini-3.1-pro-preview"),  # below 3.7, not flash: verbatim, no default
         ("kimi", "kimi-k2.6"),
         ("together", "deepseek-ai/DeepSeek-V4"),
     ],
 )
 def test_verbatim_routes_add_no_limit(provider: str, upstream: str) -> None:
     assert gateway_effort_limit(provider, upstream) is None
+
+
+@pytest.mark.parametrize(
+    ("provider", "upstream"),
+    [
+        ("google-ai-studio", "gemini-3.1-flash-image"),  # native image route: no thinking config
+        ("google-vertex", "gemini-3.1-flash-image-preview"),
+        ("privatemode", "deepseek-ocr-2"),  # OCR rejects any reasoning setting
+    ],
+)
+def test_routes_that_ignore_reasoning_controls(provider: str, upstream: str) -> None:
+    limit = gateway_effort_limit(provider, upstream)
+    assert limit is not None
+    assert limit.controllable is False
+
+
+@pytest.mark.parametrize(
+    ("provider", "upstream", "default"),
+    [
+        ("google-vertex", "gemini-2.5-flash", "none"),  # budget 0
+        ("google-vertex", "gemini-3.6-flash", "minimal"),
+        ("google-vertex", "gemini-3.8-flash", "low"),
+        ("google-vertex", "gemini-3.1-pro-preview", KEEP_SOURCE_DEFAULT),  # left to Google
+        ("google-ai-studio", "gemini-2.5-flash", "none"),
+        ("google-ai-studio", "gemini-3-flash-preview", "minimal"),
+        ("google-ai-studio", "gemini-3.8-flash", "low"),
+    ],
+)
+def test_gateway_defaults_when_the_caller_sends_no_effort(provider: str, upstream: str, default: str) -> None:
+    limit = gateway_effort_limit(provider, upstream)
+    assert limit is not None
+    assert limit.default == default
 
 
 @pytest.fixture
@@ -117,8 +163,28 @@ def test_a_route_that_cannot_disable_makes_reasoning_mandatory(published: dict[s
         "mandatory": True,
         "default_enabled": True,
         "supported_efforts": ["high", "medium", "low"],
-        "default_effort": "medium",
+        # Both routes send "low" when the caller sends nothing, not OpenRouter's "medium".
+        "default_effort": "low",
     }
+
+
+def test_disagreeing_route_defaults_publish_no_default(published: dict[str, Any]) -> None:
+    # AI Studio defaults to "low"; DeepInfra leaves it to the model (OpenRouter's "medium").
+    result = reasoning_metadata(
+        "google/gemini-3.8-flash",
+        ["reasoning"],
+        [("google-ai-studio", "gemini-3.8-flash"), ("deepinfra", "google/gemini-3.8-flash")],
+    )
+    assert result is not None
+    assert result["default_effort"] is None
+
+
+def test_a_route_that_ignores_reasoning_publishes_nothing(published: dict[str, Any]) -> None:
+    assert reasoning_metadata(
+        "google/gemini-3.8-flash",
+        ["reasoning"],
+        [("deepinfra", "x"), ("google-ai-studio", "gemini-3.8-flash-image")],
+    ) is None
 
 
 def test_verbatim_routes_publish_openrouters_metadata_unchanged(published: dict[str, Any]) -> None:
@@ -148,13 +214,17 @@ def test_capture_keeps_only_well_formed_reasoning_rows() -> None:
                                          "supported_efforts": ["high", "low"], "default_effort": "high"}},
             {"id": "a/no-reasoning"},
             {"id": "a/bad-effort", "reasoning": {"supported_efforts": ["ultra"]}},
-            {"id": "a/odd-default", "reasoning": {"supported_efforts": ["low"], "default_effort": "turbo"}},
-            {"reasoning": {"supported_efforts": ["low"]}},
+            {"id": "a/odd-default", "reasoning": {"mandatory": False, "supported_efforts": ["low"], "default_effort": "turbo"}},
+            {"id": "a/typed-default", "reasoning": {"mandatory": False, "supported_efforts": ["low"], "default_effort": []}},
+            {"id": "a/empty", "reasoning": {}},
+            # OpenRouter omits the optional fields on mandatory-only models.
+            {"id": "a/mandatory-only", "reasoning": {"mandatory": True}},
+            {"reasoning": {"mandatory": True, "supported_efforts": ["low"]}},
         ]
     }
     assert openrouter_reasoning.parse(document) == {
         "a/ok": {"mandatory": True, "default_enabled": True, "supported_efforts": ["high", "low"], "default_effort": "high"},
-        "a/odd-default": {"mandatory": False, "default_enabled": False, "supported_efforts": ["low"], "default_effort": None},
+        "a/mandatory-only": {"mandatory": True, "default_enabled": False, "supported_efforts": [], "default_effort": None},
     }
     with pytest.raises(ValueError):
         openrouter_reasoning.parse({"data": "nope"})
@@ -171,6 +241,32 @@ def test_capture_keeps_the_existing_file_when_the_fetch_fails(
         raise openrouter_reasoning.httpx.ConnectError("offline")
 
     monkeypatch.setattr(openrouter_reasoning.httpx, "get", boom)
+    assert openrouter_reasoning.main() == 0
+    assert target.read_text(encoding="utf-8") == "existing"
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"id": f"m/{i}", "reasoning": {}} for i in range(200)],  # many empty rows
+        [{"id": f"m/{i}", "reasoning": {"mandatory": True, "default_effort": []}} for i in range(200)],
+    ],
+)
+def test_capture_keeps_the_existing_file_on_malformed_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, rows: list[dict[str, Any]]
+) -> None:
+    target = tmp_path / "openrouter_reasoning.json"
+    target.write_text("existing", encoding="utf-8")
+    monkeypatch.setattr(openrouter_reasoning, "DATA_PATH", target)
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"data": rows}
+
+    monkeypatch.setattr(openrouter_reasoning.httpx, "get", lambda *_a, **_k: Response())
     assert openrouter_reasoning.main() == 0
     assert target.read_text(encoding="utf-8") == "existing"
 

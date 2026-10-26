@@ -30,8 +30,40 @@ EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 MIN_MODELS = 100
 
 
+def _entry(reasoning: object) -> dict[str, Any] | None:
+    """One row's metadata, or None when it is malformed.
+
+    OpenRouter always sends `mandatory` and omits the other fields on many rows
+    (a mandatory-only model has no effort list), so `mandatory` must be a bool and
+    the rest may be absent but not mistyped. An empty `reasoning: {}` is rejected.
+    """
+    if not isinstance(reasoning, dict):
+        return None
+    mandatory = reasoning.get("mandatory")
+    default_enabled = reasoning.get("default_enabled", False)
+    efforts = reasoning.get("supported_efforts", [])
+    default_effort = reasoning.get("default_effort")
+    if not isinstance(mandatory, bool) or not isinstance(default_enabled, bool):
+        return None
+    if not isinstance(efforts, list) or not all(isinstance(e, str) and e in EFFORTS for e in efforts):
+        return None
+    if default_effort is not None and not (isinstance(default_effort, str) and default_effort in EFFORTS):
+        return None
+    return {
+        "mandatory": mandatory,
+        "default_enabled": default_enabled,
+        "supported_efforts": efforts,
+        "default_effort": default_effort,
+    }
+
+
 def parse(document: object) -> dict[str, dict[str, Any]]:
-    """id -> reasoning metadata, for rows whose metadata is well-formed. Raises on a bad document."""
+    """id -> reasoning metadata, for rows whose metadata is complete and well-typed.
+
+    Raises ValueError on a document without a data array. A row with missing or
+    mistyped fields (for example an empty `reasoning: {}`) is skipped, so it can
+    neither crash the refresh nor count toward MIN_MODELS.
+    """
     rows = document.get("data") if isinstance(document, dict) else None
     if not isinstance(rows, list):
         raise ValueError("OpenRouter model list has no data array")
@@ -39,19 +71,9 @@ def parse(document: object) -> dict[str, dict[str, Any]]:
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             continue
-        reasoning = row.get("reasoning")
-        if not isinstance(reasoning, dict):
-            continue
-        efforts = reasoning.get("supported_efforts", [])
-        if not isinstance(efforts, list) or not all(isinstance(e, str) and e in EFFORTS for e in efforts):
-            continue
-        default_effort = reasoning.get("default_effort")
-        models[row["id"]] = {
-            "mandatory": reasoning.get("mandatory") is True,
-            "default_enabled": reasoning.get("default_enabled") is True,
-            "supported_efforts": efforts,
-            "default_effort": default_effort if default_effort in EFFORTS else None,
-        }
+        entry = _entry(row.get("reasoning"))
+        if entry is not None:
+            models[row["id"]] = entry
     return models
 
 
@@ -69,7 +91,7 @@ def main() -> int:
         response = httpx.get(SOURCE, timeout=30.0)
         response.raise_for_status()
         models = parse(response.json())
-    except (httpx.HTTPError, ValueError) as exc:
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
         print(f"openrouter_reasoning: keeping existing file ({exc})", file=sys.stderr)
         return 0
     if len(models) < MIN_MODELS:

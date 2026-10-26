@@ -2065,14 +2065,28 @@
       "default_effort": "medium"
     },
     "openai/gpt-6.1-terra": {
-      "mandatory": true,
+      "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [
         "max",
         "xhigh",
         "high",
         "medium",
-        "low"
+        "low",
+        "none"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.1-terra:batch": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "none"
       ],
       "default_effort": "medium"
     },
