@@ -238,7 +238,7 @@ func policyOf(t *testing.T, f authorizeFile, c authorizeCase) *routingsnapshot.E
 }
 
 var parsedSnapshot = sync.OnceValues(func() (*routingsnapshot.Snapshot, error) {
-	raw, err := readTestdata("routing_snapshot_v2.body.json")
+	raw, err := readTestdata("routing_snapshot_v3.body.json")
 	if err != nil {
 		return nil, err
 	}
@@ -608,8 +608,7 @@ func checkAffinity(t *testing.T, c authorizeCase, d Decided) bool {
 // routing-snapshot-v1.md, "What Go evaluates"): Go passes them, which is
 // always safe; the shadow counts them python_answered_go_passed.evaluate.pass.
 var evaluatorPasses = map[string]string{
-	"answer:provider:max_price":  "provider.max_price",
-	"answer:required_parameters": "provider.require_parameters",
+	"answer:provider:max_price": "provider.max_price",
 }
 
 // checkAnswered holds a decision to an answered case: what the pipeline

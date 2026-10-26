@@ -20,7 +20,7 @@ import (
 const (
 	fingerprintFile = "../../testdata/authorize_fingerprint_v1.json"
 	casesFile       = "../../testdata/authorize_cases_v1.json"
-	snapshotFile    = "../../testdata/routing_snapshot_v2.body.json"
+	snapshotFile    = "../../testdata/routing_snapshot_v3.body.json"
 	aliasFile       = "../../testdata/model_alias_vectors_v1.json"
 )
 

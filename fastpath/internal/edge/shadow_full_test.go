@@ -467,8 +467,8 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 		}
 	}
 	t.Logf("classes over the goldens: %v; %d row pairs agree; %d answers after a read-back", classes, rowsAgree, readBack)
-	if classes[ClassAgreeFull] != 166+5 || rowsAgree != 166 || readBack != 1 || classes[ClassPythonUnavailable] != 2 ||
-		classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 2 {
+	if classes[ClassAgreeFull] != 174+5 || rowsAgree != 174 || readBack != 1 || classes[ClassPythonUnavailable] != 2 ||
+		classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 {
 		t.Fatalf("agree_full %d, rows %d, read back %d, unavailable %d: not the goldens' counts",
 			classes[ClassAgreeFull], rowsAgree, readBack, classes[ClassPythonUnavailable])
 	}

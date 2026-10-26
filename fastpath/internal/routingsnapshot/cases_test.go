@@ -72,10 +72,9 @@ func init() {
 		"z-ai/glm-5.3", "deepseek/deepseek-v4.1-flash",
 	} {
 		// Request parsing the snapshot does not carry the tables of yet.
-		outsideTheCohort[model+"+confidential"] = "provider.min_privacy"
 		outsideTheCohort[model+"+max_price"] = "provider.max_price"
 		outsideTheCohort[model+"+perf"] = "provider.preferred_max_latency"
-		// The fixture snapshot lists 13 providers, but the cases ran against
+		// The fixture snapshot lists 16 providers, but the cases ran against
 		// the process's whole provider table: "google" names google-vertex,
 		// which the fixture omits, and "nope-provider" is unknown to both.
 		// A slug missing from the snapshot is not proof Python refuses it.
@@ -83,8 +82,6 @@ func init() {
 		outsideTheCohort[model+"+unknown_provider"] = `provider "nope-provider" is not in the snapshot`
 	}
 	outsideTheCohort["route:images"] = `route type "images"`
-	outsideTheCohort["required_parameters"] = "provider.require_parameters"
-	outsideTheCohort["missing_parameters"] = "provider.require_parameters"
 	// Python validates the whole list before looking up any item, so a blank
 	// or null item after a router name is refused as a bad item; Go passes
 	// the malformed list.

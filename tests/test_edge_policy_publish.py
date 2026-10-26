@@ -1050,7 +1050,7 @@ def test_each_verifier_refuses_the_others_manifest() -> None:
             verify_manifest(edge_token, [key], body, now=T0, **routing_args)
         with pytest.raises(JWSError, match="^type$"):
             _golden_verify(routing_token, body, now=routing_now)
-    assert (TYP, EDGE_POLICY_TYP) == ("tr-routing-snapshot-v2", "tr-edge-policy-v1")
+    assert (TYP, EDGE_POLICY_TYP) == ("tr-routing-snapshot-v3", "tr-edge-policy-v1")
 
 
 def test_the_claims_differ_too() -> None:

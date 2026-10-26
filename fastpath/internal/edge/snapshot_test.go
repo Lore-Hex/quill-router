@@ -40,6 +40,7 @@ func testdata(t *testing.T, name string) []byte {
 // binds.
 type goldenBody struct {
 	raw            []byte
+	v              int64
 	compiledAt     int64
 	notAfter       int64
 	sourceRevision string
@@ -48,8 +49,9 @@ type goldenBody struct {
 
 func loadGoldenBody(t *testing.T) goldenBody {
 	t.Helper()
-	raw := testdata(t, "routing_snapshot_v2.body.json")
+	raw := testdata(t, "routing_snapshot_v3.body.json")
 	var fields struct {
+		V              int64                 `json:"v"`
 		CompiledAt     int64                 `json:"compiled_at"`
 		NotAfter       int64                 `json:"not_after"`
 		SourceRevision string                `json:"source_revision"`
@@ -58,7 +60,7 @@ func loadGoldenBody(t *testing.T) goldenBody {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	return goldenBody{raw: raw, compiledAt: fields.CompiledAt, notAfter: fields.NotAfter,
+	return goldenBody{raw: raw, v: fields.V, compiledAt: fields.CompiledAt, notAfter: fields.NotAfter,
 		sourceRevision: fields.SourceRevision, plane: fields.Plane}
 }
 
@@ -73,7 +75,7 @@ func sign(t *testing.T, private ed25519.PrivateKey, kid string, g goldenBody, bo
 	header := fmt.Sprintf(`{"alg":"EdDSA","kid":%q,"typ":%q}`, kid, routingsnapshot.Typ)
 	payload, err := json.Marshal(routingsnapshot.Claims{Aud: SnapshotAudience, CompiledAt: g.compiledAt, Iss: SnapshotIssuer,
 		NotAfter: g.notAfter, Plane: g.plane, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body)),
-		SourceRevision: g.sourceRevision, V: 2})
+		SourceRevision: g.sourceRevision, V: g.v})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +369,7 @@ func TestAPublicationThatDoesNotVerifyKeepsTheLastGoodCopy(t *testing.T) {
 	var goldenManifest struct {
 		JWS string `json:"jws"`
 	}
-	if err := json.Unmarshal(testdata(t, "routing_snapshot_v2.manifest.json"), &goldenManifest); err != nil {
+	if err := json.Unmarshal(testdata(t, "routing_snapshot_v3.manifest.json"), &goldenManifest); err != nil {
 		t.Fatal(err)
 	}
 	tampered := append([]byte(nil), h.golden.raw...)
