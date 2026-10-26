@@ -171,6 +171,16 @@ def test_a_skipped_job_outside_the_list_fails_even_on_a_data_only_commit() -> No
     assert summarize({**needs(), "new-job": {"result": "skipped"}}, "true") == ["new-job: skipped"]
 
 
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
+def test_a_unicode_line_separator_in_a_path_is_not_the_data_file(monkeypatch, capsys, separator: str) -> None:
+    """git prints these literally when core.quotePath is off; splitting on
+    them would strip the separator and leave the allowlisted name."""
+    record = f":000000 100644 0000000 0967ef4 A\tsrc/trusted_router/data/openrouter_snapshot.json{separator}\n"
+    monkeypatch.setattr("sys.stdin", io.StringIO(record))
+    assert main(["classify"]) == 0
+    assert capsys.readouterr().out == "false\n"
+
+
 def test_classify_command_reads_raw_records_from_stdin(monkeypatch, capsys) -> None:
     monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw(SNAPSHOT)}\n{added(MANIFEST)}\n"))
     assert main(["classify"]) == 0

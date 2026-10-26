@@ -103,7 +103,7 @@ jobs:
           elif ! git fetch -q --depth=1 origin "${base}"; then
             echo "::notice title=CI scope::base ${base} is not fetchable; running the complete matrix"
           else
-            git diff --no-renames --raw "${base}" "${head}" > changed-paths.txt
+            git -c core.quotePath=true diff --no-renames --raw "${base}" "${head}" > changed-paths.txt
             echo "changed paths (${base}..${head}):"
             sed 's/^/  /' changed-paths.txt
             if [ "$(python3 scripts/ci/commit_scope.py classify < changed-paths.txt)" = "true" ]; then

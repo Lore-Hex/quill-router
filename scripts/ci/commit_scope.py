@@ -143,7 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("summarize", help="env NEEDS (JSON), DATA_ONLY; exit 1 on any failure")
     args = parser.parse_args(argv)
     if args.command == "classify":
-        print("true" if classify(sys.stdin.read().splitlines()) else "false")
+        # Records are split on "\n" alone: str.splitlines also splits on
+        # U+0085, U+2028 and U+2029, which git prints literally in a path
+        # when core.quotePath is off, and that would hide them from the
+        # record check.
+        print("true" if classify(sys.stdin.read().split("\n")) else "false")
         return 0
     needs = json.loads(os.environ["NEEDS"])
     data_only = os.environ.get("DATA_ONLY", "")
