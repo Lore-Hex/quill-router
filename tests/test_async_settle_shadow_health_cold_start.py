@@ -80,7 +80,9 @@ def test_installed_fleet_publication_selects_follower_stagger(monkeypatch, gap):
     svc.submit_publisher(job.slot, wall[0])
     outcome(svc, job, 'lost_claim' if gap <= 2 else 'published')
     assert svc.store.database.commits == (0 if gap <= 2 else 2)
-    assert waits == [shell.follower_stagger(svc.journal.boot, job.slot, gap <= 2)]
+    # Once health was installed, takeover has an inter-slot rank and retains
+    # the warm follower band even after that publication becomes stale.
+    assert waits == [shell.follower_stagger(svc.journal.boot, job.slot, True)]
 
 
 @pytest.mark.parametrize('contenders', [8, 12])
@@ -142,3 +144,27 @@ async def test_unknown_fallback_preserves_start_and_next_slot(monkeypatch, failu
         accounting(svc)
     finally:
         svc.publisher_executor.shutdown(wait=True)
+
+
+def test_scope_setup_does_not_accumulate_after_cadence_wait(monkeypatch):
+    from contextlib import contextmanager
+
+    svc, wall, mono, job, _ = timed_owner(monkeypatch)
+    svc.incumbent_slot = job.slot-1
+    original = shell.rpc_scope
+    @contextmanager
+    def setup(*args):
+        mono[0] += .005
+        wall[0] += 5000
+        svc.store.database.server_ns = wall[0]*1000
+        with original(*args):
+            yield
+    monkeypatch.setattr(shell, "rpc_scope", setup)
+    starts = []
+    for offset in range(5):
+        current = job if not offset else advance(svc, wall, mono, job.slot+offset)
+        svc.submit_publisher(current.slot, wall[0])
+        trace = outcome(svc, current, "published")
+        starts.append(trace["claim_start_us"]-current.slot*lifecycle.SLOT_US)
+    # Previously 5, 10, 15, 20, 25ms: each setup followed the cadence wait.
+    assert starts == [5000]*5

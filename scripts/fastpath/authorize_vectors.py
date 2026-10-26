@@ -101,7 +101,7 @@ from trusted_router.storage_models import CreditAccount, GatewayBoot, Workspace 
 CASES_OUTPUT = "fastpath/testdata/authorize_cases_v1.json"
 FINGERPRINT_OUTPUT = "fastpath/testdata/authorize_fingerprint_v1.json"
 GENERATOR = "scripts/fastpath/authorize_vectors.py"
-SNAPSHOT = "fastpath/testdata/routing_snapshot_v1.body.json"
+SNAPSHOT = "fastpath/testdata/routing_snapshot_v2.body.json"
 PATH = "/internal/gateway/authorize"
 # A reservation row's created_at in the goldens: the commit's timestamp (§5).
 RESERVATION_CREATED_AT = "commit_timestamp"

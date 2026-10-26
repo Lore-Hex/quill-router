@@ -54,10 +54,12 @@ def test_incumbent_uses_only_recent_accepted_publication(monkeypatch, gap):
     next_job = advance(svc, wall, mono, job.slot+gap)
     before = svc.store.database.snapshot_execute_sql_calls
     svc.submit_publisher(next_job.slot, wall[0])
+    # An older accepted publication needs authoritative storage reconciliation
+    # before renewal; its age is still inside the three-slot holder window.
     trace = outcome(svc, next_job, "published")
-    assert len(waits) == (1 if gap <= 2 else 2)
+    assert len(waits) == 1
     # Incumbents issue only the observation snapshot, with no claim snapshot.
-    assert svc.store.database.snapshot_execute_sql_calls-before == (1 if gap <= 2 else 2)
+    assert svc.store.database.snapshot_execute_sql_calls-before == (1 if gap <= 2 else 3)
     if gap <= 2:
         assert trace["claim_at_ns"] == next_job.slot*m.SLOT_US*1000
 
@@ -131,15 +133,22 @@ def test_stopped_incumbent_follower_wins_and_then_attempts_immediately(monkeypat
     next_job = advance(svc, wall, mono, job.slot+1)
     svc.submit_publisher(next_job.slot, wall[0])
     outcome(svc, next_job, "lost_claim")
-    next_job = advance(svc, wall, mono, job.slot+2)
+    # Even a newly booted follower must respect the same non-overlapping
+    # takeover window; lack of a health cache cannot permit an age-2 race.
+    due = shell.TAKEOVER_MIN_AGE + shell.takeover_rank(svc.journal.boot, job.slot)
+    for offset in range(2, due):
+        next_job = advance(svc, wall, mono, job.slot+offset)
+        svc.submit_publisher(next_job.slot, wall[0])
+        outcome(svc, next_job, "lost_claim")
+    next_job = advance(svc, wall, mono, job.slot+due)
     svc.submit_publisher(next_job.slot, wall[0])
     trace = outcome(svc, next_job, "published")
     assert trace["observed_at_ns"]-next_job.slot*m.SLOT_US*1000 <= 250_000_000
-    assert len(waits) == 3 and svc.incumbent_slot == next_job.slot
-    next_job = advance(svc, wall, mono, job.slot+3)
+    assert len(waits) == due+1 and svc.incumbent_slot == next_job.slot
+    next_job = advance(svc, wall, mono, job.slot+due+1)
     svc.submit_publisher(next_job.slot, wall[0])
     outcome(svc, next_job, "published")
-    assert len(waits) == 3
+    assert len(waits) == due+1
     accounting(svc)
 
 

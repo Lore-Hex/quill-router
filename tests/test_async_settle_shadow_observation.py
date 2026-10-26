@@ -199,7 +199,8 @@ def fake_store() -> tuple[ObservationStore, FakeSpannerDatabase]:
     return ObservationStore(db, clock=logical_time, wall=lambda: NOW_US/1_000_000+100), db
 
 
-def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypatch):
+@pytest.mark.parametrize("nanos", [0, 123456789, 999999999])
+def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypatch, nanos):
     from types import SimpleNamespace
 
     from google.cloud.spanner_v1.database import Database
@@ -207,7 +208,9 @@ def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypa
     from google.protobuf.timestamp_pb2 import Timestamp
     from proto.datetime_helpers import DatetimeWithNanoseconds
 
-    seconds, nanos = 1792627200, 123456789
+    seconds = 1792627200
+    aligned_ns = ((seconds*1_000_000_000+nanos+999)//1000)*1000
+    bound_seconds, bound_nanos = divmod(aligned_ns, 1_000_000_000)
     claim_ns = seconds*1_000_000_000+nanos
     selectors = []
     checkouts = []
@@ -229,10 +232,11 @@ def test_observation_real_sdk_nanosecond_bound_and_strong_health_reader(monkeypa
             bound = snapshot._min_read_timestamp
             assert isinstance(bound, DatetimeWithNanoseconds)
             assert bound.tzinfo is dt.UTC and bound.utcoffset() == dt.timedelta(0)
-            assert bound.nanosecond == nanos
+            assert bound.nanosecond == bound_nanos
             read_only = options._pb.read_only
             assert read_only.WhichOneof("timestamp_bound") == "min_read_timestamp"
-            assert read_only.min_read_timestamp == Timestamp(seconds=seconds, nanos=nanos)
+            assert read_only.min_read_timestamp == Timestamp(seconds=bound_seconds, nanos=bound_nanos)
+            assert aligned_ns >= claim_ns and aligned_ns % 1000 == 0
         else:
             assert options._pb.read_only.WhichOneof("timestamp_bound") == "strong"
             assert options.read_only.strong is True
@@ -1331,6 +1335,11 @@ def test_unreconciled_decrease_needs_exact_readback() -> None:
 def test_port_counter_demand_and_terminal_permits() -> None:
     from trusted_router.async_settle_shadow_v2_evidence import COUNTS
     svc = service()
+    # Event demand arms allocation while keeping Port.lost clear, so the
+    # invalid counter fold below must still set that sticky flag itself.
+    assert svc.port.reserve(NOW_US+100_000_000) is None
+    assert not svc.port.lost.is_set()
+    logical_time.now = svc.next_allocate
     svc.maintain()
     day = "2026-10-12"
     assert svc.journal.terminal_permits[day] == RESERVATION_BLOCK
@@ -1367,6 +1376,8 @@ def test_all_four_money_primitives_are_unreachable(monkeypatch: Any) -> None:
     svc.store.wall = lambda: NOW_US/1e6+100
     svc.store.database.server_ns = (NOW_US+100_000_000)*1000
     svc.publish_cycle((NOW_US+100_000_000)//2_000_000, NOW_US+100_000_000)
+    assert svc.port.reserve(NOW_US+100_000_000, terminal=True) is None
+    logical_time.now = svc.next_allocate
     svc.maintain()
     assert svc.counters["2026-10-12"]["publisher"]["publications"] == 1
     assert all(spy.call_count == 0 for spy in calls)

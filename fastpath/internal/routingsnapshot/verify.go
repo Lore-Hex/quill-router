@@ -15,7 +15,7 @@ import (
 // The manifest's literals (src/trusted_router/routing_snapshot_signing.py).
 const (
 	Purpose = "routing-snapshot"
-	Typ     = "tr-routing-snapshot-v1"
+	Typ     = "tr-routing-snapshot-v2"
 	// TestKID and TestPublicKey name the golden files' key, derived from a
 	// public seed in scripts/fastpath/routing_snapshot_vectors.py. Anyone can
 	// sign with it, so Verify refuses it unless AllowTestKey is set.
@@ -254,6 +254,6 @@ func validClaims(c Claims) bool {
 			return false
 		}
 	}
-	return c.V == 1 && digest.MatchString(c.SHA256) &&
+	return c.V == snapshotVersion && digest.MatchString(c.SHA256) &&
 		c.Size >= 0 && c.CompiledAt >= 0 && c.NotAfter >= 0
 }

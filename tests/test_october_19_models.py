@@ -182,14 +182,17 @@ def test_launch_catalog_prices_limits_capabilities_and_weight_labels() -> None:
     from trusted_router.catalog_ingest import _customer_price
     from trusted_router.request_capabilities import endpoint_capabilities
 
-    for model_id, provider, native, efforts, vision in (
-        ("minimax/minimax-m3.1-flash", "minimax", "MiniMax-M3.1-Flash",
+    for model_id, provider, native, context_length, efforts, vision in (
+        # OpenRouter listed the model on 2026-10-25 with every host at 1048576
+        # and no MiniMax route. MiniMax's API reports no window, so the listed
+        # window is advertised, as it already is for minimax/minimax-m3.
+        ("minimax/minimax-m3.1-flash", "minimax", "MiniMax-M3.1-Flash", 1_048_576,
          ["low", "medium", "high", "xhigh", "max"], True),
-        ("inception/mercury-3", "inception", "mercury-3",
+        ("inception/mercury-3", "inception", "mercury-3", 1_000_000,
          ["low", "medium", "high"], False),
     ):
         model = MODELS[model_id]
-        assert model.context_length == 1_000_000
+        assert model.context_length == context_length
         assert not model_open_weights(model)
         endpoint = next(e for e in endpoints_for_model(model_id) if e.usage_type == "Credits" and e.provider == provider)
         assert endpoint.upstream_id == native

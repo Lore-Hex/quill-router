@@ -175,9 +175,7 @@
         "seed",
         "max_tokens"
       ],
-      "routable": false,
-      "routable_reason": "delisted-upstream",
-      "missing_since": "2026-10-24",
+      "routable": true,
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 340000,
       "cached_input_token_price_per_m": 50000
@@ -524,6 +522,6 @@
       "cached_input_token_price_per_m": 3000
     }
   ],
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-25T17:52:07Z",
   "model_count": 12
 }
