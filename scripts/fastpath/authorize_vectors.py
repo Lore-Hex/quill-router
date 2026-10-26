@@ -81,6 +81,7 @@ from tests.fakes.spanner import _SpannerModule, make_fake_store  # noqa: E402
 from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
+from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS  # noqa: E402
 from trusted_router.catalog_data import MONITOR_MODEL_ID, Model, ModelEndpoint  # noqa: E402
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
@@ -700,7 +701,10 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                            "timing": warm["expect"]["timing"], "cold_timing": cold["expect"]["timing"],
                            "candidates": warm_ids, "cold_candidates": cold_ids,
                            "estimate_microdollars": warm_data["estimated_cost_microdollars"],
-                           "cold_estimate_microdollars": data["estimated_cost_microdollars"]}}
+                           "cold_estimate_microdollars": data["estimated_cost_microdollars"],
+                           # The lease's hold (§5, "The two figures") in each run.
+                           "reservation_microdollars": warm["expect"]["reservation_microdollars"],
+                           "cold_reservation_microdollars": cold["expect"]["reservation_microdollars"]}}
     return {**{k: v for k, v in cold.items() if k not in ("expect", "_models")}, "expect": expect}
 
 
@@ -749,8 +753,16 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
     reason = case["_reason"] if case["_affinity"] is None else None
     if reason is not None:
         error = _error(body) if response.status_code != 200 else {}
+        # The credit reservation Python's typed store wrote for a request it
+        # answered without a lease (a stream, say): at most HOLD_OUTPUT_TOKENS
+        # of the output budget, or the whole budget for a stream (§5, "The
+        # two figures").
+        reserved = (
+            {"reservation_microdollars": reservations[0]["credit_reserved_micro"]}
+            if len(reservations) == 1 and not leased else {}
+        )
         return {**world_rows, "_models": models, "expect": {"outcome": "pass", "reason": reason, "python": {
-            "status": response.status_code, "type": error.get("type"), "leased": leased}}}
+            "status": response.status_code, "type": error.get("type"), "leased": leased, **reserved}}}
     if case["insert"] == "failed_precondition" and response.status_code != 503:
         # Python counts this code permanent and fails the request; Go cannot
         # tell it from the refusal of a re-sent commit whose first applied
@@ -779,6 +791,10 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         "outcome": "answer", "status": 200, "response": body,
         "generation_id": data["generation_id"],
         "estimate_microdollars": data["estimated_cost_microdollars"],
+        # The credit reservation the lease held (the front door's Estimate):
+        # at most HOLD_OUTPUT_TOKENS of the output budget, where the estimate
+        # above prices the whole budget (authorize_candidates.hold_output_tokens).
+        "reservation_microdollars": door.seen[0][1]["Estimate"],
         "decide_region": data["region"],
         "fingerprint": fingerprint,
         "fingerprint_material": material,
@@ -962,6 +978,23 @@ def cases() -> list[dict[str, Any]]:
         for tokens_out in (1_000_000_000, 1_562_500, 15_625_000):
             add(f"answer:estimate:{FLASH}:0+{tokens_out}@{at}", at=at,
                 body={"model": FLASH, "estimated_input_tokens": 0, "max_output_tokens": tokens_out})
+    # The reservation (reservation_microdollars, the lease's hold) prices at
+    # most HOLD_OUTPUT_TOKENS of the budget while the estimate prices it all:
+    # both sides of the bound, and the production shape that motivated it, a
+    # max_tokens of 131,072 (which counts toward the window, so only Gemini's
+    # unknown window admits it).
+    for tokens_out in (HOLD_OUTPUT_TOKENS - 1, HOLD_OUTPUT_TOKENS, HOLD_OUTPUT_TOKENS + 1, 131_072):
+        add(f"answer:estimate:hold_cap:{FLASH}:1000+{tokens_out}",
+            body={"model": FLASH, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
+    add(f"answer:estimate:hold_cap:{GEMINI}:8000+max_tokens:131072",
+        body={"model": GEMINI, "estimated_input_tokens": 8_000, "max_output_tokens": None, "max_tokens": 131_072})
+    # A stream's reservation is its estimate for now (finish_candidates,
+    # stream): Go passes a stream to Python (body.stream), whose typed store
+    # writes the whole budget's price into the reservation row, recorded as
+    # the pass case's python.reservation_microdollars.
+    for tokens_out in (HOLD_OUTPUT_TOKENS, 131_072):
+        add(f"pass:body.stream:hold_cap:{FLASH}:1000+{tokens_out}", "body.stream",
+            body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
     for field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
         add(f"answer:output_field:{field}", body={"max_output_tokens": None, field: 2_048})
     add("answer:output_default_512", body={"max_output_tokens": None})

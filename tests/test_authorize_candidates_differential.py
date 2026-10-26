@@ -336,9 +336,14 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
             "it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, "
             "or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits."
         )
+        # The quote is the reserve call's amount, the reservation. The
+        # matrix's output budgets are at most 4,096, below HOLD_OUTPUT_TOKENS
+        # (authorize_candidates.hold_output_tokens), so the estimate the
+        # line also carries is the same figure.
         diagnostic = ("INFO", (
             f"billing.insufficient_credits workspace_id={key.workspace_id} key_id={key.hash} request_id=None "
-            f"model={body.model} estimated_microdollars={quote['estimate']} "
+            f"model={body.model} reserved_microdollars={quote['estimate']} "
+            f"estimated_microdollars={quote['estimate']} "
             f"estimated_input_tokens={quote['input']} output_token_budget={quote['output']}"
         ))
         assert outcome["logs"].count(diagnostic) == 1
@@ -484,7 +489,7 @@ def test_the_comparison_sees_a_difference(monkeypatch: pytest.MonkeyPatch,
     def off_by_one(*args: Any, **kwargs: Any) -> Any:
         outcome = real(*args, **kwargs)
         return authorize_candidates.CandidateOutcome(
-            outcome.candidates, outcome.service_tier, outcome.model_estimate + 1,
+            outcome.candidates, outcome.service_tier, outcome.model_estimate + 1, outcome.model_reservation + 1,
         )
 
     monkeypatch.setattr(gateway, "finish_candidates", off_by_one)

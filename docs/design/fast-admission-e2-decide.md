@@ -535,7 +535,7 @@ always written. For the cohort (`storage_models.py:887-990`), every key:
 | `workspace_id`, `key_hash` | the key's |
 | `model_id`, `provider`, `endpoint_id` | the first candidate's |
 | `usage_type` | `"Credits"` |
-| `estimated_microdollars` | the model estimate |
+| `estimated_microdollars` | the model estimate, the spend ceiling: the largest candidate's price of `estimated_input_tokens` prompt tokens plus the whole `output_estimate`. The credit reservation is a second figure, the same price at `min(output_estimate, HOLD_OUTPUT_TOKENS)` output tokens: see "The two figures" below |
 | `credit_reservation_id` | the reservation id |
 | `settled` | `false` |
 | `created_at` | the clock reading, `isoformat()` with `+00:00` as `Z`: no fraction when the microseconds are 0, else six digits |
@@ -556,6 +556,59 @@ always written. For the cohort (`storage_models.py:887-990`), every key:
 | `invocation_nonce` | when the body sends one |
 | `fastpath_envelope` | `Authorized.Envelope` |
 | `fastpath_end_of_life` | `Authorized.EndOfLife` truncated to microseconds and written with its own UTC offset, exactly what Python's `_parse_time` and `isoformat` make of Go's JSON for that value today (`fastpath_frontdoor.py:359-376`): `+00:00` becomes `Z`, any other offset stays `±HH:MM`; no fraction when the microseconds are 0 |
+
+**The two figures.** An authorization carries an estimate and a
+reservation (`authorize_candidates.hold_output_tokens`,
+`CandidateOutcome.model_estimate` and `model_reservation`;
+`routingsnapshot.Result.ModelEstimate` and `Result.Reservation`). The
+estimate is the spend ceiling: the priciest candidate's price of the prompt
+and the client's whole output budget. The reservation is the credit hold:
+the same price at `min(budget, HOLD_OUTPUT_TOKENS)` output tokens,
+`HOLD_OUTPUT_TOKENS` being 16,384 in Python and in the evaluator's
+`HoldOutputTokens`. They are equal for user-provided models, partner
+billing, videos (whose settle is held to the ceiling), streams (for now:
+see "Streams" below), and whenever the budget is at most 16,384. Every
+reader of either, and which it reads:
+
+| Reader | Figure |
+|---|---|
+| Workspace credit admission against the available balance (`reserve_credit`, `reserve_credit_with_pause`, `credit_exhaustion_precheck`, the memory and Postgres `reserve`), the typed credit counters' `reserved`, the reservation row's `credit_reserved_micro`, and its release at settle, refund and reap (`storage_gcp_counter_dml`, `storage_gcp_authorize` settle; the outbox resolves the reservation by id and releases the recorded hold) | reservation |
+| Key admission: the lifetime cap, the spend windows and the strict windows (`reserve_key`, `reserve_strict_key`, `key_window_limit_decision`, `key_lifetime_cap_precheck`, the memory and Postgres `reserve_key_limit`), the key counters' reserved and the reservation row's `key_reserved_micro`, released at settle, refund and reap as recorded | estimate: a key cap is a promise to the key's owner that outstanding spend ceilings count against it (docs/routing-controls-20260927.md, "Strict spending"); the key counter carries what it admitted, so its release is the recorded hold, symmetric as before. The edge has no key gate: a capped, windowed or strict key passes to Python (`key.key_cap`, `key.key_window`, `key.budget_strict`) |
+| The fast path's lease: `_fastpath_admission` and the edge's admit (`frontdoor.AuthorizeOf.Estimate`, the owner's `Admission.Estimate`, the hold row's `Estimate`, the signed envelope), the drain's raise (`max(charge - hold, 0)`), the owner's and the record's bound on a heartbeat's running charge, and the Go reaper's cap on an abandoned hold's charge | reservation. The owner accepts no heartbeat whose running charge passes the hold, so a stream admitted under a lease would be cut at the reservation: both front doors keep streams out of the lease cohort (Python `fastpath_frontdoor` reason `stream`, Go `gwauth.ReasonStream`) until an admission carries the ceiling beside the hold; an abandoned hold is charged its last accepted snapshot, at most the reservation (Python's snapshot reaper charges the recorded running charge and releases the recorded hold) |
+| The insufficient-credits 402 and its `billing.insufficient_credits` line (`reserved_microdollars`, beside the estimate) | reservation |
+| The authorization row's `estimated_microdollars` (Python and `gwauth.AuthorizationRow`; `storage_gcp_request_records` readback), the payload's `estimated_microdollars`, the 200's `estimated_cost` and `estimated_cost_microdollars` (Python and `gwauth/response.go`, so the shadow's byte comparison of the 200 and of the rows is unchanged; the shadow compares no reservation, the goldens' `reservation_microdollars` does), the replay of a stored authorization, the fast path settle's full-record money metadata (`fastpath_settle`), and the `billing.authorize_contention` and `authorize_conflict_after_escrow` diagnostics | estimate |
+| Stage D: the gateway's `cap_micro` (`_gateway_stage_d_payload`), the heartbeat's `cap_micro` and its `usage_exceeds_cap` refusal (`storage_gcp_stage_d._cap_micro`), which cut a stream whose running charge passes it | estimate |
+| A video's settle ceiling (`Video token cost exceeds the authorized reservation`), a user-provided model's settle cap, the Polyphemus mixed-rollout clamp, the Fetch fee check, the token-billed transcription and speech ceilings, and the `billing.settlement_exceeded_reservation` log | estimate (equal to the reservation for every one of these but the log) |
+| The fixed-quote transcription and speech checks | `additional_cost_reservation_microdollars`, the frozen quote, neither figure (it can differ from both: a quote with app markup) |
+| The deferred (federated) outstanding counter on the Postgres plane, incremented by the row value and released by it at settle, refund and reap | estimate (conservative; no row carries the reservation). The in-memory store increments its counter and has no matching adjustment, which predates this change |
+| Counter reconciliation and resharding (`storage_gcp_counter_reconcile`) | the recorded holds, old full-estimate ones included |
+| `stage_d_max_output_tokens` and the token ceiling `_usage_exceeds_authorized_tokens` | the whole budget, as before |
+
+A catalog text route's settle is capped at neither figure (the video,
+user-provided and Polyphemus settles above are held to the estimate), and
+nothing in authorize bounds the actual charge: cache-creation premiums,
+provider-reported counts above the budget and a price tier the prompt
+estimate missed all settle in full, so an exact prompt with an output
+within the budget can still settle above the estimate. An in-flight
+request's uncovered cost is `max(0, actual - reservation)`, with no bound
+of its own. What the split changes is bounded: against a single hold at
+the estimate it was `max(0, actual - estimate)`, so the split raises the
+uncovered cost of a request by at most the estimate minus the reservation,
+whatever makes up the charge. The reservation is not in the 200 body or on the authorization row;
+the goldens (§10.1) record it as `reservation_microdollars` from what the
+front door was asked.
+
+**Streams.** A stream's reservation is its estimate for now, in
+`finish_candidates` (`stream`) and in the evaluator (`Request.Stream`)
+alike: the Stage D heartbeat reader deployed before this change bounds a
+stream's running charge by the reservation row's `credit_reserved_micro`,
+so during a mixed-version deploy or a rollback a stream admitted with a
+lower reservation would be cut at `usage_exceeds_cap` by an instance
+running that reader. Non-stream requests take the reduced reservation now.
+Follow-up: lower stream reservations once every plane runs the reader that
+caps at the estimate (`storage_gcp_stage_d._cap_micro` here); the change
+is the one `or stream` in `finish_candidates` and the `req.Stream` branch
+in `Evaluate`, with the `hold_cap` goldens' stream cases.
 
 Absent, because `None` with a `None` default: `key_reserved_microdollars`,
 `custom_model_id`, `custom_model_revision`, `user_provided_model_id`,
@@ -1276,7 +1329,8 @@ EXPECT =
       "cold_response": STR, "cold_timing": TIMING,  // Python's 200 with no session: Go's bytes
       "cold_candidates": [STR], "cold_estimate_microdollars": INT,
       "response": STR, "timing": TIMING,            // Python's 200 with the sessions remembered
-      "candidates": [STR], "estimate_microdollars": INT}}
+      "candidates": [STR], "estimate_microdollars": INT,
+      "reservation_microdollars": INT, "cold_reservation_microdollars": INT}}  // the lease's hold in each run (§5)
 ```
 
 **Signatures.** Every request whose `boot.signature_ok` is true carries
@@ -1320,7 +1374,9 @@ every pass reason has at least one case, `body.content_type`,
 
 The test fake keeps any integer, so a case whose estimate is beyond int64
 (`evaluate.estimate_overflow`) records Python's 200 from the fake, where
-real Spanner refuses the commit.
+real Spanner refuses the commit. An answered case also records
+`reservation_microdollars`, the credit reservation the front door was asked
+to hold (§5, "The two figures"), which the edge's admit must ask for.
 
 **Affinity cases** (`pass:body.cache_affinity*`, G13). The generator runs
 each twice in its own world, against a fresh `RoutingState` in the

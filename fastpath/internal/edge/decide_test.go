@@ -114,6 +114,7 @@ type authorizeExpect struct {
 	Response            string           `json:"response"`
 	GenerationID        string           `json:"generation_id"`
 	Estimate            int64            `json:"estimate_microdollars"`
+	Reservation         int64            `json:"reservation_microdollars"`
 	DecideRegion        string           `json:"decide_region"`
 	Fingerprint         string           `json:"fingerprint"`
 	IdempotencyScope    string           `json:"idempotency_scope"`
@@ -125,6 +126,10 @@ type authorizeExpect struct {
 		Status int     `json:"status"`
 		Type   *string `json:"type"`
 		Leased bool    `json:"leased"`
+		// Reservation is the credit reservation Python's typed store wrote
+		// for a request it answered without a lease (§10.1): nil when it
+		// wrote none.
+		Reservation *int64 `json:"reservation_microdollars"`
 	} `json:"python"`
 	// Affinity is a body.cache_affinity case's record of Python's bytes
 	// with its sessions remembered and with none (G13, §10.1).
@@ -146,6 +151,9 @@ type affinityExpect struct {
 	ColdCandidates []string         `json:"cold_candidates"`
 	Estimate       int64            `json:"estimate_microdollars"`
 	ColdEstimate   int64            `json:"cold_estimate_microdollars"`
+	// The lease's hold (§5, "The two figures") in each run.
+	Reservation     int64 `json:"reservation_microdollars"`
+	ColdReservation int64 `json:"cold_reservation_microdollars"`
 }
 
 func timingOfMap(t map[string]int64) gwauth.Timing {
@@ -568,6 +576,7 @@ func checkAffinity(t *testing.T, c authorizeCase, d Decided) bool {
 	check("scope", dec.Identity.Scope, a.Scope)
 	check("material", string(dec.Identity.Material), a.Material)
 	check("estimate", dec.Estimate, a.ColdEstimate)
+	check("reservation", dec.Reservation, a.ColdReservation)
 	check("candidates", dec.Candidates, a.ColdCandidates)
 	check("workspace", dec.Workspace, c.Facts.Key.WorkspaceID)
 	if !ok {
@@ -621,6 +630,7 @@ func checkAnswered(t *testing.T, c authorizeCase, d *Decision) bool {
 	check("scope", d.Identity.Scope, e.IdempotencyScope)
 	check("material", string(d.Identity.Material), e.FingerprintMaterial)
 	check("estimate", d.Estimate, e.Estimate)
+	check("reservation", d.Reservation, e.Reservation)
 	check("workspace", d.Workspace, c.Facts.Key.WorkspaceID)
 	if !ok {
 		return false
@@ -1268,5 +1278,92 @@ func TestTheKeylessPolicyGatesAreBeforeTheLookup(t *testing.T) {
 	}
 	if Decide(in); looked != 1 {
 		t.Fatalf("positive control: %d lookups", looked)
+	}
+}
+
+// TestTheReservationPricesAtMostHoldOutputTokens: through the pipeline, the
+// production shape (a max_tokens of 131,072) and the budgets either side of
+// routingsnapshot.HoldOutputTokens decide what the regenerated goldens
+// record: a reservation (the lease's hold) of 16,384 output tokens at and
+// above the bound and of the budget itself below it, while the estimate
+// (the rows' and the 200's ceiling) prices the whole budget.
+func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
+	f := authorizeGoldens(t)
+	figures := func(name string) (estimate, reservation int64) {
+		t.Helper()
+		for _, c := range f.Cases {
+			if c.Name != name {
+				continue
+			}
+			in, _ := caseInputs(t, f, c)
+			d := Decide(in)
+			if d.Pass != "" || d.ForShadow() == nil {
+				t.Fatalf("%s: passed %q, want a decision", name, d.Pass)
+			}
+			got := d.ForShadow()
+			if got.Estimate != c.Expect.Estimate || got.Reservation != c.Expect.Reservation {
+				t.Fatalf("%s: estimate %d and reservation %d, the golden's %d and %d",
+					name, got.Estimate, got.Reservation, c.Expect.Estimate, c.Expect.Reservation)
+			}
+			return got.Estimate, got.Reservation
+		}
+		t.Fatalf("%s: not a golden case", name)
+		return 0, 0
+	}
+	flash := "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+"
+	atBound, bound := figures(flash + "16384")
+	if atBound != bound {
+		t.Errorf("at the bound the estimate %d and the reservation %d differ", atBound, bound)
+	}
+	for _, budget := range []string{"16385", "131072"} {
+		if estimate, reservation := figures(flash + budget); reservation != bound || estimate <= atBound {
+			t.Errorf("a %s budget: reservation %d, want the bound's %d; estimate %d, want above %d",
+				budget, reservation, bound, estimate, atBound)
+		}
+	}
+	if estimate, reservation := figures(flash + "16383"); reservation >= bound || estimate != reservation {
+		t.Errorf("a 16,383 budget: reservation %d, want below %d; estimate %d, want the reservation", reservation, bound, estimate)
+	}
+	if estimate, reservation := figures("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:8000+max_tokens:131072"); reservation >= estimate {
+		t.Errorf("max_tokens 131,072: reservation %d, want below the estimate %d", reservation, estimate)
+	}
+}
+
+// TestPythonsReservationOnPassedGoldens: a golden Go passes that Python
+// answered without a lease records the credit reservation Python wrote
+// (python.reservation_microdollars, §10.1). Where the evaluator reads the
+// body, it is the evaluator's reservation: the whole budget's price for a
+// stream (for now), at most HoldOutputTokens of it otherwise.
+func TestPythonsReservationOnPassedGoldens(t *testing.T) {
+	f := authorizeGoldens(t)
+	checked, streams := 0, 0
+	for _, c := range f.Cases {
+		if c.Expect.Outcome != "pass" || c.Expect.Python.Reservation == nil {
+			continue
+		}
+		req, _, why := requestOf(c.body(), &shadowCall{})
+		if why != "" {
+			continue // a body the evaluator does not read (§3's body.* reasons)
+		}
+		in, _ := caseInputs(t, f, c)
+		req.At = c.at()
+		r := in.Snapshot.Evaluate(req)
+		if r.Outcome != routingsnapshot.Answered {
+			continue
+		}
+		if req.Stream != nil && *req.Stream {
+			streams++
+			if r.Reservation != r.ModelEstimate {
+				t.Errorf("%s: a stream's reservation %d, want its estimate %d", c.Name, r.Reservation, r.ModelEstimate)
+			}
+		}
+		if got := *c.Expect.Python.Reservation; got != r.Reservation {
+			t.Errorf("%s: Python reserved %d, the evaluator %d (estimate %d)", c.Name, got, r.Reservation, r.ModelEstimate)
+		}
+		checked++
+	}
+	t.Logf("%d passed goldens' reservations checked, %d of them streams", checked, streams)
+	if streams < 2 || checked < 4 {
+		t.Fatalf("checked %d (%d streams): fewer than the goldens hold", checked, streams)
 	}
 }

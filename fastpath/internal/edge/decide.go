@@ -197,16 +197,20 @@ type DecideInputs struct {
 // Input is what Staged was built from, kept so the shadow can stage the
 // same decision under Python's ids (Restage).
 type Decision struct {
-	Staged     gwauth.Staged
-	Input      gwauth.ComposeInput
-	Identity   gwauth.Identity
-	Estimate   int64
-	Workspace  string
-	KeyHash    string
-	LookupHash string
-	Kid        string
-	Region     string
-	Candidates []string
+	Staged   gwauth.Staged
+	Input    gwauth.ComposeInput
+	Identity gwauth.Identity
+	// Estimate is the spend ceiling (Result.ModelEstimate: the rows and the
+	// 200 carry it); Reservation is the credit hold the owner's lease takes
+	// (Result.Reservation, at most HoldOutputTokens of the output budget).
+	Estimate    int64
+	Reservation int64
+	Workspace   string
+	KeyHash     string
+	LookupHash  string
+	Kid         string
+	Region      string
+	Candidates  []string
 	// Affinity is whether the body names a cache_affinity_key: the
 	// candidates are Go's cold order, and the decision is the shadow's
 	// alone (body.cache_affinity; G13). Routing is the evaluator's request
@@ -467,7 +471,7 @@ func Decide(in DecideInputs) Decided {
 		return pass(PassCompose)
 	}
 	out.shadowOnly = &Decision{
-		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate,
+		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate, Reservation: res.Reservation,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
 		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap,

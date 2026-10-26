@@ -1573,6 +1573,7 @@ def _authorize_gateway_sync_impl(
             ),
             partner_mode=partner_mode,
             rerank=rerank,
+            stream=bool(body.stream),
         )
     except NamedChainRefusal as refusal:
         if refusal.event == "filtered":
@@ -1598,11 +1599,15 @@ def _authorize_gateway_sync_impl(
     service_tier = candidate_outcome.service_tier
     model, endpoint = candidate_outcome.model, candidate_outcome.endpoint
     output_tokens = body.output_estimate
+    # Two figures (authorize_candidates.hold_output_tokens): the estimate is
+    # the spend ceiling, the reservation is the credit hold. Every adjustment
+    # below applies to both; they part only in the output tokens priced.
     model_estimate = candidate_outcome.model_estimate
+    model_reservation = candidate_outcome.model_reservation
     model_usage_type = UsageType.for_endpoint(endpoint)
     if (is_transcription_request and not transcription_spec.token_billed) or (is_speech_request and not speech_spec.token_billed):
         # Duration/characters are not tokens. The complete frozen quote is held below.
-        model_estimate = 0
+        model_estimate = model_reservation = 0
     has_credit_candidate = any(
         UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
         for _candidate_model, candidate_endpoint in endpoint_candidates
@@ -1613,6 +1618,7 @@ def _authorize_gateway_sync_impl(
     )
     if receipt_fee_basis_points and user_model is None and partner_mode is None:
         model_estimate = signed_receipt_price_microdollars(model_estimate, receipt_fee_basis_points)
+        model_reservation = signed_receipt_price_microdollars(model_reservation, receipt_fee_basis_points)
     custom_model_markup_basis_points = (
         int(custom_model.markup_basis_points) if custom_model is not None else 0
     )
@@ -1624,9 +1630,17 @@ def _authorize_gateway_sync_impl(
             model_estimate,
             custom_model_markup_basis_points,
         )
+        model_reservation += custom_model_markup_microdollars(
+            model_reservation,
+            custom_model_markup_basis_points,
+        )
     # Video candidates are either fixed-quote or output-token billed. Reserve
     # the largest possible route charge, not the sum of mutually exclusive routes.
     estimate = max(model_estimate, additional_cost_reservation) if is_video_request else model_estimate + additional_cost_reservation
+    reservation = (
+        max(model_reservation, additional_cost_reservation) if is_video_request
+        else model_reservation + additional_cost_reservation
+    )
     broadcast_destinations = [
         payload
         for destination in _broadcast_destinations_for_authorize(workspace.id)
@@ -1652,6 +1666,7 @@ def _authorize_gateway_sync_impl(
         # Settle-side caps compare against this frozen hold. If authorize held
         # only the base, those caps would claw the app markup back at settle.
         estimate += app_markup_microdollars(estimate, app_markup_basis_points)
+        reservation += app_markup_microdollars(reservation, app_markup_basis_points)
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -1794,7 +1809,8 @@ def _authorize_gateway_sync_impl(
             settings,
             workspace_id=workspace.id,
             authorization_id=authorization_id,
-            estimate=estimate,
+            # The lease holds the reservation; the row keeps the estimate.
+            estimate=reservation,
             stream=bool(body.stream),
             standard_endpoint_pricing=standard_endpoint_pricing,
             # Every candidate priced in credits: a BYOK fallback books no
@@ -1826,6 +1842,7 @@ def _authorize_gateway_sync_impl(
                     key_hash=api_key.hash,
                     authorization_id=authorization_id,
                     estimate=estimate,
+                    reservation=reservation,
                     has_credit_candidate=has_credit_candidate,
                     reservation_usage_type=reservation_usage_type,
                     model_id=model.id,
@@ -1996,7 +2013,7 @@ def _authorize_gateway_sync_impl(
             release_user_model_slot_after_error()
             record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(
-                workspace, estimate=estimate, body=body, input_tokens=input_tokens,
+                workspace, reservation=reservation, estimate=estimate, body=body, input_tokens=input_tokens,
                 key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
             )
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
@@ -2047,6 +2064,8 @@ def _authorize_gateway_sync_impl(
         )
         try:
             with gateway_phase("store_ms", after="post_commit_ms"):
+                # A key cap counts outstanding spend ceilings: the key takes
+                # the estimate, the workspace's credits the reservation.
                 key_limit_reservation = STORE.reserve_key_limit(
                     api_key.hash,
                     estimate,
@@ -2094,7 +2113,7 @@ def _authorize_gateway_sync_impl(
                     credit_reservation = STORE.reserve(
                         workspace.id,
                         api_key.hash,
-                        estimate,
+                        reservation,
                         idempotency_key=request_idempotency_key,
                         key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
                     )
@@ -2123,8 +2142,9 @@ def _authorize_gateway_sync_impl(
                         usage_type=reservation_usage_type,
                     )
                     raise _insufficient_credits_error(
-                        workspace, estimate=estimate, body=body, input_tokens=input_tokens,
-                        key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
+                        workspace, reservation=reservation, estimate=estimate, body=body,
+                        input_tokens=input_tokens, key_id=api_key.hash,
+                        request_id=getattr(request.state, "request_id", None),
                     ) from exc
                 settlement = _DEFERRED_HOME_SETTLEMENT
                 authorization_expires_at = _deferred_expires_at(settings)
@@ -3365,7 +3385,7 @@ def _deferred_expires_at(settings: Settings) -> str:
 
 
 def _insufficient_credits_error(
-    workspace: Any, *, estimate: int, body: GatewayAuthorizeRequest,
+    workspace: Any, *, reservation: int, estimate: int, body: GatewayAuthorizeRequest,
     input_tokens: int, key_id: str, request_id: str | None,
 ) -> Exception:
     """402, but say WHICH plane the money is on when that is the real answer.
@@ -3398,9 +3418,10 @@ def _insufficient_credits_error(
     # and add database work to every denial. Log only known, content-free facts.
     logger.info(
         "billing.insufficient_credits workspace_id=%s key_id=%s request_id=%s "
-        "model=%s estimated_microdollars=%d estimated_input_tokens=%d output_token_budget=%d",
+        "model=%s reserved_microdollars=%d estimated_microdollars=%d estimated_input_tokens=%d "
+        "output_token_budget=%d",
         _log_value(workspace.id), _log_value(key_id), _log_value(request_id),
-        _log_value(body.model), estimate, input_tokens, body.output_estimate,
+        _log_value(body.model), reservation, estimate, input_tokens, body.output_estimate,
     )
     if getattr(workspace, "federated_home", ""):
         return api_error(
@@ -3413,7 +3434,7 @@ def _insufficient_credits_error(
         )
     return api_error(
         402,
-        f"Insufficient credits for this request's upfront reservation of {format_money_precise(estimate)}. "
+        f"Insufficient credits for this request's upfront reservation of {format_money_precise(reservation)}. "
         "The reservation covers the estimated input, output-token limit, and any additional usage costs; "
         "it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, "
         "or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits.",

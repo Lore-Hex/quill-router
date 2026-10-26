@@ -233,8 +233,10 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	}
 	detached := context.WithoutCancel(r.Context())
 	admitCtx, cancel := context.WithDeadline(detached, budget)
+	// The lease holds the reservation, as Python's _fastpath_admission asks
+	// for it; the rows and the 200 keep the estimate.
 	got := admitter.Authorize(admitCtx, frontdoor.AuthorizeOf{Workspace: d.Workspace, Request: d.Input.AuthorizationID,
-		Estimate: d.Estimate, Boot: []byte(d.Kid)})
+		Estimate: d.Reservation, Boot: []byte(d.Kid)})
 	spent := admitCtx.Err() != nil
 	cancel()
 	switch {
