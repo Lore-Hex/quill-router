@@ -3,9 +3,41 @@
 The fast path admits only for workspaces its switch enables
 (`tr_fastpath_workspace`; `docs/design/fast-admission-production-rollout.md`,
 W1). Turning one off ends its leases; only once they have ended may any node
-stop (W2). `fastpathctl` does both halves.
+stop (W2). `fastpathctl` does both halves. A workspace whose edge nodes
+decide its authorizations (`tr_fastpath_edge_decide`, stage I2) has a step
+before the switch: its decide row, first.
 
-## 1. Turn the workspace off
+## 1. Decide off, then turn the workspace off
+
+First, for a workspace that decides at the edge (`tr_fastpath_edge_decide`,
+keyed by workspace, cloud and region; `docs/design/fast-admission-e2-decide.md`
+§9, `fastpath-edge-decide.md`):
+
+```bash
+fastpathctl -database projects/P/instances/I/databases/D decide off WORKSPACE [-cloud gcp] [-region us-central1]
+```
+
+or, for every row at once, `fastpathctl -database D decide-off-all`. This
+is the first step of any abuse pause or key revocation for a workspace that
+decides (design decision 17): the edge decides from cached key and
+workspace facts, honoured within 15 s, and from a policy whose withdrawn
+digest is honoured within 60 s, and it asks the front door, which reads the
+switch, only after it has decided; the decide row is the lever it reads
+soonest. Each node with `-edge-decide` copies the whole table: a read begins every
+5 s and is given 5 s (`fastpath/internal/edge/decide.go`, `DecideEvery`,
+`decideCopy.run`), so a row turned off is seen by a node within 10 s of the
+commit when its reads succeed. A node whose read fails keeps its last copy,
+deciding as that copy said, until the copy is 15 s old (three intervals,
+`DecideView.gate`), and then decides nothing (`cache.decide`); so a row
+turned off is honoured within 10 s, or by the time the copy a node holds is
+15 s old, whichever a node's reads give.
+`decide status WORKSPACE` exits 0 while the workspace does not decide in
+that cloud and region and 3 while it does, with every row of the
+workspace's beside: a row of another cloud or region stays as it was, so
+read the rows it prints, or run `decide-off-all`. A workspace with no row
+decides nowhere. Nothing of this touches the switch or the leases.
+
+Then the switch:
 
 ```bash
 fastpathctl -database projects/P/instances/I/databases/D disable WORKSPACE
@@ -35,17 +67,12 @@ fastpathctl -database projects/P/instances/I/databases/D disable-all
 It turns every enabled workspace off and revokes every open lease, in one
 transaction. The rest of this procedure then holds for each of them.
 
-Deciding at the edge is a separate table, `tr_fastpath_edge_decide`, keyed
-by workspace, cloud and region. It only chooses whether a workspace's edge
-nodes answer its authorizations themselves; nothing reads it yet except
-`fastpathctl`, and with no row a workspace decides nowhere. To stop the edge
-deciding without touching the switch or the leases, run
-`fastpathctl -database D decide off WORKSPACE [-cloud gcp] [-region us-central1]`
-for one workspace, or `fastpathctl -database D decide-off-all` for every
-row. `decide status WORKSPACE` exits 0 while the workspace does not decide
-in that cloud and region, and 3 while it does. `disable` and `disable-all`
-leave the decide rows as they are, so a workspace turned back on decides
-wherever its rows still say on. Turn decide off as well if it should not.
+The decide rows are read by `fastpathctl` and by every node whose unit
+carries `-edge-decide` (the copy above; a node without the flag reads
+them for its shadow's counts alone and answers nothing). `disable` and
+`disable-all` leave the decide rows as they are, so a workspace turned back
+on decides wherever its rows still say on: turn decide off as well if it
+should not.
 
 ## 2. Wait for its leases to end
 

@@ -35,18 +35,23 @@ ssh tr-fastpath-7 --zone=us-central1-a --project=quill-cloud-proxy
    fastpathwatch edge -project quill-cloud-proxy -since SOAK_START
    ```
 
-   `SOAK_START`, RFC 3339, is the later of the current release's first
-   serving minute and the last route weight change: the counts from before
-   a node re-pin or a weight change are kept apart and do not count. In
-   the report: `i2.comparable` at least 10,000 over at least 24 hours;
+   `SOAK_START`, RFC 3339, is the start of the sample: the counts from
+   before a node re-pin or a route weight change are kept apart and do not
+   count, and since each count line carries the minute before its
+   timestamp, it is the latest, over the nodes, of the first count line
+   that is a full period after the node's last change (its restart onto
+   the release, or the weight's apply), found from the lines' timestamps
+   per node (`fastpath-watch.md`, "The edge's decide counts"). In the
+   report: `periods` showing every node from there on, one line a minute;
+   `i2.comparable` at least 10,000 over at least 24 hours;
    `i2.agree_full_ratio` at least 0.995 with every `i2.differ_by_field`
    explained; `i2.differ_estimate`, `i2.row_idempotency_fingerprint` and
    `i2.fields_other` zero; `i2.would_admit_python_refused` zero beyond
    key-revocation lag (decision 17); `i2.cohort_by_class` accounted for;
    `i2.stale_rate` recorded. The span's distinct digests, at least three
-   `policy=` and two `snapshot=`, are read from the shadow's lines
-   themselves (`fastpath-watch.md` gives the read): the report sums over
-   them.
+   `policy=` and two `snapshot=` among the lines with comparable requests,
+   are counted from the shadow's lines themselves (`fastpath-watch.md`
+   gives the read): the report sums over them and does not print them.
 2. **Both nodes run the pinned release and a startup script that reads
    the attribute.** The pinned release (`infra/fastpath.tf`,
    `fastpath_release`) takes `-edge-decide`: `tests/test_fastpath_p1.py`
@@ -100,18 +105,21 @@ off"). The edge reads the key, the workspace and the policy from caches
 abuse-latched workspace, or a debt mark is honoured within 15 s, a
 withdrawn digest within 60 s, and Python's own 401, 402, 403 or pause 503
 on a request the edge passes evicts the key sooner (`decide_path.go`,
-`evict`). The decide row is the one lever honoured within 5 s.
+`evict`). The decide row is the lever the edge reads soonest.
 
 What `decide off` does: one transaction writes the workspace's row for the
 cloud and region with `decide` false and `changed_at` the commit's
 timestamp (`fastpath/internal/store/decide.go`, `SetDecide`, an
 `InsertOrUpdate`); `decide-off-all` sets every row false in one statement,
-rows kept (`DecideOffAll`). Each node copies the whole table every 5 s
-(`decide.go`, `DecideEvery`; `decideCopy.run`, each read given one
-interval), so a row turned off is honoured within one interval; a copy
-older than three intervals, 15 s, is all off (`DecideView.gate`, the pass
-`cache.decide`), so a node that cannot read the table decides nothing. The
-row touches neither the switch nor the leases: what the edge admitted
+rows kept (`DecideOffAll`). Each node with `-edge-decide` copies the whole table: a read begins every
+5 s and is given 5 s (`fastpath/internal/edge/decide.go`, `DecideEvery`,
+`decideCopy.run`), so a row turned off is seen by a node within 10 s of the
+commit when its reads succeed. A node whose read fails keeps its last copy,
+deciding as that copy said, until the copy is 15 s old (three intervals,
+`DecideView.gate`), and then decides nothing (`cache.decide`); so a row
+turned off is honoured within 10 s, or by the time the copy a node holds is
+15 s old, whichever a node's reads give.
+The row touches neither the switch nor the leases: what the edge admitted
 settles as before.
 
 Start from a table that says nobody decides, and prove it:
@@ -125,8 +133,10 @@ fastpathctl -database $DB decide status WORKSPACE
 found on (0 for a table all off already). `decide status` exits 0 while the
 workspace does not decide in that cloud and region and 3 while it does
 (`fastpath/cmd/fastpathctl/main.go`, `notDone`), with every row of the
-workspace's beside: `"found": false` is a workspace with no row, which
-decides nowhere.
+workspace's beside, under `rows`. `"found": false` says there is no row
+for the cloud and region asked about, not that the workspace decides
+nowhere: a row of another cloud or region is listed under `rows` and may
+say on. Read them; `decide-off-all` turns every row off whatever its key.
 
 ## 2. The node attribute
 
@@ -206,10 +216,20 @@ decide path counts passes).
 
 ## 3. The workspace enters the cohort
 
-An operator-owned workspace first, then the pilot workspace (§11). The P1
-synthetic workspace (`fastpath-p1.md`, "What is done by hand, once") under
-its load generator is the operator's own: its requests are the operator's,
-and its audit is run after every run.
+An operator-owned workspace first, then the pilot workspace (§11). The
+decide path sees only what the balancer sends the edge: an enclave's
+`/internal/gateway/authorize` for a client's gateway request. The P1
+synthetic workspace cannot be the first: it has no API key
+(`fastpath-p1.md`, "What is done by hand, once"), and its load generator
+calls a node's front door at `/v1/authorize` directly
+(`fastpath/internal/frontdoor/http.go`, `Gateway.Authorize`), so none of
+its requests reaches the edge. An operator-owned workspace serves as the
+first only with an API key of its own, named in Python's pilot set, and
+requests sent as a client sends them, through the public API with that
+key, each an enclave's authorize behind it; nothing in the repository
+sends such a request for the operator (the synthetic monitor's key is
+passed, `policy.monitor_key`). Without one, say so and put the pilot
+workspace's row on: the first evidence is then the pilot's own traffic.
 
 ```bash
 fastpathctl -database $DB decide on WORKSPACE -cloud gcp -region us-central1
@@ -225,8 +245,11 @@ us-central1, true, changed_at)`, `changed_at` the commit's timestamp
 `decide status WORKSPACE` now exits 3 with `"decide": true`,
 `"found": true` and `"changed_at"` that instant.
 
-Each node's copy takes the row at its next read, within 5 s
-(`DecideEvery`). Nothing reads a node's copy from outside, so the node is
+Each node's copy takes the row at its next successful read: one begins
+within 5 s and is given 5 s (`DecideEvery`, `decideCopy.run`), so within
+10 s when its reads succeed, and not until they do when they fail (the
+copy without the row is kept, then ages out at 15 s to all off). Nothing
+reads a node's copy from outside, so the node is
 seen to have taken it by what it does: the next minute's count line has
 `answered` above 0 (`read_back` counts the 200s after a read-back), and
 its `passed` no longer grows by `decide.off` for the workspace's requests:
@@ -262,35 +285,61 @@ then, the decide path's now):
 fastpathwatch edge -project quill-cloud-proxy -since DECIDE_ON
 ```
 
-with `DECIDE_ON` the `at` of `decide on`. Read, each against the line of
-§11 it answers to:
+with `DECIDE_ON` the `at` of `decide on`. The report is the fleet's: it
+sums every node's lines, and no count names a workspace (the lines carry
+no id), so with one workspace deciding its `answered` are that
+workspace's and its `passed` are everyone's. The workspace's own
+evidence is elsewhere: its row (`decide status`), and Python's rows for it,
+which the edge wrote and Python settles (`fastpathctl status WORKSPACE`
+and `audit`, below). Read, each against the line of §11 it answers to:
 
 - `decide.counts.answered` and `read_back`: the requests Go answered;
-  `read_back`'s share is the lost-answer rate, small (a commit whose
-  answer was lost, or an `AlreadyExists` of our own row, §8.4).
-- `decide.counts.unavailable` and `i2.unavailable_by_code`: 0. One of a
-  code other than `failed_precondition` is a commit whose answer was lost
-  (`fastpath-alerts.md`, `edge_decide_unavailable`); any
-  `failed_precondition` is the node's clock ahead of Spanner's, and
-  `edge_decide_unavailable_sustained` a cause that persists: the way
-  back, then the cause.
+  `read_back` counts the 200s answered from a row read back and found
+  ours (a commit the client re-ran after losing the first answer, or an
+  `AlreadyExists` of our own row, §8.4), a small share.
+- `decide.counts.unavailable` and `i2.unavailable_by_code`: 0. An
+  unavailable answer is an insert whose outcome the transaction's error
+  does not prove and whose read-back found no row of ours
+  (`fastpath/internal/store/gatewayauth.go`, `ClassifyInsert`, `Unknown`);
+  the code is what the transaction returned, not a cause, and none of them
+  says whether the commit applied. `deadline_exceeded` is the insert's
+  1.5 s reached, which is also how `Unavailable`, `Aborted` and
+  `ResourceExhausted` end, since the client retries them to the deadline.
+  `failed_precondition` is Spanner's for a commit it no longer remembers
+  as well as for a timestamp in the future; the reservation's `created_at`
+  is the commit's own timestamp, so a clock ahead of Spanner's does not by
+  itself produce it (`gatewayauth_test.go`,
+  `TestAClockAheadOfTheCommitInserts`), and the node's clock is still the
+  first thing to read (`fastpath-alerts.md`). The enclave's retry finds the
+  row through Python's replay if the commit applied, or inserts. One, from
+  one node, is read and kept; `edge_decide_unavailable_sustained` is the
+  way back, then the cause.
 - `decide.counts.refunded` and `refund_failed`: a refund per pass after an
   admit (`insert.scope_taken`, `insert.failed`, `compose.refused`);
   `refund_failed` 0. A refund not sent ends with the lease, as Python's
   does.
-- `decide.by_name.passed`, by §3 reason: `decide.off` for every other
-  workspace's requests; `insert.scope_taken` only for the enclave's
-  replays; `owner.busy` and `budget.spent` rare and explained by the
-  owner's load; `owner.off`, `owner.invalid`, `owner.failed`,
-  `owner.unreachable`, `insert.failed` and `inflight.key` 0 or each
-  explained; `cache.*` at the stale rate the soak recorded
-  (`i2.stale_rate`).
+- `decide.by_name.passed`, by §3 reason, over every authorize the edge
+  read, whichever workspace's: `policy.not_pilot_workspace` for every
+  workspace outside Python's pilot set (the policy's gates come before the
+  key's, `decide.go`, `policyPass`), `decide.off` for a pilot workspace
+  with no row on, and the request, key and cache reasons at the shares the
+  soak's shadow counted (`cache.*` at `i2.stale_rate`). `insert.scope_taken`
+  is a request whose idempotency scope another authorization took first,
+  which Python then answers as a replay or a 409 (`gatewayauth.go`,
+  `ScopeTaken`). `owner.busy` and `budget.spent` are the owner's load and
+  the decide budget; `owner.off` is the switch. `owner.invalid`,
+  `owner.failed`, `owner.unreachable`, `insert.failed`, `compose.refused`
+  and `inflight.key` are each a thing to explain.
 - `decide.by_name.slow`: `at_edge` and `in_all` 0 (decision 12;
   `edge_decide_pass_slow`).
-- The shadow's figures, now for the passes alone: `i2.agree_full_ratio`
-  still at its gate, `i2.would_admit_python_refused` 0 beyond revocation
-  lag, `i2.differ_estimate`, `i2.row_idempotency_fingerprint` and
-  `i2.fields_other` 0.
+- The shadow's figures are now of the passes alone: a request Go answers
+  never reaches it. With one pilot workspace deciding, `i2.comparable` can
+  be 0 and `i2.agree_full_ratio` null, and that is the expected shape, not
+  a failure. Where comparable requests remain (another pilot workspace's,
+  whose row is off, counted `decide.off` under the shadow's `decide=`),
+  `i2.agree_full_ratio` holds its gate, and `i2.would_admit_python_refused`
+  (beyond revocation lag), `i2.differ_estimate`,
+  `i2.row_idempotency_fingerprint` and `i2.fields_other` are 0.
 - `periods.NODE.decide`: one line a minute from each node; fewer is a node
   that was not running the path, or a minute lost.
 
@@ -328,7 +377,8 @@ the cohort as it entered, `decide off`, and nothing else of it changes.
 As §9 and decision 17 give it. Each step leaves the ones after it
 untouched, and what the edge admitted settles through Python as before.
 
-1. **One workspace**, honoured within 5 s on every node:
+1. **One workspace**, seen by a node within 10 s when its reads succeed,
+   or by the time the copy it holds is 15 s old (step 1's bound):
 
    ```bash
    fastpathctl -database $DB decide off WORKSPACE
@@ -336,17 +386,19 @@ untouched, and what the edge admitted settles through Python as before.
 
    `decide status WORKSPACE` exits 0. This is the first step of any abuse
    pause or key revocation for a workspace that decides (decision 17).
-2. **Every workspace**, within the same 5 s:
+2. **Every workspace**, within the same bound:
 
    ```bash
    fastpathctl -database $DB decide-off-all
    ```
 
 3. **The switch**, `fastpathctl -database $DB disable WORKSPACE`
-   (`fastpath-turn-off.md`): the front door answers `Off`, which the decide
-   path passes `owner.off`, and the workspace's leases are revoked. It is
-   the turn-off runbook's lever, broader than decide, and leaves the
-   decide rows as they are.
+   (`fastpath-turn-off.md`): each node's copy of the switch drops the
+   workspace within three seconds (`fastpath/internal/service/switch.go`,
+   a copy older than three intervals enables nothing), the front door then
+   answers `Off`, which the decide path passes `owner.off`, and the
+   workspace's leases are revoked. It is the turn-off runbook's lever,
+   broader than decide, and leaves the decide rows as they are.
 4. **The node attribute**, `fastpath-edge-decide = "false"` in
    `infra/fastpath.tf`, applied, and each node cycled as in step 2 above,
    one at a time, the other serving: minutes to hours, the leases' drain.
@@ -354,6 +406,9 @@ untouched, and what the edge admitted settles through Python as before.
    answers nothing and passes `decide.off`: the attribute is the way back
    for the path, not for a workspace.
 5. **The route**, `fastpath_edge_route_weight = 0`
-   (`infra/fastpath_edge_backend.tf`), which the balancer takes at once:
-   the enclave's authorizes go to the control plane directly, the edge
-   untouched (`fastpath-deploy.md`, "Raising the edge route weight").
+   (`infra/fastpath_edge_backend.tf`): a one-line change merged and
+   applied (workflow dispatch), which the balancer takes once the url
+   map's change has propagated, minutes, not at once; requests in flight
+   at the edge finish there. Then the enclave's authorizes go to the
+   control plane directly, the edge untouched (`fastpath-deploy.md`,
+   "Raising the edge route weight").

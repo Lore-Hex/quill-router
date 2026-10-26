@@ -1701,13 +1701,20 @@ and Python answered a 200 that is not a replay; `affinity_cold` and
 clock and at least three distinct policy digests and two distinct
 snapshot digests, all read with `fastpathwatch edge -since` the start of
 the current release's soak: the counts from before a node re-pin or a
-route weight change are kept apart and do not count, so `-since` is the
-later of the release's first serving minute and the last weight change,
-and the sample starts over from there. The calendar bound measured time,
-not evidence; the sample bound measures what the gate reads. The report
-sums the shadow's lines over their digests, so the distinct digests of
-the span are read from the lines' `snapshot=` and `policy=`
-(`docs/runbooks/fastpath-watch.md`). Then `agree_full` at least 99.5% of
+route weight change are kept apart and do not count. Each count line
+carries the period (a minute) before its timestamp, and `-since` selects
+lines by timestamp, so the sample starts at the first count line on every
+node that is a full period after the last change, the last node's restart
+onto the release or the weight's apply, found from the lines' timestamps
+per node (`docs/runbooks/fastpath-watch.md`): `-since` is the latest of
+those, the period that crosses a change is before it, and during a rolling
+re-pin so is every line of a node still on the old release. The sample
+starts over from there. The calendar bound measured time, not evidence;
+the sample bound measures what the gate reads. `fastpathwatch edge` does
+not print the digests: it sums the shadow's lines over them, so the
+distinct digests of the span are counted from the lines' `snapshot=` and
+`policy=` among the lines with comparable requests, with the `gcloud
+logging read` of `fastpath-watch.md`, for now. Then `agree_full` at least 99.5% of
 the comparable requests with every difference
 explained; every other cohort-eligible request (Go would answer, each
 counted by its decide row's gate) accounted for by class

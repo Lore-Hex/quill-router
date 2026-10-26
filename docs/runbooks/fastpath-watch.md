@@ -128,13 +128,21 @@ by. It stops nothing, and needs logging read access only:
 fastpathwatch edge -project quill-cloud-proxy -since 2026-10-24T00:00:00Z
 ```
 
-`-since` is the start of the sample the gates read, in RFC 3339: the
-later of the current release's first serving minute and the last route
-weight change, since the counts from before a node re-pin or a weight
-change are kept apart and do not count (§11); `-until` is now when not
-given. The gates are a sample, not a calendar: at least 10,000 comparable
-requests over at least 24 hours and at least three policy and two snapshot
-digests, and the ratios and zero counts below.
+`-since` is the start of the sample the gates read, in RFC 3339, and
+`-until` is now when not given. The counts from before a node re-pin or a
+route weight change are kept apart and do not count (§11), and `-since`
+selects lines by their timestamp while each line carries the period (a
+minute) before it, so the period that crosses a change is not the
+sample's: on every node, find the first count line that is a full period
+after the last change (the node's restart onto the release, or the
+weight's apply), from the lines' timestamps per node (the read below, by
+`resource_name`), and give `-since` the latest of those. During a rolling
+re-pin the nodes still on the old release keep logging until each is
+restarted, so the last node's restart is the change. The report's
+`periods` then shows every node contributing one line a minute from
+`-since` on. The gates are a sample, not a calendar: at least 10,000
+comparable requests over at least 24 hours and at least three policy and
+two snapshot digests among them, and the ratios and zero counts below.
 
 Each minute every node logs one line of its decide path's counts
 (`fastpath edge decide: ...`, with `-edge-decide`) and, with
@@ -186,16 +194,28 @@ or a 5xx: a week of three nodes is about 90 pages. Exit
 2 is its usage: `-project` and `-since` (RFC 3339) are needed, `-until` is
 now when not given.
 
-The report sums the shadow's lines over their digests. The distinct
-digests of the span, which the gate counts, are read from the lines
-themselves, each line's `snapshot=` and `policy=` (one line a minute a
-node for each pair the minute compared under):
+The report sums the shadow's lines over their digests and does not print
+them. The distinct digests of the span, which the gate counts, are read
+from the lines themselves, each line's `snapshot=` and `policy=` (one line
+a minute a node for each pair the minute compared under), counted only
+among the lines with comparable requests (`agree_full` plus `differ`
+above 0): a pair whose lines carried affinity results alone, or none, is
+no evidence, and a line of a minute with no snapshot or policy held says
+`snapshot=none` or `policy=none` and compares nothing. Each dimension is
+counted apart, over the report's exact window:
 
 ```bash
-gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide shadow: snapshot=" AND timestamp>="2026-10-24T00:00:00Z"' \
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide shadow: snapshot=" AND timestamp>="2026-10-24T00:00:00Z" AND timestamp<"2026-10-26T00:00:00Z"' \
   --project=quill-cloud-proxy --format='value(jsonPayload.MESSAGE)' \
-  | grep -o 'snapshot=[^ ]* policy=[^ ]*' | sort | uniq -c
+  | awk '{ split("", f); for (i = 1; i <= NF; i++) { n = index($i, "="); if (n) f[substr($i, 1, n - 1)] = substr($i, n + 1) }
+           if (f["agree_full"] + f["differ"] > 0) { s[f["snapshot"]] += f["agree_full"] + f["differ"]; p[f["policy"]] += f["agree_full"] + f["differ"] } }
+         END { for (d in s) print "snapshot", d, s[d]; for (d in p) print "policy", d, p[d] }'
 ```
+
+It prints each snapshot digest and each policy digest with the comparable
+requests compared under it; the gate wants at least two of the first and
+three of the second. The `timestamp` bounds are the report's `since` and
+`until`.
 
 The lines themselves, to read a minute's by eye:
 
