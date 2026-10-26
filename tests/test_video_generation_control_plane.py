@@ -69,6 +69,8 @@ NATIVE_VIDEO_PROVIDERS = {
 }
 
 NATIVE_ONLY_VIDEO_MODELS = {
+    "openai/sora-2",
+    "openai/sora-2-pro",
     "minimax/h3-max",
     "x-ai/grok-imagine-video",
     "decart/lucy-2.5",
@@ -155,16 +157,14 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
     assert MODELS["minimax/h3-max"].input_modalities == ("text", "image")
 
 
-def test_sora_video_authorizes_direct_openai_before_standard_fallback() -> None:
+def test_sora_video_has_no_reseller_fallback() -> None:
     for model_id in ("openai/sora-2", "openai/sora-2-pro"):
         direct = endpoint_for_id(f"{model_id}@openai/prepaid")
         fallback = endpoint_for_id(f"{model_id}@venice/prepaid")
         assert direct is not None
-        assert fallback is not None
+        assert fallback is None
         assert endpoint_privacy_tier(direct) == PRIVACY_TIER_STANDARD
         assert endpoint_stores_content(direct) is True
-        assert endpoint_privacy_tier(fallback) == PRIVACY_TIER_STANDARD
-        assert endpoint_stores_content(fallback) is True
 
 
 def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:

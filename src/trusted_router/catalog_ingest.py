@@ -421,13 +421,6 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "@cf/meta/llama-guard-3-8b",
         }
     ),
-    # atlas-cloud (onboarded #244) advertises these openai/* models but its
-    # router returns HTTP 400 "router not found" — 100% synthetic failure / 0
-    # success as of 2026-07-20. Provider-scoped: the same model ids on
-    # first-party OpenAI and other providers are unaffected, and atlas-cloud's
-    # open-weight catalog plus the six openai models it actually serves
-    # (gpt-4.1-mini, gpt-5.4-mini, gpt-5.5, gpt-5.6-luna, gpt-5.6-sol,
-    # gpt-5.6-terra) remain routable.
     # Parasail retired Mistral Small 3.2 on 2026-07-24. The evidence is a
     # clean boundary rather than a failure rate: the route's last success was
     # 2026-07-24 08:16 UTC and EVERY subsequent probe (14 of them, through
@@ -445,6 +438,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
     ),
     "atlas-cloud": frozenset(
         {
+            # Historical 400 router-not-found routes. The OpenAI direct-route
+            # policy also blocks working and newly discovered API resellers.
             "openai/gpt-4.1",
             "gpt-4.1",
             "openai/gpt-4.1-nano",
@@ -1748,7 +1743,8 @@ def _filter_unserved_provider_endpoints(
 
     Seven complementary filters apply:
       * operator hold    — drop deliberately disabled provider/model routes for
-        every usage type, including third-party Lightning/Cloudflare passthrough.
+        every usage type, including OpenAI API resellers and third-party
+        Lightning/Cloudflare passthrough. Independent weight hosting is allowed.
       * provider deprecation — drop a disabled upstream route on one provider for
         every usage type (Nebius June 2026 retirements).
       * discovery hold   — drop prepaid routes explicitly held by a fresh

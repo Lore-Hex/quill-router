@@ -16,6 +16,11 @@ NEXTBIT_UNAVAILABLE_MODEL_IDS = frozenset({
 STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
 STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
+# OpenAI API models must use our direct OpenAI or Azure deployments, never
+# another router's wrapper. Independent GPT-OSS and Whisper weight hosting is
+# not an API passthrough. Unknown OpenAI families fail closed on other hosts.
+_OPENAI_DIRECT_PROVIDERS = frozenset({"openai", "azure"})
+_OPENAI_HOSTED_WEIGHT_PREFIXES = ("openai/gpt-oss-", "openai/whisper-large-")
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
 _NATIVE_HOSTED_MODEL_PREFIXES = {
@@ -127,6 +132,12 @@ def provider_model_operator_held(
     provider_slug: str, model_id: str, upstream_id: str | None = None,
 ) -> bool:
     if provider_slug in PROVIDER_INCIDENT_HOLD_REASONS:
+        return True
+    if (
+        model_id.startswith("openai/")
+        and provider_slug not in _OPENAI_DIRECT_PROVIDERS
+        and not model_id.startswith(_OPENAI_HOSTED_WEIGHT_PREFIXES)
+    ):
         return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id

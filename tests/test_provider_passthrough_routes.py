@@ -77,3 +77,65 @@ def test_hosting_not_model_author_controls_eligibility(
     assert _filter_unserved_provider_endpoints(
         {endpoint.id: endpoint}, explicit_model_ids=frozenset({model_id}),
     ) == {endpoint.id: endpoint}
+
+
+@pytest.mark.parametrize("provider", ["atlas-cloud", "boundless", "gmi", "venice", "future-reseller"])
+@pytest.mark.parametrize("model_id", ["openai/gpt-6-sol", "openai/gpt-future", "openai/o3", "openai/sora-2", "openai/whisper-1"])
+@pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
+def test_openai_resellers_are_blocked_even_with_fresh_or_explicit_routes(
+    provider: str, model_id: str, usage_type: str,
+) -> None:
+    template = next(iter(MODEL_ENDPOINTS.values()))
+    endpoint = replace(template, id="reseller", provider=provider, model_id=model_id,
+                       upstream_id=model_id.removeprefix("openai/"), usage_type=usage_type)
+    assert provider_model_operator_held(provider, model_id, endpoint.upstream_id)
+    assert _filter_unserved_provider_endpoints(
+        {endpoint.id: endpoint}, explicit_model_ids=frozenset({model_id}),
+    ) == {}
+
+
+@pytest.mark.parametrize("provider", ["openai", "azure"])
+@pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
+def test_openai_direct_deployments_are_not_resellers(provider: str, usage_type: str) -> None:
+    model_id = "openai/gpt-future"
+    template = next(iter(MODEL_ENDPOINTS.values()))
+    endpoint = replace(template, id="direct", provider=provider, model_id=model_id,
+                       upstream_id="deployment-name", usage_type=usage_type)
+    assert not provider_model_operator_held(provider, model_id, endpoint.upstream_id)
+    assert _filter_unserved_provider_endpoints(
+        {endpoint.id: endpoint}, explicit_model_ids=frozenset({model_id}),
+    ) == {endpoint.id: endpoint}
+
+
+@pytest.mark.parametrize("provider,model_id", [
+    ("atlas-cloud", "openai/gpt-oss-120b"),
+    ("gmi", "openai/gpt-oss-120b"),
+    ("tinfoil", "openai/gpt-oss-safeguard-120b"),
+    ("privatemode", "openai/whisper-large-v3"),
+    ("tinfoil", "openai/whisper-large-v3-turbo"),
+])
+def test_independently_hosted_openai_weights_stay_allowed(provider: str, model_id: str) -> None:
+    assert not provider_model_operator_held(provider, model_id)
+    template = next(iter(MODEL_ENDPOINTS.values()))
+    endpoint = replace(template, id="hosted", provider=provider, model_id=model_id,
+                       upstream_id=model_id, usage_type="Credits")
+    assert _filter_unserved_provider_endpoints(
+        {endpoint.id: endpoint}, explicit_model_ids=frozenset({model_id}),
+    ) == {endpoint.id: endpoint}
+
+
+def test_catalog_cannot_publish_proprietary_openai_resellers() -> None:
+    from tests.catalog_vehicles import registry_endpoints
+
+    endpoints = list(registry_endpoints().values())
+    forbidden = [
+        endpoint.id for endpoint in endpoints
+        if endpoint.model_id.startswith("openai/")
+        and not endpoint.model_id.startswith(("openai/gpt-oss-", "openai/whisper-large-"))
+        and endpoint.provider not in {"openai", "azure"}
+    ]
+    assert forbidden == []
+    assert any(endpoint.provider == "openai" and endpoint.usage_type == "Credits" for endpoint in endpoints)
+    assert any(endpoint.provider == "openai" and endpoint.usage_type == "BYOK" for endpoint in endpoints)
+    assert any(endpoint.provider == "azure" and endpoint.model_id.startswith("openai/") for endpoint in endpoints)
+    assert any(endpoint.provider == "gmi" and endpoint.model_id == "openai/gpt-oss-120b" for endpoint in endpoints)

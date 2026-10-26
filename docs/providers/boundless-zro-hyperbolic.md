@@ -3,10 +3,16 @@
 Reviewed 2026-10-11. Boundless and Zro passed native streaming and non-streaming
 GLM-5.3-Flash probes; all 20 Boundless and 5 Zro priced models passed PONG canaries
 with integer token accounting. Routing activation also requires gateway rollout.
-The serving catalog admits 16 Boundless routes and 5 Zro routes: existing
-Claude first-party-only policy excludes three Boundless Claude reseller routes,
-and the immutable DeepSeek Pro 0813 leaf retains its frozen provider set.
-Native availability does not override either policy.
+The serving catalog applies routing policy after discovery: Claude
+first-party-only policy excludes Boundless Claude reseller routes, OpenAI API
+models exclude resellers, and the immutable DeepSeek Pro 0813 leaf retains its
+frozen provider set. Native availability does not override these policies.
+
+OpenAI API models use our direct OpenAI or Azure deployments. The reseller
+restriction applies to prepaid and BYOK routes, including explicit media
+registrations, and cannot be cleared by an hourly catalog refresh. Independent
+GPT-OSS and Whisper weight hosting remains eligible; it is not an OpenAI API
+wrapper. Provider privacy labels still apply to each actual hosting route.
 
 ## Discovery and pricing
 
