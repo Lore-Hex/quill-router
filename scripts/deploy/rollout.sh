@@ -717,15 +717,23 @@ ENV_VARS=(
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  # October 24: canary 3 hit its API-failure stop gate. Opt out of both shadow
-  # versions together; clearing only policy would re-enable v1 for the cohort.
-  # Retain the bucket and evidence. Re-enable only with a reviewed contention
-  # repair and another bounded canary. Money/protection/fast drain stay off.
-  # See docs/incidents/2026-10-24-shadow-canary-api-failures.md.
+  # October 24: canary 3 hit its API-failure stop gate (docs/incidents/
+  # 2026-10-24-shadow-canary-api-failures.md). The repairs it required landed
+  # afterwards: the publisher's microsecond-safe observation bound, renewal
+  # after failed cycles and spread takeover (#2054), the fleet-wide runtime stop
+  # marker, operator CLI and in-process API-failure breaker (#2053), and the
+  # permit-row allocation backoff (#2058). Shadow v2 canary 4: the v2 policy,
+  # the one probe workspace and the primary health region, with the runtime
+  # expiry below as the canary's stop. Gates for the canary hour, measured from
+  # the moment the health region serves these pins: publications >= 80% after a
+  # 5-minute warm-up, unknown <= 5%, readers installed >= 80% per region,
+  # Spanner sessions bounded, no API-failure or session incident; otherwise opt
+  # out by emptying the policy, workspaces, health-region and expiry lines
+  # together (keep the bucket). Money, protection and fast drain stay off.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
-  "TR_ASYNC_SETTLE_SHADOW_POLICY="
-  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
+  "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
+  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
   # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 14 days
   # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
   # checks it, so the canary turns itself off without a deploy. Deployed
@@ -733,7 +741,7 @@ ENV_VARS=(
   # valid one do nothing. It gates shadow v2 only; v1 still installs whenever
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
-  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
+  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-11-04T12:00:00Z"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key

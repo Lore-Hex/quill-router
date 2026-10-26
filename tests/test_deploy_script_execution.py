@@ -686,14 +686,14 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
 @pytest.mark.parametrize("no_traffic", ["0", "1"])
-def test_rollout_opts_out_failed_shadow_canary_without_enabling_money_paths(
+def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabling_money_paths(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
     no_traffic: str,
 ) -> None:
     from unittest.mock import Mock
 
     from trusted_router import main, storage
-    from trusted_router.config import in_v2_cohort
+    from trusted_router.config import in_v2_cohort, parse_shadow_expiry
     from trusted_router.services import (
         async_settle,
         async_settle_shadow,
@@ -701,23 +701,26 @@ def test_rollout_opts_out_failed_shadow_canary_without_enabling_money_paths(
         async_settle_shadow_health,
     )
 
+    # Stale inherited values must never leak into the rendered pins.
     run = harness.run(
         "scripts/deploy/rollout.sh",
         extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
                    "TR_DEPLOY_NO_TRAFFIC": no_traffic,
                    "TR_ASYNC_SETTLE_SHADOW_WORKSPACES": "stale-opt-in",
-                   "TR_ASYNC_SETTLE_SHADOW_POLICY": "shadow-v2",
-                   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION": "us-central1",
+                   "TR_ASYNC_SETTLE_SHADOW_POLICY": "stale-policy",
+                   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION": "stale-region",
                    "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT": "2026-10-25T20:00:00Z"},
     )
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     assert rendered["TR_SERVING_REGION"] == region
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == ""
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == "162e441a-5d13-414f-92bd-7c6cd805faa3"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == "shadow-v2"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == "us-central1"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == "2026-11-04T12:00:00Z"
+    # The canary stop must be a valid, unexpired instant when this deploys (parse_shadow_expiry is strict).
+    assert parse_shadow_expiry(rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"]) > time.time()
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
     assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
     assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"
@@ -743,7 +746,7 @@ def test_rollout_opts_out_failed_shadow_canary_without_enabling_money_paths(
     # so this checks selection without constructing observers or starting workers.
     monkeypatch.setattr(storage, "typed_billing_store", lambda _: backend)
     monkeypatch.setattr(async_settle, "load_runtime", Mock(return_value=None))
-    v1_install = Mock(side_effect=AssertionError("opting out must not install the v1 observer"))
+    v1_install = Mock(side_effect=AssertionError("the v2 canary must not install the v1 observer"))
     health_install = Mock()
     cohort_install = Mock()
     monkeypatch.setattr(async_settle_shadow, "install", v1_install)
@@ -752,14 +755,14 @@ def test_rollout_opts_out_failed_shadow_canary_without_enabling_money_paths(
 
     app = main.create_app(config, configure_store_arg=False, init_observability=False)
     v1_install.assert_not_called()
-    health_install.assert_not_called()
-    cohort_install.assert_not_called()
+    health_install.assert_called_once_with(app, config, backend)
+    cohort_install.assert_called_once_with(app, config, backend)
     assert not hasattr(app.state, "async_settle_shadow")
     assert not config.async_settle_enabled
     assert not config.async_settle_protection
     assert not config.settle_outbox_fast_drain_enabled
-    assert config.async_settle_shadow_workspace_ids == set()
-    assert not in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
+    assert config.async_settle_shadow_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
                         config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
     assert not in_v2_cohort(config.async_settle_shadow_policy, "stale-opt-in",
                            config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
