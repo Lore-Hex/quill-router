@@ -18,6 +18,12 @@
         viewport.removeAttribute('aria-label');
       }
     };
+    viewport.addEventListener('keydown', (event) => {
+      if (event.target !== viewport || event.altKey || event.ctrlKey || event.metaKey
+        || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      viewport.scrollBy({ left: event.key === 'ArrowRight' ? 40 : -40, behavior: 'instant' });
+    });
     viewport.addEventListener('scroll', update, { passive: true });
     const observer = new ResizeObserver(update);
     observer.observe(viewport);
