@@ -5,7 +5,7 @@
 .cw-hero .inner{width:min(560px,100%)}
 .cw-hero h1{margin-bottom:22px;text-shadow:0 2px 24px rgba(5,7,6,.5)}
 .cw-hero .lede{margin-bottom:34px;color:var(--on-photo);text-shadow:0 1px 12px rgba(5,7,6,.7)}
-.cw-meta{margin-top:24px;font:400 14px/1.7 var(--mono);color:var(--on-photo);text-shadow:0 1px 12px rgba(5,7,6,.7)}
+.cw-meta{margin-top:20px;font:400 12px/1.6 var(--mono);color:var(--t3);text-shadow:0 1px 12px rgba(5,7,6,.7)}
 .cw-flow{grid-template-columns:1fr;gap:40px;margin-top:48px}
 ol.cw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;list-style:none;counter-reset:v;margin:0;padding:0}
 .cw-steps li{counter-increment:v;display:grid;grid-template-columns:44px minmax(0,1fr);padding:20px 0;border-top:1px solid var(--rule)}
