@@ -23,10 +23,74 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Independent jobs instead of one serial pipeline: wall time becomes the
-# slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
-# conclusion for the SHA, and a run only concludes success when every job
-# succeeds, so the gate semantics are unchanged by the split.
+# slowest job, not the sum. deploy.yml's gate and refresh-prices.yml's
+# publication gate poll this WORKFLOW RUN's conclusion for the SHA. GitHub
+# concludes a run success when every job succeeded OR was skipped, so the
+# `ci` summary job at the end re-derives the conclusion from each job's
+# result and accepts a skipped job only in the one case below.
+#
+# Path-aware selection. The hourly price refresh commits catalog data files
+# only (scripts/ci/commit_scope.py lists them) and gates publication on this
+# run. Every hour that was 44 jobs and about 630 runner-minutes, 300 of them
+# in jobs that read none of those files; on 2026-10-26 the organization's
+# Actions queue starved for about two hours with hourly refresh runs among 19
+# queued runs, and merges and deploys stalled. The `scope` job classifies the
+# commit by its changed paths against the commit before it. Jobs that read
+# the catalog data (lint's history check, the production import, both Python
+# suite clocks, the browser smoke) run on every commit; the others carry
+#   if: needs.scope.outputs.data_only != 'true'
+# and skip only when EVERY changed path is catalog data. An empty comparison,
+# a missing base commit or a failed classification runs the complete matrix.
+# tests/test_ci_workflow.py holds the two job lists to the workflow text.
 jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      data_only: ${{ steps.scope.outputs.data_only }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT_NAME: ${{ github.event_name }}
+      PUSH_BEFORE: ${{ github.event.before }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Classify the commit by its changed paths
+        id: scope
+        # The base is the commit this one supersedes: for a push the previous
+        # tip, for a pull request its base (the checkout is the merge commit,
+        # so the diff is the pull request's own changes), and for a dispatch
+        # the merge base with main (refresh-prices.yml dispatches a branch of
+        # main plus one generated commit). A shallow fetch of the base is
+        # enough: `git diff` compares two trees and needs no history between
+        # them, and the repository's history is too large to clone each time.
+        run: |
+          set -euo pipefail
+          head="${GITHUB_SHA}"
+          case "${EVENT_NAME}" in
+            push) base="${PUSH_BEFORE}" ;;
+            pull_request) base="${PR_BASE_SHA}" ;;
+            *)
+              base=$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${head}" \
+                --jq '.merge_base_commit.sha // empty' || true) ;;
+          esac
+          data_only=false
+          if [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ]; then
+            echo "::notice title=CI scope::no base commit to compare against; running the complete matrix"
+          elif [ "${base}" = "${head}" ]; then
+            echo "::notice title=CI scope::${head} is its own base; running the complete matrix"
+          elif ! git fetch -q --depth=1 origin "${base}"; then
+            echo "::notice title=CI scope::base ${base} is not fetchable; running the complete matrix"
+          else
+            git diff --name-only "${base}" "${head}" > changed-paths.txt
+            data_only=$(python3 scripts/ci/commit_scope.py classify < changed-paths.txt)
+            echo "changed paths (${base}..${head}):"
+            sed 's/^/  /' changed-paths.txt
+          fi
+          echo "data_only=${data_only}"
+          echo "data_only=${data_only}" >> "$GITHUB_OUTPUT"
+
   lint:
     runs-on: ubuntu-24.04
     steps:
@@ -44,6 +108,8 @@ jobs:
         run: uv run python scripts/update_model_changes.py --check
 
   spanner-emulator:
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -112,6 +178,8 @@ jobs:
           docker logs ${{ job.services.spanner.id }}
 
   frontend:
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -322,8 +390,10 @@ jobs:
     # partial run is not a measurement of this commit.
     # Cancelled runs must release their concurrency slot. always() kept this
     # job queued after superseding PR runs, blocking the replacement's CI.
-    needs: test
-    if: ${{ !cancelled() }}
+    # The floor measures the code's coverage; a data-only commit changes no
+    # code and skips it (its shards still ran and still gate the run).
+    needs: [test, scope]
+    if: ${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -456,7 +526,12 @@ jobs:
 
   # Frozen reference tracing is intentionally separate from coverage tracing.
   # Both lifecycle clocks retain the complete matrix; no cloud identity needed.
+  # The oracle builds its catalog from each case's fixture body
+  # (tests/test_async_settle_proof.py `catalog`), not from the published
+  # snapshot, so a data-only commit cannot change its result and skips it.
   proof-oracle:
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -543,6 +618,8 @@ jobs:
   # test_an_unchanged_write_side_is_silent_and_reads_no_network, which drives
   # the real main() with every network seam replaced by a function that raises.
   byok-format-ordering:
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -582,6 +659,11 @@ jobs:
   # the pinned TLC from proofs/ on a small instance and compares every step,
   # so this job needs Java as well as Go.
   fastpath:
+    # Reads fastpath/testdata/model_alias_vectors_v1.json, which the refresh
+    # regenerates; that file is deliberately NOT a data-only path, so a
+    # refresh commit that changes it runs this job.
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     # The module stays on the patched Go 1.26 toolchain: a dependency that needs a
@@ -626,6 +708,8 @@ jobs:
   # With FASTPATH_SPANNER_EMULATOR=1 an emulator that cannot be reached fails
   # the tests; the fastpath job, without it, skips them.
   fastpath-spanner:
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -674,6 +758,8 @@ jobs:
   # so the store job leaves them out; each runs here in a job of its own,
   # without the race detector, against an emulator of its own.
   fastpath-walks:
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 260
     strategy:
@@ -711,6 +797,8 @@ jobs:
         run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
 
   proofs:
+    needs: scope
+    if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -723,3 +811,39 @@ jobs:
       # check.sh verifies before it runs anything (see proofs/check.sh).
       - name: Model-check every spec
         run: ./proofs/check.sh
+
+  # The run's conclusion, derived from every job's result. GitHub concludes a
+  # run success when its jobs succeeded or were skipped; this job accepts a
+  # skipped job only when it is one of the jobs above that carry the data-only
+  # condition AND `scope` classified the commit as data-only, and fails on a
+  # failed `scope`, a failed job, or a skip for any other reason. The deploy
+  # gate and the price-refresh gate read the run's conclusion, which this job
+  # now determines; branch protection can also require the `CI` check.
+  # !cancelled() rather than always(): a cancelled run releases its slot.
+  ci:
+    name: CI
+    needs:
+      - scope
+      - lint
+      - spanner-emulator
+      - frontend
+      - production-import
+      - test
+      - coverage
+      - test-post-cutover
+      - proof-oracle
+      - browser
+      - byok-format-ordering
+      - fastpath
+      - fastpath-spanner
+      - fastpath-walks
+      - proofs
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    env:
+      NEEDS: ${{ toJSON(needs) }}
+      DATA_ONLY: ${{ needs.scope.outputs.data_only }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Every job succeeded, or was skipped for a data-only commit
+        run: python3 scripts/ci/commit_scope.py summarize

@@ -420,6 +420,22 @@ def test_publication_times_out_when_only_another_sha_passed(publication_repo: Pu
     assert_snapshot_withheld(publication_repo, result)
     assert "CI did not pass within" in result.stdout
     assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 480
+    # No run was ever found for the SHA, so there is nothing to cancel.
+    assert not any(call[:2] == ["run", "cancel"] for call in publication_repo.calls)
+
+
+def test_publication_cancels_the_dispatched_run_it_stops_waiting_for(
+    publication_repo: PublicationRepo,
+) -> None:
+    # Deleting the temporary branch does not cancel its run. A run still
+    # queued when the gate gives up kept its jobs in the organization's
+    # queue after nothing could use its result (2026-10-26 starvation).
+    result = publication_repo.run(run_states=[("in_progress", None)])
+    assert_snapshot_withheld(publication_repo, result)
+    assert "CI did not pass within" in result.stdout
+    calls = publication_repo.calls
+    assert len([call for call in calls if call[:2] == ["run", "list"]]) == 480
+    assert calls[-1] == ["run", "cancel", "1234", "--repo", publication_repo.env["GITHUB_REPOSITORY"]]
 
 
 @pytest.mark.parametrize("direction", ["forward", "backward"])
@@ -606,10 +622,17 @@ def test_price_refresh_publishes_only_after_exact_snapshot_ci() -> None:
 
 def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     # Excluding the redundant local oracle pass is safe only while the
-    # required exact-SHA CI includes every default/post-cutover proof shard.
+    # required exact-SHA CI includes every default/post-cutover proof shard
+    # for a commit that can change the oracle's result. The oracle builds its
+    # catalog from each case's fixture body, so a commit that touches only
+    # published catalog data cannot; ci.yml skips the shards for exactly that
+    # commit and runs them for a refresh that also rewrote a parser.
+    from scripts.ci.commit_scope import DATA_ONLY_CONDITION
+
     ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     job = ci["jobs"]["proof-oracle"]
-    assert "if" not in job
+    assert job["if"] == DATA_ONLY_CONDITION
+    assert job["needs"] == "scope"
     assert "continue-on-error" not in job
     assert job["strategy"]["matrix"] == {
         "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4, 5, 6],

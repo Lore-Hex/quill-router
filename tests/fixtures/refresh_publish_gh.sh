@@ -76,6 +76,13 @@ elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
   fi
   record_event poll "${poll}" "${answer}" "${main_sha}"
   printf '%s\n' "${answer}"
+elif [ "${command}" = run ] && [ "${subcommand}" = cancel ]; then
+  # Only the run the poll found may be cancelled, and only once the poll has
+  # found it: the scenario's run id, never a guess.
+  if [ "${third}" != "$(jq -r '.polls[0][0].databaseId' "${scenario}")" ]; then
+    echo "Unexpected run cancel: ${third}" >&2
+    exit 1
+  fi
 elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
   fault=$(jq -r '.status_fault // empty' "${scenario}")
   if [ ! -f "${statuses}" ]; then printf '[]' > "${statuses}"; fi
