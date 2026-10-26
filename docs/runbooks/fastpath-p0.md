@@ -10,8 +10,9 @@ roles, the envelope key's secret, the releases bucket, and the two nodes,
 `tr-fastpath-1` (us-central1-a) and `tr-fastpath-2` (us-central1-b) at P0,
 replaced on 2026-10-20 by `tr-fastpath-3` and `tr-fastpath-4` in the same zones,
 and those in turn by `tr-fastpath-5` and `tr-fastpath-6` (E2), then by
-`tr-fastpath-7` and `tr-fastpath-8` (E2 stage I1, the edge policy), on the
-default network behind the project's NAT with no external address.
+`tr-fastpath-7` and `tr-fastpath-8` (E2 stage I1, the edge policy), then by
+`tr-fastpath-9` and `tr-fastpath-10` (E2 stage I2, the decide attribute), on
+the default network behind the project's NAT with no external address.
 
 ## What is done by hand, once
 

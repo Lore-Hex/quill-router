@@ -78,7 +78,8 @@ locals {
   # run again, one node at a time. Only a script that reads the attribute
   # passes the flag: a node from before that script carries the attribute
   # and passes nothing, so the script reaches the fleet first, as I1's did,
-  # through nodes added under new names.
+  # through nodes added under new names: 9 and 10 beside 7 and 8, which
+  # then leave the backend and are removed.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -321,10 +322,20 @@ resource "google_compute_instance" "fastpath_node" {
   # leaving and drained, left the edge backend (local.fastpath_edge_retiring)
   # one apply before its removal, then was removed. 7 and 8 took the places
   # of 5 and 6 the same way, with the edge policy's attributes (stage I1),
-  # which the script 5 and 6 ran, from before I1, read neither of.
+  # which the script 5 and 6 ran, from before I1, read neither of. 9 and 10
+  # take the places of 7 and 8 the same way, with the decide attribute
+  # (stage I2, "false" until the I2 switch), which the script 7 and 8 run,
+  # from before I2, does not read. Each of 9 and 10 has an edge instance
+  # group and a backend entry from the apply that makes it
+  # (infra/fastpath_edge_backend.tf); the health check keeps the balancer
+  # off it until its edge serves, and the pilot's watches and audit loop
+  # are started on it by hand before 7 or 8 is drained
+  # (docs/runbooks/fastpath-deploy.md, "Turning the edge on").
   for_each = {
-    "tr-fastpath-7" = "us-central1-a"
-    "tr-fastpath-8" = "us-central1-b"
+    "tr-fastpath-7"  = "us-central1-a"
+    "tr-fastpath-8"  = "us-central1-b"
+    "tr-fastpath-9"  = "us-central1-a"
+    "tr-fastpath-10" = "us-central1-b"
   }
 
   project      = local.gcp_project_id
