@@ -305,7 +305,7 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     scope = jobs["scope"]
     assert scope["outputs"] == {"data_only": "${{ steps.scope.outputs.data_only }}"}
-    assert scope["permissions"] == {"contents": "read"}
+    assert scope["permissions"] == {"contents": "read", "actions": "read"}
     assert "needs" not in scope
     step = next(step for step in scope["steps"] if step.get("id") == "scope")
     script = step["run"]
@@ -318,8 +318,20 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     # are compared. The classification is the committed script, not inline
     # shell, so tests/test_commit_scope.py can drive it.
     assert 'git fetch -q --depth=1 origin "${base}"' in script
-    assert 'git diff --name-only "${base}" "${head}" > changed-paths.txt' in script
-    assert "python3 scripts/ci/commit_scope.py classify < changed-paths.txt" in script
+    # --no-renames: a code file moved onto a data path must appear as the
+    # deletion of its code path. --raw: modes and status reach the classifier.
+    assert 'git diff --no-renames --raw "${base}" "${head}" > changed-paths.txt' in script
+    assert 'if [ "$(python3 scripts/ci/commit_scope.py classify < changed-paths.txt)" = "true" ]' in script
+    # The induction: data_only only when the base commit's own tree passed a
+    # completed ci.yml run (push or dispatch; a pull_request run checks a
+    # merge commit). The summary job makes that conclusion mean every job
+    # that ran passed and every skip was legitimate.
+    assert '"repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${base}&per_page=100"' in script
+    assert ('select(.status == "completed" and .conclusion == "success" and '
+            '(.event == "push" or .event == "workflow_dispatch"))') in script
+    assert 'if [ "${validated:-0}" -gt 0 ]; then' in script
+    assert script.count("data_only=true") == 1
+    assert script.index("classify < changed-paths.txt") < script.index("data_only=true")
     assert script.count("data_only=false") == 1
     assert 'echo "data_only=${data_only}" >> "$GITHUB_OUTPUT"' in script
     # Every path that cannot be classified runs the complete matrix.
@@ -341,21 +353,41 @@ def test_summary_job_derives_the_run_conclusion_from_every_job():
     assert "continue-on-error" not in summary
 
 
-def test_data_only_paths_are_what_the_refresh_commits_minus_code_and_go_inputs():
-    from scripts.ci.commit_scope import classify, is_data_path
+def test_data_only_paths_are_exactly_what_the_refresh_stages_minus_code_and_go_inputs():
+    from scripts.ci.commit_scope import DATA_ONLY_PATHS
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
     step = next(step for step in workflow["jobs"]["refresh"]["steps"]
                 if step.get("name") == "Commit, verify, and push if changed")
     script = step["run"]
     staged = script[script.index("git add \\"):script.index("if git diff --cached --quiet")]
-    paths = [token for token in staged.replace("\\", " ").split()[2:]]
+    paths = staged.replace("\\", " ").split()[2:]
     assert len(paths) == 10
-    full_matrix = {"fastpath/testdata/model_alias_vectors_v1.json", "scripts/pricing/parsers/"}
+    # The two staged paths that are not data: self-healed parser code, and
+    # the alias vectors the fastpath job's Go tests read. A refresh commit
+    # that touches either runs the complete matrix.
+    excluded = {"scripts/pricing/parsers/", "fastpath/testdata/model_alias_vectors_v1.json"}
+    assert excluded <= set(paths)
+    # The two staged directories admit only what the refresh writes in them:
+    # one manifest per provider, and what scripts/generate_provider_og.py
+    # writes (one PNG per provider and its manifest).
+    og = (ROOT / "scripts/generate_provider_og.py").read_text()
+    assert 'OUT_DIR = STATIC_DIR / "og" / "providers"' in og
+    assert 'OUT_DIR / f"{facts.slug}.png"' in og
+    assert 'MANIFEST_PATH = OUT_DIR / "manifest.json"' in og
+    directory_patterns = {
+        "src/trusted_router/data/provider_models/": {
+            "src/trusted_router/data/provider_models/*.json"},
+        "src/trusted_router/static/og/providers/": {
+            "src/trusted_router/static/og/providers/*.png",
+            "src/trusted_router/static/og/providers/manifest.json"},
+    }
+    expected: set[str] = set()
     for path in paths:
-        sample = path + "example.json" if path.endswith("/") else path
-        if path.endswith("parsers/"):
-            sample = path + "example.py"
-        assert is_data_path(sample) == (path not in full_matrix), path
-    assert classify([paths[0], paths[4] + "fireworks.json", paths[7] + "fireworks.png"])
-    assert not classify(paths)
+        if path in excluded:
+            continue
+        expected |= directory_patterns[path] if path.endswith("/") else {path}
+    # Both ways: a pattern the refresh does not stage (frontend/src/*.ts) and
+    # a staged file the classifier forgot both fail here.
+    assert set(DATA_ONLY_PATHS) == expected
+    assert len(DATA_ONLY_PATHS) == len(expected)

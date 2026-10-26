@@ -423,13 +423,26 @@ jobs:
           # Keep exact-SHA completion mandatory, but allow the test matrix
           # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
           for _ in $(seq 1 480); do
-            run_json=$(gh run list \
-              --repo "${GITHUB_REPOSITORY}" \
-              --workflow ci.yml \
-              --branch "${BRANCH}" \
-              --event workflow_dispatch \
-              --json databaseId,headSha,status,conclusion \
-              --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+            if [ -n "${ci_run_id}" ]; then
+              # Once the listing has found the run, poll that run by id. A
+              # second dispatch on the same branch and SHA could otherwise be
+              # read, and on timeout cancelled, in its place.
+              run_json=$(gh run view "${ci_run_id}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --json databaseId,headSha,status,conclusion)
+              if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
+                echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
+                exit 1
+              fi
+            else
+              run_json=$(gh run list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --workflow ci.yml \
+                --branch "${BRANCH}" \
+                --event workflow_dispatch \
+                --json databaseId,headSha,status,conclusion \
+                --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+            fi
             if [ -n "${run_json}" ]; then
               status=$(jq -r .status <<<"${run_json}")
               conclusion=$(jq -r .conclusion <<<"${run_json}")
@@ -451,6 +464,7 @@ jobs:
             # Deleting the branch (the EXIT trap) does not cancel its run. A
             # run left queued or running here keeps its jobs in the
             # organization's Actions queue after nothing can use its result.
+            # Cancel the run polled above by id, never a fresh listing.
             if [ -n "${ci_run_id}" ]; then
               gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
                 echo "::warning::could not cancel ci run ${ci_run_id}"
