@@ -141,6 +141,12 @@ type Epoch struct {
 	StartsAt int64    `json:"starts_at"`
 	Headline Headline `json:"headline"`
 	Price    Price    `json:"price"`
+	// BillingValid is optional (docs/design/fast-admission-e2-g15-async.md
+	// section 3.2): whether every raw price value of the effective endpoint
+	// at starts_at is a strict non-negative int64, as build_snapshot checks
+	// before it builds the async billing snapshot. Nil is unpublished
+	// (unknown); present, it is a bool, never null. Nothing reads it yet.
+	BillingValid *bool `json:"billing_valid,omitempty"`
 }
 
 // Headline is an endpoint's effective headline rates, which sort=price
@@ -425,7 +431,9 @@ func surrogates(raw []byte) error {
 
 // shape holds a generically decoded value to a Go type: every struct is an
 // object with exactly its exported fields' JSON names, null only where the
-// field is a pointer, and every scalar of its declared kind.
+// field is a pointer, and every scalar of its declared kind. A pointer field
+// tagged omitempty is optional: it may be absent (nil), but present it is
+// never null.
 func shape(value any, t reflect.Type, path string) error {
 	if t.Kind() == reflect.Pointer {
 		if value == nil {
@@ -448,11 +456,21 @@ func shape(value any, t reflect.Type, path string) error {
 			if !field.IsExported() {
 				continue
 			}
-			name := strings.Split(field.Tag.Get("json"), ",")[0]
+			name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+			optional := options == "omitempty"
+			if optional && field.Type.Kind() != reflect.Pointer {
+				return fmt.Errorf("%s.%s: an optional field must be a pointer", path, name)
+			}
 			names[name] = true
 			item, present := object[name]
 			if !present {
+				if optional {
+					continue
+				}
 				return fmt.Errorf("%s.%s: missing", path, name)
+			}
+			if optional && item == nil {
+				return fmt.Errorf("%s.%s: null where a value is required", path, name)
 			}
 			if err := shape(item, field.Type, path+"."+name); err != nil {
 				return err
