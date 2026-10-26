@@ -155,6 +155,44 @@ func TestACacheAffinityKeyParsesAndIsFlagged(t *testing.T) {
 	}
 }
 
+// TestAPassAfterTheKeyIsReadCarriesAffinity (§11, G13): a body naming a
+// cache_affinity_key that the parse then passes on its tags, its
+// attribution, a routing input, a missing key identifier, or a cohort or
+// header reason, passes with Affinity; one the schema refuses before the
+// key is read (a lax type, a dict key, a field it refuses), or one without
+// the key, does not.
+func TestAPassAfterTheKeyIsReadCarriesAffinity(t *testing.T) {
+	key := `"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`
+	for _, c := range []struct {
+		name     string
+		body     []byte
+		headers  Headers
+		reason   string
+		affinity bool
+	}{
+		{"tag non-ASCII", bodyOf(key, `"tags":{"x":"é"}`), jsonHeaders, ReasonTags, true},
+		{"tag value", bodyOf(key, `"tags":{"x":1}`), jsonHeaders, ReasonRefused, true},
+		{"tag reserved", bodyOf(key, `"tags":{"aws:x":"x"}`), jsonHeaders, ReasonRefused, true},
+		{"referer", bodyOf(key, `"http_referer":"https://user@example.com"`), jsonHeaders, ReasonReferer, true},
+		{"categories", bodyOf(key, `"app_categories":["BAD"]`), jsonHeaders, ReasonRefused, true},
+		{"huge tokens", bodyOf(key, `"estimated_input_tokens":9223372036854775808`), jsonHeaders, ReasonEvaluatorInput, true},
+		{"no key identifier", []byte(`{"model":"z-ai/glm-5.3",` + key + `}`), jsonHeaders, ReasonRefused, true},
+		{"stream", bodyOf(key, `"stream":true`), jsonHeaders, ReasonStream, true},
+		{"settlement header", bodyOf(key),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}, ReasonSettlementAsync, true},
+		{"before the key: lax type", bodyOf(key, `"max_tokens":"64"`), jsonHeaders, ReasonLaxType, false},
+		{"before the key: dict key", bodyOf(key, `"tags":{" k":"v"}`), jsonHeaders, ReasonDictKeyStrip, false},
+		{"before the key: refused field", bodyOf(key, `"region":5`), jsonHeaders, ReasonRefused, false},
+		{"before the key: bad key", bodyOf(`"cache_affinity_key":"not-hex"`, `"tags":{"x":"é"}`), jsonHeaders, ReasonRefused, false},
+		{"no key", bodyOf(`"tags":{"x":"é"}`), jsonHeaders, ReasonTags, false},
+	} {
+		_, p := ParseRequest(c.body, c.headers)
+		if p.Reason != c.reason || p.Affinity != c.affinity {
+			t.Errorf("%s: pass %q affinity %v, want %q %v", c.name, p.Reason, p.Affinity, c.reason, c.affinity)
+		}
+	}
+}
+
 // TestTheMaterial pins §7's rules on one body: stripped strings, the
 // defaults, a dropped null extra and nonce, a kept nested null, {} tags,
 // the hostname default, an empty app_categories dropped, and the

@@ -112,6 +112,13 @@ func ParseRequest(body []byte, h Headers) (Request, Pass) {
 	return r, Pass{}
 }
 
+// Which passes carry the affinity fact: build's own, once the key is read
+// (the declared fields dumped; the key identifier, tags, attribution and
+// routing inputs are checked after), and the cohort's and headers' above.
+// A body the parse refuses before that (the content type, the decode, a
+// duplicate key, a float, a lax type, an ambiguous strip, a dict key, a
+// field the schema refuses) is nobody's.
+
 // parseBody is ParseRequest up to body.refused: the content type, the
 // decode and the schema.
 func parseBody(body []byte, h Headers) (Request, pyjson.Object, Pass) {
@@ -452,9 +459,17 @@ var literalModalities = map[string]bool{"text": true, "image": true, "audio": tr
 
 // build checks the schema's constraints and _gateway_authorize_body's
 // validators on values of the exact types, and holds the result.
-func build(object pyjson.Object, values map[string]any) (Request, Pass) {
+func build(object pyjson.Object, values map[string]any) (r Request, p Pass) {
 	refuse := func() (Request, Pass) { return Request{}, passFor(ReasonRefused) }
-	var r Request
+	// From the moment the key is read (below, once the declared fields are
+	// dumped), every pass build returns carries it (Pass.Affinity), so the
+	// shadow counts the request as an affinity one wherever it passed.
+	affinity := false
+	defer func() {
+		if p.Passed() {
+			p.Affinity = affinity
+		}
+	}()
 	dumped := map[string]any{}
 	for _, m := range object {
 		f, isDeclared := declared[m.Key]
@@ -512,6 +527,8 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 		}
 		return nil
 	}
+	// The key is read: the schema's pattern (hex64) admits no empty one.
+	affinity = str("cache_affinity_key") != nil
 	// The model validator: a key identifier is required.
 	keyHash, lookup := str("api_key_hash"), str("api_key_lookup_hash")
 	if (keyHash == nil || *keyHash == "") && (lookup == nil || *lookup == "") {
@@ -529,8 +546,7 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 	}
 	r.BodyIdempotencyKey, r.InvocationNonce, r.RequestedRegion = str("idempotency_key"), str("invocation_nonce"),
 		str("region")
-	// The schema's pattern (hex64) admits no empty key.
-	r.CacheAffinity = str("cache_affinity_key") != nil
+	r.CacheAffinity = affinity
 	cost, _ := new(big.Int).SetString(string(dumped["additional_cost_reservation_microdollars"].(json.Number)), 10)
 	r.additionalCost = cost.Sign() != 0
 	r.inferenceReceipt = dumped["inference_receipt"].(bool)

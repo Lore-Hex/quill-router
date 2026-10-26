@@ -806,6 +806,50 @@ func TestAffinityNeverSpendsTheRowReadBudget(t *testing.T) {
 	}
 }
 
+// TestAnAffinityRequestPassedByTheParseIsAffinitys (§11): a body naming a
+// cache_affinity_key that the parse passes after reading the key (a tag
+// outside ASCII, an attribution, a routing input) is affinity's under
+// Decide and the comparison, whatever Python answered; the same body
+// without the key is the cohort's.
+func TestAnAffinityRequestPassedByTheParseIsAffinitys(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "pass:body.cache_affinity:warm")
+	key := strings.Repeat("a", 64)
+	for _, v := range []struct {
+		name, body, reason string
+		affinity           bool
+	}{
+		{"a tag outside ASCII", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","cache_affinity_key":"` + key +
+			`","tags":{"x":"é"}}`, gwauth.ReasonTags, true},
+		{"a referer", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","cache_affinity_key":"` + key +
+			`","http_referer":"https://user@example.com"}`, gwauth.ReasonReferer, true},
+		{"a routing input", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","cache_affinity_key":"` + key +
+			`","estimated_input_tokens":9223372036854775808}`, gwauth.ReasonEvaluatorInput, true},
+		{"the tag without the key", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","tags":{"x":"é"}}`,
+			gwauth.ReasonTags, false},
+	} {
+		in, _ := caseInputs(t, f, c)
+		in.Request.Body = []byte(strings.Replace(v.body, "LOOKUP", c.Facts.Key.LookupHash, 1))
+		// E1 verified the boot over this body (the verdict is E1's, not
+		// Decide's to recompute).
+		in.Request.Boot = BootSeen{Verdict: Verified, Kid: in.Request.Boot.Kid, Found: true, Boot: in.Request.Boot.Boot}
+		d := Decide(in)
+		if d.Pass != v.reason || d.Affinity != v.affinity || d.ForShadow() != nil {
+			t.Errorf("%s: pass %q affinity %v, want %q %v", v.name, d.Pass, d.Affinity, v.reason, v.affinity)
+			continue
+		}
+		for _, a := range []pyAnswer{
+			{status: 200, body: []byte(`{"data":{"idempotent_replay":false}}`)},
+			{status: 403, body: errorBody(403, "forbidden", "refused")},
+			{why: "wait"},
+		} {
+			if r := compareFull(d, a); r.affinity != v.affinity || r.decided || r.rows {
+				t.Errorf("%s on Python's %d: %+v, want affinity %v", v.name, a.status, r, v.affinity)
+			}
+		}
+	}
+}
+
 // TestWouldAdmitPythonRefusedIsCritical: the positive control of the
 // critical class. Python refuses a case Go would answer: the class is
 // would_admit_python_refused.<status>.<type>, a CRITICAL line is logged at
