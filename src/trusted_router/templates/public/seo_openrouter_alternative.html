@@ -19,7 +19,8 @@
 <section class="panel comparison-article" aria-labelledby="quick-answer-heading">
  <div class="panel-head"><h2 id="quick-answer-heading">What is the best OpenRouter alternative in 2026?</h2></div>
  <div class="panel-body">
- <p><strong>TrustedRouter is a hosted, OpenAI-compatible AI gateway: one API key and endpoint for 600+ models from 100+ providers, with automatic failover.</strong> It's the best OpenRouter alternative for teams that send sensitive data to AI models or answer to auditors. Its gateway attests to the exact build it runs and never logs prompts, its EU gateway is open to every account, and its 5.5% fee falls as low as 0.1% at enterprise scale. As of October 2026, no other hosted gateway here publishes a hardware attestation.</p>
+ <p><strong>TrustedRouter is a hosted, OpenAI-compatible AI gateway: one API key and endpoint for 600+ models from 100+ providers, with automatic failover.</strong></p>
+ <p>It's the best OpenRouter alternative for teams that send sensitive data to AI models or answer to auditors. Its gateway attests to the exact build it runs and never logs prompts, its EU gateway is open to every account, and its 5.5% fee falls as low as 0.1% at enterprise scale. As of October 2026, no other hosted gateway here publishes a hardware attestation.</p>
  <p>Most tools sold as OpenRouter alternatives sit in front of provider accounts you already have. If you want what OpenRouter actually gives you, one wallet, one API key and 600+ models, TrustedRouter is the like-for-like replacement, with a gateway you can verify.</p>
  <p>The rest each cover part of the job. Self-hosted proxies leave you to run, patch and secure the gateway. Observability tools record your traffic instead of keeping it private. Cloud platforms tie you to one provider's catalog and prices: the same open model can cost up to 75% less on TrustedRouter than on Amazon Bedrock.</p>
  <blockquote class="v2-quote">
@@ -49,22 +50,26 @@
 <section class="marketing-grid two" aria-label="Why teams switch to TrustedRouter">
  <article class="marketing-card">
  <h3>Evidence your auditors can check</h3>
- <p>The gateway runs on confidential hardware that signs a statement of the exact build it's running. Every build is published and signed, and the running build never logs prompt or output content. Your security team can verify the attestation at trust.trustedrouter.com without taking our word for it. SOC 2 Type II audit in progress.</p>
+ <p>The gateway runs on confidential hardware that signs a statement of the exact build it's running. Every build is published and signed, and the running build never logs prompt or output content.</p>
+ <p>Your security team can verify the attestation at trust.trustedrouter.com without taking our word for it. SOC 2 Type II audit in progress.</p>
  <p><a href="https://trust.trustedrouter.com">Verify the gateway</a></p>
  </article>
  <article class="marketing-card">
  <h3>Privacy rules that fail closed</h3>
- <p>Every route carries a privacy label: zero data retention, confidential zero retention, or no verified claim. Set a privacy floor on a request and TrustedRouter refuses it rather than fall back to a weaker route. Metadata retention is published, and content-free diagnostics expire after 90 days.</p>
+ <p>Every route carries a privacy label: zero data retention, confidential zero retention, or no verified claim.</p>
+ <p>Set a privacy floor on a request and TrustedRouter refuses it rather than fall back to a weaker route. Metadata retention is published, and content-free diagnostics expire after 90 days.</p>
  <p><a href="/docs">Read the privacy controls</a></p>
  </article>
  <article class="marketing-card">
  <h3>An EU gateway on every account</h3>
- <p>Send EU traffic to TrustedRouter's EU gateway and authentication, policy checks, provider selection and streaming start in Europe. Use <code>trustedrouter/eu</code> for an EU-focused provider set led by Mistral, or pin requests to providers you've approved: if none can serve a request, it fails instead of leaving your list. OpenRouter keeps in-region routing for its Business and Enterprise plans.</p>
+ <p>Send EU traffic to TrustedRouter's EU gateway and authentication, policy checks, provider selection and streaming start in Europe.</p>
+ <p>Use <code>trustedrouter/eu</code> for an EU-focused provider set led by Mistral, or pin requests to providers you've approved: if none can serve a request, it fails instead of leaving your list. OpenRouter keeps in-region routing for its Business and Enterprise plans.</p>
  <p><a href="/eu">EU gateway details</a></p>
  </article>
  <article class="marketing-card">
  <h3>Lower prices on the same models</h3>
- <p>When providers compete for each request, the same open model costs less. On a workload of 100M input and 20M output tokens a month, gpt-oss-120b costs 75% less on TrustedRouter's cheapest route than on Amazon Bedrock, and DeepSeek V3.2 costs 64% less. Enterprise rates bring the platform fee as low as 0.1%.</p>
+ <p>When providers compete for each request, the same open model costs less. On a workload of 100M input and 20M output tokens a month, gpt-oss-120b costs 75% less on TrustedRouter's cheapest route than on Amazon Bedrock, and DeepSeek V3.2 costs 64% less.</p>
+ <p>Enterprise rates bring the platform fee as low as 0.1%.</p>
  <p><a href="#pricing">See the pricing</a></p>
  </article>
 </section>
@@ -127,42 +132,50 @@
 <section class="marketing-grid two" aria-label="OpenRouter alternatives compared with TrustedRouter">
  <article class="marketing-card">
  <h3>Requesty</h3>
- <p>A hosted router with a 5% markup and an EU endpoint in Frankfurt. Its privacy rests on policy; it publishes no gateway attestation that we could find. TrustedRouter matches the hosted, EU-ready setup and adds a gateway you can verify, privacy floors that fail closed, and enterprise rates down to 0.1%.</p>
+ <p>A hosted router with a 5% markup and an EU endpoint in Frankfurt. Its privacy rests on policy; it publishes no gateway attestation that we could find.</p>
+ <p>TrustedRouter matches the hosted, EU-ready setup and adds a gateway you can verify, privacy floors that fail closed, and enterprise rates down to 0.1%.</p>
  <p><a href="/compare/requesty">TrustedRouter vs Requesty</a></p>
  </article>
  <article class="marketing-card">
  <h3>Vercel AI Gateway</h3>
- <p>A hosted gateway with no token markup, designed around Vercel's platform and AI SDK. Per-request zero retention is free; enforcing it across a whole team costs $0.10 per 1,000 requests. TrustedRouter works the same from any stack, and its gateway is attested.</p>
+ <p>A hosted gateway with no token markup, designed around Vercel's platform and AI SDK. Per-request zero retention is free; enforcing it across a whole team costs $0.10 per 1,000 requests.</p>
+ <p>TrustedRouter works the same from any stack, and its gateway is attested.</p>
  <p><a href="/compare/vercel-ai-gateway">TrustedRouter vs Vercel AI Gateway</a></p>
  </article>
  <article class="marketing-card">
  <h3>Cloudflare AI Gateway</h3>
- <p>An analytics, caching and rate-limiting layer on Cloudflare's network. Unified Billing adds a 5% fee on credits, and full request payloads are logged by default. TrustedRouter never logs prompt or output content, and attests to the build that handles them.</p>
+ <p>An analytics, caching and rate-limiting layer on Cloudflare's network. Unified Billing adds a 5% fee on credits, and full request payloads are logged by default.</p>
+ <p>TrustedRouter never logs prompt or output content, and attests to the build that handles them.</p>
  <p><a href="/compare/cloudflare-ai-gateway">TrustedRouter vs Cloudflare AI Gateway</a></p>
  </article>
  <article class="marketing-card">
  <h3>LiteLLM</h3>
- <p>An MIT-licensed proxy you deploy, scale, patch and secure yourself, with a separate contract for every provider. In March 2026, two LiteLLM releases on PyPI were found to carry malware that stole cloud and CI credentials. TrustedRouter runs the gateway for you, signs every build and attests the one running, and offers an Apache-2.0 on-prem gateway when you need one inside your network.</p>
+ <p>An MIT-licensed proxy you deploy, scale, patch and secure yourself, with a separate contract for every provider. In March 2026, two LiteLLM releases on PyPI were found to carry malware that stole cloud and CI credentials.</p>
+ <p>TrustedRouter runs the gateway for you, signs every build and attests the one running, and offers an Apache-2.0 on-prem gateway when you need one inside your network.</p>
  <p><a href="/compare/litellm">TrustedRouter vs LiteLLM</a></p>
  </article>
  <article class="marketing-card">
  <h3>Portkey</h3>
- <p>A gateway for your own provider keys, now part of Palo Alto Networks' Prisma AIRS platform after the acquisition closed in May 2026. You still sign up for and pay every provider separately. TrustedRouter includes the catalog, billing and failover across 100+ providers, with privacy you can verify instead of configure.</p>
+ <p>A gateway for your own provider keys, now part of Palo Alto Networks' Prisma AIRS platform after the acquisition closed in May 2026. You still sign up for and pay every provider separately.</p>
+ <p>TrustedRouter includes the catalog, billing and failover across 100+ providers, with privacy you can verify instead of configure.</p>
  <p><a href="/compare/portkey">TrustedRouter vs Portkey</a></p>
  </article>
  <article class="marketing-card">
  <h3>Helicone</h3>
- <p>An observability proxy built to record requests for tracing and cost analysis. Since Mintlify acquired it in March 2026, it has been in maintenance mode with no new features. TrustedRouter is built for the opposite job: keeping prompts out of every log.</p>
+ <p>An observability proxy built to record requests for tracing and cost analysis. Since Mintlify acquired it in March 2026, it has been in maintenance mode with no new features.</p>
+ <p>TrustedRouter is built for the opposite job: keeping prompts out of every log.</p>
  <p><a href="/compare/helicone">TrustedRouter vs Helicone</a></p>
  </article>
  <article class="marketing-card">
  <h3>Amazon Bedrock and Google Vertex AI</h3>
- <p>Model access inside one cloud account, at that cloud's prices. The same open model can cost up to four times as much on Bedrock as through TrustedRouter, and in-region Claude endpoints carry a 10% premium. TrustedRouter routes across 100+ providers, Bedrock and Vertex included, from one key.</p>
+ <p>Model access inside one cloud account, at that cloud's prices. The same open model can cost up to four times as much on Bedrock as through TrustedRouter, and in-region Claude endpoints carry a 10% premium.</p>
+ <p>TrustedRouter routes across 100+ providers, Bedrock and Vertex included, from one key.</p>
  <p><a href="/compare/aws-bedrock">TrustedRouter vs Bedrock</a> · <a href="/compare/google-vertex-ai">TrustedRouter vs Vertex AI</a></p>
  </article>
  <article class="marketing-card">
  <h3>Direct provider APIs</h3>
- <p>The fewest intermediaries and the most paperwork: one contract, key, invoice, rate limit and failover plan per provider. TrustedRouter puts them behind one key and one bill, and fails over across providers automatically.</p>
+ <p>The fewest intermediaries and the most paperwork: one contract, key, invoice, rate limit and failover plan per provider.</p>
+ <p>TrustedRouter puts them behind one key and one bill, and fails over across providers automatically.</p>
  <p><a href="/providers">Browse providers</a></p>
  </article>
 </section>

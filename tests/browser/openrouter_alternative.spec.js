@@ -16,7 +16,7 @@ for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
       const body = style('.quote-feature p');
       return {
         ctaInset: parseFloat(style('.cta-band').paddingLeft),
-        resourceInset: parseFloat(style('.link-list li').paddingLeft),
+        resourceBorder: style('.link-list li').borderTopWidth,
         codeInset: parseFloat(style('.copy-terminal pre').paddingLeft),
         headingSize: parseFloat(heading.fontSize),
         bodySize: parseFloat(body.fontSize),
@@ -24,7 +24,7 @@ for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
       };
     });
     expect(layout.ctaInset).toBeGreaterThanOrEqual(24);
-    expect(layout.resourceInset).toBeGreaterThanOrEqual(20);
+    expect(layout.resourceBorder).toBe("0px");
     expect(layout.codeInset).toBeGreaterThanOrEqual(20);
     expect(layout.headingSize).toBeGreaterThan(layout.bodySize);
     expect(layout.headingWeight).toBeGreaterThanOrEqual(600);
