@@ -117,7 +117,7 @@ def read_shadow_health_statement() -> Statement:
 class ObservationStore:
     def __init__(self, database: Any, *, clock: Callable[[], float] = elapsed_clock,
                  wall: Callable[[], float] = time.time) -> None:
-        self.workspace_database = owned_database(database)
+        self.workspace_database = owned_database(database, lane="workspace")
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
         self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
@@ -146,8 +146,8 @@ class ObservationStore:
         ready = not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
         workspace = getattr(self.workspace_database, "_sessions_manager", None)
         if isinstance(workspace, Sessions) and workspace is not manager:
-            # Reconciliation deletes this manager's boot-filtered inventory.
-            # A distinct label keeps it from deleting the other lane's session.
+            # Preserve the boot identity; the separate tr_lane label isolates
+            # reconciliation under Spanner's substring label matching.
             workspace_boot = None if boot is None else f"{boot}-workspace"
             workspace_ready = workspace.prepare(self.clock, workspace_boot)
             # Prepare both even when the first lane failed or is quarantined;

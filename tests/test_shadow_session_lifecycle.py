@@ -63,13 +63,12 @@ def inventory(monkeypatch, shadow_deadline_clock):
         if state.list_error or request.page_token == state.list_fail_page:
             raise DeadlineExceeded('listing unavailable')
         assert request.database == db.name
-        # Model server-side filtering; foreign boots and components stay live.
-        component, boot = request.filter.split(' AND ')
-        assert component == 'labels.tr_component:shadow-v2'
-        assert boot.startswith('labels.tr_boot:')
-        labels = dict(tr_component='shadow-v2', tr_boot=boot.removeprefix('labels.tr_boot:'))
+        # Match Spanner's case-insensitive substring label filter semantics.
+        filters = [clause.removeprefix('labels.').split(':', 1)
+                   for clause in request.filter.split(' AND ')]
         sessions = [SessionPB(name=n, labels=state.labels[n]) for n in sorted(state.live)
-                    if state.labels[n] == labels]
+                    if all(value.lower() in state.labels[n].get(key, '').lower()
+                           for key, value in filters)]
         start = int(request.page_token or '0')
         end = start + state.page_size
         response = ListSessionsResponse(sessions=sessions[start:end],
@@ -155,8 +154,9 @@ def test_healthy_checkouts_reuse_one_labeled_session(inventory):
     for _ in range(20):
         with rpc_scope(clock.now + 1, 1, clock.monotonic):
             session = db._sessions_manager.get_session(None)
-            assert set(session.labels) == {"tr_component", "tr_boot"}
-            assert session.labels == {"tr_component": "shadow-v2", "tr_boot": db._sessions_manager.boot}
+            assert set(session.labels) == {"tr_component", "tr_boot", "tr_lane"}
+            assert session.labels == {"tr_component": "shadow-v2", "tr_boot": db._sessions_manager.boot,
+                                      "tr_lane": "observation"}
             db._sessions_manager.put_session(session)
     assert state.creates == 1 and state.deletes == 0
 
@@ -189,7 +189,8 @@ def test_install_prepares_session_under_own_five_second_budget(inventory, monkey
     assert state.creates == 1 and state.create_timeouts == [5.]
     assert db._sessions_manager.ready
     assert state.labels[next(iter(state.live))] == dict(
-        tr_component='shadow-v2', tr_boot=app.state.async_settle_shadow_observation.journal.boot)
+        tr_component='shadow-v2', tr_boot=app.state.async_settle_shadow_observation.journal.boot,
+        tr_lane='observation')
     assert app.state.async_settle_shadow_observation.state.job is None
     assert not db.calls
 
@@ -288,7 +289,7 @@ def unknown_creation(inventory):
 def seed_session(db, state, identity, boot, component='shadow-v2'):
     name = db.name+'/sessions/'+identity
     state.live.add(name)
-    state.labels[name] = dict(tr_component=component, tr_boot=boot)
+    state.labels[name] = dict(tr_component=component, tr_boot=boot, tr_lane='observation')
     return name
 
 
@@ -330,7 +331,8 @@ def test_unknown_creation_reconciles_before_replacement_and_publishes(inventory,
     assert manager.ready and not manager.creation_unknown and manager.retired is None
     assert stale not in state.live and not (pending & state.live)
     assert state.creates == 2 and state.deletes == 2 and len(state.listings) == 1
-    assert state.listings[0][0].filter == f'labels.tr_component:shadow-v2 AND labels.tr_boot:{manager_boot}'
+    assert state.listings[0][0].filter == (f'labels.tr_component:shadow-v2 AND labels.tr_boot:{manager_boot}'
+                                        ' AND labels.tr_lane:observation')
     assert state.listings[0][1] == 5.
     assert state.create_timeouts == [5., 5.]
     assert state.live == foreign | {manager.session.name}
@@ -594,7 +596,13 @@ def owned_inventory(monkeypatch):
     from google.api_core.client_options import ClientOptions
     from google.auth.credentials import AnonymousCredentials
     from google.cloud.spanner_v1 import Client
-    from google.cloud.spanner_v1.types import ExecuteSqlRequest, PartialResultSet
+    from google.cloud.spanner_v1.types import (
+        CommitRequest,
+        CommitResponse,
+        ExecuteSqlRequest,
+        PartialResultSet,
+        Transaction,
+    )
 
     from trusted_router import storage_gcp_shadow_observation as observation
     from trusted_router.config import Settings
@@ -602,10 +610,10 @@ def owned_inventory(monkeypatch):
     from trusted_router.storage_gcp_shadow_io import owned_database
 
     clock, live, states = [10.], {}, []
-    def owned(source):
-        db = owned_database(source)
+    def owned(source, **kwargs):
+        db = owned_database(source, **kwargs)
         state = SimpleNamespace(database=db, creates=0, reads=0, lists=0, deletes=0,
-                                fail_create=False, timeouts=[], filters=[])
+                                fail_create=False, timeouts=[], filters=[], commits=[])
         states.append(state)
         lane = len(states)
         def create(**kwargs):
@@ -627,11 +635,11 @@ def owned_inventory(monkeypatch):
             state.lists += 1
             request = ListSessionsRequest(kwargs['request'])
             state.filters.append(request.filter)
-            component, boot = request.filter.split(' AND ')
-            assert component == 'labels.tr_component:shadow-v2'
-            label = boot.removeprefix('labels.tr_boot:')
+            # Spanner label filters use case-insensitive substring matching.
+            filters = [clause.removeprefix('labels.').split(':', 1)
+                       for clause in request.filter.split(' AND ')]
             response = ListSessionsResponse(sessions=[s for s in live.values()
-                if s.labels.get('tr_component') == 'shadow-v2' and s.labels.get('tr_boot') == label])
+                if all(value.lower() in s.labels.get(key, '').lower() for key, value in filters)])
             return ListSessionsPager(None, request, response)
         def query(**kwargs):
             request = ExecuteSqlRequest(kwargs['request'])
@@ -641,12 +649,24 @@ def owned_inventory(monkeypatch):
             fields = ([{'name': name, 'type': {'code': 'INT64'}}
                        for name in ('n', 'amount', 'trust_tier')] if workspace else
                       [{'name': 'body', 'type': {'code': 'STRING'}}])
-            response = PartialResultSet(metadata={'row_type': {'fields': fields}})
+            response = PartialResultSet(metadata={'row_type': {'fields': fields},
+                'transaction': {'id': b'owned-transaction'}})
             if workspace:
                 response._pb.values.add(string_value='0')
                 response._pb.values.add(null_value=0)
                 response._pb.values.add(string_value='1')
             return iter([response])
+        def begin(**kwargs):
+            assert kwargs['retry'] is None and 0 < kwargs['timeout'] <= 2.
+            return Transaction(id=b'owned-transaction')
+        def commit(**kwargs):
+            assert kwargs['retry'] is None and 0 < kwargs['timeout'] <= 2.
+            request = CommitRequest(kwargs['request'])
+            assert request.session in live
+            state.commits.append(request)
+            return CommitResponse(commit_timestamp={'seconds': 1800000000})
+        db.spanner_api.begin_transaction = begin
+        db.spanner_api.commit = commit
         db.spanner_api.create_session = create
         db.spanner_api.delete_session = delete
         db.spanner_api.list_sessions = listing
@@ -747,3 +767,61 @@ async def test_owned_lanes_recover_lost_creation_on_owner_worker(owned_inventory
     assert store.session_ready() and store.session_ready(workspace=True)
     assert store.database._sessions_manager.boot != store.workspace_database._sessions_manager.boot
     assert svc.policy_enabled() and not svc.runtime_stop.failures
+
+
+@pytest.mark.parametrize('recovering_lane', ['observation', 'workspace'])
+def test_reconciliation_preserves_other_lane_with_same_boot(owned_inventory, recovering_lane):
+    svc, clock, (workspace, observation), live = owned_inventory
+    recovering, healthy = ((observation, workspace) if recovering_lane == 'observation'
+                           else (workspace, observation))
+    recovering.fail_create = True
+    manager = recovering.database._sessions_manager
+    other = healthy.database._sessions_manager
+    assert not manager.prepare(svc.store.clock, svc.journal.boot)
+    orphan, = (name for name in live if not name.endswith('/money'))
+    assert other.prepare(svc.store.clock, svc.journal.boot)
+    held = other.session.name
+    recovering.fail_create = False
+    clock[0] = 70.
+    assert manager.prepare(svc.store.clock)
+    assert orphan not in live
+    assert held in live  # Reconciliation must never delete the healthy lane.
+    assert recovering.deletes == 1 and healthy.deletes == 0
+    assert manager.session.name in live and len(live) == 3
+    assert manager.boot == other.boot == svc.journal.boot
+    assert manager.session.labels['tr_lane'] == recovering_lane
+    assert other.session.labels['tr_lane'] != recovering_lane
+    assert f'labels.tr_lane:{recovering_lane}' in recovering.filters[0]
+
+
+def test_marker_retry_persists_while_workspace_is_unready(owned_inventory):
+    svc, clock, (workspace, observation), _ = owned_inventory
+    store = svc.store
+    workspace.fail_create = True
+    assert not store.prepare_session(svc.journal.boot)
+    assert store.session_ready() and not store.session_ready(workspace=True)
+    assert store.read_runtime_stop() is None
+    svc.runtime_stop.outcome('execute_streaming_sql', 'DeadlineExceeded')
+    svc.runtime_stop.outcome('commit', 'Cancelled')
+    assert svc.runtime_stop.tripped is not None and not svc.policy_enabled()
+    svc.runtime_stop.retry()
+    assert svc.runtime_stop.persisted
+    assert len(observation.commits) == 1 and not workspace.commits
+    mutation = observation.commits[0].mutations[0].insert_or_update
+    assert mutation.table == 'tr_entities'
+    assert list(mutation.columns) == ['kind', 'id', 'body', 'updated_at']
+    values = mutation._pb.values[0].values
+    assert values[0].string_value == svc.runtime_stop.tripped.kind
+    assert values[1].string_value == 'stop-v2'
+    assert values[2].string_value == svc.runtime_stop.tripped.body.decode('utf-8')
+    assert not store.session_ready(workspace=True)
+    # Marker success does not disable the workspace manager's independent recovery.
+    assert not store.session_recovery_due()
+    clock[0] = 70.
+    assert store.session_recovery_due()
+    workspace.fail_create = False
+    assert store.prepare_session()
+    assert store.session_ready(workspace=True)
+    assert workspace.lists == workspace.deletes == 1 and workspace.creates == 2
+    svc.runtime_stop.retry()
+    assert len(observation.commits) == 1

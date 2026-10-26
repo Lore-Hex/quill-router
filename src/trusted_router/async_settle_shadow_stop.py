@@ -87,7 +87,9 @@ class RuntimeStop:
         self.next_write = float("inf")
         self.backoff = min(60., delay*2)
         try:
-            if not self.store.prepare_session():
+            self.store.prepare_session()
+            # The marker uses only observation IO; workspace recovery is independent.
+            if not self.store.session_ready():
                 return
             self.store.runtime_stop(row, Budget(self.store.clock()+2, self.store.clock))
         except Exception:

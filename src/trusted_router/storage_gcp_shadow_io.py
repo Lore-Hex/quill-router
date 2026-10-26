@@ -77,9 +77,10 @@ class SessionCheckoutTimeout(TimeoutError):
 
 class Sessions:
     """One bounded checkout lane; no SDK pool/maintenance-thread wait escapes."""
-    def __init__(self, database: Any, *, managed: bool = False) -> None:
+    def __init__(self, database: Any, *, managed: bool = False, lane: str = "observation") -> None:
         self.database = database
         self.managed = managed
+        self.lane = lane
         self.boot = str(uuid.uuid4())
         self.next_recovery = float("-inf")
         self.lock = threading.Lock()
@@ -148,7 +149,7 @@ class Sessions:
                 scope.remaining()
             if self.session is None:
                 from google.cloud.spanner_v1.session import Session
-                session = Session(self.database, labels={"tr_component": "shadow-v2", "tr_boot": self.boot})
+                session = Session(self.database, labels={"tr_component": "shadow-v2", "tr_boot": self.boot, "tr_lane": self.lane})
                 self.creation_unknown = True
                 session.create()
                 self.session = session
@@ -174,7 +175,8 @@ class Sessions:
             # One page per recovery window bounds actual ListSessions RPCs.
             pager = self.database.spanner_api.list_sessions(request=dict(
                 database=self.database.name,
-                filter=f"labels.tr_component:shadow-v2 AND labels.tr_boot:{self.boot}",
+                filter=(f"labels.tr_component:shadow-v2 AND labels.tr_boot:{self.boot}"
+                        f" AND labels.tr_lane:{self.lane}"),
                 page_token=self.reconciliation_token))
             page = next(iter(pager.pages))
             scope.remaining()
@@ -196,7 +198,7 @@ class Sessions:
         self.creation_unknown = False
 
 
-def owned_database(database: Any) -> Any:
+def owned_database(database: Any, *, lane: str = "observation") -> Any:
     """Construct only after v2 selection, with a distinct API and session manager."""
     from google.cloud.spanner_v1 import Client
     from google.cloud.spanner_v1.database import Database
@@ -206,7 +208,7 @@ def owned_database(database: Any) -> Any:
     owned = Client(project=client.project, credentials=client.credentials,
                    client_options=client._client_options, disable_builtin_metrics=True)
     result = owned.instance(database._instance.instance_id).database(database.database_id)
-    result._sessions_manager = Sessions(result)
+    result._sessions_manager = Sessions(result, lane=lane)
     # The SDK sets its thread-local transaction flag before checkout, outside its
     # finally block. Own the checkout so a timeout cannot poison the next cycle.
     def transaction(callback: Any, **kwargs: Any) -> Any:

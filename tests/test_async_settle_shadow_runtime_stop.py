@@ -351,7 +351,7 @@ def test_real_observer_workspace_failures_trip_shared_breaker(monkeypatch, strea
     # clients; the source (money) client must remain untouched.
     money = SimpleNamespace(spanner_api=SimpleNamespace(commit=Mock()))
     lanes = iter([workspace, base.database])
-    monkeypatch.setattr('trusted_router.storage_gcp_shadow_observation.owned_database', lambda _: next(lanes))
+    monkeypatch.setattr('trusted_router.storage_gcp_shadow_observation.owned_database', lambda _, **kwargs: next(lanes))
     store = ObservationStore(money, clock=base.clock, wall=base.wall)
     svc = shell.Service(pins(), store)
     now = [100.]
