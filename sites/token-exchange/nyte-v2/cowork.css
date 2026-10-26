@@ -1,4 +1,4 @@
-.cw-hero{position:relative;min-height:min(80svh,700px);display:flex;align-items:center;padding:40px 0 96px;isolation:isolate}
+.cw-hero{position:relative;min-height:calc(100svh - var(--header));display:flex;align-items:center;padding:40px 0 96px;isolation:isolate}
 .cw-photo{background-image:url(photos/cowork-clouds-2400.webp);background-position:center 45%}
 .cw-hero::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(5,7,6,.45) 0%,rgba(5,7,6,0) 22%,rgba(5,7,6,0) 72%,#050706 100%),linear-gradient(90deg,rgba(5,7,6,.84) 0%,rgba(5,7,6,.7) 34%,rgba(5,7,6,.22) 56%,rgba(5,7,6,.08) 100%)}
 .cw-hero .wrap{width:100%}
@@ -43,7 +43,7 @@ ol.cw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;
   .cw-banner::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 60%,var(--bg))}
   .cw-hero::before{content:none}
   .cw-hero .inner{padding:0 0 32px}
-  .cw-intro{display:flex;flex-direction:column;min-height:calc(100svh - var(--header) - 160px);padding:12px 0 24px}
+  .cw-intro{display:flex;flex-direction:column;min-height:calc(var(--cw-viewport,100svh) - var(--header) - 160px);padding:12px 0 24px}
   .cw-hero .cw-intro h1{margin-top:auto}
   .cw-hero .cw-intro .btns{margin-top:0}
   .cw-meta{margin-top:24px}

@@ -193,3 +193,18 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   });
   void refresh();
 })();
+
+/* Keep the mobile Cowork hero steady when browser chrome changes viewport height.
+   Width changes still refresh its size for rotation and responsive previews. */
+(() => {
+  if (document.body.dataset.nytePage !== 'cowork') return;
+  let width;
+  const sizeHero = () => {
+    const nextWidth = document.documentElement.clientWidth;
+    if (nextWidth === width) return;
+    width = nextWidth;
+    document.documentElement.style.setProperty('--cw-viewport', `${window.innerHeight}px`);
+  };
+  sizeHero();
+  window.addEventListener('resize', sizeHero, {passive: true});
+})();
