@@ -1,0 +1,32 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section aria-labelledby="closure-heading" style="max-width:640px">
+  <h2 id="closure-heading">Before you close your account</h2>
+  <p>You are closing <strong>{{ user.email or user.wallet_address or 'your account' }}</strong>.</p>
+  <ul>
+    <li>You will be signed out and your other sessions will lose access.</li>
+    <li>Your personal workspaces and their API keys, including authorized app keys, will be disabled.</li>
+    <li>Other regional services may take up to 24 hours to refresh cached API-key permissions. Contact support if you need urgent revocation across regions.</li>
+    <li>Auto refill will stop. Requests and payments already in progress may finish.</li>
+    <li>Remaining credits will become inaccessible. For a balance or refund question, contact <a href="mailto:help@trustedrouter.com">help@trustedrouter.com</a> before continuing.</li>
+  </ul>
+  <h2>Personal data</h2>
+  <p>This closes access; it does not erase your personal data. Account, billing and usage metadata remain stored. For a data erasure request, email <a href="mailto:security@trustedrouter.com?subject=Account%20data%20erasure">security@trustedrouter.com</a>. We will explain any records we are required to retain.</p>
+  <p>Signing in again will not reopen this account. Contact support if you need assistance.</p>
+  {% if error %}<p class="notice bad" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/console/account/delete" style="display:grid;gap:20px;margin-top:24px">
+    <input type="hidden" name="csrf_token" value="{{ closure_token }}">
+    <label>Type DELETE to confirm
+      <input name="confirmation" autocomplete="off" autocapitalize="characters" spellcheck="false" required pattern="DELETE" maxlength="6">
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:12px">
+      <input type="checkbox" name="acknowledge" value="yes" required style="width:20px;height:20px;flex-shrink:0;margin-top:3px">
+      <span>I understand this disables my account and access to remaining credits, and does not erase my personal data.</span>
+    </label>
+    <div class="actions" style="display:flex;flex-wrap:wrap;gap:12px">
+      <button class="btn" type="submit">Review account closure</button>
+      <a class="btn" href="/console/account/preferences">Keep my account</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
