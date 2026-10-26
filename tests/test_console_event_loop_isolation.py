@@ -6,7 +6,7 @@ decorated endpoint is a plain ``def``.  The four console endpoints that really
 await network I/O or coordinate concurrent provider calls keep ``async def`` and
 place each synchronous segment behind ``run_in_threadpool`` explicitly.
 
-The AST checks make the 45/4 split non-vacuous; the thread-id and heartbeat
+The AST checks make the 58/4 split non-vacuous; the thread-id and heartbeat
 checks prove the framework/runtime behavior instead of merely matching source
 text.  Storage methods are patched on ``InMemoryStore`` rather than the global
 ``STORE`` proxy so pytest restores them without poisoning later tests.
@@ -124,12 +124,15 @@ def _nested_function(
 
 def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
     routes = _console_route_functions()
-    assert len(routes) == 60, "guard must inspect every decorated console route"
+    assert len(routes) == 62, "guard must inspect every decorated console route"
     async_routes = {node.name for node in routes if isinstance(node, ast.AsyncFunctionDef)}
     assert async_routes == _ASYNC_CONSOLE_HANDLERS
-    assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 56
+    assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 58
 
     by_name = {node.name: node for node in routes}
+    for name in ("confirm_account_deletion", "delete_account"):
+        assert isinstance(by_name[name], ast.FunctionDef)
+    assert "STORE.close_user_account" in ast.unparse(by_name["delete_account"])
     assert set(_threadpool_targets(by_name["console_credit_stripe_details"])) == {
         "STORE.get_credit_account",
         "_load_saved_payment_method",
