@@ -196,3 +196,31 @@ def test_stepfun_releases_are_discovered() -> None:
     assert featherless._is_discovery_candidate(row)
     assert not featherless._is_discovery_candidate({**row, "id": "someone/step-5-finetune"})
     assert not featherless._is_discovery_candidate({**row, "available_on_current_plan": None})
+
+
+@pytest.mark.parametrize(("reported", "expected"), [
+    (1_048_576, 262_144), (262_144, 262_144), (131_072, 131_072),
+    (None, 262_144), (0, 262_144), ("unknown", 262_144),
+])
+def test_flash_refresh_preserves_shared_hosting_cap(catalog, reported, expected):
+    details, _, _, manifest = catalog
+    native = "MiniMaxAI/MiniMax-M3.1-Flash"
+    details[native].update({
+        "context_length": reported,
+        "tasks": ["image-text-to-text"],
+        "features": {"tool_use": True},
+    })
+    # Repeated discovery must not restore the generic model's 1M window.
+    for _ in range(2):
+        result = featherless.fetch()
+        featherless.write_provider_manifest(result)
+        rows = {row["upstream_id"]: row for row in json.loads(manifest.read_text())["models"]}
+        row = rows[native]
+        assert row["context_length"] == expected
+        assert row["input_modalities"] == ["text", "image"]
+        assert row["supported_features"] == ["tools"]
+        assert row["input_token_price_per_m"] == 170_000
+        assert row["output_token_price_per_m"] == 250_000
+        assert "cached_input_token_price_per_m" not in row
+        assert rows[AGED_OUT_NATIVE]["context_length"] == 32_768
+    assert details[native]["context_length"] == reported

@@ -1,5 +1,26 @@
 [
   {
+    "provider": "featherless",
+    "model_id": "minimax/minimax-m3.1-flash",
+    "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
+    "quantization": "fp4",
+    "label": "FP4 (provider-declared)",
+    "weight_formats": ["fp4"],
+    "kv_cache_dtype": null,
+    "model_repository": null,
+    "model_revision": null,
+    "reviewed_on": "2026-10-26",
+    "evidence_type": "provider_declaration",
+    "runtime_verified": false,
+    "sources": [
+      {
+        "title": "Featherless shared-serving launch announcement (256K, FP4, vision)",
+        "url": "https://featherless.ai/blog/minimax-m3-1-flash-is-live-on-featherless"
+      }
+    ],
+    "notes": "Featherless declares FP4 for this shared-serving route. Its generic model page reports FP8 and 1M context, conflicting with the explicit launch announcement of FP4 and 256K shared serving; full 1M requires dedicated hosting. The exact FP4 variant, weight revision and KV cache format are unverified. This is a provider declaration, not reviewed serving code or attestation."
+  },
+  {
     "provider": "chutes",
     "model_id": "deepseek/deepseek-v3.2",
     "upstream_id": "deepseek-ai/DeepSeek-V3.2-TEE",

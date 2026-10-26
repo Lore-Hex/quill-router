@@ -910,7 +910,7 @@
       "status": 1,
       "id": "minimax/minimax-m3.1-flash",
       "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
-      "context_length": 1048576,
+      "context_length": 262144,
       "supported_features": [
         "tools"
       ],

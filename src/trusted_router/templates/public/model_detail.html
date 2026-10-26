@@ -244,7 +244,7 @@
             {% if endpoint.precision %}
             <details>
               <summary>{{ endpoint.precision.label }}</summary>
-              <p>Published serving configuration, reviewed {{ endpoint.precision.reviewed_on }}. Per-request precision is not verified.</p>
+              <p>{{ 'Provider declaration' if endpoint.precision.evidence_type == 'provider_declaration' else 'Published serving configuration' }}, reviewed {{ endpoint.precision.reviewed_on }}. Per-request precision is not verified.</p>
               <p>{{ endpoint.precision.notes }}</p>
               <p>KV cache: {{ endpoint.precision.kv_cache_dtype or 'unspecified' }}.</p>
               {% for source in endpoint.precision.sources %}
