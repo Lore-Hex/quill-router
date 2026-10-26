@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -328,5 +329,91 @@ func TestTheCasesNameTheGoldenSnapshot(t *testing.T) {
 	}
 	if len(cases.Cases) < 100 {
 		t.Fatalf("%d cases", len(cases.Cases))
+	}
+}
+
+// TestBillingValidIsOptionalPerEpoch: G15a (docs/design/
+// fast-admission-e2-g15-async.md section 6.1). The golden body, which has no
+// billing_valid, parses with every epoch's nil (unknown); a body that
+// publishes it on some epochs parses and exposes each as published, the
+// others nil; null and a non-boolean are refused; and nothing the evaluator
+// answers changes when every epoch carries it.
+func TestBillingValidIsOptionalPerEpoch(t *testing.T) {
+	_, raw := golden(t)
+	at := []byte(`"epochs":[{"headline":`)
+	if bytes.Contains(raw, []byte(`"billing_valid"`)) || bytes.Count(raw, at) < 2 {
+		t.Fatal("the golden body must have no billing_valid and several endpoints")
+	}
+	plain, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range plain.Endpoints {
+		for _, epoch := range e.Epochs {
+			if epoch.BillingValid != nil {
+				t.Fatalf("%s: absent billing_valid parsed as %v", e.ID, *epoch.BillingValid)
+			}
+		}
+	}
+	// The first endpoint's first epoch false, the second's true, the rest
+	// unpublished.
+	first := bytes.Index(raw, at)
+	second := first + len(at) + bytes.Index(raw[first+len(at):], at)
+	splice := func(value string) []byte {
+		out := bytes.Clone(raw[:first])
+		out = append(out, `"epochs":[{"billing_valid":false,"headline":`...)
+		out = append(out, raw[first+len(at):second]...)
+		out = append(out, `"epochs":[{"billing_valid":`+value+`,"headline":`...)
+		return append(out, raw[second+len(at):]...)
+	}
+	s, err := Parse(splice("true"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := 0
+	for i, e := range s.Endpoints {
+		for j, epoch := range e.Epochs {
+			if epoch.BillingValid == nil {
+				continue
+			}
+			published++
+			if j != 0 || i > 1 || *epoch.BillingValid != (i == 1) {
+				t.Errorf("%s epoch %d: billing_valid %v", e.ID, j, *epoch.BillingValid)
+			}
+		}
+	}
+	if published != 2 {
+		t.Fatalf("%d epochs carry billing_valid, want 2", published)
+	}
+	for _, value := range []string{"null", `"true"`, "1", "{}"} {
+		if _, err := Parse(splice(value)); err == nil {
+			t.Errorf("billing_valid %s: parsed", value)
+		}
+	}
+
+	// Every epoch false: the evaluator's answers are the golden body's.
+	every := bytes.ReplaceAll(raw, []byte(`{"headline":{`), []byte(`{"billing_valid":false,"headline":{`))
+	flagged, err := Parse(every)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochs := 0
+	for _, e := range flagged.Endpoints {
+		for _, epoch := range e.Epochs {
+			if epoch.BillingValid == nil || *epoch.BillingValid {
+				t.Fatalf("%s: an epoch without billing_valid false", e.ID)
+			}
+			epochs++
+		}
+	}
+	base := goldenSnapshot(t)
+	cases := loadCases(t).Cases
+	if epochs < 2 || len(cases) < 100 {
+		t.Fatalf("%d epochs, %d cases: the comparison is vacuous", epochs, len(cases))
+	}
+	for _, c := range cases {
+		if got, want := flagged.Evaluate(c.request(t)), base.Evaluate(c.request(t)); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v with billing_valid, %+v without", c.Name, got, want)
+		}
 	}
 }

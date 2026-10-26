@@ -328,3 +328,76 @@ func TestParseEdgePolicyRefusals(t *testing.T) {
 		t.Errorf("key order: %v", err)
 	}
 }
+
+// withAsyncSettle is the golden body with an async_settle object in its
+// canonical place (just before async_settle_shadow_policy, keys sorted).
+func withAsyncSettle(t *testing.T, raw []byte, object string) []byte {
+	t.Helper()
+	at := []byte(`"async_settle_shadow_policy":`)
+	if bytes.Count(raw, at) != 1 {
+		t.Fatal("the golden body has no single async_settle_shadow_policy")
+	}
+	return bytes.Replace(raw, at, append([]byte(`"async_settle":`+object+`,`), at...), 1)
+}
+
+// TestTheAsyncSettleObjectIsOptional: G15a (docs/design/
+// fast-admission-e2-g15-async.md section 6.1). The golden body, which has no
+// async_settle, parses with it nil (unknown); a body with the object parses
+// and exposes each of the four booleans as published, in every combination,
+// and verifies under a manifest signed for it; null, a missing, unknown or
+// non-boolean member, and an object out of canonical order are refused.
+func TestTheAsyncSettleObjectIsOptional(t *testing.T) {
+	m, raw := policyGolden(t)
+	if bytes.Contains(raw, []byte(`"async_settle":`)) {
+		t.Fatal("the golden body must stay without async_settle")
+	}
+	p, err := ParseEdgePolicy(raw)
+	if err != nil || p.AsyncSettle != nil {
+		t.Fatalf("absent async_settle: %v, %+v", err, p)
+	}
+	for bits := range 16 {
+		want := AsyncSettle{AdmissionEnabled: bits&1 != 0, EdgeDecide: bits&2 != 0,
+			TicketAuthority: bits&4 != 0, TypedRecords: bits&8 != 0}
+		object := fmt.Sprintf(`{"admission_enabled":%t,"edge_decide":%t,"ticket_authority":%t,"typed_records":%t}`,
+			want.AdmissionEnabled, want.EdgeDecide, want.TicketAuthority, want.TypedRecords)
+		body := withAsyncSettle(t, raw, object)
+		got, err := ParseEdgePolicy(body)
+		if err != nil || got.AsyncSettle == nil || *got.AsyncSettle != want {
+			t.Fatalf("%s: %v, %+v", object, err, got)
+		}
+		// Every other field is what the golden body says.
+		got.AsyncSettle = nil
+		if a, b := canonical(got), canonical(p); !bytes.Equal(a, b) {
+			t.Fatalf("%s changed another field:\n%s\n%s", object, a, b)
+		}
+	}
+	on := `{"admission_enabled":false,"edge_decide":true,"ticket_authority":true,"typed_records":true}`
+	signed := withAsyncSettle(t, raw, on)
+	s := testKeySigner(t, m)
+	verified, _, err := VerifyEdgePolicy(s.signPolicy(t, signed), []TrustedKey{goldenKey(t, m)}, signed, policyOptions(m, policyIssuedAt))
+	if err != nil || verified.AsyncSettle == nil || !verified.AsyncSettle.EdgeDecide || verified.AsyncSettle.AdmissionEnabled {
+		t.Fatalf("a signed body with async_settle: %v, %+v", err, verified)
+	}
+	for name, object := range map[string]string{
+		"null":           `null`,
+		"fifth member":   `{"admission_enabled":false,"edge_decide":true,"extra":true,"ticket_authority":true,"typed_records":true}`,
+		"missing member": `{"admission_enabled":false,"edge_decide":true,"ticket_authority":true}`,
+		"empty object":   `{}`,
+		"null member":    `{"admission_enabled":null,"edge_decide":true,"ticket_authority":true,"typed_records":true}`,
+		"string member":  `{"admission_enabled":"false","edge_decide":true,"ticket_authority":true,"typed_records":true}`,
+		"int member":     `{"admission_enabled":0,"edge_decide":true,"ticket_authority":true,"typed_records":true}`,
+		"not an object":  `true`,
+		"an array":       `[false,true,true,true]`,
+		"unsorted":       `{"edge_decide":true,"admission_enabled":false,"ticket_authority":true,"typed_records":true}`,
+		"duplicate":      `{"admission_enabled":false,"admission_enabled":false,"edge_decide":true,"ticket_authority":true,"typed_records":true}`,
+	} {
+		if got, err := ParseEdgePolicy(withAsyncSettle(t, raw, object)); err == nil {
+			t.Errorf("%s: accepted as %+v", name, got.AsyncSettle)
+		}
+	}
+	// The positive control for the refusals: the same splice accepts the
+	// object they each break.
+	if _, err := ParseEdgePolicy(withAsyncSettle(t, raw, on)); err != nil {
+		t.Fatalf("the refusals' control: %v", err)
+	}
+}
