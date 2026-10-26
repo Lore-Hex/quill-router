@@ -193,6 +193,11 @@ def register(app: FastAPI) -> None:
                 verification_topup_line=(
                     purpose == "identity_verification" and verification_remaining > 0
                 ),
+                credits_balance=money(
+                    summary["total_credits"] - summary["total_usage"] if summary else 0
+                ),
+                credits_reserved=money(summary["reserved"] if summary else 0),
+                credits_reserved_nonzero=bool(summary and summary["reserved"] > 0),
                 credits_available=money(summary["available"] if summary else 0),
                 credits_empty=not summary or summary["available"] <= 0,
                 credits_usage=money(summary["total_usage"] if summary else 0),
