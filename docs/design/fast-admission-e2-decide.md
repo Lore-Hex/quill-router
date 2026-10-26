@@ -306,7 +306,7 @@ the compose for the row's state, this passes for the request's.
 | `body.referer` | `http_referer` with no `app` that fails the strict ASCII URL rule (§7) |
 | `body.evaluator_input` | anything `routing-snapshot-v1.md` "What Go evaluates" sends to Python (`shadow.go:927`, `requestOf`) |
 | `header.idempotency_key` | an idempotency key (body or header) over 256 characters after strip, or with a native-batch or partner prefix; an `Idempotency-Key` header sent more than once (Starlette reads the first) or with a byte outside 0x20 to 0x7E (Starlette decodes latin-1 and `str.strip` strips Unicode whitespace) |
-| `header.settlement_async` | `X-TR-Settlement-Mode: async-v1` (`gateway.py:2976`) |
+| `header.settlement_async` | `X-TR-Settlement-Mode` present (`gateway.py:3179-3180`); G15 decides exactly one `async-v1` instead ([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md)) |
 | `header.video_providers` | `X-Quill-Video-Allowed-Providers` present |
 
 **Caches:** `cache.policy`, `cache.snapshot`, `cache.key`,
@@ -1573,6 +1573,7 @@ letter: disjoint files, built in parallel.
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
 | I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, the I2 gates |
+| G15a to G15c, P5, P6, I3 | 6 | The edge decides async-v1 requests with Python's admission-off answer: [`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6 | G13 |
 
 **The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
 `-edge-decide-shadow`, off by default) runs `Decide` for each authorize the
@@ -1734,5 +1735,10 @@ fields past the line's bound, which could hide either); zero
 `would_admit_python_refused` beyond key-revocation lag; the stale-pass rate
 (`stale` over `followed`: every request the shadow compared whose body did
 not name a `cache_affinity_key`, those being `affinity`'s) recorded. `fastpathwatch
-edge` prints each figure. `decide on` for an operator-owned workspace first, then the pilot
+edge` prints each figure. Requests carrying `X-TR-Settlement-Mode` pass with
+`header.settlement_async` and are not comparable until G15c is pinned;
+their share of `followed` is read from the shadow's count lines (G15c's
+watch prints it), and the I2 decision records it as the traffic I2 does not cover
+([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6.2).
+`decide on` for an operator-owned workspace first, then the pilot
 workspace.
