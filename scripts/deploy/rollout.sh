@@ -726,7 +726,7 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_SHADOW_POLICY="
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
-  # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 48 h
+  # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 14 days
   # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
   # checks it, so the canary turns itself off without a deploy. Deployed
   # environments treat an empty or invalid value as expired: v2 pins without a

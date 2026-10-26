@@ -81,7 +81,7 @@ owner must consume/compare this schedule before removing its finite-window seam.
 | Router `TR_ASYNC_SETTLE_SHADOW_POLICY` | `shadow-v2` | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_WORKSPACES` | `162e441a-5d13-414f-92bd-7c6cd805faa3` | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION` | `us-central1` | empty |
-| Router `TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT` | `--expires-at` (UTC `...Z`, at most 48 h ahead) | empty |
+| Router `TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT` | `--expires-at` (UTC `...Z`, at most 14 days ahead) | empty |
 | Router `TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET` | `tr-async-settle-shadow-attachments-quill-cloud-proxy` | Same retained bucket |
 | Router `TR_ASYNC_SETTLE_ENABLED` | `false` | `false` |
 | Router `TR_ASYNC_SETTLE_PROTECTION` | `false` | `false` |
@@ -89,16 +89,21 @@ owner must consume/compare this schedule before removing its finite-window seam.
 | Enclave `TR_ASYNC_SETTLE_SHADOW` | `on` | `off` |
 | Enclave `TR_ASYNC_SETTLE_NEGOTIATE` | `off` | `off` |
 
-The expiry is the canary's stop. Every request and owner tick checks it; at the
-instant it passes, the publisher's generation is revoked, the service closes as
+The expiry is the canary's upper bound. Every request and owner tick checks it;
+at the instant it passes, the publisher's generation is revoked, the service closes as
 `opt_out` and the request path goes dormant, with no deploy. Deployed
 environments treat an empty or invalid expiry as already expired (an invalid
 value is logged once, never a configuration failure), so policy pins without a
 valid one do nothing. `release --phase shadow-opt-in` requires `--expires-at`
-(a future UTC instant ending in `Z`, at most 48 h ahead); opt-out clears it.
-A week-long evidence window therefore needs a reviewed renewal at least every
-48 h. Leaving expired pins in `rollout.sh` is harmless, but clear them in the
-next change.
+(a future UTC instant ending in `Z`, at most 14 days ahead); opt-out clears it.
+
+One expiry must cover the whole evidence window (at least seven days for
+certification); the 14-day cap provides that room. Renewal deploys that restart
+the fleet are not an acceptable mechanism for sustaining a window. Stop early
+with the fleet-wide runtime stop marker / operator CLI (#2053), or an opt-out
+PR. The expiry remains the upper bound that turns a forgotten canary off.
+Leaving expired pins in `rollout.sh` is harmless, but clear them in the next
+change.
 
 The expiry gates shadow v2 only. The v1 shadow still installs whenever
 `TR_ASYNC_SETTLE_SHADOW_WORKSPACES` is set and the policy pin is empty, as

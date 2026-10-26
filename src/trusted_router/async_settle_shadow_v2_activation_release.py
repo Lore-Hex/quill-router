@@ -19,7 +19,7 @@ MONEY_OFF = dict(TR_ASYNC_SETTLE_ENABLED='false', TR_ASYNC_SETTLE_PROTECTION='fa
 # Mirrors trusted_router.config.SHADOW_CANARY_MAX_SECONDS (v2 modules do not
 # import config; a test pins the two equal). The router treats a farther
 # expiry as expired, so the tool refuses to write one.
-CANARY_MAX_SECONDS = 48 * 3600
+CANARY_MAX_SECONDS = 14 * 86400
 
 
 def canary_expiry(expires_at: str, now: float | None = None) -> str:
@@ -43,7 +43,7 @@ def canary_expiry(expires_at: str, now: float | None = None) -> str:
     if expiry <= current:
         raise ValueError('shadow canary expiry already passed')
     if expiry - current > CANARY_MAX_SECONDS:
-        raise ValueError('shadow canary expiry exceeds the canary maximum')
+        raise ValueError('shadow canary expiry exceeds the canary maximum of 14 days')
     return expires_at
 
 

@@ -63,13 +63,12 @@ def inventory(monkeypatch, shadow_deadline_clock):
         if state.list_error or request.page_token == state.list_fail_page:
             raise DeadlineExceeded('listing unavailable')
         assert request.database == db.name
-        # Model server-side filtering; foreign boots and components stay live.
-        component, boot = request.filter.split(' AND ')
-        assert component == 'labels.tr_component:shadow-v2'
-        assert boot.startswith('labels.tr_boot:')
-        labels = dict(tr_component='shadow-v2', tr_boot=boot.removeprefix('labels.tr_boot:'))
+        # Match Spanner's case-insensitive substring label filter semantics.
+        filters = [clause.removeprefix('labels.').split(':', 1)
+                   for clause in request.filter.split(' AND ')]
         sessions = [SessionPB(name=n, labels=state.labels[n]) for n in sorted(state.live)
-                    if state.labels[n] == labels]
+                    if all(value.lower() in state.labels[n].get(key, '').lower()
+                           for key, value in filters)]
         start = int(request.page_token or '0')
         end = start + state.page_size
         response = ListSessionsResponse(sessions=sessions[start:end],
@@ -155,8 +154,9 @@ def test_healthy_checkouts_reuse_one_labeled_session(inventory):
     for _ in range(20):
         with rpc_scope(clock.now + 1, 1, clock.monotonic):
             session = db._sessions_manager.get_session(None)
-            assert set(session.labels) == {"tr_component", "tr_boot"}
-            assert session.labels == {"tr_component": "shadow-v2", "tr_boot": db._sessions_manager.boot}
+            assert set(session.labels) == {"tr_component", "tr_boot", "tr_lane"}
+            assert session.labels == {"tr_component": "shadow-v2", "tr_boot": db._sessions_manager.boot,
+                                      "tr_lane": "observation"}
             db._sessions_manager.put_session(session)
     assert state.creates == 1 and state.deletes == 0
 
@@ -189,7 +189,8 @@ def test_install_prepares_session_under_own_five_second_budget(inventory, monkey
     assert state.creates == 1 and state.create_timeouts == [5.]
     assert db._sessions_manager.ready
     assert state.labels[next(iter(state.live))] == dict(
-        tr_component='shadow-v2', tr_boot=app.state.async_settle_shadow_observation.journal.boot)
+        tr_component='shadow-v2', tr_boot=app.state.async_settle_shadow_observation.journal.boot,
+        tr_lane='observation')
     assert app.state.async_settle_shadow_observation.state.job is None
     assert not db.calls
 
@@ -288,7 +289,7 @@ def unknown_creation(inventory):
 def seed_session(db, state, identity, boot, component='shadow-v2'):
     name = db.name+'/sessions/'+identity
     state.live.add(name)
-    state.labels[name] = dict(tr_component=component, tr_boot=boot)
+    state.labels[name] = dict(tr_component=component, tr_boot=boot, tr_lane='observation')
     return name
 
 
@@ -330,7 +331,8 @@ def test_unknown_creation_reconciles_before_replacement_and_publishes(inventory,
     assert manager.ready and not manager.creation_unknown and manager.retired is None
     assert stale not in state.live and not (pending & state.live)
     assert state.creates == 2 and state.deletes == 2 and len(state.listings) == 1
-    assert state.listings[0][0].filter == f'labels.tr_component:shadow-v2 AND labels.tr_boot:{manager_boot}'
+    assert state.listings[0][0].filter == (f'labels.tr_component:shadow-v2 AND labels.tr_boot:{manager_boot}'
+                                        ' AND labels.tr_lane:observation')
     assert state.listings[0][1] == 5.
     assert state.create_timeouts == [5., 5.]
     assert state.live == foreign | {manager.session.name}
@@ -586,3 +588,240 @@ def test_checkout_timeout_is_missed_only_before_first_rpc(inventory, monkeypatch
     assert (trace['cycle_us'] is not None) is after_rpc
     assert trace['claim_at_ns'] is None
     assert manager.ready and not manager.lock.locked()
+
+
+@pytest.fixture
+def owned_inventory(monkeypatch):
+    """Native SDK clients share one server inventory, including money sessions."""
+    from google.api_core.client_options import ClientOptions
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud.spanner_v1 import Client
+    from google.cloud.spanner_v1.types import (
+        CommitRequest,
+        CommitResponse,
+        ExecuteSqlRequest,
+        PartialResultSet,
+        Transaction,
+    )
+
+    from trusted_router import storage_gcp_shadow_observation as observation
+    from trusted_router.config import Settings
+    from trusted_router.services.async_settle_shadow_health import Service
+    from trusted_router.storage_gcp_shadow_io import owned_database
+
+    clock, live, states = [10.], {}, []
+    def owned(source, **kwargs):
+        db = owned_database(source, **kwargs)
+        state = SimpleNamespace(database=db, creates=0, reads=0, lists=0, deletes=0,
+                                fail_create=False, timeouts=[], filters=[], commits=[])
+        states.append(state)
+        lane = len(states)
+        def create(**kwargs):
+            assert kwargs['retry'] is None
+            state.timeouts.append(kwargs['timeout'])
+            state.creates += 1
+            name = f'{db.name}/sessions/{lane}-{state.creates}'
+            session = SessionPB(name=name, labels=kwargs['request'].session.labels)
+            live[name] = session
+            if state.fail_create:
+                raise DeadlineExceeded('one lost CreateSession acknowledgement')
+            return session
+        def delete(**kwargs):
+            assert kwargs['retry'] is None and 0 < kwargs['timeout'] <= 5.
+            state.deletes += 1
+            del live[kwargs['name']]
+        def listing(**kwargs):
+            assert kwargs['retry'] is None and kwargs['timeout'] == 5.
+            state.lists += 1
+            request = ListSessionsRequest(kwargs['request'])
+            state.filters.append(request.filter)
+            # Spanner label filters use case-insensitive substring matching.
+            filters = [clause.removeprefix('labels.').split(':', 1)
+                       for clause in request.filter.split(' AND ')]
+            response = ListSessionsResponse(sessions=[s for s in live.values()
+                if all(value.lower() in s.labels.get(key, '').lower() for key, value in filters)])
+            return ListSessionsPager(None, request, response)
+        def query(**kwargs):
+            request = ExecuteSqlRequest(kwargs['request'])
+            assert request.session in live
+            state.reads += 1
+            workspace = 'trust_tier' in request.sql
+            fields = ([{'name': name, 'type': {'code': 'INT64'}}
+                       for name in ('n', 'amount', 'trust_tier')] if workspace else
+                      [{'name': 'body', 'type': {'code': 'STRING'}}])
+            response = PartialResultSet(metadata={'row_type': {'fields': fields},
+                'transaction': {'id': b'owned-transaction'}})
+            if workspace:
+                response._pb.values.add(string_value='0')
+                response._pb.values.add(null_value=0)
+                response._pb.values.add(string_value='1')
+            return iter([response])
+        def begin(**kwargs):
+            assert kwargs['retry'] is None and 0 < kwargs['timeout'] <= 2.
+            return Transaction(id=b'owned-transaction')
+        def commit(**kwargs):
+            assert kwargs['retry'] is None and 0 < kwargs['timeout'] <= 2.
+            request = CommitRequest(kwargs['request'])
+            assert request.session in live
+            state.commits.append(request)
+            return CommitResponse(commit_timestamp={'seconds': 1800000000})
+        db.spanner_api.begin_transaction = begin
+        db.spanner_api.commit = commit
+        db.spanner_api.create_session = create
+        db.spanner_api.delete_session = delete
+        db.spanner_api.list_sessions = listing
+        db.spanner_api.execute_streaming_sql = query
+        return db
+
+    money = Client(project='offline', credentials=AnonymousCredentials(),
+        client_options=ClientOptions(api_endpoint='127.0.0.1:1'),
+        disable_builtin_metrics=True).instance('i').database('d')
+    money_manager, money_create = money._sessions_manager, money.spanner_api.create_session
+    money_name = money.name+'/sessions/money'
+    live[money_name] = SessionPB(name=money_name, labels={'tr_component': 'money'})
+    monkeypatch.setattr(observation, 'owned_database', owned)
+    store = observation.ObservationStore(money, clock=lambda: clock[0], wall=lambda: 1800000000.)
+    cfg = Settings(environment='test', async_settle_shadow_policy='shadow-v2',
+        async_settle_shadow_workspaces='ws', source_revision='a'*40)
+    cfg.async_settle_shadow_health_region = cfg.effective_serving_region
+    svc = Service(cfg, store)
+    try:
+        yield svc, clock, states, live
+        assert money._sessions_manager is money_manager
+        assert money.spanner_api.create_session == money_create
+        assert live[money_name].labels == {'tr_component': 'money'}
+    finally:
+        for executor in (svc.session_executor, svc.publisher_executor, svc.evidence_executor):
+            executor.shutdown(wait=True, cancel_futures=True)
+        for db in (money, store.database, store.workspace_database):
+            db.spanner_api.transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failed_lane', ['workspace', 'observation', 'both'])
+async def test_owned_lanes_recover_lost_creation_on_owner_worker(owned_inventory, monkeypatch, failed_lane):
+    """Reviewer control: a lost workspace CreateSession ACK must not wedge reads."""
+    import asyncio
+
+    from trusted_router.async_settle_shadow_journal import CONTROL_KIND
+    from trusted_router.services import async_settle_shadow_health as shell
+    from trusted_router.storage_gcp_shadow_observation import Budget
+
+    svc, clock, (workspace, observation), live = owned_inventory
+    store = svc.store
+    failed = (workspace, observation) if failed_lane == 'both' else (
+        workspace if failed_lane == 'workspace' else observation,)
+    for state in failed:
+        state.fail_create = True
+    assert not store.prepare_session(svc.journal.boot)
+    assert store.session_ready() is (observation not in failed)
+    assert store.session_ready(workspace=True) is (workspace not in failed)
+    assert not store.session_recovery_due()
+    svc.tick(int(store.wall()*1e6))
+    def workspace_read():
+        started = clock[0]
+        svc.observer._count('workspace_reads')
+        svc.observer.inflight_ticks['ws'] = started
+        svc.observer._workspace('ws', started)
+    workspace_read()
+    failures = svc.observer.counts['read_failures']
+    assert failures == int(workspace in failed)
+    assert svc.policy_enabled() and not svc.runtime_stop.failures
+    for state in failed:
+        state.fail_create = False
+    # Only recovery scheduling runs here; storage and the native session manager
+    # remain real. Stop polling cannot consume the observation lane first.
+    monkeypatch.setattr(svc.runtime_stop, 'poll', lambda: True)
+    monkeypatch.setattr(svc.runtime_stop, 'start', lambda *args: None)
+    monkeypatch.setattr(svc, 'tick', lambda now: ())
+    svc.next_flush = float('inf')
+    async def one_turn(seconds):
+        if svc.session_job is not None:
+            await asyncio.wrap_future(svc.session_job)
+        svc.stopped.set()
+    monkeypatch.setattr(shell.asyncio, 'sleep', one_turn)
+    clock[0] = 69.999
+    await svc.run()
+    assert svc.session_job is None
+    assert all(state.creates == 1 and state.lists == 0 for state in (workspace, observation))
+    svc.stopped.clear()
+    clock[0] = 70.
+    assert store.session_recovery_due()
+    await svc.run()
+    assert svc.session_job is not None and svc.session_job.result()
+    svc.loop = None  # Direct observer delivery after the controlled owner turn.
+    workspace_read()
+    assert svc.observer.counts['read_failures'] == failures
+    assert workspace.reads == (1 if workspace in failed else 2)
+    assert store.read(CONTROL_KIND, 'stop-v2', Budget(clock[0]+1, store.clock)) is None
+    for state in (workspace, observation):
+        lost = state in failed
+        assert state.creates == (2 if lost else 1)
+        assert state.lists == state.deletes == int(lost)
+        assert state.timeouts == ([5., 5.] if lost else [5.])
+        manager = state.database._sessions_manager
+        assert manager.managed and manager.ready and not manager.creation_unknown
+        assert manager.session.name in live
+    assert len(live) == 3  # Two owned sessions and the untouched money session.
+    assert not store.session_recovery_due()
+    assert store.session_ready() and store.session_ready(workspace=True)
+    assert store.database._sessions_manager.boot != store.workspace_database._sessions_manager.boot
+    assert svc.policy_enabled() and not svc.runtime_stop.failures
+
+
+@pytest.mark.parametrize('recovering_lane', ['observation', 'workspace'])
+def test_reconciliation_preserves_other_lane_with_same_boot(owned_inventory, recovering_lane):
+    svc, clock, (workspace, observation), live = owned_inventory
+    recovering, healthy = ((observation, workspace) if recovering_lane == 'observation'
+                           else (workspace, observation))
+    recovering.fail_create = True
+    manager = recovering.database._sessions_manager
+    other = healthy.database._sessions_manager
+    assert not manager.prepare(svc.store.clock, svc.journal.boot)
+    orphan, = (name for name in live if not name.endswith('/money'))
+    assert other.prepare(svc.store.clock, svc.journal.boot)
+    held = other.session.name
+    recovering.fail_create = False
+    clock[0] = 70.
+    assert manager.prepare(svc.store.clock)
+    assert orphan not in live
+    assert held in live  # Reconciliation must never delete the healthy lane.
+    assert recovering.deletes == 1 and healthy.deletes == 0
+    assert manager.session.name in live and len(live) == 3
+    assert manager.boot == other.boot == svc.journal.boot
+    assert manager.session.labels['tr_lane'] == recovering_lane
+    assert other.session.labels['tr_lane'] != recovering_lane
+    assert f'labels.tr_lane:{recovering_lane}' in recovering.filters[0]
+
+
+def test_marker_retry_persists_while_workspace_is_unready(owned_inventory):
+    svc, clock, (workspace, observation), _ = owned_inventory
+    store = svc.store
+    workspace.fail_create = True
+    assert not store.prepare_session(svc.journal.boot)
+    assert store.session_ready() and not store.session_ready(workspace=True)
+    assert store.read_runtime_stop() is None
+    svc.runtime_stop.outcome('execute_streaming_sql', 'DeadlineExceeded')
+    svc.runtime_stop.outcome('commit', 'Cancelled')
+    assert svc.runtime_stop.tripped is not None and not svc.policy_enabled()
+    svc.runtime_stop.retry()
+    assert svc.runtime_stop.persisted
+    assert len(observation.commits) == 1 and not workspace.commits
+    mutation = observation.commits[0].mutations[0].insert_or_update
+    assert mutation.table == 'tr_entities'
+    assert list(mutation.columns) == ['kind', 'id', 'body', 'updated_at']
+    values = mutation._pb.values[0].values
+    assert values[0].string_value == svc.runtime_stop.tripped.kind
+    assert values[1].string_value == 'stop-v2'
+    assert values[2].string_value == svc.runtime_stop.tripped.body.decode('utf-8')
+    assert not store.session_ready(workspace=True)
+    # Marker success does not disable the workspace manager's independent recovery.
+    assert not store.session_recovery_due()
+    clock[0] = 70.
+    assert store.session_recovery_due()
+    workspace.fail_create = False
+    assert store.prepare_session()
+    assert store.session_ready(workspace=True)
+    assert workspace.lists == workspace.deletes == 1 and workspace.creates == 2
+    svc.runtime_stop.retry()
+    assert len(observation.commits) == 1
