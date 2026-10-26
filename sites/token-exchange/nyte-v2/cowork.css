@@ -13,7 +13,7 @@ ol.cw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;
 .cw-steps li::before{content:counter(v);display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--strong);border-radius:50%;font:500 13px var(--mono);color:var(--t1)}
 .cw-steps b{display:block;font-size:18px;font-weight:550;letter-spacing:-.015em}
 .cw-steps span{display:block;margin-top:4px;color:#E6F1EC;font-weight:450}
-.cw-screenshot{margin:0;min-width:0}
+.cw-screenshot{margin:0;min-width:0;padding:28px;background:var(--ver-bg);border:1px solid var(--ver-bd);border-radius:12px}
 .cw-screenshot img{display:block;width:100%;height:auto;border:1px solid var(--rule);border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
 .cw-boundary{margin-top:24px;font-size:19px;font-weight:450;color:var(--t1);max-width:33em}
 .cw-rules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:48px 0 40px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
@@ -52,8 +52,7 @@ ol.cw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;
   .cw-hero .lede{margin-bottom:20px}
   .cw-hero .btns{gap:10px}
   .cw-flow{margin-top:32px}
-  .cw-screenshot{margin-inline:calc(-1 * var(--gutter))}
-  .cw-screenshot img{border-radius:0;border-left:0;border-right:0}
+  .cw-screenshot{margin-inline:calc(-1 * var(--gutter));padding:12px;border-radius:0;border-left:0;border-right:0}
   .cw-hero .btns,.cw-download .btns{flex-direction:column}
   .cw-hero .btns .btn,.cw-download .btns .btn{flex:auto;width:100%;min-height:50px}
   .cw-rules>div{padding:26px 14px}
