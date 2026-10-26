@@ -149,7 +149,10 @@ lines, summed, are its counts. It prints JSON:
   the line's bound are counted `other`, so a non-zero `fields_other` means
   the two zero gates cannot be read as zero. Then
   `would_admit_python_refused` and its classes; `stale` by cache,
-  `followed` (every request the shadow compared) and `stale_rate`; the
+  `followed` (every request the shadow compared whose body did not name a
+  `cache_affinity_key`; those are counted under `affinity` alone, wherever
+  they passed, so neither `stale` nor `followed` moves for them) and
+  `stale_rate`; the
   decide path's `unavailable` answers by the insert's gRPC code; and
   `affinity_by_class` with `affinity_warm_share`: the requests naming a
   `cache_affinity_key`, which Go composes in the cold order to measure and

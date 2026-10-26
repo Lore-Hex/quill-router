@@ -1335,17 +1335,28 @@ or the remembered endpoint already first), or the remembered endpoint
 moved to the front of its model's run (the default partition) or of the
 list (`provider.sort.partition` none), or, with fallbacks off, kept as the
 one candidate at its own estimate (`affinity_warm`). The generator
-refuses a warm answer whose candidates are not the cold ones with one
-remembered endpoint so moved, or in which any member outside the first
-candidate's (`model`, `upstream_model`, `endpoint_id`, `provider`,
-`provider_name`, `inference_location`, `wafer_zdr_required`,
-`route_candidates`; with fallbacks off the estimate too) differs from the
-cold answer's. Go's tests hold the decision's 200 to `cold_response` byte
-for byte and Python's `response` to the case's class through the
-shadow's comparison (`checkAffinity`, `TestAffinityIsMeasuredNeverAdmitted`,
-`TestAffinityWarmIsPythonsRerank`), and that no such decision is
-admittable. Labels: `pass.body.cache_affinity` and `affinity.cold` or
-`affinity.warm`.
+holds Python's answer with the sessions remembered to
+`routing_state.rank`'s rule, written once, without side effects, in
+`scripts/fastpath/affinity_rule.py`: the candidates must be exactly the
+cold order re-ranked for the last session remembered (`remember`
+overwrites) when it is younger than 600 s, among the cold candidates (or,
+with fallbacks off, of the primary model) and `provider.order` names no
+provider: a stable sort by the model's first-seen rank (unless
+`provider.sort.partition` is none), the remembered endpoint first; else
+the cold order itself. It refuses any other candidates, and any answer
+in which a member outside the first candidate's (`model`,
+`upstream_model`, `endpoint_id`, `provider`, `provider_name`,
+`inference_location`, `wafer_zdr_required`, `route_candidates`; with
+fallbacks off the estimate too) differs from the cold answer's.
+`tests/test_fastpath_affinity_rule.py` feeds it the goldens' own answers
+and forbidden ones (a promotion under a `provider.order`, a move across
+models under the default partition, an expired or overwritten session, a
+changed tag or estimate) and sees the refusals. Go's tests hold the
+decision's 200 to `cold_response` byte for byte and Python's `response`
+to the case's class through the shadow's comparison (`checkAffinity`,
+`TestAffinityIsMeasuredNeverAdmitted`, `TestAffinityWarmIsPythonsRerank`),
+and that no such decision is admittable. Labels:
+`pass.body.cache_affinity` and `affinity.cold` or `affinity.warm`.
 
 ### 10.2 `fastpath/testdata/authorize_fingerprint_v1.json` (P1)
 
@@ -1544,14 +1555,20 @@ counts, per snapshot and policy digest:
   Go names pinned to its provider (`Decision.warmOf`,
   `fastpath/internal/edge/affinity.go`). The bytes must match whole, so
   nothing but the first candidate's members (and that estimate) differs.
-  Any other difference is `differ` with its fields. Every affinity result
-  is counted apart, by class, under `affinity=` on the count line
-  (`would_admit_python_refused.*`, `python_error.*` and the rest
-  included) and in none of the cohort's counts: not `classes`, `fields`,
-  `rows`, `decide`, `cohort` or `read_back`, so none of the I2 figures
-  below reads it. Rows are read back only for `affinity_cold`. The
-  would-admit alert fires for them as for any decision: Go's gates are
-  the same, only the order is not comparable.
+  Any other difference is `differ` with its fields. Every result of a
+  request naming a `cache_affinity_key` (as the strict parse reads it:
+  `Decided.Affinity`, known from the parse on) is counted apart, by
+  class, under `affinity=` on the count line, wherever the request
+  passed: `stale.<cache>`, `passed.<reason>`,
+  `python_answered_go_passed.<reason>`, `would_admit_python_refused.*`,
+  `python_error.*` and the rest included; and in none of the cohort's
+  counts: not `classes`, `fields`, `rows`, `decide`, `cohort` or
+  `read_back`, so none of the I2 figures below, `stale` and `followed`
+  among them, reads it. A body the strict parse refuses before it reads
+  the key (a `body.*` pass) is nobody's: counted with the cohort's
+  passes. Rows are read back only for `affinity_cold`. The would-admit
+  alert fires for them as for any decision: Go's gates are the same, only
+  the order is not comparable.
 - `would_admit_python_refused.<status>.<type>` (critical, a `CRITICAL` log
   line at once): Go would answer, Python answered a 4xx or its pause 503.
 - `python_answered_go_passed.<reason>`: Go would pass with the §3 reason,
@@ -1629,6 +1646,7 @@ answers, the scope taken, replays); zero `differ.estimate*` and zero
 `row.idempotency_fingerprint`, with no field counted `other` (a period's
 fields past the line's bound, which could hide either); zero
 `would_admit_python_refused` beyond key-revocation lag; the stale-pass rate
-(`stale` over every request the shadow followed) recorded. `fastpathwatch
+(`stale` over `followed`: every request the shadow compared whose body did
+not name a `cache_affinity_key`, those being `affinity`'s) recorded. `fastpathwatch
 edge` prints each figure. `decide on` for an operator-owned workspace first, then the pilot
 workspace.

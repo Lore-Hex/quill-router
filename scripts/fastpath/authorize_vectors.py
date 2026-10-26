@@ -76,6 +76,7 @@ from google.api_core.exceptions import (  # noqa: E402
 )
 from pydantic import ValidationError  # noqa: E402
 
+from scripts.fastpath import affinity_rule  # noqa: E402
 from tests.fakes.spanner import _SpannerModule, make_fake_store  # noqa: E402
 from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
@@ -644,9 +645,6 @@ def _reservation_row(row: dict[str, Any]) -> dict[str, Any]:
     return {**_row_timestamps(written, ("expires_at",)), "created_at": RESERVATION_CREATED_AT}
 
 
-_MISSING = object()
-
-
 def _session_key(world: dict[str, Any], body: dict[str, Any], region: str) -> tuple[str, str, str, str]:
     """The route's affinity session (gateway.py, ``rerank``): the key's hash,
     body.model, the region it chose and the cache affinity key."""
@@ -670,7 +668,7 @@ def _seeded_routing_state(case: dict[str, Any], sessions: tuple[tuple[str, float
 
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
     if case["_affinity"] is None:
-        return _run_case(case, ())
+        return {k: v for k, v in _run_case(case, ()).items() if k != "_models"}
     # A cache affinity key: Python's order with no session (the cold order,
     # which Go composes) and then with the case's sessions remembered.
     cold = _run_case(case, ())
@@ -683,35 +681,13 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     cold_ids = [c["endpoint_id"] for c in data["route_candidates"]]
     warm_data = json.loads(warm["expect"]["response"])["data"]
     warm_ids = [c["endpoint_id"] for c in warm_data["route_candidates"]]
-    if warm_ids == cold_ids:
-        if warm["expect"]["response"] != cold["expect"]["response"]:
-            raise AssertionError(f"{case['name']}: the same order, other bytes")
-        affinity_class = "affinity_cold"
-    else:
-        # Python's health re-rank moved one remembered endpoint to the front
-        # (of its model's run, or of the list), or, with fallbacks off, kept
-        # the remembered one in place of the first: nothing else changes.
-        seeded = {endpoint_id for endpoint_id, _age in case["_affinity"]}
-        if len(warm_ids) == len(cold_ids) == 1:
-            if warm_ids[0] not in seeded:
-                raise AssertionError(f"{case['name']}: the one candidate is not a remembered endpoint")
-        else:
-            if sorted(warm_ids) != sorted(cold_ids):
-                raise AssertionError(f"{case['name']}: the candidates are not the cold ones")
-            first = next(i for i, (w, c) in enumerate(zip(warm_ids, cold_ids, strict=True)) if w != c)
-            moved = warm_ids[first]
-            if moved not in seeded or warm_ids[first + 1:] != [c for c in cold_ids[first:] if c != moved]:
-                raise AssertionError(f"{case['name']}: not one remembered endpoint moved to the front")
-        # Nothing but the first candidate's members (and, with fallbacks
-        # off, the estimate) may change; wafer_zdr_required is written only
-        # under a Wafer first candidate.
-        first = {"model", "upstream_model", "endpoint_id", "provider", "provider_name", "inference_location",
-                 "wafer_zdr_required", "route_candidates"}
-        allowed = first | ({"estimated_cost", "estimated_cost_microdollars"} if len(cold_ids) == 1 else set())
-        changed = {k for k in set(data) | set(warm_data) if data.get(k, _MISSING) != warm_data.get(k, _MISSING)}
-        if not changed <= allowed:
-            raise AssertionError(f"{case['name']}: the session changed {sorted(changed - allowed)}")
-        affinity_class = "affinity_warm"
+    # The class, or a refusal: Python's warm candidates must be rank's
+    # re-rank of the cold order (provider.order and the sort partition
+    # respected, the session's age too), with nothing but the first
+    # candidate's members (and, with fallbacks off, the estimate) changed.
+    affinity_class = affinity_rule.affinity_class(
+        case["name"], json.loads(case["request"]["body"]), cold["expect"]["response"], warm["expect"]["response"],
+        case["_affinity"], cold["_models"].__getitem__)
     for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
         if cold["expect"][field] != warm["expect"][field]:
             raise AssertionError(f"{case['name']}: the session changed {field}")
@@ -725,7 +701,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                            "candidates": warm_ids, "cold_candidates": cold_ids,
                            "estimate_microdollars": warm_data["estimated_cost_microdollars"],
                            "cold_estimate_microdollars": data["estimated_cost_microdollars"]}}
-    return {**{k: v for k, v in cold.items() if k != "expect"}, "expect": expect}
+    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models")}, "expect": expect}
 
 
 def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
@@ -759,6 +735,9 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         stack.enter_context(given_ids(case["ids"]))
         stack.enter_context(leased_insert(case["insert"]))
         authorizations_before, reservations_before = set(database.gateway_authorizations), set(database.reservations)
+        # The fixture catalog's endpoint models (installed by pinned), for
+        # the affinity rule, which run_case applies outside it.
+        models = {endpoint_id: endpoint.model_id for endpoint_id, endpoint in MODEL_ENDPOINTS.items()}
         response = send(client, case["request"])
         authorizations = [row for k, row in database.gateway_authorizations.items() if k not in authorizations_before]
         reservations = [row for k, row in database.reservations.items() if k not in reservations_before]
@@ -770,7 +749,7 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
     reason = case["_reason"] if case["_affinity"] is None else None
     if reason is not None:
         error = _error(body) if response.status_code != 200 else {}
-        return {**world_rows, "expect": {"outcome": "pass", "reason": reason, "python": {
+        return {**world_rows, "_models": models, "expect": {"outcome": "pass", "reason": reason, "python": {
             "status": response.status_code, "type": error.get("type"), "leased": leased}}}
     if case["insert"] == "failed_precondition" and response.status_code != 503:
         # Python counts this code permanent and fails the request; Go cannot
@@ -779,13 +758,13 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         # Python's own 503 for the same request, recorded with what Python
         # answered here.
         error = _error(body) if response.status_code != 200 else {}
-        unknown = run_case({**case, "insert": "unknown_not_landed"})
+        unknown = _run_case({**case, "insert": "unknown_not_landed"}, sessions, region=region)
         unknown["expect"]["python"] = {"status": response.status_code, "type": error.get("type"), "leased": leased}
         return unknown
     if response.status_code == 503:
         if authorizations or [path for path, _sent in door.seen] != ["/v1/authorize"]:
             raise AssertionError(f"{case['name']}: a 503 that wrote or refunded")
-        return {**world_rows, "expect": {"outcome": "unavailable", "status": 503,
+        return {**world_rows, "_models": models, "expect": {"outcome": "unavailable", "status": 503,
                                          "headers": [["retry-after", response.headers["retry-after"]]],
                                          "response": body, "timing": json.loads(body)["data"]["timing"]}}
     if not (response.status_code == 200 and leased):
@@ -796,7 +775,7 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         raise AssertionError(f"{case['name']}: the route minted other ids")
     data = json.loads(body)["data"]
     fingerprint, material = recorder.seen[-1]
-    return {**world_rows, "expect": {
+    return {**world_rows, "_models": models, "expect": {
         "outcome": "answer", "status": 200, "response": body,
         "generation_id": data["generation_id"],
         "estimate_microdollars": data["estimated_cost_microdollars"],

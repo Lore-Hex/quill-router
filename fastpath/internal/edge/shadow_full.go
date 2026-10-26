@@ -481,21 +481,24 @@ type pythonIDs struct {
 // same.
 func compareFull(d Decided, a pyAnswer) fullResult {
 	read := a.why == ""
+	// A request naming a cache_affinity_key is measured apart wherever it
+	// passed (§11): a stale cache or a key's facts on one is affinity's
+	// count, not followed's or stale's; a composed decision is Go's cold
+	// order for the comparison alone (body.cache_affinity), no cohort
+	// member.
+	affinity := d.Affinity
 	if d.ForShadow() == nil {
 		reason := d.Pass
 		switch {
 		case strings.HasPrefix(reason, "cache."):
-			return fullResult{class: ClassStale + "." + strings.TrimPrefix(reason, "cache.")}
+			return fullResult{class: ClassStale + "." + strings.TrimPrefix(reason, "cache."), affinity: affinity}
 		case a.status == http.StatusOK:
-			return fullResult{class: ClassPythonAnsweredGoPassed + "." + reason}
+			return fullResult{class: ClassPythonAnsweredGoPassed + "." + reason, affinity: affinity}
 		case a.status == 0:
-			return fullResult{class: ClassUnread + "." + a.why}
+			return fullResult{class: ClassUnread + "." + a.why, affinity: affinity}
 		}
-		return fullResult{class: ClassGoPassed + "." + reason}
+		return fullResult{class: ClassGoPassed + "." + reason, affinity: affinity}
 	}
-	// An affinity decision is measured apart: Go composed it for the
-	// comparison alone (body.cache_affinity), so it is no cohort member.
-	affinity := d.ForShadow().Affinity
 	r := fullResult{decided: !affinity, affinity: affinity, gate: d.DecideGate}
 	if !read {
 		switch {

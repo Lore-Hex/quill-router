@@ -266,6 +266,11 @@ type Decided struct {
 	// Read is what the cache held for the lookup hash (zero when not
 	// looked up).
 	Read gwstate.Read
+	// Affinity is whether the body, as the strict parse read it, names a
+	// cache_affinity_key: known from the parse on, so a pass after it (a
+	// cold cache, a key's facts, the evaluator) is counted under the
+	// shadow's affinity tally, never with the cohort's (§11, G13).
+	Affinity bool
 }
 
 // Admit is the decision the edge may admit: one, and true, only when every
@@ -301,7 +306,7 @@ func Decide(in DecideInputs) Decided {
 		return passDecided(p.Reason)
 	}
 	at := in.Request.At
-	out := Decided{LookupHash: r.APIKeyLookupHash}
+	out := Decided{LookupHash: r.APIKeyLookupHash, Affinity: r.CacheAffinity}
 	pass := func(reason string) Decided {
 		out.Pass = reason
 		return out

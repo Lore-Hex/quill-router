@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -701,6 +702,41 @@ func TestAffinityIsCountedApart(t *testing.T) {
 	if !strings.Contains(logs, "agree_full=0 differ=0 would_admit_python_refused=0 read_back=0 classes={} fields={} "+
 		"rows={} decide={} cohort={} affinity={\"differ\":1}") {
 		t.Fatalf("the summary: %s", logs)
+	}
+}
+
+// TestAnAffinityRequestPassedBeforeTheComposeIsAffinitys (§11): a request
+// naming a cache_affinity_key that passes before the compose, here on a
+// cold key cache, is counted affinity.stale.key, in no class the cohort's
+// stale and followed figures read; the same pass on a request without the
+// key is stale.key.
+func TestAnAffinityRequestPassedBeforeTheComposeIsAffinitys(t *testing.T) {
+	f := authorizeGoldens(t)
+	for _, v := range []struct {
+		name     string
+		affinity bool
+	}{
+		{"pass:body.cache_affinity:warm", true},
+		{"answer:app_categories_empty", false},
+	} {
+		c := authorizeCaseNamed(t, v.name)
+		h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) {
+			cold, err := gwstate.NewCache(gwstate.CacheConfig{Reader: &fakeWorld{c: c, slow: time.Second}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(cold.Close)
+			cfg.Cache = &recordingCache{KeyCache: cold}
+		})
+		h.answer(answerWith(200, []byte(`{"data":{"idempotent_replay":false}}`)))
+		h.send(t, c)
+		got := h.edge.DecideShadowCounts()
+		want := map[string]int{ClassStale + ".key": 1}
+		if v.affinity && (!maps.Equal(got.Affinity, want) || len(got.Classes) != 0) ||
+			!v.affinity && (!maps.Equal(got.Classes, want) || len(got.Affinity) != 0) {
+			t.Errorf("%s: classes %v affinity %v, want %v under %s", v.name, got.Classes, got.Affinity, want,
+				map[bool]string{true: "affinity", false: "classes"}[v.affinity])
+		}
 	}
 }
 
