@@ -44,7 +44,8 @@ ol.cw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;
   .cw-hero::before{content:none}
   .cw-hero .inner{padding:0 0 32px}
   .cw-intro{display:flex;flex-direction:column;min-height:calc(100svh - var(--header) - 160px);padding:12px 0 24px}
-  .cw-hero .cw-intro .btns{margin-top:auto}
+  .cw-hero .cw-intro h1{margin-top:auto}
+  .cw-hero .cw-intro .btns{margin-top:0}
   .cw-meta{margin-top:24px}
   .cw-hero h1,.cw-hero .lede,.cw-meta{text-shadow:none}
   .cw-hero h1{margin-bottom:14px}
