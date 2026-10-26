@@ -266,7 +266,9 @@ fastpathctl -database $DB decide on WORKSPACE -cloud gcp -region us-central1
 or after the workspace; the region is the authorizations'
 (`choose_region(body.region)`, decision 10), so a request of the
 workspace whose region is another passes `decide.off` on reaching the
-row (`body.cache_affinity` if it names a key). It writes one row,
+row with the copy fresh (`cache.decide` with it unread or stale, which
+the gate checks before it looks the row up, `DecideView.gate`;
+`body.cache_affinity` if it names a key). It writes one row,
 `(WORKSPACE, gcp,
 us-central1, true, changed_at)`, `changed_at` the commit's timestamp
 (`store/decide.go`, `SetDecide`), and answers
@@ -284,10 +286,15 @@ count line rises with the workspace's requests that the route sent that
 node, that passed every gate, that the owner admitted and whose rows were
 inserted, or read back and found ours (`decide_path.go`: `Inserted` and
 `Landed` alone count it, `read_back` the latter), and those of its
-requests that reach the row no longer count `decide.off`. If `answered`
-stays 0 while the workspace sends, the line's `passed` by reason says
-where its requests went: an eligibility gate, `body.cache_affinity`, the
-admit (`owner.*`, `budget.spent`) or the insert (`insert.*`):
+requests that reach the row with a fresh copy, for the row's cloud and
+region, no longer count `decide.off` (one whose region resolves
+elsewhere still does: the lookup is by workspace, cloud and region,
+`DecideView.gate`). If `answered` stays 0 while the workspace sends, the
+line's `passed` by reason says where its requests went (an eligibility
+gate, `body.cache_affinity`, the admit: `owner.*` and `budget.spent`, or
+the insert: `insert.*`), and `unavailable` with `unavailable_by_code`
+counts those answered 503 for an insert of unknown outcome, which
+neither `answered` nor `passed` counts:
 
 ```bash
 gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide:"' \
@@ -384,7 +391,10 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   the shadow's: it counts the requests naming a `cache_affinity_key`
   (as `body.cache_affinity` when they reach the row, else at the earlier
   gate they tripped, `cache.key` for one), which the shadow's classes and
-  `i2.stale_rate` leave out, and a stale decide copy is a pass here where
+  `i2.stale_rate` leave out once the body was parsed (a request the boot
+  check passes before the parse carries no affinity flag, `decide.go`,
+  `bootPass` before `ParseRequest`, and is counted with the cohort's
+  passes on both sides), and a stale decide copy is a pass here where
   the shadow still compares the decision (`shadow_full.go`, `ForShadow`),
   so its shares are not the shadow's rates. Read it as counts: against
   the same node's lines of the hour before, and after a day against the
