@@ -366,8 +366,12 @@ def finish_candidates(
     user_model_prices: tuple[int, int] | None = None,
     partner_mode: PartnerBillingMode | None = None,
     rerank: Rerank | None = None,
+    stream: bool = False,
 ) -> CandidateOutcome:
     """Admit, order and price the candidates.
+
+    ``stream`` is the request's stream flag: a stream's reservation is its
+    estimate for now (see ``hold_output_tokens``).
 
     ``byok_providers`` are the provider slugs whose BYOK credentials the
     workspace holds; a BYOK candidate of any other provider is dropped.
@@ -463,8 +467,17 @@ def finish_candidates(
 
         model_estimate = priciest(output_tokens)
         # A video's output tokens are video tokens and its settle is held to
-        # the ceiling: its reservation is the ceiling.
-        reserved_output_tokens = output_tokens if route_type == "videos" else hold_output_tokens(output_tokens)
+        # the ceiling: its reservation is the ceiling. A stream's reservation
+        # is the ceiling too, for now: the Stage D heartbeat reader deployed
+        # before this change bounds a stream's running charge by the
+        # reservation row's credit hold, so a mixed-version deploy or a
+        # rollback would cut a stream admitted with a lower reservation at
+        # usage_exceeds_cap. Follow-up: lower stream reservations once every
+        # plane runs the reader that caps at the estimate
+        # (docs/design/fast-admission-e2-decide.md, "The two figures").
+        reserved_output_tokens = (
+            output_tokens if route_type == "videos" or stream else hold_output_tokens(output_tokens)
+        )
         model_reservation = (
             model_estimate if reserved_output_tokens == output_tokens else priciest(reserved_output_tokens)
         )
@@ -491,11 +504,15 @@ def hold_output_tokens(output_tokens: int) -> int:
     exports it as ``cap_micro`` and cuts a stream whose running charge passes
     it, the heartbeat refuses usage above it, a video's settle and a
     user-provided model's settle are held to it, and the Go reaper charges an
-    abandoned hold at most its hold. The RESERVATION (``model_reservation``,
-    the reservation row's ``credit_reserved_micro`` and ``key_reserved_micro``,
-    the lease hold on the fast path) is what admission compares with the
-    available balance and what the counters hold until settle: the same price
-    at the output tokens this function bounds.
+    abandoned hold at most its hold. Key admission (the lifetime cap, the
+    spend windows, the strict windows) compares it too, and the reservation
+    row's ``key_reserved_micro`` records it: a key cap counts outstanding
+    spend ceilings. The RESERVATION (``model_reservation``, the reservation
+    row's ``credit_reserved_micro``, the lease hold on the fast path) is what
+    workspace credit admission compares with the available balance and what
+    the credit counters hold until settle: the same price at the output
+    tokens this function bounds. A stream's reservation is its estimate for
+    now (``finish_candidates``, ``stream``).
 
     The budget is a ceiling, not a forecast: a client sending the model's
     whole output window as ``max_tokens`` held the window's worst case per
@@ -505,10 +522,13 @@ def hold_output_tokens(output_tokens: int) -> int:
 
     A catalog text route's settle is capped at neither figure (a video's, a
     user-provided model's and Polyphemus's settle are held to the estimate,
-    which is also their reservation), so the uncovered cost of an in-flight
-    request is ``max(0, actual minus reservation)``: at most the estimate
-    minus the reservation while the provider honours the budget, the output
-    past 16,384 tokens at the selected candidate's rate.
+    which is also their reservation), and nothing in authorize bounds the
+    charge (cache-creation premiums and counts above the budget settle in
+    full), so the uncovered cost of an in-flight request,
+    ``max(0, actual minus reservation)``, has no bound of its own; against
+    the single hold at the estimate it was ``max(0, actual minus estimate)``,
+    so the bound here raises it by at most the estimate minus the
+    reservation.
     """
     return min(output_tokens, HOLD_OUTPUT_TOKENS)
 

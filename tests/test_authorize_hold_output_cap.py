@@ -221,3 +221,41 @@ def test_a_key_spend_limit_compares_the_estimate_on_the_legacy_path(
     })
     assert refused.status_code == 402, refused.text
     assert refused.json()["error"]["type"] == "key_limit_exceeded"
+
+
+def test_a_stream_with_max_tokens_131072_reserves_its_whole_budget_for_now(
+    client: TestClient, user_headers: dict[str, str],
+) -> None:
+    """Until every plane runs the Stage D heartbeat reader that caps at the
+    estimate, a stream's reservation is its estimate: the reader deployed
+    before this change would cut a stream admitted with a lower one."""
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "stream hold"}).json()
+    key_hash, workspace_id = created["data"]["hash"], created["data"]["workspace_id"]
+    reserved_before = STORE.credit_money[workspace_id].reserved_microdollars
+    response = client.post("/v1/internal/gateway/authorize", json={
+        "api_key_hash": key_hash, "model": MODEL, "estimated_input_tokens": 8_000, "max_tokens": 131_072,
+        "stream": True, "idempotency_key": "stream-hold:131072",
+    })
+    assert response.status_code == 200, response.text
+    authorization = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert authorization is not None
+    reserved = STORE.credit_money[workspace_id].reserved_microdollars - reserved_before
+    assert reserved == authorization.estimated_microdollars
+    at_the_bound, _reserved_at_the_bound = _figures(client, key_hash, workspace_id, "max_tokens", HOLD_OUTPUT_TOKENS)
+    assert reserved > at_the_bound
+
+
+def test_sharded_credit_headroom_is_judged_for_the_reservation() -> None:
+    """Two credit shards of 16,434 each hold the 32,868 reservation between
+    them: the cold-path headroom precheck and the shard rebalance consolidate
+    for the credit hold, not for the 262,244 estimate."""
+    from tests.test_credit_rebalance_contention import _seed, _set_credit_rows
+
+    store, database, key = _seed([16_434, 16_434], workspace_id="sharded-workspace")
+    _set_credit_rows(database, [16_434, 16_434], workspace_id="sharded-workspace")
+    workspace = Workspace(id="sharded-workspace", name="Sharded", owner_user_id="user-1")
+    store._write_entity("workspace", workspace.id, workspace)
+    outcome = _typed_authorize(store, workspace, key, estimate=ESTIMATE, reservation=RESERVATION)
+    assert outcome == "accepted", outcome
+    reserved = sum(row["reserved"] for (ws, _shard), row in database.typed[CREDIT_BALANCE_TABLE].items() if ws == workspace.id)
+    assert reserved == RESERVATION

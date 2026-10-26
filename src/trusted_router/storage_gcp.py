@@ -5823,7 +5823,8 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     shard_count=len(candidates),
                     target_shard=candidates[0],
-                    estimate=estimate,
+                    # The credit shards are consolidated for the credit hold.
+                    estimate=hold,
                 )
 
             # A concurrent request can consume the newly consolidated target
@@ -5842,7 +5843,8 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     shard_count=len(credit_shard_candidates),
                     shard_candidates=credit_shard_candidates,
-                    estimate=estimate,
+                    # Aggregate credit headroom is judged for the credit hold.
+                    estimate=hold,
                 )
                 verdict = precheck.outcome
                 if verdict == rebalance_mod.RebalanceOutcome.INSUFFICIENT:

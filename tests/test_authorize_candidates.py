@@ -213,3 +213,18 @@ def test_hold_output_tokens_is_the_bound_both_paths_share() -> None:
     assert hold_output_tokens(512) == 512
     evaluator = (ROOT / "fastpath" / "internal" / "routingsnapshot" / "evaluate.go").read_text()
     assert f"const HoldOutputTokens = {HOLD_OUTPUT_TOKENS:_}" in evaluator
+
+
+def test_a_stream_reserves_its_whole_budget_for_now() -> None:
+    """The Stage D heartbeat reader deployed before this change bounds a
+    stream's running charge by the credit hold, so a stream's reservation
+    stays its estimate until every plane runs the reader that caps at the
+    estimate (finish_candidates, ``stream``)."""
+    request, plan, resolved = _candidates(_multi_route_chat_model())
+    outcome = finish_candidates(
+        plan, resolved, route_type=request.route_type, byok_providers=frozenset(),
+        estimated_input_tokens=1_000, output_tokens=131_072, service_tier=None,
+        additional_cost_reservation=0, video_resolution=None, at=AT, stream=True,
+    )
+    assert outcome.model_reservation == outcome.model_estimate == _credits_cost(resolved, 131_072)
+    assert outcome.model_reservation > _credits_cost(resolved, HOLD_OUTPUT_TOKENS)

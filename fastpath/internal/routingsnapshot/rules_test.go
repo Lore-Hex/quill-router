@@ -254,4 +254,12 @@ func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 		t.Errorf("max_tokens %d: reservation %d, want below %d; estimate %d, want the reservation",
 			HoldOutputTokens-1, reservation, bound, estimate)
 	}
+	// A stream's reservation is its estimate for now (the Stage D heartbeat
+	// reader deployed before this bounds a stream by the credit hold).
+	r := baseRequest()
+	r.Model, r.MaxTokens, r.Stream = "google/gemini-3.1-pro-preview", ptr(int64(131_072)), ptr(true)
+	if got := s.Evaluate(r); got.Outcome != Answered || got.Reservation != got.ModelEstimate || got.Reservation <= bound {
+		t.Errorf("a stream with max_tokens 131,072: reservation %d, want the estimate %d (above %d): %+v",
+			got.Reservation, got.ModelEstimate, bound, got.Refusal)
+	}
 }

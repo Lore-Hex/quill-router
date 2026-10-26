@@ -409,3 +409,17 @@ def test_the_facts_are_the_stored_rows_in_section_10_3s_shapes() -> None:
     for name in names:
         tags = by_name[name]["facts"]["key"]["tags"]
         assert len(tags) == 2 and tags == sorted(tags), name
+
+
+def test_a_streams_reservation_is_its_estimate_for_now() -> None:
+    """Go passes a stream to Python (body.stream); Python's typed store
+    reserved the whole budget's price, where the same non-stream request
+    reserves at most HOLD_OUTPUT_TOKENS of it (§5, "The two figures")."""
+    by_name = {case["name"]: case["expect"] for case in [*_cases("answer"), *_cases("pass")]}
+    flash = "deepseek/deepseek-v4-flash:1000+131072"
+    answered = by_name[f"answer:estimate:hold_cap:{flash}"]
+    streamed = by_name[f"pass:body.stream:hold_cap:{flash}"]["python"]
+    assert streamed["status"] == 200 and not streamed["leased"]
+    assert streamed["reservation_microdollars"] == answered["estimate_microdollars"] > answered["reservation_microdollars"]
+    at_the_bound = by_name["pass:body.stream:hold_cap:deepseek/deepseek-v4-flash:1000+16384"]["python"]
+    assert at_the_bound["reservation_microdollars"] == answered["reservation_microdollars"]

@@ -41,8 +41,8 @@ type Request struct {
 	// RequestedParameters and InputModalities are nil when absent.
 	RequestedParameters []string
 	InputModalities     []string
-	// Stream is the body's stream flag (nil when absent); only the Stage D
-	// reason reads it.
+	// Stream is the body's stream flag (nil when absent): the Stage D reason
+	// reads it, and a stream's reservation is its estimate.
 	Stream *bool
 	// BYOKProviders are the provider slugs whose BYOK credentials the
 	// workspace holds.
@@ -371,8 +371,17 @@ func (s *Snapshot) Evaluate(req Request) Result {
 
 	// The estimate prices the whole budget; the reservation prices at most
 	// HoldOutputTokens of it. The window check above took the whole budget.
+	// A stream's reservation is its estimate for now, as Python's
+	// finish_candidates has it: the Stage D heartbeat reader deployed before
+	// this bounds a stream's running charge by the credit hold, so a lower
+	// stream reservation would be cut in a mixed-version deploy or a
+	// rollback. Follow-up: lower stream reservations once every plane runs
+	// the reader that caps at the estimate (fast-admission-e2-decide.md §5).
 	usage := Usage{InputTokens: prompt, OutputTokens: outputTokens}
 	reserved := Usage{InputTokens: prompt, OutputTokens: min(outputTokens, HoldOutputTokens)}
+	if req.Stream != nil && *req.Stream {
+		reserved = usage
+	}
 	estimate, reservation := new(big.Int), new(big.Int)
 	out := Result{Outcome: Answered, ServiceTier: tier}
 	for _, i := range admitted {

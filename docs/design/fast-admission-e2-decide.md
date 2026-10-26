@@ -561,12 +561,22 @@ within the budget can still settle above the estimate. An in-flight
 request's uncovered cost is `max(0, actual - reservation)`, with no bound
 of its own. What the split changes is bounded: against a single hold at
 the estimate it was `max(0, actual - estimate)`, so the split raises the
-uncovered cost of a request by at most the estimate minus the reservation
-(a candidate cheaper than the priciest can pass 16,384 tokens without
-passing the reservation, and only the output past 16,384 tokens at the
-selected candidate's rate reaches that difference). The reservation is not in the 200 body or on the authorization row;
+uncovered cost of a request by at most the estimate minus the reservation,
+whatever makes up the charge. The reservation is not in the 200 body or on the authorization row;
 the goldens (§10.1) record it as `reservation_microdollars` from what the
 front door was asked.
+
+**Streams.** A stream's reservation is its estimate for now, in
+`finish_candidates` (`stream`) and in the evaluator (`Request.Stream`)
+alike: the Stage D heartbeat reader deployed before this change bounds a
+stream's running charge by the reservation row's `credit_reserved_micro`,
+so during a mixed-version deploy or a rollback a stream admitted with a
+lower reservation would be cut at `usage_exceeds_cap` by an instance
+running that reader. Non-stream requests take the reduced reservation now.
+Follow-up: lower stream reservations once every plane runs the reader that
+caps at the estimate (`storage_gcp_stage_d._cap_micro` here); the change
+is the one `or stream` in `finish_candidates` and the `req.Stream` branch
+in `Evaluate`, with the `hold_cap` goldens' stream cases.
 
 Absent, because `None` with a `None` default: `key_reserved_microdollars`,
 `custom_model_id`, `custom_model_revision`, `user_provided_model_id`,
