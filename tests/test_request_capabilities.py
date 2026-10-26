@@ -75,7 +75,8 @@ def test_catalog_models_publish_verified_unions_and_unknown_effort(client):
     assert response.status_code == 200
     rows = {row["id"]: row for row in response.json()["data"]}
     expected = {
-        "openai/gpt-5.5": dict(reasoning_effort=["none", "low", "medium", "high", "xhigh"], tools=True, seed=True, vision=True, confidential=False),
+        # Reseller-only seed declarations cannot widen the direct OpenAI contract.
+        "openai/gpt-5.5": dict(reasoning_effort=["none", "low", "medium", "high", "xhigh"], tools=True, seed=False, vision=True, confidential=False),
         # Native Mistral discovery declares vision for both generations;
         # Large 4's reasoning support does not imply known effort values.
         "mistralai/mistral-large": dict(reasoning_effort=[], tools=True, seed=False, vision=True, confidential=False),
