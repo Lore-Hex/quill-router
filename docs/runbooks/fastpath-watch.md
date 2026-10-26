@@ -140,7 +140,7 @@ weight's apply), from the lines' timestamps per node (the read below, by
 re-pin the nodes still on the old release keep logging until each is
 restarted, so the last node's restart is the change. The report's
 `periods` then shows every node contributing one line a minute from
-`-since` on. The gates are a sample, not a calendar: at least 10,000
+`-since` on. The gates are a sample, not a calendar: at least 3,000
 comparable requests over at least 24 hours and at least three policy and
 two snapshot digests among them, and the ratios and zero counts below.
 

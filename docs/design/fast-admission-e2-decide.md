@@ -1704,13 +1704,18 @@ the edge or 25 s in all `edge_decide_pass_slow`; each kind has its policy
 (`docs/runbooks/fastpath-alerts.md`).
 
 **I2 gates:** a sample, not a calendar. The shadow has compared at least
-10,000 comparable requests (`agree_full` plus `differ`: Go would answer
+3,000 comparable requests (`agree_full` plus `differ`: Go would answer
 and Python answered a 200 that is not a replay; `affinity_cold` and
 `affinity_warm` are not comparable), spanning at least 24 hours of wall
 clock and at least three distinct policy digests and two distinct
 snapshot digests, all read with `fastpathwatch edge -since` the start of
 the current release's soak: the counts from before a node re-pin or a
-route weight change are kept apart and do not count. Each count line
+route weight change are kept apart and do not count. The bar is 3,000 because I2
+begins with one workspace and widens one group at a time, each widening
+read against the same ratio and zero-count gates on its own traffic: the
+sample proves Go's answer matches Python's on the cohort, and at 3,000
+a defect on 0.2% of requests is seen at least once with probability
+99.75% (1 - 0.998^3000), while a defect on 0.1% is seen with 95%. Each count line
 carries the period (a minute) before its timestamp, and `-since` selects
 lines by timestamp, so the sample starts at the first count line on every
 node that is a full period after the last change, the last node's restart
