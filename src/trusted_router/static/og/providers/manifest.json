@@ -64,10 +64,10 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "arcee"
   },
@@ -613,10 +613,10 @@
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 19,
+    "model_count": 20,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 19,
+    "route_count": 20,
     "route_mode": "Prepaid",
     "slug": "nscale"
   },
@@ -838,10 +838,10 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 21,
+    "model_count": 20,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 21,
+    "route_count": 20,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
