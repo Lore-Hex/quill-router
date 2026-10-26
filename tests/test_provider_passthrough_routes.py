@@ -8,6 +8,7 @@ from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.catalog_ingest import _filter_unserved_provider_endpoints
 from trusted_router.provider_contracts import (
     PROVIDER_INCIDENT_HOLD_REASONS,
+    provider_model_is_openai_reseller,
     provider_model_operator_held,
 )
 
@@ -88,7 +89,7 @@ def test_openai_resellers_are_blocked_even_with_fresh_or_explicit_routes(
     template = next(iter(MODEL_ENDPOINTS.values()))
     endpoint = replace(template, id="reseller", provider=provider, model_id=model_id,
                        upstream_id=model_id.removeprefix("openai/"), usage_type=usage_type)
-    assert provider_model_operator_held(provider, model_id, endpoint.upstream_id)
+    assert provider_model_is_openai_reseller(provider, model_id)
     assert _filter_unserved_provider_endpoints(
         {endpoint.id: endpoint}, explicit_model_ids=frozenset({model_id}),
     ) == {}
@@ -139,3 +140,26 @@ def test_catalog_cannot_publish_proprietary_openai_resellers() -> None:
     assert any(endpoint.provider == "openai" and endpoint.usage_type == "BYOK" for endpoint in endpoints)
     assert any(endpoint.provider == "azure" and endpoint.model_id.startswith("openai/") for endpoint in endpoints)
     assert any(endpoint.provider == "gmi" and endpoint.model_id == "openai/gpt-oss-120b" for endpoint in endpoints)
+
+
+def test_reseller_tariffs_are_available_only_to_previously_authorized_requests() -> None:
+    from types import SimpleNamespace
+
+    from trusted_router.catalog import endpoint_for_id, endpoints_for_model
+    from trusted_router.catalog_registry import HELD_POLICY_SETTLEMENT_ENDPOINTS
+    from trusted_router.routes.internal.gateway import _select_authorized_endpoint
+    from trusted_router.schemas import GatewaySettleRequest
+
+    assert HELD_POLICY_SETTLEMENT_ENDPOINTS
+    for identity, endpoint in HELD_POLICY_SETTLEMENT_ENDPOINTS.items():
+        assert provider_model_is_openai_reseller(endpoint.provider, endpoint.model_id)
+        assert endpoint_for_id(identity) is None
+        assert endpoint not in endpoints_for_model(endpoint.model_id)
+        auth = SimpleNamespace(
+            user_provided_model_id=None, model_id=endpoint.model_id,
+            endpoint_id=identity, candidate_endpoint_ids=[identity],
+        )
+        body = GatewaySettleRequest(authorization_id="previously-authorized", selected_endpoint=identity)
+        assert _select_authorized_endpoint(auth, body) == endpoint
+        auth.candidate_endpoint_ids = ["unrelated@openai/prepaid"]
+        assert _select_authorized_endpoint(auth, body) is None

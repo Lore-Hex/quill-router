@@ -5882,9 +5882,15 @@ def _endpoint_for_id_compat(endpoint_id: str) -> ModelEndpoint | None:
 
     # This helper is settlement-only, after the authorization's endpoint IDs
     # have been checked. A hold must not strand pre-hold charges or refunds.
-    from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
+    from trusted_router.catalog_registry import (
+        HELD_POLICY_SETTLEMENT_ENDPOINTS,
+        HELD_PREPAID_SETTLEMENT_ENDPOINTS,
+    )
 
-    held_endpoint = HELD_PREPAID_SETTLEMENT_ENDPOINTS.get(endpoint_id)
+    held_endpoint = (
+        HELD_PREPAID_SETTLEMENT_ENDPOINTS.get(endpoint_id)
+        or HELD_POLICY_SETTLEMENT_ENDPOINTS.get(endpoint_id)
+    )
     if held_endpoint is not None:
         return held_endpoint
 

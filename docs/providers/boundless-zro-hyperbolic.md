@@ -13,6 +13,9 @@ restriction applies to prepaid and BYOK routes, including explicit media
 registrations, and cannot be cleared by an hourly catalog refresh. Independent
 GPT-OSS and Whisper weight hosting remains eligible; it is not an OpenAI API
 wrapper. Provider privacy labels still apply to each actual hosting route.
+Previously authorized calls retain settlement-only route metadata so a rolling
+deployment does not strand a charge or refund. Those records never become new
+routing candidates or public endpoints.
 
 ## Discovery and pricing
 

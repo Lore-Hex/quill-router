@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
-from trusted_router.catalog import MODELS, PROVIDERS, endpoint_for_id
+from trusted_router.catalog import MODELS, PROVIDERS
 from trusted_router.errors import api_error
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.schemas import (
@@ -88,7 +88,9 @@ def _prepare(
         allowed_endpoint_ids.add(authorization.endpoint_id)
     if body.endpoint_id not in allowed_endpoint_ids:
         raise api_error(400, "Video endpoint was not authorized", ErrorType.BAD_REQUEST)
-    endpoint = endpoint_for_id(body.endpoint_id)
+    from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
+
+    endpoint = _endpoint_for_id_compat(body.endpoint_id)
     if endpoint is None or endpoint.model_id != body.model or endpoint.provider != body.provider:
         raise api_error(
             400, "Video provider does not match the authorized endpoint", ErrorType.BAD_REQUEST
@@ -250,7 +252,9 @@ def register(router: APIRouter) -> None:
         endpoint_id = body.endpoint_id or existing.endpoint_id
         provider_model = body.provider_model or existing.provider_model
         quoted_microdollars = existing.quoted_microdollars if body.quoted_microdollars is None else body.quoted_microdollars
-        endpoint = endpoint_for_id(endpoint_id)
+        from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
+
+        endpoint = _endpoint_for_id_compat(endpoint_id) if endpoint_id in allowed_endpoint_ids else None
         if (
             endpoint_id not in allowed_endpoint_ids
             or endpoint is None

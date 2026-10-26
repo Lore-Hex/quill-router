@@ -62,6 +62,7 @@ from trusted_router.provider_contract import (
 from trusted_router.provider_contracts import (
     INPUT_ONLY_PROVIDER_MODELS,
     PREPAID_PROVIDER_HOLD_REASONS,
+    provider_model_is_openai_reseller,
     provider_model_operator_held,
     provider_model_uses_passthrough_retail_price,
 )
@@ -1762,6 +1763,9 @@ def _filter_unserved_provider_endpoints(
         allow[provider_slug] = _authoritative_provider_model_ids(provider_slug, at=at)
 
     def _keep(endpoint: ModelEndpoint) -> bool:
+        # Apply at final admission, after retaining the old settlement tariff.
+        if provider_model_is_openai_reseller(endpoint.provider, endpoint.model_id):
+            return False
         if provider_model_operator_held(endpoint.provider, endpoint.model_id, endpoint.upstream_id):
             return False
         if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS:

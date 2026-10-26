@@ -306,13 +306,24 @@ def test_video_idempotency_binds_request_not_fresh_provider_quote(
     assert mismatch.status_code == 409
 
 
+@pytest.mark.parametrize("policy_held", [False, True])
 def test_video_job_state_is_content_free_idempotent_and_key_scoped(
     client: TestClient,
     inference_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+    policy_held: bool,
 ) -> None:
     auth = _authorize_video(client, inference_key)
     endpoint = endpoint_for_id(str(auth["endpoint_id"]))
     assert endpoint is not None
+    if policy_held:
+        from trusted_router.catalog_registry import (
+            HELD_POLICY_SETTLEMENT_ENDPOINTS,
+            MODEL_ENDPOINTS,
+        )
+
+        monkeypatch.setitem(HELD_POLICY_SETTLEMENT_ENDPOINTS, endpoint.id, endpoint)
+        monkeypatch.delitem(MODEL_ENDPOINTS, endpoint.id)
     prepare_body = {
         "job_id": "job-0123456789abcdef",
         "authorization_id": auth["authorization_id"],

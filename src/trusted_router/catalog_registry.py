@@ -205,7 +205,10 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     customer_fixed_price_microdollars,
     select_price_tier,
 )
-from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+from trusted_router.provider_contracts import (
+    PREPAID_PROVIDER_HOLD_REASONS,
+    provider_model_is_openai_reseller,
+)
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.request_capabilities import normalize_request_capabilities
 from trusted_router.speech import SPEECH_MODELS
@@ -1753,6 +1756,12 @@ HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
     if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
 }
 HELD_PREPAID_SETTLEMENT_ENDPOINTS.update(_HELD_DECISION_ENDPOINTS)
+# Preserve tariffs for requests authorized before the no-reseller policy.
+# This is never included in admission, public models, or routing snapshots.
+HELD_POLICY_SETTLEMENT_ENDPOINTS = {
+    identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
+    if provider_model_is_openai_reseller(endpoint.provider, endpoint.model_id)
+}
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS) | frozenset(TRANSCRIPTION_MODELS) | {FETCH_MODEL_ID},

@@ -128,16 +128,18 @@ EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 # a supported egress region without bypassing Sakana's geographic policy.
 
 
+def provider_model_is_openai_reseller(provider_slug: str, model_id: str) -> bool:
+    return (
+        model_id.startswith("openai/")
+        and provider_slug not in _OPENAI_DIRECT_PROVIDERS
+        and not model_id.startswith(_OPENAI_HOSTED_WEIGHT_PREFIXES)
+    )
+
+
 def provider_model_operator_held(
     provider_slug: str, model_id: str, upstream_id: str | None = None,
 ) -> bool:
     if provider_slug in PROVIDER_INCIDENT_HOLD_REASONS:
-        return True
-    if (
-        model_id.startswith("openai/")
-        and provider_slug not in _OPENAI_DIRECT_PROVIDERS
-        and not model_id.startswith(_OPENAI_HOSTED_WEIGHT_PREFIXES)
-    ):
         return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id
