@@ -184,7 +184,10 @@ func New(cfg Config) (*FrontDoor, error) {
 type AuthorizeOf struct {
 	Workspace string
 	// Request is the request's own hash, which picks its shard (§4.3).
-	Request  string
+	Request string
+	// Estimate is the credit reservation the lease holds (Python's
+	// _fastpath_admission sends the reservation, the edge
+	// Decision.Reservation), not the authorization row's spend ceiling.
 	Estimate int64
 	Stream   bool
 	Boot     []byte

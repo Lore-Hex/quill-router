@@ -41,8 +41,8 @@ type Request struct {
 	// RequestedParameters and InputModalities are nil when absent.
 	RequestedParameters []string
 	InputModalities     []string
-	// Stream is the body's stream flag (nil when absent); only the Stage D
-	// reason reads it.
+	// Stream is the body's stream flag (nil when absent): the Stage D reason
+	// reads it, and a stream's reservation is its estimate.
 	Stream *bool
 	// BYOKProviders are the provider slugs whose BYOK credentials the
 	// workspace holds.
@@ -59,7 +59,9 @@ type Request struct {
 	// MaxTokens, MaxCompletionTokens and MaxOutputTokens are the body's
 	// fields (nil when absent). The window must also hold max_tokens, else
 	// max_completion_tokens (max_output_tokens does not count); the estimate
-	// prices the first of the three present, else 512 (output_estimate).
+	// prices the first of the three present, else 512 (output_estimate);
+	// the reservation prices at most HoldOutputTokens of it, or the whole
+	// budget for a stream (for now).
 	MaxTokens           *int64
 	MaxCompletionTokens *int64
 	MaxOutputTokens     *int64
@@ -67,6 +69,15 @@ type Request struct {
 	// and whether the rank evidence is current.
 	At time.Time
 }
+
+// HoldOutputTokens is the output tokens a credit reservation prices at most,
+// Python's HOLD_OUTPUT_TOKENS in src/trusted_router/authorize_candidates.py
+// (hold_output_tokens): the two must agree, or the two paths reserve
+// different amounts for one request. Result.Reservation prices
+// min(output_estimate, HoldOutputTokens), or the whole budget for a stream
+// (for now); Result.ModelEstimate, the spend ceiling, prices the whole
+// budget.
+const HoldOutputTokens = 16_384
 
 // Outcome says which of a Result's fields hold the answer.
 type Outcome int
@@ -95,8 +106,15 @@ type Result struct {
 	Outcome Outcome
 	// Candidates are the endpoint ids in order; the first is selected.
 	Candidates []string
-	// ModelEstimate is the largest candidate's price at At, in microdollars.
+	// ModelEstimate is the largest candidate's price at At, in microdollars,
+	// of the prompt and the whole output budget: the spend ceiling, the
+	// authorization row's estimated_microdollars and the 200's
+	// estimated_cost. Reservation is the same price at min(budget,
+	// HoldOutputTokens), or at the whole budget for a stream (for now): the
+	// credit hold the owner's lease takes. Python's
+	// CandidateOutcome.model_estimate and model_reservation.
 	ModelEstimate int64
+	Reservation   int64
 	// ServiceTier is the normalized tier, "" when the request names none.
 	ServiceTier string
 	Refusal     *Refusal
@@ -354,20 +372,37 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		return refused(400, "provider_not_supported", "No authorized route candidates are available for this workspace")
 	}
 
+	// The estimate prices the whole budget; the reservation prices at most
+	// HoldOutputTokens of it. (The window check above counts max_tokens,
+	// else max_completion_tokens; max_output_tokens only prices.)
+	// A stream's reservation is its estimate for now, as Python's
+	// finish_candidates has it: the Stage D heartbeat reader deployed before
+	// this bounds a stream's running charge by the credit hold, so a lower
+	// stream reservation would be cut in a mixed-version deploy or a
+	// rollback. Follow-up: lower stream reservations once every plane runs
+	// the reader that caps at the estimate (fast-admission-e2-decide.md §5).
 	usage := Usage{InputTokens: prompt, OutputTokens: outputTokens}
-	estimate := new(big.Int)
+	reserved := Usage{InputTokens: prompt, OutputTokens: min(outputTokens, HoldOutputTokens)}
+	if req.Stream != nil && *req.Stream {
+		reserved = usage
+	}
+	estimate, reservation := new(big.Int), new(big.Int)
 	out := Result{Outcome: Answered, ServiceTier: tier}
 	for _, i := range admitted {
 		e := &s.Endpoints[i]
 		out.Candidates = append(out.Candidates, e.ID)
-		if cost := Cost(e.priceAt(at), usage); cost.Cmp(estimate) > 0 {
+		price := e.priceAt(at)
+		if cost := Cost(price, usage); cost.Cmp(estimate) > 0 {
 			estimate = cost
+		}
+		if cost := Cost(price, reserved); cost.Cmp(reservation) > 0 {
+			reservation = cost
 		}
 	}
 	if !estimate.IsInt64() {
 		return pass("the estimate exceeds int64")
 	}
-	out.ModelEstimate = estimate.Int64()
+	out.ModelEstimate, out.Reservation = estimate.Int64(), reservation.Int64()
 	return out
 }
 

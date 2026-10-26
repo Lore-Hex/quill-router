@@ -53,7 +53,7 @@ type ComposeInput struct {
 	Region       string // choose_region(body.region)
 	Regions      []Region
 	Candidates   []Candidate // in order; every one Credits
-	Estimate     int64       // Result.ModelEstimate, microdollars
+	Estimate     int64       // Result.ModelEstimate, microdollars: the spend ceiling, not the lease's hold
 	StageDReason string      // StageDReasonOf
 	BootKid      string
 }

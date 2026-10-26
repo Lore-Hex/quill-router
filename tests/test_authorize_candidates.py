@@ -19,13 +19,17 @@ import pytest
 
 from trusted_router import authorize_candidates
 from trusted_router.authorize_candidates import (
+    HOLD_OUTPUT_TOKENS,
     CandidateRequest,
+    endpoint_cost_microdollars,
     finish_candidates,
+    hold_output_tokens,
     plan_route,
     resolve_candidates,
 )
 from trusted_router.catalog import MODELS
 from trusted_router.config import Settings
+from trusted_router.custom_model_billing import custom_model_cost_microdollars
 
 ROOT = Path(__file__).resolve().parents[1]
 AT = dt.datetime(2026, 10, 21, 9, 30, tzinfo=dt.UTC)
@@ -146,3 +150,81 @@ def test_a_refused_named_chain_carries_its_log_event() -> None:
             additional_cost_reservation=0, video_resolution=None, at=AT,
         )
     assert refusal.value.event == "unavailable" and refusal.value.error.status_code == 503
+
+
+def _candidates(model: str, route_type: str = "chat.completions"):  # type: ignore[no-untyped-def]
+    request = _request(model, route_type=route_type)
+    plan = plan_route(request, Settings(environment="test"), region="us-central1")
+    return request, plan, resolve_candidates(plan, request, region="us-central1", at=AT)
+
+
+def _figures(request, plan, resolved, output_tokens: int,  # type: ignore[no-untyped-def]
+             user_model_prices: tuple[int, int] | None = None) -> tuple[int, int]:
+    """The outcome's (estimate, reservation) for a 1,000-token prompt."""
+    outcome = finish_candidates(
+        plan, resolved, route_type=request.route_type, byok_providers=frozenset(),
+        estimated_input_tokens=1_000, output_tokens=output_tokens, service_tier=None,
+        additional_cost_reservation=0, video_resolution=None, at=AT,
+        user_model_prices=user_model_prices,
+    )
+    return outcome.model_estimate, outcome.model_reservation
+
+
+def _credits_cost(resolved, output_tokens: int) -> int:  # type: ignore[no-untyped-def]
+    return max(
+        endpoint_cost_microdollars(endpoint, 1_000, output_tokens, effective_at=AT, reserve_auto=True)
+        for _model, endpoint in resolved.candidates if endpoint.usage_type == "Credits"
+    )
+
+
+def test_a_catalog_reservation_prices_at_most_hold_output_tokens_and_the_estimate_the_budget() -> None:
+    request, plan, resolved = _candidates(_multi_route_chat_model())
+    at_the_bound = _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
+    assert _figures(request, plan, resolved, HOLD_OUTPUT_TOKENS) == (at_the_bound, at_the_bound)
+    for budget in (HOLD_OUTPUT_TOKENS + 1, 131_072):
+        estimate, reservation = _figures(request, plan, resolved, budget)
+        assert reservation == at_the_bound
+        assert estimate == _credits_cost(resolved, budget) > at_the_bound
+    below = _credits_cost(resolved, HOLD_OUTPUT_TOKENS - 1)
+    assert _figures(request, plan, resolved, HOLD_OUTPUT_TOKENS - 1) == (below, below)
+    assert below < at_the_bound
+
+
+def test_a_user_provided_model_reserves_its_whole_budget() -> None:
+    request, plan, resolved = _candidates(_multi_route_chat_model())
+    prices = (1_000_000, 4_000_000)
+    whole = custom_model_cost_microdollars(
+        input_tokens=1_000, output_tokens=131_072, prompt_price=prices[0], completion_price=prices[1],
+    )
+    assert _figures(request, plan, resolved, 131_072, user_model_prices=prices) == (whole, whole)
+    assert whole > _figures(request, plan, resolved, HOLD_OUTPUT_TOKENS, user_model_prices=prices)[1]
+
+
+def test_a_token_billed_video_reserves_its_whole_budget() -> None:
+    """A video's settle is held to the estimate, so its reservation is the
+    estimate: 80,000 video tokens, not 16,384."""
+    request, plan, resolved = _candidates("bytedance/seedance-2.5", route_type="videos")
+    estimate, reservation = _figures(request, plan, resolved, 80_000)
+    assert estimate == reservation == _credits_cost(resolved, 80_000) > _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
+
+
+def test_hold_output_tokens_is_the_bound_both_paths_share() -> None:
+    assert hold_output_tokens(131_072) == HOLD_OUTPUT_TOKENS == 16_384
+    assert hold_output_tokens(512) == 512
+    evaluator = (ROOT / "fastpath" / "internal" / "routingsnapshot" / "evaluate.go").read_text()
+    assert f"const HoldOutputTokens = {HOLD_OUTPUT_TOKENS:_}" in evaluator
+
+
+def test_a_stream_reserves_its_whole_budget_for_now() -> None:
+    """The Stage D heartbeat reader deployed before this change bounds a
+    stream's running charge by the credit hold, so a stream's reservation
+    stays its estimate until every plane runs the reader that caps at the
+    estimate (finish_candidates, ``stream``)."""
+    request, plan, resolved = _candidates(_multi_route_chat_model())
+    outcome = finish_candidates(
+        plan, resolved, route_type=request.route_type, byok_providers=frozenset(),
+        estimated_input_tokens=1_000, output_tokens=131_072, service_tier=None,
+        additional_cost_reservation=0, video_resolution=None, at=AT, stream=True,
+    )
+    assert outcome.model_reservation == outcome.model_estimate == _credits_cost(resolved, 131_072)
+    assert outcome.model_reservation > _credits_cost(resolved, HOLD_OUTPUT_TOKENS)

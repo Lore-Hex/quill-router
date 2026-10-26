@@ -222,3 +222,44 @@ func TestAnOmittedEstimateIsTheSchemaDefault(t *testing.T) {
 		t.Fatalf("explicit zero estimate: got %+v, want answered", r)
 	}
 }
+
+// TestTheReservationPricesAtMostHoldOutputTokens: the reservation prices
+// at most HoldOutputTokens output tokens, as
+// authorize_candidates.hold_output_tokens does in Python, while the
+// estimate prices the whole budget. Gemini's window is unknown, so a
+// max_tokens of 131,072 (which counts toward the window) fits.
+func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
+	s := goldenSnapshot(t)
+	figures := func(maxTokens int64) (estimate, reservation int64) {
+		t.Helper()
+		r := baseRequest()
+		r.Model, r.MaxTokens = "google/gemini-3.1-pro-preview", ptr(maxTokens)
+		got := s.Evaluate(r)
+		if got.Outcome != Answered {
+			t.Fatalf("max_tokens %d: %+v %+v", maxTokens, got, got.Refusal)
+		}
+		return got.ModelEstimate, got.Reservation
+	}
+	atBound, bound := figures(HoldOutputTokens)
+	if atBound != bound {
+		t.Errorf("at the bound the estimate %d and the reservation %d differ", atBound, bound)
+	}
+	for _, budget := range []int64{HoldOutputTokens + 1, 131_072} {
+		if estimate, reservation := figures(budget); reservation != bound || estimate <= atBound {
+			t.Errorf("max_tokens %d: reservation %d, want the bound's %d; estimate %d, want above %d",
+				budget, reservation, bound, estimate, atBound)
+		}
+	}
+	if estimate, reservation := figures(HoldOutputTokens - 1); reservation >= bound || estimate != reservation {
+		t.Errorf("max_tokens %d: reservation %d, want below %d; estimate %d, want the reservation",
+			HoldOutputTokens-1, reservation, bound, estimate)
+	}
+	// A stream's reservation is its estimate for now (the Stage D heartbeat
+	// reader deployed before this bounds a stream by the credit hold).
+	r := baseRequest()
+	r.Model, r.MaxTokens, r.Stream = "google/gemini-3.1-pro-preview", ptr(int64(131_072)), ptr(true)
+	if got := s.Evaluate(r); got.Outcome != Answered || got.Reservation != got.ModelEstimate || got.Reservation <= bound {
+		t.Errorf("a stream with max_tokens 131,072: reservation %d, want the estimate %d (above %d): %+v",
+			got.Reservation, got.ModelEstimate, bound, got.Refusal)
+	}
+}
