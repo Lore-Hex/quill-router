@@ -1752,7 +1752,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is there a European alternative to OpenRouter?",
-                "TrustedRouter runs an EU gateway that every account can use: authentication, policy checks, provider selection and streaming start in Europe. The trustedrouter/eu model routes to an EU-focused provider set led by Mistral, and you can restrict requests to providers you've approved so nothing routes outside your list. As of October 2026, OpenRouter offers in-region routing only on its Business and Enterprise plans.",
+                "TrustedRouter runs an EU gateway that every account can use: authentication, policy checks, provider selection and streaming start in Europe. The trustedrouter/eu model routes to an EU-focused provider set led by Mistral, and you can restrict requests to providers you've approved so nothing routes outside your list. OpenRouter offers in-region routing only on its Business and Enterprise plans.",
             ),
             (
                 "Is there a free OpenRouter alternative?",
@@ -1772,7 +1772,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "What is happening to OpenRouter?",
-                "Stripe agreed to acquire OpenRouter, announced August 19, 2026. As of mid-October 2026, no closing had been publicly announced. OpenRouter said it would keep operating under the same name, product and roadmap.",
+                "Stripe agreed to acquire OpenRouter, announced August 19, 2026. OpenRouter said it would keep operating under the same name, product and roadmap.",
             ),
         ),
     ),

@@ -1756,8 +1756,8 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
         in response.text
     )
     assert "<h1>OpenRouter Alternatives: TrustedRouter vs 9 AI Gateways (2026)</h1>" in response.text
-    assert "Updated October 26, 2026" in response.text
-    assert "Checked October 19, 2026" in response.text
+    assert 'class="v2-dates"' not in response.text
+    assert 'class="v2-section-date"' not in response.text
     assert "TrustedRouter is a hosted, OpenAI-compatible AI gateway" in response.text
     assert "TrustedRouter vs 9 OpenRouter alternatives" in response.text
     for path in [

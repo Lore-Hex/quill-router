@@ -29,7 +29,9 @@ for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     expect(layout.headingSize).toBeGreaterThan(layout.bodySize);
     expect(layout.headingWeight).toBeGreaterThanOrEqual(600);
     if (width <= 720) {
-      await expect(page.locator(".v2-stack tbody tr").first()).toHaveCSS("display", "block");
+      await expect(page.locator(".v2-stack thead").first()).toBeVisible();
+      expect(await page.locator(".v2-saving-table").evaluate(el => el.getBoundingClientRect().width)).toBeLessThanOrEqual(width - 40);
+      await expect(page.locator(".v2-stack tbody tr").first()).toHaveCSS("display", "table-row");
     }
   });
 }
