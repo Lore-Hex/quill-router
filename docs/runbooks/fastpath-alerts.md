@@ -130,24 +130,36 @@ Every Spanner call an auditor part makes has a 15 s deadline
 (`auditor.StoreDeadline`); one that runs out is a failure whose outcome is
 unknown, so the member reads the lease again and every write is
 conditional on what it read: nothing is applied twice. A round of commits
-that has run for a minute (`auditor.CommitStall`) fails the member: the
-process logs
+that makes no progress for a minute, no commit of it returning
+(`auditor.CommitStall`), fails the member. The watchdog reads progress, not
+the round's length: a backlog of many batches makes a long round whose
+commits keep returning, each within its 15 s, and that round runs on. What
+trips it is a call that never returns, its deadline notwithstanding, as on
+2026-10-26. The process logs
 
 ```
-auditor: a round of commits has run 1m0.2s, past 1m0s: the member stops so that the others take its leases
-fastpath: service: auditor: auditor: a round of commits ran past its limit; the member stops so the others take its leases
+auditor: a round of commits has made no progress for 1m0.2s, past 1m0s: the member stops so that the others take its leases
+fastpath: service: auditor: auditor: a round of commits made no progress within its limit; the member stops so the others take its leases
 ```
 
 and exits, its subscription asking again at once for every record it held,
 so the other members take its leases; systemd starts the unit again five
-seconds later (`Restart=on-failure`). The Pub/Sub client also stops holding
+seconds later (`Restart=on-failure`). The exit is bounded: a part that
+fails starts a 30 s clock (`service.FailStop`), and if the process has not
+exited by then, another part wedged as well, it logs
+
+```
+service: the process had not stopped 30s after its failure (service: auditor: ...); exiting
+```
+
+and exits with code 1 all the same. The Pub/Sub client also stops holding
 a record after five minutes (`maxExtension` in
 `fastpath/internal/settlelog`), a backstop behind the watchdog: a record
 that lapses is delivered again, perhaps to the same member, and a member
 skips what it has applied.
 
-A member that restarts again and again, its rounds each running past the
-minute, points at Spanner from that node: compare with the other nodes'
+A member that restarts again and again, its rounds each stalling, points
+at Spanner from that node: compare with the other nodes'
 lines, and take a dump before the next restart.
 
 ### The auditor's own lines
@@ -194,9 +206,11 @@ SIGQUIT would print it, but the process keeps running. Read it for:
 - the other parts: `auditor.(*Ticker).round`, `auditor.(*Pending).sweep`,
   `auditor.(*Stager).Handle`.
 
-The stacks carry function names and argument words, not records or
-credentials; still, keep the file on the node or in the incident's private
-notes, not in a public issue.
+The stacks carry function names and argument words: strings and bodies
+appear as pointers and lengths, but a value passed by value, such as a
+fixed-size identifier, can appear in them. Treat a dump as sensitive: keep
+it on the node or in the incident's private notes, never in a public
+issue.
 
 ## Exercising the alert path
 

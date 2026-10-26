@@ -156,10 +156,11 @@ resource "google_monitoring_alert_policy" "fastpath_auditor_lag" {
 
   # A healthy auditor acknowledges a record within a second or two of its
   # delivery (a round of commits every second), and its oldest message is a
-  # few seconds old. A member whose round runs past a minute stops itself
-  # (auditor.CommitStall), and its records come back to the others within
-  # seconds; two minutes, held for one, is past both, and fires on a wedged
-  # member the watchdog did not stop, or on every member stuck at once.
+  # few seconds old. A member whose round makes no progress for a minute
+  # stops itself (auditor.CommitStall), and its records come back to the
+  # others within seconds; two minutes, held for one, is past both, and
+  # fires on a wedged member the watchdog did not stop, on every member
+  # stuck at once, or on a backlog of many batches worth a look.
   conditions {
     display_name = "The auditor subscription's oldest unacked message is over two minutes old"
     condition_threshold {

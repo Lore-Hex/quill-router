@@ -9,6 +9,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -116,7 +117,13 @@ type Config struct {
 	// one. The front door reads its clock only for spans of time, which an
 	// offset leaves as they were, and an auditor's parts keep a true clock.
 	ClockOffset time.Duration
+	// Exit, when set, ends the process with a code: a part's failure that
+	// has not let the process exit within FailStop calls it with 1. The
+	// command sets os.Exit; nil leaves the process to its parts.
+	Exit func(code int)
 
+	// failStop, when set, is FailStop for a test.
+	failStop time.Duration
 	// edgeMade, when set, is given the edge once it is made: the tests'
 	// view of it.
 	edgeMade func(*edge.Edge)
@@ -322,6 +329,7 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
 	return lifecycle(ctx, func(p *parts) {
+		p.exit, p.failStop = cfg.Exit, cmp.Or(cfg.failStop, FailStop)
 		// The edge first: one that cannot listen or has no upstream fails
 		// the process before the node takes its ring row.
 		if cfg.Edge.Address != "" {
@@ -589,6 +597,11 @@ type parts struct {
 	// admitter is the edge's: the admission node's front door, bound once
 	// it is made, and none on a process without one.
 	admitter edge.LateAdmitter
+	// exit, when set, ends the process failStop after its first failure
+	// unless it has ended by then (Config.Exit, FailStop). Set before any
+	// part runs.
+	exit     func(code int)
+	failStop time.Duration
 
 	mu  sync.Mutex
 	err error
@@ -601,13 +614,34 @@ func (p *parts) serving() bool {
 	return !p.retiring.Load() && p.ctx.Err() == nil
 }
 
-// fail ends the process with err, the first failure kept.
+// FailStop bounds how long a failed process takes to exit. A part's
+// failure stops the others, and the process exits once each has returned;
+// a part wedged in a call that does not heed its context would keep it
+// running, failed and serving nothing, and systemd restarts a unit only
+// once its process exits. So from the first failure the process has
+// FailStop, and then it exits with code 1 whatever still runs. Its parts
+// let go of what they hold when the failure cancels them, the auditor's
+// subscription its records among it (within its own releaseWait, 15 s), so
+// the exit loses nothing another member needs; 30 s is past that, and
+// past the HTTP server's Stopping.
+const FailStop = 30 * time.Second
+
+// fail ends the process with err, the first failure kept; the first arms
+// the process's exit (FailStop).
 func (p *parts) fail(err error) {
 	p.mu.Lock()
-	if p.err == nil {
+	first := p.err == nil
+	if first {
 		p.err = err
 	}
 	p.mu.Unlock()
+	if first && p.exit != nil {
+		exit, stop := p.exit, p.failStop
+		time.AfterFunc(stop, func() {
+			log.Printf("service: the process had not stopped %v after its failure (%v); exiting", stop, err)
+			exit(1)
+		})
+	}
 	p.cancel()
 }
 

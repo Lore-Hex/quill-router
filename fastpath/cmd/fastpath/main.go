@@ -181,6 +181,9 @@ func run() error {
 		}
 	}()
 	cfg.Leave = leave
+	// A failed process exits within service.FailStop, so that systemd
+	// starts it again, though a part of it is wedged.
+	cfg.Exit = os.Exit
 	sp, err := spanner.NewClient(ctx, *database)
 	if err != nil {
 		return err

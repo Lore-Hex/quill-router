@@ -248,14 +248,34 @@ func TestFailuresAreLoggedAtMostEveryPeriod(t *testing.T) {
 
 // hanging is the fixture's store with a commit that waits: hang commits
 // wait until their context ends; with wedge set, every commit waits until
-// it is closed, whatever its context.
+// it is closed, whatever its context; with slow set, every commit takes
+// that long first. Every other call, and every commit not made to wait,
+// runs under relaxed: the runtime's deadline, which a test shortens for
+// the commit it makes hang, does not bound the emulator's own calls.
 type hanging struct {
 	*flaky
 	hang  atomic.Int32
 	wedge chan struct{}
+	slow  time.Duration
 	// entered, when set, is closed as the first wedged commit begins.
 	entered chan struct{}
 	enter   sync.Once
+}
+
+// setupBound bounds each of the emulator's calls the tests make through
+// hanging, in place of the runtime's deadline.
+const setupBound = 30 * time.Second
+
+// relaxed is ctx without its deadline, bounded by setupBound instead, and
+// ended still when ctx is cancelled.
+func relaxed(ctx context.Context) (context.Context, context.CancelFunc) {
+	r, cancel := context.WithTimeout(context.WithoutCancel(ctx), setupBound)
+	stop := context.AfterFunc(ctx, func() {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			cancel()
+		}
+	})
+	return r, func() { stop(); cancel() }
 }
 
 func (h *hanging) Commit(ctx context.Context, reqs []store.CommitRequest) ([]store.CommitResult, time.Time, error) {
@@ -270,28 +290,83 @@ func (h *hanging) Commit(ctx context.Context, reqs []store.CommitRequest) ([]sto
 		<-ctx.Done()
 		return nil, time.Time{}, ctx.Err()
 	}
+	time.Sleep(h.slow)
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
 	return h.flaky.Commit(ctx, reqs)
+}
+
+func (h *hanging) FindLease(ctx context.Context, id string) (store.LeaseRef, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.FindLease(ctx, id)
+}
+
+func (h *hanging) Load(ctx context.Context, ref store.LeaseRef) (store.Loaded, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.Load(ctx, ref)
+}
+
+func (h *hanging) ReadLease(ctx context.Context, ref store.LeaseRef) (store.Lease, time.Time, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.ReadLease(ctx, ref)
+}
+
+func (h *hanging) LoadWinners(ctx context.Context, ref store.LeaseRef) ([]store.Pack, time.Time, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.LoadWinners(ctx, ref)
+}
+
+func (h *hanging) StopForGap(ctx context.Context, ref store.LeaseRef, version, seq int64) (bool, time.Time, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.StopForGap(ctx, ref, version, seq)
+}
+
+func (h *hanging) ReadDrainSince(ctx context.Context, ref store.LeaseRef, cursor time.Time) ([]store.DrainRow, time.Time, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.ReadDrainSince(ctx, ref, cursor)
+}
+
+func (h *hanging) Reap(ctx context.Context, ref store.LeaseRef, version int64, tick time.Time,
+	r store.ReapRow) (store.Refusal, time.Time, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.Reap(ctx, ref, version, tick, r)
+}
+
+func (h *hanging) CloseLease(ctx context.Context, ref store.LeaseRef, version int64, drainRead,
+	now time.Time) (store.CloseResult, error) {
+	ctx, cancel := relaxed(ctx)
+	defer cancel()
+	return h.flaky.CloseLease(ctx, ref, version, drainRead, now)
 }
 
 // TestACommitThatHangsEndsAtItsDeadline: a commit held on the client's
 // side returns once its deadline has run out, as one whose outcome is
 // unknown: the round goes on, the lease is read again, and the next round
-// commits and acknowledges its records, with nothing booked twice.
+// commits and acknowledges its records, with nothing booked twice. The
+// short deadline reaches the hung commit alone; the emulator's own calls
+// run under setupBound, and the setup under a guard of its own.
 func TestACommitThatHangsEndsAtItsDeadline(t *testing.T) {
 	f := newRuntimeFixture(t)
 	h, l := &hanging{flaky: f.store}, &lines{}
 	h.hang.Store(1)
 	rt := f.runtime(func(c *Config) { c.Store, c.deadline, c.logf = h, 100*time.Millisecond, l.logf })
 	ds := []*fakeDelivery{on(t, f.ref, settle(1, "a", 40, 0)), on(t, f.ref, settle(2, "b", 7, 0))}
-	handleAll(rt, ds...)
-	within(t, 10*time.Second, "a round whose commit hangs", func() { round(rt) })
+	within(t, 2*setupBound, "the setup", func() { handleAll(rt, ds...) })
+	within(t, 2*setupBound, "a round whose commit hangs", func() { round(rt) })
 	if got := acks(ds...); !slices.Equal(got, []int{0, 0}) {
 		t.Fatalf("acknowledged after a commit that ran out of time: %v", got)
 	}
 	if got := l.with("auditor: spanner commit failed: DeadlineExceeded"); len(got) != 1 {
 		t.Fatalf("logged %q", l.got)
 	}
-	within(t, 10*time.Second, "the next round", func() { round(rt) })
+	within(t, 2*setupBound, "the next round", func() { round(rt) })
 	if got := acks(ds...); !slices.Equal(got, []int{1, 1}) {
 		t.Fatalf("acknowledged after the next round: %v", got)
 	}
@@ -335,7 +410,7 @@ func TestAWedgedRoundFailsTheMember(t *testing.T) {
 	if !src.ended.Load() || d.acked() != 0 {
 		t.Fatalf("the source's context ended %v; the record acknowledged %d times", src.ended.Load(), d.acked())
 	}
-	if got := l.with("auditor: a round of commits has run "); len(got) != 1 {
+	if got := l.with("auditor: a round of commits has made no progress for "); len(got) != 1 {
 		t.Fatalf("logged %q", l.got)
 	}
 }
@@ -444,4 +519,49 @@ func (s failingSource) Receive(ctx context.Context, handle func(context.Context,
 	handle(ctx, s.d)
 	<-s.after
 	return errors.New("the subscription failed")
+}
+
+// TestALongRoundThatMakesProgressRunsOn: the watchdog reads progress, not
+// a round's length. A backlog of many dirty leases, one commit a lease
+// here, each commit under the limit but the round many times past it, as
+// a thousand leases in batches of a hundred at twelve seconds a commit
+// would be, runs to its end: every record is acknowledged and Run is not
+// failed. TestAWedgedRoundFailsTheMember is the other side: one commit that
+// never returns trips it.
+func TestALongRoundThatMakesProgressRunsOn(t *testing.T) {
+	f := newRuntimeFixture(t)
+	const stall, leases = 1500 * time.Millisecond, 10
+	h, l := &hanging{flaky: f.store, slow: 250 * time.Millisecond}, &lines{}
+	rt := f.runtime(func(c *Config) {
+		c.Store, c.MaxBatch, c.CommitEvery, c.stall, c.slowRound, c.logf = h, 1, 5*time.Millisecond, stall, stall, l.logf
+	})
+	ds := []*fakeDelivery{on(t, f.ref, settle(1, "a", 40, 0))}
+	for range leases - 1 {
+		ds = append(ds, on(t, f.grant(), settle(1, "a", 40, 0)))
+	}
+	// Every lease dirty before the first round, which so commits them all.
+	within(t, 2*setupBound, "the setup", func() { handleAll(rt, ds...) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- rt.Run(ctx, fakeSource{}) }()
+	deadline := time.Now().Add(2 * setupBound)
+	for slices.Contains(acks(ds...), 0) {
+		select {
+		case err := <-done:
+			t.Fatalf("Run returned %v with %v acknowledged", err, acks(ds...))
+		case <-time.After(10 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("acknowledged %v", acks(ds...))
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	// The round was past the limit: it is logged as slow past it.
+	if got := l.with("auditor: a round of commits took "); len(got) == 0 || len(l.with("no progress")) != 0 {
+		t.Fatalf("logged %q", l.got)
+	}
 }

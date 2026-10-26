@@ -386,12 +386,13 @@ const ackExtension = 10 * time.Second
 // maxExtension is how long the client library goes on extending a record's
 // deadline for a member that holds it unacknowledged; then the record lapses
 // and the log delivers it again (the library's default is an hour). A
-// healthy auditor acknowledges a record at the first commit that lands after
-// it: within a round, which the runtime fails past a minute
-// (auditor.CommitStall), each of its Spanner calls bounded at 15 s
-// (auditor.StoreDeadline). Five minutes is five such rounds, so only a
-// member stuck past its own watchdog, or a Spanner outage, holds a record
-// that long; a redelivery is then harmless, since a member skips what it
+// healthy auditor acknowledges a record at the first commit of its lease
+// that lands after it: within a round, each of whose commits is bounded at
+// 15 s (auditor.StoreDeadline) and which the runtime fails once a minute
+// passes with none of them returning (auditor.CommitStall). Even a backlog
+// of a thousand dirty leases, ten batches at most 15 s each, is acknowledged
+// within three minutes, so only a member stuck past its own watchdog, or a
+// Spanner outage, holds a record five minutes; a redelivery is then harmless, since a member skips what it
 // has applied, and lets another member take the lease's key. It is the
 // backstop behind the watchdog, not the cure: a lapsed record may come back
 // to the same member. A test shortens it.
