@@ -1737,10 +1737,11 @@ def _filter_unserved_provider_endpoints(
     explicit_model_ids: frozenset[str] = frozenset(),
     at: datetime | None = None,
 ) -> dict[str, ModelEndpoint]:
-    """Drop a provider's prepaid (Credits) endpoints for models it doesn't
-    serve on our account. Only Credits routes use OUR provider key, so only
-    those 502 on an account mismatch — BYOK routes use the customer's own key
-    (their account may serve a different model set), so they're left intact.
+    """Filter routes by serving availability and routing policy.
+
+    Account-specific prepaid restrictions leave BYOK intact because customer
+    accounts may serve different models. Reseller policy, provider retirement,
+    and operator safety holds apply to both prepaid and BYOK routes.
 
     Seven complementary filters apply:
       * operator hold    — drop deliberately disabled provider/model routes for
