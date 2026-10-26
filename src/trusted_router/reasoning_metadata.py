@@ -28,7 +28,8 @@ one of its routes, because a request can fail over to any of them:
 adapter.go (Claude on the Anthropic wire, incl. azure.go and Vertex), multi.go
 (the legacy `gemini` slug is served by Vertex), vertex_gemini.go, byok.go (AI
 Studio defaults and >= 3.7 rewrite; Engy's forced-off Qwen 3.6),
-ai_studio_gemini.go (native image route), reasoning_control.go (Kimi K3,
+ai_studio_gemini.go (native image route), zero_g.go (Claude over 0G),
+reasoning_control.go (Kimi K3,
 Tencent), privatemode.go. A route not listed forwards efforts verbatim and adds
 no limit. Not representable per route, and so not reflected here: Kimi
 K2.5/K2.6 force thinking off when tools are present, and OpenAI's Responses
@@ -159,12 +160,18 @@ def gateway_effort_limit(provider: str, upstream_id: str | None, model_id: str =
     `model_id` is the requested (catalog) model id; Azure picks the Anthropic wire
     from it as well as from the upstream deployment name.
     """
-    upstream = _model_name(upstream_id)
     requested = _model_name(model_id)
+    # byok.go directModelID falls back to the requested model when a route has no upstream id.
+    upstream = _model_name(upstream_id) or requested
     if provider == "anthropic" or (provider == "google-vertex" and upstream.startswith("claude-")):
         return _claude_limit(upstream)
     if provider == "azure" and (upstream.startswith("claude-") or requested.startswith("claude-")):
         # azure.go azureUsesAnthropicWire.
+        return _claude_limit(upstream)
+    if provider == "zero-g" and (
+        upstream.startswith("claude-") or (model_id or "").strip().lower().startswith("anthropic/")
+    ):
+        # zero_g.go zeroGUsesAnthropicFormat, then the shared Anthropic reasoning adapter.
         return _claude_limit(upstream)
     if provider in {"google-vertex", "gemini", "google-ai-studio"} and "gemini" in upstream:
         if "image" in upstream:

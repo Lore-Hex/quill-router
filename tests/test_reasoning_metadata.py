@@ -120,6 +120,20 @@ def test_gateway_defaults_when_the_caller_sends_no_effort(provider: str, upstrea
     assert (limit.default if limit is not None else KEEP_SOURCE_DEFAULT) == default
 
 
+def test_zero_g_claude_uses_the_anthropic_rules() -> None:
+    limit = gateway_effort_limit("zero-g", "claude-haiku-5-5", "anthropic/claude-haiku-5.5")
+    assert limit is not None
+    assert set(limit.efforts) == {"none", "low", "medium", "high"}  # budget-only Haiku
+    assert gateway_effort_limit("zero-g", "qwen3-235b", "qwen/qwen3-235b") is None
+
+
+def test_a_route_without_an_upstream_id_is_judged_by_the_requested_model() -> None:
+    limit = gateway_effort_limit("google-vertex", None, "google/gemini-3-flash-preview")
+    assert limit is not None
+    assert limit.can_disable is False
+    assert limit.default == "minimal"
+
+
 def test_azure_custom_deployment_takes_the_anthropic_wire_with_budget_rules() -> None:
     # azure.go picks the Anthropic wire from the requested model; anthropicChatReasoningBody
     # then classifies by the deployment name, which matches no effort class.
