@@ -158,7 +158,13 @@ def test_homepage_social_card_is_fetchable_for_every_brand(client: TestClient) -
     assert page.select_one('meta[name="twitter:image"]')["content"] == url
     assert page.select_one('meta[property="og:image:width"]')["content"] == "1200"
     assert page.select_one('meta[property="og:image:height"]')["content"] == "630"
-    assert page.select_one('meta[property="og:image:alt"]')["content"]
+    headline = page.select_one("#top h1").get_text(" ", strip=True)
+    description = page.select_one("#top .sub").get_text(" ", strip=True)
+    assert page.select_one('meta[property="og:title"]')["content"] == f"TrustedRouter: {headline}"
+    assert page.select_one('meta[property="og:description"]')["content"] == description
+    image_alt = f"TrustedRouter — {headline}. A river winds through a mountain valley."
+    assert page.select_one('meta[property="og:image:alt"]')["content"] == image_alt
+    assert page.select_one('meta[name="twitter:image:alt"]')["content"] == image_alt
     image = client.get("/static/homepage/social-card-v2.jpg")
     assert image.status_code == 200
     assert image.headers["content-type"].startswith("image/jpeg")
