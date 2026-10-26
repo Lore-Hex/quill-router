@@ -58,8 +58,11 @@ const (
 	maxHeartbeat = maxRecord - 4<<10
 )
 
-// Admission is an authorize's: the hold's estimate e, whether it is a
-// stream, which heartbeats, and the boot binding of the enclave that asked.
+// Admission is an authorize's: the hold's estimate e (the credit
+// reservation the lease takes: routingsnapshot.Result.Reservation, at most
+// HoldOutputTokens of the output budget, not the authorization row's spend
+// ceiling), whether it is a stream, which heartbeats, and the boot binding
+// of the enclave that asked.
 type Admission struct {
 	Estimate int64
 	Stream   bool

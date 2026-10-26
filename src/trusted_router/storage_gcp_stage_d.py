@@ -86,7 +86,7 @@ def heartbeat_gateway_atomic(
         )
         if not rows:
             return reject("unknown_authorization")
-        _reservation_id, credit_reserved_micro, reservation_settled, expires_at = rows[0]
+        _reservation_id, _credit_reserved_micro, reservation_settled, expires_at = rows[0]
         if authorization.settled or bool(reservation_settled):
             return reject("already_terminal")
         if authorization.pricing_snapshot is None or not stream:
@@ -102,7 +102,7 @@ def heartbeat_gateway_atomic(
                 return reject("stale_seq")
             stored_usage = delivered_usage_counts(authorization.delivered_usage)
             document = parse_pricing_snapshot(authorization.pricing_snapshot)
-            cap_micro = _cap_micro(credit_reserved_micro)
+            cap_micro = _cap_micro(authorization)
             stored_endpoint_id = str(authorization.selected_endpoint_id)
             return HeartbeatResult(
                 accepted=True,
@@ -138,7 +138,7 @@ def heartbeat_gateway_atomic(
             )
         except ValueError:
             return reject("endpoint_mismatch")
-        cap_micro = _cap_micro(credit_reserved_micro)
+        cap_micro = _cap_micro(authorization)
         if running_micro > cap_micro:
             return reject("usage_exceeds_cap")
         updated = transaction.execute_update(
@@ -295,8 +295,17 @@ def _usage_exceeds_authorized_tokens(authorization: Any, usage: dict[str, int]) 
     return total_prompt + int(usage["output_tokens"]) > int(prompt_limit) + int(output_limit)
 
 
-def _cap_micro(credit_reserved_micro: Any) -> int:
-    return int(credit_reserved_micro)
+def _cap_micro(authorization: Any) -> int:
+    """The spend ceiling is the authorization's estimate, not the reservation.
+
+    The reservation row's credit_reserved_micro is the credit hold, which
+    authorize bounds at HOLD_OUTPUT_TOKENS of the output budget
+    (authorize_candidates.hold_output_tokens); the estimate prices the whole
+    budget, and it is what the gateway exports as cap_micro and cuts a
+    stream at. Capping the running charge at the reservation would end an
+    authorized completion at 16,384 output tokens.
+    """
+    return int(authorization.estimated_microdollars)
 
 
 def _selected_provider(authorization: Any, endpoint_id: str) -> str:

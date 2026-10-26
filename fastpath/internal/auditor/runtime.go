@@ -495,7 +495,10 @@ type reapMoney struct {
 }
 
 // reap reaps an open hold at a tick published at at (§4.8): at its latest
-// snapshot's running charge, capped at its estimate. Its full record goes to
+// snapshot's running charge, capped at its estimate, which is the lease's
+// hold (the credit reservation, at most HoldOutputTokens of the output
+// budget), so an abandoned stream past that is charged the hold, not the
+// row's ceiling. Its full record goes to
 // the record topic first, then its row to the drain log, which the member
 // applies as the hold's winner at a later tick unless a terminal was there
 // first. It reports false if the member was dropped to be read again.

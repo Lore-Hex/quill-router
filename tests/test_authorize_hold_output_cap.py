@@ -1,24 +1,40 @@
-"""The hold prices at most HOLD_OUTPUT_TOKENS of the client's output budget
-(authorize_candidates.hold_output_tokens), through the gateway authorize route.
+"""An authorization carries two figures (authorize_candidates.hold_output_tokens):
+the estimate, the spend ceiling at the whole output budget, and the
+reservation, the credit hold at most HOLD_OUTPUT_TOKENS of it.
 
-A client that sent max_tokens 131,072 on a catalog model held the priciest
-candidate's price of all 131,072 tokens, about 78 times the actual cost of a
-typical request, and was refused for insufficient credits with a balance that
-covered the request many times over. The 16,384-token figure is the hold now,
-whichever output field carries the budget.
+A client sending the model's whole output window as max_tokens held the
+window's worst case per request. The reservation is now the 16,384-token
+figure, whichever output field carries the budget, while the authorization
+row keeps the whole-budget estimate for the readers that need a ceiling
+(Stage D, video and user-model settles).
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fakes.spanner import make_fake_store
 from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, effective_endpoint
+from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
+from trusted_router.storage_gcp_authorize import AuthorizeOutcome
+from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_models import CreditAccount, Workspace
+from trusted_router.types import UsageType
 
 MODEL = "z-ai/glm-5.3"
+VIDEO_MODEL = "bytedance/seedance-2.5"
+VIDEO_ENDPOINT = f"{VIDEO_MODEL}@venice/prepaid"
 
 
-def _hold(client: TestClient, key_hash: str, field: str, budget: int) -> int:
+def _figures(client: TestClient, key_hash: str, workspace_id: str, field: str, budget: int) -> tuple[int, int]:
+    """(the authorization's estimate, what the workspace's reserved counter grew by)."""
+    reserved_before = STORE.credit_money[workspace_id].reserved_microdollars
     response = client.post(
         "/v1/internal/gateway/authorize",
         json={
@@ -27,17 +43,99 @@ def _hold(client: TestClient, key_hash: str, field: str, budget: int) -> int:
         },
     )
     assert response.status_code == 200, response.text
-    authorization = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    data = response.json()["data"]
+    authorization = STORE.get_gateway_authorization(data["authorization_id"])
     assert authorization is not None
-    assert response.json()["data"]["estimated_cost_microdollars"] == authorization.estimated_microdollars
-    return authorization.estimated_microdollars
+    assert data["estimated_cost_microdollars"] == authorization.estimated_microdollars
+    reserved = STORE.credit_money[workspace_id].reserved_microdollars - reserved_before
+    return authorization.estimated_microdollars, reserved
 
 
-def test_a_max_tokens_of_131072_holds_the_16384_figure(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_a_max_tokens_of_131072_reserves_the_16384_figure_and_estimates_the_whole_budget(
+    client: TestClient, user_headers: dict[str, str],
+) -> None:
     created = client.post("/v1/keys", headers=user_headers, json={"name": "hold output cap"}).json()
-    key_hash = created["data"]["hash"]
-    bound = _hold(client, key_hash, "max_tokens", HOLD_OUTPUT_TOKENS)
-    assert _hold(client, key_hash, "max_tokens", 131_072) == bound
-    assert _hold(client, key_hash, "max_completion_tokens", 131_072) == bound
-    assert _hold(client, key_hash, "max_output_tokens", 131_072) == bound
-    assert _hold(client, key_hash, "max_tokens", HOLD_OUTPUT_TOKENS - 1) < bound
+    key_hash, workspace_id = created["data"]["hash"], created["data"]["workspace_id"]
+    at_the_bound, reserved_at_the_bound = _figures(client, key_hash, workspace_id, "max_tokens", HOLD_OUTPUT_TOKENS)
+    assert reserved_at_the_bound == at_the_bound
+    for field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
+        estimate, reserved = _figures(client, key_hash, workspace_id, field, 131_072)
+        assert reserved == at_the_bound
+        assert estimate > at_the_bound
+    below, reserved_below = _figures(client, key_hash, workspace_id, "max_tokens", HOLD_OUTPUT_TOKENS - 1)
+    assert reserved_below == below < at_the_bound
+
+
+@pytest.fixture
+def token_video_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The accounting contract, isolated from the provider's catalog state.
+    monkeypatch.setitem(MODEL_ENDPOINTS, VIDEO_ENDPOINT, replace(
+        MODEL_ENDPOINTS[VIDEO_ENDPOINT], completion_price_microdollars_per_million_tokens=10_700_000,
+        published_completion_price_microdollars_per_million_tokens=10_700_000,
+    ))
+
+
+def test_a_token_billed_video_reserves_its_whole_budget_and_settles_past_the_bound(
+    client: TestClient, inference_key: str, token_video_endpoint: None,
+) -> None:
+    """A video's settle is held to the authorization's estimate, so its
+    reservation is the estimate: 80,000 video tokens at 10.70 per million
+    reserve 856,000, and a 38,830-token completion settles at 415,481."""
+    response = client.post("/v1/internal/gateway/authorize", json={
+        "api_key_lookup_hash": lookup_hash_api_key(inference_key), "model": VIDEO_MODEL,
+        "estimated_input_tokens": 0, "max_output_tokens": 80_000, "route_type": "videos",
+        "idempotency_key": "token-video-whole-budget", "request_fingerprint": "b" * 64,
+        "provider": {"only": ["venice"]},
+    })
+    assert response.status_code == 200, response.text
+    authorization_id = response.json()["data"]["authorization_id"]
+    authorization = STORE.get_gateway_authorization(authorization_id)
+    assert authorization is not None
+    assert authorization.estimated_microdollars == 856_000
+    # The key's fresh workspace holds nothing else: the whole budget is reserved.
+    assert STORE.credit_money[authorization.workspace_id].reserved_microdollars == 856_000
+    assert 856_000 > 10_700_000 * HOLD_OUTPUT_TOKENS // 1_000_000
+
+    settle = client.post("/v1/internal/gateway/settle", json={
+        "authorization_id": authorization_id, "actual_input_tokens": 0, "actual_output_tokens": 38_830,
+        "route_type": "videos", "selected_endpoint": VIDEO_ENDPOINT, "selected_model": VIDEO_MODEL,
+        "finish_reason": "completed",
+    })
+    assert settle.status_code == 200, settle.text
+    assert settle.json()["data"]["cost_microdollars"] == 415_481
+
+
+def test_the_typed_store_holds_the_reservation_and_records_the_estimate() -> None:
+    """The Spanner path: the counters and the reservation row take the
+    reservation, the authorization row keeps the estimate."""
+    store, db = make_fake_store(request_record_write_mode="typed")
+    workspace = Workspace(id="hold-cap-workspace", name="Hold cap", owner_user_id="user-1")
+    store._write_entity("workspace", workspace.id, workspace)
+    store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace.id, 0)] = {
+        "workspace_id": workspace.id, "shard": 0, "total_credits": 1_000_000, "total_usage": 0,
+        "reserved": 0, "source_updated_at": None, "updated_at": None,
+    }
+    _raw, key = store.api_keys.create(
+        workspace_id=workspace.id, name="hold cap", creator_user_id=workspace.owner_user_id,
+        limit_microdollars=1_000_000,
+    )
+    endpoint = effective_endpoint(
+        next(endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.usage_type == "Credits")
+    )
+    model = MODELS[endpoint.model_id]
+    outcome, authorization = store.authorize_gateway_typed(
+        workspace_id=workspace.id, key_hash=key.hash, estimate=262_244, reservation=32_868,
+        has_credit_candidate=True, reservation_usage_type=UsageType.CREDITS,
+        model_id=model.id, provider=endpoint.provider, requested_model_id=model.id,
+        candidate_model_ids=[model.id], region="us-central1", endpoint_id=endpoint.id,
+        candidate_endpoint_ids=[endpoint.id], idempotency_key="hold-cap-typed",
+        idempotency_fingerprint="f" * 64, expires_at=datetime.now(UTC) + timedelta(hours=2),
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    assert db.gateway_authorizations[authorization.id]["estimated_microdollars"] == 262_244
+    reservation = db.reservations[authorization.credit_reservation_id]
+    assert reservation["credit_reserved_micro"] == 32_868
+    assert reservation["key_reserved_micro"] == 32_868
+    assert db.typed[CREDIT_BALANCE_TABLE][(workspace.id, 0)]["reserved"] == 32_868

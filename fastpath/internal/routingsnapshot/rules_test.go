@@ -223,13 +223,14 @@ func TestAnOmittedEstimateIsTheSchemaDefault(t *testing.T) {
 	}
 }
 
-// TestTheHoldPricesAtMostHoldOutputTokens: a budget above HoldOutputTokens
-// prices HoldOutputTokens output tokens, as authorize_candidates.hold_output_tokens
-// does in Python; one below prices itself. Gemini's window is unknown, so a
+// TestTheReservationPricesAtMostHoldOutputTokens: the reservation prices
+// at most HoldOutputTokens output tokens, as
+// authorize_candidates.hold_output_tokens does in Python, while the
+// estimate prices the whole budget. Gemini's window is unknown, so a
 // max_tokens of 131,072 (which counts toward the window) fits.
-func TestTheHoldPricesAtMostHoldOutputTokens(t *testing.T) {
+func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 	s := goldenSnapshot(t)
-	estimate := func(maxTokens int64) int64 {
+	figures := func(maxTokens int64) (estimate, reservation int64) {
 		t.Helper()
 		r := baseRequest()
 		r.Model, r.MaxTokens = "google/gemini-3.1-pro-preview", ptr(maxTokens)
@@ -237,15 +238,20 @@ func TestTheHoldPricesAtMostHoldOutputTokens(t *testing.T) {
 		if got.Outcome != Answered {
 			t.Fatalf("max_tokens %d: %+v %+v", maxTokens, got, got.Refusal)
 		}
-		return got.ModelEstimate
+		return got.ModelEstimate, got.Reservation
 	}
-	bound := estimate(HoldOutputTokens)
+	atBound, bound := figures(HoldOutputTokens)
+	if atBound != bound {
+		t.Errorf("at the bound the estimate %d and the reservation %d differ", atBound, bound)
+	}
 	for _, budget := range []int64{HoldOutputTokens + 1, 131_072} {
-		if got := estimate(budget); got != bound {
-			t.Errorf("max_tokens %d prices %d, want the bound's %d", budget, got, bound)
+		if estimate, reservation := figures(budget); reservation != bound || estimate <= atBound {
+			t.Errorf("max_tokens %d: reservation %d, want the bound's %d; estimate %d, want above %d",
+				budget, reservation, bound, estimate, atBound)
 		}
 	}
-	if got := estimate(HoldOutputTokens - 1); got >= bound {
-		t.Errorf("max_tokens %d prices %d, want below the bound's %d", HoldOutputTokens-1, got, bound)
+	if estimate, reservation := figures(HoldOutputTokens - 1); reservation >= bound || estimate != reservation {
+		t.Errorf("max_tokens %d: reservation %d, want below %d; estimate %d, want the reservation",
+			HoldOutputTokens-1, reservation, bound, estimate)
 	}
 }

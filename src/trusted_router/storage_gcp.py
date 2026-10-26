@@ -5455,6 +5455,7 @@ class SpannerStore(OperationalAnalyticsReads):
         key_hash: str,
         authorization_id: str | None = None,
         estimate: int,
+        reservation: int | None = None,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
         model_id: str,
@@ -5520,6 +5521,9 @@ class SpannerStore(OperationalAnalyticsReads):
         )
 
         usage = UsageType.coerce(reservation_usage_type)
+        # The counters and caps take the reservation (the credit hold); the
+        # authorization row keeps the estimate (the spend ceiling).
+        hold = estimate if reservation is None else reservation
         key_counter_shards = key_usage_shard_count({"usage_shard_count": key_usage_shards})
         key_shard_candidates = randomized_credit_shards(key_counter_shards)
         scope = (
@@ -5611,7 +5615,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 self._database,
                 self._param_types,
                 key_hash=key_hash,
-                estimate=estimate,
+                estimate=hold,
                 window_limits=window_limits,
                 shard_count=key_counter_shards,
                 idempotency_scope=scope,
@@ -5634,7 +5638,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 self._database,
                 self._param_types,
                 key_hash=key_hash,
-                estimate=estimate,
+                estimate=hold,
                 has_credit_candidate=has_credit_candidate,
                 shard_count=key_counter_shards,
                 idempotency_scope=scope,
@@ -5677,7 +5681,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 self._database,
                 self._param_types,
                 workspace_id=workspace_id,
-                estimate=estimate,
+                estimate=hold,
                 idempotency_scope=scope,
             )
             if credit_verdict == EXHAUSTED:
@@ -5702,6 +5706,7 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     key_hash=key_hash,
                     estimate=estimate,
+                    reservation=reservation,
                     trust_settings=self.trust_settings,
                     has_credit_candidate=has_credit_candidate,
                     reservation_usage_type=str(usage),

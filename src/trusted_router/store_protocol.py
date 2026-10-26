@@ -1166,6 +1166,10 @@ class TypedBillingStore(Protocol):
         key_hash: str,
         authorization_id: str | None = ...,
         estimate: int,
+        # The credit hold the counters take when it differs from the
+        # estimate, the spend ceiling the authorization row keeps
+        # (authorize_candidates.hold_output_tokens); None holds the estimate.
+        reservation: int | None = ...,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
         model_id: str,

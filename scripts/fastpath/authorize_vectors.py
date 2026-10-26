@@ -711,6 +711,10 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         "outcome": "answer", "status": 200, "response": body,
         "generation_id": data["generation_id"],
         "estimate_microdollars": data["estimated_cost_microdollars"],
+        # The credit reservation the lease held (the front door's Estimate):
+        # at most HOLD_OUTPUT_TOKENS of the output budget, where the estimate
+        # above prices the whole budget (authorize_candidates.hold_output_tokens).
+        "reservation_microdollars": door.seen[0][1]["Estimate"],
         "decide_region": data["region"],
         "fingerprint": fingerprint,
         "fingerprint_material": material,
@@ -879,30 +883,23 @@ def cases() -> list[dict[str, Any]]:
         for tokens_in, tokens_out in sizes:
             add(f"answer:estimate:{model}:{tokens_in}+{tokens_out}",
                 body={"model": model, "estimated_input_tokens": tokens_in, "max_output_tokens": tokens_out})
-    # max_output_tokens prices but does not count toward the window. The hold
-    # prices at most HOLD_OUTPUT_TOKENS of it (authorize_candidates.hold_output_tokens,
-    # the Go evaluator's HoldOutputTokens), so these three budgets each price
-    # 16,384 completion tokens at DeepSeek's 633,000 (off peak) or 1,266,000
-    # (peak) per million, at both instants.
+    # max_output_tokens prices but does not count toward the window. DeepSeek
+    # charges 633,000 (off peak) or 1,266,000 (peak) per million completion
+    # tokens: a billion of them is a whole number of dollars.
     for at in INSTANTS:
         for tokens_out in (1_000_000_000, 1_562_500, 15_625_000):
             add(f"answer:estimate:{FLASH}:0+{tokens_out}@{at}", at=at,
                 body={"model": FLASH, "estimated_input_tokens": 0, "max_output_tokens": tokens_out})
-    # Both sides of the bound, and the production shape that motivated it: a
+    # The reservation (reservation_microdollars, the lease's hold) prices at
+    # most HOLD_OUTPUT_TOKENS of the budget while the estimate prices it all:
+    # both sides of the bound, and the production shape that motivated it, a
     # max_tokens of 131,072 (which counts toward the window, so only Gemini's
-    # unknown window admits it) prices 16,384 output tokens, as 16,385 does;
-    # 16,383 prices itself.
+    # unknown window admits it).
     for tokens_out in (HOLD_OUTPUT_TOKENS - 1, HOLD_OUTPUT_TOKENS, HOLD_OUTPUT_TOKENS + 1, 131_072):
         add(f"answer:estimate:hold_cap:{FLASH}:1000+{tokens_out}",
             body={"model": FLASH, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
     add(f"answer:estimate:hold_cap:{GEMINI}:7680+max_tokens:131072",
         body={"model": GEMINI, "estimated_input_tokens": 7_680, "max_output_tokens": None, "max_tokens": 131_072})
-    # A whole number of dollars for the float twin's spelling (float.integral),
-    # which the three budgets above no longer make: 49,999,550 prompt tokens
-    # at Gemini's over-200k tier, 4.22, and 100 output tokens at 18.99 make
-    # exactly $211.
-    add(f"answer:estimate:{GEMINI}:49999550+100",
-        body={"model": GEMINI, "estimated_input_tokens": 49_999_550, "max_output_tokens": 100})
     for field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
         add(f"answer:output_field:{field}", body={"max_output_tokens": None, field: 2_048})
     add("answer:output_default_512", body={"max_output_tokens": None})
@@ -1117,11 +1114,8 @@ def cases() -> list[dict[str, Any]]:
         body_expand={"marker": "@@PAD@@", "repeat": "p", "count": 4 * 1024 * 1024})
     # An estimate past int64: the fake store keeps it (a real Spanner INT64
     # column would refuse the commit), so Python's answer here is the fake's.
-    # Only the prompt can overflow it: the hold prices at most
-    # HOLD_OUTPUT_TOKENS of the output budget, and Gemini's unknown window
-    # admits any prompt.
     add("pass:evaluate.estimate_overflow", "evaluate.estimate_overflow",
-        body={"model": GEMINI, "estimated_input_tokens": 2**63 - 1})
+        body={"model": GEMINI, "max_output_tokens": 2**63 - 1})
     # The schema strips the top-level keys of dict fields (str_strip_whitespace
     # on dict[str, Any]); keys that collide after the strip keep the last
     # value. Go passes on any such key, or one outside printable ASCII.

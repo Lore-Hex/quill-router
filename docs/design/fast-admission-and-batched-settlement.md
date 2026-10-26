@@ -590,12 +590,15 @@ lease's expiry minus a skew allowance.
 
 1. Verify the boot signature and the accepted image digest, against caches with
    a maximum age.
-2. Evaluate the compiled routing snapshot (§4.10) and compute the estimate e.
-   Without `max_tokens`, it assumes 512 output tokens; a budget above
-   `HOLD_OUTPUT_TOKENS` (16,384) prices 16,384. It is the estimate Python
+2. Evaluate the compiled routing snapshot (§4.10) and compute the estimate e
+   (the spend ceiling: the priciest candidate's price of the prompt estimate
+   and the output budget, `max_tokens`, else `max_completion_tokens`, else
+   `max_output_tokens`, else 512) and the reservation r (the same price at
+   most `HOLD_OUTPUT_TOKENS`, 16,384, output tokens). They are what Python
    computes today, so a hold is the same amount on both paths (§4.13).
 3. At the owner, check the workspace's state from a cache with a short maximum
-   age (pause, trust, debt, revocation). Then hold e against the lease.
+   age (pause, trust, debt, revocation). Then hold r against the lease; e
+   is the ceiling the rows carry and the heartbeat cuts a stream at.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
    settle and refund:
    - the authorization ID `A` and the generation ID;
@@ -1773,17 +1776,25 @@ which §4.11 now lists.
     it ships, Python itself prices an opted-in request that does not stream
     from the authorization's prices: the basis this design proposes for the
     fast path (§9).
-- **How far a request can outrun its hold.** The hold is the estimate: the
-  estimated input at the input rate, plus the caller's `max_tokens`, or 512
-  tokens without one, bounded by `HOLD_OUTPUT_TOKENS` (16,384;
-  `authorize_candidates.hold_output_tokens`, the evaluator's
-  `HoldOutputTokens`), at the output rate (`outputTokenEstimate` in the
-  enclave, `output_estimate` in Python). A settle bills what the provider
-  reports, uncapped for a catalog route, so an answer past 16,384 tokens
-  outruns its hold by the excess at the output rate; a user-provided
-  model's settle is capped at its hold, which keeps the whole budget. With
-  the input estimate exact, it can still pass the hold
-  (quill-cloud-proxy `29be0fdd`, quill-router `7ea04fa7`):
+- **How far a request can outrun its hold.** An authorization carries two
+  figures (fast-admission-e2-decide.md §5, "The two figures"). The estimate
+  is the spend ceiling: the priciest candidate's price of the estimated
+  input plus the caller's output budget (`max_tokens`, else
+  `max_completion_tokens`, else `max_output_tokens`, else 512:
+  `outputTokenEstimate` in the enclave, `output_estimate` in Python). The
+  hold, the credit reservation, is the same price at most
+  `HOLD_OUTPUT_TOKENS` (16,384; `authorize_candidates.hold_output_tokens`,
+  the evaluator's `HoldOutputTokens`) output tokens for a catalog text
+  route; for a user-provided model, partner billing and a video it is the
+  estimate. A catalog text route's settle bills what the provider reports,
+  capped at neither figure (a video's, a user-provided model's and
+  Polyphemus's settle are held to the estimate), so an in-flight request's
+  uncovered cost is `max(0, actual - reservation)`: while the provider
+  honours the budget, at most the estimate minus the reservation, the
+  output past 16,384 tokens at the selected candidate's rate (a candidate
+  cheaper than the priciest can pass 16,384 tokens without passing the
+  reservation). With the input estimate exact, it can still pass the
+  estimate (quill-cloud-proxy `29be0fdd`, quill-router `7ea04fa7`):
   - **The ceiling sent to the provider is above the estimate.** With no
     caller limit, adaptive-thinking Anthropic models are sent 32,000 tokens
     (#440), about sixty times a 512-token hold, and OpenAI-compatible

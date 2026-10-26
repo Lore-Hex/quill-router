@@ -9,8 +9,9 @@ routing code it calls, with no store, request, or process-local state:
    narrowed to those reachable from the request's gateway region.
 3. ``finish_candidates``: BYOK presence, the named decision chain, service
    tier, operator-funded costs, the caller's ``allow_fallbacks``, and the
-   largest candidate's estimate, whose output budget ``hold_output_tokens``
-   bounds for catalog routes.
+   largest candidate's estimate (the spend ceiling) and reservation (the
+   credit hold, whose priced output ``hold_output_tokens`` bounds for
+   catalog routes).
 
 The gateway reads what these need (the BYOK rows, the clock, the custom or
 user model, the partner mode) and passes it in; it applies the process-local
@@ -158,11 +159,15 @@ class ResolvedCandidates:
 @dataclass(frozen=True)
 class CandidateOutcome:
     """What authorize derives from the candidates: their order, the selected
-    (first) candidate, the normalized service tier and the model estimate."""
+    (first) candidate, the normalized service tier, the model estimate (the
+    spend ceiling: the priciest candidate at the whole output budget) and the
+    model reservation (the credit hold: the same at ``hold_output_tokens``;
+    equal to the estimate for user-provided, partner and video routes)."""
 
     candidates: list[Candidate]
     service_tier: str | None
     model_estimate: int
+    model_reservation: int
 
     @property
     def model(self) -> Model:
@@ -416,73 +421,96 @@ def finish_candidates(
             "No authorized route candidates are available for this workspace",
             ErrorType.PROVIDER_NOT_SUPPORTED,
         )
-    model_estimate = (
-        custom_model_cost_microdollars(
+    if user_model_prices is not None:
+        model_estimate = custom_model_cost_microdollars(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             prompt_price=user_model_prices[0],
             completion_price=user_model_prices[1],
         )
-        if user_model_prices is not None
-        else partner_cost_microdollars(
+        model_reservation = model_estimate
+    elif partner_mode is not None:
+        model_estimate = partner_cost_microdollars(
             partner_mode,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
-        if partner_mode is not None
-        else max(
+        model_reservation = model_estimate
+    elif video_resolution is not None:
+        model_estimate = max(
             endpoint_cost_microdollars_from_document(
                 endpoint_pricing_document((candidate_endpoint,)),
                 candidate_endpoint.id,
                 input_tokens,
                 output_tokens,
             )
-            if video_resolution is not None
-            else endpoint_cost_microdollars(
-                candidate_endpoint,
-                input_tokens,
-                hold_output_tokens(output_tokens, candidate_endpoint.max_completion_tokens),
-                effective_at=at,
-                service_tier=service_tier,
-                reserve_auto=True,
-            )
             for _candidate_model, candidate_endpoint in endpoint_candidates
         )
-    )
-    return CandidateOutcome(endpoint_candidates, service_tier, model_estimate)
+        model_reservation = model_estimate
+    else:
+        def priciest(priced_output_tokens: int) -> int:
+            return max(
+                endpoint_cost_microdollars(
+                    candidate_endpoint,
+                    input_tokens,
+                    priced_output_tokens,
+                    effective_at=at,
+                    service_tier=service_tier,
+                    reserve_auto=True,
+                )
+                for _candidate_model, candidate_endpoint in endpoint_candidates
+            )
+
+        model_estimate = priciest(output_tokens)
+        # A video's output tokens are video tokens and its settle is held to
+        # the ceiling: its reservation is the ceiling.
+        reserved_output_tokens = output_tokens if route_type == "videos" else hold_output_tokens(output_tokens)
+        model_reservation = (
+            model_estimate if reserved_output_tokens == output_tokens else priciest(reserved_output_tokens)
+        )
+    return CandidateOutcome(endpoint_candidates, service_tier, model_estimate, model_reservation)
 
 
-# The output tokens a catalog route's hold prices at most. The Go edge
-# prices the same hold from the routing snapshot with its own copy,
-# HoldOutputTokens in fastpath/internal/routingsnapshot/evaluate.go: the two
-# must agree, or the two paths hold different amounts for one request.
+# The output tokens a catalog route's credit reservation prices at most. The
+# Go edge computes the same reservation from the routing snapshot with its
+# own copy, HoldOutputTokens in fastpath/internal/routingsnapshot/evaluate.go:
+# the two must agree, or the two paths reserve different amounts for one
+# request.
 HOLD_OUTPUT_TOKENS = 16_384
 
 
-def hold_output_tokens(output_tokens: int, endpoint_max_completion_tokens: int | None = None) -> int:
-    """The output tokens a catalog route's hold prices: ``min(the client's
-    budget, the endpoint's max_completion_tokens when known, HOLD_OUTPUT_TOKENS)``.
+def hold_output_tokens(output_tokens: int) -> int:
+    """The output tokens a catalog route's credit reservation prices:
+    ``min(the client's budget, HOLD_OUTPUT_TOKENS)``.
 
-    The client's budget (``max_tokens``, ``max_completion_tokens`` or
-    ``max_output_tokens``, else 512) is a ceiling, not a forecast. Pricing a
-    131,072-token budget held about 78 times the actual cost of a typical
-    request against the priciest candidate, and refused requests for
-    insufficient credits while the balance covered them many times over,
-    because two or three in-flight holds exceeded it. The context window
-    still has to hold the whole budget; only the price is bounded.
+    An authorization carries two figures. The ESTIMATE (``model_estimate``,
+    the authorization row's ``estimated_microdollars``, the 200's
+    ``estimated_cost``) is the spend ceiling: the priciest candidate's price
+    of the prompt plus the client's whole output budget (``max_tokens``,
+    ``max_completion_tokens`` or ``max_output_tokens``, else 512). Stage D
+    exports it as ``cap_micro`` and cuts a stream whose running charge passes
+    it, the heartbeat refuses usage above it, a video's settle and a
+    user-provided model's settle are held to it, and the Go reaper charges an
+    abandoned hold at most its hold. The RESERVATION (``model_reservation``,
+    the reservation row's ``credit_reserved_micro`` and ``key_reserved_micro``,
+    the lease hold on the fast path) is what admission compares with the
+    available balance and what the counters hold until settle: the same price
+    at the output tokens this function bounds.
 
-    The settle of a catalog route is not capped at the hold (the gateway
-    clamps only a user-provided model's settle to its authorization's
-    estimate), so a lower hold raises the overdraft exposure by (actual minus
-    hold) per in-flight request, bounded by what the provider can emit past
-    16,384 tokens. User-provided models keep the full budget in their hold:
-    ``finish_candidates`` prices them before this bound, and their settle is
-    the one clamped to it.
+    The budget is a ceiling, not a forecast: a client sending the model's
+    whole output window as ``max_tokens`` held the window's worst case per
+    request, and a few in-flight requests could exhaust a balance that
+    covered what they would actually cost. The context window still has to
+    hold the whole budget; only the reservation's priced output is bounded.
+
+    A catalog text route's settle is capped at neither figure (a video's, a
+    user-provided model's and Polyphemus's settle are held to the estimate,
+    which is also their reservation), so the uncovered cost of an in-flight
+    request is ``max(0, actual minus reservation)``: at most the estimate
+    minus the reservation while the provider honours the budget, the output
+    past 16,384 tokens at the selected candidate's rate.
     """
-    bound = min(output_tokens, HOLD_OUTPUT_TOKENS)
-    if endpoint_max_completion_tokens is not None:
-        bound = min(bound, endpoint_max_completion_tokens)
-    return bound
+    return min(output_tokens, HOLD_OUTPUT_TOKENS)
 
 
 def _named_chain_candidates(

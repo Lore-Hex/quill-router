@@ -113,6 +113,7 @@ type authorizeExpect struct {
 	Response            string           `json:"response"`
 	GenerationID        string           `json:"generation_id"`
 	Estimate            int64            `json:"estimate_microdollars"`
+	Reservation         int64            `json:"reservation_microdollars"`
 	DecideRegion        string           `json:"decide_region"`
 	Fingerprint         string           `json:"fingerprint"`
 	IdempotencyScope    string           `json:"idempotency_scope"`
@@ -531,6 +532,7 @@ func checkAnswered(t *testing.T, c authorizeCase, d *Decision) bool {
 	check("scope", d.Identity.Scope, e.IdempotencyScope)
 	check("material", string(d.Identity.Material), e.FingerprintMaterial)
 	check("estimate", d.Estimate, e.Estimate)
+	check("reservation", d.Reservation, e.Reservation)
 	check("workspace", d.Workspace, c.Facts.Key.WorkspaceID)
 	if !ok {
 		return false
@@ -1181,13 +1183,15 @@ func TestTheKeylessPolicyGatesAreBeforeTheLookup(t *testing.T) {
 	}
 }
 
-// TestTheHoldPricesAtMostHoldOutputTokens: through the pipeline, the
+// TestTheReservationPricesAtMostHoldOutputTokens: through the pipeline, the
 // production shape (a max_tokens of 131,072) and the budgets either side of
-// routingsnapshot.HoldOutputTokens price what the regenerated goldens record:
-// 16,384 output tokens at and above the bound, the budget itself below it.
-func TestTheHoldPricesAtMostHoldOutputTokens(t *testing.T) {
+// routingsnapshot.HoldOutputTokens decide what the regenerated goldens
+// record: a reservation (the lease's hold) of 16,384 output tokens at and
+// above the bound and of the budget itself below it, while the estimate
+// (the rows' and the 200's ceiling) prices the whole budget.
+func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 	f := authorizeGoldens(t)
-	estimate := func(name string) int64 {
+	figures := func(name string) (estimate, reservation int64) {
 		t.Helper()
 		for _, c := range f.Cases {
 			if c.Name != name {
@@ -1198,24 +1202,31 @@ func TestTheHoldPricesAtMostHoldOutputTokens(t *testing.T) {
 			if d.Pass != "" || d.ForShadow() == nil {
 				t.Fatalf("%s: passed %q, want a decision", name, d.Pass)
 			}
-			if got := d.ForShadow().Estimate; got != c.Expect.Estimate {
-				t.Fatalf("%s: estimate %d, the golden's %d", name, got, c.Expect.Estimate)
+			got := d.ForShadow()
+			if got.Estimate != c.Expect.Estimate || got.Reservation != c.Expect.Reservation {
+				t.Fatalf("%s: estimate %d and reservation %d, the golden's %d and %d",
+					name, got.Estimate, got.Reservation, c.Expect.Estimate, c.Expect.Reservation)
 			}
-			return c.Expect.Estimate
+			return got.Estimate, got.Reservation
 		}
 		t.Fatalf("%s: not a golden case", name)
-		return 0
+		return 0, 0
 	}
 	flash := "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+"
-	bound := estimate(flash + "16384")
-	if got := estimate(flash + "16385"); got != bound {
-		t.Errorf("a 16,385 budget prices %d, want the bound's %d", got, bound)
+	atBound, bound := figures(flash + "16384")
+	if atBound != bound {
+		t.Errorf("at the bound the estimate %d and the reservation %d differ", atBound, bound)
 	}
-	if got := estimate(flash + "131072"); got != bound {
-		t.Errorf("a 131,072 budget prices %d, want the bound's %d", got, bound)
+	for _, budget := range []string{"16385", "131072"} {
+		if estimate, reservation := figures(flash + budget); reservation != bound || estimate <= atBound {
+			t.Errorf("a %s budget: reservation %d, want the bound's %d; estimate %d, want above %d",
+				budget, reservation, bound, estimate, atBound)
+		}
 	}
-	if got := estimate(flash + "16383"); got >= bound {
-		t.Errorf("a 16,383 budget prices %d, want below the bound's %d", got, bound)
+	if estimate, reservation := figures(flash + "16383"); reservation >= bound || estimate != reservation {
+		t.Errorf("a 16,383 budget: reservation %d, want below %d; estimate %d, want the reservation", reservation, bound, estimate)
 	}
-	estimate("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:7680+max_tokens:131072")
+	if estimate, reservation := figures("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:7680+max_tokens:131072"); reservation >= estimate {
+		t.Errorf("max_tokens 131,072: reservation %d, want below the estimate %d", reservation, estimate)
+	}
 }

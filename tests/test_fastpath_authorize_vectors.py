@@ -78,13 +78,8 @@ PASS_REQUIRED = {
     "float_present", "lax_coercion", "duplicate_key", "strip_ambiguous", "dict_key_strip", "non_ascii_tag",
     "referer_not_strict", "canonical_model_rewrite", "native_batch_key", "partner_key",
     "idempotency_key_too_long", "idempotency_header_repeated", "idempotency_header_non_ascii",
-    "content_type", "deep_nesting", "int_over_4000_digits", "bom", "lone_surrogate",
+    "content_type", "deep_nesting", "int_over_4000_digits", "bom", "lone_surrogate", "estimate_overflow",
 }
-# estimate_overflow (Python wrote an estimate beyond int64) is a label the
-# generator still attaches, but no corpus body carries it: the hold prices at
-# most HOLD_OUTPUT_TOKENS of the output budget, and the corpus draws no
-# prompt that overflows and is otherwise admitted. §10.1's
-# pass:evaluate.estimate_overflow case carries the reason.
 DESCRIPTIVE = {
     "null_extra", "null_nested", "app_categories_empty", "input_modalities", "extras", "nested_provider",
     "nested_trace", "nested_metadata", "unicode_extra", "int_near_2_63", "int_beyond_2_63", "attribution",

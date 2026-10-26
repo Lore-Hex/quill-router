@@ -8,7 +8,6 @@ re-rank is an explicit argument that callers may leave absent.
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import inspect
 import os
@@ -22,7 +21,6 @@ from trusted_router import authorize_candidates
 from trusted_router.authorize_candidates import (
     HOLD_OUTPUT_TOKENS,
     CandidateRequest,
-    ResolvedCandidates,
     endpoint_cost_microdollars,
     finish_candidates,
     hold_output_tokens,
@@ -154,20 +152,22 @@ def test_a_refused_named_chain_carries_its_log_event() -> None:
     assert refusal.value.event == "unavailable" and refusal.value.error.status_code == 503
 
 
-def _candidates(model: str):  # type: ignore[no-untyped-def]
-    request = _request(model)
+def _candidates(model: str, route_type: str = "chat.completions"):  # type: ignore[no-untyped-def]
+    request = _request(model, route_type=route_type)
     plan = plan_route(request, Settings(environment="test"), region="us-central1")
     return request, plan, resolve_candidates(plan, request, region="us-central1", at=AT)
 
 
-def _estimate(request, plan, resolved, output_tokens: int,  # type: ignore[no-untyped-def]
-              user_model_prices: tuple[int, int] | None = None) -> int:
-    return finish_candidates(
+def _figures(request, plan, resolved, output_tokens: int,  # type: ignore[no-untyped-def]
+             user_model_prices: tuple[int, int] | None = None) -> tuple[int, int]:
+    """The outcome's (estimate, reservation) for a 1,000-token prompt."""
+    outcome = finish_candidates(
         plan, resolved, route_type=request.route_type, byok_providers=frozenset(),
         estimated_input_tokens=1_000, output_tokens=output_tokens, service_tier=None,
         additional_cost_reservation=0, video_resolution=None, at=AT,
         user_model_prices=user_model_prices,
-    ).model_estimate
+    )
+    return outcome.model_estimate, outcome.model_reservation
 
 
 def _credits_cost(resolved, output_tokens: int) -> int:  # type: ignore[no-untyped-def]
@@ -177,41 +177,39 @@ def _credits_cost(resolved, output_tokens: int) -> int:  # type: ignore[no-untyp
     )
 
 
-def test_a_catalog_hold_prices_at_most_hold_output_tokens() -> None:
+def test_a_catalog_reservation_prices_at_most_hold_output_tokens_and_the_estimate_the_budget() -> None:
     request, plan, resolved = _candidates(_multi_route_chat_model())
-    at_the_bound = _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS)
-    assert at_the_bound == _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
-    assert _estimate(request, plan, resolved, 131_072) == at_the_bound
-    assert _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS + 1) == at_the_bound
-    assert _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS - 1) < at_the_bound
+    at_the_bound = _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
+    assert _figures(request, plan, resolved, HOLD_OUTPUT_TOKENS) == (at_the_bound, at_the_bound)
+    for budget in (HOLD_OUTPUT_TOKENS + 1, 131_072):
+        estimate, reservation = _figures(request, plan, resolved, budget)
+        assert reservation == at_the_bound
+        assert estimate == _credits_cost(resolved, budget) > at_the_bound
+    below = _credits_cost(resolved, HOLD_OUTPUT_TOKENS - 1)
+    assert _figures(request, plan, resolved, HOLD_OUTPUT_TOKENS - 1) == (below, below)
+    assert below < at_the_bound
 
 
-def test_a_user_provided_model_keeps_the_whole_budget_in_its_hold() -> None:
+def test_a_user_provided_model_reserves_its_whole_budget() -> None:
     request, plan, resolved = _candidates(_multi_route_chat_model())
     prices = (1_000_000, 4_000_000)
-    whole = _estimate(request, plan, resolved, 131_072, user_model_prices=prices)
-    assert whole == custom_model_cost_microdollars(
+    whole = custom_model_cost_microdollars(
         input_tokens=1_000, output_tokens=131_072, prompt_price=prices[0], completion_price=prices[1],
     )
-    assert whole > _estimate(request, plan, resolved, HOLD_OUTPUT_TOKENS, user_model_prices=prices)
+    assert _figures(request, plan, resolved, 131_072, user_model_prices=prices) == (whole, whole)
+    assert whole > _figures(request, plan, resolved, HOLD_OUTPUT_TOKENS, user_model_prices=prices)[1]
 
 
-def test_an_endpoint_output_ceiling_below_the_bound_wins() -> None:
-    request, plan, resolved = _candidates(_multi_route_chat_model())
-    ceiling = 4_096
-    narrowed = ResolvedCandidates(
-        [(model, dataclasses.replace(endpoint, max_completion_tokens=ceiling))
-         for model, endpoint in resolved.candidates],
-        resolved.effective_preferences,
-    )
-    assert _estimate(request, plan, narrowed, 131_072) == _credits_cost(resolved, ceiling)
-    assert _estimate(request, plan, narrowed, 131_072) < _estimate(request, plan, resolved, 131_072)
+def test_a_token_billed_video_reserves_its_whole_budget() -> None:
+    """A video's settle is held to the estimate, so its reservation is the
+    estimate: 80,000 video tokens, not 16,384."""
+    request, plan, resolved = _candidates("bytedance/seedance-2.5", route_type="videos")
+    estimate, reservation = _figures(request, plan, resolved, 80_000)
+    assert estimate == reservation == _credits_cost(resolved, 80_000) > _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
 
 
 def test_hold_output_tokens_is_the_bound_both_paths_share() -> None:
     assert hold_output_tokens(131_072) == HOLD_OUTPUT_TOKENS == 16_384
     assert hold_output_tokens(512) == 512
-    assert hold_output_tokens(131_072, 4_096) == 4_096
-    assert hold_output_tokens(100, 4_096) == 100
     evaluator = (ROOT / "fastpath" / "internal" / "routingsnapshot" / "evaluate.go").read_text()
     assert f"const HoldOutputTokens = {HOLD_OUTPUT_TOKENS:_}" in evaluator

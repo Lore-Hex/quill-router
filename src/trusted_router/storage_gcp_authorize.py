@@ -472,6 +472,7 @@ def authorize_atomic(
     workspace_id: str,
     key_hash: str,
     estimate: int,
+    reservation: int | None = None,
     has_credit_candidate: bool,
     reservation_usage_type: str,
     idempotency_scope: str | None,
@@ -600,6 +601,13 @@ def authorize_atomic(
         if speculative and len(counts) > key_index and counts[key_index] == 0:
             raise _RetrySequentialKeyReserve("speculative key hold missed")
 
+    # The hold the counters and caps take: the reservation when the caller
+    # separates it from the estimate (authorize_candidates.hold_output_tokens:
+    # at most HOLD_OUTPUT_TOKENS of the output budget), else the estimate.
+    # The authorization row the builders write keeps the estimate, the
+    # spend ceiling.
+    hold = estimate if reservation is None else reservation
+
     def txn(transaction: Any) -> dict:
         if idempotency_scope is not None:
             existing = read_reservation_by_idempotency(transaction, pt, idempotency_scope)
@@ -614,21 +622,21 @@ def authorize_atomic(
         paused = False
         if batch_credit:
             selected_credit_shard = shard_candidates[0]
-            credit_hold = estimate
+            credit_hold = hold
         elif has_credit_candidate:
             for candidate in shard_candidates:
                 if armed:
                     reserved, paused = reserve_credit_with_pause(
-                        transaction, pt, workspace_id, estimate, shard=candidate,
+                        transaction, pt, workspace_id, hold, shard=candidate,
                     )
                 else:
-                    reserved = reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate)
+                    reserved = reserve_credit(transaction, pt, workspace_id, hold, shard=candidate)
                 if reserved:
                     selected_credit_shard = candidate
                     break
             else:
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
-            credit_hold = estimate
+            credit_hold = hold
 
         if armed:
             # Batched credit checks pause in its UPDATE predicate below.
@@ -655,7 +663,7 @@ def authorize_atomic(
             from trusted_router.storage_gcp_strict_budget import reserve_strict_key
 
             key_result, strict_decision = reserve_strict_key(
-                transaction, pt, key_hash, estimate, is_byok=is_byok,
+                transaction, pt, key_hash, hold, is_byok=is_byok,
                 enforce_windows=enforce_strict_windows,
             )
             selected_key_shard = UNSHARDED
@@ -679,7 +687,7 @@ def authorize_atomic(
                     transaction,
                     pt,
                     key_hash,
-                    estimate,
+                    hold,
                     is_byok=is_byok,
                     shard=candidate,
                 )
@@ -695,7 +703,7 @@ def authorize_atomic(
                 raise _Reject(
                     AuthorizeOutcome.KEY_LIMIT_EXCEEDED if saw_key_row else AuthorizeOutcome.KEY_MISSING
                 )
-        key_hold = estimate if key_result == KEY_ACCEPTED else 0
+        key_hold = hold if key_result == KEY_ACCEPTED else 0
 
         reservation_statement = reservation_insert_statement(
             pt,
@@ -731,11 +739,11 @@ def authorize_atomic(
         statements = []
         if batch_credit:
             statements.append(reserve_credit_statement(
-                pt, workspace_id, estimate, shard=selected_credit_shard, check_pause=armed,
+                pt, workspace_id, hold, shard=selected_credit_shard, check_pause=armed,
             ))
         if speculative:
             statements.append(reserve_key_statement(
-                pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
+                pt, key_hash, hold, is_byok=is_byok, shard=selected_key_shard,
             ))
         # Credit before key; no client RPC between these locks and commit.
         # A zero does not stop Batch DML: check the prefix before INSERT errors.

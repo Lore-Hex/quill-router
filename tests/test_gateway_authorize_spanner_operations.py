@@ -965,9 +965,14 @@ def test_folded_pause_gateway_error_bytes_and_rollback(
     monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 100.0)
     folded = storage_gcp_authorize.authorize_atomic
 
-    def parent_with_its_own_clock(*args: Any, created_at: Any = None, **kwargs: Any) -> Any:
+    def parent_with_its_own_clock(
+        *args: Any, created_at: Any = None, reservation: int | None = None, **kwargs: Any,
+    ) -> Any:
         # The frozen parent predates the caller's instant: it stamps its own
-        # reading, which no error byte or rollback below depends on.
+        # reading, which no error byte or rollback below depends on. It also
+        # predates the reservation beside the estimate: it held the estimate,
+        # which the reservation equals for this body's output budget.
+        assert reservation is None or reservation == kwargs["estimate"]
         return parent(*args, **kwargs)
 
     errors = []
