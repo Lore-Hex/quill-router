@@ -96,8 +96,8 @@ class ScopeRepo:
             f"python3 {shlex.quote(str(ROOT / 'scripts/ci/commit_scope.py'))}",
         )
         if mutation == "renames":
-            assert script.count("git diff --no-renames --raw") == 1
-            script = script.replace("git diff --no-renames --raw", "git diff --raw")
+            assert script.count("git -c core.quotePath=true diff --no-renames --raw") == 1
+            script = script.replace("git -c core.quotePath=true diff --no-renames --raw", "git -c core.quotePath=true diff --raw")
         elif mutation is not None:
             raise AssertionError(f"Unknown mutation: {mutation}")
         output = self.root / "github-output"

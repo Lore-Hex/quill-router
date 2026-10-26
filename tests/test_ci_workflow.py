@@ -320,7 +320,7 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     assert 'git fetch -q --depth=1 origin "${base}"' in script
     # --no-renames: a code file moved onto a data path must appear as the
     # deletion of its code path. --raw: modes and status reach the classifier.
-    assert 'git diff --no-renames --raw "${base}" "${head}" > changed-paths.txt' in script
+    assert 'git -c core.quotePath=true diff --no-renames --raw "${base}" "${head}" > changed-paths.txt' in script
     assert 'if [ "$(python3 scripts/ci/commit_scope.py classify < changed-paths.txt)" = "true" ]' in script
     # The induction: data_only only when the base commit's own tree passed a
     # completed ci.yml run (push or dispatch; a pull_request run checks a
