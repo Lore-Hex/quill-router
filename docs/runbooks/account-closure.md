@@ -8,6 +8,10 @@ The confirmation explains that this disables access, not personal-data erasure.
 It requires an active cookie session, same-origin POST, a session-bound CSRF
 token, the exact word `DELETE`, and a separate acknowledgment checkbox. An API
 key cannot close an account, and the form cannot select a different user.
+This first submission leaves the account active and opens a separate final
+confirmation screen. **Yes, close my account** performs the closure. That second
+POST requires its own session-bound signed token, issued only after the first
+confirmation and valid for five minutes. Cancelling leaves the account active.
 
 One database transaction marks the user disabled with `account_closed_at`,
 archives their solo workspaces through the existing lifecycle operation,

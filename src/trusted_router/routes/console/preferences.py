@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -24,6 +25,25 @@ def _closure_token(session: AuthSession) -> str:
     ).hexdigest()
 
 
+def _final_token(session: AuthSession, issued: int) -> str:
+    signature = hmac.new(
+        session.secret_hash.encode(),
+        f"account-closure-final:{session.hash}:{session.user_id}:{issued}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{issued}.{signature}"
+
+
+def _valid_final_token(session: AuthSession, token: str) -> bool:
+    try:
+        issued = int(token.split(".", 1)[0])
+    except ValueError:
+        return False
+    return 0 <= time.time() - issued <= 300 and hmac.compare_digest(
+        token.encode(), _final_token(session, issued).encode(),
+    )
+
+
 def register(app: FastAPI) -> None:
     @app.get("/console/account/preferences")
     def console_preferences(ctx: ConsoleDep, settings: SettingsDep) -> Response:
@@ -42,6 +62,7 @@ def register(app: FastAPI) -> None:
     def confirm_account_deletion(ctx: ConsoleDep, settings: SettingsDep, error: str = "") -> Response:
         messages = {
             "confirmation": "Type DELETE and confirm the account closure to continue.",
+            "expired": "Your final confirmation expired. Review the account closure again to continue.",
             "shared": "Your account belongs to a shared workspace. Contact support to close it without interrupting your team.",
             "assisted": "This account needs assisted closure. Contact support and we will help you close it.",
         }
@@ -52,15 +73,33 @@ def register(app: FastAPI) -> None:
         ), headers=_HEADERS)
 
     @app.post("/console/account/delete")
-    def delete_account(
+    def review_account_deletion(
         request: Request, ctx: ConsoleDep, settings: SettingsDep,
         csrf_token: str = Form(""), confirmation: str = Form(""), acknowledge: str = Form(""),
     ) -> Response:
         _same_origin(request, settings)
-        if not hmac.compare_digest(csrf_token, _closure_token(ctx.session)):
+        if not hmac.compare_digest(csrf_token.encode(), _closure_token(ctx.session).encode()):
             raise HTTPException(403, "Invalid confirmation. Reload the page and try again.")
         if confirmation != "DELETE" or acknowledge != "yes":
             return RedirectResponse("/console/account/delete?error=confirmation", status_code=303, headers=_HEADERS)
+        return HTMLResponse(render(
+            "console/account/delete_final.html", settings=settings, ctx=ctx, active="preferences",
+            page_title="Final confirmation", page_subtitle="Your account is still active.",
+            closure_token=_closure_token(ctx.session), final_token=_final_token(ctx.session, int(time.time())),
+        ), headers=_HEADERS)
+
+    @app.post("/console/account/delete/confirm")
+    def delete_account(
+        request: Request, ctx: ConsoleDep, settings: SettingsDep,
+        csrf_token: str = Form(""), final_token: str = Form(""), confirm_close: str = Form(""),
+    ) -> Response:
+        _same_origin(request, settings)
+        if not hmac.compare_digest(csrf_token.encode(), _closure_token(ctx.session).encode()):
+            raise HTTPException(403, "Invalid confirmation. Reload the page and try again.")
+        # Only the first confirmation issues this short-lived, session-bound
+        # capability. A direct POST cannot skip the review step.
+        if not _valid_final_token(ctx.session, final_token) or confirm_close != "yes":
+            return RedirectResponse("/console/account/delete?error=expired", status_code=303, headers=_HEADERS)
         try:
             closed = STORE.close_user_account(ctx.user.id)
         except AccountClosureBlocked as exc:

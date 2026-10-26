@@ -1,0 +1,18 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section aria-labelledby="final-heading" style="max-width:640px;overflow-wrap:anywhere">
+  <h2 id="final-heading">Close this account?</h2>
+  <p><strong>{{ user.email or user.wallet_address or 'Your account' }}</strong></p>
+  <p>This is the final step. Confirming will sign you out, disable your personal workspaces and API keys, and stop auto refill. Your remaining credits will become inaccessible.</p>
+  <p>Other regional services may take up to 24 hours to refresh cached API-key permissions. Requests and payments already in progress may finish.</p>
+  <p>This closes access; it does not erase your personal data. For data erasure, contact <a href="mailto:security@trustedrouter.com">security@trustedrouter.com</a>.</p>
+  <form method="post" action="/console/account/delete/confirm" style="margin-top:24px">
+    <input type="hidden" name="csrf_token" value="{{ closure_token }}">
+    <input type="hidden" name="final_token" value="{{ final_token }}">
+    <div class="actions" style="display:flex;flex-wrap:wrap;gap:12px">
+      <a class="btn" href="/console/account/preferences">Keep my account</a>
+      <button class="btn" type="submit" name="confirm_close" value="yes">Yes, close my account</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

@@ -32,11 +32,26 @@ def payload(client):
     return {"csrf_token": token, "confirmation": "DELETE", "acknowledge": "yes"}
 
 
+def final_payload(client):
+    data = payload(client)
+    review = client.post("/console/account/delete", data=data, headers={"Origin": "http://testserver"})
+    assert review.status_code == 200
+    assert "Final confirmation" in review.text
+    assert "Your account is still active" in review.text
+    assert review.headers["cache-control"] == "private, no-store"
+    token = re.search(r'name="final_token" value="([a-f0-9.]+)"', review.text).group(1)
+    return {"csrf_token": data["csrf_token"], "final_token": token, "confirm_close": "yes"}
+
+
 def test_close_revokes_sessions_keys_and_keeps_account_tombstone(client, account):
     user, workspace, raw_key, key, raw, _ = account
     other_raw, _ = STORE.create_auth_session(user_id=user.id, provider="github", label="other", ttl_seconds=3600)
     assert '/console/account/delete' in client.get('/console/account/preferences').text
-    response = client.post("/console/account/delete", data=payload(client), headers={"Origin": "http://testserver"})
+    data = final_payload(client)
+    assert not STORE.get_user(user.id).disabled
+    assert STORE.get_auth_session_by_raw(raw) is not None
+    assert not STORE.get_key_by_hash(key.hash).disabled
+    response = client.post("/console/account/delete/confirm", data=data, headers={"Origin": "http://testserver"})
     assert response.status_code == 200
     assert "Account closed" in response.text
     assert "Account closure is not data erasure" in response.text
@@ -54,12 +69,15 @@ def test_close_revokes_sessions_keys_and_keeps_account_tombstone(client, account
     assert client.get("/v1/key", headers={"Authorization": f"Bearer {raw_key}"}).status_code == 401
     client.cookies.set("tr_session", raw)
     assert client.get("/console/account/preferences", follow_redirects=False).status_code == 302
+    assert client.post("/console/account/delete/confirm", data=data,
+                       headers={"Origin": "http://testserver"}, follow_redirects=False).status_code == 302
 
 
 @pytest.mark.parametrize("origin", [None, "null", "https://evil.test", "https://testserver", "http://testserver:81"])
 def test_close_rejects_missing_or_cross_origin(client, account, origin):
     headers = {"Origin": origin} if origin else {}
     assert client.post("/console/account/delete", data=payload(client), headers=headers).status_code == 403
+    assert client.post("/console/account/delete/confirm", data=final_payload(client), headers=headers).status_code == 403
     assert not STORE.get_user(account[0].id).disabled
 
 
@@ -76,16 +94,17 @@ def test_close_requires_session_bound_token_and_explicit_confirmation(client, ac
 
 def test_close_cannot_target_another_user(client, account):
     victim = STORE.ensure_user("victim@example.com")
-    response = client.post("/console/account/delete", data={**payload(client), "user_id": victim.id},
+    response = client.post("/console/account/delete/confirm", data={**final_payload(client), "user_id": victim.id},
                            headers={"Origin": "http://testserver"})
     assert response.status_code == 200
     assert not STORE.get_user(victim.id).disabled
+    assert STORE.get_user(account[0].id).disabled
 
 
 def test_shared_workspace_blocks_without_partial_closure(client, account):
     user, workspace, _, key, *_ = account
     STORE.add_members(workspace.id, ["teammate@example.com"])
-    response = client.post("/console/account/delete", data=payload(client),
+    response = client.post("/console/account/delete/confirm", data=final_payload(client),
                            headers={"Origin": "http://testserver"}, follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"].endswith("error=shared")
     assert not STORE.get_user(user.id).disabled
@@ -115,10 +134,67 @@ def test_too_many_keys_blocks_without_partial_closure(client, account, monkeypat
 
 
 def test_anonymous_and_api_keys_cannot_close_accounts(client, account):
-    data = payload(client)
+    data = final_payload(client)
     client.cookies.clear()
-    response = client.post("/console/account/delete", data=data,
+    response = client.post("/console/account/delete/confirm", data=data,
                            headers={"Origin": "http://testserver", "Authorization": f"Bearer {account[2]}"},
                            follow_redirects=False)
     assert response.status_code == 302
+    assert not STORE.get_user(account[0].id).disabled
+
+
+@pytest.mark.parametrize("token", ["", "garbage", "1.invalid", "0." + "0" * 64, "\u00e9"])
+def test_final_cannot_skip_first_confirmation(client, account, token):
+    response = client.post("/console/account/delete/confirm",
+                           data={**payload(client), "final_token": token, "confirm_close": "yes"},
+                           headers={"Origin": "http://testserver"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("error=expired")
+    assert not STORE.get_user(account[0].id).disabled
+
+
+def test_final_requires_explicit_button_and_csrf(client, account):
+    data = final_payload(client)
+    for change, status in (({"confirm_close": ""}, 303), ({"csrf_token": "invalid"}, 403),
+                           ({"csrf_token": "\u00e9"}, 403)):
+        response = client.post("/console/account/delete/confirm", data={**data, **change},
+                               headers={"Origin": "http://testserver"}, follow_redirects=False)
+        assert response.status_code == status
+    assert not STORE.get_user(account[0].id).disabled
+
+
+@pytest.mark.parametrize("elapsed", [-1, 301])
+def test_final_expires_and_rejects_future_tokens(client, account, monkeypatch, elapsed):
+    from trusted_router.routes.console import preferences
+    data = final_payload(client)
+    issued = int(data["final_token"].split(".")[0])
+    monkeypatch.setattr(preferences, "time", SimpleNamespace(time=lambda: issued + elapsed))
+    response = client.post("/console/account/delete/confirm", data=data,
+                           headers={"Origin": "http://testserver"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("error=expired")
+    assert not STORE.get_user(account[0].id).disabled
+
+
+@pytest.mark.parametrize("different_user", [False, True])
+def test_final_token_cannot_move_between_sessions_or_users(client, account, different_user):
+    data = final_payload(client)
+    user = STORE.ensure_user("other@example.com") if different_user else account[0]
+    raw, _ = STORE.create_auth_session(user_id=user.id, provider="github", label="other", ttl_seconds=3600)
+    client.cookies.set("tr_session", raw)
+    data["csrf_token"] = payload(client)["csrf_token"]
+    response = client.post("/console/account/delete/confirm", data=data,
+                           headers={"Origin": "http://testserver"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert not STORE.get_user(user.id).disabled
+    assert not STORE.get_user(account[0].id).disabled
+
+
+def test_final_token_cannot_be_tampered_and_cancel_keeps_account(client, account):
+    data = final_payload(client)
+    data["final_token"] = data["final_token"][:-1] + ("1" if data["final_token"][-1] == "0" else "0")
+    response = client.post("/console/account/delete/confirm", data=data,
+                           headers={"Origin": "http://testserver"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert client.get("/console/account/preferences").status_code == 200
     assert not STORE.get_user(account[0].id).disabled
