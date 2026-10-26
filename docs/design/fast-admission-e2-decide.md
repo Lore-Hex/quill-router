@@ -206,8 +206,13 @@ The flow, per request, in this order:
     deciding off after 60 s (availability only). Eviction is sooner when Python answers
     the key a 401, 402 or 403, or the workspace a pause 503, on any request
     the edge passes. The cohort is pilot workspaces only, and the operator's
-    immediate lever is `fastpathctl decide-off-all` (honoured within one
-    5 s copy interval). Before I2, `docs/runbooks/fastpath-turn-off.md`
+    immediate lever is `fastpathctl decide-off-all`: a node whose reads
+    succeed sees the change within 10 s of the commit, up to 5 s until its
+    next read and the read's 5 s budget (`DecideEvery`, `decideCopy.run`);
+    a node whose read fails keeps the copy it held, and decides nothing
+    (`cache.decide`) once that copy is 15 s old, measured from the start
+    of its last successful read (`DecideView.gate`). Before I2,
+    `docs/runbooks/fastpath-turn-off.md`
     (G2's paragraph) makes `fastpathctl decide off` the first step of any
     abuse pause or key revocation for a decided workspace. A revocation feed
     (a change stream or a Python-published epoch) is E4's, with capped keys.
@@ -1563,11 +1568,11 @@ letter: disjoint files, built in parallel.
 | G9 | 2 | `store/gatewayauth.go`: §8.4 | G2 |
 | P3 | 2 | Python settles Go-shaped rows (test only): settle, refund, disposition, reaper, replay (same key and fingerprint replays, another body 409s), drain | P1 |
 | G10 | 3 | `edge/decide.go` pipeline and full-response shadow, `-edge-decide-shadow` (false) | G4 to G9 |
-| I1 | 3 | Shadow on: node attributes, `TR_EDGE_POLICY_PUBLISH_ENABLED=true`; then at least 7 days of soak | G10 |
+| I1 | 3 | Shadow on: node attributes, `TR_EDGE_POLICY_PUBLISH_ENABLED=true`; then the shadow's sample ("I2 gates" below) | G10 |
 | G11 | 4 | Decide path (`edge/decide_path.go`): admit, insert, answer; per-lookup-hash in-flight limit (`edge/inflight.go`); `-edge-decide` (false); the store's one read-back and drain (§8.4); emulator end-to-end test | G10 |
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
-| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, soak |
+| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, the I2 gates |
 
 **The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
 `-edge-decide-shadow`, off by default) runs `Decide` for each authorize the
@@ -1685,8 +1690,12 @@ class too (`cohort`), and the cache affinity requests it measured by class
 `affinity_warm` over `affinity_cold` plus `affinity_warm`, the figure §1
 item 5's revisit reads) (`docs/runbooks/fastpath-watch.md`). The decide path counts
 its unavailable answers by the insert's gRPC code (`store` returns it with
-the outcome), so a clock ahead of Spanner's (`failed_precondition`, §8.4)
-or a Spanner incident is told from a lost commit answer. A period with an
+the outcome): the code is the transaction's error as `ClassifyInsert`
+read it, not a cause, and no code says whether the commit applied (§8.4);
+`failed_precondition` can follow a re-sent commit Spanner no longer
+remembers, and `deadline_exceeded` the local deadline or the
+transaction's own, so several nodes answering unavailable at once point
+at what they share, Spanner among it, without proving it. A period with an
 unavailable answer raises `edge_decide_unavailable`, three such periods
 with no 200 between them `edge_decide_unavailable_sustained` (a period
 that answered nothing neither adds to the run nor ends it), and a pass past decision 12's 1 s at
@@ -1694,9 +1703,28 @@ the edge or 25 s in all `edge_decide_pass_slow`; each kind has its policy
 (`infra/fastpath_alerts.tf`) and runbook row
 (`docs/runbooks/fastpath-alerts.md`).
 
-**I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
-the comparable requests (`agree_full` plus `differ`: Go would answer and
-Python answered a 200 that is not a replay) with every difference
+**I2 gates:** a sample, not a calendar. The shadow has compared at least
+10,000 comparable requests (`agree_full` plus `differ`: Go would answer
+and Python answered a 200 that is not a replay; `affinity_cold` and
+`affinity_warm` are not comparable), spanning at least 24 hours of wall
+clock and at least three distinct policy digests and two distinct
+snapshot digests, all read with `fastpathwatch edge -since` the start of
+the current release's soak: the counts from before a node re-pin or a
+route weight change are kept apart and do not count. Each count line
+carries the period (a minute) before its timestamp, and `-since` selects
+lines by timestamp, so the sample starts at the first count line on every
+node that is a full period after the last change, the last node's restart
+onto the release or the weight's apply, found from the lines' timestamps
+per node (`docs/runbooks/fastpath-watch.md`): `-since` is the latest of
+those, the period that crosses a change is before it, and during a rolling
+re-pin so is every line of a node still on the old release. The sample
+starts over from there. The calendar bound measured time, not evidence;
+the sample bound measures what the gate reads. `fastpathwatch edge` does
+not print the digests: it sums the shadow's lines over them, so the
+distinct digests of the span are counted from the lines' `snapshot=` and
+`policy=` among the lines with comparable requests, with the `gcloud
+logging read` of `fastpath-watch.md`, for now. Then `agree_full` at least 99.5% of
+the comparable requests with every difference
 explained; every other cohort-eligible request (Go would answer, each
 counted by its decide row's gate) accounted for by class
 (`cohort_by_class`: Python's errors, unavailable answers and unread

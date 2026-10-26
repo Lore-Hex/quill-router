@@ -70,6 +70,15 @@ locals {
   # measured soak (the I1 runbook); each node in turn took it drained, its
   # unit stopped and its startup script run again (a reset alone keeps the
   # unit's old arguments). Python still decides.
+  # The decide path (G11, stage I2): fastpath-edge-decide "true" has the
+  # edge answer the authorizes of the workspaces the decide table names
+  # (docs/runbooks/fastpath-edge-decide.md); "false", the default, answers
+  # nothing. It is a flag the unit takes, so a node takes a change to it as
+  # it took the shadow's: drained, its unit stopped and its startup script
+  # run again, one node at a time. Only a script that reads the attribute
+  # passes the flag: a node from before that script carries the attribute
+  # and passes nothing, so the script reaches the fleet first, as I1's did,
+  # through nodes added under new names.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -78,6 +87,7 @@ locals {
     fastpath-edge-shadow              = "true"
     fastpath-edge-policy-url          = "${local.fastpath_edge_upstream}/internal/fastpath/edge-policy"
     fastpath-edge-decide-shadow       = "true"
+    fastpath-edge-decide              = "false"
   })
 }
 
