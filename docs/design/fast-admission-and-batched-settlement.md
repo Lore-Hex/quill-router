@@ -1789,8 +1789,8 @@ which §4.11 now lists.
   hold, the credit reservation, is the same price at most
   `HOLD_OUTPUT_TOKENS` (16,384; `authorize_candidates.hold_output_tokens`,
   the evaluator's `HoldOutputTokens`) output tokens for a catalog text
-  route; for a user-provided model, partner billing and a video it is the
-  estimate. A catalog text route's settle bills what the provider reports,
+  route; for a user-provided model, partner billing, a video and, for now,
+  a stream it is the estimate. A catalog text route's settle bills what the provider reports,
   capped at neither figure (a video's, a user-provided model's and
   Polyphemus's settle are held to the estimate), and nothing in authorize
   bounds that charge (cache-creation premiums and counts above the budget

@@ -535,8 +535,9 @@ and the client's whole output budget. The reservation is the credit hold:
 the same price at `min(budget, HOLD_OUTPUT_TOKENS)` output tokens,
 `HOLD_OUTPUT_TOKENS` being 16,384 in Python and in the evaluator's
 `HoldOutputTokens`. They are equal for user-provided models, partner
-billing and videos (whose settle is held to the ceiling), and whenever the
-budget is at most 16,384. Every reader of either, and which it reads:
+billing, videos (whose settle is held to the ceiling), streams (for now:
+see "Streams" below), and whenever the budget is at most 16,384. Every
+reader of either, and which it reads:
 
 | Reader | Figure |
 |---|---|

@@ -125,6 +125,10 @@ type authorizeExpect struct {
 		Status int     `json:"status"`
 		Type   *string `json:"type"`
 		Leased bool    `json:"leased"`
+		// Reservation is the credit reservation Python's typed store wrote
+		// for a request it answered without a lease (§10.1): nil when it
+		// wrote none.
+		Reservation *int64 `json:"reservation_microdollars"`
 	} `json:"python"`
 }
 
@@ -1228,5 +1232,44 @@ func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 	}
 	if estimate, reservation := figures("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:8000+max_tokens:131072"); reservation >= estimate {
 		t.Errorf("max_tokens 131,072: reservation %d, want below the estimate %d", reservation, estimate)
+	}
+}
+
+// TestPythonsReservationOnPassedGoldens: a golden Go passes that Python
+// answered without a lease records the credit reservation Python wrote
+// (python.reservation_microdollars, §10.1). Where the evaluator reads the
+// body, it is the evaluator's reservation: the whole budget's price for a
+// stream (for now), at most HoldOutputTokens of it otherwise.
+func TestPythonsReservationOnPassedGoldens(t *testing.T) {
+	f := authorizeGoldens(t)
+	checked, streams := 0, 0
+	for _, c := range f.Cases {
+		if c.Expect.Outcome != "pass" || c.Expect.Python.Reservation == nil {
+			continue
+		}
+		req, _, why := requestOf(c.body(), &shadowCall{})
+		if why != "" {
+			continue // a body the evaluator does not read (§3's body.* reasons)
+		}
+		in, _ := caseInputs(t, f, c)
+		req.At = c.at()
+		r := in.Snapshot.Evaluate(req)
+		if r.Outcome != routingsnapshot.Answered {
+			continue
+		}
+		if req.Stream != nil && *req.Stream {
+			streams++
+			if r.Reservation != r.ModelEstimate {
+				t.Errorf("%s: a stream's reservation %d, want its estimate %d", c.Name, r.Reservation, r.ModelEstimate)
+			}
+		}
+		if got := *c.Expect.Python.Reservation; got != r.Reservation {
+			t.Errorf("%s: Python reserved %d, the evaluator %d (estimate %d)", c.Name, got, r.Reservation, r.ModelEstimate)
+		}
+		checked++
+	}
+	t.Logf("%d passed goldens' reservations checked, %d of them streams", checked, streams)
+	if streams < 2 || checked < 4 {
+		t.Fatalf("checked %d (%d streams): fewer than the goldens hold", checked, streams)
 	}
 }

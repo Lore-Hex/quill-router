@@ -719,8 +719,9 @@ without the completion as Python's has it. The estimate prices
 `max_output_tokens`, else 512. Beside it the evaluator answers the
 reservation, the same price at `min(output_estimate, HOLD_OUTPUT_TOKENS)`
 output tokens (16,384 in `authorize_candidates.hold_output_tokens` and the
-evaluator's `HoldOutputTokens`): the estimate is the spend ceiling the rows
-and the 200 carry, the reservation is the credit hold the lease takes
+evaluator's `HoldOutputTokens`; a stream's reservation is its estimate for
+now): the estimate is the spend ceiling the rows and the 200 carry, the
+reservation is the credit hold the lease takes
 (fast-admission-e2-decide.md §5, "The two figures"). A `max_*` below 1 or a negative prompt
 estimate (which the schema refuses) and a prompt plus completion beyond int64
 go to Python.

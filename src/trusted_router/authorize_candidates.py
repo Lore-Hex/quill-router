@@ -517,8 +517,10 @@ def hold_output_tokens(output_tokens: int) -> int:
     The budget is a ceiling, not a forecast: a client sending the model's
     whole output window as ``max_tokens`` held the window's worst case per
     request, and a few in-flight requests could exhaust a balance that
-    covered what they would actually cost. The context window still has to
-    hold the whole budget; only the reservation's priced output is bounded.
+    covered what they would actually cost. Only the reservation's priced
+    output is bounded; the context window check is unchanged (it counts
+    ``max_tokens``, else ``max_completion_tokens``, never
+    ``max_output_tokens``).
 
     A catalog text route's settle is capped at neither figure (a video's, a
     user-provided model's and Polyphemus's settle are held to the estimate,
