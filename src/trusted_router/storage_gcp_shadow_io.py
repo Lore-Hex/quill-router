@@ -5,12 +5,13 @@ import contextvars
 import threading
 import time
 import uuid
+import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import Cancelled, DeadlineExceeded, NotFound
 
 
 def elapsed_clock() -> float:
@@ -76,9 +77,10 @@ class SessionCheckoutTimeout(TimeoutError):
 
 class Sessions:
     """One bounded checkout lane; no SDK pool/maintenance-thread wait escapes."""
-    def __init__(self, database: Any, *, managed: bool = False) -> None:
+    def __init__(self, database: Any, *, managed: bool = False, lane: str = "observation") -> None:
         self.database = database
         self.managed = managed
+        self.lane = lane
         self.boot = str(uuid.uuid4())
         self.next_recovery = float("-inf")
         self.lock = threading.Lock()
@@ -147,7 +149,7 @@ class Sessions:
                 scope.remaining()
             if self.session is None:
                 from google.cloud.spanner_v1.session import Session
-                session = Session(self.database, labels={"tr_component": "shadow-v2", "tr_boot": self.boot})
+                session = Session(self.database, labels={"tr_component": "shadow-v2", "tr_boot": self.boot, "tr_lane": self.lane})
                 self.creation_unknown = True
                 session.create()
                 self.session = session
@@ -173,7 +175,8 @@ class Sessions:
             # One page per recovery window bounds actual ListSessions RPCs.
             pager = self.database.spanner_api.list_sessions(request=dict(
                 database=self.database.name,
-                filter=f"labels.tr_component:shadow-v2 AND labels.tr_boot:{self.boot}",
+                filter=(f"labels.tr_component:shadow-v2 AND labels.tr_boot:{self.boot}"
+                        f" AND labels.tr_lane:{self.lane}"),
                 page_token=self.reconciliation_token))
             page = next(iter(pager.pages))
             scope.remaining()
@@ -195,7 +198,7 @@ class Sessions:
         self.creation_unknown = False
 
 
-def owned_database(database: Any) -> Any:
+def owned_database(database: Any, *, lane: str = "observation") -> Any:
     """Construct only after v2 selection, with a distinct API and session manager."""
     from google.cloud.spanner_v1 import Client
     from google.cloud.spanner_v1.database import Database
@@ -205,7 +208,7 @@ def owned_database(database: Any) -> Any:
     owned = Client(project=client.project, credentials=client.credentials,
                    client_options=client._client_options, disable_builtin_metrics=True)
     result = owned.instance(database._instance.instance_id).database(database.database_id)
-    result._sessions_manager = Sessions(result)
+    result._sessions_manager = Sessions(result, lane=lane)
     # The SDK sets its thread-local transaction flag before checkout, outside its
     # finally block. Own the checkout so a timeout cannot poison the next cycle.
     def transaction(callback: Any, **kwargs: Any) -> Any:
@@ -219,14 +222,28 @@ def owned_database(database: Any) -> Any:
     return result
 
 
-def configure(database: Any) -> None:
-    if getattr(database, "_shadow_v2_io", False):
-        return
+@dataclass
+class Transport:
+    database: Any
+    failure: Callable[[str, str], None] | None = None
+
+
+# Wrappers retain their state; the registry does not keep discarded clients alive.
+# Identity keys also support unhashable, non-weakrefable offline stand-ins.
+_TRANSPORTS: weakref.WeakValueDictionary[int, Transport] = weakref.WeakValueDictionary()
+
+
+def configure(database: Any) -> Transport | None:
+    existing = _TRANSPORTS.get(id(database))
+    if existing is not None:
+        return existing
     api = getattr(database, "spanner_api", None)
     if api is None:
-        return
+        return None
     from google.api_core.exceptions import Aborted
 
+    transport = Transport(database)
+    _TRANSPORTS[id(database)] = transport
     for name, original in (
             ("begin_transaction", api.begin_transaction if hasattr(api, "begin_transaction") else None),
             ("commit", api.commit if hasattr(api, "commit") else None),
@@ -252,6 +269,13 @@ def configure(database: Any) -> None:
             record = _RECORDER.get()
             started = scope.clock()
             streaming = False
+            def failed(error: Exception) -> None:
+                # Notify before replacing the exception or retiring its session.
+                # This hook is confined to the v2-owned client, never money IO.
+                callback = transport.failure
+                if callback is not None and _name in ("commit", "execute_streaming_sql"):
+                    if isinstance(error, (DeadlineExceeded, Cancelled)):
+                        callback(_name, "DeadlineExceeded" if isinstance(error, DeadlineExceeded) else "Cancelled")
             def measured() -> None:
                 if record is not None:
                     record(max(0, round((scope.clock()-started)*1_000_000)))
@@ -265,6 +289,7 @@ def configure(database: Any) -> None:
                                 scope.remaining()
                                 yield response
                         except Exception as error:
+                            failed(error)
                             manager = getattr(database, "_sessions_manager", None)
                             if isinstance(manager, Sessions):
                                 manager.retire()
@@ -279,6 +304,7 @@ def configure(database: Any) -> None:
                     scope.remaining()
                 return result
             except Exception as error:
+                failed(error)
                 # Deletion is idempotent, but NotFound from a query is not:
                 # the missing resource might be a table rather than a session.
                 if _name == "delete_session" and isinstance(error, NotFound):
@@ -293,7 +319,7 @@ def configure(database: Any) -> None:
                 if not streaming:
                     measured()
         setattr(api, name, bounded)
-    database._shadow_v2_io = True
+    return transport
 
 
 def timestamp_ns(value: Any) -> int:

@@ -117,7 +117,7 @@ def read_shadow_health_statement() -> Statement:
 class ObservationStore:
     def __init__(self, database: Any, *, clock: Callable[[], float] = elapsed_clock,
                  wall: Callable[[], float] = time.time) -> None:
-        self.workspace_database = database
+        self.workspace_database = owned_database(database, lane="workspace")
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
         self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
@@ -132,19 +132,34 @@ class ObservationStore:
         self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
-        configure(self.database)
+        self.transport = configure(self.database)
+        self.workspace_transport = configure(self.workspace_database)
+        # Partial offline transports can exercise sessions without snapshot reads.
+        self.supports_runtime_stop = callable(getattr(self.database, "snapshot", None))
 
-    def session_ready(self) -> bool:
-        manager = getattr(self.database, "_sessions_manager", None)
+    def session_ready(self, *, workspace: bool = False) -> bool:
+        database = self.workspace_database if workspace else self.database
+        manager = getattr(database, "_sessions_manager", None)
         return not isinstance(manager, Sessions) or manager.ready
 
     def session_recovery_due(self) -> bool:
-        manager = getattr(self.database, "_sessions_manager", None)
-        return isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+        return any(isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+                   for manager in (getattr(self.database, "_sessions_manager", None),
+                                   getattr(self.workspace_database, "_sessions_manager", None)))
 
     def prepare_session(self, boot: str | None = None) -> bool:
         manager = getattr(self.database, "_sessions_manager", None)
-        return not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+        ready = not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+        workspace = getattr(self.workspace_database, "_sessions_manager", None)
+        if isinstance(workspace, Sessions) and workspace is not manager:
+            # Preserve the boot identity; the separate tr_lane label isolates
+            # reconciliation under Spanner's substring label matching.
+            workspace_boot = None if boot is None else f"{boot}-workspace"
+            workspace_ready = workspace.prepare(self.clock, workspace_boot)
+            # Prepare both even when the first lane failed or is quarantined;
+            # each retains its own five-second budget and recovery window.
+            ready = ready and workspace_ready
+        return ready
 
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement
@@ -466,8 +481,35 @@ class ObservationStore:
             proofs.add(proof)
         return True
 
+    def runtime_stop(self, row: Row | None, budget: Budget) -> Row | None:
+        """Reviewed stop/clear path: one key, one transaction, first stop wins.
+
+        A lost commit acknowledgement is safe to retry. Clear deletes only this
+        latch; ordinary immutable controls and retention remain unchanged.
+        """
+        from google.cloud.spanner_v1 import KeySet
+
+        if row is not None:
+            require(row.kind == CONTROL_KIND and row.key == "stop-v2", "stop_identity")
+            row.value()
+        budget = budget.child(WRITE_SECONDS)
+        def run(tx: Any) -> Row | None:
+            old = self.point(tx, entity_point_statement(CONTROL_KIND, "stop-v2"), budget, READ_SECONDS)
+            if row is None:
+                if old is not None:
+                    tx.delete("tr_entities", KeySet(keys=[(CONTROL_KIND, "stop-v2")]))
+                return None
+            if old is not None:
+                return old
+            self.write(tx, [row], budget)
+            return row
+        return self.transaction(run, budget, WRITE_SECONDS)
+
+    def read_runtime_stop(self) -> Row | None:
+        return self.read(CONTROL_KIND, "stop-v2", Budget(self.clock()+READ_SECONDS, self.clock))
+
     def control(self, row: Row, budget: Budget) -> None:
-        require(row.kind == CONTROL_KIND, "control_kind")
+        require(row.kind == CONTROL_KIND and row.key != "stop-v2", "control_kind")
         budget = budget.child(WRITE_SECONDS)
         def run(tx: Any) -> None:
             self.retention(tx, [row], budget)
