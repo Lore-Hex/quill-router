@@ -60,7 +60,8 @@ type Request struct {
 	// fields (nil when absent). The window must also hold max_tokens, else
 	// max_completion_tokens (max_output_tokens does not count); the estimate
 	// prices the first of the three present, else 512 (output_estimate);
-	// the reservation prices at most HoldOutputTokens of it.
+	// the reservation prices at most HoldOutputTokens of it, or the whole
+	// budget for a stream (for now).
 	MaxTokens           *int64
 	MaxCompletionTokens *int64
 	MaxOutputTokens     *int64

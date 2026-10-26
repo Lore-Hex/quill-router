@@ -161,8 +161,9 @@ class CandidateOutcome:
     """What authorize derives from the candidates: their order, the selected
     (first) candidate, the normalized service tier, the model estimate (the
     spend ceiling: the priciest candidate at the whole output budget) and the
-    model reservation (the credit hold: the same at ``hold_output_tokens``;
-    equal to the estimate for user-provided, partner and video routes)."""
+    model reservation (the credit hold: the same at ``hold_output_tokens``
+    for a non-stream catalog route; equal to the estimate for streams, for
+    now, and for user-provided, partner and video routes)."""
 
     candidates: list[Candidate]
     service_tier: str | None
