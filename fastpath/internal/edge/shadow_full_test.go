@@ -498,7 +498,7 @@ func TestAffinityIsMeasuredNeverAdmitted(t *testing.T) {
 			t.Fatalf("%s: admittable", name)
 		}
 		classOf := func(body string) fullResult { return compareFull(d, pyAnswer{status: 200, body: []byte(body)}) }
-		if r := classOf(a.ColdResponse); r.class != ClassAffinityCold || !r.affinity || r.decided || !r.rows {
+		if r := classOf(a.ColdResponse); r.class != ClassAffinityCold || !r.affinity || r.decided || r.rows {
 			t.Errorf("%s: the cold bytes: %+v", name, r)
 		}
 		if r := classOf(a.Response); r.class != ClassAffinityWarm || len(r.fields) != 0 || !r.affinity || r.decided || r.rows {
@@ -737,6 +737,72 @@ func TestAnAffinityRequestPassedBeforeTheComposeIsAffinitys(t *testing.T) {
 			t.Errorf("%s: classes %v affinity %v, want %v under %s", v.name, got.Classes, got.Affinity, want,
 				map[bool]string{true: "affinity", false: "classes"}[v.affinity])
 		}
+	}
+}
+
+// TestAnAffinityRequestPassedOnAHeaderIsAffinitys (§11): a request naming
+// a cache_affinity_key that the request half passes on a header after
+// the parse read the key (X-TR-Settlement-Mode, X-Quill-Video-Allowed-
+// Providers) is affinity's, whatever Python answered: never in classes,
+// so never in followed. The same headers on a request without the key
+// are the cohort's passes.
+func TestAnAffinityRequestPassedOnAHeaderIsAffinitys(t *testing.T) {
+	f := authorizeGoldens(t)
+	for _, v := range []struct {
+		name, header, value, reason string
+		affinity                    bool
+		status                      int
+	}{
+		{"pass:body.cache_affinity:warm", "X-TR-Settlement-Mode", "async-v1", "header.settlement_async", true, 200},
+		{"pass:body.cache_affinity:warm", "X-TR-Settlement-Mode", "async-v1", "header.settlement_async", true, 403},
+		{"pass:body.cache_affinity:warm", "X-Quill-Video-Allowed-Providers", "wafer", "header.video_providers", true, 200},
+		{"answer:app_categories_empty", "X-TR-Settlement-Mode", "async-v1", "header.settlement_async", false, 200},
+	} {
+		c := authorizeCaseNamed(t, v.name)
+		c.Request.Headers = append(slices.Clone(c.Request.Headers), [2]string{v.header, v.value})
+		h := newFullEdge(t, f, c, nil, nil)
+		class := ClassPythonAnsweredGoPassed + "." + v.reason
+		if v.status == 200 {
+			h.answer(answerWith(200, []byte(`{"data":{"idempotent_replay":false}}`)))
+		} else {
+			h.answer(answerWith(v.status, errorBody(v.status, "forbidden", "refused")))
+			class = ClassGoPassed + "." + v.reason
+		}
+		h.send(t, c)
+		got := h.edge.DecideShadowCounts()
+		want := map[string]int{class: 1}
+		if v.affinity && (!maps.Equal(got.Affinity, want) || len(got.Classes) != 0) ||
+			!v.affinity && (!maps.Equal(got.Classes, want) || len(got.Affinity) != 0) {
+			t.Errorf("%s with %s on Python's %d: classes %v affinity %v, want %v under %s", v.name, v.header, v.status,
+				got.Classes, got.Affinity, want, map[bool]string{true: "affinity", false: "classes"}[v.affinity])
+		}
+	}
+}
+
+// TestAffinityNeverSpendsTheRowReadBudget (§11): five cold affinity 200s
+// within the read-back limiter's burst, then an ordinary answer whose
+// stored row carries another fingerprint: the ordinary row is still read
+// and its fingerprint difference counted; the affinity answers read
+// nothing.
+func TestAffinityNeverSpendsTheRowReadBudget(t *testing.T) {
+	f := authorizeGoldens(t)
+	cold, ordinary := authorizeCaseNamed(t, "pass:body.cache_affinity"), authorizeCaseNamed(t, "answer:app_categories_empty")
+	h := newFullEdge(t, f, cold, nil, func(cfg *DecideShadowConfig) { cfg.ReadsPerSecond = 5 })
+	h.answer(answerWith(200, []byte(cold.Expect.Affinity.ColdResponse)))
+	for range 5 {
+		h.send(t, cold)
+	}
+	rows := storedRows(t, ordinary)
+	rows.Authorization.IdempotencyFingerprint = spanner.NullString{StringVal: strings.Repeat("0", 64), Valid: true}
+	h.rows.by[ordinary.IDs.AuthorizationID] = rows
+	h.answer(answerWith(200, []byte(ordinary.Expect.Response)))
+	h.send(t, ordinary)
+	got := h.edge.DecideShadowCounts()
+	if got.Affinity[ClassAffinityCold] != 5 || !maps.Equal(got.Classes, map[string]int{ClassAgreeFull: 1}) ||
+		got.Fields["row.idempotency_fingerprint"] != 1 || h.rows.reads.Load() != 1 ||
+		!maps.Equal(got.Rows, map[string]int{"differ": 1}) {
+		t.Fatalf("affinity %v classes %v fields %v rows %v, %d reads", got.Affinity, got.Classes, got.Fields, got.Rows,
+			h.rows.reads.Load())
 	}
 }
 

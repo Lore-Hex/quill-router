@@ -64,8 +64,16 @@ type Request struct {
 	inferenceReceipt bool
 }
 
-// Pass is why a request goes to Python; "" is none.
-type Pass struct{ Reason string }
+// Pass is why a request goes to Python; "" is none. Affinity is whether
+// the body, as the strict parse read it, names a cache_affinity_key: set
+// on a pass the request half makes after the parse (a cohort or header
+// reason), so the shadow counts the request as an affinity one wherever
+// it passed (§11, G13); a body the parse refuses before it reads the key
+// is nobody's.
+type Pass struct {
+	Reason   string
+	Affinity bool
+}
 
 // Passed reports whether the request goes to Python.
 func (p Pass) Passed() bool { return p.Reason != "" }
@@ -98,6 +106,7 @@ func ParseRequest(body []byte, h Headers) (Request, Pass) {
 		return Request{}, p
 	}
 	if p := r.cohort(object, h); p.Passed() {
+		p.Affinity = r.CacheAffinity
 		return Request{}, p
 	}
 	return r, Pass{}

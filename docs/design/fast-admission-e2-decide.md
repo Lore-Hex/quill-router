@@ -1566,9 +1566,11 @@ counts, per snapshot and policy digest:
   `read_back`, so none of the I2 figures below, `stale` and `followed`
   among them, reads it. A body the strict parse refuses before it reads
   the key (a `body.*` pass) is nobody's: counted with the cohort's
-  passes. Rows are read back only for `affinity_cold`. The would-admit
-  alert fires for them as for any decision: Go's gates are the same, only
-  the order is not comparable.
+  passes. No row is read back for an affinity request, whatever its
+  class: the read-back budget (at most 5 reads a second) is the cohort's
+  alone, so the `row.idempotency_fingerprint` gate reads the cohort's
+  rows and nothing else. The would-admit alert fires for them as for any
+  decision: Go's gates are the same, only the order is not comparable.
 - `would_admit_python_refused.<status>.<type>` (critical, a `CRITICAL` log
   line at once): Go would answer, Python answered a 4xx or its pause 503.
 - `python_answered_go_passed.<reason>`: Go would pass with the §3 reason,

@@ -47,7 +47,8 @@ const (
 	// constant, the same meaning) is one whose Python 200 is Go's decision
 	// rendered in routing_state.rank's order for a remembered endpoint
 	// (affinity.go); anything else of theirs is differ. Every affinity
-	// result is counted apart (affinity=), in no count of the cohort's.
+	// result is counted apart (affinity=), in no count of the cohort's,
+	// and no row is read back for one.
 	ClassAffinityCold = "affinity_cold"
 	// ClassWouldAdmit is critical: Go would have answered 200 where Python
 	// refused (status.type follows).
@@ -582,7 +583,10 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 	}
 	r.py.authorization, _ = memberOf(data, "authorization_id").(string)
 	r.py.reservation, _ = memberOf(data, "credit_reservation_id").(string)
-	r.rows = r.py.authorization != ""
+	// Rows are never read back for an affinity request (§11): the cohort's
+	// read-back budget, which the fingerprint gate depends on, is the
+	// cohort's alone.
+	r.rows = r.py.authorization != "" && !d.Affinity
 	timing, shaped := timingOf(memberOf(data, "timing"))
 	staged, err := d.Restage(r.py.authorization, r.py.reservation, d.Input.IdempotencyKey, d.Input.At)
 	if err != nil {
@@ -611,9 +615,8 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 	}
 	if d.Affinity && len(r.fields) == 0 && shaped && warmBytes(d, staged, data, raw, timing) {
 		// Python's bytes are Go's decision with the session's endpoint
-		// promoted: the rows Go would write differ by design, so none are
-		// read back.
-		r.class, r.rows = ClassAffinityWarm, false
+		// promoted.
+		r.class = ClassAffinityWarm
 		return r
 	}
 	goTree, _ := pyjson.Decode(inserted)
@@ -624,9 +627,6 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 		r.fields = []string{"differ.bytes"}
 	}
 	r.class = ClassDifferAny
-	// An affinity decision's rows are read back only when cold: Python's
-	// order, and so its rows, may be a session's (§11).
-	r.rows = r.rows && !d.Affinity
 	return r
 }
 

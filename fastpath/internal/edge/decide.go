@@ -267,9 +267,10 @@ type Decided struct {
 	// looked up).
 	Read gwstate.Read
 	// Affinity is whether the body, as the strict parse read it, names a
-	// cache_affinity_key: known from the parse on, so a pass after it (a
-	// cold cache, a key's facts, the evaluator) is counted under the
-	// shadow's affinity tally, never with the cohort's (§11, G13).
+	// cache_affinity_key: known from the parse on (Pass.Affinity for the
+	// request half's own passes), so a pass after it (a cohort or header
+	// reason, a cold cache, a key's facts, the evaluator) is counted under
+	// the shadow's affinity tally, never with the cohort's (§11, G13).
 	Affinity bool
 }
 
@@ -303,7 +304,7 @@ func Decide(in DecideInputs) Decided {
 	h := headersOf(in.Request.Header)
 	r, p := gwauth.ParseRequest(in.Request.Body, h)
 	if p.Passed() {
-		return passDecided(p.Reason)
+		return Decided{Pass: p.Reason, Affinity: p.Affinity}
 	}
 	at := in.Request.At
 	out := Decided{LookupHash: r.APIKeyLookupHash, Affinity: r.CacheAffinity}

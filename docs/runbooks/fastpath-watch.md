@@ -160,7 +160,8 @@ lines, summed, are its counts. It prints JSON:
   `affinity_warm`: Go's with a remembered endpoint promoted; `differ`,
   `would_admit_python_refused.*` and the rest as for the cohort), and
   `affinity_warm` over cold plus warm, the figure the design's §1 item 5
-  revisit reads. They are not cohort-eligible.
+  revisit reads. They are not cohort-eligible, and no row is read back for
+  them.
 - `decide_shadow` and `decide`: every count of the lines, summed.
 - `periods`: each node's lines that come once a minute, the decide line and
   the shadow's line of the requests it did not follow. A node that ran the
