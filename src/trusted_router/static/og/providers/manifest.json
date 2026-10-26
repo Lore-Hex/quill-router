@@ -622,10 +622,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -838,10 +838,10 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 21,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 21,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
