@@ -2493,7 +2493,7 @@ def dashboard_html(
             canonical_site_url=canonical_site_url,
             brand_name=brand_name,
             alternate_brand=alternate_brand,
-            og_image=f"https://{domain}/static/homepage/social-card-v1.jpg",
+            og_image=f"https://{domain}/static/homepage/social-card-v2.jpg",
             tr_config=json.dumps(tr_config),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,

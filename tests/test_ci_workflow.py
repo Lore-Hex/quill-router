@@ -28,7 +28,7 @@ def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
         assert job["timeout-minutes"] == 35
         assert job["strategy"]["fail-fast"] is False
         assert "continue-on-error" not in job
-    assert jobs["coverage"]["needs"] == "test"
+    assert jobs["coverage"]["needs"] == ["test", "scope"]
 
 
 def test_ci_runs_python_suite_once_with_coverage() -> None:
@@ -253,8 +253,8 @@ def test_ci_cancels_the_run_it_supersedes_on_a_branch_but_never_on_main():
 def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     coverage = jobs["coverage"]
-    assert coverage["if"] == "${{ !cancelled() }}"
-    assert coverage["needs"] == "test"
+    assert coverage["if"] == "${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}"
+    assert coverage["needs"] == ["test", "scope"]
     assert "continue-on-error" not in coverage
     command = next(step["run"] for step in coverage["steps"]
                    if step.get("name") == "Combine and enforce the floor")
@@ -262,3 +262,132 @@ def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
     assert '!= "success"' in command
     assert "exit 1" in command
     assert "--fail-under=70" in command
+
+
+ALWAYS_RUN_JOBS = {"scope", "lint", "production-import", "test", "test-post-cutover", "browser", "ci"}
+
+
+def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
+    # The hourly price refresh gates publication on this workflow's run of a
+    # commit that touches only catalog data. On 2026-10-26 those 44-job runs
+    # were among 19 queued runs while the organization's queue starved for two
+    # hours. The scope job classifies the commit; a job skips only when its
+    # `if` is the data-only condition, and every job that reads the data runs.
+    from scripts.ci.commit_scope import DATA_ONLY_CONDITION, SKIPPED_FOR_DATA_ONLY
+
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    skipped = {name for name, job in jobs.items() if DATA_ONLY_CONDITION in str(job.get("if", ""))}
+    assert skipped == SKIPPED_FOR_DATA_ONLY
+    assert set(jobs) - skipped == ALWAYS_RUN_JOBS
+    for name in skipped:
+        needs = jobs[name]["needs"]
+        assert "scope" in ([needs] if isinstance(needs, str) else needs), name
+        # `!cancelled()` would let a job run after a failed scope; coverage
+        # keeps it (it reports beside a red shard) and guards with the
+        # condition, every other job must skip when scope fails.
+        if name != "coverage":
+            assert jobs[name]["if"] == DATA_ONLY_CONDITION, name
+    for name in ALWAYS_RUN_JOBS:
+        assert "if" not in jobs[name] or name == "ci", name
+    # The jobs that read the published catalog: the suite under both clocks,
+    # lint's catalog history check, the production import and the browser
+    # smoke (which starts the app on the committed snapshot).
+    commands = {name: "\n".join(step.get("run", "") for step in job.get("steps", []))
+                for name, job in jobs.items()}
+    assert {name for name, text in commands.items()
+            if "not provider_health and not proof_oracle" in text} == {"test", "test-post-cutover"}
+    assert "update_model_changes.py --check" in commands["lint"]
+    assert "import trusted_router.main" in commands["production-import"]
+    assert "npm run test:browser" in commands["browser"]
+
+
+def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    scope = jobs["scope"]
+    assert scope["outputs"] == {"data_only": "${{ steps.scope.outputs.data_only }}"}
+    assert scope["permissions"] == {"contents": "read", "actions": "read"}
+    assert "needs" not in scope
+    step = next(step for step in scope["steps"] if step.get("id") == "scope")
+    script = step["run"]
+    assert 'push) base="${PUSH_BEFORE}" ;;' in script
+    assert 'pull_request) base="${PR_BASE_SHA}" ;;' in script
+    assert 'compare/main...${head}' in script and ".merge_base_commit.sha" in script
+    assert scope["env"]["PUSH_BEFORE"] == "${{ github.event.before }}"
+    assert scope["env"]["PR_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    # No history is cloned: the base is fetched at depth 1 and the two trees
+    # are compared. The classification is the committed script, not inline
+    # shell, so tests/test_commit_scope.py can drive it.
+    assert 'git fetch -q --depth=1 origin "${base}"' in script
+    # --no-renames: a code file moved onto a data path must appear as the
+    # deletion of its code path. --raw: modes and status reach the classifier.
+    assert 'git -c core.quotePath=true diff --no-renames --raw "${base}" "${head}" > changed-paths.txt' in script
+    assert 'if [ "$(python3 scripts/ci/commit_scope.py classify < changed-paths.txt)" = "true" ]' in script
+    # The induction: data_only only when the base commit's own tree passed a
+    # completed ci.yml run (push or dispatch; a pull_request run checks a
+    # merge commit). The summary job makes that conclusion mean every job
+    # that ran passed and every skip was legitimate.
+    assert '"repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${base}&per_page=100"' in script
+    assert ('select(.status == "completed" and .conclusion == "success" and '
+            '(.event == "push" or .event == "workflow_dispatch"))') in script
+    assert 'if [ "${validated:-0}" -gt 0 ]; then' in script
+    assert script.count("data_only=true") == 1
+    assert script.index("classify < changed-paths.txt") < script.index("data_only=true")
+    assert script.count("data_only=false") == 1
+    assert 'echo "data_only=${data_only}" >> "$GITHUB_OUTPUT"' in script
+    # Every path that cannot be classified runs the complete matrix.
+    for guard in ('[ -z "${base}" ]', '"0000000000000000000000000000000000000000"',
+                  '[ "${base}" = "${head}" ]', "! git fetch"):
+        assert guard in script, guard
+
+
+def test_summary_job_derives_the_run_conclusion_from_every_job():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    summary = jobs["ci"]
+    assert summary["name"] == "CI"
+    assert set(summary["needs"]) == set(jobs) - {"ci"}
+    assert summary["if"] == "${{ !cancelled() }}"
+    assert summary["env"] == {"NEEDS": "${{ toJSON(needs) }}",
+                              "DATA_ONLY": "${{ needs.scope.outputs.data_only }}"}
+    assert [step["run"] for step in summary["steps"] if "run" in step] == [
+        "python3 scripts/ci/commit_scope.py summarize"]
+    assert "continue-on-error" not in summary
+
+
+def test_data_only_paths_are_exactly_what_the_refresh_stages_minus_code_and_go_inputs():
+    from scripts.ci.commit_scope import DATA_ONLY_PATHS
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
+    step = next(step for step in workflow["jobs"]["refresh"]["steps"]
+                if step.get("name") == "Commit, verify, and push if changed")
+    script = step["run"]
+    staged = script[script.index("git add \\"):script.index("if git diff --cached --quiet")]
+    paths = staged.replace("\\", " ").split()[2:]
+    assert len(paths) == 10
+    # The two staged paths that are not data: self-healed parser code, and
+    # the alias vectors the fastpath job's Go tests read. A refresh commit
+    # that touches either runs the complete matrix.
+    excluded = {"scripts/pricing/parsers/", "fastpath/testdata/model_alias_vectors_v1.json"}
+    assert excluded <= set(paths)
+    # The two staged directories admit only what the refresh writes in them:
+    # one manifest per provider, and what scripts/generate_provider_og.py
+    # writes (one PNG per provider and its manifest).
+    og = (ROOT / "scripts/generate_provider_og.py").read_text()
+    assert 'OUT_DIR = STATIC_DIR / "og" / "providers"' in og
+    assert 'OUT_DIR / f"{facts.slug}.png"' in og
+    assert 'MANIFEST_PATH = OUT_DIR / "manifest.json"' in og
+    directory_patterns = {
+        "src/trusted_router/data/provider_models/": {
+            "src/trusted_router/data/provider_models/*.json"},
+        "src/trusted_router/static/og/providers/": {
+            "src/trusted_router/static/og/providers/*.png",
+            "src/trusted_router/static/og/providers/manifest.json"},
+    }
+    expected: set[str] = set()
+    for path in paths:
+        if path in excluded:
+            continue
+        expected |= directory_patterns[path] if path.endswith("/") else {path}
+    # Both ways: a pattern the refresh does not stage (frontend/src/*.ts) and
+    # a staged file the classifier forgot both fail here.
+    assert set(DATA_ONLY_PATHS) == expected
+    assert len(DATA_ONLY_PATHS) == len(expected)
