@@ -107,7 +107,15 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
         if not parser.title or len(parser.title) > 60:
             issues.append(f"{path}: title length {len(parser.title)}")
         description_length = len(parser.description or "")
-        if not 120 <= description_length <= 160:
+        if path == "/":
+            # The homepage deliberately shares the approved, shorter hero copy.
+            # Require that exact copy rather than padding it to the generated-page minimum.
+            expected_description = (
+                "Access hundreds of models confidentially through a single OpenAI-compatible API."
+            )
+            if parser.description != expected_description:
+                issues.append(f"{path}: description does not match the approved hero copy")
+        elif not 120 <= description_length <= 160:
             issues.append(f"{path}: description length {description_length}")
         if parser.images_without_alt:
             issues.append(f"{path}: {parser.images_without_alt} images have empty alt text")

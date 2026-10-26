@@ -470,8 +470,8 @@ def test_paid_domain_homepages_render_their_own_brand(
 
     assert response.status_code == 200
     # The paid domains serve the same landscape homepage under their own name.
-    assert f"<title>{brand}: The AI router that shows its work</title>" in response.text
-    assert f'property="og:title" content="{brand}: The AI router that shows its work"' in response.text
+    assert f"<title>{brand}: Encrypt all your AI chats</title>" in response.text
+    assert f'property="og:title" content="{brand}: Encrypt all your AI chats"' in response.text
     assert f'<span class="brand-word" aria-hidden="true">{brand}</span>' in response.text
     assert f'property="og:site_name" content="{brand}"' in response.text
     assert f'property="og:url" content="https://{host}/"' in response.text
