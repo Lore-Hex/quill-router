@@ -231,10 +231,20 @@ binary.
 `fastpath_edge_route_weight` (`infra/fastpath_edge_backend.tf`) is the
 share of every enclave's authorize that the control balancer's url map
 sends through the edge; the rest keeps going to the control plane
-directly. It moves one step at a time, `1 -> 5 -> 10`, each step a
-one-line change whose plan is `0 to add, 1 to change, 0 to destroy` (the
-url map only; the route's 24 s timeout in `infra/control_lb_url_map.tf`
-is untouched). The split is global: the edge's nodes and their upstream
+directly. It moves one step at a time, `1 -> 5 -> 50 -> 100`, each step
+a one-line change whose plan is `0 to add, 1 to change, 0 to destroy`
+(the url map only; the route's 24 s timeout in
+`infra/control_lb_url_map.tf` is untouched). The steps are wide because
+the edge only proxies until stage I2 and the decide shadow's sample grows
+with the share: at 5 it compares a few hundred requests a day, at 50 a
+few thousand. What the share changes is retry exposure: the enclave
+makes up to three attempts (two retries) at authorize within 28 s, and
+the weighted split picks a backend per attempt without failing over, so
+all three reaching the edge backend is the share cubed, 0.01% of
+requests at 5 and 12.5% at 50; such a request fails only if each attempt
+also lands on a node that is unhealthy in the seconds before the health
+check (every 5 s, two failures) takes it out of the backend. The gates
+below read that as 5xx on the edge backend. The split is global: the edge's nodes and their upstream
 are in us-central1 only, so that share of European and Asian enclaves'
 authorizes crosses to us-central1 while the weight holds.
 
