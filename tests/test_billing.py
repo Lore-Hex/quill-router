@@ -1206,7 +1206,7 @@ def test_credits_page_shows_the_balance_and_what_requests_in_flight_hold(monkeyp
     assert ">Balance<" in resp.text
     assert "$3.71" in resp.text
     assert "$2.97 held by requests in flight" in resp.text
-    assert "$0.74 can start new requests now" in resp.text
+    assert "Available: $0.74." in resp.text
 
     # Nothing in flight: the headline alone, no held line.
     summary["reserved"] = 0

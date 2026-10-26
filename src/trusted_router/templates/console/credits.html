@@ -12,7 +12,7 @@
         <h2 id="credits-balance-title">Balance</h2>
         <p class="credits-balance-amount">{{ credits_balance }}</p>
         {% if credits_reserved_nonzero %}
-        <p class="credits-balance-held">{{ credits_reserved }} held by requests in flight, released as each one settles; {{ credits_available }} can start new requests now.</p>
+        <p class="credits-balance-held">{{ credits_reserved }} held by requests in flight, released as each one settles. Available: {{ credits_available }}.</p>
         {% endif %}
       </div>
     </div>
