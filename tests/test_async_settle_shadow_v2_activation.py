@@ -26,8 +26,8 @@ from trusted_router.async_settle_shadow_v2_native_reads import NativeClient, Rea
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / 'release/first-window-plan.json'
-# A canary opt-in must carry its runtime stop (TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT).
-EXPIRY = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 1800))
+# A ten-day canary covers a certified evidence window with one expiry.
+EXPIRY = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 10 * 86400))
 
 
 @pytest.fixture
@@ -810,20 +810,24 @@ def test_round2_archive_output_containment(plan, tmp_path):
     ('', 'expiry required'),
     ('2026-10-23T11:00:00Z', 'already passed'),
     ('2026-10-23T11:00:00+00:00', 'ending in Z'),
-    (None, 'canary maximum'),  # 49 h ahead, computed at run time (stable test ids).
+    (None, 'canary maximum'),  # 15 days ahead, computed at run time (stable test ids).
 ])
 def test_opt_in_requires_a_valid_future_expiry(plan, value, message):
     if value is None:
-        value = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 49 * 3600))
+        value = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 15 * 86400))
     with pytest.raises(ValueError, match=message):
         pins(plan, 'shadow-opt-in', expires_at=value)
     # Opt-out ignores and clears it.
     assert pins(plan, 'shadow-opt-out', expires_at=value)['router']['TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT'] == ''
 
 
-def test_release_cli_opt_in_without_expiry_writes_no_patch(tmp_path):
+@pytest.mark.parametrize("days", [None, 15])
+def test_release_cli_opt_in_without_valid_expiry_writes_no_patch(tmp_path, days):
     out = tmp_path / 'release'
-    assert window_main(['release', '--plan', str(EXAMPLE), '--phase', 'shadow-opt-in', '--out', str(out)]) == 1
+    expiry_args = ([] if days is None else
+        ['--expires-at', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + days * 86400))])
+    assert window_main(['release', '--plan', str(EXAMPLE), '--phase', 'shadow-opt-in',
+                        '--out', str(out), *expiry_args]) == 1
     result = json.loads((out / 'result.json').read_text())
     assert result['missing'] == ['P6ActionIncomplete:ValueError']
     assert not (out / 'router.patch').exists()
@@ -832,6 +836,14 @@ def test_release_cli_opt_in_without_expiry_writes_no_patch(tmp_path):
 def test_tool_and_router_share_the_canary_maximum():
     from trusted_router.async_settle_shadow_v2_activation_release import CANARY_MAX_SECONDS
     from trusted_router.config import SHADOW_CANARY_MAX_SECONDS, parse_shadow_expiry
-    assert CANARY_MAX_SECONDS == SHADOW_CANARY_MAX_SECONDS
+    assert CANARY_MAX_SECONDS == SHADOW_CANARY_MAX_SECONDS == 14 * 86400
     # Whatever the tool writes, the router parses strictly and accepts.
     assert parse_shadow_expiry(EXPIRY) > time.time() and EXPIRY.endswith('Z')
+
+
+@pytest.mark.parametrize("days", [10, 14])
+def test_opt_in_accepts_evidence_window_expiry(plan, monkeypatch, days):
+    now = float(int(time.time()))
+    monkeypatch.setattr(time, "time", lambda: now)
+    expiry = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now + days * 86400))
+    assert pins(plan, 'shadow-opt-in', expires_at=expiry)['router']['TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT'] == expiry

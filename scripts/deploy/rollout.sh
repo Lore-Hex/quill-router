@@ -734,14 +734,14 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
-  # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 48 h
+  # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 14 days
   # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
   # checks it, so the canary turns itself off without a deploy. Deployed
   # environments treat an empty or invalid value as expired: v2 pins without a
   # valid one do nothing. It gates shadow v2 only; v1 still installs whenever
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
-  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-10-27T12:00:00Z"
+  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-11-04T12:00:00Z"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key

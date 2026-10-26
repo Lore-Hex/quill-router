@@ -81,7 +81,7 @@ def test_past_expiry_and_z_suffix_are_accepted():
 ])
 def test_invalid_or_unbounded_expiry_fails_closed_without_failing_settings(value, message, caplog):
     if value is None:
-        value = iso(time.time() + SHADOW_CANARY_MAX_SECONDS + 3600)
+        value = iso(time.time() + 15 * 86400)
     # Strict for deploy tests and the activation tool ...
     with pytest.raises(ValueError, match=message):
         parse_shadow_expiry(value)
@@ -98,9 +98,7 @@ def test_invalid_or_unbounded_expiry_fails_closed_without_failing_settings(value
     assert pins(async_settle_shadow_expires_at=iso(time.time() + SHADOW_CANARY_MAX_SECONDS - 60)).async_settle_shadow_live()
 
 
-def test_rollout_expiry_pin_is_strictly_valid_or_empty():
-    """Deploy-time strictness: rollout.sh may carry only an empty or valid expiry."""
-    source = (Path(__file__).resolve().parents[1]/"scripts/deploy/rollout.sh").read_text()
+def assert_rollout_expiry_pin(source: str) -> None:
     values = re.findall(r'^  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=([^"\n]*)"$', source, re.MULTILINE)
     assert len(values) == 1
     if values[0]:
@@ -110,6 +108,43 @@ def test_rollout_expiry_pin_is_strictly_valid_or_empty():
     assert len(policy) == 1
     # Opt-in pins without an expiry would be a silent no-op in production.
     assert not policy[0] or values[0]
+
+
+@pytest.mark.parametrize("days", [10, 14])
+def test_evidence_window_expiry_is_valid_and_live(monkeypatch, days):
+    now = float(int(time.time()))
+    monkeypatch.setattr(time, "time", lambda: now)
+    expiry = now + days * 86400
+    value = iso(expiry)
+    assert SHADOW_CANARY_MAX_SECONDS == 14 * 86400
+    assert parse_shadow_expiry(value, now=now) == expiry
+    settings = deployed(pins(async_settle_shadow_expires_at=value))
+    assert settings.async_settle_shadow_live()
+    assert settings.effective_async_settle_shadow_policy() == "shadow-v2"
+    assert not settings.async_settle_shadow_live(expiry)
+
+
+def test_rollout_expiry_pin_is_strictly_valid_or_empty():
+    """Deploy-time strictness: rollout.sh may carry only an empty or valid expiry."""
+    source = (Path(__file__).resolve().parents[1]/"scripts/deploy/rollout.sh").read_text()
+    assert_rollout_expiry_pin(source)
+
+
+@pytest.mark.parametrize("days", [10, 14, 15])
+def test_rollout_expiry_pin_evidence_window_cap(monkeypatch, days):
+    now = float(int(time.time()))
+    monkeypatch.setattr(time, "time", lambda: now)
+    source = (Path(__file__).resolve().parents[1]/"scripts/deploy/rollout.sh").read_text()
+    expiry = iso(now + days * 86400).replace("+00:00", "Z")
+    source = re.sub(r'(?m)^(  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=)[^"\n]*"$',
+                    rf'\g<1>{expiry}"', source)
+    source = re.sub(r'(?m)^(  "TR_ASYNC_SETTLE_SHADOW_POLICY=)[^"\n]*"$',
+                    r'\g<1>shadow-v2"', source)
+    if days == 15:
+        with pytest.raises(ValueError, match="canary maximum"):
+            assert_rollout_expiry_pin(source)
+    else:
+        assert_rollout_expiry_pin(source)
 
 
 def owner(settings: Settings) -> tuple[shell.Service, list[int]]:

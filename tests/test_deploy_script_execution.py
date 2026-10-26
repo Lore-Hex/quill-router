@@ -718,7 +718,7 @@ def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabli
     assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == "162e441a-5d13-414f-92bd-7c6cd805faa3"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == "shadow-v2"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == "us-central1"
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == "2026-10-27T12:00:00Z"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == "2026-11-04T12:00:00Z"
     # The canary stop must be a valid, unexpired instant when this deploys (parse_shadow_expiry is strict).
     assert parse_shadow_expiry(rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"]) > time.time()
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
