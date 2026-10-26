@@ -70,7 +70,7 @@ func NewStager(s StagingStore, alert func(authorization, what string)) (*Stager,
 	if s == nil || alert == nil {
 		return nil, errors.New("auditor: a stager needs a store and someone to tell")
 	}
-	return &Stager{store: s, alert: alert}, nil
+	return &Stager{store: boundStagingStore{s: s, bound: bound{d: StoreDeadline, j: newJournal(nil)}}, alert: alert}, nil
 }
 
 // Run stages what src delivers until ctx ends or src fails.

@@ -97,6 +97,19 @@ Every node keeps running meanwhile: the auditor, the ticker, the stager and
 the pending worker are what end the leases. A fleet stopped with a lease
 open leaves its reservation held.
 
+A revoked lease drains only as fast as the auditor acknowledges its
+records. If **TR Fast path: auditor lag** or **TR Fast path: auditor
+acknowledges nothing** is open while you wait, the drain is stuck behind
+an auditor member, not slow (`fastpath-alerts.md`, "Auditor lag"). A
+member whose round of commits runs past a minute stops itself and is
+started again by systemd, its leases going to the other members; that
+restart is the watchdog's, and the drain resumes once the alert closes.
+If it does not close, take a goroutine dump of the stuck node before
+anything else (`fastpath-alerts.md`, "A goroutine dump of a hung node"):
+a restart erases what the hang waits on. Restarting its unit
+(`sudo systemctl restart fastpath`) then hands its leases to the others as
+the watchdog would; stopping nodes for good does not end their leases.
+
 ## 3. Check
 
 ```bash

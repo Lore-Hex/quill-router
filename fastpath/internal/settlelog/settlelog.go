@@ -383,6 +383,20 @@ var beforeKeeping func()
 // both the least and the most each extension may be are set to it.
 const ackExtension = 10 * time.Second
 
+// maxExtension is how long the client library goes on extending a record's
+// deadline for a member that holds it unacknowledged; then the record lapses
+// and the log delivers it again (the library's default is an hour). A
+// healthy auditor acknowledges a record at the first commit that lands after
+// it: within a round, which the runtime fails past a minute
+// (auditor.CommitStall), each of its Spanner calls bounded at 15 s
+// (auditor.StoreDeadline). Five minutes is five such rounds, so only a
+// member stuck past its own watchdog, or a Spanner outage, holds a record
+// that long; a redelivery is then harmless, since a member skips what it
+// has applied, and lets another member take the lease's key. It is the
+// backstop behind the watchdog, not the cure: a lapsed record may come back
+// to the same member. A test shortens it.
+var maxExtension = 5 * time.Minute
+
 // Subscription is the auditor's subscription to a region's settle log,
 // which must have message ordering on. It runs one Receive at a time.
 type Subscription struct {
@@ -404,6 +418,7 @@ func Subscribe(client *pubsub.Client, subscription string, maxOutstanding int) *
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
 	sub.ReceiveSettings.MinDurationPerAckExtension = ackExtension
 	sub.ReceiveSettings.MaxDurationPerAckExtension = ackExtension
+	sub.ReceiveSettings.MaxExtension = maxExtension
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
 	return &Subscription{sub: sub, active: map[string]bool{}, outstanding: map[*pubsub.Message]bool{}}
@@ -462,7 +477,7 @@ func (s *Subscription) settle(m *pubsub.Message, ack bool) {
 // and comes back in its order. Nor does the library always let go of a
 // record its handler returned without settling, or one whose handler is
 // still running when it returns: it can go on extending its deadline, for up
-// to an hour. Release every such record when cancellation starts or
+// to maxExtension. Release every such record when cancellation starts or
 // Receive returns, whichever happens first. Waiting for Receive first can
 // deadlock with the library waiting for its message inventory to drain.
 func (s *Subscription) Receive(ctx context.Context, handle func(context.Context, *Delivery)) error {
@@ -525,6 +540,7 @@ func SubscribeRecords(client *pubsub.Client, subscription string, maxOutstanding
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
 	sub.ReceiveSettings.MinDurationPerAckExtension = ackExtension
 	sub.ReceiveSettings.MaxDurationPerAckExtension = ackExtension
+	sub.ReceiveSettings.MaxExtension = maxExtension
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
 	return &RecordSubscription{sub: sub, outstanding: map[*pubsub.Message]bool{}}
@@ -572,7 +588,7 @@ func (s *RecordSubscription) settle(m *pubsub.Message, ack bool) {
 // again. A message whose handler returns without settling it, as the
 // service's does for one that comes once it is stopping, or whose handler
 // still runs when Receive returns, the client library can go on holding,
-// extending its deadline for up to an hour, as Subscription's Receive
+// extending its deadline for up to maxExtension, as Subscription's Receive
 // says; release each such message when cancellation starts or Receive
 // returns, without waiting for the library to drain that same inventory.
 func (s *RecordSubscription) Receive(ctx context.Context, handle func(context.Context, *RecordDelivery)) error {

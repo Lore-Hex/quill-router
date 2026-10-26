@@ -1,6 +1,7 @@
 package auditor
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,12 @@ type PendingConfig struct {
 	Alert   func(authorization, what string)
 	Overdue time.Duration
 	Clock   func() time.Time
+
+	// The tests' own: each Store call's deadline (StoreDeadline) and where
+	// the sweep's lines go (the standard logger), each its default when
+	// zero.
+	deadline time.Duration
+	logf     func(format string, args ...any)
 }
 
 // Pending does the winners' pending work (§4.8, §4.9): for each pack whose
@@ -74,6 +81,7 @@ func NewPending(cfg PendingConfig) (*Pending, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
+	cfg.Store = boundPendingStore{s: cfg.Store, bound: bound{d: cmp.Or(cfg.deadline, StoreDeadline), j: newJournal(cfg.logf)}}
 	return &Pending{cfg: cfg, firstSaw: map[string]time.Time{}, told: map[string]bool{}}, nil
 }
 

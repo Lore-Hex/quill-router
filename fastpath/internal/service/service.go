@@ -871,6 +871,10 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 	}
 	sub := settlelog.Subscribe(c.PubSub, cfg.SettleSubscription, cfg.MaxOutstanding)
 	src := reporting{Source: auditor.FromSubscription(sub), fail: p.failing("auditor")}
+	// A round of commits that runs past auditor.CommitStall ends Run with
+	// auditor.ErrCommitStalled, which fails the process (run): the subscription
+	// asks again for every record the member held, so the other members take
+	// its leases, and systemd starts the unit again.
 	p.run("auditor", func(ctx context.Context) error { return rt.Run(ctx, src) })
 
 	tc := cfg.Ticker

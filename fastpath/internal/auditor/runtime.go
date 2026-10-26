@@ -1,12 +1,14 @@
 package auditor
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
@@ -119,7 +121,41 @@ type Config struct {
 	// Clock is the member's clock, which says when it saw a drain's end
 	// condition hold.
 	Clock func() time.Time
+
+	// The tests' own: each Store call's deadline (StoreDeadline), how long
+	// a round may run (CommitStall), a slow round's (SlowCommitRound), and
+	// where the runtime's lines go (the standard logger, whose standard
+	// error the node's journal keeps), each its default when zero.
+	deadline, stall, slowRound time.Duration
+	logf                       func(format string, args ...any)
 }
+
+// CommitStall is how long a round of commits may run before the member
+// fails: Run returns ErrCommitStalled, and the service fails the process,
+// whose subscription asks again at once for every record the member held,
+// so the other members take its leases, and systemd starts the unit again.
+// The round is the only path that acknowledges a live lease's records, and
+// with the settle log's ordering one held record holds its lease's key
+// shut: a member whose round is wedged would take keys and never let them
+// go (2026-10-26). A healthy round takes well under a second; one whose
+// Spanner calls each run out their StoreDeadline still finishes in time
+// unless it meets four of them, which is a member to replace.
+const CommitStall = 60 * time.Second
+
+// SlowCommitRound is how long a round of commits may take before it is
+// logged.
+const SlowCommitRound = 5 * time.Second
+
+// ErrCommitStalled is Run's failure when a round of commits ran past
+// CommitStall.
+var ErrCommitStalled = errors.New("auditor: a round of commits ran past its limit; the member stops so the others take its leases")
+
+// releaseWait bounds how long a stalled Run waits for its source to return
+// once ctx has ended, so that the client library can ask again for the
+// records it held: longer than the library's own shutdown timeout
+// (settlelog's, 10 s), and short enough that the process still exits if
+// the library hangs as well.
+const releaseWait = 15 * time.Second
 
 // Runtime is a member's work on its share of a region's settle log (§4.8):
 // each lease's records applied in order to the lease's member, the leases'
@@ -136,6 +172,10 @@ type Runtime struct {
 	handlers int
 	stopping bool
 	idle     *sync.Cond
+	// roundSince is when the round of commits under way began, in Unix
+	// nanoseconds, 0 between rounds: the watchdog's reading.
+	roundSince atomic.Int64
+	journal    *journal
 }
 
 // held is a lease at the runtime: its member, and the records handled since
@@ -185,7 +225,12 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
-	rt := &Runtime{cfg: cfg, leases: map[string]*held{}}
+	cfg.deadline = cmp.Or(cfg.deadline, StoreDeadline)
+	cfg.stall = cmp.Or(cfg.stall, CommitStall)
+	cfg.slowRound = cmp.Or(cfg.slowRound, SlowCommitRound)
+	j := newJournal(cfg.logf)
+	cfg.Store = boundStore{s: cfg.Store, bound: bound{d: cfg.deadline, j: j}}
+	rt := &Runtime{cfg: cfg, leases: map[string]*held{}, journal: j}
 	rt.idle = sync.NewCond(&rt.hmu)
 	return rt, nil
 }
@@ -194,9 +239,18 @@ func New(cfg Config) (*Runtime, error) {
 // it applied every CommitEvery. Its handlers work under ctx, and it returns
 // only once each has ended, though src returned first: what it has not
 // acknowledged then, src delivers again.
+//
+// A round of commits that runs past CommitStall fails the member: Run ends
+// ctx, at which src asks again for every record it holds, and returns
+// ErrCommitStalled once src has returned, or after releaseWait if it has
+// not, without waiting for the round or for the handlers it holds up. The
+// process then exits, which nothing wedged in it can stop.
 func (rt *Runtime) Run(ctx context.Context, src Source) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	stalled, watching := make(chan struct{}), make(chan struct{})
+	defer close(watching)
+	go rt.watch(cancel, stalled, watching)
 	committed := make(chan struct{})
 	go func() {
 		defer close(committed)
@@ -207,27 +261,88 @@ func (rt *Runtime) Run(ctx context.Context, src Source) error {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				rt.commitAll(ctx)
+				rt.round(ctx)
 			}
 		}
 	}()
-	err := src.Receive(ctx, func(_ context.Context, d Delivery) {
-		if !rt.enter() {
+	received := make(chan error, 1)
+	go func() {
+		received <- src.Receive(ctx, func(_ context.Context, d Delivery) {
+			if !rt.enter() {
+				return
+			}
+			defer rt.exit()
+			rt.handle(ctx, d)
+		})
+	}()
+	var err error
+	select {
+	case err = <-received:
+	case <-stalled:
+		select {
+		case <-received:
+		case <-time.After(releaseWait):
+		}
+		return ErrCommitStalled
+	}
+	cancel()
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		rt.hmu.Lock()
+		rt.stopping = true
+		for rt.handlers > 0 {
+			rt.idle.Wait()
+		}
+		rt.hmu.Unlock()
+		<-committed
+		rt.workers.Wait()
+	}()
+	select {
+	case <-ended:
+		return err
+	case <-stalled:
+		return ErrCommitStalled
+	}
+}
+
+// round is one round of commits, timed: the watchdog reads when it began,
+// and a slow one is logged.
+func (rt *Runtime) round(ctx context.Context) {
+	began := time.Now()
+	rt.roundSince.Store(began.UnixNano())
+	commits := rt.commitAll(ctx)
+	rt.roundSince.Store(0)
+	if took := time.Since(began); took > rt.cfg.slowRound {
+		rt.journal.printf("slow round", "auditor: a round of commits took %v (%d commits; slow past %v)",
+			took.Round(time.Millisecond), commits, rt.cfg.slowRound)
+	}
+}
+
+// watch fails the member once a round of commits has run past its limit:
+// it logs why, closes stalled and ends Run's context. It returns then, or
+// once done is closed.
+func (rt *Runtime) watch(cancel context.CancelFunc, stalled chan<- struct{}, done <-chan struct{}) {
+	t := time.NewTicker(max(rt.cfg.stall/4, time.Millisecond))
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-t.C:
+		}
+		since := rt.roundSince.Load()
+		if since == 0 {
+			continue
+		}
+		if ran := time.Since(time.Unix(0, since)); ran > rt.cfg.stall {
+			rt.journal.logf("auditor: a round of commits has run %v, past %v: the member stops so that the others "+
+				"take its leases", ran.Round(time.Millisecond), rt.cfg.stall)
+			close(stalled)
+			cancel()
 			return
 		}
-		defer rt.exit()
-		rt.handle(ctx, d)
-	})
-	cancel()
-	rt.hmu.Lock()
-	rt.stopping = true
-	for rt.handlers > 0 {
-		rt.idle.Wait()
 	}
-	rt.hmu.Unlock()
-	<-committed
-	rt.workers.Wait()
-	return err
 }
 
 // enter admits a handler, unless Run is stopping.
@@ -634,8 +749,9 @@ func (rt *Runtime) landed(h *held, got store.CommitResult, n int) {
 
 // commitAll commits what the leases applied, MaxBatch leases a commit, and
 // acknowledges the records of a lease with nothing to commit. A lease whose
-// handler holds it, reading Spanner, waits for the next round.
-func (rt *Runtime) commitAll(ctx context.Context) {
+// handler holds it, reading Spanner, waits for the next round. It returns how
+// many commits it made.
+func (rt *Runtime) commitAll(ctx context.Context) (commits int) {
 	rt.mu.Lock()
 	hs := make([]*held, 0, len(rt.leases))
 	for _, h := range rt.leases {
@@ -646,6 +762,7 @@ func (rt *Runtime) commitAll(ctx context.Context) {
 	var batch []*held
 	flush := func() {
 		rt.commit(ctx, batch)
+		commits++
 		var again []*held
 		for _, h := range batch {
 			// A lease to read again is claimed for its worker while the
@@ -689,10 +806,12 @@ func (rt *Runtime) commitAll(ctx context.Context) {
 	if len(batch) > 0 {
 		flush()
 	}
+	return commits
 }
 
 // commit commits a batch of leases in one transaction. A lease the commit
-// refused, or all of them if its outcome is unknown, loses its member, to
+// refused, or all of them if its outcome is unknown (any failure, its deadline
+// run out included: the commit may have landed), loses its member, to
 // be read again with its records applied again (recover): what a commit
 // that landed made durable, they skip.
 func (rt *Runtime) commit(ctx context.Context, batch []*held) {

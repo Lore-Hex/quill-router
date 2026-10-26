@@ -110,6 +110,9 @@ func run() error {
 		"answer the authorizes the edge decides itself: admit through the node's front door, insert the rows and "+
 			"answer (docs/design/fast-admission-e2-decide.md section 1), for the workspaces the decide table names; "+
 			"needs -edge-snapshot-url and -edge-policy-url; every other request still passes to Python")
+	debugAddress := flag.String("debug-address", service.DebugAddress,
+		"where the goroutine dump is served, GET /debug/goroutines (docs/runbooks/fastpath-alerts.md): a loopback IP address "+
+			"and port only; empty serves none")
 	flag.Parse()
 
 	switch *roles {
@@ -152,6 +155,19 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *debugAddress != "" {
+		// A dump that cannot listen, its port taken, leaves the node running
+		// without it; an address off the loopback interface is refused.
+		ln, err := service.ListenDebug(*debugAddress)
+		switch {
+		case errors.Is(err, service.ErrNotLoopback):
+			return err
+		case err != nil:
+			fmt.Fprintln(os.Stderr, "fastpath: the goroutine dump does not listen:", err)
+		default:
+			defer service.ServeDebug(ln)()
+		}
+	}
 	// SIGUSR1 marks the node leaving, as a deploy does before it stops it.
 	usr1 := make(chan os.Signal, 1)
 	signal.Notify(usr1, syscall.SIGUSR1)
