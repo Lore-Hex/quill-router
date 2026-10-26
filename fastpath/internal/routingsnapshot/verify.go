@@ -15,7 +15,7 @@ import (
 // The manifest's literals (src/trusted_router/routing_snapshot_signing.py).
 const (
 	Purpose = "routing-snapshot"
-	Typ     = "tr-routing-snapshot-v2"
+	Typ     = "tr-routing-snapshot-v3"
 	// TestKID and TestPublicKey name the golden files' key, derived from a
 	// public seed in scripts/fastpath/routing_snapshot_vectors.py. Anyone can
 	// sign with it, so Verify refuses it unless AllowTestKey is set.

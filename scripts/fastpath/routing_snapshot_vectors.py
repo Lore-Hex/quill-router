@@ -27,7 +27,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
     Ed25519PrivateKey,
 )
 
-from trusted_router.catalog_data import PROVIDERS, Model, ModelEndpoint  # noqa: E402
+from trusted_router.catalog_data import (  # noqa: E402
+    PRIVACY_TIER_ALIASES,
+    PROVIDERS,
+    Model,
+    ModelEndpoint,
+)
 from trusted_router.detached_jws import TrustedKey, b64encode  # noqa: E402
 from trusted_router.pricing import PriceTier  # noqa: E402
 from trusted_router.routing_snapshot import (  # noqa: E402
@@ -39,12 +44,13 @@ from trusted_router.routing_snapshot import (  # noqa: E402
     RegionEntry,
     RequestedModel,
     RequestedOverrides,
-    RoutingSnapshotV2,
+    RoutingSnapshotV3,
     SnapshotSettings,
     StageDSettings,
     VariantSuffix,
     canonical_snapshot_bytes,
     compile_routing_snapshot,
+    live_parameter_rules,
 )
 from trusted_router.routing_snapshot_signing import (  # noqa: E402
     PURPOSE,
@@ -52,8 +58,8 @@ from trusted_router.routing_snapshot_signing import (  # noqa: E402
     RoutingSnapshotSigner,
 )
 
-OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "routing_snapshot_v2.body.json"
-OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "routing_snapshot_v2.manifest.json"
+OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "routing_snapshot_v3.body.json"
+OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "routing_snapshot_v3.manifest.json"
 GENERATOR = "scripts/fastpath/routing_snapshot_vectors.py"
 
 COMPILED_AT = int(datetime(2026, 10, 19, tzinfo=UTC).timestamp())
@@ -75,9 +81,14 @@ TEST_KEY = TrustedKey(
 )
 
 _PROVIDER_SLUGS = (
-    "amazon-bedrock", "deepinfra", "deepseek", "fireworks", "google-ai-studio", "minimax",
-    "sakana", "tencent", "thinkingmachines", "together", "trustedrouter", "wafer", "zai",
+    "amazon-bedrock", "chutes", "deepinfra", "deepseek", "fireworks", "google-ai-studio", "kimi",
+    "minimax", "sakana", "tencent", "thinkingmachines", "tinfoil", "together", "trustedrouter",
+    "wafer", "zai",
 )
+# Every route declares these unless it says otherwise; the routing cases
+# exercise routes that lack tools, or structured output, or declare the
+# structured_outputs spelling.
+DEFAULT_PARAMETERS = ("tools", "max_tokens", "response_format")
 
 
 def _model(model_id: str, provider: str, context_length: int = 131_072) -> Model:
@@ -89,7 +100,7 @@ def _endpoint(model_id: str, provider: str, usage: str, prompt: int, completion:
     suffix = "byok" if usage == "BYOK" else "prepaid"
     fields: dict[str, object] = {
         "upstream_id": None,
-        "supported_parameters": ("tools", "max_tokens", "response_format"),
+        "supported_parameters": DEFAULT_PARAMETERS,
         "input_modalities": ("text",),
         "price_tiers": (PriceTier(None, prompt, completion, prompt // 10),),
         **extra,
@@ -109,6 +120,7 @@ def fixture_inputs() -> CatalogInputs:
     flash, glm, gemini = "deepseek/deepseek-v4-flash", "z-ai/glm-5.3", "google/gemini-3.1-pro-preview"
     tencent_flash, fugu = "deepseek/deepseek-v4.1-flash", "sakana-ai/fugu-ultra-v1.1"
     bedrock, inkling = "minimax/minimax-m2", "thinkingmachines/inkling"
+    kimi = "moonshotai/kimi-k2.7"
     two_tiers = (
         PriceTier(200_000, 2_110_000, 12_660_000, 211_000),
         PriceTier(None, 4_220_000, 18_990_000, 422_000),
@@ -124,13 +136,21 @@ def fixture_inputs() -> CatalogInputs:
                   context_length=100_000),
         # More hosts for GLM 5.3 and V4.1 Flash, so the routing cases order
         # several candidates: by rank evidence, preference, price and filters.
-        _endpoint(glm, "together", "Credits", 950_000, 3_300_000),
-        _endpoint(glm, "fireworks", "Credits", 1_100_000, 3_000_000),
-        _endpoint(tencent_flash, "together", "Credits", 160_000, 640_000),
+        # Together's routes declare no tools where another route of the model
+        # does, so a tools request drops them; Fireworks' declares no
+        # structured output, which only require_parameters holds it to.
+        _endpoint(glm, "together", "Credits", 950_000, 3_300_000,
+                  supported_parameters=("max_tokens", "response_format")),
+        _endpoint(glm, "fireworks", "Credits", 1_100_000, 3_000_000,
+                  supported_parameters=("max_tokens", "tools")),
+        _endpoint(tencent_flash, "together", "Credits", 160_000, 640_000,
+                  supported_parameters=("max_tokens", "response_format")),
         # Bedrock: only the upgraded gateway regions, and only an explicit origin.
         _endpoint(bedrock, "amazon-bedrock", "Credits", 316_500, 1_266_000),
-        # Sakana's terms exclude the EEA: no europe-west4 gateway.
-        _endpoint(fugu, "sakana", "Credits", 5_275_000, 21_100_000),
+        # Sakana's terms exclude the EEA: no europe-west4 gateway. No route of
+        # Fugu declares tools: silence is a gap, not a refusal.
+        _endpoint(fugu, "sakana", "Credits", 5_275_000, 21_100_000,
+                  supported_parameters=("max_tokens",)),
         # Two price tiers, and its BYOK twin (two BYOK storage slugs).
         _endpoint(gemini, "google-ai-studio", "Credits", 2_110_000, 12_660_000,
                   price_tiers=two_tiers),
@@ -141,6 +161,20 @@ def fixture_inputs() -> CatalogInputs:
         _endpoint(inkling, "deepinfra", "Credits", 1_055_000, 4_220_000,
                   upstream_id="thinkingmachines/Inkling",
                   catalog_valid_until=datetime(2026, 10, 19, 5, 30, tzinfo=UTC)),
+        # Confidential hosts for GLM 5.3, priced under the others so no
+        # earlier estimate moves: Tinfoil meets every privacy requirement
+        # (Trusted), Chutes Confidential but not Trusted. Tinfoil declares the
+        # structured_outputs spelling, which require_parameters accepts for
+        # response_format, and logprobs, which no other route declares.
+        _endpoint(glm, "tinfoil", "Credits", 800_000, 2_800_000,
+                  supported_parameters=("tools", "max_tokens", "structured_outputs", "logprobs")),
+        _endpoint(glm, "chutes", "Credits", 850_000, 2_700_000),
+        # Kimi K2.7 on two Confidential hosts only. Its preference for Chutes
+        # (below) applies only when it is the request's one model, so a
+        # privacy floor that removes every route of the model before it
+        # reorders Kimi's hosts.
+        _endpoint(kimi, "tinfoil", "Credits", 600_000, 2_500_000),
+        _endpoint(kimi, "chutes", "Credits", 550_000, 2_200_000),
     )
     # Context windows: three sizes for the routing cases' context filter, and
     # Gemini's unknown (0), which the filter keeps whatever the request's size.
@@ -148,6 +182,7 @@ def fixture_inputs() -> CatalogInputs:
         _model(flash, "deepseek", 65_536), _model(tencent_flash, "deepseek", 32_768),
         _model(glm, "zai"), _model(bedrock, "minimax"), _model(fugu, "sakana"),
         _model(gemini, "google-ai-studio", 0), _model(inkling, "thinkingmachines"),
+        _model(kimi, "kimi"),
     )
     credits = RequestedOverrides(**{**NO_OVERRIDES.model_dump(), "usage": "Credits"})
     requested = (
@@ -178,6 +213,7 @@ def fixture_inputs() -> CatalogInputs:
         provider_aliases={"ai-studio": "google-ai-studio", "z-ai": "zai"},
         provider_group_aliases={"google": ("google-vertex", "google-ai-studio")},
         router_provider_slugs=("openrouter", "trustedrouter"),
+        privacy_tiers=dict(PRIVACY_TIER_ALIASES),
     )
     row = {"completion_rate": 1.0, "p50_ttft_ms": 900, "tokens_per_second": 120.5,
            "samples": 40, "throughput_samples": 9}
@@ -199,10 +235,12 @@ def fixture_inputs() -> CatalogInputs:
         catalog_resolved_at=COMPILED_AT,
         expansions_clock=(COMPILED_AT, COMPILED_AT),
         aliases=aliases,
+        parameter_rules=live_parameter_rules(),
         decision_chains={"trustedrouter/dev-1.0": ("wafer", "deepinfra")},
         ranking_evidence=evidence,
         prepaid_min_rank={"tencent": 1_500},
-        model_provider_preference={tencent_flash: {"tencent": 3_000}, glm: {"wafer": -1}},
+        model_provider_preference={tencent_flash: {"tencent": 3_000}, glm: {"wafer": -1},
+                                   kimi: {"chutes": -1}},
     )
 
 
@@ -231,7 +269,7 @@ def fixture_settings() -> SnapshotSettings:
     )
 
 
-def snapshot() -> RoutingSnapshotV2:
+def snapshot() -> RoutingSnapshotV3:
     return compile_routing_snapshot(
         at=COMPILED_AT, horizon=HORIZON_SECONDS, settings=fixture_settings(),
         source_revision="golden-fixture", plane=Plane(cloud="gcp", region="us-central1"),

@@ -1,4 +1,4 @@
-# Routing snapshot v2
+# Routing snapshot v3
 
 Status: versioned upgrade of the published E2 routing snapshot
 ([`fast-admission-enclave-direct.md`](fast-admission-enclave-direct.md), E2
@@ -17,8 +17,8 @@ edge polls the snapshot and compares in shadow behind flags that default off
 | `src/trusted_router/routing_snapshot.py` | Schema, `compile_routing_snapshot`, `CatalogInputs.live`, canonical bytes, digest |
 | `src/trusted_router/routing_snapshot_signing.py` | Manifest claims, `RoutingSnapshotSigner`, `verify_manifest` |
 | `scripts/fastpath/routing_snapshot_vectors.py` | Synthetic catalog, golden files, the test key |
-| `fastpath/testdata/routing_snapshot_v2.body.json` | The golden body: exact canonical bytes, no trailing newline |
-| `fastpath/testdata/routing_snapshot_v2.manifest.json` | The golden manifest: JWS, test public key, kid, issuer, audience |
+| `fastpath/testdata/routing_snapshot_v3.body.json` | The golden body: exact canonical bytes, no trailing newline |
+| `fastpath/testdata/routing_snapshot_v3.manifest.json` | The golden manifest: JWS, test public key, kid, issuer, audience |
 | `fastpath/internal/routingsnapshot` | Go: `Verify` (manifest and strict body), `Snapshot.Evaluate` (candidates and estimate), `Cost` |
 | `tests/test_fastpath_routing_snapshot_vectors.py` | Staleness, signature refusals, fail-closed compiles |
 | `tests/test_routing_snapshot.py` | Live-catalog properties, determinism, field allowlist, dormancy |
@@ -64,10 +64,10 @@ caps): those come from the separate per-workspace cache and key snapshot.
 
 ## Schema
 
-Top level: `v` (2), `kind` (`"tr-routing-snapshot"`), `compiled_at`,
+Top level: `v` (3), `kind` (`"tr-routing-snapshot"`), `compiled_at`,
 `not_after`, `epoch_seconds` (3600), `source_revision`, `plane` `{cloud,
 region}`, `settings`, `providers`, `models`, `endpoints`, `aliases`,
-`requested_models`, `decision_chains`, `ranking`, `fees`. The snapshot is
+`parameters`, `requested_models`, `decision_chains`, `ranking`, `fees`. The snapshot is
 valid on `[compiled_at, not_after)`; past `not_after` Go passes every request
 to Python.
 
@@ -102,6 +102,19 @@ bumps both the body/manifest `v` and the JWS `typ` to
 missing or negative host windows. The outer publication envelope and the
 independent edge-policy schema remain V1; the signing key purpose is unchanged.
 This document retains its existing path for inbound links.
+
+*Migration from v2.* V3 adds required `aliases.privacy_tiers` and
+`parameters` (below), and bumps the body/manifest `v` to 3 and the JWS `typ`
+to `tr-routing-snapshot-v3`, by the same rule: V2 readers reject V3, V3
+readers reject V2, the envelope, the edge policy and the key purpose are
+unchanged, and no check is weakened. The golden files are renamed
+(`routing_snapshot_v3.*`), as v2's were; nothing reads v2 files. Either
+deploy order is safe. A V2 reader shown V3 keeps its last good V2 copy until
+`not_after` (at most 24 hours) and then passes every request to Python; that
+copy is still correct for what V2 answers, because V2 passes both inputs V3
+adds. A V3 reader shown only V2 passes every request to Python until it
+receives V3. Upgrading readers first keeps the edge answering through the
+change.
 
 Upgrade readers before publishing V2, or first verify local edge decisions
 are disabled and remain disabled throughout the migration. An old reader can
@@ -171,6 +184,38 @@ part before the first `:` by `router_base_rewrites`; then return
 filter item is lower-cased, `_` and spaces become `-`, then
 `provider_group_aliases` (several slugs) or `provider_aliases` (one) apply; a
 slug in `router_provider_slugs` or not in `providers` is a 400.
+`privacy_tiers` is `catalog_data.PRIVACY_TIER_ALIASES`: each accepted
+`provider.min_privacy` spelling (`str(value).strip().lower()`) to the
+requirement value it asks for, one of `PRIVACY_TIER_*` (0 to 4); 0 asks for
+nothing, and any other spelling (or a non-string, whose `str` is no
+spelling today) is the 400 `provider.min_privacy must be one of: any, no_store,
+zdr, confidential, trusted (aliases: e2e, e2ee)`. A requirement keeps a route
+exactly when it is in the route's `privacy.meets`; `provider.zdr` adds 2;
+with any requirement the soft `data_collection=deny` is hard.
+
+**parameters**, routing's request-parameter tables, every set sorted:
+`capability_required` (`CAPABILITY_REQUIRED_PARAMETERS`: a parameter that
+decides the kind of answer, to the route declarations that take it),
+`aliases` (`_PARAMETER_CAPABILITY_ALIASES`: the declarations
+`require_parameters` accepts for a requested name; a name not listed accepts
+only itself) and `route_declared` (`_ROUTE_DECLARED_CAPABILITIES`: the
+capabilities whose route declarations are kept per host). A request's
+`requested_parameters` are its stripped names less blanks; on
+`chat.completions`, `responses` or no route type the ones in
+`capability_required` are its capability parameters. A route survives
+`require_parameters: true` when it declares every requested name or one of
+its aliases (on any route type), and survives a capability parameter when it
+declares one of the accepted names, or when it does not but no other route
+of its model declares one, or the capability is not in `route_declared`.
+Python's other refusal, a model a routing pool chose that neither it nor its
+routes declare, needs `pool_model_ids`, which only a requested model makes,
+and Go passes every requested model; so the model's own
+`supported_parameters` are not carried. When nothing survives, the refusal is
+`_no_route_error`'s: the plain one unless the provider filters alone keep a
+route, else the capability parameters no route takes alone (sorted, `param`
+the first), else all of them together. Its `unsupported_parameters` list is
+in the error body but not compared: the shadow compares status, type, message
+and param.
 
 **requested_models[]**, sorted by id: each canonical id whose meaning is not
 "itself, with no overrides": meta models, privacy aliases, private proxies,
@@ -279,7 +324,7 @@ refuses (`SnapshotRefused`) rather than approximate:
 
 The body (about 3 MB for the live catalog) exceeds `detached_jws`'s 64 KiB
 token bound, so the compact JWS signs a manifest: header `{"alg":"EdDSA",
-"kid", "typ":"tr-routing-snapshot-v2"}`, purpose `routing-snapshot`, claims
+"kid", "typ":"tr-routing-snapshot-v3"}`, purpose `routing-snapshot`, claims
 `{v, sha256, size, compiled_at, not_after, source_revision, plane, iss, aud}`.
 `verify_manifest(token, keys, body, now=..., expected_plane=...,
 expected_aud=...)` checks the signature, type, purpose and issuer; that the
@@ -618,9 +663,9 @@ are pinned, so the hourly price refresh cannot make it stale.
 
 ## Not yet
 
-- Request parsing as data (`provider` fields, `max_price`, privacy-tier
-  spellings, `require_parameters` aliases): the routing cases exercise it
-  through Python, but the snapshot does not carry its tables yet.
+- Request parsing as data for `provider.max_price` and the performance
+  thresholds: the routing cases exercise it through Python, but the snapshot
+  does not carry its rules yet.
 - In the routing cases: meta models, decision chains and the full fee
   stack (receipt fee, custom-model markup, additional cost, app markup), and
   `candidate_cost_reporting`, which authorize derives from the stored row.
@@ -651,7 +696,7 @@ edge imports it, to poll the snapshot and compare in shadow.
 
 **Verify** checks a manifest as `verify_manifest` does, in its order: the
 compact JWS (at most 64 KiB, strict base64url, a header that is exactly the
-canonical `{alg EdDSA, kid, typ tr-routing-snapshot-v2}`); exactly one
+canonical `{alg EdDSA, kid, typ tr-routing-snapshot-v3}`); exactly one
 accepted key with that kid, of purpose `routing-snapshot`; its Ed25519
 signature; the public test key (by kid or by public key) refused unless the
 caller sets `AllowTestKey`; claims that are exactly the v1 fields with strict
@@ -669,8 +714,9 @@ duplicate key, no float or exponent, no lone surrogate escape, every object
 exactly its schema fields (none missing, none extra, null only where the
 schema allows it). It then refuses literals Go does not evaluate (another
 version, kind, epoch length, rounding, usage type, `dated_suffix_pattern`, a
-variant suffix that is not a sort), a window over 24 hours, and dangling
-references. A refused snapshot is never evaluated; every request goes to
+variant suffix that is not a sort), a window over 24 hours, a privacy tier
+outside 0 to 4, a parameter set that is empty, unsorted or repeated, and
+dangling references. A refused snapshot is never evaluated; every request goes to
 Python.
 
 **Evaluate** takes the authorize body's routing fields as the enclave sent
@@ -698,9 +744,14 @@ chain above, `provider.order`, `only` and `ignore` with their aliases,
 `allow_fallbacks` (top-level and nested, with their type and conflict
 refusals), `sort` (string or object, with `partition`),
 `data_collection` (with the soft `deny`), `usage` (`byok`, `credits`),
-`jurisdiction` (`us`), `zdr`, input modalities, the context window, the
+`jurisdiction` (`us`), `zdr`, `min_privacy` (every spelling in
+`privacy_tiers`, and the refusal for any other value), `require_parameters`
+(a boolean; anything else present, `null` included, is Python's 400),
+`requested_parameters` with the capability rules and `_no_route_error`'s
+refusals (see **parameters**), input modalities, the context window, the
 gateway-region rule, BYOK presence, the `default` service tier and the
-refusals these make.
+refusals these make. The provider refusals come in Python's order: a router
+name, then `allow_fallbacks`, then `min_privacy`, then `require_parameters`.
 
 *The context window.* Authorize calls `resolve_candidates` with
 `prompt_tokens` = `estimated_input_tokens` (plus a custom model's hidden
@@ -748,42 +799,39 @@ It passes to Python, with the reason, and never guesses:
   (`canonical_router_model_id` rewrites these to `decisionmodelsio`, which
   `router_prefix_rewrites` does not carry); an empty or non-printable-ASCII
   model string.
-- `provider` fields and spellings outside the list above: `min_privacy`,
-  `max_price`, `preferred_max_latency`, `preferred_min_throughput` when not
-  null, `require_parameters` other than `false`, `usage_type`, `billing`,
+- `provider` fields and spellings outside the list above: `max_price`,
+  `preferred_max_latency`, `preferred_min_throughput` when not null, a
+  `min_privacy` string outside printable ASCII (Python's `strip` and `lower`
+  act on Unicode) or a non-string one when a `privacy_tiers` spelling could
+  be its `str` (`true`, a number; none can today), `usage_type`, `billing`,
   `country` and the other jurisdiction keys, alternative spellings (`prepaid`,
   `usa`, ...), an unknown field, any non-printable value, and a provider slug
   the snapshot does not list (Python refuses only slugs its process does not
   know; see below), and an order, only or ignore list with a null, non-string
   or blank item (Python validates the whole list, and refuses such an item,
   before it looks up any name).
-- On `chat.completions`, `responses` or no route type, any non-empty
-  `requested_parameters`: `CAPABILITY_REQUIRED_PARAMETERS` is not in the
-  snapshot.
 - `auto` or `priority` service tier with an OpenAI candidate (priority
   prices), and `priority` over 272,000 prompt tokens. That bound is
   `OPENAI_PRIORITY_MAX_PROMPT_TOKENS`, copied into Go; the cases pin it only
   to the extent that a 1,000-token priority request is refused as unavailable.
 - An estimate, or a `sort=price` headline sum, outside int64.
 
-Against `routing_cases_v1.json` (202 cases), Go answers 127 and refuses 50
+Against `routing_cases_v1.json` (265 cases), Go answers 175 and refuses 71
 exactly as Python (candidates and order, estimate, service tier and Stage D
-reason; or status, type, message and param), and passes 25 to Python. The test
+reason; or status, type, message and param), and passes 19 to Python. The test
 lists each passed case with its reason and fails if Go answers one of them or
 passes any other:
 
 | Passed | Cases | Reason |
 |---|---|---|
-| 4 | `*+confidential` | `provider.min_privacy`: privacy-tier spellings |
 | 4 | `*+max_price` | `provider.max_price`: decimal parsing |
 | 4 | `*+perf` | `provider.preferred_max_latency`: thresholds, and stays on Python |
-| 2 | `required_parameters`, `missing_parameters` | `provider.require_parameters`: its aliases |
 | 1 | `route:images` | the image resolver |
 | 2 | `router_name_then_blank_item`, `router_name_then_null_item` | a malformed provider list |
 | 4 | `*+group_alias` | `google` names `google-vertex`, which the fixture omits |
 | 4 | `*+unknown_provider` | `nope-provider` is not in the snapshot |
 
-The last two rows are the fixture, not the rule. The fixture snapshot lists 13
+The last two rows are the fixture, not the rule. The fixture snapshot lists 16
 providers, but the case generator runs routing against the process's whole
 `catalog_data.PROVIDERS`, which knows `google-vertex`: so a slug missing from
 the snapshot is not evidence Python refuses it, and Go passes it. A live
@@ -815,9 +863,30 @@ seven cases (`order_reorders`,
 fixture provider order, the prepaid floor, a variant suffix's sort, the
 `only` and `order` ceiling and the latency table were tied with what a wrong
 rule would give: mutating any of them in Go left every earlier case passing.
-Still unpinned by any case, for want of a fixture that separates them: the
-single-model condition on `model_provider_preference` (applying it to
-several models orders this fixture the same), availability
+For v3 the fixture gained GLM 5.3 hosts of every privacy tier (Tinfoil
+Trusted, Chutes Confidential), priced under the others so no estimate
+moved, route declarations that differ by host (Together without tools,
+Fireworks without structured output, Tinfoil with the `structured_outputs`
+spelling and `logprobs`), and Kimi K2.7 on Tinfoil and Chutes with a
+preference for Chutes. Of the 202 earlier cases, 28 that route GLM 5.3 list
+the two new hosts too (the same estimates; under `sort=price` they lead),
+`z-ai/glm-5.3+confidential` is answered by them where it was refused, and the
+earlier `*+confidential`, `required_parameters` and `missing_parameters`
+cases, which Go passed, are now answered. It gained 63 cases: every
+`min_privacy` spelling, a spaced and cased one, an unknown one, a blank, a
+null and two non-strings; privacy that removes the first candidate (Wafer,
+under `confidential`), a whole first model, every route (`min_privacy_empties`),
+and that reorders (`min_privacy_reorders`: removing V4 Flash leaves Kimi the
+one model, so its preference puts Chutes before Tinfoil, where
+`kimi_behind_flash` has Tinfoil first); privacy with `zdr`, `order`, no
+fallbacks and `data_collection=deny`; the refusals' order; capability
+parameters kept, dropped, on a model none of whose routes declare them,
+across models, on route types they do not describe, spaced, blank and
+repeated, and the named refusals; and `require_parameters` true (supported,
+by alias, unsupported), false, null and not a boolean. That also pins the
+single-model condition on `model_provider_preference`, which no case did
+before. Still unpinned by any case, for want of a fixture that separates
+them: availability
 (`catalog_valid_until`, `retired_at`: the compiler clamps the window so no
 fixture endpoint changes inside it), and the rank evidence's age bounds (the
 fixture's evidence spans the whole window).

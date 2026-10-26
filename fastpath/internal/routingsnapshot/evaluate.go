@@ -134,6 +134,14 @@ const noRouteMessage = "No route candidates match the requested provider filters
 
 func noRoute() Result { return refused(400, "model_not_supported", noRouteMessage) }
 
+// The refusals routing.provider_route_preferences makes for the two fields
+// this file evaluates from the snapshot's tables, byte for byte.
+const (
+	minPrivacyMessage = "provider.min_privacy must be one of: any, no_store, zdr, confidential, " +
+		"trusted (aliases: e2e, e2ee)"
+	requireParametersMessage = "provider.require_parameters must be a boolean"
+)
+
 // Route types whose candidates come from the chat resolver for a chat
 // model. images, videos, audio, fetch and orchestration sub-routes have
 // resolvers or parameter rules the snapshot does not carry.
@@ -143,7 +151,9 @@ var chatArmRouteTypes = map[string]bool{
 }
 
 // routing._ROUTE_TYPES_DESCRIBED_BY_REQUESTED_PARAMETERS, less None (a
-// missing route type), which describeParameters handles.
+// missing route type), which Evaluate handles: on these route types the
+// body's requested_parameters describe the request being routed, so the
+// capability-required ones among them filter routes.
 var described = map[string]bool{"chat.completions": true, "responses": true}
 
 // The privacy requirement provider.zdr adds (catalog_data.PRIVACY_TIER_ZERO_RETENTION;
@@ -177,6 +187,15 @@ type prefs struct {
 	usOnly         bool
 	privacy        []int64
 	modalities     []string
+	// requireParameters, requested and capability are routing's
+	// require_parameters, requested_parameters and capability_parameters:
+	// requested is the body's list stripped of blanks (a set, in body order),
+	// capability its sorted capability-required members on a described route
+	// type. Routing's pool_model_ids is always empty here: a request that
+	// names a pool resolves to a requested_models entry, which goes to Python.
+	requireParameters bool
+	requested         []string
+	capability        []string
 }
 
 // Rerank is what routing_state.rank reads of a request's provider
@@ -246,12 +265,21 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	if !ok {
 		return result
 	}
+	// routing._requested_parameters: the stripped names less the blanks, a
+	// set; capability_parameters: those CAPABILITY_REQUIRED_PARAMETERS names,
+	// on a route type the list describes.
+	for _, name := range req.RequestedParameters {
+		if name != "" && !slices.Contains(p.requested, name) {
+			p.requested = append(p.requested, name)
+		}
+	}
 	if req.RouteType == nil || described[*req.RouteType] {
-		for _, name := range req.RequestedParameters {
-			if !printable(name) || strings.Trim(name, " ") != "" {
-				return pass("requested_parameters: the capability parameter table is not in the snapshot")
+		for _, name := range p.requested {
+			if _, ok := s.Parameters.CapabilityRequired[name]; ok {
+				p.capability = append(p.capability, name)
 			}
 		}
+		slices.Sort(p.capability)
 	}
 	for _, m := range req.InputModalities {
 		if !slices.Contains([]string{"text", "image", "audio", "video"}, m) {
@@ -297,14 +325,9 @@ func (s *Snapshot) Evaluate(req Request) Result {
 			}
 		}
 	}
-	filtered := s.filter(all, p)
-	if len(filtered) == 0 && p.deny && len(p.privacy) == 0 {
-		relaxed := p
-		relaxed.deny = false
-		filtered = s.filter(all, relaxed)
-	}
+	filtered := s.keep(all, p, at)
 	if len(filtered) == 0 {
-		return noRoute()
+		return s.noRouteError(all, p, at)
 	}
 	candidates, ok := s.sortCandidates(filtered, p, at, req.At.UnixMicro())
 	if !ok {
@@ -571,8 +594,10 @@ func (s *Snapshot) requestedModelIDs(req Request, p *prefs) ([]string, Result, b
 // parseProvider is routing.provider_route_preferences for the provider
 // fields and spellings the routing cases cover. Any other field or spelling
 // passes to Python, which owns request parsing until the snapshot carries
-// its tables. The one refusal it makes is the router-name refusal, in
-// Python's field and item order.
+// its tables. The refusals it makes, in Python's field and item order: the
+// router-name refusal, the allow_fallbacks refusals, a min_privacy spelling
+// the snapshot's table lacks, and a require_parameters that is not a
+// boolean (a null is one: Python reads the key's None).
 func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (prefs, Result, bool) {
 	p := prefs{allowFallbacks: true}
 	fields := map[string]json.RawMessage{}
@@ -604,13 +629,10 @@ func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (p
 		}
 	}
 	// Present and not null, these need tables the snapshot does not carry.
-	for _, name := range []string{"min_privacy", "max_price", "preferred_max_latency", "preferred_min_throughput"} {
+	for _, name := range []string{"max_price", "preferred_max_latency", "preferred_min_throughput"} {
 		if !isNull(name) {
 			return p, pass("provider.%s", name), false
 		}
-	}
-	if v, present := fields["require_parameters"]; present && !bytes.Equal(bytes.TrimSpace(v), []byte("false")) {
-		return p, pass("provider.require_parameters"), false
 	}
 
 	var routerRefusal *Result
@@ -769,13 +791,45 @@ func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (p
 		}
 		p.usOnly = true
 	}
+	// min_privacy: str(value).strip().lower() looked up in PRIVACY_TIER_ALIASES,
+	// else a 400. A number, boolean, list or object is the refusal unless the
+	// table has a spelling its str could be (spelledByNonString); then it goes
+	// to Python. A string outside printable ASCII, where Python's strip and
+	// lower act on Unicode, goes to Python.
+	var minPrivacyRefusal *Result
+	if !isNull("min_privacy") {
+		var v string
+		if err := json.Unmarshal(fields["min_privacy"], &v); err != nil {
+			if spelledByNonString(s.Aliases.PrivacyTiers) {
+				return p, pass("provider.min_privacy is not a string"), false
+			}
+			r := refused(400, "bad_request", minPrivacyMessage)
+			minPrivacyRefusal = &r
+		} else if !printable(v) {
+			return p, pass("provider.min_privacy is not printable ASCII"), false
+		} else if requirement, ok := s.Aliases.PrivacyTiers[strings.ToLower(strings.Trim(v, " "))]; !ok {
+			r := refused(400, "bad_request", minPrivacyMessage)
+			minPrivacyRefusal = &r
+		} else if requirement != 0 {
+			p.privacy = append(p.privacy, requirement)
+		}
+	}
 	if !isNull("zdr") {
 		var zdr bool
 		if err := json.Unmarshal(fields["zdr"], &zdr); err != nil {
 			return p, pass("provider.zdr is not a boolean"), false
 		}
-		if zdr {
-			p.privacy = []int64{zeroRetention}
+		if zdr && !slices.Contains(p.privacy, zeroRetention) {
+			p.privacy = append(p.privacy, zeroRetention)
+		}
+	}
+	// require_parameters: raw.get("require_parameters", False) must be a
+	// boolean, so a present null is refused too.
+	var requireRefusal *Result
+	if v, present := fields["require_parameters"]; present {
+		if err := json.Unmarshal(v, &p.requireParameters); err != nil || isJSONNull(v) {
+			r := refused(400, "bad_request", requireParametersMessage)
+			requireRefusal = &r
 		}
 	}
 	if routerRefusal != nil {
@@ -784,10 +838,33 @@ func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (p
 	if fallbackRefusal != nil {
 		return p, *fallbackRefusal, false
 	}
+	if minPrivacyRefusal != nil {
+		return p, *minPrivacyRefusal, false
+	}
+	if requireRefusal != nil {
+		return p, *requireRefusal, false
+	}
 	p.order = lists["order"]
 	p.only = set(lists["only"])
 	p.ignore = set(lists["ignore"])
 	return p, Result{}, true
+}
+
+// spelledByNonString reports whether a spelling in tiers could be
+// str(value).strip().lower() for a JSON value that is not a string: Python's
+// "true" or "false", a number's digits (an int, a float's repr, "inf" or
+// "nan"), or a list's or object's brackets. None has no spelling: a null
+// min_privacy is absent.
+func spelledByNonString(tiers map[string]int64) bool {
+	for spelling := range tiers {
+		switch {
+		case spelling == "true" || spelling == "false" || spelling == "inf" || spelling == "nan":
+			return true
+		case spelling != "" && strings.ContainsRune("0123456789-[{", rune(spelling[0])):
+			return true
+		}
+	}
+	return false
 }
 
 func isJSONNull(raw json.RawMessage) bool {
@@ -861,10 +938,62 @@ func set(values []string) map[string]bool {
 	return out
 }
 
+// keep is routing._filter_candidates_soft_data_collection over
+// _apply_endpoint_provider_filters: data_collection=deny is relaxed when it
+// is the request's only privacy preference and nothing survives it.
+func (s *Snapshot) keep(candidates []int, p prefs, at int64) []int {
+	filtered := s.filter(candidates, p, at)
+	if len(filtered) == 0 && p.deny && len(p.privacy) == 0 {
+		relaxed := p
+		relaxed.deny = false
+		filtered = s.filter(candidates, relaxed, at)
+	}
+	return filtered
+}
+
+// noRouteError is routing._no_route_error: the 400 for a request no
+// candidate route survives. When the provider filters alone keep a route,
+// the capability-required parameters emptied the list, and the error names
+// them: those no route takes on their own, else all of them together.
+func (s *Snapshot) noRouteError(candidates []int, p prefs, at int64) Result {
+	kept := func(capability []string) bool {
+		q := p
+		q.capability = capability
+		return len(s.keep(candidates, q, at)) > 0
+	}
+	if len(p.capability) == 0 || !kept(nil) {
+		return noRoute()
+	}
+	var unsupported []string
+	for _, name := range p.capability {
+		if !kept([]string{name}) {
+			unsupported = append(unsupported, name)
+		}
+	}
+	var message string
+	if len(unsupported) > 0 {
+		plural := ""
+		if len(unsupported) > 1 {
+			plural = "s"
+		}
+		message = fmt.Sprintf("No route for the requested model supports the parameter%s: %s",
+			plural, strings.Join(unsupported, ", "))
+	} else {
+		unsupported = p.capability
+		message = "No route for the requested model supports these parameters together: " +
+			strings.Join(unsupported, ", ")
+	}
+	r := refused(400, "model_not_supported", message)
+	r.Refusal.Param = unsupported[0]
+	return r
+}
+
 // filter is routing._apply_endpoint_provider_filters for the preferences
-// Go evaluates.
-func (s *Snapshot) filter(candidates []int, p prefs) []int {
+// Go evaluates. declared caches each model's route declarations for one
+// call, as Python's declared_by_model does.
+func (s *Snapshot) filter(candidates []int, p prefs, at int64) []int {
 	var out []int
+	declared := map[string][]string{}
 	for _, i := range candidates {
 		e := &s.Endpoints[i]
 		if len(p.only) > 0 && !p.only[e.Provider] {
@@ -888,9 +1017,67 @@ func (s *Snapshot) filter(candidates []int, p prefs) []int {
 		if slices.ContainsFunc(p.modalities, func(m string) bool { return !slices.Contains(e.InputModalities, m) }) {
 			continue
 		}
+		if p.requireParameters && !s.supportsRequested(e, p.requested) {
+			continue
+		}
+		if !s.takesCapability(e, p, declared, at) {
+			continue
+		}
 		out = append(out, i)
 	}
 	return out
+}
+
+// supportsRequested is routing._endpoint_supports_requested_parameters:
+// every requested name, or one of its aliases, is among the route's
+// declarations.
+func (s *Snapshot) supportsRequested(e *Endpoint, requested []string) bool {
+	for _, name := range requested {
+		alternatives, ok := s.Parameters.Aliases[name]
+		if !ok {
+			alternatives = []string{name}
+		}
+		if !intersects(alternatives, e.SupportedParameters) {
+			return false
+		}
+	}
+	return true
+}
+
+// takesCapability is routing._takes_capability_parameters: whether a route
+// may serve every capability-required parameter the request sends. A route
+// that declares one takes it. A route that does not is refused only on the
+// catalog's evidence: another route of the same model declares it, for a
+// capability whose route declarations are kept per host (route_declared).
+// Otherwise silence is a gap, not a refusal. Python's other refusal, a
+// model routing chose from a pool that neither it nor its routes declare,
+// needs pool_model_ids, which is empty for every request Go evaluates. The
+// model's routes are endpoints_for_model's: those available at the instant.
+func (s *Snapshot) takesCapability(e *Endpoint, p prefs, declared map[string][]string, at int64) bool {
+	for _, name := range p.capability {
+		accepted := s.Parameters.CapabilityRequired[name]
+		if intersects(accepted, e.SupportedParameters) {
+			continue
+		}
+		if _, ok := declared[e.ModelID]; !ok {
+			var union []string
+			for _, i := range s.endpointsByModel[e.ModelID] {
+				if s.available(&s.Endpoints[i], at) {
+					union = append(union, s.Endpoints[i].SupportedParameters...)
+				}
+			}
+			declared[e.ModelID] = union
+		}
+		if intersects(accepted, declared[e.ModelID]) &&
+			slices.ContainsFunc(s.Parameters.RouteDeclared, func(c []string) bool { return slices.Equal(c, accepted) }) {
+			return false
+		}
+	}
+	return true
+}
+
+func intersects(a, b []string) bool {
+	return slices.ContainsFunc(a, func(v string) bool { return slices.Contains(b, v) })
 }
 
 // rank is provider_ranking.measured_provider_rank at nowUS (microseconds).

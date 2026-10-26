@@ -105,7 +105,7 @@ from trusted_router.storage_models import CreditAccount, GatewayBoot, Workspace 
 CASES_OUTPUT = "fastpath/testdata/authorize_cases_v1.json"
 FINGERPRINT_OUTPUT = "fastpath/testdata/authorize_fingerprint_v1.json"
 GENERATOR = "scripts/fastpath/authorize_vectors.py"
-SNAPSHOT = "fastpath/testdata/routing_snapshot_v2.body.json"
+SNAPSHOT = "fastpath/testdata/routing_snapshot_v3.body.json"
 PATH = "/internal/gateway/authorize"
 # A reservation row's created_at in the goldens: the commit's timestamp (§5).
 RESERVATION_CREATED_AT = "commit_timestamp"
@@ -1018,6 +1018,17 @@ def cases() -> list[dict[str, Any]]:
     add("answer:image_input", body={"model": TENCENT_FLASH, "input_modalities": ["text", "image"]})
     add("answer:required_parameters",
         body={"model": GEMINI, "requested_parameters": ["tools"], "provider": {"require_parameters": True}})
+    # G14: the snapshot carries the parameter tables and the privacy
+    # spellings, so these are answered: a capability-required parameter drops
+    # the GLM 5.3 route that does not declare it; require_parameters holds
+    # every route to the requested names through their aliases; min_privacy
+    # keeps the hosts of its tier.
+    add("answer:requested_parameters:tools", body={"requested_parameters": ["tools"]})
+    add("answer:require_parameters:structured_alias",
+        body={"requested_parameters": ["response_format"], "provider": {"require_parameters": True}})
+    for spelling in ("zdr", "confidential", "trusted", " E2E "):
+        add(f"answer:provider:min_privacy:{spelling.strip().lower()}", body={"provider": {"min_privacy": spelling}})
+    add("answer:provider:min_privacy_and_order", body={"provider": {"min_privacy": "zdr", "order": ["chutes", "together"]}})
     # The region a request routes to, and the regions payload.
     for region in ("us-east4", "europe-west4", "us-west1", " us-east4 ", "", "unknown-region"):
         add(f"answer:region:{region.strip() or 'empty'}{':spaced' if region != region.strip() else ''}",
@@ -1197,6 +1208,13 @@ def cases() -> list[dict[str, Any]]:
     add("pass:evaluate.refused:no_origin", "evaluate.refused", body={"model": BEDROCK})
     add("pass:evaluate.refused:context", "evaluate.refused", body={"model": FLASH, "estimated_input_tokens": 70_000})
     add("pass:evaluate.refused:unknown_provider", "evaluate.refused", body={"provider": {"only": ["nope-provider"]}})
+    add("pass:evaluate.refused:min_privacy_spelling", "evaluate.refused", body={"provider": {"min_privacy": "secret"}})
+    add("pass:evaluate.refused:min_privacy_empties", "evaluate.refused",
+        body={"model": FLASH, "provider": {"min_privacy": "confidential"}})
+    add("pass:evaluate.refused:unsupported_parameter", "evaluate.refused",
+        body={"requested_parameters": ["tools"], "provider": {"only": ["together"]}})
+    add("pass:evaluate.refused:require_parameters_not_boolean", "evaluate.refused",
+        body={"provider": {"require_parameters": "true"}})
     add("pass:candidates.byok", "candidates.byok", body={"model": GEMINI}, world={"byok_providers": ["google-ai-studio"]})
     add("pass:candidates.byok:only", "candidates.byok", body={"model": GEMINI, "provider": {"usage": "byok"}},
         world={"byok_providers": ["google-ai-studio"]})

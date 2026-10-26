@@ -32,7 +32,7 @@ from trusted_router.routing_snapshot import (
 )
 
 PURPOSE = "routing-snapshot"
-TYP = "tr-routing-snapshot-v2"
+TYP = "tr-routing-snapshot-v3"
 # The golden files' key, derived from a public seed in
 # scripts/fastpath/routing_snapshot_vectors.py. Anyone can sign with it, so
 # signing and verification refuse it unless the caller asks for test mode.
@@ -43,7 +43,7 @@ _KEY_FIELD = re.compile(r"[A-Za-z0-9_./:@+\-]{1,512}")
 
 
 class ManifestClaims(Frozen):
-    v: Literal[2]
+    v: Literal[3]
     sha256: Digest
     size: UInt
     compiled_at: UInt
@@ -57,14 +57,14 @@ class ManifestClaims(Frozen):
 def manifest_claims(body: bytes, *, iss: str, aud: str) -> dict[str, Any]:
     """The claims a manifest must carry for exactly these bytes.
 
-    The body must parse as a v2 snapshot and be its own canonical encoding, so
+    The body must parse as a v3 snapshot and be its own canonical encoding, so
     two encodings of one snapshot cannot carry two digests.
     """
     snapshot = parse_routing_snapshot(body)
     if canonical_snapshot_bytes(snapshot) != body:
         raise ValueError("snapshot body is not canonical")
     claims = {
-        "v": 2,
+        "v": 3,
         "sha256": hashlib.sha256(body).hexdigest(),
         "size": len(body),
         "compiled_at": snapshot.compiled_at,

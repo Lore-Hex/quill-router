@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,12 +39,12 @@ func testdata(t *testing.T, name string) []byte {
 func golden(t *testing.T) (manifestFile, []byte) {
 	t.Helper()
 	var m manifestFile
-	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "routing_snapshot_v2.manifest.json")))
+	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "routing_snapshot_v3.manifest.json")))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&m); err != nil {
 		t.Fatal(err)
 	}
-	return m, testdata(t, "routing_snapshot_v2.body.json")
+	return m, testdata(t, "routing_snapshot_v3.body.json")
 }
 
 // goldenKey is the manifest's key as a verifier configured with it holds it.
@@ -226,19 +227,22 @@ func TestVerifyRefusals(t *testing.T) {
 	ok("production key", s.sign(s.header(), canonical(claims)), sKeys, raw, prod)
 	refused("typ", "type", s.sign(canonical(jwsHeader{Alg: "EdDSA", Kid: s.key.Kid, Typ: "tr-other"}), canonical(claims)), sKeys, raw, prod)
 	refused("alg", "algorithm", s.sign(canonical(jwsHeader{Alg: "HS256", Kid: s.key.Kid, Typ: Typ}), canonical(claims)), sKeys, raw, prod)
-	refused("header spacing", "canonical_header", s.sign([]byte(`{"alg": "EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v2"}`), canonical(claims)), sKeys, raw, prod)
-	refused("header field", "fields", s.sign([]byte(`{"alg":"EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v2","x":"y"}`), canonical(claims)), sKeys, raw, prod)
+	refused("header spacing", "canonical_header", s.sign([]byte(`{"alg": "EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v3"}`), canonical(claims)), sKeys, raw, prod)
+	refused("header field", "fields", s.sign([]byte(`{"alg":"EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v3","x":"y"}`), canonical(claims)), sKeys, raw, prod)
 	refused("v1 type", "type", s.sign(canonical(jwsHeader{Alg: "EdDSA", Kid: s.key.Kid, Typ: "tr-routing-snapshot-v1"}), canonical(claims)), sKeys, raw, prod)
-	oldClaims := claims
-	oldClaims.V = 1
-	refused("v1 claims", "claims", s.sign(s.header(), canonical(oldClaims)), sKeys, raw, prod)
-	extra := strings.Replace(string(canonical(claims)), `"v":2}`, `"v":2,"x":1}`, 1)
+	refused("v2 type", "type", s.sign(canonical(jwsHeader{Alg: "EdDSA", Kid: s.key.Kid, Typ: "tr-routing-snapshot-v2"}), canonical(claims)), sKeys, raw, prod)
+	for _, v := range []int64{1, 2} {
+		oldClaims := claims
+		oldClaims.V = v
+		refused(fmt.Sprintf("v%d claims", v), "claims", s.sign(s.header(), canonical(oldClaims)), sKeys, raw, prod)
+	}
+	extra := strings.Replace(string(canonical(claims)), `"v":3}`, `"v":3,"x":1}`, 1)
 	refused("claims field", "claims", s.sign(s.header(), []byte(extra)), sKeys, raw, prod)
-	float := strings.Replace(string(canonical(claims)), `"v":2}`, `"v":2.0}`, 1)
+	float := strings.Replace(string(canonical(claims)), `"v":3}`, `"v":3.0}`, 1)
 	refused("float claim", "json", s.sign(s.header(), []byte(float)), sKeys, raw, prod)
-	duplicate := strings.Replace(string(canonical(claims)), `"v":2}`, `"v":2,"v":2}`, 1)
+	duplicate := strings.Replace(string(canonical(claims)), `"v":3}`, `"v":3,"v":3}`, 1)
 	refused("duplicate claim", "json", s.sign(s.header(), []byte(duplicate)), sKeys, raw, prod)
-	spaced := strings.Replace(string(canonical(claims)), `"v":2}`, `"v": 2}`, 1)
+	spaced := strings.Replace(string(canonical(claims)), `"v":3}`, `"v": 3}`, 1)
 	refused("claims spacing", "manifest issuer or encoding", s.sign(s.header(), []byte(spaced)), sKeys, raw, prod)
 	wrongIss := claims
 	wrongIss.Iss = "tr-someone-else"
@@ -252,8 +256,8 @@ func TestVerifyRefusals(t *testing.T) {
 	padded := strings.Replace(s.sign(s.header(), canonical(claims)), ".", "=.", 1)
 	refused("padding", "base64", padded, sKeys, raw, prod)
 
-	// A body the claims bind exactly but that is not a v2 snapshot.
-	notSnapshot := []byte(`{"v":2}`)
+	// A body the claims bind exactly but that is not a v3 snapshot.
+	notSnapshot := []byte(`{"v":3}`)
 	bound := claims
 	sum := sha256.Sum256(notSnapshot)
 	bound.SHA256, bound.Size = hex.EncodeToString(sum[:]), int64(len(notSnapshot))
@@ -283,22 +287,35 @@ func TestParseRefusals(t *testing.T) {
 		// A snapshot compiled before models carried context_length.
 		"no context_length":      mutate(`"context_length":65536,`, ``),
 		"negative window":        mutate(`"context_length":65536,`, `"context_length":-1,`),
-		"v1 without host bounds": mutate(`"v":2}`, `"v":1}`),
-		"no host context":        mutate(`"context_length":0,`, ``),
-		"negative host context":  mutate(`"context_length":0,`, `"context_length":-1,`),
-		"missing field":          mutate(`"epoch_seconds":3600,`, ``),
-		"float":                  mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600.0`),
-		"exponent":               mutate(`"epoch_seconds":3600`, `"epoch_seconds":36e2`),
-		"duplicate key":          mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600,"epoch_seconds":3600`),
-		"null required":          mutate(`"epoch_seconds":3600`, `"epoch_seconds":null`),
-		"string for int":         mutate(`"epoch_seconds":3600`, `"epoch_seconds":"3600"`),
-		"lone surrogate":         mutate(`"golden-fixture"`, `"golden-\ud800"`),
-		"trailing newline":       append(bytes.Clone(raw), '\n'),
-		"two values":             append(bytes.Clone(raw), []byte(` {}`)...),
-		"unknown pattern":        mutate(`"dated_suffix_pattern":"-\\d{4}-\\d{2}-\\d{2}$"`, `"dated_suffix_pattern":"-\\d{8}$"`),
-		"unknown rounding":       mutate(`"rounding":"half_up_per_million"`, `"rounding":"half_even"`),
-		"unknown usage":          mutate(`"usage_type":"Credits"`, `"usage_type":"Prepaid"`),
-		"too long a window":      mutate(`"not_after":1792387800`, `"not_after":1792454401`),
+		"v1 without host bounds": mutate(`"v":3}`, `"v":1}`),
+		"v2":                     mutate(`"v":3}`, `"v":2}`),
+		// v2's shape: no parameter tables, no privacy-tier spellings.
+		"no parameter tables": mutate(`"parameters":{"aliases":{"max_tokens":["max_completion_tokens","max_tokens"],`+
+			`"reasoning":["reasoning","reasoning_effort"],"response_format":["response_format","structured_outputs"]},`+
+			`"capability_required":{"response_format":["response_format","structured_outputs"],`+
+			`"structured_outputs":["response_format","structured_outputs"],"tool_choice":["tools"],"tools":["tools"]},`+
+			`"route_declared":[["tools"]]},`, ``),
+		"no privacy tiers":            mutate(`,"privacy_tiers":{"any":0,`, `,"x":{"any":0,`),
+		"unknown privacy requirement": mutate(`"trusted":4,`, `"trusted":5,`),
+		"unsorted alternatives":       mutate(`"max_tokens":["max_completion_tokens","max_tokens"]`, `"max_tokens":["max_tokens","max_completion_tokens"]`),
+		"empty capability":            mutate(`"tool_choice":["tools"]`, `"tool_choice":[]`),
+		"empty route declaration":     mutate(`"route_declared":[["tools"]]`, `"route_declared":[[]]`),
+		"repeated route declaration":  mutate(`"route_declared":[["tools"]]`, `"route_declared":[["tools"],["tools"]]`),
+		"no host context":             mutate(`"context_length":0,`, ``),
+		"negative host context":       mutate(`"context_length":0,`, `"context_length":-1,`),
+		"missing field":               mutate(`"epoch_seconds":3600,`, ``),
+		"float":                       mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600.0`),
+		"exponent":                    mutate(`"epoch_seconds":3600`, `"epoch_seconds":36e2`),
+		"duplicate key":               mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600,"epoch_seconds":3600`),
+		"null required":               mutate(`"epoch_seconds":3600`, `"epoch_seconds":null`),
+		"string for int":              mutate(`"epoch_seconds":3600`, `"epoch_seconds":"3600"`),
+		"lone surrogate":              mutate(`"golden-fixture"`, `"golden-\ud800"`),
+		"trailing newline":            append(bytes.Clone(raw), '\n'),
+		"two values":                  append(bytes.Clone(raw), []byte(` {}`)...),
+		"unknown pattern":             mutate(`"dated_suffix_pattern":"-\\d{4}-\\d{2}-\\d{2}$"`, `"dated_suffix_pattern":"-\\d{8}$"`),
+		"unknown rounding":            mutate(`"rounding":"half_up_per_million"`, `"rounding":"half_even"`),
+		"unknown usage":               mutate(`"usage_type":"Credits"`, `"usage_type":"Prepaid"`),
+		"too long a window":           mutate(`"not_after":1792387800`, `"not_after":1792454401`),
 	} {
 		if _, err := Parse(body); err == nil {
 			t.Errorf("%s: parsed", name)
@@ -323,7 +340,7 @@ func TestTheCasesNameTheGoldenSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
-	if cases.SnapshotSHA256 != hex.EncodeToString(sum[:]) || cases.Snapshot != "fastpath/testdata/routing_snapshot_v2.body.json" {
+	if cases.SnapshotSHA256 != hex.EncodeToString(sum[:]) || cases.Snapshot != "fastpath/testdata/routing_snapshot_v3.body.json" {
 		t.Fatalf("the cases name %s %s, not the golden body", cases.Snapshot, cases.SnapshotSHA256)
 	}
 	if len(cases.Cases) < 100 {

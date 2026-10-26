@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-// The literals of the v2 schema (src/trusted_router/routing_snapshot.py).
+// The literals of the v3 schema (src/trusted_router/routing_snapshot.py).
 const (
-	snapshotVersion  = 2
+	snapshotVersion  = 3
 	snapshotKind     = "tr-routing-snapshot"
 	epochSeconds     = 3600
 	maxHorizon       = 24 * 3600
@@ -34,7 +34,7 @@ const datedSuffixPattern = `-\d{4}-\d{2}-\d{2}$`
 
 var datedSuffix = regexp.MustCompile(datedSuffixPattern)
 
-// Snapshot is a parsed v1 routing snapshot body. Every exported field is a
+// Snapshot is a parsed v3 routing snapshot body. Every exported field is a
 // field of the wire schema; Parse refuses a body with any other field, a
 // missing field, a float, a duplicate key or a lone surrogate.
 type Snapshot struct {
@@ -50,6 +50,7 @@ type Snapshot struct {
 	Models          []Model             `json:"models"`
 	Endpoints       []Endpoint          `json:"endpoints"`
 	Aliases         Aliases             `json:"aliases"`
+	Parameters      Parameters          `json:"parameters"`
 	RequestedModels []RequestedModel    `json:"requested_models"`
 	DecisionChains  map[string][]string `json:"decision_chains"`
 	Ranking         Ranking             `json:"ranking"`
@@ -200,6 +201,23 @@ type Aliases struct {
 	ProviderAliases      map[string]string   `json:"provider_aliases"`
 	ProviderGroupAliases map[string][]string `json:"provider_group_aliases"`
 	RouterProviderSlugs  []string            `json:"router_provider_slugs"`
+	// PrivacyTiers maps each accepted provider.min_privacy spelling to the
+	// requirement value it asks for (0 asks for nothing); any other spelling
+	// is a 400.
+	PrivacyTiers map[string]int64 `json:"privacy_tiers"`
+}
+
+// Parameters is routing's request-parameter tables: CapabilityRequired
+// (CAPABILITY_REQUIRED_PARAMETERS: a parameter that decides the kind of
+// answer, to the route declarations that take it), Aliases
+// (_PARAMETER_CAPABILITY_ALIASES: what provider.require_parameters accepts
+// for a requested name) and RouteDeclared (_ROUTE_DECLARED_CAPABILITIES: the
+// declaration sets a route is held to when another route of its model
+// declares them). Every list is sorted and unique.
+type Parameters struct {
+	CapabilityRequired map[string][]string `json:"capability_required"`
+	Aliases            map[string][]string `json:"aliases"`
+	RouteDeclared      [][]string          `json:"route_declared"`
 }
 
 type PrefixRewrite struct {
@@ -552,6 +570,26 @@ func (s *Snapshot) validate() error {
 	}
 	if !sortedUnique(a.RouterProviderSlugs) {
 		return errors.New("router_provider_slugs must be sorted and unique")
+	}
+	for spelling, requirement := range a.PrivacyTiers {
+		if requirement < 0 || requirement > 4 {
+			return fmt.Errorf("privacy tier %q asks for an unknown requirement", spelling)
+		}
+	}
+	for name, table := range map[string]map[string][]string{
+		"capability_required": s.Parameters.CapabilityRequired, "aliases": s.Parameters.Aliases,
+	} {
+		for key, values := range table {
+			if len(values) == 0 || !sortedUnique(values) {
+				return fmt.Errorf("parameters.%s[%s] must be sorted, unique and non-empty", name, key)
+			}
+		}
+	}
+	for i, capability := range s.Parameters.RouteDeclared {
+		if len(capability) == 0 || !sortedUnique(capability) ||
+			(i > 0 && slices.Compare(s.Parameters.RouteDeclared[i-1], capability) >= 0) {
+			return errors.New("parameters.route_declared must be sorted, unique and non-empty")
+		}
 	}
 	s.providers = make(map[string]*Provider, len(s.Providers))
 	slugs := make([]string, len(s.Providers))

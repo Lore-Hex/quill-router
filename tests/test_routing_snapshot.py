@@ -50,7 +50,7 @@ from trusted_router.routing_snapshot import (
     EPOCH_SECONDS,
     CatalogInputs,
     Plane,
-    RoutingSnapshotV2,
+    RoutingSnapshotV3,
     canonical_snapshot_bytes,
     compile_routing_snapshot,
     snapshot_settings_from,
@@ -71,7 +71,7 @@ def _instant(seconds: int) -> datetime:
     return EPOCH + timedelta(seconds=seconds)
 
 
-def _compile(settings: Settings, inputs: CatalogInputs) -> RoutingSnapshotV2:
+def _compile(settings: Settings, inputs: CatalogInputs) -> RoutingSnapshotV3:
     return compile_routing_snapshot(
         at=LIVE_AT, horizon=HORIZON, settings=snapshot_settings_from(settings),
         source_revision="test", plane=Plane(cloud="gcp", region="us-central1"), inputs=inputs,
@@ -99,7 +99,7 @@ def catalog_clock() -> Iterator[None]:
 
 
 @pytest.fixture(scope="module")
-def live(settings: Settings, catalog_clock: None) -> tuple[RoutingSnapshotV2, CatalogInputs]:
+def live(settings: Settings, catalog_clock: None) -> tuple[RoutingSnapshotV3, CatalogInputs]:
     inputs = CatalogInputs.live(settings)
     assert inputs.catalog_resolved_at == LIVE_AT
     return _compile(settings, inputs), inputs
@@ -185,6 +185,133 @@ def test_privacy_is_what_the_routing_filters_ask(live) -> None:
                 endpoint, requirement
             ), (entry.id, requirement)
     assert any(3 in e.privacy.meets for e in snapshot.endpoints)
+
+
+# --- provider.min_privacy, requested_parameters, provider.require_parameters ------------------
+
+MIN_PRIVACY_SPELLINGS = (None, "zdr", "confidential", "trusted", "no_store", "any")
+PARAMETER_LISTS = (
+    ["tools"], ["tool_choice"], ["response_format"], ["structured_outputs"],
+    ["tools", "response_format"], ["max_tokens"], ["max_completion_tokens"],
+    ["reasoning_effort"], ["reasoning"], ["logprobs"], [" tools ", ""], [],
+)
+
+
+def _snapshot_preferences(snapshot: RoutingSnapshotV3, body: dict[str, Any]) -> Any:
+    """The rule docs/design/routing-snapshot-v1.md gives Go for these three
+    inputs, read from the snapshot alone: the requirements, require_parameters,
+    the requested names and the capability-required ones; or the field a 400
+    names."""
+    provider = body.get("provider") or {}
+    requirements: set[int] = set()
+    spelling = provider.get("min_privacy")
+    if spelling is not None:
+        tier = snapshot.aliases.privacy_tiers.get(spelling.strip().lower()) if isinstance(spelling, str) else None
+        if tier is None:
+            return "provider.min_privacy"
+        requirements |= {tier} - {0}
+    require = provider.get("require_parameters", False)
+    if not isinstance(require, bool):
+        return "provider.require_parameters"
+    requested = {name.strip() for name in body.get("requested_parameters") or () if name.strip()}
+    described = body.get("route_type") in {None, "chat.completions", "responses"}
+    capability = sorted(requested & set(snapshot.parameters.capability_required)) if described else []
+    return requirements, require, requested, capability
+
+
+def _snapshot_keep(snapshot: RoutingSnapshotV3, entries: list[Any], preferences: Any,
+                   capability: list[str]) -> list[str]:
+    requirements, require, requested, _ = preferences
+    tables = snapshot.parameters
+    declared = {name for entry in entries for name in entry.supported_parameters}
+    kept = []
+    for entry in entries:
+        supported = set(entry.supported_parameters)
+        if not requirements <= set(entry.privacy.meets):
+            continue
+        if require and any(
+            supported.isdisjoint(tables.aliases.get(name, (name,))) for name in requested
+        ):
+            continue
+        if any(
+            supported.isdisjoint(tables.capability_required[name])
+            and not declared.isdisjoint(tables.capability_required[name])
+            and tables.capability_required[name] in tables.route_declared
+            for name in capability
+        ):
+            continue
+        kept.append(entry.id)
+    return kept
+
+
+def _snapshot_no_route(snapshot: RoutingSnapshotV3, entries: list[Any], preferences: Any) -> Any:
+    capability = preferences[3]
+    if not capability or not _snapshot_keep(snapshot, entries, preferences, []):
+        return "No route candidates match the requested provider filters", None
+    unsupported = [name for name in capability if not _snapshot_keep(snapshot, entries, preferences, [name])]
+    if unsupported:
+        plural = "s" if len(unsupported) > 1 else ""
+        return f"No route for the requested model supports the parameter{plural}: {', '.join(unsupported)}", unsupported[0]
+    return f"No route for the requested model supports these parameters together: {', '.join(capability)}", capability[0]
+
+
+def test_privacy_and_parameter_filters_are_what_routing_filters(live) -> None:
+    """Every live chat model's routes, under every min_privacy tier and the
+    parameter lists, kept or refused by the snapshot's tables exactly as
+    routing keeps or refuses them (provider_route_preferences,
+    _apply_endpoint_provider_filters, _no_route_error)."""
+    snapshot, _inputs = live
+    entries = {e.id: e for e in snapshot.endpoints}
+    models = [m for m in routing.MODELS.values() if m.supports_chat]
+    compared = dropped = refusals = 0
+    for spelling in MIN_PRIVACY_SPELLINGS:
+        for require in (False, True):
+            for parameters in PARAMETER_LISTS:
+                for route_type in (None, "messages"):
+                    body: dict[str, Any] = {
+                        "provider": {"min_privacy": spelling, "require_parameters": require},
+                        "requested_parameters": parameters, "route_type": route_type,
+                    }
+                    preferences = _snapshot_preferences(snapshot, body)
+                    prefs = routing.provider_route_preferences(body)
+                    for model in models:
+                        candidates = [(model, e) for e in routing.endpoints_for_model(model.id)]
+                        if not candidates:
+                            continue
+                        mine = [entries[e.id] for _, e in candidates]
+                        python = [e.id for _, e in routing._apply_endpoint_provider_filters(candidates, prefs)]
+                        assert _snapshot_keep(snapshot, mine, preferences, preferences[3]) == python, (
+                            model.id, body)
+                        compared += 1
+                        dropped += len(python) < len(candidates)
+                        if not python:
+                            error = routing._no_route_error(candidates, prefs).detail["error"]
+                            assert _snapshot_no_route(snapshot, mine, preferences) == (
+                                error["message"], error.get("param")), (model.id, body)
+                            refusals += error.get("param") is not None
+    # Not vacuous: routes were dropped, and parameters were named.
+    assert compared > 1_000 and dropped > 100 and refusals > 0, (compared, dropped, refusals)
+
+
+def test_min_privacy_and_require_parameters_spellings_are_what_routing_parses(live) -> None:
+    snapshot, _inputs = live
+    for spelling in (*snapshot.aliases.privacy_tiers, " ZDR ", "Confidential", "secret", "", "zdr\t",
+                     2, True, [], {}):
+        for require in (False, True, None, "true", 1, ...):
+            provider: dict[str, Any] = {"min_privacy": spelling}
+            if require is not ...:
+                provider["require_parameters"] = require
+            body = {"provider": provider}
+            try:
+                prefs = routing.provider_route_preferences(body)
+            except HTTPException as exc:
+                python: Any = exc.detail["error"]["message"].split(" must be", 1)[0]
+            else:
+                python = (frozenset(prefs.privacy_requirements), prefs.require_parameters)
+            mine = _snapshot_preferences(snapshot, body)
+            if not isinstance(mine, str):
+                mine = (frozenset(mine[0]), mine[1])
+            assert mine == python, body
 
 
 def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> None:
@@ -316,14 +443,14 @@ def test_providers_and_models(live) -> None:
 # --- model and provider spellings -------------------------------------------------------------
 
 
-def _strip_variant(snapshot: RoutingSnapshotV2, raw: str) -> tuple[str, dict[str, str]]:
+def _strip_variant(snapshot: RoutingSnapshotV3, raw: str) -> tuple[str, dict[str, str]]:
     for variant in snapshot.aliases.variant_suffixes:
         if raw.endswith(variant.suffix):
             return raw[: -len(variant.suffix)], {variant.preference: variant.value}
     return raw, {}
 
 
-def _resolve(snapshot: RoutingSnapshotV2, model_id: str) -> str:
+def _resolve(snapshot: RoutingSnapshotV3, model_id: str) -> str:
     aliases = snapshot.aliases
     for rewrite in aliases.router_prefix_rewrites:
         if model_id.startswith(rewrite.prefix):
@@ -344,7 +471,7 @@ def _resolve(snapshot: RoutingSnapshotV2, model_id: str) -> str:
     return model_id
 
 
-def _spellings(snapshot: RoutingSnapshotV2) -> list[str]:
+def _spellings(snapshot: RoutingSnapshotV3) -> list[str]:
     ids = [m.id for m in snapshot.models]
     out = {
         "", "nope/model", "gpt-unknown-2025-01-01", "trustedrouter/auto-routing",
@@ -374,7 +501,7 @@ def test_model_spellings_resolve_as_routing_resolves_them(live) -> None:
     assert rewritten > 100
 
 
-def _provider_filter(snapshot: RoutingSnapshotV2, items: list[str]) -> list[str] | int:
+def _provider_filter(snapshot: RoutingSnapshotV3, items: list[str]) -> list[str] | int:
     aliases, providers = snapshot.aliases, {p.slug for p in snapshot.providers}
     out: list[str] = []
     for item in items:
@@ -431,7 +558,7 @@ def _python_requested(body: dict[str, Any], settings: Settings) -> Any:
     return ids, normalized
 
 
-def _requested(snapshot: RoutingSnapshotV2, raws: list[str]) -> Any:
+def _requested(snapshot: RoutingSnapshotV3, raws: list[str]) -> Any:
     """The composition rule docs/design/routing-snapshot-v1.md gives Go."""
     entries = {r.id: r for r in snapshot.requested_models}
     ids: list[str] = []
@@ -688,7 +815,9 @@ ALLOWED_FIELDS = frozenset({
     "aliases.variant_suffixes", "aliases.variant_suffixes.suffix",
     "aliases.variant_suffixes.preference", "aliases.variant_suffixes.value",
     "aliases.provider_aliases", "aliases.provider_group_aliases",
-    "aliases.router_provider_slugs",
+    "aliases.router_provider_slugs", "aliases.privacy_tiers",
+    "parameters", "parameters.capability_required", "parameters.aliases",
+    "parameters.route_declared",
     "requested_models", "requested_models.id", "requested_models.expands_to",
     "requested_models.refused_status", "requested_models.private_proxy",
     "requested_models.overrides", "requested_models.overrides.usage",
@@ -708,7 +837,8 @@ DATA_KEYED = frozenset({
     "aliases.router_base_rewrites", "aliases.alias_targets", "aliases.provider_aliases",
     "aliases.provider_group_aliases", "decision_chains", "ranking.default",
     "ranking.latency", "ranking.throughput", "ranking.prepaid_min_rank",
-    "ranking.model_provider_preference",
+    "ranking.model_provider_preference", "aliases.privacy_tiers",
+    "parameters.capability_required", "parameters.aliases",
 })
 SECRET_SHAPED = re.compile(
     r"secret|encrypt|password|credential|hidden|destination|webhook|api_key|key_hint|"
@@ -732,7 +862,7 @@ def _schema_paths(model: type[BaseModel], prefix: str = "") -> set[str]:
 
 
 def test_the_schema_carries_only_allowlisted_fields() -> None:
-    paths = _schema_paths(RoutingSnapshotV2)
+    paths = _schema_paths(RoutingSnapshotV3)
     assert paths == ALLOWED_FIELDS, (
         f"new fields {sorted(paths - ALLOWED_FIELDS)}; gone {sorted(ALLOWED_FIELDS - paths)}"
     )
