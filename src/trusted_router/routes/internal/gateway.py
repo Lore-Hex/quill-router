@@ -169,7 +169,7 @@ from trusted_router.routing import (
     provider_route_preferences,
     resolved_route_preferences,
 )
-from trusted_router.routing_state import ROUTING_STATE
+from trusted_router.routing_state import ROUTING_STATE, Affinity
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
     GatewayAuthorizeResponse,
@@ -1542,15 +1542,19 @@ def _authorize_gateway_sync_impl(
     if is_transcription_request:
         additional_cost_reservation = transcription_quote
 
+    affinity: Affinity = "none"
+
     def rerank(
         candidates: list[tuple[Model, ModelEndpoint]], preferences: RoutePreferences,
     ) -> list[tuple[Model, ModelEndpoint]]:
+        nonlocal affinity
         # Process-local health and session affinity: outside the pure pipeline.
-        return ROUTING_STATE.rank(
+        ranked, affinity = ROUTING_STATE.rank_with_affinity(
             candidates, preferences, region=region,
             session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
             if body.cache_affinity_key else None,
         )
+        return ranked
 
     try:
         candidate_outcome = finish_candidates(
@@ -2332,6 +2336,9 @@ def _authorize_gateway_sync_impl(
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider, byok_configs) if model_usage_type.is_byok() else None
     )
+    # Measurement only: how often session affinity changes the routed answer.
+    # Fixed categories and the gateway region; never the key or any identifier.
+    logger.info("gateway.authorize_affinity affinity=%s region=%s", affinity, region)
     return _gateway_authorize_response(
         authorization=authorization,
         workspace_id=workspace.id,
