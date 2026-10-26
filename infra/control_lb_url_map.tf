@@ -114,11 +114,12 @@ resource "google_compute_url_map" "control" {
     # E1): a share of it through the fast path's edge, which checks the boot
     # signature and passes the call to Python unchanged with its verdict;
     # Python still decides, and compares the verdict on this route only.
-    # Authorize alone: the enclave retries it (three attempts within 28 s),
-    # so a 503 from an unhealthy edge, which the weighted split does not
-    # fail over, is retried; with the share at w, three attempts all on an
-    # unhealthy node is w cubed, for the seconds before the health check
-    # takes it out of the backend. The terminals (settle, refund, heartbeat,
+    # Authorize alone: the enclave makes up to three attempts (two retries)
+    # within 28 s, and the split picks a backend per attempt without failing
+    # over, so all three reaching the edge backend is the share cubed; the
+    # request fails only if each also lands on a node that is unhealthy in
+    # the seconds before the health check takes it out of the backend. The
+    # terminals (settle, refund, heartbeat,
     # disposition) are not all retried, and the maintenance drains run
     # longer than the edge backend's own 8 s timeout, which they would get
     # without a route timeout. The split is global: the share is of every
