@@ -329,6 +329,7 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
         return None
     event = _scrub(event)
     _fingerprint_method_not_allowed(event)
+    _fingerprint_router_error(event, hint)
     request = event.get("request")
     if isinstance(request, MutableMapping):
         request.pop("data", None)
@@ -336,6 +337,33 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
     if not _floodgate.allow(event):
         return None
     return event
+
+
+def _fingerprint_router_error(event: dict[str, Any], hint: dict[str, Any] | None) -> None:
+    """Group our HTTP errors by cause, not per-request timing/ID metadata."""
+    if event.get("fingerprint") or not hint:
+        return
+    from starlette.exceptions import HTTPException
+
+    info = hint.get("exc_info")
+    if not isinstance(info, tuple) or len(info) != 3 or not isinstance(info[1], HTTPException):
+        return
+    exc = info[1]
+    detail = exc.detail
+    error = detail.get("error") if isinstance(detail, dict) else None
+    if (
+        not isinstance(error, dict)
+        or error.get("source") != "router"
+        or error.get("code") != exc.status_code
+    ):
+        return
+    route = _safe_route_identity(event)
+    if route == "unresolved-route":
+        return
+    # Keep different causes distinct; never ship the hint's raw fields as
+    # fingerprint text. The original scrubbed event remains available.
+    identity = _hash_identity(json.dumps(_scrub(error), sort_keys=True, default=str))
+    event["fingerprint"] = ["router-http-error", route, str(exc.status_code), identity]
 
 
 def before_send_log(
