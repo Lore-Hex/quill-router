@@ -46,6 +46,25 @@ test('Tables and code use native scrolling with boundary-aware edge cues', async
     await expect(viewport).not.toHaveClass(/can-scroll-left/);
     await viewport.focus();
     await page.keyboard.press('ArrowRight');
+    const ring = await viewport.evaluate(el => {
+      const frame = el.parentElement;
+      const style = getComputedStyle(frame, '::after');
+      return {
+        focusVisible: el.matches(':focus-visible'),
+        mask: getComputedStyle(frame).maskImage,
+        border: style.borderTopWidth,
+        color: style.borderTopColor,
+        hitTesting: style.pointerEvents,
+        width: frame.getBoundingClientRect().width,
+        viewportWidth: el.getBoundingClientRect().width,
+      };
+    });
+    expect(ring.focusVisible).toBe(true);
+    expect(ring.mask).toBe('none');
+    expect(ring.border).toBe('2px');
+    expect(ring.color).toBe('rgb(183, 228, 202)');
+    expect(ring.hitTesting).toBe('none');
+    expect(ring.width).toBe(ring.viewportWidth);
     await expect.poll(() => viewport.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
     await expect(viewport).toHaveClass(/can-scroll-left/);
     await viewport.evaluate(el => { el.scrollLeft = el.scrollWidth; });
@@ -53,4 +72,14 @@ test('Tables and code use native scrolling with boundary-aware edge cues', async
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.locator('.model-table-wrap').first()).not.toHaveClass(/can-scroll/);
+});
+
+test('FAQ pricing has no stale as-of date in visible text or structured data', async ({ page }) => {
+  await page.goto('/openrouter-alternative');
+  const answer = 'TrustedRouter charges provider prices plus 5.5%';
+  await expect(page.locator('.faq-panel')).toContainText(answer);
+  await expect(page.locator('.faq-panel')).not.toContainText('As of October 2026');
+  const structured = await page.locator('script[type="application/ld+json"]').allTextContents();
+  expect(structured.join(' ')).toContain(answer);
+  expect(structured.join(' ')).not.toContain('As of October 2026');
 });

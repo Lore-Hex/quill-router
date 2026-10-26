@@ -64,7 +64,7 @@
 .openrouter-article .seo-evidence-head .eyebrow{padding:0}
 .openrouter-article .quote-feature{display:block}
 .openrouter-article .quote-feature>div:first-child{margin-bottom:24px}
-.openrouter-article main>section:has(>.model-table-wrap){max-width:1112px}
+.openrouter-article main>section:has(>.model-table-wrap,>.horizontal-overflow-frame>.model-table-wrap){max-width:1112px}
 .openrouter-article .model-table-wrap{border:1px solid var(--border-hairline);background:var(--surface-card)}
 .openrouter-article .v2-price-body{max-width:720px;margin:28px auto 0}
 .openrouter-article .v2-table-note{padding:16px 0 0;font-size:14px;line-height:1.6}
@@ -179,7 +179,7 @@
 .openrouter-article main > .v2-head { margin-bottom: 24px; }
 .openrouter-article main > .v2-head + .marketing-grid { margin-top: 0; }
 .openrouter-article .quote-feature p:last-child { margin-bottom: 0; }
-.openrouter-article .v2-price-body + .model-table-wrap { margin-top: 24px; }
+.openrouter-article .v2-price-body + :is(.model-table-wrap,.horizontal-overflow-frame) { margin-top: 24px; }
 
 /* Quiet reading surfaces; reserve rules for comparing data. */
 .openrouter-article main :is(h1,h2,h3) { text-wrap: balance; }
@@ -340,4 +340,18 @@
 .openrouter-article .horizontal-overflow::-webkit-scrollbar { height: 8px; }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-track { background: #10231b; }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-thumb { background: #7caa90; border-radius: 4px; }
-.openrouter-article .horizontal-overflow:focus-visible { outline: 2px solid #b7e4ca; outline-offset: 3px; }
+/* Draw the keyboard focus ring outside the masked scroller, above sticky cells. */
+.openrouter-article .horizontal-overflow-frame { position: relative; min-width: 0; }
+.openrouter-article .horizontal-overflow:focus-visible { outline: none; }
+.openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid #b7e4ca;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+}
+@media (forced-colors: active) {
+  .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
+}

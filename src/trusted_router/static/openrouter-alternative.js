@@ -1,6 +1,10 @@
 /* Native scrolling with edge fades; no extra navigation controls. */
 (() => {
   document.querySelectorAll('.openrouter-article .model-table-wrap, .openrouter-article .seo-evidence-table-wrap, .openrouter-article .copy-terminal pre').forEach((viewport) => {
+    const frame = document.createElement('div');
+    frame.className = 'horizontal-overflow-frame';
+    viewport.before(frame);
+    frame.append(viewport);
     viewport.classList.add('horizontal-overflow');
     const update = () => {
       const max = viewport.scrollWidth - viewport.clientWidth;

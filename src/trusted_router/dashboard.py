@@ -1740,7 +1740,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is TrustedRouter cheaper than OpenRouter?",
-                "As of October 2026, TrustedRouter charges provider prices plus 5.5% on text and embedding models, with no subscription. OpenRouter charges 5.5% on credit purchases on its Standard plan and 8% on Business, the plan that includes EU in-region routing. TrustedRouter's fee falls with volume, to as low as 0.1% at enterprise scale.",
+                "TrustedRouter charges provider prices plus 5.5% on text and embedding models, with no subscription. OpenRouter charges 5.5% on credit purchases on its Standard plan and 8% on Business, the plan that includes EU in-region routing. TrustedRouter's fee falls with volume, to as low as 0.1% at enterprise scale.",
             ),
             (
                 "What is the easiest OpenRouter alternative to migrate to?",
