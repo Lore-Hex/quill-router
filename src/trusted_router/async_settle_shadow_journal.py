@@ -15,6 +15,7 @@ from trusted_router.async_settle_shadow_v2_a1_evidence import (
     KINDS,
     MANIFEST,
     RETENTION,
+    STOP,
     validate_row,
 )
 from trusted_router.async_settle_shadow_v2_a1_health import HEALTH, HEALTH_CLAIM
@@ -65,7 +66,7 @@ class Row:
                    HEALTH_KIND: HEALTH, CLAIM_KIND: HEALTH_CLAIM, CONTROL_KIND: MANIFEST, CLOSE_RESULT_KIND: CLOSE_RESULT}
         schema = schemas[kind]
         if kind == CONTROL_KIND:
-            schema = RETENTION if key == "retention-v2" else CAP if key.endswith("/cap-v2") else MANIFEST
+            schema = STOP if key == "stop-v2" else RETENTION if key == "retention-v2" else CAP if key.endswith("/cap-v2") else MANIFEST
         body = schema.serialize(value)
         row = cls(kind, key, body)
         if kind == COUNTER_KIND:

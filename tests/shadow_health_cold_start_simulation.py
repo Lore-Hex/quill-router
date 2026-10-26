@@ -59,10 +59,8 @@ MODULE_SOURCES = (("observation", "storage_gcp_shadow_observation.py"),
 
 def baseline_ref():
     """Use local baseline objects only; source archives need no Git metadata."""
-    candidates = ["origin/main"]
     base = os.environ.get("GITHUB_BASE_REF")
-    if base:
-        candidates.extend((base, f"origin/{base}"))
+    candidates = [base, f"origin/{base}", "origin/main"] if base else ["origin/main"]
     for ref in dict.fromkeys(candidates):
         try:
             for _, source in MODULE_SOURCES:
@@ -79,12 +77,27 @@ def modules(ref=None):
     """Import copies, never stash or change the working tree to run a baseline."""
     if ref == "baseline":
         ref = baseline_ref()
+    sources = []
+    for name, source in MODULE_SOURCES:
+        path = "src/trusted_router/" + source
+        try:
+            raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT,  # noqa: S603, S607 - local git revision, no shell
+                                          stderr=subprocess.PIPE)
+                   if ref else (ROOT/path).read_bytes())
+        except (OSError, subprocess.CalledProcessError):
+            if ref is None:
+                raise
+            pytest.skip(f"simulation revision {ref!r} unavailable: missing local source {path} "
+                        "(shallow checkout or absent Git metadata); worktree cases run independently")
+        sources.append((name, path, raw))
+    # Compare the actual blobs, including pinned historical controls, before
+    # importing either copy. Ref names do not tell us whether a fix is present.
+    if ref and all(raw == (ROOT/path).read_bytes() for _, path, raw in sources):
+        pytest.skip(f"simulation baseline {ref!r} source blobs are byte-identical to the worktree; "
+                    "positive control requires different sources; worktree cases run independently")
     result = []
     with tempfile.TemporaryDirectory() as directory:
-        for name, source in MODULE_SOURCES:
-            path = "src/trusted_router/" + source
-            raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT)  # noqa: S603, S607 - local git revision, no shell
-                   if ref else (ROOT/path).read_bytes())
+        for name, _, raw in sources:
             dest = Path(directory)/f"{name}.py"
             dest.write_bytes(raw)
             key = "shadow_sim_" + name
@@ -101,9 +114,10 @@ def modules(ref=None):
 
 
 @pytest.mark.parametrize("available,expected", [
-    ({"origin/main", "release", "origin/release"}, "origin/main"),
+    ({"origin/main", "release", "origin/release"}, "release"),
     ({"release", "origin/release"}, "release"),
     ({"origin/release"}, "origin/release"),
+    ({"origin/main"}, "origin/main"),
     (set(), None),
 ])
 def test_baseline_resolution_order_and_missing_metadata(monkeypatch, available, expected):
@@ -126,7 +140,7 @@ def test_baseline_resolution_order_and_missing_metadata(monkeypatch, available, 
         assert publisher.ObservationStore is storage.ObservationStore
     else:
         assert baseline_ref() == expected
-    order = ["origin/main", "release", "origin/release"]
+    order = ["release", "origin/release", "origin/main"]
     assert list(dict.fromkeys(checked)) == (order if expected is None else order[:order.index(expected)+1])
 
 
@@ -134,11 +148,11 @@ def test_baseline_requires_both_source_blobs(monkeypatch):
     monkeypatch.setenv("GITHUB_BASE_REF", "release")
 
     def check(command, **kwargs):
-        if command[-1] == "origin/main:src/trusted_router/services/async_settle_shadow_health.py":
+        if command[-1] == "release:src/trusted_router/services/async_settle_shadow_health.py":
             raise subprocess.CalledProcessError(128, command)
 
     monkeypatch.setattr(subprocess, "run", check)
-    assert baseline_ref() == "release"
+    assert baseline_ref() == "origin/release"
 
 
 class Clock:

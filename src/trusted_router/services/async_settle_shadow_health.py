@@ -39,6 +39,7 @@ from trusted_router.async_settle_shadow_journal import (
     Reservation,
     Row,
 )
+from trusted_router.async_settle_shadow_stop import RuntimeStop
 from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_result
 from trusted_router.async_settle_shadow_v2_a1_health import (
     PUBLISHER_OPERATIONS,
@@ -179,7 +180,12 @@ class HealthObserver(Observer):
         self._owned(None, started, self.health_read)
 
     def _workspace(self, key: str, started: float) -> None:
-        self._owned(key, started, partial(self.read, key))
+        def read() -> Any:
+            if self.service is not None and not self.service.store.session_ready(workspace=True):
+                raise SessionUnavailable("shadow_session_unavailable")
+            with rpc_scope(self.clock()+OBSERVER_READ_RPC_SECONDS, OBSERVER_READ_RPC_SECONDS, self.clock):
+                return self.read(key)
+        self._owned(key, started, read)
 
     async def run(self) -> None:
         enabled = self.enabled
@@ -289,6 +295,13 @@ class Port:
             require(svc.policy_enabled() and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
             require(not svc.journal.days[day].sealing, "closed_day")
+            # Signal demand only; the evidence worker owns all cap I/O. Keep
+            # the existing refusal/loss path when this request has no permits.
+            if svc.allocation_day != day:
+                svc.allocation_day = day
+                svc.allocation_failures = 0
+                svc.next_allocate = svc.store.clock()
+            svc.allocation_requested = True
             if terminal:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
                 svc.journal.terminal_permits[day] -= 1
@@ -756,6 +769,11 @@ class Service:
         self.unknown_batches: set[Reservation] = set()
         self.unknown: tuple[str, list[Row], Row, Row | None] | None = None
         self.next_allocate = float("-inf")
+        self.allocation_day: str | None = None
+        self.allocation_requested = False
+        self.allocation_failures = 0
+        # The first owner tick must provision permits before cohort traffic.
+        # Only contention retries are dephased; refills remain demand-gated.
         self.next_flush = float("-inf")
         self.previous_closure: str | None = None
         self.last_closure_ack: dict[str, Any] | None = None
@@ -771,6 +789,24 @@ class Service:
         self.close_finished = False
         self.close_done = asyncio.Event()
         self.ensure_day(int(store.wall()*1_000_000))
+        self.runtime_stop = RuntimeStop(store, self.journal.boot, self.latch_stop)
+        self.breaker_recorded = False
+
+    def latch_stop(self) -> None:
+        # Worker-safe terminal latches: block requests and publisher starts now.
+        # The owner publishes the generation change through the expiry path.
+        self.settings.stop_async_settle_shadow()
+        self.revocation_epoch = 1
+
+    def record_breaker(self) -> None:
+        row = self.runtime_stop.tripped
+        if row is not None and not self.breaker_recorded:
+            day = self.ensure_day(row.value()["stopped_at_us"])
+            if day in self.counters:
+                target = self.counters[day]["diagnostics"]
+                self._counter_cells(day, target, {"runtime_breaker_trips": 1,
+                    "runtime_breaker_api_failures": row.value()["failure_count"]})
+                self.breaker_recorded = True
 
     def pin(self) -> tuple[Any, ...]:
         # The effective policy includes the canary expiry: when it passes, the
@@ -837,6 +873,7 @@ class Service:
 
     def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
+        self.record_breaker()
         self.enabled()  # Publish any changed admission generation before dispatch.
         effects: tuple[lifecycle.Effect, ...] = ()
         job = self.state.job
@@ -1261,6 +1298,7 @@ class Service:
                 value, error = operation(), None
             except Exception as caught:
                 value, error = None, caught
+            self.record_breaker()  # Include a trip from drain IO before resuming closure.
 
     async def drive_async(self, work: Generator[Callable[[], Any], Any, None]) -> None:
         self.assert_owner()
@@ -1281,6 +1319,7 @@ class Service:
                 loop.call_soon_threadsafe(deliver, result.value, result.error)
             self.evidence_executor.submit(execute)
             value, error = await reply
+            self.record_breaker()
 
     def flush(self, deadline: float) -> None:
         self.drive(self._flush(min(deadline, self.termination_deadline or deadline)))
@@ -1520,6 +1559,18 @@ class Service:
     def maintain(self) -> None:
         self.drive(self.maintenance())
 
+    def allocation_jitter(self, seconds: float) -> float:
+        # A distinct boot UUID spreads a simultaneous fleet restart. Include
+        # the day and attempt so retries and midnight do not repeat one phase.
+        # Eager first attempts still burst. In the simultaneous 26/40-process
+        # lock witness, a 60 s ceiling gave 170/255 s last-grant tails; 40 s
+        # gives 165/230 s with 89/183 aborts (baseline: 350/819). These tails
+        # remain longer than baseline lock-step retries (130/200 s). Jitter
+        # reduces contention; it neither bounds fleet writes/s nor avoids all
+        # retry collisions after five-second maintenance quantization.
+        seed = f"{self.journal.boot}/{self.allocation_day}/{self.allocation_failures}"
+        return seconds*int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big")/2**64
+
     def maintenance(self) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
         deadline = self.store.clock()+FLUSH_SECONDS
@@ -1531,21 +1582,34 @@ class Service:
         with self.lock:
             if self.journal.stopped:
                 return
+            if self.allocation_day != day:
+                # Startup and rollover supply demand for the day's first block.
+                # Preserve next_allocate's throttle; same-day refills need port demand.
+                self.allocation_day = day
+                self.allocation_requested = True
+                self.allocation_failures = 0
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
-            allocate = self.store.clock() >= self.next_allocate and (terminal or event)
+            allocate = (self.allocation_requested and self.allocation_day == day
+                        and self.store.clock() >= self.next_allocate and (terminal or event))
             if allocate:
                 self.next_allocate = self.store.clock()+5
         if allocate:
             try:
                 yield partial(self.store.allocate, day, terminal=terminal, event=event, budget=Budget(deadline, self.store.clock))
                 with self.lock:
+                    self.allocation_requested = False
+                    self.allocation_failures = 0
                     if event:
                         self.journal.grant(day, RESERVATION_BLOCK)
                     if terminal:
                         self.journal.terminal_permits[day] = self.journal.terminal_permits.get(day, 0)+RESERVATION_BLOCK
-            except Exception:
+            except Exception as error:
                 with self.lock:
+                    if isinstance(error, ContentionLoss):
+                        self.allocation_failures += 1
+                        self.next_allocate = self.store.clock()+5+self.allocation_jitter(
+                            min(40., 5.*2**min(4, self.allocation_failures)))
                     target = self.counters[day]["diagnostics"]
                     self._counter_cells(day, target, {"cap_unavailable": target.get("cap_unavailable", 0)+1})
         yield from self._flush(deadline)
@@ -1610,6 +1674,10 @@ class Service:
     async def run(self) -> None:
         self.assert_owner()
         self.loop = asyncio.get_running_loop()
+        if self.policy_enabled():
+            await asyncio.to_thread(self.runtime_stop.poll)
+        self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                lambda: not self.close_finished)
         while not self.stopped.is_set() and self.enabled():
             if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
@@ -1622,6 +1690,7 @@ class Service:
                 self.next_flush = now+5
                 self.flush_job = self.loop.create_task(self.drive_async(self.maintenance()))
             await asyncio.sleep(.01)
+        self.record_breaker()
         if not self.stopped.is_set():
             await self.close("opt_out", from_loop=True)
 
@@ -1657,6 +1726,8 @@ class Service:
         signal.signal(signal.SIGTERM, stop)
 
     def start(self) -> None:
+        if self.enabled() and not self.runtime_stop.poll():
+            return
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
@@ -1741,6 +1812,8 @@ class Service:
             self.session_executor.shutdown(wait=False, cancel_futures=True)
             self.publisher_executor.shutdown(wait=False, cancel_futures=True)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
+            if reason != "opt_out" or self.runtime_stop.tripped is None or self.runtime_stop.persisted:
+                await self.runtime_stop.close()
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
@@ -1750,6 +1823,11 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     store = ObservationStore(backend._database)
     service = Service(settings, store)
     store.prepare_session(service.journal.boot)
+    if not service.runtime_stop.poll():
+        service.session_executor.shutdown(wait=False, cancel_futures=True)
+        service.publisher_executor.shutdown(wait=False, cancel_futures=True)
+        service.evidence_executor.shutdown(wait=False, cancel_futures=True)
+        return
     app.state.async_settle_shadow_observation = service
     @app.on_event("startup")
     async def start() -> None:
@@ -1757,3 +1835,4 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     @app.on_event("shutdown")
     async def stop() -> None:
         await service.close()
+        await service.runtime_stop.close()
