@@ -42,11 +42,12 @@ const (
 	ClassDifferAny = "differ"
 	// ClassAffinityCold: a request naming a cache_affinity_key (G13),
 	// which Go never admits (body.cache_affinity), whose Python 200 is Go's
-	// cold order byte for byte: Python's process held no session for it.
-	// ClassAffinityWarm (shadow.go's constant, the same meaning) is one
-	// whose Python 200 is Go's decision rendered with Python's remembered
-	// endpoint promoted (affinity.go); anything else of theirs is differ.
-	// Both are counted apart (affinity=), never in the cohort.
+	// cold order byte for byte: Python's re-rank changed nothing (no
+	// session, or one it does not apply). ClassAffinityWarm (shadow.go's
+	// constant, the same meaning) is one whose Python 200 is Go's decision
+	// rendered in routing_state.rank's order for a remembered endpoint
+	// (affinity.go); anything else of theirs is differ. Every affinity
+	// result is counted apart (affinity=), in no count of the cohort's.
 	ClassAffinityCold = "affinity_cold"
 	// ClassWouldAdmit is critical: Go would have answered 200 where Python
 	// refused (status.type follows).
@@ -620,6 +621,9 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 		r.fields = []string{"differ.bytes"}
 	}
 	r.class = ClassDifferAny
+	// An affinity decision's rows are read back only when cold: Python's
+	// order, and so its rows, may be a session's (§11).
+	r.rows = r.rows && !d.Affinity
 	return r
 }
 
@@ -1096,6 +1100,12 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		sh.tallies[digest] = t
 	}
 	for _, tally := range []*fullTally{t, sh.totals} {
+		if r.affinity {
+			// Measured apart (§11): no class, field, row, gate or
+			// read-back count of the cohort's takes an affinity result.
+			boundedTo(tally.affinity, r.class, maxShadowReasons*4)
+			continue
+		}
 		tally.classes[r.class]++
 		for _, f := range r.fields {
 			boundedTo(tally.fields, f, maxShadowReasons*4)
@@ -1110,9 +1120,6 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 			}
 			tally.decide[gate]++
 			boundedTo(tally.cohort, r.class, maxShadowReasons*4)
-		}
-		if r.affinity {
-			boundedTo(tally.affinity, r.class, maxShadowReasons*4)
 		}
 		if r.readBack {
 			tally.readBack++

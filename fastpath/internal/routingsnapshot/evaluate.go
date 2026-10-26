@@ -161,6 +161,21 @@ type prefs struct {
 	modalities     []string
 }
 
+// Rerank is what routing_state.rank reads of a request's provider
+// preferences before it promotes a remembered endpoint: ordered when
+// provider.order names a provider (Python then keeps the cold order), and
+// byModel unless provider.sort.partition is "none" (the remembered endpoint
+// then goes to the front of the whole list, not of its model's run). ok is
+// false for a provider Evaluate would pass or refuse. An empty order, as a
+// list or a string, names no provider.
+func (s *Snapshot) Rerank(req Request) (ordered, byModel, ok bool) {
+	p, _, ok := s.parseProvider(req.Provider, req.AllowFallbacks)
+	if !ok {
+		return false, false, false
+	}
+	return len(p.order) > 0, !p.partitionNone, true
+}
+
 // Evaluate answers one request as authorize_candidates' plan_route,
 // resolve_candidates and finish_candidates would with rerank absent, or
 // passes it to Python.

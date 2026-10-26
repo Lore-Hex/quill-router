@@ -644,6 +644,9 @@ def _reservation_row(row: dict[str, Any]) -> dict[str, Any]:
     return {**_row_timestamps(written, ("expires_at",)), "created_at": RESERVATION_CREATED_AT}
 
 
+_MISSING = object()
+
+
 def _session_key(world: dict[str, Any], body: dict[str, Any], region: str) -> tuple[str, str, str, str]:
     """The route's affinity session (gateway.py, ``rerank``): the key's hash,
     body.model, the region it chose and the cache affinity key."""
@@ -699,6 +702,15 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             moved = warm_ids[first]
             if moved not in seeded or warm_ids[first + 1:] != [c for c in cold_ids[first:] if c != moved]:
                 raise AssertionError(f"{case['name']}: not one remembered endpoint moved to the front")
+        # Nothing but the first candidate's members (and, with fallbacks
+        # off, the estimate) may change; wafer_zdr_required is written only
+        # under a Wafer first candidate.
+        first = {"model", "upstream_model", "endpoint_id", "provider", "provider_name", "inference_location",
+                 "wafer_zdr_required", "route_candidates"}
+        allowed = first | ({"estimated_cost", "estimated_cost_microdollars"} if len(cold_ids) == 1 else set())
+        changed = {k for k in set(data) | set(warm_data) if data.get(k, _MISSING) != warm_data.get(k, _MISSING)}
+        if not changed <= allowed:
+            raise AssertionError(f"{case['name']}: the session changed {sorted(changed - allowed)}")
         affinity_class = "affinity_warm"
     for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
         if cold["expect"][field] != warm["expect"][field]:
@@ -1093,6 +1105,22 @@ def cases() -> list[dict[str, Any]]:
         body={**key, "allow_fallbacks": False}, affinity=((glm_together, 1.0),))
     add("pass:body.cache_affinity:warm:sort_price", "body.cache_affinity",
         body={**key, "provider": {"sort": "price"}}, affinity=((glm_together, 1.0),))
+    # An empty provider.order names no provider: Python re-ranks as with none.
+    add("pass:body.cache_affinity:warm:empty_order", "body.cache_affinity",
+        body={**key, "provider": {"order": []}}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:no_fallbacks:empty_order", "body.cache_affinity",
+        body={**key, "provider": {"allow_fallbacks": False, "order": []}}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:top_level_no_fallbacks:empty_order", "body.cache_affinity",
+        body={**key, "allow_fallbacks": False, "provider": {"order": []}}, affinity=((glm_together, 1.0),))
+    # The sort partitioned by model (the default) keeps the remembered
+    # endpoint within its model's run; partition none moves it to the front
+    # of the whole list.
+    add("pass:body.cache_affinity:warm:partition_none:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI], "provider": {"sort": {"sort": "price", "partition": "none"}}},
+        affinity=((glm_together, 1.0),))
+    add("pass:body.cache_affinity:warm:partition_model:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI], "provider": {"sort": {"sort": "price", "partition": "model"}}},
+        affinity=((glm_together, 1.0),))
     add("pass:body.priced_extra:additional_cost", "body.priced_extra",
         body={"additional_cost_reservation_microdollars": 5_000})
     add("pass:body.priced_extra:inference_receipt", "body.priced_extra", body={"inference_receipt": True})

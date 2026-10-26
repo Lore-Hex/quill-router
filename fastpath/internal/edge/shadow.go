@@ -577,7 +577,7 @@ func (sh *shadow) compare(c comparison) result {
 		estimated := true
 		if !slices.Equal(goAnswer.Candidates, py.candidates) {
 			switch {
-			case affinityKey && h.promotedWithinItsModel(goAnswer.Candidates, py.candidates):
+			case affinityKey && h.pythonsWarm(req, goAnswer.Candidates, py.candidates):
 				affinity = true
 			case affinityKey && h.warmInsteadOfFirst(req, goAnswer.Candidates, py.candidates):
 				// Python re-ranked, then kept one: its candidate and its
@@ -662,10 +662,16 @@ func (h *held) impliedBYOK(candidates []string) []string {
 	return out
 }
 
-// promotedWithinItsModel is affinity.go's shape over the snapshot's
-// endpoint models.
-func (h *held) promotedWithinItsModel(cold, py []string) bool {
-	return promotedWithinItsModel(cold, py, func(id string) string { return h.endpointModel[id] })
+// pythonsWarm is affinity.go's rule over the snapshot's endpoint models:
+// py is the order routing_state.rank gives Go's cold order for some
+// endpoint of it remembered, under the request's provider preferences.
+func (h *held) pythonsWarm(req routingsnapshot.Request, cold, py []string) bool {
+	ordered, byModel, ok := h.snapshot.Rerank(req)
+	if !ok {
+		return false
+	}
+	_, warm := pythonsWarm(ordered, byModel, cold, py, func(id string) string { return h.endpointModel[id] })
+	return warm
 }
 
 // warmInsteadOfFirst: with fallbacks off Python re-ranks and then keeps
@@ -677,7 +683,7 @@ func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string
 	if len(cold) != 1 || len(py) != 1 || h.endpointModel[py[0]] == "" || h.endpointModel[py[0]] != h.endpointModel[cold[0]] {
 		return false
 	}
-	on, ok := withFallbacks(req)
+	on, ok := withFallbacks(h.snapshot, req)
 	if !ok {
 		return false
 	}
@@ -702,29 +708,6 @@ func (h *held) warmEstimate(req routingsnapshot.Request, endpoint string) (int64
 		return 0, false
 	}
 	return r.ModelEstimate, true
-}
-
-// withFallbacks is req with allow_fallbacks unset, top-level and in
-// provider; ok is false when provider names an order, or is not an object.
-func withFallbacks(req routingsnapshot.Request) (routingsnapshot.Request, bool) {
-	req.AllowFallbacks = nil
-	if isJSONNull(req.Provider) {
-		return req, true
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(req.Provider, &fields) != nil || fields == nil {
-		return req, false
-	}
-	if order, ok := fields["order"]; ok && !isJSONNull(order) {
-		return req, false
-	}
-	delete(fields, "allow_fallbacks")
-	provider, err := json.Marshal(fields)
-	if err != nil {
-		return req, false
-	}
-	req.Provider = provider
-	return req, true
 }
 
 // markupBPS is the smallest integer basis points in 1..30000 that, as an

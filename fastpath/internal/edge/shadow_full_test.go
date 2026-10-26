@@ -418,18 +418,25 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 			t.Errorf("%s: the enclave got %d %q, not Python's %d", c.Name, rec.Code, rec.Body.Bytes(), probe.Code)
 		}
 		got := h.edge.DecideShadowCounts()
-		if got.Classes[want] != 1 || len(got.Classes) != 1 {
-			t.Errorf("%s: classes %v, want %s (fields %v)", c.Name, got.Classes, want, got.Fields)
+		if c.Expect.Affinity != nil {
+			// An affinity decision is measured apart: in no count of the
+			// cohort's (classes, fields, rows, decide, cohort).
+			if got.Affinity[want] != 1 || len(got.Affinity) != 1 || len(got.Classes) != 0 || len(got.Fields) != 0 ||
+				len(got.Rows) != 0 || len(got.Decide) != 0 || len(got.Cohort) != 0 {
+				t.Errorf("%s: affinity %v classes %v fields %v rows %v decide %v, want affinity %s alone", c.Name,
+					got.Affinity, got.Classes, got.Fields, got.Rows, got.Decide, want)
+				continue
+			}
+			classes[want]++
+			continue
+		}
+		if got.Classes[want] != 1 || len(got.Classes) != 1 || len(got.Affinity) != 0 {
+			t.Errorf("%s: classes %v affinity %v, want %s (fields %v)", c.Name, got.Classes, got.Affinity, want, got.Fields)
 			continue
 		}
 		classes[want]++
 		if want == ClassAgreeFull && len(got.Fields) != 0 {
 			t.Errorf("%s: agree_full with fields %v", c.Name, got.Fields)
-		}
-		// An affinity decision is measured apart from the cohort.
-		if affinity := c.Expect.Affinity != nil; affinity != (got.Affinity[want] == 1) ||
-			(affinity && (len(got.Decide) > 0 || len(got.Fields) != 0)) || (!affinity && len(got.Affinity) != 0) {
-			t.Errorf("%s: affinity %v, decide %v, fields %v", c.Name, got.Affinity, got.Decide, got.Fields)
 		}
 		if c.Expect.Outcome == "answer" && want == ClassAgreeFull {
 			if got.Rows["agree"] != 1 {
@@ -526,21 +533,174 @@ func TestAffinityIsMeasuredNeverAdmitted(t *testing.T) {
 			}
 		}
 	}
-	// Across models: the fallback case's cold order with the second
-	// model's last endpoint moved to the front of the list is no promotion
-	// within its model (Python partitions the sort by model).
-	c := authorizeCaseNamed(t, "pass:body.cache_affinity:warm:fallback_models")
+}
+
+// rendered is Go's decision rendered in another candidate order (and
+// estimate) under Python's ids and timing: the bytes Python would answer
+// had it that order, every first-candidate member consistent.
+func rendered(t *testing.T, d Decided, c authorizeCase, ids []string, estimate int64) []byte {
+	t.Helper()
+	dec := d.ForShadow()
+	byID := map[string]gwauth.Candidate{}
+	for _, cand := range dec.Input.Candidates {
+		byID[cand.EndpointID] = cand
+	}
+	var candidates []gwauth.Candidate
+	for _, id := range ids {
+		cand, ok := byID[id]
+		if !ok {
+			e, found := dec.Snapshot.Endpoint(id)
+			if !found {
+				t.Fatalf("%s: no endpoint %s", c.Name, id)
+			}
+			cand = gwauth.CandidateOf(e)
+		}
+		candidates = append(candidates, cand)
+	}
+	staged, err := dec.RestageWith(candidates, estimate, c.IDs.AuthorizationID, c.IDs.ReservationID,
+		dec.Input.IdempotencyKey, dec.Input.At)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composed, err := staged.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return composed.Render(timingOfMap(c.Expect.Affinity.ColdTiming), false)
+}
+
+// TestAffinityWarmIsPythonsRerank (G13): affinity_warm is exactly the
+// order routing_state.rank gives, every first-candidate member rendered
+// consistently. Under a provider.order naming a provider Python keeps the
+// cold order, so a promotion is differ; under the default partition a
+// second model's endpoint moved ahead of the primary model is differ;
+// under partition none it is warm (the golden); an empty provider.order
+// names no provider, so the warm goldens with one are warm.
+func TestAffinityWarmIsPythonsRerank(t *testing.T) {
+	f := authorizeGoldens(t)
+	decide := func(name string) (Decided, authorizeCase) {
+		c := authorizeCaseNamed(t, name)
+		in, _ := caseInputs(t, f, c)
+		d := Decide(in)
+		if d.Pass != gwauth.ReasonCacheAffinity || d.ForShadow() == nil {
+			t.Fatalf("%s: pass %q", name, d.Pass)
+		}
+		return d, c
+	}
+	classify := func(d Decided, body []byte) fullResult { return compareFull(d, pyAnswer{status: 200, body: body}) }
+	// The control: the rendering reproduces Python's warm bytes.
+	d, c := decide("pass:body.cache_affinity:warm")
 	a := c.Expect.Affinity
-	in, _ := caseInputs(t, f, c)
-	d := Decide(in)
-	across := mutated(t, a.ColdResponse, func(o pyjson.Object) pyjson.Object {
-		l, _ := memberOf(o, "route_candidates").([]any)
-		moved := slices.Concat([]any{l[3]}, l[:3], l[4:])
-		return setMember(o, "route_candidates", moved)
+	if got := rendered(t, d, c, a.Candidates, a.Estimate); !bytes.Equal(got, []byte(a.Response)) {
+		t.Fatalf("the rendering is not Python's warm bytes:\n got %s\nwant %s", got, a.Response)
+	}
+	// A provider.order: [together, fireworks, wafer] is a promotion Python
+	// would not make.
+	d, c = decide("pass:body.cache_affinity:cold:order")
+	a = c.Expect.Affinity
+	promoted := []string{a.ColdCandidates[1], a.ColdCandidates[0], a.ColdCandidates[2]}
+	if r := classify(d, rendered(t, d, c, promoted, a.ColdEstimate)); r.class != ClassDifferAny ||
+		!slices.Contains(r.fields, "differ.candidates") || r.rows {
+		t.Errorf("under a provider.order: %+v, want differ", r)
+	}
+	// The default partition: the second model's endpoint ahead of the
+	// primary model's, every member consistent, is differ; its own golden
+	// (within its model's run) is warm.
+	d, c = decide("pass:body.cache_affinity:warm:fallback_models")
+	a = c.Expect.Affinity
+	across := slices.Concat([]string{a.ColdCandidates[3]}, a.ColdCandidates[:3], a.ColdCandidates[4:])
+	if r := classify(d, rendered(t, d, c, across, a.ColdEstimate)); r.class != ClassDifferAny ||
+		!slices.Contains(r.fields, "differ.candidates") || r.rows {
+		t.Errorf("across models under the default partition: %+v, want differ", r)
+	}
+	if r := classify(d, []byte(a.Response)); r.class != ClassAffinityWarm {
+		t.Errorf("within the model's run: %+v, want affinity_warm", r)
+	}
+	// Partition none: the same move is Python's order (the golden); the
+	// within-run order is then not.
+	d, c = decide("pass:body.cache_affinity:warm:partition_none:fallback_models")
+	a = c.Expect.Affinity
+	if a.Candidates[0] == a.ColdCandidates[0] {
+		t.Fatalf("the partition none golden did not move across models: %v", a.Candidates)
+	}
+	if r := classify(d, []byte(a.Response)); r.class != ClassAffinityWarm || len(r.fields) != 0 {
+		t.Errorf("partition none: %+v, want affinity_warm", r)
+	}
+	withinRun := slices.Concat(a.ColdCandidates[:1], []string{a.ColdCandidates[2]}, a.ColdCandidates[1:2],
+		a.ColdCandidates[3:])
+	if r := classify(d, rendered(t, d, c, withinRun, a.ColdEstimate)); r.class != ClassDifferAny {
+		t.Errorf("partition none, within the run: %+v, want differ", r)
+	}
+	// An empty provider.order names no provider.
+	for _, name := range []string{"pass:body.cache_affinity:warm:empty_order",
+		"pass:body.cache_affinity:warm:no_fallbacks:empty_order",
+		"pass:body.cache_affinity:warm:top_level_no_fallbacks:empty_order"} {
+		d, c := decide(name)
+		if r := classify(d, []byte(c.Expect.Affinity.Response)); r.class != ClassAffinityWarm || len(r.fields) != 0 {
+			t.Errorf("%s: %+v, want affinity_warm", name, r)
+		}
+	}
+}
+
+// TestRerankReadsTheOrderAndThePartition: what routing_state.rank reads
+// of provider: an order names a provider only when non-empty (a list or a
+// comma string), and the sort is partitioned by model unless
+// provider.sort.partition is none.
+func TestRerankReadsTheOrderAndThePartition(t *testing.T) {
+	f := authorizeGoldens(t)
+	in, _ := caseInputs(t, f, authorizeCaseNamed(t, "pass:body.cache_affinity:warm"))
+	for _, v := range []struct {
+		provider         string
+		ordered, byModel bool
+	}{
+		{`null`, false, true},
+		{`{}`, false, true},
+		{`{"order":[]}`, false, true},
+		{`{"order":""}`, false, true},
+		{`{"order":["fireworks"]}`, true, true},
+		{`{"order":"fireworks, together"}`, true, true},
+		{`{"sort":"price"}`, false, true},
+		{`{"sort":{"sort":"price","partition":"model"}}`, false, true},
+		{`{"sort":{"sort":"price","partition":"none"}}`, false, false},
+		{`{"order":["together"],"sort":{"partition":"none"}}`, true, false},
+	} {
+		req := routingsnapshot.Request{Model: "z-ai/glm-5.3", Provider: json.RawMessage(v.provider)}
+		ordered, byModel, ok := in.Snapshot.Rerank(req)
+		if !ok || ordered != v.ordered || byModel != v.byModel {
+			t.Errorf("%s: ordered %v byModel %v ok %v, want %v %v", v.provider, ordered, byModel, ok, v.ordered, v.byModel)
+		}
+	}
+	if _, _, ok := in.Snapshot.Rerank(routingsnapshot.Request{Model: "z-ai/glm-5.3",
+		Provider: json.RawMessage(`{"order":[1]}`)}); ok {
+		t.Error("an order of numbers parses")
+	}
+}
+
+// TestAffinityIsCountedApart (G13, §11): an affinity result, whatever its
+// class, is in no count the I2 gates read (classes, fields, rows, decide,
+// cohort, read_back): a warm answer with a tag changed is affinity's
+// differ, with no row read back; the count line carries it under
+// affinity= alone.
+func TestAffinityIsCountedApart(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "pass:body.cache_affinity:warm")
+	drifted := mutated(t, c.Expect.Affinity.Response, func(o pyjson.Object) pyjson.Object {
+		return setMember(o, "tags", pyjson.Object{{Key: "x", Value: "y"}})
 	})
-	if r := compareFull(d, pyAnswer{status: 200, body: across}); r.class != ClassDifferAny ||
-		!slices.Contains(r.fields, "differ.candidates") {
-		t.Errorf("across models: %+v", r)
+	h := newFullEdge(t, f, c, nil, nil)
+	h.answer(answerWith(200, drifted))
+	h.rows.by[c.IDs.AuthorizationID] = store.AuthorizationForCompare{}
+	h.send(t, c)
+	got := h.edge.DecideShadowCounts()
+	if got.Affinity[ClassDifferAny] != 1 || len(got.Classes) != 0 || len(got.Fields) != 0 || len(got.Rows) != 0 ||
+		len(got.Decide) != 0 || len(got.Cohort) != 0 || got.ReadBack != 0 || h.rows.reads.Load() != 0 {
+		t.Fatalf("counts %+v, rows read %d", got, h.rows.reads.Load())
+	}
+	h.edge.full.flush()
+	logs := h.logs.all()
+	if !strings.Contains(logs, "agree_full=0 differ=0 would_admit_python_refused=0 read_back=0 classes={} fields={} "+
+		"rows={} decide={} cohort={} affinity={\"differ\":1}") {
+		t.Fatalf("the summary: %s", logs)
 	}
 }
 

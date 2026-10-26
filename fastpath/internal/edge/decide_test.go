@@ -541,7 +541,7 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 	if answered < 160 || passes < 90 || admitted < 10 {
 		t.Fatalf("answered %d, passes %d, admitted %d: fewer than the goldens hold", answered, passes, admitted)
 	}
-	if affinity[ClassAffinityCold] < 6 || affinity[ClassAffinityWarm] < 5 {
+	if affinity[ClassAffinityCold] < 6 || affinity[ClassAffinityWarm] < 10 {
 		t.Fatalf("affinity %v: fewer than the goldens hold", affinity)
 	}
 }

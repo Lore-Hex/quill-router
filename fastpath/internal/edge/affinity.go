@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 
@@ -10,53 +11,76 @@ import (
 
 // Cache affinity (docs/design/fast-admission-e2-decide.md §1 item 5, G13).
 // Python's authorize re-ranks the candidates of a request naming a
-// cache_affinity_key through routing_state.rank: a session (key hash,
-// model, region, affinity key) whose endpoint its own process remembered,
-// at a settle with a discounted cache hit within the last 600 s, moves to
-// the front of its model's run (the sort partitioned by model) or of the
-// list, and with fallbacks off is then the one candidate kept. The table is
+// cache_affinity_key through routing_state.rank: unless provider.order
+// names a provider, the candidates are sorted, stably, by their model's
+// first-seen rank (unless provider.sort.partition is none) and then with
+// the session's remembered endpoint first, where the session (key hash,
+// model, region, affinity key) is one the process itself remembered at a
+// settle with a discounted cache hit within the last 600 s; with fallbacks
+// off the first candidate of that order is then the one kept. The table is
 // per Python process, seeded only by settle, never stored: Go cannot read
 // it, so Go composes the cold order and the full shadow measures Python's
 // against it, cold (the same bytes) or warm (Python's bytes are Go's
-// decision rendered with the remembered endpoint promoted). Neither admits.
+// decision rendered in that order for some remembered endpoint among the
+// candidates). Neither admits.
 
-// promotedWithinItsModel: py is cold with one endpoint moved to the front of
-// its model's run, or to the front of the list, which is the order
-// routing_state.rank gives a session's sticky endpoint (the warm cache)
-// with the sort partitioned by model or not at all. modelOf is an
-// endpoint's model, "" when not known.
-func promotedWithinItsModel(cold, py []string, modelOf func(string) string) bool {
-	if len(cold) != len(py) {
-		return false
+// rerankOrder is routing_state.rank's order over cold with sticky
+// remembered: a stable sort by the model's first-seen rank (unless byModel
+// is false), then the remembered endpoint before the others.
+func rerankOrder(cold []string, sticky string, byModel bool, modelOf func(string) string) []string {
+	rank := map[string]int{}
+	for _, id := range cold {
+		if m := modelOf(id); !byModel {
+			rank[m] = 0
+		} else if _, seen := rank[m]; !seen {
+			rank[m] = len(rank)
+		}
 	}
-	i := 0
-	for i < len(cold) && cold[i] == py[i] {
-		i++
+	notSticky := func(id string) int {
+		if id == sticky {
+			return 0
+		}
+		return 1
 	}
-	if i == len(cold) {
-		return false
+	out := slices.Clone(cold)
+	slices.SortStableFunc(out, func(a, b string) int {
+		if c := cmp.Compare(rank[modelOf(a)], rank[modelOf(b)]); c != 0 {
+			return c
+		}
+		return cmp.Compare(notSticky(a), notSticky(b))
+	})
+	return out
+}
+
+// pythonsWarm reports py as the order routing_state.rank gives cold for
+// some endpoint of cold remembered, other than cold itself, when ordered
+// is false (a provider.order keeps the cold order); sticky is that
+// endpoint.
+func pythonsWarm(ordered, byModel bool, cold, py []string, modelOf func(string) string) (sticky string, ok bool) {
+	if ordered || len(cold) != len(py) || slices.Equal(cold, py) {
+		return "", false
 	}
-	j := slices.Index(cold, py[i])
-	if j <= i {
-		return false
+	for _, id := range cold {
+		if slices.Equal(rerankOrder(cold, id, byModel, modelOf), py) {
+			return id, true
+		}
 	}
-	moved := slices.Concat(cold[:i], []string{cold[j]}, cold[i:j], cold[j+1:])
-	if !slices.Equal(moved, py) {
-		return false
-	}
-	model := modelOf(cold[j])
-	return i == 0 || (modelOf(cold[i-1]) != model && modelOf(cold[i]) == model)
+	return "", false
 }
 
 // warmOf is Python's warm order over Go's decision: the candidates and
 // the estimate Go would have composed had it held Python's session. ok is
-// false unless py is a warm re-rank of the decision's cold order: its
-// candidates with one promoted within its model (the estimate, the
-// largest over the same candidates, unchanged), or, with fallbacks off,
-// one endpoint of the same model that Go admits with fallbacks on, at the
-// estimate Go names when pinned to that endpoint's provider.
+// false unless py is that order for some remembered endpoint (pythonsWarm:
+// the estimate, the largest over the same candidates, unchanged), or, with
+// fallbacks off, one endpoint of the primary model that Go admits with
+// fallbacks on (Python re-ranks the model's endpoints and keeps the first),
+// at the estimate Go names when pinned to that endpoint's provider.
 func (d *Decision) warmOf(py []string) (candidates []gwauth.Candidate, estimate int64, ok bool) {
 	if !d.Affinity || d.Snapshot == nil || len(py) == 0 {
+		return nil, 0, false
+	}
+	ordered, byModel, ok := d.Snapshot.Rerank(d.Routing)
+	if !ok || ordered {
 		return nil, 0, false
 	}
 	modelOf := func(id string) string {
@@ -67,7 +91,7 @@ func (d *Decision) warmOf(py []string) (candidates []gwauth.Candidate, estimate 
 		return e.ModelID
 	}
 	cold := d.Candidates
-	if promotedWithinItsModel(cold, py, modelOf) {
+	if _, warm := pythonsWarm(ordered, byModel, cold, py, modelOf); warm {
 		byID := make(map[string]gwauth.Candidate, len(d.Input.Candidates))
 		for _, c := range d.Input.Candidates {
 			byID[c.EndpointID] = c
@@ -90,7 +114,7 @@ func (d *Decision) warmOf(py []string) (candidates []gwauth.Candidate, estimate 
 	if !d.Snapshot.CreditsOnly(py) {
 		return nil, 0, false
 	}
-	on, ok := withFallbacks(d.Routing)
+	on, ok := withFallbacks(d.Snapshot, d.Routing)
 	if !ok {
 		return nil, 0, false
 	}
@@ -107,6 +131,30 @@ func (d *Decision) warmOf(py []string) (candidates []gwauth.Candidate, estimate 
 		return nil, 0, false
 	}
 	return []gwauth.Candidate{gwauth.CandidateOf(e)}, r.ModelEstimate, true
+}
+
+// withFallbacks is req with allow_fallbacks unset, top-level and in
+// provider; ok is false when provider.order names a provider (Python then
+// does not re-rank), or provider is not an object.
+func withFallbacks(s *routingsnapshot.Snapshot, req routingsnapshot.Request) (routingsnapshot.Request, bool) {
+	if ordered, _, ok := s.Rerank(req); !ok || ordered {
+		return req, false
+	}
+	req.AllowFallbacks = nil
+	if isJSONNull(req.Provider) {
+		return req, true
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(req.Provider, &fields) != nil || fields == nil {
+		return req, false
+	}
+	delete(fields, "allow_fallbacks")
+	provider, err := json.Marshal(fields)
+	if err != nil {
+		return req, false
+	}
+	req.Provider = provider
+	return req, true
 }
 
 // withProviderOnly is req with provider.only set to the one provider, its

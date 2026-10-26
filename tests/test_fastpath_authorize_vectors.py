@@ -297,9 +297,10 @@ def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:
     (affinity_warm)."""
     cases = [case for case in _cases("pass") if "affinity" in case["expect"]]
     classes = Counter(case["expect"]["affinity"]["class"] for case in cases)
-    assert classes["affinity_cold"] >= 6 and classes["affinity_warm"] >= 5, classes
-    first_candidate_members = {"upstream_model", "endpoint_id", "provider", "provider_name", "inference_location",
-                               "wafer_zdr_required", "route_candidates"}
+    assert classes["affinity_cold"] >= 6 and classes["affinity_warm"] >= 10, classes
+    # The 200's members written from the first candidate (gwauth/response.go, responseData).
+    first_candidate_members = {"model", "upstream_model", "endpoint_id", "provider", "provider_name",
+                               "inference_location", "wafer_zdr_required", "route_candidates"}
     missing = object()
     for case in cases:
         name, a, python = case["name"], case["expect"]["affinity"], case["expect"]["python"]
@@ -330,14 +331,19 @@ def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:
             continue
         assert sorted(warm_ids) == sorted(cold_ids) and cold["estimated_cost_microdollars"] == warm[
             "estimated_cost_microdollars"], name
-        moved_to = next(i for i, (w, c) in enumerate(zip(warm_ids, cold_ids, strict=True)) if w != c)
-        moved = warm_ids[moved_to]
-        assert moved in seeded, name
-        assert warm_ids[moved_to + 1:] == [c for c in cold_ids[moved_to:] if c != moved], name
-        # To the front of its model's run (the sort partitioned by model).
+        # routing_state.rank's order: a stable sort by the model's first-seen
+        # rank (unless provider.sort.partition is none), the remembered
+        # endpoint first; provider.order names no provider in a warm case.
+        provider = body.get("provider") or {}
+        assert not provider.get("order"), name
+        by_model = not (isinstance(provider.get("sort"), dict) and provider["sort"].get("partition") == "none")
         model_of = {c["endpoint_id"]: c["model"] for c in cold["route_candidates"]}
-        assert moved_to == 0 or (model_of[cold_ids[moved_to - 1]] != model_of[moved]
-                                 and model_of[cold_ids[moved_to]] == model_of[moved]), name
+        ranks: dict[str, int] = {}
+        for endpoint_id in cold_ids:
+            ranks.setdefault(model_of[endpoint_id], len(ranks))
+        expected = [sorted(cold_ids, key=lambda e: (ranks[model_of[e]] if by_model else 0, e != sticky))
+                    for sticky in seeded]
+        assert warm_ids in expected, (name, warm_ids, expected)
         assert changed <= first_candidate_members, name
     # Positive controls: a promotion within the second model, and a session
     # kept in place of the first with fallbacks off.
@@ -347,6 +353,15 @@ def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:
     assert by_name["pass:body.cache_affinity:warm:no_fallbacks"]["candidates"] != by_name[
         "pass:body.cache_affinity:warm:no_fallbacks"]["cold_candidates"]
     assert by_name["pass:body.cache_affinity:cold:expired"]["sessions"][0][1] > 600
+    # Partition none moves the remembered endpoint of the second model to
+    # the front of the list; the default partition keeps it in its run; an
+    # empty provider.order is no order.
+    none, model = (by_name[f"pass:body.cache_affinity:warm:partition_{p}:fallback_models"] for p in ("none", "model"))
+    assert none["candidates"][0] != none["cold_candidates"][0] and none["class"] == "affinity_warm"
+    assert model["candidates"][0] == model["cold_candidates"][0] and model["class"] == "affinity_warm"
+    for case in ("warm:empty_order", "warm:no_fallbacks:empty_order", "warm:top_level_no_fallbacks:empty_order"):
+        assert by_name[f"pass:body.cache_affinity:{case}"]["class"] == "affinity_warm", case
+    assert by_name["pass:body.cache_affinity:cold:order"]["class"] == "affinity_cold"
 
 
 def test_an_insert_whose_outcome_is_unknown_and_not_landed_is_pythons_exact_503() -> None:
