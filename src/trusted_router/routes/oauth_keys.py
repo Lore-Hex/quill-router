@@ -489,7 +489,10 @@ def _validate_callback_url(callback_url: str) -> str:
         if port is not None:
             raise api_error(400, "native callback_url cannot contain a port", ErrorType.BAD_REQUEST)
         return callback_url
-    if localhost_callback and port == 3000:
+    if localhost_callback:
+        # RFC 8252 section 7.3: a native app's loopback redirect may use any
+        # port, chosen when the app binds its listener (pi and other CLI agents
+        # bind port 0). The listener is on the user's own machine.
         return callback_url
     if port not in {None, 443, 3000}:
         raise api_error(400, "callback_url port must be 443 or 3000", ErrorType.BAD_REQUEST)
