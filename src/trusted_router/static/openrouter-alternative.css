@@ -299,3 +299,21 @@
   .openrouter-article :is(.v2-matrix-table,.v2-price-table) th[scope=row] { padding: 12px 8px; font-size: 14px; }
   .openrouter-article :is(.v2-matrix-table,.v2-price-table) th:first-child { width: 26%; min-width: 0; max-width: none; position: static; }
 }
+
+/* Sage surfaces make comparison groups visible at every viewport width. */
+.openrouter-article .model-table-wrap,
+.openrouter-article .seo-evidence-table-wrap,
+.openrouter-article .v2-table-note { background: #10231b; }
+.openrouter-article .v2-stack :is(th,td),
+.openrouter-article .seo-evidence-table :is(th,td) { background: transparent; }
+.openrouter-article .v2-stack thead th,
+.openrouter-article .seo-evidence-table thead th { background: #183226; }
+.openrouter-article .v2-row-tr :is(th,td) { background: #1c3e2e; }
+.openrouter-article main h2 { color: #d9f2e3; }
+.openrouter-article .seo-evidence-stats strong { color: #b7e4ca; }
+.openrouter-article .seo-evidence-stats { grid-template-columns: repeat(5,minmax(0,1fr)); }
+@media (max-width: 720px) {
+  .openrouter-article .seo-evidence-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .openrouter-article .v2-stack th:first-child { background: #183226; }
+  .openrouter-article .v2-row-tr th:first-child { background: #1c3e2e; }
+}

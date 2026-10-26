@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% set compact_catalog_evidence = true %}
 {% block head_extra %}
 <link rel="stylesheet" href="/static/openrouter-alternative.css?v={{ static_version|default('local') }}">
 {% endblock %}
@@ -217,7 +218,7 @@
  <div class="panel-head"><h2 id="stripe-heading">What the Stripe deal means for OpenRouter users</h2></div>
  <div class="panel-body">
  <p>Stripe agreed to acquire OpenRouter on August 19, 2026, in the largest acquisition in its history. OpenRouter said it would keep operating under the same name, product and roadmap. After the close, its pricing, data handling and terms will be up to Stripe.</p>
- <p>If you'd rather not wait to find out, moving to TrustedRouter is a base URL and key change. <a href="/docs/migrate-from-openrouter">Read the migration guide</a>.</p>
+ <p>If you'd rather not wait to find out, moving to TrustedRouter is a base URL and key change.</p>
  </div>
 </section>
 
@@ -227,7 +228,7 @@
  <h2>Switch from OpenRouter in one base URL.</h2>
  <p>Keep the OpenAI SDK and swap the base URL and key. OpenRouter-style routing fields such as <code>provider.order</code>, <code>provider.only</code> and <code>provider.ignore</code> carry over, so most migrations are a config change.</p>
  <p><button class="btn primary" type="button" data-action="open-signin">Create my API key</button></p>
- <p class="microcopy">No card required. Start with 1 million free tokens. <a href="/docs/migrate-from-openrouter">Read the migration guide.</a></p>
+ <p class="microcopy">No card required. Start with 1 million free tokens.</p>
  </div>
  <div class="copy-terminal">
  <pre><code>import os
@@ -270,13 +271,10 @@ response = client.chat.completions.create(
 
 <!-- ==== OA-14b: Migration resources (two links added) ==== -->
 <section class="panel" aria-label="OpenRouter migration resources">
- <div class="panel-head"><h2>OpenRouter migration resources</h2><a href="/resources">All resources</a></div>
+ <div class="panel-head"><h2>OpenRouter migration resources</h2></div>
  <div class="panel-body">
  <ul class="link-list">
  <li><a href="/docs/migrate-from-openrouter">Migration guide</a><span>Endpoints, headers, provider controls, and compatibility</span></li>
- <li><a href="/compare/openrouter">Detailed gateway comparison</a><span>Trust, pricing, deployment, and API surface</span></li>
- <li><a href="https://trust.trustedrouter.com">Verify the gateway</a><span>Attestation, signed builds, and how to check them</span></li>
- <li><a href="/eu">EU gateway</a><span>EU endpoint, EU-focused providers, and strict allowlists</span></li>
  <li><a href="/docs/agent-setup">Agent setup</a><span>Codex, Claude Code, Cursor, and eval runners</span></li>
  <li><a href="/compare/models">Model comparisons</a><span>Current price, latency, throughput, privacy, and provider routes</span></li>
  <li><a href="/leaderboard">Provider leaderboard</a><span>Measured route performance and availability</span></li>
@@ -284,5 +282,5 @@ response = client.chat.completions.create(
  </div>
 </section>
 
-{# The shared base renders unchanged live catalog evidence, then the shared FAQ. #}
+{# The shared base renders the compact catalog evidence, then the shared FAQ. #}
 {% endblock %}

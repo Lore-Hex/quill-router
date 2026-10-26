@@ -2266,3 +2266,17 @@ def test_organization_same_as_only_lists_profiles_we_own() -> None:
     assert "https://x.com/trustedrouter" in same_as
     assert not any("wikipedia.org" in url for url in same_as)
     assert not any("wikidata.org" in url for url in same_as)
+
+
+def test_openrouter_catalog_omits_measurement_columns_without_changing_other_pages(client: TestClient) -> None:
+    response = client.get("/openrouter-alternative")
+    assert response.status_code == 200
+    assert "Measured route</th>" not in response.text
+    assert "No measurements yet" not in response.text
+    assert "Live catalog evidence</span>" not in response.text
+    assert ">All resources</a>" not in response.text
+    assert ">Read the migration guide" not in response.text
+    assert 'href="/docs/migrate-from-openrouter">Migration guide</a>' in response.text
+    other = client.get("/litellm-alternative")
+    assert other.status_code == 200
+    assert "Measured route</th>" in other.text

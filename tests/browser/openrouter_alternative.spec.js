@@ -1,6 +1,6 @@
 const { test, expect } = require("@playwright/test");
 
-for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
+for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [768, 1024], [1024, 768], [1280, 800], [1440, 900]]) {
   test(`OpenRouter alternative fits ${width}px with readable tables`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     await page.goto("/openrouter-alternative");
