@@ -47,6 +47,7 @@ import sys
 # writes: one PNG per provider and its manifest.
 DATA_ONLY_PATHS: tuple[str, ...] = (
     "src/trusted_router/data/openrouter_snapshot.json",
+    "src/trusted_router/data/openrouter_reasoning.json",
     "src/trusted_router/data/speech_pricing.json",
     "src/trusted_router/data/transcription_pricing.json",
     "src/trusted_router/data/provider_routing_evidence.json",
