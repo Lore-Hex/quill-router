@@ -317,3 +317,18 @@
   .openrouter-article .v2-stack th:first-child { background: #183226; }
   .openrouter-article .v2-row-tr th:first-child { background: #1c3e2e; }
 }
+.openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child {
+  color: #b7e4ca; font-size: 23px; line-height: 1.5; margin-bottom: 28px;
+}
+.openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child strong { font-weight: 650; color: inherit; }
+.openrouter-article .table-scroll-tools { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #10231b; }
+.openrouter-article .table-scroll-tools[hidden] { display: none; }
+.openrouter-article .table-scroll-track { position: relative; flex: 1; height: 6px; border-radius: 3px; background: #284b39; }
+.openrouter-article .table-scroll-thumb { position: absolute; height: 100%; border-radius: inherit; background: #b7e4ca; }
+.openrouter-article .table-scroll-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid #7caa90; border-radius: 50%; background: #183226; color: #e8f7ef; }
+.openrouter-article .table-scroll-button:disabled { opacity: .3; }
+.openrouter-article .table-scroll-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }
+.openrouter-article .table-scroll-button:focus-visible { outline: 2px solid #b7e4ca; outline-offset: 3px; }
+@media (max-width:720px) {
+  .openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child { font-size: 21px; }
+}

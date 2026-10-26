@@ -42,7 +42,7 @@
  </tbody>
  </table>
  </div>
- <p class="v2-table-note">An attested gateway publishes hardware proof of the code that handles your requests. Fees are the platform's own charge on top of model prices. Sources are listed at the end of this page.</p>
+ <p class="v2-table-note">Attested gateways publish hardware proof of their running code. Platform fees exclude model costs.</p>
 </section>
 
 <!-- ==== OA-06: Where TrustedRouter is ahead (new) ==== -->
@@ -106,7 +106,7 @@
  </tbody>
  </table>
  </div>
- <p class="v2-table-note">Monthly cost of 100M input and 20M output tokens at list prices on October 19, 2026. Bedrock prices from Artificial Analysis. TrustedRouter prices are the cheapest public route for each model with the fee included; routes differ in privacy tier and precision.</p>
+ <p class="v2-table-note">100M input + 20M output tokens/month, priced Oct 19, 2026. Cheapest TrustedRouter routes, fees included; privacy and precision vary.</p>
  <div class="panel-body v2-price-body">
  <p>Moving requests that don't need a frontier model saves more. The same workload costs $800 on Claude Opus 5.5 and $103 on GLM 5.2 through a zero-retention route.</p>
  </div>
@@ -284,3 +284,5 @@ response = client.chat.completions.create(
 
 {# The shared base renders the compact catalog evidence, then the shared FAQ. #}
 {% endblock %}
+
+{% block body_scripts %}<script defer src="/static/openrouter-alternative.js?v={{ static_version|default('local') }}"></script>{% endblock %}
