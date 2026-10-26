@@ -388,14 +388,15 @@ const ackExtension = 10 * time.Second
 // and the log delivers it again (the library's default is an hour). A
 // healthy auditor acknowledges a record at the first commit of its lease
 // that lands after it: within a round, each of whose commits is bounded at
-// 15 s (auditor.StoreDeadline) and which the runtime fails once a minute
-// passes with none of them returning (auditor.CommitStall). Even a backlog
-// of a thousand dirty leases, ten batches at most 15 s each, is acknowledged
+// 15 s (auditor.StoreDeadline); the runtime fails a member any of whose
+// calls is under way a minute (auditor.CommitStall). Even a backlog of a
+// thousand dirty leases, ten batches at most 15 s each, is acknowledged
 // within three minutes, so only a member stuck past its own watchdog, or a
-// Spanner outage, holds a record five minutes; a redelivery is then harmless, since a member skips what it
-// has applied, and lets another member take the lease's key. It is the
-// backstop behind the watchdog, not the cure: a lapsed record may come back
-// to the same member. A test shortens it.
+// Spanner outage, holds a record five minutes; a redelivery is then
+// harmless, since a member skips what it has applied, and lets another
+// member take the lease's key. It is the backstop behind the watchdog, not
+// the cure: a lapsed record may come back to the same member. A test
+// shortens it.
 var maxExtension = 5 * time.Minute
 
 // Subscription is the auditor's subscription to a region's settle log,

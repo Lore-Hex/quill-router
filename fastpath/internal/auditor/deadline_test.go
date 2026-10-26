@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
@@ -410,7 +411,7 @@ func TestAWedgedRoundFailsTheMember(t *testing.T) {
 	if !src.ended.Load() || d.acked() != 0 {
 		t.Fatalf("the source's context ended %v; the record acknowledged %d times", src.ended.Load(), d.acked())
 	}
-	if got := l.with("auditor: a round of commits has made no progress for "); len(got) != 1 {
+	if got := l.with("auditor: a spanner commit has been under way "); len(got) != 1 {
 		t.Fatalf("logged %q", l.got)
 	}
 }
@@ -561,7 +562,163 @@ func TestALongRoundThatMakesProgressRunsOn(t *testing.T) {
 		t.Fatalf("Run returned %v", err)
 	}
 	// The round was past the limit: it is logged as slow past it.
-	if got := l.with("auditor: a round of commits took "); len(got) == 0 || len(l.with("no progress")) != 0 {
+	if got := l.with("auditor: a round of commits took "); len(got) == 0 || len(l.with("has been under way")) != 0 {
 		t.Fatalf("logged %q", l.got)
+	}
+}
+
+// deafStore is a store whose FindLease, or Load, waits until wedge is
+// closed, whatever its context, once entered has been closed; the rest
+// answer at once, as blocking's do not: Load finds a lease of nothing, and
+// a reap is refused, after reapTakes.
+type deafStore struct {
+	*blocking
+	deafFind, deafLoad bool
+	wedge, entered     chan struct{}
+	enter              sync.Once
+	reapTakes          time.Duration
+}
+
+func (d *deafStore) deaf() {
+	d.enter.Do(func() { close(d.entered) })
+	<-d.wedge
+}
+
+func (d *deafStore) FindLease(ctx context.Context, id string) (store.LeaseRef, error) {
+	if d.deafFind {
+		d.deaf()
+	}
+	return store.LeaseRef{Workspace: "w", LeaseID: id}, nil
+}
+
+func (d *deafStore) Load(ctx context.Context, ref store.LeaseRef) (store.Loaded, error) {
+	if d.deafLoad {
+		d.deaf()
+	}
+	return store.Loaded{}, errInjected
+}
+
+func (d *deafStore) Reap(ctx context.Context, _ store.LeaseRef, _ int64, _ time.Time, _ store.ReapRow) (store.Refusal, time.Time, error) {
+	time.Sleep(d.reapTakes)
+	return store.RefusedNotDue, time.Time{}, nil
+}
+
+// TestAWedgedReadInAHandlerFailsTheMember: a handler that reads a lease it
+// does not know, its FindLease or its Load deaf to its context, holds the
+// lease, which every round passes by, and so is outside any round; the
+// watchdog, which reads the calls under way wherever they were made, fails
+// the member all the same.
+func TestAWedgedReadInAHandlerFailsTheMember(t *testing.T) {
+	for _, find := range []bool{true, false} {
+		t.Run(map[bool]string{true: "find lease", false: "load"}[find], func(t *testing.T) {
+			s := &deafStore{blocking: &blocking{}, deafFind: find, deafLoad: !find, wedge: make(chan struct{}),
+				entered: make(chan struct{})}
+			t.Cleanup(func() { close(s.wedge) })
+			l := &lines{}
+			rt, err := New(Config{Store: s, CommitEvery: 5 * time.Millisecond, MaxBatch: 1, Retry: time.Millisecond,
+				MaxLife: time.Minute, Records: &fakeRecords{}, Wait: time.Second, stall: 300 * time.Millisecond, logf: l.logf})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := encodeSettle("lease-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &fakeDelivery{lease: "lease-1", data: data, at: start}
+			var runErr error
+			within(t, 20*time.Second, "Run with a wedged handler", func() { runErr = rt.Run(context.Background(), leftSource{d: d}) })
+			<-s.entered
+			if !errors.Is(runErr, ErrCommitStalled) {
+				t.Fatalf("Run returned %v", runErr)
+			}
+			op := map[bool]string{true: "find lease", false: "load"}[find]
+			if got := l.with("auditor: a spanner " + op + " has been under way "); len(got) != 1 {
+				t.Fatalf("logged %q", l.got)
+			}
+		})
+	}
+}
+
+// encodeSettle is a settle record of lease.
+func encodeSettle(lease string) ([]byte, error) {
+	r := settle(1, "a", 40, 0)
+	r.Lease = lease
+	return record.Encode(r)
+}
+
+// TestAWedgedReadInARecoveryFailsTheMember: a lease read again after a
+// commit whose outcome is unknown is read in a worker of its own, outside
+// any round; its Load deaf to its context fails the member.
+func TestAWedgedReadInARecoveryFailsTheMember(t *testing.T) {
+	f := newRuntimeFixture(t)
+	f.store.failCommit = 1
+	h, l := &deafLoads{hanging: hanging{flaky: f.store}, wedge: make(chan struct{}), entered: make(chan struct{})}, &lines{}
+	t.Cleanup(func() { close(h.wedge) })
+	rt := f.runtime(func(c *Config) {
+		c.Store, c.CommitEvery, c.stall, c.logf = h, 5*time.Millisecond, 300*time.Millisecond, l.logf
+	})
+	d := on(t, f.ref, settle(1, "a", 40, 0))
+	var err error
+	within(t, 2*setupBound, "Run with a wedged recovery", func() { err = rt.Run(context.Background(), fakeSource{ds: []*fakeDelivery{d}}) })
+	<-h.entered
+	if !errors.Is(err, ErrCommitStalled) || d.acked() != 0 {
+		t.Fatalf("Run returned %v; the record acknowledged %d times", err, d.acked())
+	}
+	if got := l.with("auditor: a spanner load has been under way "); len(got) != 1 {
+		t.Fatalf("logged %q", l.got)
+	}
+}
+
+// deafLoads is hanging whose every Load after the first waits until wedge
+// is closed, whatever its context.
+type deafLoads struct {
+	hanging
+	loads          atomic.Int32
+	wedge, entered chan struct{}
+	enter          sync.Once
+}
+
+func (h *deafLoads) Load(ctx context.Context, ref store.LeaseRef) (store.Loaded, error) {
+	if h.loads.Add(1) > 1 {
+		h.enter.Do(func() { close(h.entered) })
+		<-h.wedge
+		return store.Loaded{}, errInjected
+	}
+	return h.hanging.Load(ctx, ref)
+}
+
+// TestManyCallsUnderTheirDeadlineDoNotTrip: twenty reaps one after another,
+// as a draining lease's handler makes when many holds are due, each well
+// under the limit (a fifth of it) and all of them four times past it, as
+// twenty reaps at four seconds each are past a minute, never fail the member: the watchdog reads
+// each call's age, not the work's.
+func TestManyCallsUnderTheirDeadlineDoNotTrip(t *testing.T) {
+	const stall = 600 * time.Millisecond
+	s := &deafStore{blocking: &blocking{}, reapTakes: stall / 5}
+	rt, err := New(Config{Store: s, CommitEvery: time.Hour, MaxBatch: 1, Retry: time.Millisecond, MaxLife: time.Minute,
+		Records: &fakeRecords{}, Wait: time.Second, stall: stall, logf: (&lines{}).logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- rt.Run(ctx, fakeSource{}) }()
+	began := time.Now()
+	for range 20 {
+		if _, _, err := rt.cfg.Store.Reap(ctx, store.LeaseRef{LeaseID: "l"}, 1, time.Time{}, store.ReapRow{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if took := time.Since(began); took < 2*stall {
+		t.Fatalf("the reaps took %v, not past the limit", took)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned %v", err)
+	default:
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

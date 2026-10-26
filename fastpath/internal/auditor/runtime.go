@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
@@ -131,33 +130,33 @@ type Config struct {
 	logf                       func(format string, args ...any)
 }
 
-// CommitStall is how long a round of commits may go without progress, no
-// commit of it returning, before the member fails: Run returns
-// ErrCommitStalled, and the service fails the process, whose subscription
-// asks again at once for every record the member held, so the other
-// members take its leases, and systemd starts the unit again. The round is
-// the only path that acknowledges a live lease's records, and with the
-// settle log's ordering one held record holds its lease's key shut: a
-// member whose round is wedged would take keys and never let them go.
+// CommitStall is how long one Store call of the runtime may be under way
+// before the member fails: Run returns ErrCommitStalled, and the service
+// fails the process, whose subscription asks again at once for every record
+// the member held, so the other members take its leases, and systemd
+// starts the unit again. A call wedged anywhere holds records: in the round
+// of commits, the only path that acknowledges a live lease's records; in a
+// handler or a lease's read again, which hold the lease, so every round
+// passes it by. With the settle log's ordering one held record holds its
+// lease's key shut: a member so wedged would take keys and never let them
+// go.
 //
-// It is progress the watchdog reads, not the round's length: a round makes
-// one commit per MaxBatch dirty leases, one after another, and a backlog
-// of many batches each under its deadline is a long round that is healthy.
-// Every commit is bounded by StoreDeadline (15 s), so a round whose calls
-// honour their context returns a commit at least that often and never
-// trips it. What trips it is a call that never returns, its context
-// notwithstanding, as on 2026-10-26, when one commit sat 37 minutes in a
-// read that no deadline reached: no commit of the round returns for a
-// minute.
+// The watchdog reads the age of each call under way, wherever it was made
+// (boundStore), not the length of a round or of a handler's work: a round
+// of many batches, or a drain of many reaps, each call under its deadline,
+// is long and healthy. Every call is bounded by StoreDeadline (15 s), a
+// quarter of this, so only a call that does not heed its context reaches
+// it, as on 2026-10-26, when one commit sat 37 minutes in a read no
+// deadline reached.
 const CommitStall = 60 * time.Second
 
 // SlowCommitRound is how long a round of commits may take before it is
 // logged.
 const SlowCommitRound = 5 * time.Second
 
-// ErrCommitStalled is Run's failure when a round of commits went
-// CommitStall without progress.
-var ErrCommitStalled = errors.New("auditor: a round of commits made no progress within its limit; " +
+// ErrCommitStalled is Run's failure when a Store call has been under way
+// past CommitStall.
+var ErrCommitStalled = errors.New("auditor: a Spanner call ran past its limit, its deadline notwithstanding; " +
 	"the member stops so the others take its leases")
 
 // releaseWait bounds how long a stalled Run waits for its source to return
@@ -182,12 +181,9 @@ type Runtime struct {
 	handlers int
 	stopping bool
 	idle     *sync.Cond
-	// progressAt is when the round of commits under way last made
-	// progress, in Unix nanoseconds: when it began, or when its latest
-	// commit returned; 0 between rounds. The round alone writes it, and
-	// the watchdog reads it.
-	progressAt atomic.Int64
-	journal    *journal
+	// calls are the Store calls under way, which the watchdog reads.
+	calls   *inFlight
+	journal *journal
 }
 
 // held is a lease at the runtime: its member, and the records handled since
@@ -240,9 +236,9 @@ func New(cfg Config) (*Runtime, error) {
 	cfg.deadline = cmp.Or(cfg.deadline, StoreDeadline)
 	cfg.stall = cmp.Or(cfg.stall, CommitStall)
 	cfg.slowRound = cmp.Or(cfg.slowRound, SlowCommitRound)
-	j := newJournal(cfg.logf)
-	cfg.Store = boundStore{s: cfg.Store, bound: bound{d: cfg.deadline, j: j}}
-	rt := &Runtime{cfg: cfg, leases: map[string]*held{}, journal: j}
+	j, calls := newJournal(cfg.logf), &inFlight{began: map[uint64]callUnderWay{}}
+	cfg.Store = boundStore{s: cfg.Store, bound: bound{d: cfg.deadline, j: j, calls: calls}}
+	rt := &Runtime{cfg: cfg, leases: map[string]*held{}, calls: calls, journal: j}
 	rt.idle = sync.NewCond(&rt.hmu)
 	return rt, nil
 }
@@ -318,31 +314,19 @@ func (rt *Runtime) Run(ctx context.Context, src Source) error {
 	}
 }
 
-// round is one round of commits, watched and timed: the watchdog reads its
-// progress, and a slow one is logged.
+// round is one round of commits, timed: a slow one is logged.
 func (rt *Runtime) round(ctx context.Context) {
 	began := time.Now()
-	rt.progressAt.Store(began.UnixNano())
 	commits := rt.commitAll(ctx)
-	rt.progressAt.Store(0)
 	if took := time.Since(began); took > rt.cfg.slowRound {
 		rt.journal.printf("slow round", "auditor: a round of commits took %v (%d commits; slow past %v)",
 			took.Round(time.Millisecond), commits, rt.cfg.slowRound)
 	}
 }
 
-// progressed notes a commit of the round under way returned, whatever its
-// outcome; outside a round, as in tests that call commitAll, it does
-// nothing.
-func (rt *Runtime) progressed() {
-	if rt.progressAt.Load() != 0 {
-		rt.progressAt.Store(time.Now().UnixNano())
-	}
-}
-
-// watch fails the member once a round of commits has gone past its limit
-// without progress (CommitStall): it logs why, closes stalled and ends
-// Run's context. It returns then, or once done is closed.
+// watch fails the member once a Store call has been under way past its
+// limit (CommitStall), wherever it was made: it logs why, closes stalled
+// and ends Run's context. It returns then, or once done is closed.
 func (rt *Runtime) watch(cancel context.CancelFunc, stalled chan<- struct{}, done <-chan struct{}) {
 	t := time.NewTicker(max(rt.cfg.stall/4, time.Millisecond))
 	defer t.Stop()
@@ -352,13 +336,13 @@ func (rt *Runtime) watch(cancel context.CancelFunc, stalled chan<- struct{}, don
 			return
 		case <-t.C:
 		}
-		at := rt.progressAt.Load()
-		if at == 0 {
+		op, began, ok := rt.calls.oldest()
+		if !ok {
 			continue
 		}
-		if still := time.Since(time.Unix(0, at)); still > rt.cfg.stall {
-			rt.journal.logf("auditor: a round of commits has made no progress for %v, past %v: the member stops so "+
-				"that the others take its leases", still.Round(time.Millisecond), rt.cfg.stall)
+		if under := time.Since(began); under > rt.cfg.stall {
+			rt.journal.logf("auditor: a spanner %s has been under way %v, past %v: the member stops so that the "+
+				"others take its leases", op, under.Round(time.Millisecond), rt.cfg.stall)
 			close(stalled)
 			cancel()
 			return
@@ -783,7 +767,6 @@ func (rt *Runtime) commitAll(ctx context.Context) (commits int) {
 	var batch []*held
 	flush := func() {
 		rt.commit(ctx, batch)
-		rt.progressed()
 		commits++
 		var again []*held
 		for _, h := range batch {

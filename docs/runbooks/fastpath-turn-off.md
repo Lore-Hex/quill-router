@@ -101,7 +101,7 @@ A revoked lease drains only as fast as the auditor acknowledges its
 records. If **TR Fast path: auditor lag** or **TR Fast path: auditor
 acknowledges nothing** is open while you wait, the drain is stuck behind
 an auditor member, not slow (`fastpath-alerts.md`, "Auditor lag"). A
-member whose round of commits makes no progress for a minute stops itself and is
+member with a Spanner call stuck for a minute stops itself and is
 started again by systemd, its leases going to the other members; that
 restart is the watchdog's, and the drain resumes once the alert closes.
 If it does not close, take a goroutine dump of the stuck node before

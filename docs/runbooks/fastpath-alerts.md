@@ -129,17 +129,18 @@ takes more.
 Every Spanner call an auditor part makes has a 15 s deadline
 (`auditor.StoreDeadline`); one that runs out is a failure whose outcome is
 unknown, so the member reads the lease again and every write is
-conditional on what it read: nothing is applied twice. A round of commits
-that makes no progress for a minute, no commit of it returning
-(`auditor.CommitStall`), fails the member. The watchdog reads progress, not
-the round's length: a backlog of many batches makes a long round whose
-commits keep returning, each within its 15 s, and that round runs on. What
+conditional on what it read: nothing is applied twice. A Spanner call of
+the runtime under way for a minute (`auditor.CommitStall`), wherever it was
+made (the round of commits, a handler reading a lease, a lease read again
+after a lost commit, a reap or a close), fails the member. The watchdog
+reads each call's age, not the length of a round or of a drain: a backlog
+of many batches, or many reaps, each call within its 15 s, runs on. What
 trips it is a call that never returns, its deadline notwithstanding, as on
 2026-10-26. The process logs
 
 ```
-auditor: a round of commits has made no progress for 1m0.2s, past 1m0s: the member stops so that the others take its leases
-fastpath: service: auditor: auditor: a round of commits made no progress within its limit; the member stops so the others take its leases
+auditor: a spanner commit has been under way 1m0.2s, past 1m0s: the member stops so that the others take its leases
+fastpath: service: auditor: auditor: a Spanner call ran past its limit, its deadline notwithstanding; the member stops so the others take its leases
 ```
 
 and exits, its subscription asking again at once for every record it held,
@@ -158,7 +159,7 @@ a record after five minutes (`maxExtension` in
 that lapses is delivered again, perhaps to the same member, and a member
 skips what it has applied.
 
-A member that restarts again and again, its rounds each stalling, points
+A member that restarts again and again, a call stuck each time, points
 at Spanner from that node: compare with the other nodes'
 lines, and take a dump before the next restart.
 

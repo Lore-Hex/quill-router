@@ -94,17 +94,63 @@ func errorClass(err error) string {
 	return "other"
 }
 
-// bound is a part's deadline on each Spanner call, and its journal of the
-// calls that fail.
+// bound is a part's deadline on each Spanner call, its journal of the
+// calls that fail, and, for the runtime, the calls under way, which its
+// watchdog reads (nil for the other parts).
 type bound struct {
-	d time.Duration
-	j *journal
+	d     time.Duration
+	j     *journal
+	calls *inFlight
+}
+
+// inFlight is the Store calls under way: each one's name and when it
+// began.
+type inFlight struct {
+	mu    sync.Mutex
+	next  uint64
+	began map[uint64]callUnderWay
+}
+
+type callUnderWay struct {
+	op string
+	at time.Time
+}
+
+// start notes a call begun, and returns what notes it ended. A nil
+// inFlight notes nothing.
+func (f *inFlight) start(op string) (end func()) {
+	if f == nil {
+		return func() {}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := f.next
+	f.next++
+	f.began[id] = callUnderWay{op: op, at: time.Now()}
+	return func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		delete(f.began, id)
+	}
+}
+
+// oldest is the call under way longest, if any.
+func (f *inFlight) oldest() (op string, at time.Time, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.began {
+		if !ok || c.at.Before(at) {
+			op, at, ok = c.op, c.at, true
+		}
+	}
+	return op, at, ok
 }
 
 // call runs f under the deadline and logs its failure, unless ctx itself
 // ended, as when the process stops, or the failure is an answer the
 // callers act on (no such lease, a lease retired).
 func call[T any](b bound, ctx context.Context, op, lease string, f func(context.Context) (T, error)) (T, error) {
+	defer b.calls.start(op)()
 	cctx, cancel := context.WithTimeout(ctx, b.d)
 	defer cancel()
 	v, err := f(cctx)
@@ -115,6 +161,7 @@ func call[T any](b bound, ctx context.Context, op, lease string, f func(context.
 // call2 is call for the store's calls that answer a commit timestamp too.
 func call2[T any](b bound, ctx context.Context, op, lease string,
 	f func(context.Context) (T, time.Time, error)) (T, time.Time, error) {
+	defer b.calls.start(op)()
 	cctx, cancel := context.WithTimeout(ctx, b.d)
 	defer cancel()
 	v, at, err := f(cctx)
