@@ -29,9 +29,10 @@ from trusted_router.trust_ownership import (
 
 logger = logging.getLogger(__name__)
 
-# Longest a shadow canary expiry may lie ahead of process start-up: one UTC
-# evidence day plus a day of margin. A typo cannot leave the shadow on for weeks.
-SHADOW_CANARY_MAX_SECONDS = 48 * 3600
+# One expiry covers the whole evidence window; renewal deploys are unacceptable.
+# Stop early via the runtime stop marker / CLI (#2053) or an opt-out PR; this
+# upper bound turns a forgotten canary off.
+SHADOW_CANARY_MAX_SECONDS = 14 * 86400
 _LOGGED_SHADOW_EXPIRY_ERRORS: set[str] = set()
 
 
