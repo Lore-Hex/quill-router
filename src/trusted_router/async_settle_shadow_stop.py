@@ -11,8 +11,16 @@ from trusted_router.async_settle_shadow_journal import CONTROL_KIND, Row
 from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
 
 CADENCE = 4.
-WINDOW = 120.
-THRESHOLD = 2
+# The breaker mirrors the alert it pre-empts, "TR Spanner: API failures":
+# ALIGN_RATE over 300 s, summed over the instance, above 1/min for a further
+# 300 s. Five qualifying outcomes in 300 s means this process alone is at that
+# rate over the alert's own window; the alert still needs it sustained for
+# another 5 minutes, so the breaker stops the shadow first. Canary 4
+# (2026-10-26) saw three such failures fleet-wide in 40 minutes, two of them in
+# one minute: the former two-in-120-seconds rule stopped the whole canary at a
+# rate thirteen times below the alert's.
+WINDOW = 300.
+THRESHOLD = 5
 logger = logging.getLogger(__name__)
 
 

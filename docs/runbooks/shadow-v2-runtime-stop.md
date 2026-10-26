@@ -57,12 +57,15 @@ no new publisher cycle or request reservation is admitted after the local latch.
 
 Each process counts `Commit` and `ExecuteStreamingSql` RPC failures with status
 `DEADLINE_EXCEEDED` or `CANCELLED`, including failures during stream consumption.
-Two failures in a sliding 120-second window trip a terminal local latch before
-any marker write. This process alone then consumes one failure/minute, already
-the instance alert's budget; other processes can only add to it. `ABORTED`,
+Five failures in a sliding 300-second window trip a terminal local latch before
+any marker write: this process alone is then at the instance alert's rate (more
+than one per minute, as a 300-second ALIGN_RATE, sustained for 300 seconds) over
+the alert's own window, and the alert still needs five more minutes to fire.
+Isolated deadline bursts below that rate (canary 4 saw three in 40 minutes) do
+not stop the canary. `ABORTED`,
 other RPCs, local budget exceptions and late successful replies do not count.
 The breaker row has `source: breaker`, a boot/time incident identifier,
-`failure_count: 2`, and `window_seconds: 120`. Day diagnostics retain
+`failure_count: 5`, and `window_seconds: 300`. Day diagnostics retain
 `runtime_breaker_trips` and `runtime_breaker_api_failures` before closure.
 If evidence persistence fails during the incident, do not claim a durable day
 counter; the pending marker and the local latch remain independent of it.

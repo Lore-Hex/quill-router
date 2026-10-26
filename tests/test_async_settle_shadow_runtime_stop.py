@@ -126,17 +126,19 @@ def test_transport_breaker_counts_alert_outcomes_and_never_aborted(method, strea
         for _ in range(5):
             transport(svc, method, Aborted, stream=stream)
         assert svc.policy_enabled() and svc.runtime_stop.tripped is None
-        transport(svc, method, deadline, stream=stream)
-        assert svc.policy_enabled()
-        wall[0] += 1_000_000
+        # Four qualifying outcomes inside the window stay below the alert's rate.
+        for index in range(4):
+            transport(svc, method, deadline if index % 2 == 0 else cancelled, stream=stream)
+            assert svc.policy_enabled() and svc.runtime_stop.tripped is None
+            wall[0] += 1_000_000
         transport(svc, method, cancelled, stream=stream)
         assert not svc.policy_enabled() and svc.revocation_epoch == 1
         svc.tick(wall[0])
         assert svc.counters[lifecycle.day_name(wall[0])]['diagnostics']['runtime_breaker_trips'] == 1
         svc.runtime_stop.retry()
         marker = svc.store.read_runtime_stop().value()
-        assert marker['source'] == 'breaker' and marker['failure_count'] == 2
-        assert marker['window_seconds'] == 120 and marker['incident'].startswith('breaker:')
+        assert marker['source'] == 'breaker' and marker['failure_count'] == 5
+        assert marker['window_seconds'] == 300 and marker['incident'].startswith('breaker:')
     finally:
         cleanup(svc)
 
@@ -145,9 +147,13 @@ def test_sliding_window_and_failed_marker_write_backoff(monkeypatch):
     svc, wall = owner(pins())
     try:
         breaker = svc.runtime_stop
-        breaker.outcome('commit', 'DeadlineExceeded')
-        wall[0] += 120_000_000
-        breaker.outcome('execute_streaming_sql', 'Cancelled')
+        breaker.outcome('commit', 'DeadlineExceeded')  # t = 0
+        for _ in range(3):  # t = 60, 120, 180
+            wall[0] += 60_000_000
+            breaker.outcome('execute_streaming_sql', 'Cancelled')
+            assert svc.policy_enabled()
+        wall[0] += 120_000_000  # t = 300
+        breaker.outcome('commit', 'Cancelled')
         assert svc.policy_enabled()  # first failure aged out exactly at boundary
         breaker.outcome('commit', 'Cancelled')
         assert not svc.policy_enabled()
@@ -171,12 +177,36 @@ def test_sliding_window_and_failed_marker_write_backoff(monkeypatch):
         cleanup(svc)
 
 
+
+def test_canary_4_burst_does_not_trip_but_an_alert_rate_does():
+    """2026-10-26: two DEADLINE_EXCEEDED in one minute and a CANCELLED commit the
+    next, the only qualifying failures in 40 minutes, stopped canary 4 under the
+    former two-in-120-seconds rule. They are 13x below the alert's rate."""
+    svc, wall = owner(pins())
+    try:
+        breaker = svc.runtime_stop
+        breaker.outcome('commit', 'DeadlineExceeded')
+        wall[0] += 20_000_000
+        breaker.outcome('execute_streaming_sql', 'DeadlineExceeded')
+        wall[0] += 60_000_000
+        breaker.outcome('commit', 'Cancelled')
+        assert svc.policy_enabled() and breaker.tripped is None
+        # The alert's own rate (one per minute over five minutes) from this one
+        # process trips the breaker before the alert's five-minute duration.
+        for _ in range(2):
+            wall[0] += 60_000_000
+            breaker.outcome('commit', 'DeadlineExceeded')
+        assert not svc.policy_enabled() and breaker.tripped is not None
+        assert breaker.tripped.value()['failure_count'] == 5
+    finally:
+        cleanup(svc)
+
 @pytest.mark.asyncio
 async def test_retry_task_survives_optout(monkeypatch):
     svc, _ = owner(pins())
     try:
-        svc.runtime_stop.outcome('commit', 'DeadlineExceeded')
-        svc.runtime_stop.outcome('commit', 'Cancelled')
+        for _ in range(5):
+            svc.runtime_stop.outcome('commit', 'DeadlineExceeded')
         async def close(*args, **kwargs):
             pass
         monkeypatch.setattr(svc, 'close', close)
@@ -258,8 +288,8 @@ def test_cli_argument_path_prints_result_without_other_mutations(monkeypatch, ca
 async def test_controller_shutdown_ends_polling_but_optout_keeps_pending_write(monkeypatch):
     svc, _ = owner(pins())
     try:
-        svc.runtime_stop.outcome('commit', 'DeadlineExceeded')
-        svc.runtime_stop.outcome('execute_streaming_sql', 'Cancelled')
+        for method, status in (('commit', 'DeadlineExceeded'), ('execute_streaming_sql', 'Cancelled')) * 2 + (('commit', 'DeadlineExceeded'),):
+            svc.runtime_stop.outcome(method, status)
         monkeypatch.setattr(svc.store, 'runtime_stop', Mock(side_effect=RuntimeError('unavailable')))
         svc.runtime_stop.start(lambda: svc.policy_enabled() and not svc.stopped.is_set())
         await svc.close('opt_out')
@@ -281,8 +311,10 @@ async def test_breaker_during_optout_drain_still_writes_marker():
         await asyncio.sleep(.06)
         assert not svc.runtime_stop.task.done()
         def drain():
-            yield lambda: transport(svc, 'commit', DeadlineExceeded)
-            yield lambda: transport(svc, 'execute_streaming_sql', Cancelled, stream=True)
+            for _ in range(2):
+                yield lambda: transport(svc, 'commit', DeadlineExceeded)
+                yield lambda: transport(svc, 'execute_streaming_sql', Cancelled, stream=True)
+            yield lambda: transport(svc, 'commit', Cancelled)
         await svc.drive_async(drain())
         assert svc.counters[lifecycle.day_name(int(svc.store.wall()*1e6))]['diagnostics']['runtime_breaker_trips'] == 1
         for _ in range(100):
@@ -308,8 +340,8 @@ def test_partial_store_and_empty_app_support_install_poll_and_breaker(monkeypatc
     try:
         assert svc.store is store and not hasattr(store, 'database')
         assert svc.runtime_stop.poll() and svc.policy_enabled()
-        svc.runtime_stop.outcome('commit', 'DeadlineExceeded')
-        svc.runtime_stop.outcome('execute_streaming_sql', 'Cancelled')
+        for method, status in (('commit', 'DeadlineExceeded'), ('execute_streaming_sql', 'Cancelled')) * 2 + (('commit', 'DeadlineExceeded'),):
+            svc.runtime_stop.outcome(method, status)
         assert svc.runtime_stop.tripped is not None and not svc.policy_enabled()
         svc.runtime_stop.retry()
         assert not svc.runtime_stop.persisted
@@ -331,7 +363,7 @@ def test_real_observer_workspace_failures_trip_shared_breaker(monkeypatch, strea
     )
 
     base, _ = fake_store()
-    pending = [Aborted, Aborted, *errors]
+    pending = [Aborted, Aborted, *errors, *errors, errors[0]]
     calls = []
     def execute(**kwargs):
         calls.append(kwargs)
@@ -359,18 +391,18 @@ def test_real_observer_workspace_failures_trip_shared_breaker(monkeypatch, strea
     svc.settings.async_settle_shadow_health_region = svc.settings.effective_serving_region
     try:
         assert any(isinstance(e, lifecycle.StartPublisherCycle) for e in svc.tick(int(store.wall()*1e6)))
-        for index in range(4):
+        for index in range(7):
             started = now[0]
             svc.observer._count('workspace_reads')
             svc.observer.inflight_ticks['ws'] = started
             svc.observer._workspace('ws', started)
             assert svc.observer.counts['read_failures'] == index+1
             assert len(svc.runtime_stop.failures) == max(0, index-1)
-            if index < 3:
+            if index < 6:
                 assert svc.policy_enabled()
             now[0] += 4
-        assert len(calls) == 4 and svc.runtime_stop.tripped is not None
-        assert svc.runtime_stop.tripped.value()['failure_count'] == 2
+        assert len(calls) == 7 and svc.runtime_stop.tripped is not None
+        assert svc.runtime_stop.tripped.value()['failure_count'] == 5
         assert not svc.policy_enabled() and svc.revocation_epoch == 1
         assert not svc.contender()
         assert not any(isinstance(e, lifecycle.StartPublisherCycle)
