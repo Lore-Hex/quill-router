@@ -60,9 +60,9 @@ def _entry(reasoning: object) -> dict[str, Any] | None:
 def parse(document: object) -> dict[str, dict[str, Any]]:
     """id -> reasoning metadata, for rows whose metadata is complete and well-typed.
 
-    Raises ValueError on a document without a data array. A row with missing or
-    mistyped fields (for example an empty `reasoning: {}`) is skipped, so it can
-    neither crash the refresh nor count toward MIN_MODELS.
+    Raises ValueError on a document without a data array, or when any row carries
+    a `reasoning` object that is malformed (for example an empty `{}`): a response
+    that is wrong anywhere is not trusted anywhere, so the existing file is kept.
     """
     rows = document.get("data") if isinstance(document, dict) else None
     if not isinstance(rows, list):
@@ -71,9 +71,12 @@ def parse(document: object) -> dict[str, dict[str, Any]]:
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             continue
-        entry = _entry(row.get("reasoning"))
-        if entry is not None:
-            models[row["id"]] = entry
+        if row.get("reasoning") is None:
+            continue
+        entry = _entry(row["reasoning"])
+        if entry is None:
+            raise ValueError(f"malformed reasoning metadata on {row['id']}")
+        models[row["id"]] = entry
     return models
 
 

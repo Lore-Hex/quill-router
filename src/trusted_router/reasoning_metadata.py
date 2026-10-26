@@ -19,18 +19,20 @@ publishes OpenRouter's efforts intersected with what the gateway honors on EVERY
 one of its routes, because a request can fail over to any of them:
 
 - a route that cannot turn reasoning off makes the model mandatory;
-- a route that ignores reasoning controls entirely means nothing is published;
-- the default is the gateway's own where every route agrees on it, else null.
+- a route that ignores reasoning controls means nothing is published;
+- the default effort, and separately whether reasoning is on by default, are
+  published only where every route agrees (a route that leaves the default to
+  the upstream contributes OpenRouter's), else null and false.
 
-`gateway_effort_limit` mirrors enclave-go/internal/llm: anthropic_reasoning.go
-and adapter.go (Claude on the Anthropic wire, incl. azure.go and Vertex),
-vertex_gemini.go, byok.go (AI Studio defaults and >= 3.7 rewrite),
-ai_studio_gemini.go (native image route), reasoning_control.go (Kimi K3, Tencent),
-privatemode.go. A route not listed there forwards efforts verbatim and adds no
-limit: the upstream's accepted set, which OpenRouter's metadata records, is the
-answer. Not representable per route, and so not reflected here: Kimi K2.5/K2.6
-force thinking off when tools are present, and OpenAI's Responses route rejects
-an enabled-only reasoning object (an explicit effort is still honored).
+`gateway_effort_limit` mirrors enclave-go/internal/llm: anthropic_reasoning.go and
+adapter.go (Claude on the Anthropic wire, incl. azure.go and Vertex), multi.go
+(the legacy `gemini` slug is served by Vertex), vertex_gemini.go, byok.go (AI
+Studio defaults and >= 3.7 rewrite; Engy's forced-off Qwen 3.6),
+ai_studio_gemini.go (native image route), reasoning_control.go (Kimi K3,
+Tencent), privatemode.go. A route not listed forwards efforts verbatim and adds
+no limit. Not representable per route, and so not reflected here: Kimi
+K2.5/K2.6 force thinking off when tools are present, and OpenAI's Responses
+route rejects an enabled-only reasoning object (an explicit effort is honored).
 """
 
 from __future__ import annotations
@@ -80,10 +82,9 @@ class EffortLimit:
 _IGNORED = EffortLimit(efforts=frozenset(), can_disable=False, controllable=False)
 
 
-def _model_name(upstream_id: str | None) -> str:
-    # byok.go directModelID drops an author prefix ("google/gemini-2.5-flash").
-    model = (upstream_id or "").strip().lower()
-    return model.rsplit("/", 1)[-1]
+def _model_name(model_id: str | None) -> str:
+    # byok.go directModelID / azure.go drop an author prefix ("google/gemini-2.5-flash").
+    return (model_id or "").strip().lower().rsplit("/", 1)[-1]
 
 
 def _gemini_version_at_least(model: str, major: int, minor: int) -> bool:
@@ -100,79 +101,93 @@ def _gemini_flash_default(model: str) -> str:
     return "low" if _gemini_version_at_least(model, 3, 7) else "minimal"
 
 
-def _claude_on_anthropic_wire(provider: str, model: str) -> bool:
-    if provider == "anthropic":
-        return True
-    # azure.go azureUsesAnthropicWire; multi.go routes a claude-* Vertex upstream to gcp.go.
-    if provider == "azure":
-        return model.startswith("claude-")
-    return provider == "google-vertex" and "claude" in model
+def _claude_limit(upstream: str) -> EffortLimit:
+    # anthropicChatReasoningBody classifies by the UPSTREAM model name.
+    claude = upstream.replace(".", "-")
+    if any(prefix in claude for prefix in _ANTHROPIC_ADAPTIVE):
+        # output_config.effort verbatim with adaptive thinking; "minimal" is not an Anthropic effort.
+        return EffortLimit(efforts=_ALL - {"minimal"}, can_disable=True)
+    if _ANTHROPIC_MANUAL in claude:
+        # Effort plus a thinking budget for low/medium/high/xhigh; "max" sets no budget.
+        return EffortLimit(efforts=frozenset({"none", "low", "medium", "high", "xhigh"}), can_disable=True)
+    # Budget-only (adapter.go anthropicEffortBudget): xhigh is high's budget; max and
+    # minimal turn thinking off. A custom deployment name lands here too.
+    return EffortLimit(efforts=frozenset({"none", "low", "medium", "high"}), can_disable=True)
 
 
-def gateway_effort_limit(provider: str, upstream_id: str | None) -> EffortLimit | None:
-    """The gateway's own limit on one route, or None where it forwards efforts verbatim."""
-    model = _model_name(upstream_id)
-    if _claude_on_anthropic_wire(provider, model):
-        claude = model.replace(".", "-")
-        if any(prefix in claude for prefix in _ANTHROPIC_ADAPTIVE):
-            # output_config.effort verbatim with adaptive thinking; "minimal" is not an
-            # Anthropic effort.
-            return EffortLimit(efforts=_ALL - {"minimal"}, can_disable=True)
-        if _ANTHROPIC_MANUAL in claude:
-            # Effort plus a thinking budget for low/medium/high/xhigh; "max" sets the
-            # effort but no budget, so thinking is off.
-            return EffortLimit(efforts=frozenset({"none", "low", "medium", "high", "xhigh"}), can_disable=True)
-        # Budget-only (adapter.go anthropicEffortBudget): xhigh is high's budget, max and
-        # minimal turn thinking off.
-        return EffortLimit(efforts=frozenset({"none", "low", "medium", "high"}), can_disable=True)
-    gemini_route = provider in {"google-vertex", "google-ai-studio", "gemini"} and "gemini" in model
-    if gemini_route and "image" in model:
-        # vertexGeminiImageModel / googleAIStudioNeedsNativeImage: no thinking config is sent.
-        return _IGNORED
-    if provider == "google-vertex" and gemini_route:
-        flash = "flash" in model
-        if model.startswith("gemini-2.5"):
-            # Budgets: none 0, low 1024, medium 8192, high 24576; minimal is low's budget,
-            # xhigh/max are unmapped. Flash defaults to budget 0.
-            return EffortLimit(
-                efforts=frozenset({"none", "low", "medium", "high"}),
-                can_disable=True,
-                default="none" if flash else KEEP_SOURCE_DEFAULT,
-            )
-        # Gemini 3+: a thinking level; "none" becomes "low", so it cannot be turned off.
-        efforts = {"low", "medium", "high"}
-        if "pro" not in model and not _gemini_version_at_least(model, 3, 7):
-            efforts.add("minimal")
+def _vertex_gemini_limit(model: str) -> EffortLimit:
+    # vertex_gemini.go vertexGeminiThinkingConfig.
+    flash = "flash" in model
+    if model.startswith("gemini-2.5"):
+        # Budgets: none 0, low 1024, medium 8192, high 24576; minimal is low's budget,
+        # xhigh/max are unmapped. Flash defaults to budget 0.
         return EffortLimit(
-            efforts=frozenset(efforts),
-            can_disable=False,
-            default=_gemini_flash_default(model) if flash else KEEP_SOURCE_DEFAULT,
+            efforts=frozenset({"none", "low", "medium", "high"}),
+            can_disable=True,
+            default="none" if flash else KEEP_SOURCE_DEFAULT,
         )
-    if provider in {"google-ai-studio", "gemini"} and gemini_route:
-        # byok.go googleAIStudioDefaultReasoningEffort: flash models get a default.
-        default = KEEP_SOURCE_DEFAULT
-        if "flash" in model:
-            if model.startswith("gemini-2.5"):
-                default = "none"
-            elif model.startswith("gemini-3") or _gemini_version_at_least(model, 3, 0):
-                default = _gemini_flash_default(model)
-        if _gemini_version_at_least(model, 3, 7):
-            # none/off/minimal are rewritten to "low" before the request leaves.
-            return EffortLimit(efforts=_ALL - {"none", "minimal"}, can_disable=False, default=default)
-        if default != KEEP_SOURCE_DEFAULT:
-            return EffortLimit(efforts=_ALL, can_disable=True, default=default)
-        return None
-    if provider == "kimi" and model == "kimi-k3":
+    # Gemini 3+: a thinking level; "none" becomes "low", so it cannot be turned off.
+    efforts = {"low", "medium", "high"}
+    if "pro" not in model and not _gemini_version_at_least(model, 3, 7):
+        efforts.add("minimal")
+    return EffortLimit(
+        efforts=frozenset(efforts),
+        can_disable=False,
+        default=_gemini_flash_default(model) if flash else KEEP_SOURCE_DEFAULT,
+    )
+
+
+def _ai_studio_gemini_limit(model: str) -> EffortLimit | None:
+    # byok.go googleAIStudioDefaultReasoningEffort: only gemini-2.5* / gemini-3* flash ids.
+    default = KEEP_SOURCE_DEFAULT
+    if "flash" in model:
+        if model.startswith("gemini-2.5"):
+            default = "none"
+        elif model.startswith("gemini-3"):
+            default = _gemini_flash_default(model)
+    if _gemini_version_at_least(model, 3, 7):
+        # googleAIStudioCompatibleReasoningEffort rewrites none/off/minimal to "low".
+        return EffortLimit(efforts=_ALL - {"none", "minimal"}, can_disable=False, default=default)
+    if default != KEEP_SOURCE_DEFAULT:
+        return EffortLimit(efforts=_ALL, can_disable=True, default=default)
+    return None
+
+
+def gateway_effort_limit(provider: str, upstream_id: str | None, model_id: str = "") -> EffortLimit | None:
+    """The gateway's own limit on one route, or None where it forwards efforts verbatim.
+
+    `model_id` is the requested (catalog) model id; Azure picks the Anthropic wire
+    from it as well as from the upstream deployment name.
+    """
+    upstream = _model_name(upstream_id)
+    requested = _model_name(model_id)
+    if provider == "anthropic" or (provider == "google-vertex" and upstream.startswith("claude-")):
+        return _claude_limit(upstream)
+    if provider == "azure" and (upstream.startswith("claude-") or requested.startswith("claude-")):
+        # azure.go azureUsesAnthropicWire.
+        return _claude_limit(upstream)
+    if provider in {"google-vertex", "gemini", "google-ai-studio"} and "gemini" in upstream:
+        if "image" in upstream:
+            # vertexGeminiImageModel / googleAIStudioNeedsNativeImage: no thinking config is sent.
+            return _IGNORED
+        if provider == "google-ai-studio":
+            return _ai_studio_gemini_limit(upstream)
+        # multi.go serves the pre-split `gemini` compatibility slug through Vertex.
+        return _vertex_gemini_limit(upstream)
+    if provider == "engy" and upstream == "qwen3.6-35b-a3b":
+        # byok.go always sends enable_thinking=false on this route.
+        return _IGNORED
+    if provider == "kimi" and upstream == "kimi-k3":
         return EffortLimit(efforts=frozenset({"low", "high", "max"}), can_disable=False)
-    if provider == "tencent" and model in _TENCENT_ALWAYS_THINKING:
+    if provider == "tencent" and upstream in _TENCENT_ALWAYS_THINKING:
         return EffortLimit(efforts=_ALL, can_disable=False)
     if provider == "privatemode":
-        if model == "deepseek-ocr-2":
+        if upstream == "deepseek-ocr-2":
             return _IGNORED
         efforts = {"low", "high"}
-        if model == "gpt-oss-120b":
+        if upstream == "gpt-oss-120b":
             efforts.add("medium")
-        if model.startswith("glm-"):
+        if upstream.startswith("glm-"):
             efforts.add("max")
         return EffortLimit(efforts=frozenset(efforts), can_disable=False)
     return None
@@ -211,33 +226,33 @@ def reasoning_metadata(
         return None
     efforts = [effort for effort in source.get("supported_efforts", []) if effort in _ALL]
     mandatory = bool(source.get("mandatory", False))
-    source_default = source.get("default_effort")
-    defaults: set[str | None] = set()
+    source_effort = source.get("default_effort")
+    source_enabled = bool(source.get("default_enabled", False))
+    # What a request that sends no reasoning control gets, per route: (enabled, effort).
+    route_defaults: set[tuple[bool, str | None]] = set()
     for provider, upstream_id in routes:
-        limit = gateway_effort_limit(provider, upstream_id)
+        limit = gateway_effort_limit(provider, upstream_id, model_id)
+        if limit is None or limit.default == KEEP_SOURCE_DEFAULT:
+            route_defaults.add((source_enabled, source_effort))
+        else:
+            route_defaults.add((limit.default != "none", limit.default))
         if limit is None:
-            defaults.add(source_default)
             continue
         if not limit.controllable:
             return None
         efforts = [effort for effort in efforts if effort in limit.efforts]
         if not limit.can_disable:
             mandatory = True
-        defaults.add(source_default if limit.default == KEEP_SOURCE_DEFAULT else limit.default)
     if mandatory:
         efforts = [effort for effort in efforts if effort != "none"]
-    default_effort = next(iter(defaults)) if len(defaults) == 1 else None
-    if default_effort not in efforts:
-        default_effort = None
-    if defaults <= {source_default}:
-        # Every route leaves the default to the upstream: OpenRouter's answer stands.
-        default_enabled = bool(source.get("default_enabled", False))
-    else:
-        # A gateway default is in play: reasoning is on by default iff it is not "none".
-        default_enabled = default_effort is not None and default_effort != "none"
+    if not route_defaults:
+        route_defaults.add((source_enabled, source_effort))
+    enabled_defaults = {enabled for enabled, _ in route_defaults}
+    effort_defaults = {effort for _, effort in route_defaults}
+    default_effort = next(iter(effort_defaults)) if len(effort_defaults) == 1 else None
     return {
         "mandatory": mandatory,
-        "default_enabled": True if mandatory else default_enabled,
+        "default_enabled": enabled_defaults == {True},
         "supported_efforts": efforts,
-        "default_effort": default_effort,
+        "default_effort": default_effort if default_effort in efforts else None,
     }

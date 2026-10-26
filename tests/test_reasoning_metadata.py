@@ -48,7 +48,8 @@ ALL = set(EFFORTS)
         ("google-vertex", "gemini-3.8-flash", {"low", "medium", "high"}, False),
         # AI Studio Gemini >= 3.7 rewrites none/minimal to low.
         ("google-ai-studio", "gemini-3.8-flash", ALL - {"none", "minimal"}, False),
-        ("gemini", "gemini-4-argon", ALL - {"none", "minimal"}, False),
+        # The legacy `gemini` slug is served by Vertex (multi.go).
+        ("gemini", "gemini-3-flash-preview", {"minimal", "low", "medium", "high"}, False),
         # Kimi K3 rejects anything but low/high/max.
         ("kimi", "kimi-k3", {"low", "high", "max"}, False),
         # Tencent TokenHub: these models are always thinking.
@@ -91,6 +92,7 @@ def test_verbatim_routes_add_no_limit(provider: str, upstream: str) -> None:
         ("google-ai-studio", "gemini-3.1-flash-image"),  # native image route: no thinking config
         ("google-vertex", "gemini-3.1-flash-image-preview"),
         ("privatemode", "deepseek-ocr-2"),  # OCR rejects any reasoning setting
+        ("engy", "qwen3.6-35b-a3b"),  # always sent enable_thinking=false
     ],
 )
 def test_routes_that_ignore_reasoning_controls(provider: str, upstream: str) -> None:
@@ -109,12 +111,22 @@ def test_routes_that_ignore_reasoning_controls(provider: str, upstream: str) -> 
         ("google-ai-studio", "gemini-2.5-flash", "none"),
         ("google-ai-studio", "gemini-3-flash-preview", "minimal"),
         ("google-ai-studio", "gemini-3.8-flash", "low"),
+        # The AI Studio default injector only knows gemini-2.5* and gemini-3* flash ids.
+        ("google-ai-studio", "gemini-4-flash", KEEP_SOURCE_DEFAULT),
     ],
 )
 def test_gateway_defaults_when_the_caller_sends_no_effort(provider: str, upstream: str, default: str) -> None:
     limit = gateway_effort_limit(provider, upstream)
+    assert (limit.default if limit is not None else KEEP_SOURCE_DEFAULT) == default
+
+
+def test_azure_custom_deployment_takes_the_anthropic_wire_with_budget_rules() -> None:
+    # azure.go picks the Anthropic wire from the requested model; anthropicChatReasoningBody
+    # then classifies by the deployment name, which matches no effort class.
+    limit = gateway_effort_limit("azure", "production-chat", "anthropic/claude-opus-4.7")
     assert limit is not None
-    assert limit.default == default
+    assert set(limit.efforts) == {"none", "low", "medium", "high"}
+    assert gateway_effort_limit("azure", "production-chat", "openai/gpt-5.4") is None
 
 
 @pytest.fixture
@@ -168,6 +180,43 @@ def test_a_route_that_cannot_disable_makes_reasoning_mandatory(published: dict[s
     }
 
 
+def test_a_gateway_default_equal_to_the_source_effort_still_enables_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"mandatory": False, "default_enabled": False,
+              "supported_efforts": ["minimal", "medium"], "default_effort": "minimal"}
+    monkeypatch.setattr(rm, "openrouter_reasoning", {"google/gemini-3-flash-preview": source}.get)
+    result = reasoning_metadata(
+        "google/gemini-3-flash-preview", ["reasoning"], [("google-ai-studio", "gemini-3-flash-preview")]
+    )
+    assert result is not None
+    # AI Studio injects "minimal" when the caller sends nothing: reasoning is on by default.
+    assert (result["default_enabled"], result["default_effort"]) == (True, "minimal")
+
+
+def test_routes_that_all_enable_by_default_keep_enabled_even_with_different_efforts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"mandatory": False, "default_enabled": True,
+              "supported_efforts": ["minimal", "medium"], "default_effort": "medium"}
+    monkeypatch.setattr(rm, "openrouter_reasoning", {"google/gemini-3-flash-preview": source}.get)
+    result = reasoning_metadata(
+        "google/gemini-3-flash-preview",
+        ["reasoning"],
+        [("google-ai-studio", "gemini-3-flash-preview"), ("atlas-cloud", "google/gemini-3-flash-preview")],
+    )
+    assert result is not None
+    assert (result["default_enabled"], result["default_effort"]) == (True, None)
+
+
+def test_mandatory_source_keeps_its_default_enabled_when_routes_keep_upstream_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"mandatory": True, "default_enabled": False, "supported_efforts": [], "default_effort": None}
+    monkeypatch.setattr(rm, "openrouter_reasoning", {"a/m": source}.get)
+    assert reasoning_metadata("a/m", ["reasoning"], [("deepinfra", "a/m")]) == source
+
+
 def test_disagreeing_route_defaults_publish_no_default(published: dict[str, Any]) -> None:
     # AI Studio defaults to "low"; DeepInfra leaves it to the model (OpenRouter's "medium").
     result = reasoning_metadata(
@@ -213,10 +262,7 @@ def test_capture_keeps_only_well_formed_reasoning_rows() -> None:
             {"id": "a/ok", "reasoning": {"mandatory": True, "default_enabled": True,
                                          "supported_efforts": ["high", "low"], "default_effort": "high"}},
             {"id": "a/no-reasoning"},
-            {"id": "a/bad-effort", "reasoning": {"supported_efforts": ["ultra"]}},
-            {"id": "a/odd-default", "reasoning": {"mandatory": False, "supported_efforts": ["low"], "default_effort": "turbo"}},
-            {"id": "a/typed-default", "reasoning": {"mandatory": False, "supported_efforts": ["low"], "default_effort": []}},
-            {"id": "a/empty", "reasoning": {}},
+            {"id": "a/null-reasoning", "reasoning": None},
             # OpenRouter omits the optional fields on mandatory-only models.
             {"id": "a/mandatory-only", "reasoning": {"mandatory": True}},
             {"reasoning": {"mandatory": True, "supported_efforts": ["low"]}},
@@ -226,6 +272,15 @@ def test_capture_keeps_only_well_formed_reasoning_rows() -> None:
         "a/ok": {"mandatory": True, "default_enabled": True, "supported_efforts": ["high", "low"], "default_effort": "high"},
         "a/mandatory-only": {"mandatory": True, "default_enabled": False, "supported_efforts": [], "default_effort": None},
     }
+    # One malformed reasoning object anywhere rejects the whole response.
+    for bad in (
+        {"mandatory": False, "supported_efforts": ["low"], "default_effort": "turbo"},
+        {"mandatory": False, "supported_efforts": ["low"], "default_effort": []},
+        {"supported_efforts": ["ultra"]},
+        {},
+    ):
+        with pytest.raises(ValueError, match="malformed reasoning"):
+            openrouter_reasoning.parse({"data": [*document["data"], {"id": "a/bad", "reasoning": bad}]})
     with pytest.raises(ValueError):
         openrouter_reasoning.parse({"data": "nope"})
 
@@ -250,6 +305,9 @@ def test_capture_keeps_the_existing_file_when_the_fetch_fails(
     [
         [{"id": f"m/{i}", "reasoning": {}} for i in range(200)],  # many empty rows
         [{"id": f"m/{i}", "reasoning": {"mandatory": True, "default_effort": []}} for i in range(200)],
+        # Enough valid rows to pass MIN_MODELS, plus one malformed: still rejected.
+        [*({"id": f"m/{i}", "reasoning": {"mandatory": True}} for i in range(150)),
+         {"id": "google/gemini-3-flash-preview", "reasoning": {}}],
     ],
 )
 def test_capture_keeps_the_existing_file_on_malformed_rows(
