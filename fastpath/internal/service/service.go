@@ -905,8 +905,10 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 	}
 	sub := settlelog.Subscribe(c.PubSub, cfg.SettleSubscription, cfg.MaxOutstanding)
 	src := reporting{Source: auditor.FromSubscription(sub), fail: p.failing("auditor")}
-	// A Spanner call of the runtime under way past auditor.CommitStall ends
-	// Run with auditor.ErrCommitStalled, which fails the process (run): the
+	// An auditor Spanner call under way past auditor.CommitStall, the
+	// runtime's, the ticker's, the pending work's or the stager's (one set
+	// of calls per process, which the runtime's watchdog reads), ends Run
+	// with auditor.ErrCommitStalled, which fails the process (run): the
 	// subscription asks again for every record the member held, so the other
 	// members take its leases, and the process exits (FailStop), which
 	// systemd starts again.

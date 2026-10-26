@@ -399,7 +399,7 @@ func TestAWedgedRoundFailsTheMember(t *testing.T) {
 	h, l := &hanging{flaky: f.store, wedge: make(chan struct{})}, &lines{}
 	t.Cleanup(func() { close(h.wedge) })
 	rt := f.runtime(func(c *Config) {
-		c.Store, c.CommitEvery, c.stall, c.logf = h, 5*time.Millisecond, 300*time.Millisecond, l.logf
+		c.Store, c.CommitEvery, c.stall, c.logf, c.calls = h, 5*time.Millisecond, 300*time.Millisecond, l.logf, newInFlight()
 	})
 	d := on(t, f.ref, settle(1, "a", 40, 0))
 	src := &endingSource{d: d}
@@ -434,7 +434,7 @@ func (s *endingSource) Receive(ctx context.Context, handle func(context.Context,
 // the time between rounds: a runtime that has no round to make runs on.
 func TestAnIdleRuntimeIsNotStalled(t *testing.T) {
 	rt, err := New(Config{Store: &blocking{}, CommitEvery: time.Hour, MaxBatch: 1, Retry: time.Millisecond,
-		MaxLife: time.Minute, Records: &fakeRecords{}, Wait: time.Second, stall: time.Millisecond})
+		MaxLife: time.Minute, Records: &fakeRecords{}, Wait: time.Second, stall: time.Millisecond, calls: newInFlight()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,8 @@ func TestAWedgedRoundFailsAMemberWhoseSourceFailed(t *testing.T) {
 	h := &hanging{flaky: f.store, wedge: make(chan struct{}), entered: make(chan struct{})}
 	t.Cleanup(func() { close(h.wedge) })
 	rt := f.runtime(func(c *Config) {
-		c.Store, c.CommitEvery, c.stall, c.logf = h, 5*time.Millisecond, 300*time.Millisecond, (&lines{}).logf
+		c.Store, c.CommitEvery, c.stall, c.logf, c.calls = h, 5*time.Millisecond, 300*time.Millisecond, (&lines{}).logf,
+			newInFlight()
 	})
 	src := failingSource{d: on(t, f.ref, settle(1, "a", 40, 0)), after: h.entered}
 	var err error
@@ -535,6 +536,7 @@ func TestALongRoundThatMakesProgressRunsOn(t *testing.T) {
 	h, l := &hanging{flaky: f.store, slow: 250 * time.Millisecond}, &lines{}
 	rt := f.runtime(func(c *Config) {
 		c.Store, c.MaxBatch, c.CommitEvery, c.stall, c.slowRound, c.logf = h, 1, 5*time.Millisecond, stall, stall, l.logf
+		c.calls = newInFlight()
 	})
 	ds := []*fakeDelivery{on(t, f.ref, settle(1, "a", 40, 0))}
 	for range leases - 1 {
@@ -616,7 +618,8 @@ func TestAWedgedReadInAHandlerFailsTheMember(t *testing.T) {
 			t.Cleanup(func() { close(s.wedge) })
 			l := &lines{}
 			rt, err := New(Config{Store: s, CommitEvery: 5 * time.Millisecond, MaxBatch: 1, Retry: time.Millisecond,
-				MaxLife: time.Minute, Records: &fakeRecords{}, Wait: time.Second, stall: 300 * time.Millisecond, logf: l.logf})
+				MaxLife: time.Minute, Records: &fakeRecords{}, Wait: time.Second, stall: 300 * time.Millisecond, logf: l.logf,
+				calls: newInFlight()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -655,7 +658,7 @@ func TestAWedgedReadInARecoveryFailsTheMember(t *testing.T) {
 	h, l := &deafLoads{hanging: hanging{flaky: f.store}, wedge: make(chan struct{}), entered: make(chan struct{})}, &lines{}
 	t.Cleanup(func() { close(h.wedge) })
 	rt := f.runtime(func(c *Config) {
-		c.Store, c.CommitEvery, c.stall, c.logf = h, 5*time.Millisecond, 300*time.Millisecond, l.logf
+		c.Store, c.CommitEvery, c.stall, c.logf, c.calls = h, 5*time.Millisecond, 300*time.Millisecond, l.logf, newInFlight()
 	})
 	d := on(t, f.ref, settle(1, "a", 40, 0))
 	var err error
@@ -696,7 +699,7 @@ func TestManyCallsUnderTheirDeadlineDoNotTrip(t *testing.T) {
 	const stall = 600 * time.Millisecond
 	s := &deafStore{blocking: &blocking{}, reapTakes: stall / 5}
 	rt, err := New(Config{Store: s, CommitEvery: time.Hour, MaxBatch: 1, Retry: time.Millisecond, MaxLife: time.Minute,
-		Records: &fakeRecords{}, Wait: time.Second, stall: stall, logf: (&lines{}).logf})
+		Records: &fakeRecords{}, Wait: time.Second, stall: stall, logf: (&lines{}).logf, calls: newInFlight()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,5 +723,148 @@ func TestManyCallsUnderTheirDeadlineDoNotTrip(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// deafParts is the ticker's, the pending work's and the stager's store, one
+// of whose calls, deaf, waits until wedge is closed, whatever its context.
+// The ticker's scan for expired leases finds one, so that it marks it
+// draining.
+type deafParts struct {
+	*blocking
+	deaf    string
+	wedge   chan struct{}
+	entered chan struct{}
+	enter   sync.Once
+}
+
+func (d *deafParts) maybe(name string) {
+	if d.deaf == name {
+		d.enter.Do(func() { close(d.entered) })
+		<-d.wedge
+	}
+}
+
+func (d *deafParts) ScanExpired(context.Context, time.Time, int) ([]store.Expired, time.Time, error) {
+	d.maybe("ScanExpired")
+	return []store.Expired{{Ref: store.LeaseRef{LeaseID: "lease-1"}}}, time.Time{}, nil
+}
+
+func (d *deafParts) AuditorMarkDraining(context.Context, store.LeaseRef, time.Time) (bool, time.Time, error) {
+	d.maybe("AuditorMarkDraining")
+	return true, time.Time{}, nil
+}
+
+func (d *deafParts) ScanDraining(context.Context, string, store.LeaseRef, int) ([]store.LeaseRef, error) {
+	d.maybe("ScanDraining")
+	return nil, nil
+}
+
+func (d *deafParts) PendingPacks(context.Context, store.PendingPack, int) ([]store.PendingPack, error) {
+	d.maybe("PendingPacks")
+	return nil, nil
+}
+
+func (d *deafParts) RetiredStaged(context.Context, int) ([]store.StagedKey, error) { return nil, nil }
+
+func (d *deafParts) DropStaged(context.Context, ...store.StagedKey) error { return nil }
+
+func (d *deafParts) StageRecord(context.Context, store.StagedRecord) error {
+	d.maybe("StageRecord")
+	return nil
+}
+
+// TestAWedgedCallOfAnyPartFailsTheMember: every auditor part notes its
+// Store calls under way in the one set the runtime's watchdog reads, so a
+// call deaf to its context in the ticker (each of its three), the pending
+// work or the stager fails the member as one of the runtime's does: Run
+// returns ErrCommitStalled, which fails the process and exits it within
+// service.FailStop (TestAFailedProcessExitsThoughAPartIsWedged).
+func TestAWedgedCallOfAnyPartFailsTheMember(t *testing.T) {
+	for _, c := range []struct{ deaf, op string }{
+		{"ScanExpired", "scan expired"},
+		{"AuditorMarkDraining", "mark draining"},
+		{"ScanDraining", "scan draining"},
+		{"PendingPacks", "pending packs"},
+		{"StageRecord", "stage record"},
+	} {
+		t.Run(c.deaf, func(t *testing.T) {
+			calls, l := newInFlight(), &lines{}
+			d := &deafParts{blocking: &blocking{}, deaf: c.deaf, wedge: make(chan struct{}), entered: make(chan struct{})}
+			t.Cleanup(func() { close(d.wedge) })
+			rt, err := New(Config{Store: &blocking{}, CommitEvery: time.Hour, MaxBatch: 1, Retry: time.Millisecond,
+				MaxLife: time.Minute, Records: &fakeRecords{}, Wait: time.Second, stall: 300 * time.Millisecond,
+				logf: l.logf, calls: calls})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			switch c.deaf {
+			case "PendingPacks":
+				p, err := NewPending(PendingConfig{Store: d, Records: &fakeRecords{}, Every: time.Hour, Limit: 1,
+					Wait: time.Second, Alert: func(string, string) {}, logf: l.logf, calls: calls})
+				if err != nil {
+					t.Fatal(err)
+				}
+				go func() { _ = p.Run(ctx) }()
+			case "StageRecord":
+				s, err := newStager(d, func(string, string) {}, calls)
+				if err != nil {
+					t.Fatal(err)
+				}
+				go func() { _ = s.store.StageRecord(ctx, store.StagedRecord{Ref: store.LeaseRef{LeaseID: "lease-1"}}) }()
+			default:
+				tk, err := NewTicker(TickerConfig{Store: d, Log: leaseLogFunc(nil), Region: "r", Every: time.Hour, Limit: 1,
+					Wait: time.Second, logf: l.logf, calls: calls})
+				if err != nil {
+					t.Fatal(err)
+				}
+				go func() { _ = tk.Run(ctx) }()
+			}
+			var runErr error
+			within(t, 20*time.Second, "Run with a wedged "+c.deaf, func() { runErr = rt.Run(ctx, fakeSource{}) })
+			<-d.entered
+			if !errors.Is(runErr, ErrCommitStalled) {
+				t.Fatalf("Run returned %v", runErr)
+			}
+			if got := l.with("auditor: a spanner " + c.op + " has been under way "); len(got) != 1 {
+				t.Fatalf("logged %q", l.got)
+			}
+		})
+	}
+}
+
+// TestEveryPartNotesItsCallsInTheProcessSet: by default every part's calls
+// go to the one process-wide set the runtime's watchdog reads.
+func TestEveryPartNotesItsCallsInTheProcessSet(t *testing.T) {
+	b := &blocking{}
+	rt, err := New(Config{Store: b, CommitEvery: time.Hour, MaxBatch: 1, Retry: time.Millisecond, MaxLife: time.Minute,
+		Records: &fakeRecords{}, Wait: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, err := NewTicker(TickerConfig{Store: b, Log: leaseLogFunc(nil), Region: "r", Every: time.Hour, Limit: 1, Wait: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPending(PendingConfig{Store: b, Records: &fakeRecords{}, Every: time.Hour, Limit: 1, Wait: time.Second,
+		Alert: func(string, string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewStager(b, func(string, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*inFlight{
+		"runtime": rt.calls,
+		"ticker":  tk.cfg.Store.(boundTickStore).calls,
+		"pending": p.cfg.Store.(boundPendingStore).calls,
+		"stager":  s.store.(boundStagingStore).calls,
+	} {
+		if got != processCalls {
+			t.Fatalf("the %s notes its calls in %p, not the process's %p", name, got, processCalls)
+		}
 	}
 }

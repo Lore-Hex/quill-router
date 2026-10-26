@@ -129,10 +129,13 @@ takes more.
 Every Spanner call an auditor part makes has a 15 s deadline
 (`auditor.StoreDeadline`); one that runs out is a failure whose outcome is
 unknown, so the member reads the lease again and every write is
-conditional on what it read: nothing is applied twice. A Spanner call of
-the runtime under way for a minute (`auditor.CommitStall`), wherever it was
-made (the round of commits, a handler reading a lease, a lease read again
-after a lost commit, a reap or a close), fails the member. The watchdog
+conditional on what it read: nothing is applied twice. Every auditor
+Store call is watched: a Spanner call under way for a minute
+(`auditor.CommitStall`), wherever it was made, fails the member. That is
+the runtime's (the round of commits, a handler reading a lease, a lease
+read again after a lost commit, a reap or a close), the ticker's (a ticker
+wedged in a scan publishes no tick again, so no lease drains and its
+reservation stays held), the pending work's and the stager's. The watchdog
 reads each call's age, not the length of a round or of a drain: a backlog
 of many batches, or many reaps, each call within its 15 s, runs on. What
 trips it is a call that never returns, its deadline notwithstanding, as on

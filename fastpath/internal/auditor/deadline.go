@@ -95,13 +95,24 @@ func errorClass(err error) string {
 }
 
 // bound is a part's deadline on each Spanner call, its journal of the
-// calls that fail, and, for the runtime, the calls under way, which its
-// watchdog reads (nil for the other parts).
+// calls that fail, and the calls under way, which the runtime's watchdog
+// reads: every part's, processCalls unless a test gives its own.
 type bound struct {
 	d     time.Duration
 	j     *journal
 	calls *inFlight
 }
+
+// processCalls is the process's auditor Store calls under way, of every
+// part: the runtime, the ticker, the pending work and the stager. A
+// process runs one auditor member, whose runtime's watchdog fails it when
+// any of them has been under way past CommitStall, wherever it was made:
+// a ticker wedged in a scan would publish no tick again, and no lease would
+// drain, its reservation held, with nothing else to see it. A test gives a
+// part a set of its own.
+var processCalls = newInFlight()
+
+func newInFlight() *inFlight { return &inFlight{began: map[uint64]callUnderWay{}} }
 
 // inFlight is the Store calls under way: each one's name and when it
 // began.

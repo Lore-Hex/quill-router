@@ -122,27 +122,32 @@ type Config struct {
 	Clock func() time.Time
 
 	// The tests' own: each Store call's deadline (StoreDeadline), how long
-	// a round may go without progress (CommitStall), a slow round's
-	// (SlowCommitRound), and
-	// where the runtime's lines go (the standard logger, whose standard
-	// error the node's journal keeps), each its default when zero.
+	// a call may be under way (CommitStall), a slow round's
+	// (SlowCommitRound), where the runtime's lines go (the standard logger,
+	// whose standard error the node's journal keeps), and the calls under
+	// way that it notes and its watchdog reads (processCalls), each its
+	// default when zero.
 	deadline, stall, slowRound time.Duration
 	logf                       func(format string, args ...any)
+	calls                      *inFlight
 }
 
-// CommitStall is how long one Store call of the runtime may be under way
-// before the member fails: Run returns ErrCommitStalled, and the service
-// fails the process, whose subscription asks again at once for every record
-// the member held, so the other members take its leases, and systemd
-// starts the unit again. A call wedged anywhere holds records: in the round
+// CommitStall is how long one Store call of the auditor may be under way,
+// the runtime's, the ticker's, the pending work's or the stager's, before
+// the member fails: Run returns ErrCommitStalled, and the service fails the
+// process, whose subscription asks again at once for every record the
+// member held, so the other members take its leases, and the process
+// exits (service.FailStop), which systemd starts again. A call wedged anywhere holds records: in the round
 // of commits, the only path that acknowledges a live lease's records; in a
 // handler or a lease's read again, which hold the lease, so every round
 // passes it by. With the settle log's ordering one held record holds its
 // lease's key shut: a member so wedged would take keys and never let them
-// go.
+// go. A ticker wedged in a scan publishes no tick again, so no lease drains
+// and its reservation stays held; a wedged pending sweep or stager holds up
+// records and retirement.
 //
 // The watchdog reads the age of each call under way, wherever it was made
-// (boundStore), not the length of a round or of a handler's work: a round
+// (processCalls), not the length of a round or of a handler's work: a round
 // of many batches, or a drain of many reaps, each call under its deadline,
 // is long and healthy. Every call is bounded by StoreDeadline (15 s), a
 // quarter of this, so only a call that does not heed its context reaches
@@ -236,7 +241,7 @@ func New(cfg Config) (*Runtime, error) {
 	cfg.deadline = cmp.Or(cfg.deadline, StoreDeadline)
 	cfg.stall = cmp.Or(cfg.stall, CommitStall)
 	cfg.slowRound = cmp.Or(cfg.slowRound, SlowCommitRound)
-	j, calls := newJournal(cfg.logf), &inFlight{began: map[uint64]callUnderWay{}}
+	j, calls := newJournal(cfg.logf), cmp.Or(cfg.calls, processCalls)
 	cfg.Store = boundStore{s: cfg.Store, bound: bound{d: cfg.deadline, j: j, calls: calls}}
 	rt := &Runtime{cfg: cfg, leases: map[string]*held{}, calls: calls, journal: j}
 	rt.idle = sync.NewCond(&rt.hmu)

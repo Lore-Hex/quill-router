@@ -53,11 +53,12 @@ type TickerConfig struct {
 	Wait  time.Duration
 	Clock func() time.Time
 
-	// The tests' own: each Store call's deadline (StoreDeadline) and where
-	// the ticker's lines go (the standard logger), each its default when
-	// zero.
+	// The tests' own: each Store call's deadline (StoreDeadline), where
+	// the ticker's lines go (the standard logger) and where its calls are
+	// noted under way (processCalls), each its default when zero.
 	deadline time.Duration
 	logf     func(format string, args ...any)
+	calls    *inFlight
 }
 
 // Ticker drains a region's expired leases and ticks its draining ones
@@ -81,7 +82,8 @@ func NewTicker(cfg TickerConfig) (*Ticker, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
-	cfg.Store = boundTickStore{s: cfg.Store, bound: bound{d: cmp.Or(cfg.deadline, StoreDeadline), j: newJournal(cfg.logf)}}
+	cfg.Store = boundTickStore{s: cfg.Store, bound: bound{d: cmp.Or(cfg.deadline, StoreDeadline), j: newJournal(cfg.logf),
+		calls: cmp.Or(cfg.calls, processCalls)}}
 	return &Ticker{cfg: cfg}, nil
 }
 
