@@ -28,7 +28,8 @@ picker and footer share one ordered directory and highlight the current market.
 - Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
   from TrustedRouter on load and every minute. There is no direct Spanner
   access, inference, cookie, or third-party pixel on these sites. The brochure form
-  is the only form. Allowlisted UTM fields pass to intake. The first-party
+  is the only submitted form; the separate NYTE `/buy` wizard keeps request
+  fields in memory and hands them directly to Calendly. Allowlisted UTM fields pass to intake. The first-party
   `/token-exchange/events` collector records visible visits and ten-second
   engagement. A random 30-minute per-tab identifier joins brochure downloads
   within the same exchange domain, with GPC/DNT opt-outs. The growth worker
@@ -67,7 +68,7 @@ NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publis
 DNS records to bypass qualification.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
-New York's homepage, `/confidential`, `/suppliers`, `/providers`, and `/index`; its shared
+New York's homepage, `/confidential`, `/suppliers`, `/providers`, `/index`, and `/buy`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 
@@ -101,6 +102,67 @@ the NYTE origin before publishing. The `nyte.*` analytics events also require
 the collector and the separately dispatched marketing-worker/source-filter
 update in `.github/workflows/deploy-growth-sync.yml`. Local preview success
 does not verify an authenticated confidential inference request or its attestation.
+
+### Reserved tokens flow (local implementation; publish separately)
+
+`/buy` and `/buy.html` use the NYTE shell and four steps: reservation unit,
+underlying and timing, contact, then a 15-minute Calendly call. Sellers leave
+for `/suppliers` or `/providers`. Index-grade token blocks show blocks × the
+published dated grade price; throughput, named models and undecided requests
+show no price. This is a request to discuss a reservation, not an order or executable quote. Capacity derivatives remain roadmap offerings.
+
+The wizard never submits a form or writes request data to browser storage.
+Only step, unit and grade are written to page history. Contact details and the
+request summary go directly to Calendly's iframe/link prefill, without its widget
+script. Without JavaScript, the offer, editable model/provider text fields and
+direct booking link remain available; the start month is optional. With JavaScript,
+it defaults to next month in local time and remains editable. Below 1000 px, CSS
+places the wizard before the brand panel; the DOM retains the introduction and
+its h1 before the wizard headings for screen readers. Inactive underlying
+fieldsets are both hidden and disabled.
+
+`nyte-v2/app.js` shares the anonymous, bounded catalogue fetch helper with the
+homepage: `/v1/providers` and `/v1/models/count` remain on trustedrouter.com;
+model IDs use `https://api.nytokenexchange.com/v1/models`, which is CORS-readable
+from the NYTE origin. Both model/provider fields accept free text if fetching
+fails; a provider preference is subject to model availability on the call.
+
+Run `node sites/token-exchange/verify-buy.cjs http://127.0.0.1:8089` against the
+local build (set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use system Chrome). It intercepts external services, covers each buyer path and no-JS
+fallback, and writes screenshots to `/private/tmp/nyte-buy-shots/`. Calendly in
+those captures is an explicitly labelled fixture, not a real booking.
+
+The only new analytics are `nyte.buy_step_1_viewed` through
+`nyte.buy_step_4_viewed` and `nyte.buy_completed`, with bounded unit,
+underlying-kind and grade values. Completion means reaching scheduling, not a
+confirmed booking. Release the collector/log-field changes and dispatch the
+existing `deploy-growth-sync.yml` workflow (which derives the exact source
+filter from `scripts/axiom_growth/model.py`) before publishing the static assets.
+
+A narrow content release needs `buy`, `buy.html`, `assets/nyte-v2/buy.css`,
+`assets/nyte-v2/buy.js`, `assets/nyte-v2/app.js`, `assets/analytics.js`,
+`assets/index-page.css`,
+`new-york/index.html`, `index`, `confidential`, `confidential.html`, `suppliers`,
+`suppliers.html`, `providers`, `providers.html`, and `new-york/sitemap.xml`.
+The existing NYTE shell pages need the new nav link and updated shared-asset
+versions; the homepage also needs its primary CTA, and `/index` its four grade
+CTAs. `/index.html` is still the homepage route, never the index-page object.
+No other market HTML or existing unchanged styles, photos, charts or fonts need
+republishing. `deploy.py publish` is a full-build rsync plus infrastructure
+checks, not a narrow publisher: do not use it for this set.
+
+Back up every existing target's bytes, metadata and generation before an
+authorized upload. Compare freshly downloaded live HTML/assets with the reviewed
+base; if live content differs, apply only the reviewed navigation, CTA and asset
+changes to those fresh bytes. Preserve unrelated edits and versions. Upload each
+object with its observed `if-generation-match` (0 for a new object), assets
+before HTML, sitemap last, and `Cache-Control: public,max-age=300`. Use
+`text/html` for all page objects including extensionless names, `text/css` for
+CSS, `text/javascript` for JS, and `application/xml` for the sitemap. A generation
+conflict requires a fresh download and reconciliation, never an unconditional
+retry. Preserve DNS, certificates, URL maps and other bucket objects. Verify the
+public routes, aliases, navigation, catalogue CORS, Calendly handoff, and privacy
+signals after the separately authorized publish.
 
 ### Public New York media kit
 

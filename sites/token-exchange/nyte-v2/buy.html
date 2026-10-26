@@ -1,0 +1,77 @@
+<div class="buy-layout wrap">
+  <aside class="buy-brand" aria-label="About reserved tokens">
+    <p class="buy-kicker">New York Token Exchange</p>
+    <h1>Reserve your next<br><em>billion tokens.</em></h1>
+    <p class="lede">Start with your workload. Shape a reservation request, then discuss availability and pricing with Joseph.</p>
+    <div class="buy-notes"><h2>For buyers</h2><p>Choose a capability grade or a model, a volume or a rate, and your timing. A 15-minute call helps define the next step.</p>
+    <h2>For providers</h2><p>Have inference capacity to offer? <a href="/suppliers">Explore supplying NYTE</a> or <a href="/providers">request the provider deck</a>.</p></div>
+    <details class="buy-contract"><summary>What we’ll discuss</summary><dl>
+      <dt>Volume and rate</dt><dd>A number of 1B-token blocks to draw on over a term, or reserved throughput in tokens per second.</dd>
+      <dt>Token accounting</dt><dd>The input, output and cached-input mix, and how usage would be counted.</dd>
+      <dt>Service requirements</dt><dd>Availability, time to first token and generation speed for your workload.</dd>
+      <dt>Term and delivery</dt><dd>Start date, duration, unused tokens and the provider responsible for delivery, subject to agreement.</dd>
+    </dl></details>
+    <p class="buy-fine">This is a request to discuss a reservation, not an order. Capacity futures and derivatives are planned offerings, not live products. This is an inference service, not a securities or cryptocurrency exchange.</p>
+  </aside>
+  <div class="buy-workspace" id="buy-flow">
+    <ol class="buy-steps" aria-label="Request progress">
+      <li aria-current="step"><span>1</span> Tokens</li><li><span>2</span> Details</li><li><span>3</span> Contact</li><li><span>4</span> Book a call</li>
+    </ol>
+    <section class="buy-step" data-step="1" aria-labelledby="buy-title-1">
+      <p class="buy-kicker">Step 1 of 4</p><h2 id="buy-title-1" tabindex="-1">What are you buying?</h2>
+      <p>Tell us how you’d like to plan your inference use.</p>
+      <fieldset><legend>Reservation unit</legend><div class="buy-grid">
+        <label class="buy-choice"><input type="radio" name="unit" value="blocks" checked><span><strong>Token blocks</strong><small>Chunks of 1 billion tokens to draw on over your chosen term.</small></span></label>
+        <label class="buy-choice"><input type="radio" name="unit" value="throughput"><span><strong>Throughput</strong><small>A reserved rate, measured in tokens per second.</small></span></label>
+        <div class="buy-choice buy-seller"><strong>Selling capacity</strong><small>Bring your inference to the supply side.</small><a href="/suppliers">Continue as a supplier →</a><a href="/providers">Request the provider deck →</a></div>
+        <label class="buy-choice"><input type="radio" name="unit" value="unsure"><span><strong>Not sure</strong><small>Outline your workload and work through the options on the call.</small></span></label>
+      </div></fieldset>
+      <div class="buy-actions" data-js hidden><button class="btn btn-primary" type="button" data-next>Continue to details →</button></div>
+    </section>
+    <section class="buy-step" data-step="2" aria-labelledby="buy-title-2">
+      <p class="buy-kicker">Step 2 of 4</p><h2 id="buy-title-2" tabindex="-1">What is it written on?</h2>
+      <p>Use an index grade as your reference, or name the model you need.</p>
+      <fieldset><legend>Underlying tokens</legend><div class="buy-tabs">
+        <label><input type="radio" name="underlying" value="index" checked> NYTE Index grade</label>
+        <label><input type="radio" name="underlying" value="model"> A specific model</label>
+      </div></fieldset>
+      <fieldset id="buy-grades"><legend>Choose a grade</legend>
+        <p class="buy-fine">USD per billion tokens · As of <time id="buy-as-of" datetime="{{as_of_iso}}">{{as_of}}</time>. Indicative, not an executable quote.</p>
+        <div class="buy-grid">{{grades}}</div>
+      </fieldset>
+      <fieldset id="buy-model-fields"><legend>Model and provider</legend>
+        <label class="buy-field" for="buy-model">Model<input id="buy-model" type="text" maxlength="160" list="buy-models" placeholder="Enter a model name or ID" autocomplete="off"></label><datalist id="buy-models"></datalist>
+        <label class="buy-field" for="buy-provider">Provider (optional)<input id="buy-provider" type="text" maxlength="120" list="buy-providers" placeholder="Any provider, or enter a preference" autocomplete="off"></label><datalist id="buy-providers"></datalist>
+        <p class="buy-fine" id="buy-catalog-status">Type a model and, optionally, a provider. Catalogue suggestions load when available; availability for your request is discussed on the call.</p>
+      </fieldset>
+      <fieldset><legend>Size and timing</legend><div class="buy-grid">
+        <div id="buy-block-fields"><label class="buy-field" for="buy-blocks">Number of 1B-token blocks</label><div class="buy-counter"><button type="button" data-block-delta="-1" aria-label="Remove one block" data-js hidden>−</button><input id="buy-blocks" type="number" min="1" max="1000000" step="1" value="1" required><button type="button" data-block-delta="1" aria-label="Add one block" data-js hidden>+</button></div></div>
+        <label class="buy-field" id="buy-rate-field" for="buy-rate">Tokens per second<input id="buy-rate" type="number" min="1" max="1000000000" step="1" placeholder="e.g. 1000" required></label>
+        <label class="buy-field" for="buy-term">Term<select id="buy-term"><option value="1">1 month</option><option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></select></label>
+        <label class="buy-field" for="buy-start">Desired start month<input id="buy-start" type="month"></label>
+      </div></fieldset>
+      <p class="buy-total" id="buy-total" aria-live="polite">For index-grade token blocks, an indicative total is the number of blocks × the dated grade price. Pricing for throughput or a specific model is discussed on the call.</p>
+      <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button><button class="btn btn-primary" type="button" data-next>Continue to contact →</button></div>
+    </section>
+    <section class="buy-step" data-step="3" aria-labelledby="buy-title-3">
+      <p class="buy-kicker">Step 3 of 4</p><h2 id="buy-title-3" tabindex="-1">How do we reach you?</h2>
+      <p>Your name and work email prefill your booking. We’ll discuss the details together.</p>
+      <fieldset><legend>Contact details</legend>
+        <label class="buy-field" for="buy-name">Full name<input id="buy-name" type="text" autocomplete="name" maxlength="120" required></label>
+        <label class="buy-field" for="buy-email">Work email<input id="buy-email" type="email" autocomplete="email" maxlength="254" required></label>
+        <label class="buy-field" for="buy-company">Company (optional)<input id="buy-company" type="text" autocomplete="organization" maxlength="160"></label>
+      </fieldset>
+      <p class="buy-fine">Continuing sends these details and your request summary directly to Calendly to prefill your call. They are not saved by this page or included in our analytics.</p>
+      <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button><button class="btn btn-primary" type="button" data-next>Continue to scheduling →</button></div>
+    </section>
+    <section class="buy-step" data-step="4" aria-labelledby="buy-title-4">
+      <p class="buy-kicker">Step 4 of 4</p><h2 id="buy-title-4" tabindex="-1">Book a call with Joseph.</h2>
+      <p>Choose a time for a 15-minute conversation about your reservation request.</p>
+      <p id="buy-summary" class="buy-total" hidden></p>
+      <div id="buy-calendar"></div>
+      <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button></div>
+    </section>
+    <p class="buy-fallback">Prefer to book directly? <a id="buy-calendly-link" href="https://calendly.com/joseph-perla/15min?embed_domain=nytokenexchange.com&amp;embed_type=Inline&amp;hide_gdpr_banner=1" target="_blank" rel="noopener noreferrer">Open Calendly in a new tab →</a></p>
+    <noscript><p class="buy-fine">JavaScript is off. Review the options above, then use the Calendly link to book directly and discuss your request. These fields are not submitted.</p></noscript>
+  </div>
+</div>

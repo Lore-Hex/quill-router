@@ -54,6 +54,7 @@ def render_nyte(
         "home": ("/", "New York Token Exchange: enterprise AI from competing providers", "Every major model from competing providers, through one API. Set your privacy and price rules once, and check the proof yourself."),
         "api": ("/confidential", "Confidential API · New York Token Exchange", "Frontier AI for sensitive work. Confidential compute, end-to-end encryption and live evidence."),
         "sup": ("/suppliers", "Suppliers · New York Token Exchange", "Sell your inference to enterprise buyers. List your models and prices once."),
+        "buy": ("/buy", "Reserved tokens | New York Token Exchange", "Plan reserved tokens in billion-token blocks or tokens per second. Choose an NYTE Index grade or model and discuss pricing on a 15-minute call."),
         "providers": ("/providers", "For inference providers | New York Token Exchange", "Bring your available inference capacity to the New York Token Exchange. Request the updated private seven-page provider deck and explore joining the exchange."),
         "index": ("/index", "NYTE Token Index | New York Token Exchange", "Compare AI inference prices across four capability grades. List spare GPU capacity under your own brand on the New York Token Exchange."),
     }[page]
@@ -61,6 +62,12 @@ def render_nyte(
     if page == "providers":
         version = hashlib.sha256((version + (SOURCE / "providers.css").read_text()).encode()).hexdigest()[:12]
         extra_head += '<link rel="stylesheet" href="/assets/nyte-v2/providers.css?v=' + version + '">'
+    if page == "buy":
+        from buy_page import buy_content
+
+        content = buy_content()
+        buy_version = hashlib.sha256((SOURCE / "buy.css").read_bytes() + (SOURCE / "buy.js").read_bytes()).hexdigest()[:12]
+        extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/buy.css?v={buy_version}"><script src="/assets/nyte-v2/buy.js?v={buy_version}" defer></script>'
     markets = json.loads((HERE / "markets.json").read_text())
     market_links = "".join(
         '<a href="https://' + html.escape(market["domain"], quote=True) + '/"'
@@ -91,9 +98,9 @@ def build_nyte(output: Path) -> None:
     assets = output / "assets/nyte-v2"
     # HTML asset paths omit the CSS-relative assets/ segment.
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "buy.css", "buy.js"):
         shutil.copyfile(SOURCE / name, assets / name)
-    for page, route in (("api", "confidential"), ("sup", "suppliers"), ("providers", "providers")):
+    for page, route in (("api", "confidential"), ("sup", "suppliers"), ("providers", "providers"), ("buy", "buy")):
         content = render_nyte(page)
         for name in (route, route + ".html"):
             (output / name).write_text(content)

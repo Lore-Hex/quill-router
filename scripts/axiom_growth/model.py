@@ -48,6 +48,7 @@ BROWSER_EVENTS = frozenset(
         "home.token_exchange_clicked",
         "exchange.landing_viewed", "exchange.landing_engaged",
         "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked",
+        "nyte.buy_step_1_viewed", "nyte.buy_step_2_viewed", "nyte.buy_step_3_viewed", "nyte.buy_step_4_viewed", "nyte.buy_completed",
         "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
         # Server-confirmed exchange downloads use the same Cloud Logging source.
         # Never accept these as browser-submitted conversion claims.
@@ -74,7 +75,7 @@ EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_doma
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
 FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain",
-          "page_path", "cta", "position", "form", "destination_host", "device_category", "reward_placement", "reward_action", "observation_id",
+          "page_path", "cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade", "device_category", "reward_placement", "reward_action", "observation_id",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
@@ -168,7 +169,7 @@ def project_event(
         output["site_domain"] = domain(row.get("site_domain"))
         output["page_path"] = safe_path(row.get("page_path"))
     if event.startswith("acquisition.nyte."):
-        for field in ("cta", "position", "form"):
+        for field in ("cta", "position", "form", "unit", "underlying_kind", "grade"):
             output[field] = safe_label(row.get(field))
         output["destination_host"] = domain(row.get("destination_host"))
     if row.get('first_utm_source'):
@@ -288,7 +289,7 @@ def safe_path(value):
 
 
 PUBLIC_LANDINGS = frozenset(('/' + p) for p in (
-    'confidential', 'suppliers', 'index', 'badge',
+    'confidential', 'suppliers', 'index', 'badge', 'buy',
     '', 'pricing', 'models', 'providers', 'leaderboard', 'blog', 'docs', 'trust', 'status',
     'choose', 'marketplace', 'support', 'vibe-coders', 'agents', 'quickstart',
     'openrouter-alternative', 'compare', 'eu', 'token-exchange', 'green-tokens',
