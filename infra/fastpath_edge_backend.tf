@@ -35,8 +35,9 @@ locals {
   # blocked on a call with no deadline and its subscription lagged; 50 again
   # once every call of the auditor's running loop has a deadline and a
   # watchdog fails a wedged loop (in 892bd7593 and since, on both nodes).
-  # Its startup's ring join and first membership scan are not yet bounded;
-  # that is a restart's risk, not the weight's.
+  # Its startup's ring join and first membership scan are not yet bounded,
+  # a risk of a restart that the restarting node's edge traffic adds to;
+  # they are bounded before the next step.
   fastpath_edge_route_weight = 50
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
