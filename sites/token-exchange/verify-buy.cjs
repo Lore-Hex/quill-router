@@ -116,7 +116,11 @@ async function localHtml(context) {
           await page.getByRole('button',{name:'Add one block'}).click();
           await page.getByRole('button',{name:'Add one block'}).click();
           assert.equal(await page.locator('#buy-blocks').inputValue(),'3');
-          assert((await page.locator('#buy-total').innerText()).includes('$2,670'));
+          const gradePrice = await page.evaluate(() => {
+            const card = document.querySelector('input[name="grade"]:checked').closest('.buy-choice, label, article');
+            return Number(card.textContent.match(/\$([\d,]+)/)[1].replace(/,/g, ''));
+          });
+          assert((await page.locator('#buy-total').innerText()).includes('$' + (3 * gradePrice).toLocaleString('en-US')));
           await page.locator('#buy-blocks').fill('0');
           await page.getByRole('button',{name:'Continue to contact'}).click();
           assert.equal(new URL(page.url()).searchParams.get('step'),'2');
