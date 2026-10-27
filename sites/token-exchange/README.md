@@ -81,7 +81,7 @@ The header always has Buy, Sell and Exchange. Labels and menu descriptions
 live in the registry. `new_until` optionally overrides the 14-day NEW window;
 otherwise the build reads the body file's added date from git and the browser
 shows at most three newest chips. The terms utility page remains outside the
-menu; Media kit retains its separate layout. Buyer deck opens `/#deck`.
+menu; Media kit stays in the footer and retains its separate layout. Buyer deck opens `/#deck`.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
 New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,

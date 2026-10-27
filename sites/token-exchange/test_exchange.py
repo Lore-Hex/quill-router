@@ -351,7 +351,7 @@ class ExchangeTests(unittest.TestCase):
         from token_index_page import render_token_index
 
         expected = ["/confidential", "/trusted-cowork", "/buy", "/suppliers",
-                    "/providers", "/neocloud-accelerator", "/index", "/media-kit", "/#deck"]
+                    "/providers", "/neocloud-accelerator", "/index", "/#deck"]
         for page in ("home", "api", "cowork", "index", "buy", "accelerator", "sup", "providers"):
             with self.subTest(page=page):
                 navigation = MarketLinkParser("Main")

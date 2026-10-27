@@ -183,6 +183,8 @@ class NavigationRegistryTests(unittest.TestCase):
                 expected = [p["route"] for p in PAGES.values() if p.get("group") == group and p["label"]]
                 self.assertEqual(re.findall(r'<a href="([^"]+)"', panel), expected)
             self.assertNotIn('data-nav=', nav)
+            self.assertNotIn('href="/media-kit"', nav)
+            self.assertIn('href="/media-kit">Media kit</a>', page)
             self.assertEqual(nav.count('aria-expanded="false"'), 3)
 
     def test_chip_dates_and_explicit_override(self):
@@ -191,12 +193,12 @@ class NavigationRegistryTests(unittest.TestCase):
 
         with patch('nyte_v2.page_added', return_value='2026-10-20'):
             nav = render_nav()
-            self.assertEqual(nav.count('data-added="2026-10-20"'), 9)
-            self.assertEqual(nav.count('class="tag cc" hidden>NEW'), 9)
+            self.assertEqual(nav.count('data-added="2026-10-20"'), 8)
+            self.assertEqual(nav.count('class="tag cc" hidden>NEW'), 8)
             with patch.dict(PAGES['api'], new_until='2026-11-01'):
                 nav = render_nav()
                 self.assertIn('href="/confidential" data-new-until="2026-11-01"', nav)
-                self.assertEqual(nav.count('data-added='), 8)
+                self.assertEqual(nav.count('data-added='), 7)
 
     def test_added_date_comes_from_source_history_or_today(self):
         from datetime import date

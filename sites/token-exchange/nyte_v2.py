@@ -116,7 +116,7 @@ PAGES = {
     },
     "media-kit": {
         "route": "/media-kit",
-        "label": "Media kit",
+        "label": None,
         "title": "Media kit | New York Token Exchange",
         "description": "Official New York Token Exchange press kit: logos, company facts, founder bio, screenshots, a product demo and media contact. Free public downloads.",
         "group": "exchange",

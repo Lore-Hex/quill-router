@@ -167,7 +167,7 @@ for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-
     assert(!(await page.locator(`#nav-${group}`).isVisible()));
    }
   }
-  assert.deepEqual(await page.locator('#nav .nav-label').allTextContents(),['Confidential API','Trusted Cowork','Reserved tokens','Suppliers','Providers','Neocloud accelerator','Token Index','Media kit','Buyer deck']);
+  assert.deepEqual(await page.locator('#nav .nav-label').allTextContents(),['Confidential API','Trusted Cowork','Reserved tokens','Suppliers','Providers','Neocloud accelerator','Token Index','Buyer deck']);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  }
 }
