@@ -78,10 +78,13 @@ The page registry is `PAGES` in `nyte_v2.py`. A new page needs one word: its
 ```
 
 The header always has Buy, Sell and Exchange. Labels and menu descriptions
-live in the registry. `new_until` optionally overrides the 14-day NEW window;
-otherwise the build reads the body file's added date from git and the browser
-shows at most three newest chips. The terms utility page remains outside the
-menu; Media kit stays in the footer and retains its separate layout. Buyer deck opens `/#deck`.
+live in the registry. Optionally set `new_until` to an ISO date such as
+`"2026-11-10"` to show a NEW chip through that day. Omit it for no chip.
+The browser expires chips automatically; at most three show, prioritizing the
+latest expiration dates. No Git history or build-date fallback is involved.
+Adding a registered page does not require updating navigation test lists or counts.
+The terms utility page remains outside the menu; Media kit stays in the footer
+and retains its separate layout. Buyer deck opens `/#deck`.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
 New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,

@@ -24,15 +24,10 @@ const active=document.body.dataset.nytePage==='home' ? '/' : location.pathname.r
 nav.querySelectorAll('a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');a.closest('.nav-group').querySelector('button').classList.add('on');}});
 const updateNew=()=>{
  const today=new Date();today.setHours(0,0,0,0);
- const dated=[...nav.querySelectorAll('a[data-added],a[data-new-until]')];
- const parse=value=>new Date(value+'T00:00:00');
+ const dated=[...nav.querySelectorAll('a[data-new-until]')];
  dated.forEach(item=>{item.querySelector('.tag').hidden=true;});
- dated.filter(item=>{
-  const start=parse(item.dataset.added || item.dataset.newUntil);
-  if(item.dataset.newUntil)return today<=start;
-  const end=new Date(start);end.setDate(end.getDate()+14);
-  return today>=start && today<end;
- }).sort((a,b)=>(b.dataset.added || b.dataset.newUntil).localeCompare(a.dataset.added || a.dataset.newUntil))
+ dated.filter(item=>today<=new Date(item.dataset.newUntil+'T00:00:00'))
+ .sort((a,b)=>b.dataset.newUntil.localeCompare(a.dataset.newUntil))
  .slice(0,3).forEach(item=>{item.querySelector('.tag').hidden=false;});
 };
 updateNew();setInterval(updateNew,60000);

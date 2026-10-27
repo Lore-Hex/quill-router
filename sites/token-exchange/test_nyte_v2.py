@@ -156,6 +156,7 @@ class NavigationRegistryTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest.mock import patch
+
         from nyte_v2 import GROUP_GUIDANCE, PAGES, build_nyte
 
         for group in (None, "buyers"):
@@ -170,6 +171,7 @@ class NavigationRegistryTests(unittest.TestCase):
 
     def test_registry_navigation_on_every_shell_page(self):
         import re
+
         from nyte_v2 import GROUPS, PAGES
         from token_index_page import render_token_index
 
@@ -187,29 +189,22 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertIn('href="/media-kit">Media kit</a>', page)
             self.assertEqual(nav.count('aria-expanded="false"'), 3)
 
-    def test_chip_dates_and_explicit_override(self):
+    def test_optional_new_until_and_added_page(self):
+        import re
         from unittest.mock import patch
+
         from nyte_v2 import PAGES, render_nav
 
-        with patch('nyte_v2.page_added', return_value='2026-10-20'):
+        sample = {"route": "/sample", "label": "Sample", "group": "sell",
+                  "menu_description": "Sample description"}
+        with patch.dict(PAGES, {"sample": sample}):
             nav = render_nav()
-            self.assertEqual(nav.count('data-added="2026-10-20"'), 8)
-            self.assertEqual(nav.count('class="tag cc" hidden>NEW'), 8)
-            with patch.dict(PAGES['api'], new_until='2026-11-01'):
-                nav = render_nav()
-                self.assertIn('href="/confidential" data-new-until="2026-11-01"', nav)
-                self.assertEqual(nav.count('data-added='), 7)
-
-    def test_added_date_comes_from_source_history_or_today(self):
-        from datetime import date
-        from unittest.mock import Mock, patch
-        from nyte_v2 import page_added
-
-        page_added.cache_clear()
-        with patch('nyte_v2.subprocess.run', return_value=Mock(stdout='2026-10-19\n')) as git:
-            self.assertEqual(page_added('nyte-v2/example.html'), '2026-10-19')
-            self.assertEqual(git.call_args.args[0][-1], 'nyte-v2/example.html')
-        page_added.cache_clear()
-        with patch('nyte_v2.subprocess.run', side_effect=FileNotFoundError):
-            self.assertEqual(page_added('nyte-v2/example.html'), date.today().isoformat())
-        page_added.cache_clear()
+            panel = re.search(r'id="nav-sell">(.*?)</div>', nav, re.S).group(1)
+            self.assertEqual(panel.count('href="/sample"'), 1)
+            item = re.search(r'<a href="/sample".*?</a>', panel).group()
+            self.assertNotIn('data-new-until', item)
+            self.assertNotIn('>NEW<', item)
+            with patch.dict(sample, new_until='2026-11-10'):
+                item = re.search(r'<a href="/sample".*?</a>', render_nav()).group()
+                self.assertIn('data-new-until="2026-11-10"', item)
+                self.assertIn('class="tag cc" hidden>NEW', item)

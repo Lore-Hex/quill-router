@@ -7,9 +7,7 @@ import json
 import re
 import runpy
 import shutil
-import subprocess
 from datetime import date
-from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -39,7 +37,6 @@ PAGES = {
         "description": "Every major model from competing providers, through one API. Set your privacy and price rules once, and check the proof yourself.",
         "group": None,
         "menu_description": "",
-        "source": "nyte-v2/home.html",
     },
     "api": {
         "route": "/confidential",
@@ -48,7 +45,6 @@ PAGES = {
         "description": "Frontier AI for sensitive work. Confidential compute, end-to-end encryption and live evidence.",
         "group": "buy",
         "menu_description": "Frontier AI for sensitive work",
-        "source": "nyte-v2/api.html",
     },
     "cowork": {
         "route": "/trusted-cowork",
@@ -57,7 +53,6 @@ PAGES = {
         "description": "Trusted Cowork by NYTE. A desktop agent for your Mac using only trusted tokens: confidential inference, explicit tool approvals, and no standard-provider fallback.",
         "group": "buy",
         "menu_description": "A desktop agent for sensitive work",
-        "source": "nyte-v2/cowork.html",
     },
     "buy": {
         "route": "/buy",
@@ -66,7 +61,6 @@ PAGES = {
         "description": "Reserve NYTE Index-grade tokens by card for January–December 2027, or discuss models, throughput and facilities on a 15-minute call.",
         "group": "buy",
         "menu_description": "Reserve your next billion tokens",
-        "source": "nyte-v2/buy.html",
     },
     "sup": {
         "route": "/suppliers",
@@ -75,7 +69,6 @@ PAGES = {
         "description": "Sell your inference to enterprise buyers. List your models and prices once.",
         "group": "sell",
         "menu_description": "Sell your inference to enterprise buyers",
-        "source": "nyte-v2/sup.html",
     },
     "providers": {
         "route": "/providers",
@@ -84,7 +77,6 @@ PAGES = {
         "description": "Bring your available inference capacity to the New York Token Exchange. Request the updated private seven-page provider deck and explore joining the exchange.",
         "group": "sell",
         "menu_description": "More demand, same GPUs",
-        "source": "nyte-v2/providers.html",
     },
     "accelerator": {
         "route": "/neocloud-accelerator",
@@ -93,7 +85,6 @@ PAGES = {
         "description": "Pre-sell reserved tokens from a planned facility to help finance the build. Explore the open-source neocloud stack and demand through NYTE.",
         "group": "sell",
         "menu_description": "Pre-sell tokens, build your neocloud",
-        "source": "nyte-v2/accelerator.html",
     },
     "index": {
         "route": "/index",
@@ -102,7 +93,6 @@ PAGES = {
         "description": "Compare AI inference prices across four capability grades. List spare GPU capacity under your own brand on the New York Token Exchange.",
         "group": "exchange",
         "menu_description": "Compare inference prices by grade",
-        "source": "index-page.html",
         "builder": "index",
     },
     "reserved-terms": {
@@ -112,7 +102,6 @@ PAGES = {
         "description": "Terms for prepaid NYTE Index-grade tokens usable during 2027.",
         "group": "exchange",
         "menu_description": "",
-        "source": "nyte-v2/reserved-terms.html",
     },
     "media-kit": {
         "route": "/media-kit",
@@ -121,7 +110,6 @@ PAGES = {
         "description": "Official New York Token Exchange press kit: logos, company facts, founder bio, screenshots, a product demo and media contact. Free public downloads.",
         "group": "exchange",
         "menu_description": "Logos and press releases",
-        "source": "press.html",
         "builder": "press",
     },
     "deck": {
@@ -131,25 +119,9 @@ PAGES = {
         "description": "The October buyer deck",
         "group": "exchange",
         "menu_description": "The October buyer deck",
-        "source": "nyte-v2/buyer-deck.html",
         "builder": "anchor",
     },
 }
-
-
-@lru_cache(maxsize=None)
-def page_added(source: str) -> str:
-    try:
-        result = subprocess.run(
-            ["git", "log", "--diff-filter=A", "--format=%cs", "--", source],
-            cwd=HERE, capture_output=True, text=True, check=True,
-        )
-        dates = result.stdout.splitlines()
-        if dates:
-            return dates[-1]
-    except (OSError, subprocess.CalledProcessError):
-        pass
-    return date.today().isoformat()
 
 
 def render_nav() -> str:
@@ -160,12 +132,12 @@ def render_nav() -> str:
             if entry.get("group") != group or not entry["label"]:
                 continue
             until = entry.get("new_until")
-            timing = ('data-new-until="' + html.escape(str(until), quote=True) + '"' if until
-                      else 'data-added="' + page_added(entry["source"]) + '"')
+            timing = 'data-new-until="' + html.escape(str(until), quote=True) + '"' if until else ''
+            chip = ' <span class="tag cc" hidden>NEW</span>' if until else ''
             items.append(
                 f'<a href="{html.escape(entry["route"], quote=True)}" {timing} '
                 f'aria-labelledby="nav-label-{key}"><span class="nav-label" id="nav-label-{key}">'
-                f'{html.escape(entry["label"])}</span> <span class="tag cc" hidden>NEW</span>'
+                f'{html.escape(entry["label"])}</span>{chip}'
                 f'<span class="nav-description">{html.escape(entry["menu_description"])}</span></a>'
             )
         groups.append(

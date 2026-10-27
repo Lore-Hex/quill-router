@@ -143,8 +143,15 @@ for (const [width,height] of [[320,568],[390,667],[390,844]]) {
  await page.evaluate(()=>scrollTo(0,120));
  assert.equal(await page.locator('.cw-hero h1').evaluate(el=>el.getBoundingClientRect().top+scrollY),top);
 }
+// Compare each shell's menu with the homepage; Python checks it against the registry.
+await page.goto(base+'/');
+const expectedNavigation=await page.locator('#nav a').evaluateAll(items=>items.map(item=>({
+ href:item.getAttribute('href'),group:item.closest('.nav-group').dataset.group,
+ label:item.querySelector('.nav-label').textContent
+})));
+const shellRoutes=['/',...expectedNavigation.map(item=>item.href).filter(href=>!href.includes('#')),'/reserved-tokens-terms'];
 // Every shell page uses the same three groups across the collapse boundary.
-for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy', '/neocloud-accelerator', '/index', '/reserved-tokens-terms']) {
+for (const path of shellRoutes) {
  for (const width of [390,768,800,801,1024,1440]) {
   await page.setViewportSize({width,height:900});await page.goto(base+path);await page.evaluate(()=>document.fonts.ready);
   assert.equal(await page.locator('#menuBtn').isVisible(),width<=800);
@@ -167,7 +174,10 @@ for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-
     assert(!(await page.locator(`#nav-${group}`).isVisible()));
    }
   }
-  assert.deepEqual(await page.locator('#nav .nav-label').allTextContents(),['Confidential API','Trusted Cowork','Reserved tokens','Suppliers','Providers','Neocloud accelerator','Token Index','Buyer deck']);
+  assert.deepEqual(await page.locator('#nav a').evaluateAll(items=>items.map(item=>({
+   href:item.getAttribute('href'),group:item.closest('.nav-group').dataset.group,
+   label:item.querySelector('.nav-label').textContent
+  }))),expectedNavigation);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  }
 }
@@ -190,27 +200,25 @@ for (const [selector,cta] of [['.btn-primary','download_apple_silicon'],['.btn-s
  await page.waitForTimeout(100);
  assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta===cta&&e.page==='/trusted-cowork'&&e.position==='close'));
 }
-// NEW chips expire in the browser, including inclusive overrides and the three-item cap.
+// Date behavior uses independent sample links and a fixed clock, not the page roster.
 await page.clock.install({time:new Date('2026-10-27T12:00:00')});
+let sampleDates=['2026-10-27','2026-10-28','2026-10-26',null];
 await page.route(base+'/',async route=>{
  const response=await route.fetch();
- let index=0;
- const dates=['2026-10-27','2026-10-26','2026-10-25','2026-10-24','2026-10-13','2026-10-28','2020-01-01','2020-01-01','2020-01-01'];
- const body=(await response.text()).replace(/data-added="[^"]+"/g,()=>`data-added="${dates[index++]}"`);
+ const items=sampleDates.map((date,i)=>`<a href="/sample-${i}" ${date?`data-new-until="${date}"`:''}>Sample ${i}${date?'<span class="tag cc" hidden>NEW</span>':''}</a>`).join('');
+ const body=(await response.text()).replace(/(<nav class="nav"[^>]*>)[\s\S]*?<\/nav>/,`$1${items}</nav>`);
  await route.fulfill({response,body});
 });
+const visibleChips=()=>page.locator('#nav a:has(.tag:not([hidden]))').evaluateAll(items=>items.map(item=>item.getAttribute('href')));
 await page.goto(base+'/');
-assert.deepEqual(await page.locator('#nav a:has(.tag:not([hidden])) .nav-label').allTextContents(),['Confidential API','Trusted Cowork','Reserved tokens']);
-await page.evaluate(()=>{
- const items=[...document.querySelectorAll('#nav a')];
- items.forEach(item=>{item.dataset.added='2020-01-01';});
- delete items[0].dataset.added;items[0].dataset.newUntil='2026-10-27';
- items[1].dataset.added='2026-10-13';items[2].dataset.added='2026-10-14';
- document.dispatchEvent(new Event('visibilitychange'));
-});
-assert.deepEqual(await page.locator('#nav a:has(.tag:not([hidden])) .nav-label').allTextContents(),['Confidential API','Reserved tokens']);
+assert.deepEqual(await visibleChips(),['/sample-0','/sample-1']);
 await page.clock.fastForward(24*60*60*1000);
-assert.equal(await page.locator('#nav .tag:not([hidden])').count(),0);
+assert.deepEqual(await visibleChips(),['/sample-1']);
+await page.clock.fastForward(24*60*60*1000);
+assert.deepEqual(await visibleChips(),[]);
+sampleDates=['2026-11-01','2026-11-02','2026-11-03','2026-11-04'];
+await page.reload();
+assert.deepEqual(await visibleChips(),['/sample-1','/sample-2','/sample-3']);
 await page.clock.resume();await page.unroute(base+'/');
 // Both direct and same-page deck links open the existing dialog.
 await page.goto(base+'/#deck');await page.locator('#m-deck').waitFor({state:'visible'});
