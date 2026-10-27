@@ -300,11 +300,15 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     if event["type"] in {"refund.failed", "refund.updated", "refund.created", "charge.refund.updated"}:
         refund = {**obj, "payment_intent": payment_intent,
                   "status": "failed" if event["type"] == "refund.failed" else obj.get("status")}
-        obligation = command("refund_lifecycle", refund=refund)
+        obligation = command("refund_lifecycle", refund=refund, existing_only=not settings.resale_enabled)
         if obligation:
             if obligation["status"] == "needs_ops":
                 alert_failed_refund(obligation, settings)
             return True
+        if not settings.resale_enabled:
+            # Only already-known obligations are serviced while sales are off.
+            # Do not import purchases or retain evidence for unknown refunds.
+            return False
         if refund["status"] in {"failed", "canceled"}:
             return bool(command("payment", payment_intent=payment_intent)) or (obj.get("metadata") or {}).get("kind") in {"reserved_tokens_2027", "resale_fill", "full_refund"}
         if refund["status"] not in {"pending", "succeeded", "requires_action"}:

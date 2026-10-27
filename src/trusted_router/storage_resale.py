@@ -409,7 +409,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 kind, key = "full_refund", p["session_id"]
         row = obligation(kind, key)
         if not row:
-            if (status in {"failed", "canceled"} and refund.get("payment_intent")
+            if (not c.get("existing_only") and status in {"failed", "canceled"} and refund.get("payment_intent")
                     and type(refund.get("amount")) is int and not get("nyte_refund_failure", rid)):
                 put("nyte_refund_failure", rid, {"payment_intent": refund["payment_intent"],
                                                "amount": refund["amount"], "status": status, "observed_at": now,

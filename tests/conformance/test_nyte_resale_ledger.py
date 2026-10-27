@@ -447,3 +447,42 @@ def test_nyte_unbound_refund_failure_survives_acknowledgement(store: Store, uniq
     row = call(store, "refund_obligation", kind=kind, id=key)
     assert row["status"] == "needs_ops" and row["stripe_refund_id"] == refund["id"]
     assert row["history"][-1]["action"] == "stale_write"
+
+
+@pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
+def test_nyte_existing_metadata_obligation_reconciles_with_sales_disabled(store: Store, unique: str, monkeypatch, kind: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    seller = unique + "seller"
+    purchase(store, seller)
+    if kind == "resale_fill":
+        listing(store, seller)
+        key = purchase(store, unique + "buyer", lots=1, allocate=True)["fills"][0]
+        call(store, "fill_claim", fill=key, owner="worker")
+        amount, metadata = 95, {"kind": kind, "fill_id": key}
+    else:
+        key = seller
+        call(store, "request_refund", position=key, holder=key, now=101, request_id="full")
+        amount, metadata = 300, {"kind": kind, "position_id": key}
+    settings = Settings(environment="test", resale_enabled=False)
+    monkeypatch.setattr(resale, "STORE", store)
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": amount, "metadata": metadata, "status": "failed"}
+    # The obligation exists, but the worker has not yet recorded its refund ID.
+    assert resale.reconcile_payment_event({"type": "refund.failed", "data": {"object": refund}}, settings)
+    row = call(store, "refund_obligation", kind=kind, id=key)
+    assert row["status"] == "needs_ops" and row["stripe_refund_id"] == refund["id"]
+    alert.assert_called_once()
+    settings.resale_enabled = True
+    create = Mock(side_effect=AssertionError("Re-enabling sales reissued a failed refund"))
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    if kind == "resale_fill":
+        resale.process_fill(key, settings)
+    else:
+        monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: {**refund, "status": "succeeded"})
+        assert resale.acknowledge_full_refund(key, refund["id"], settings)["status"] == "needs_ops"
+    create.assert_not_called()

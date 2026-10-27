@@ -296,6 +296,8 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
                 contract.test_nyte_refund_failure_and_success_commit_are_order_independent(
                     store, f"pgrace{failure_first}{failure}", monkeypatch, failure_first, failure)
         for kind in ("resale_fill", "full_refund"):
+            contract.test_nyte_existing_metadata_obligation_reconciles_with_sales_disabled(
+                store, contract.reference("pgtoggle" + kind)[:20], monkeypatch, kind)
             contract.test_nyte_unbound_refund_failure_survives_acknowledgement(store, "pgunbound" + kind, kind)
             for failure_first in (True, False):
                 for by_metadata in (True, False):
@@ -742,13 +744,74 @@ def test_legacy_completed_full_refund_is_reopened_by_exact_payment_mapping(setti
 
 
 @pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
-def test_disabled_resale_typed_refunds_do_not_touch_ledger_or_credits(client, test_settings, monkeypatch, kind):
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_disabled_unknown_nyte_refunds_do_not_change_ledger_or_credits(client, test_settings, monkeypatch, kind, status):
+    from copy import deepcopy
+
+    from trusted_router.storage import STORE
     test_settings.resale_enabled = False
+    purchase(STORE, "holder")
+    before = deepcopy(STORE.target.resale_entities)
     def forbidden(*args, **kwargs):
-        pytest.fail("Disabled NYTE refund reached ledger or credits")
-    monkeypatch.setattr(InMemoryStore, "reserved_resale", forbidden)
+        pytest.fail("Unknown NYTE refund reached credits")
     monkeypatch.setattr(InMemoryStore, "credit_workspace_typed_direct", forbidden)
-    response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_disabled_refund", "type": "refund.created", "data": {"object": {
-        "id": "re_disabled", "payment_intent": "pi_disabled", "amount": 100, "status": "succeeded", "metadata": {"kind": kind},
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_disabled_refund", "type": "refund.updated", "data": {"object": {
+        "id": "re_unknown", "payment_intent": "pi_holder", "amount": 100, "status": status, "metadata": {"kind": kind},
     }}})
     assert response.status_code == 200 and response.json()["data"]["credited"] is False
+    assert STORE.target.resale_entities == before
+    alert.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
+@pytest.mark.parametrize("event_type,status", [("refund.created", "failed"), ("refund.updated", "failed"),
+                                               ("refund.updated", "canceled"), ("refund.failed", "failed"),
+                                               ("charge.refund.updated", "failed")])
+def test_existing_refund_failure_survives_resale_flag_toggle(client, test_settings, monkeypatch, kind, event_type, status):
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    test_settings.stripe_secret_key = "sk_test_flag_toggle"  # noqa: S105
+    purchase(STORE, "holder")
+    mail = Mock(return_value=True)
+    monkeypatch.setattr(resale, "get_email_service", lambda _: SimpleNamespace(send=mail))
+    refund = {"id": "re_toggle", "payment_intent": "pi_holder", "amount": 95 if kind == "resale_fill" else 300,
+              "status": "succeeded"}
+    create = Mock(return_value=refund)
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: refund)
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
+    if kind == "resale_fill":
+        listing(STORE, "holder")
+        key = purchase(STORE, "buyer", lots=1, allocate=True)["fills"][0]
+        resale.process_fill(key, test_settings)
+        create.assert_called_once()
+        queue = "refunds_needs_ops"
+    else:
+        key, queue = "holder", "full_refunds_needs_ops"
+        call(STORE, "request_refund", position=key, holder=key, now=101, request_id="full")
+        assert resale.acknowledge_full_refund(key, refund["id"], test_settings)["status"] == "refunded"
+    issued = create.call_count
+    assert call(STORE, "refund_obligation", kind=kind, id=key)["status"] == "refunded"
+
+    test_settings.resale_enabled = False
+    # No metadata: resolving the bound ID must work with the sales switch off.
+    event = {"id": "evt_toggle", "type": event_type, "data": {"object": {**refund, "status": status}}}
+    for _ in range(2):
+        response = client.post("/v1/internal/stripe/webhook", json=event)
+        assert response.status_code == 200 and response.json()["data"]["credited"] is False
+    obligation = call(STORE, "refund_obligation", kind=kind, id=key)
+    assert obligation["status"] == "needs_ops" and obligation["stripe_refund_id"] == refund["id"]
+    pending = call(STORE, "pending", queue=queue)["rows"]
+    assert len(pending) == 1 and pending[0]["id"] == key
+    assert mail.called and refund["id"] in mail.call_args.args[0].text_body
+
+    test_settings.resale_enabled = True
+    if kind == "resale_fill":
+        resale.process_fill(key, test_settings)
+    else:
+        assert resale.acknowledge_full_refund(key, refund["id"], test_settings)["status"] == "needs_ops"
+    assert create.call_count == issued
+    assert call(STORE, "refund_obligation", kind=kind, id=key)["status"] == "needs_ops"
+    assert len(call(STORE, "pending", queue=queue)["rows"]) == 1

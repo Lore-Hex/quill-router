@@ -58,10 +58,15 @@ The CI emulator image/gate is in `.github/workflows/ci.yml`, job
 ## Purchase, allocation and payouts
 
 The signed reserved-token webhook validates paid USD totals and locked metadata
-before any credit handling. With `TR_RESALE_ENABLED=false`, the webhook follows
+before any credit handling. With `TR_RESALE_ENABLED=false`, paid checkout follows
 the original #2125 notification path and never calls the resale ledger. Every
 holder API action (including link requests and preflight) returns the inert
-generic response without email or ledger access. With the flag enabled, positions
+generic response without email or ledger access. Existing refund obligations
+continue to reconcile lifecycle events and alert ops regardless of the sales
+flag. While disabled, refund lookup is restricted to existing obligations matched
+by bound refund ID or valid metadata; unknown refunds create no evidence or
+position-review state. Charge/dispute position reconciliation remains gated.
+With the flag enabled, positions
 are written before the notification's already-sent return. A successful notification
 from before resale storage existed imports that position without allocating
 historical sales. New paid purchases consume active grade listings in FIFO order,
@@ -532,3 +537,61 @@ these do not prove native server behavior. Final output is in
 `/tmp/nyte-r4-requested-final.log`; coverage used
 `COVERAGE_FILE=/tmp/nyte-r4-coverage` and uv used the writable cache
 `UV_CACHE_DIR=/tmp/nyte-uv-cache`.
+
+
+## PR #2129 review round 5
+
+Based on `4ee6a10e2`; all changes remain uncommitted. Nothing was pushed,
+published, deployed or changed in live Stripe. Terms remain v5.
+
+`TR_RESALE_ENABLED` controls holder access and new resale allocation, not servicing
+refund obligations already incurred. All four lifecycle events (`refund.created`,
+`refund.updated`, `refund.failed`, `charge.refund.updated`) reach the shared
+refund processor regardless of the flag. Both resale fills and full-refund
+obligations retain the same payment/amount validation, terminal `needs_ops`, ops
+queue, identifier-only alert and stale-success protection.
+
+When the flag is off, the processor passes `existing_only` to the transactional
+ledger. Known refund-ID bindings, legacy bindings and valid metadata identifying
+an existing obligation remain eligible. An unknown refund returns without
+retaining failure evidence or reconciling a position; it keeps its former
+ignored/generic-handler behavior. Turning sales back on does not reopen failed
+obligations or issue another refund.
+
+Paid checkout never enters this lifecycle branch. The round-2 regression with a
+resale ledger that raises is retained unchanged, proving a disabled paid checkout
+and retry still record the original #2125 notification and first-write purchase
+time without any resale access. Holder actions, link email, listing and new
+allocation remain disabled. Charge/dispute position reconciliation remains gated.
+
+The round-4 test that forbade even a lookup for every disabled typed refund was
+updated to the new requirement: unknown typed refunds may be looked up, but
+must leave ledger contents unchanged, send no ops alert and never reach credits.
+It covers success, failure and cancellation. The stricter no-ledger rule remains
+unchanged for disabled paid checkout and every holder route.
+
+| Round 5 change | Implementation / regression |
+| --- | --- |
+| Lifecycle servicing independent of sales flag | `src/trusted_router/routes/internal/webhook.py:100` routes all four refund lifecycle types independently; charge refunds/disputes remain gated. `src/trusted_router/services/resale.py:303` selects existing-only reconciliation when disabled and returns before any new-position/evidence work for an unknown refund. |
+| Unknown refunds remain inert in disabled mode | `src/trusted_router/storage_resale.py:412` suppresses unmatched failure-evidence writes in existing-only mode. `tests/test_nyte_resale.py:748` asserts no ledger change, alert or credit call for both typed kinds and successful/failed/canceled unknown refunds. |
+| Flag toggles cannot lose failure or trigger reissuance | `tests/test_nyte_resale.py:772` issues/acknowledges with the flag on, switches off, delivers every supported lifecycle type (including cancellation), verifies terminal state, exactly one ops entry and an alert, then enables again and proves no second issuance. It resolves bound IDs without metadata for both kinds. |
+| Existing metadata matches before refund-ID commit | `tests/conformance/test_nyte_resale_ledger.py:453` covers both kinds with sales disabled before recording the refund ID, then reenables and proves no reissue. It is registered for every backend and also runs through the offline Postgres adapter. |
+| Original checkout and holder isolation preserved | `tests/test_nyte_resale.py:247` (unchanged) proves disabled paid checkout/retry succeed with a resale ledger that raises. `:221` (unchanged) checks all holder actions/preflight with no ledger call or email. |
+
+| Round 5 validation | Result |
+| --- | --- |
+| Requested seven pytest files | **340 passed, 129 skipped**; **87.51%** combined coverage across the three resale modules (70% gate passed) |
+| Focused ledger/resale run | **168 passed, 123 skipped** |
+| Site unittests | **94 passed** |
+| `node --test tests/js/nyte_holder.test.cjs` | **3 passed** |
+| Site build | Passed; 13 markets / 30 domains in `/tmp/nyte-r5-site` |
+| Repository-wide ruff / mypy, plus CLI mypy | Passed; 551 source files plus CLI |
+| `git diff --check` | Passed |
+| Explicit native Spanner emulator gate | **Blocked**: 41 setup errors, connection refused at `127.0.0.1:9010`; emulator unavailable. Not counted as a pass. |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | **Blocked** by the unchanged macOS `shasum` deployment-harness failure documented above: 1 failed, 1,846 deselected. Failed-first stopped there; no full-suite pass or coverage claimed. |
+
+The ordinary-run skips are unconfigured Postgres, Spanner-PG and native Spanner
+cases. Memory, Spanner-fake and the offline Postgres adapter ran the new contracts;
+these do not replace native-server validation. Requested-run output is in
+`/tmp/nyte-r5-requested.log`; coverage used `COVERAGE_FILE=/tmp/nyte-r5-coverage`
+and uv used `UV_CACHE_DIR=/tmp/nyte-uv-cache`.
