@@ -23,10 +23,12 @@ A higher-volume rollout should partition by grade with a reviewed lock order.
 | --- | --- |
 | `nyte_position` / Stripe Checkout Session | Stable position ID, grade, original lots, per-lot cents, original PaymentIntent, first `purchase_completed_at`, holder hash, terms version, sold/listed lots, status, payment-review marker, allocation status (pending/complete/historical), listing/fill IDs, new-inventory lots, holder-next pointer, event ID |
 | `nyte_payment` / original PaymentIntent | Session reference; isolates Dashboard refunds without inherited metadata from credit/adverse handlers |
+| `nyte_payment_review` / original PaymentIntent | Sticky disputed/unpaid flags, maximum observed external refund cents, observation time; survives events preceding checkout, without raw Stripe payloads or PII |
 | `nyte_holder` / domain-separated normalized email hash | Head of the holder's position list; no plaintext email |
 | `nyte_listing` / hash of holder + request ID | Position session, lots listed/sold, listed_at, active/sold/withdrawn status, FIFO previous/next |
-| `nyte_fill` / hash of buyer session + listing | Buyer session/event, listing, lots, resale price per lot, fee bps/total cents, capped refund total cents, seller PaymentIntent, Stripe refund ID, pending/retry/refunded status, first attempt, lease owner/expiry, refund-queue previous/next |
-| `nyte_queue` / `grade:{grade}`, `refunds`, `full_refunds` | Linked queue head/tail; completed entries are unlinked |
+| `nyte_fill` / hash of buyer session + listing | Buyer session/event, listing, lots, resale price per lot, fee bps/total cents, capped refund total cents, seller PaymentIntent, Stripe refund ID, pending/retry/refunded/needs_ops status, failure status, first attempt, lease owner/expiry, refund-queue previous/next |
+| `nyte_refund` / Stripe refund ID | Fill reference, verified against the original payment and amount before accepting failure events |
+| `nyte_queue` / `grade:{grade}`, `refunds`, `refunds_needs_ops`, `full_refunds` | Linked queue head/tail; completed entries are unlinked; issued refunds needing manual reconciliation have a separate queue |
 | `nyte_event` / Stripe event ID | Buyer session; session identity also prevents duplicates across different event IDs |
 | `nyte_action` / hash of holder + request ID | Original command and result; rejects reusing an ID for a different action |
 | `nyte_access` / hash of capability | Holder hash, expiry, consumed marker or session purpose; never raw capability |
@@ -96,8 +98,18 @@ work. A refund failure cannot undo allocation, return an unpaid buyer position,
 or credit a balance. Each fill has a durable lease and a stable idempotency key
 `nyte-resale-{fill_id}`. Before creating, the worker searches only refunds on
 that original PaymentIntent for `metadata.nyte_fill_id`. Known refunds are
-retrieved until Stripe reports `succeeded`; pending/failed refunds remain visible
-for retry/ops. A timeout after Stripe acceptance is reconciled to the same refund.
+retrieved until Stripe reports `succeeded`; pending refunds remain retryable.
+Failed/canceled issued refunds move to `needs_ops`, retaining their Stripe refund
+ID. A timeout after Stripe acceptance is reconciled to the same refund.
+
+A later `refund.failed` or `refund.updated` with failed/canceled status reopens
+even a previously successful fill into `needs_ops`. The transaction validates
+refund ID, original PaymentIntent and amount against the durable fill. Older
+fills without the refund index can be located by `nyte_fill_id` metadata, but
+the same identity checks apply. Unknown or mismatched IDs are ignored. The
+transition removes retry work, clears the lease, and fences stale worker commits;
+neither repeated events nor retry workers can issue another refund. Ops alerts
+contain only fill/refund identifiers, never Stripe descriptions or buyer email.
 
 Stripe retains idempotency keys for at least 24 hours. After **23 hours** from the
 first attempt, an absent matching refund is an ambiguous case: the worker alerts
@@ -113,6 +125,16 @@ also checks seller status. Stripe refunds are exempt only when their payment,
 amount, fill metadata and (when recorded) refund ID match a durable NYTE fill.
 The match works before the refund worker commits success; repeated evidence
 counts once per fill. Refund listing reads are bounded and payment-scoped.
+
+Adverse evidence is retained by PaymentIntent even when its checkout position
+does not yet exist. Position creation applies that evidence in the same ledger
+transaction, starting the position in `needs_review` and consuming no listed
+inventory. Healthy or stale observations cannot erase earlier adverse evidence.
+Every enabled paid webhook, including replays, and every historical import also
+reads the current Stripe PaymentIntent and charge before writing a held position;
+external refunded amounts and disputes block it, while verified resale refunds
+are exempt. Stripe read failure leaves the webhook retryable instead of assuming
+the payment is healthy. The disabled flag still bypasses this entire path.
 
 ## Holder and operational access
 
@@ -160,10 +182,11 @@ Before enabling, Joseph/operator must:
    separate existing enable/discount settings. Rotating `TR_STRIPE_SECRET_KEY`
    invalidates outstanding holder links; new links use the new key.
 3. Verify the existing Stripe key can read Customers, Checkout Sessions,
-   PaymentIntents and Refunds, and create refunds. No new Stripe Connect or
+   PaymentIntents, Charges and Refunds, and create refunds. No new Stripe Connect or
    webhook endpoint is needed. Existing paid-checkout events remain required. Ensure this endpoint also
    receives `charge.refunded` and `charge.dispute.*` events for prompt external
-   payment reconciliation; refund lifecycle events are also handled.
+   payment reconciliation, plus `refund.created`, `refund.updated`, and
+   `refund.failed` for refund lifecycle reconciliation.
 4. Verify SES sends holder links and ops alerts from the control service.
    `TR_PARTNER_INQUIRY_EMAIL` is the ops recipient (enterprise fallback).
 5. Arrange periodic execution of `uv run python -m scripts.retry_nyte_resale_refunds`
@@ -175,6 +198,11 @@ Before enabling, Joseph/operator must:
    The script verifies full amount, original payment and successful status before
    closing the request. Do not grant balance credits. Review old ambiguous or
    failed resale refunds against `nyte_fill_id` before any manual repair.
+7. Inspect `uv run python -m scripts.retry_nyte_resale_refunds --needs-ops` after
+   an issued-refund failure alert. This command only lists identifiers and never
+   creates refunds. Reconcile Stripe's failure with the retained original refund
+   ID before a separately reviewed manual repair; there is no automatic reset or
+   reissue for these fills.
 
 Browser analytics `nyte.resale_listed` / `nyte.resale_withdrawn` contain only a
 bounded grade, existing visitor/campaign metadata and `/manage-reservation` page.
@@ -295,3 +323,39 @@ uv run pytest -q --tb=short \
   --cov=trusted_router.storage_resale --cov=trusted_router.services.resale \
   --cov=trusted_router.routes.resale --cov-report=term --cov-fail-under=70
 ```
+
+## PR #2129 review round 2
+
+Based on `9498fc980`. All six changed files remain uncommitted; no push,
+publication, deployment or live Stripe mutation was performed. The entity
+additions reuse the existing transactional store protocol on every backend;
+no DDL or terms-version change is needed.
+
+| Fix | Implementation | Regression tests |
+| --- | --- | --- |
+| Adverse events before checkout, and refunded historical replays | `src/trusted_router/storage_resale.py:102` retains redacted evidence by PaymentIntent; `:145` applies it atomically during purchase creation before allocation. `src/trusted_router/services/resale.py:283` records events without requiring a position mapping; `:86` and `:257` verify current Stripe state on webhook creation/replay and import. | `tests/conformance/test_nyte_resale_ledger.py:210` exercises early refund/dispute, stale healthy evidence, listing rejection and no allocation; `:235` exercises refunded Stripe state on replay and historical import. `tests/test_nyte_resale.py:482` exercises real HTTP event → checkout ordering for charge refunds, refund creation and disputes. |
+| Successful refunds that later fail/cancel | `src/trusted_router/storage_resale.py:307` moves validated fills to the durable ops queue; `:316` validates refund ID/payment/amount; `:333` and `:342` reject retry claims and stale commits. `src/trusted_router/services/resale.py:117` also catches terminal failures observed by the worker; `:283` handles failure webhooks and `:320` sends identifier-only ops alerts. `scripts/retry_nyte_resale_refunds.py:18` adds the read-only `--needs-ops` view. | `tests/conformance/test_nyte_resale_ledger.py:266` covers failed/canceled, unknown/mismatched IDs, duplicate events, queue integrity, stale writes and no duplicate issuance. `tests/test_nyte_resale.py:504` covers HTTP lifecycle events, legacy index fallback and email privacy; `:537` checks unknown IDs; `:556` checks worker-observed failure. |
+
+These contracts are registered for every backend. Memory and Spanner-fake run
+locally; `tests/test_nyte_resale.py:275` additionally runs the new contracts
+through the actual Postgres implementation on the offline SQL adapter. The
+unconfigured server backends remain explicitly skipped in the ordinary run;
+this does not establish native server transaction behavior.
+
+| Round 2 validation | Result |
+| --- | --- |
+| Requested seven pytest files, using the grouped command above | **258 passed, 57 skipped**; **86.79%** combined coverage across the three resale modules, above the 70% gate |
+| Site unittests | **94 passed** |
+| `node --test tests/js/nyte_holder.test.cjs` | **3 passed** |
+| `uv run ruff check .` | Passed |
+| `uv run mypy` and explicit refund CLI mypy | Passed: 551 source files plus the CLI |
+| `git diff --check` | Passed |
+| Explicit native Spanner emulator gate | **Blocked**: 17 setup errors, connection refused at `127.0.0.1:9010`; Docker unavailable. Not counted as a pass. |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | **Blocked** by the unchanged macOS `shasum` deployment-harness failure described above: 1 failed, 1,846 deselected. Failed-first stopped there; remaining tests were not run. No full-suite coverage/pass is claimed. |
+
+Local commands used `UV_CACHE_DIR=/tmp/nyte-uv-cache` because the default cache
+is outside the writable sandbox. The coverage run used
+`COVERAGE_FILE=/tmp/nyte-r2-coverage`. The final requested-run output is
+`/tmp/nyte-r2-verified.log`. An earlier run exposed a test-isolation assertion
+against the entire shared refund queue; the regression now checks that existing
+queue contents are preserved and exactly the tested fill enters the ops queue.

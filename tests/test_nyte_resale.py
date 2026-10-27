@@ -34,6 +34,15 @@ def settings() -> Settings:
     return Settings(environment="test", stripe_secret_key="sk_test_holder", resale_enabled=True)  # noqa: S106
 
 
+@pytest.fixture(autouse=True)
+def healthy_stripe_payment(monkeypatch):
+    # Enabled purchase creation now verifies live Stripe state. Keep unit tests
+    # offline; adverse-state cases override this explicit healthy response.
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {
+        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0},
+    })
+
+
 def test_refund_retry_crash_reconciliation_and_no_credits(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
     store = InMemoryStore()
     monkeypatch.setattr(resale, "STORE", store)
@@ -263,7 +272,7 @@ def test_resale_fee_change_requires_new_terms_version(fee, monkeypatch):
     assert Settings(environment="test", resale_fee_bps=500).resale_fee_bps == 500
 
 
-def test_postgres_transaction_implementation_on_sql_fake():
+def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
     from tests.conformance import test_nyte_resale_ledger as contract
     from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
     conn = sqlite_postgres_conn()
@@ -276,6 +285,12 @@ def test_postgres_transaction_implementation_on_sql_fake():
         contract.test_nyte_own_refund_before_worker_commit_is_exempt_but_external_excess_blocks(store, "pgownrefund0")
         contract.test_nyte_timestamped_import_still_allocates_after_webhook_claim(store, "pgimportrace")
         contract.test_nyte_completed_legacy_notification_import_is_historical(store, "pglegacy0000")
+        contract.test_nyte_adverse_before_position_is_durable_and_blocks_purchase(store, "pgearlyref00", {"amount_refunded": 100}, monkeypatch)
+        contract.test_nyte_adverse_before_position_is_durable_and_blocks_purchase(store, "pgearlydisp0", {"disputed": True}, monkeypatch)
+        contract.test_nyte_old_purchase_checks_current_stripe_before_held(store, "pgoldstripe0", monkeypatch, "webhook_replay")
+        contract.test_nyte_old_purchase_checks_current_stripe_before_held(store, "pgoldimport0", monkeypatch, "historical_import")
+        contract.test_nyte_successful_refund_later_fails_without_reissuance(store, "pgfailedref0", monkeypatch, "failed")
+        contract.test_nyte_successful_refund_later_fails_without_reissuance(store, "pgcancelref0", monkeypatch, "canceled")
     finally:
         conn._raw.close()
 
@@ -460,3 +475,100 @@ def test_reimport_existing_refunded_position_is_blocked(settings, monkeypatch):
     resale.backfill_email("private@example.com", p["holder"], settings)
     saved = call(store, "positions", holder=p["holder"])["positions"][0]
     assert saved["status"] == "needs_review" and saved["listing_rows"][0]["status"] == "withdrawn"
+
+
+@pytest.mark.usefixtures("reservation_mail")
+@pytest.mark.parametrize("kind", ["charge.refunded", "charge.dispute.created", "refund.created"])
+def test_adverse_webhook_before_checkout_is_not_lost(client, test_settings, monkeypatch, kind):
+    from tests.test_reserved_tokens import event
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
+    response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_early", "type": kind, "data": {"object": {
+        "id": "ch_early", "payment_intent": "pi_early", "paid": True, "amount_refunded": 1600, "amount": 1600, "status": "succeeded",
+        "metadata": {"kind": "reserved_tokens_2027"},
+    }}})
+    assert response.status_code == 200
+    assert call(STORE, "payment", payment_intent="pi_early") == {}
+    data = event()
+    data["data"]["object"]["payment_intent"] = "pi_early"
+    assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 200
+    p = call(STORE, "position", position="cs_reserved")
+    assert p["status"] == "needs_review" and p["fills"] == []
+    with pytest.raises(ValueError, match="review"):
+        call(STORE, "list", position="cs_reserved", holder=p["holder"], lots=1, request_id="after-adverse")
+
+
+@pytest.mark.parametrize("kind,status", [("refund.failed", "failed"), ("refund.updated", "failed"), ("refund.updated", "canceled")])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_late_refund_failure_reopens_for_ops_and_never_reissues(client, test_settings, monkeypatch, kind, status, legacy):
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    purchase(STORE, "seller")
+    listing(STORE, "seller")
+    fid = purchase(STORE, "buyer", lots=1, allocate=True)["fills"][0]
+    call(STORE, "fill_claim", fill=fid, owner="worker")
+    call(STORE, "fill_finish", fill=fid, owner="worker", status="refunded", stripe_refund_id="re_later")
+    if legacy:
+        STORE.target.resale_entities.pop(("nyte_refund", "re_later"))
+    mail = Mock(return_value=True)
+    monkeypatch.setattr(resale, "get_email_service", lambda _: SimpleNamespace(send=mail))
+    create = Mock(side_effect=AssertionError("Duplicate issuance"))
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    data = {"id": "evt_failure", "type": kind, "data": {"object": {
+        "id": "re_later", "payment_intent": "pi_seller", "amount": 95, "status": status,
+        "metadata": {"nyte_fill_id": fid} if legacy else {}, "description": "private@example.com",
+    }}}
+    for _ in range(2):
+        response = client.post("/v1/internal/stripe/webhook", json=data)
+        assert response.status_code == 200
+    rows = call(STORE, "pending", queue="refunds_needs_ops")["rows"]
+    assert len(rows) == 1 and rows[0]["status"] == "needs_ops"
+    assert rows[0]["stripe_refund_id"] == "re_later"
+    assert call(STORE, "pending")["rows"] == []
+    resale.process_fill(fid, test_settings)
+    create.assert_not_called()
+    assert mail.called
+    message = mail.call_args.args[0]
+    assert fid in message.text_body and "re_later" in message.text_body
+    assert "private@example.com" not in message.text_body
+
+
+def test_unknown_failed_refund_cannot_reopen_fill(client, test_settings, monkeypatch):
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    purchase(STORE, "seller")
+    listing(STORE, "seller")
+    fid = purchase(STORE, "buyer", lots=1, allocate=True)["fills"][0]
+    call(STORE, "fill_claim", fill=fid, owner="worker")
+    call(STORE, "fill_finish", fill=fid, owner="worker", status="refunded", stripe_refund_id="re_known")
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    result = client.post("/v1/internal/stripe/webhook", json={"id": "evt_unknown", "type": "refund.failed", "data": {"object": {
+        "id": "re_unknown", "payment_intent": "pi_seller", "amount": 95, "status": "failed", "metadata": {"nyte_fill_id": fid},
+    }}})
+    assert result.status_code == 200
+    assert call(STORE, "pending", queue="refunds_needs_ops")["rows"] == []
+    assert not call(STORE, "fill_claim", fill=fid, owner="again")
+    alert.assert_not_called()
+
+
+def test_worker_observing_failed_refund_uses_ops_queue(settings, monkeypatch):
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    purchase(store, "seller")
+    listing(store, "seller")
+    fid = purchase(store, "buyer", lots=1, allocate=True)["fills"][0]
+    call(store, "fill_claim", fill=fid, owner="first")
+    call(store, "fill_finish", fill=fid, owner="first", status="retry", stripe_refund_id="re_pending")
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: {
+        "id": "re_pending", "payment_intent": "pi_seller", "amount": 95, "status": "failed",
+    })
+    monkeypatch.setattr(resale, "alert_ops", Mock())
+    create = Mock()
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    resale.process_fill(fid, settings)
+    resale.process_fill(fid, settings)
+    create.assert_not_called()
+    assert call(store, "pending")["rows"] == []
+    assert call(store, "pending", queue="refunds_needs_ops")["rows"][0]["status"] == "needs_ops"

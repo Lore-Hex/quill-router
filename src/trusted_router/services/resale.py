@@ -86,6 +86,8 @@ def holder_key(email: str) -> str:
 def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None, settings: Settings, *, backfill: bool = False, needs_review: bool = False, payment_state: dict[str, Any] | None = None) -> dict[str, Any]:
     from trusted_router.services.reserved_tokens import reservation_position_id
 
+    if payment_state is None:
+        payment_state = current_payment_state(obj.get("payment_intent"), settings)
     metadata = obj["metadata"]
     email = (obj.get("customer_details") or {}).get("email") or obj.get("customer_email") or ""
     # Missing contact/payment data still creates the paid position. It cannot
@@ -152,11 +154,14 @@ def process_fill(fill_id: str, settings: Settings) -> None:
             refund_id = refund["id"]
             if refund.get("amount") != fill["refund_amount_cents"] or refund.get("payment_intent") != fill["payment_intent"]:
                 raise ValueError("Refund reconciliation mismatch")
-            status = "refunded" if refund.get("status") == "succeeded" else "retry"
+            status = "refunded" if refund.get("status") == "succeeded" else "needs_ops" if refund.get("status") in {"failed", "canceled"} else "retry"
     except Exception:  # noqa: BLE001 - preserve retryability without PII/error bodies
         status = "retry"
-    command("fill_finish", fill=fill_id, owner=owner, status=status, stripe_refund_id=refund_id)
-    if status != "refunded":
+    finished = command("fill_finish", fill=fill_id, owner=owner, status=status, stripe_refund_id=refund_id,
+                       failure_status=refund.get("status") if status == "needs_ops" else None)
+    if status == "needs_ops" and finished:
+        alert_failed_refund(finished, settings)
+    elif status != "refunded":
         alert_ops(settings, "NYTE resale refund needs retry", f"Fill {fill_id} is pending. Run python -m scripts.retry_nyte_resale_refunds. Never issue a second refund without reconciling this fill's Stripe metadata.")
 
 
@@ -244,11 +249,19 @@ def backfill_email(email: str, holder: str, settings: Settings) -> None:
                 continue
             # Checkout stays paid after refunds. Reconcile the original card
             # charge before importing; a refunded/disputed order needs review.
-            payment = _stripe_dict(stripe.PaymentIntent.retrieve(obj["payment_intent"], expand=["latest_charge"], api_key=settings.stripe_secret_key))
-            charge = payment.get("latest_charge") or {}
-            state = payment_state(obj["payment_intent"], charge, settings)
-            state["unpaid"] = state["unpaid"] or payment.get("status") != "succeeded"
+            state = current_payment_state(obj.get("payment_intent"), settings)
             record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True, payment_state=state)
+
+
+@_private_stripe_reads()
+def current_payment_state(payment_intent: str | None, settings: Settings) -> dict[str, Any]:
+    if not payment_intent:
+        return {"unpaid": True}
+    payment = _stripe_dict(stripe.PaymentIntent.retrieve(payment_intent, expand=["latest_charge"],
+                                                        api_key=settings.stripe_secret_key))
+    state = payment_state(payment_intent, payment.get("latest_charge"), settings)
+    state["unpaid"] = state["unpaid"] or payment.get("status") != "succeeded"
+    return state
 
 
 def payment_state(payment_intent: str, charge: Any, settings: Settings) -> dict[str, Any]:
@@ -277,21 +290,37 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     if not payment_intent and obj.get("charge"):
         charge = _stripe_dict(stripe.Charge.retrieve(obj["charge"], api_key=settings.stripe_secret_key))
         payment_intent = charge.get("payment_intent")
-    if not payment_intent or not command("payment", payment_intent=payment_intent):
+    if not payment_intent:
         return False
-    if event["type"].startswith("charge.dispute."):
+    if event["type"] in {"refund.failed", "refund.updated", "refund.created", "charge.refund.updated"}:
+        refund = {**obj, "payment_intent": payment_intent,
+                  "status": "failed" if event["type"] == "refund.failed" else obj.get("status")}
+        if refund["status"] in {"failed", "canceled"}:
+            reopened = command("refund_failed", refund=refund)
+            if reopened:
+                alert_failed_refund(reopened, settings)
+            return bool(reopened or command("payment", payment_intent=payment_intent)) or (obj.get("metadata") or {}).get("kind") == "reserved_tokens_2027"
+        if refund["status"] not in {"pending", "succeeded", "requires_action"}:
+            return False
+        # Use the signed event itself: a successful early refund must survive
+        # even if a subsequent charge read is stale or temporarily unavailable.
+        state = {"amount_refunded": refund["amount"], "refunds": [refund]}
+    elif event["type"].startswith("charge.dispute."):
         state = {"disputed": True}
     else:
         if event["type"] == "charge.refunded":
             charge = obj
-        if charge is None:
-            payment = _stripe_dict(stripe.PaymentIntent.retrieve(payment_intent, expand=["latest_charge"],
-                                                                 api_key=settings.stripe_secret_key))
-            charge = payment.get("latest_charge")
         state = payment_state(payment_intent, charge, settings)
-    command("reconcile_payment", payment_intent=payment_intent, payment_state=state)
-    return True
+    position = command("reconcile_payment", payment_intent=payment_intent, payment_state=state)
+    # Unmapped evidence is still durable. Only intercept generic billing when
+    # this is a known NYTE payment; unrelated payments retain their old handler.
+    return bool(position) or (obj.get("metadata") or {}).get("kind") == "reserved_tokens_2027"
 
+
+def alert_failed_refund(fill: dict[str, Any], settings: Settings) -> None:
+    alert_ops(settings, "NYTE resale refund failed after issuance",
+              f"Fill {fill['id']}, Stripe refund {fill['stripe_refund_id']} needs ops reconciliation. "
+              "Automatic re-issuance is blocked. Inspect python -m scripts.retry_nyte_resale_refunds --needs-ops.")
 
 
 def _stripe_dict(value: Any) -> dict[str, Any]:

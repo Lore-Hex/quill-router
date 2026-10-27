@@ -204,3 +204,105 @@ def test_nyte_completed_legacy_notification_import_is_historical(store: Store, u
     result = call(store, "purchase", position=p, event_id="evt_" + buyer, allocate=True)
     assert result["fills"] == [] and result["new_lots"] == 2
     assert call(store, "position", position=seller)["sold_lots"] == 0
+
+
+@pytest.mark.parametrize("state", [{"amount_refunded": 100}, {"disputed": True}])
+def test_nyte_adverse_before_position_is_durable_and_blocks_purchase(store: Store, unique: str, state: dict, monkeypatch) -> None:
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    listing(store, seller)
+    monkeypatch.setattr(resale, "STORE", store)
+    early = {"id": "evt_early_" + unique, "type": "charge.dispute.created" if state.get("disputed") else "refund.created",
+             "data": {"object": {"id": "re_" + unique, "payment_intent": "pi_" + buyer, "amount": 100,
+                                 "status": "succeeded", "metadata": {"kind": "reserved_tokens_2027"}}}}
+    assert resale.reconcile_payment_event(early, Settings(environment="test", resale_enabled=True))
+    assert call(store, "payment", payment_intent="pi_" + buyer) == {}
+    # Out-of-order healthy evidence cannot erase the earlier adverse event.
+    call(store, "reconcile_payment", payment_intent="pi_" + buyer, payment_state={"amount_refunded": 0})
+    result = purchase(store, buyer, lots=1, allocate=True)
+    assert result["status"] == "needs_review" and result["payment_review"]
+    assert result["fills"] == [] and result["new_lots"] == 1
+    with pytest.raises(ValueError, match="review"):
+        listing(store, buyer, lots=1)
+    assert call(store, "position", position=seller)["sold_lots"] == 0
+    assert purchase(store, buyer, lots=1, allocate=True)["status"] == "needs_review"
+
+
+@pytest.mark.parametrize("path", ["webhook_replay", "historical_import"])
+def test_nyte_old_purchase_checks_current_stripe_before_held(store: Store, unique: str, monkeypatch, path: str) -> None:
+    from types import SimpleNamespace
+
+    from tests.test_reserved_tokens import event
+    from trusted_router.config import Settings
+    from trusted_router.services import resale, reserved_tokens
+    obj = event()["data"]["object"]
+    obj.update(id="cs_" + unique, payment_intent="pi_" + unique)
+    store.claim_reserved_notification(obj["id"], "old", now=100)
+    store.finish_reserved_notification(obj["id"], "old", sent=True)
+    monkeypatch.setattr(resale, "STORE", store)
+    monkeypatch.setattr(reserved_tokens, "STORE", store)
+    observed = []
+    def retrieve(payment, **kwargs):
+        observed.append(payment)
+        return {"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": obj["amount_total"]}}
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
+    settings = Settings(environment="test", resale_enabled=True, stripe_secret_key="sk_test_fixture")  # noqa: S106
+    if path == "webhook_replay":
+        reserved_tokens.handle_reservation_event({"id": "evt_" + unique, "type": "checkout.session.completed", "data": {"object": obj}}, settings)
+    else:
+        resale.record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True)
+    assert observed == [obj["payment_intent"]]
+    p = call(store, "position", position=obj["id"])
+    assert p["status"] == "needs_review" and p["allocation_status"] == "historical"
+    with pytest.raises(ValueError, match="review"):
+        call(store, "list", position=obj["id"], holder=p["holder"], lots=1, request_id="list")
+
+
+@pytest.mark.parametrize("failure", ["failed", "canceled"])
+def test_nyte_successful_refund_later_fails_without_reissuance(store: Store, unique: str, monkeypatch, failure: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    def queued_ids(queue: str = "refunds") -> list[str]:
+        ids: list[str] = []
+        cursor = None
+        seen: set[str] = set()
+        while True:
+            page = call(store, "pending", queue=queue, cursor=cursor)
+            ids.extend(row["id"] for row in page["rows"])
+            cursor = page["cursor"]
+            if not cursor:
+                return ids
+            assert cursor not in seen
+            seen.add(cursor)
+
+    before_refunds, before_ops = queued_ids(), queued_ids("refunds_needs_ops")
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    listing(store, seller)
+    fid = purchase(store, buyer, lots=1, allocate=True)["fills"][0]
+    call(store, "fill_claim", fill=fid, owner="original")
+    call(store, "fill_finish", fill=fid, owner="original", status="refunded", stripe_refund_id="re_" + unique)
+    assert queued_ids() == before_refunds
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": 95, "status": failure}
+    for altered in ({"id": "re_unknown_" + unique}, {"payment_intent": "pi_other"}, {"amount": 94}, {"status": "succeeded"}):
+        assert call(store, "refund_failed", refund={**refund, **altered}) == {}
+    for _ in range(2):
+        reopened = call(store, "refund_failed", refund=refund)
+        assert reopened["status"] == "needs_ops" and reopened["stripe_refund_id"] == refund["id"]
+    assert queued_ids("refunds_needs_ops") == [*before_ops, fid]
+    assert queued_ids() == before_refunds
+    # A stale success writer cannot undo the adverse event, even with its old owner.
+    assert call(store, "fill_finish", fill=fid, owner="original", status="refunded") == {}
+    assert call(store, "fill_claim", fill=fid, owner="another", now=REFUND_WINDOW * 2) == {}
+    monkeypatch.setattr(resale, "STORE", store)
+    create = Mock(side_effect=AssertionError("Needs-ops fill issued another refund"))
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    resale.process_fill(fid, Settings(environment="test"))
+    create.assert_not_called()

@@ -99,7 +99,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         p["listed_lots"] = 0
         put("nyte_position", p["session_id"], p)
 
-    def reconcile(p: Row, state: Row) -> None:
+    def remember_payment_review(payment: str, state: Row) -> Row:
         # Stripe may deliver charge.refunded before the refund worker's final
         # commit. Match Stripe's refund to the durable fill, not its lease/status.
         own_refunds = 0
@@ -109,18 +109,32 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             if not fid or fid in seen:
                 continue
             fill = get("nyte_fill", fid)
-            if (fill and fill["payment_intent"] == p["payment_intent"]
-                    and refund.get("payment_intent") == p["payment_intent"]
+            if (fill and fill["payment_intent"] == payment
+                    and refund.get("payment_intent") == payment
                     and refund.get("amount") == fill["refund_amount_cents"]
-                    and refund.get("status") in {"pending", "succeeded"}
+                    and refund.get("status") in {"pending", "succeeded", "requires_action"}
                     and refund.get("id")
                     and fill.get("stripe_refund_id") in {None, refund["id"]}):
                 own_refunds += refund["amount"]
                 seen.add(fid)
-        if state.get("disputed") or state.get("unpaid") or state.get("amount_refunded", 0) > own_refunds:
+        evidence = get("nyte_payment_review", payment)
+        external = max(0, state.get("amount_refunded", 0) - own_refunds)
+        if state.get("disputed") or state.get("unpaid") or external:
+            evidence.update(disputed=bool(evidence.get("disputed") or state.get("disputed")),
+                            unpaid=bool(evidence.get("unpaid") or state.get("unpaid")),
+                            external_refund_cents=max(evidence.get("external_refund_cents", 0), external),
+                            observed_at=now)
+            put("nyte_payment_review", payment, evidence)
+        return evidence
+
+    def reconcile(p: Row, state: Row) -> None:
+        if remember_payment_review(p.get("payment_intent") or "missing:" + p["session_id"], state):
             block_position(p)
 
     if op == "reconcile_payment":
+        # Persist even before checkout creates the payment-to-position mapping.
+        # Healthy/stale observations cannot erase previously observed adversity.
+        remember_payment_review(c["payment_intent"], c["payment_state"])
         owner = get("nyte_payment", c["payment_intent"])
         if not owner:
             return {}
@@ -157,15 +171,14 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             p["purchase_completed_at"] = notification.get("purchase_completed_at", c["position"].get("purchase_completed_at"))
         if c["position"].get("status") == "needs_review":
             block_position(p)
-        if c.get("payment_state"):
-            reconcile(p, c["payment_state"])
+        reconcile(p, c.get("payment_state") or {})
         put("nyte_event", c["event_id"], {"session_id": session})
         put("nyte_position", session, p)
         if p["allocation_status"] != "pending" or c.get("backfill"):
             p.setdefault("event_id", c["event_id"])
             return p
         remaining = p["lots"]
-        if c.get("allocate"):
+        if c.get("allocate") and p["status"] == "held":
             queue = "grade:" + p["grade"]
             while remaining:
                 key = get("nyte_queue", queue).get("head")
@@ -282,7 +295,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
 
     if op == "pending":
         queue = c.get("queue", "refunds")
-        kind = "nyte_fill" if queue == "refunds" else "nyte_refund_request"
+        kind = "nyte_fill" if queue in {"refunds", "refunds_needs_ops"} else "nyte_refund_request"
         key = c.get("cursor") or get("nyte_queue", queue).get("head")
         rows: list[Row] = []
         while key and len(rows) < 100:
@@ -291,9 +304,35 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             key = row.get("next")
         return {"rows": rows, "cursor": key}
 
+    def needs_ops(fill: Row, reason: str) -> Row:
+        if fill["status"] != "needs_ops":
+            if fill["status"] != "refunded":
+                queue_remove("nyte_fill", "refunds", fill["id"], fill)
+            queue_append("nyte_fill", "refunds_needs_ops", fill["id"], fill)
+        fill.update(status="needs_ops", failure_status=reason, owner=None, lease_until=0)
+        put("nyte_fill", fill["id"], fill)
+        return fill
+
+    if op == "refund_failed":
+        refund = c["refund"]
+        rid = refund.get("id")
+        if not rid or refund.get("status") not in {"failed", "canceled"}:
+            return {}
+        indexed = get("nyte_refund", rid)
+        # Older fills predate the index; Stripe metadata supplies an exact-key
+        # fallback, but never authorizes an unknown or mismatched refund ID.
+        fid = indexed.get("fill") or (refund.get("metadata") or {}).get("nyte_fill_id")
+        fill = get("nyte_fill", fid) if fid else {}
+        if (not fill or fill.get("stripe_refund_id") != rid
+                or fill["payment_intent"] != refund.get("payment_intent")
+                or fill["refund_amount_cents"] != refund.get("amount")):
+            return {}
+        put("nyte_refund", rid, {"fill": fid})
+        return needs_ops(fill, refund["status"])
+
     if op == "fill_claim":
         fill = get("nyte_fill", c["fill"])
-        if not fill or fill["status"] == "refunded" or fill.get("lease_until", 0) > now:
+        if not fill or fill["status"] in {"refunded", "needs_ops"} or fill.get("lease_until", 0) > now:
             return {}
         fill.update(owner=c["owner"], lease_until=now + 120)
         fill.setdefault("first_attempt_at", now)
@@ -302,9 +341,18 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
 
     if op == "fill_finish":
         fill = get("nyte_fill", c["fill"])
-        if fill.get("owner") != c["owner"]:
+        if fill.get("owner") != c["owner"] or fill["status"] == "needs_ops":
             return {}
-        fill.update(status=c["status"], stripe_refund_id=c.get("stripe_refund_id") or fill.get("stripe_refund_id"), lease_until=0)
+        rid = c.get("stripe_refund_id") or fill.get("stripe_refund_id")
+        if rid:
+            indexed = get("nyte_refund", rid)
+            if indexed and indexed["fill"] != c["fill"]:
+                raise ValueError("Stripe refund already belongs to another fill")
+            put("nyte_refund", rid, {"fill": c["fill"]})
+        fill.update(stripe_refund_id=rid, lease_until=0)
+        if c["status"] == "needs_ops":
+            return needs_ops(fill, c["failure_status"])
+        fill["status"] = c["status"]
         if c["status"] == "refunded":
             queue_remove("nyte_fill", "refunds", c["fill"], fill)
         put("nyte_fill", c["fill"], fill)
