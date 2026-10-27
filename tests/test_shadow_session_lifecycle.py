@@ -801,8 +801,8 @@ def test_marker_retry_persists_while_workspace_is_unready(owned_inventory):
     assert not store.prepare_session(svc.journal.boot)
     assert store.session_ready() and not store.session_ready(workspace=True)
     assert store.read_runtime_stop() is None
-    svc.runtime_stop.outcome('execute_streaming_sql', 'DeadlineExceeded')
-    svc.runtime_stop.outcome('commit', 'Cancelled')
+    for method, status in (('execute_streaming_sql', 'DeadlineExceeded'), ('commit', 'Cancelled')) * 2:
+        svc.runtime_stop.outcome(method, status)
     assert svc.runtime_stop.tripped is not None and not svc.policy_enabled()
     svc.runtime_stop.retry()
     assert svc.runtime_stop.persisted
