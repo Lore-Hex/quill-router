@@ -13,6 +13,7 @@ from scripts.pricing.providers import (
     deepinfra,
     novita,
     scaleway,
+    telnyx,
     together,
     xiaomi,
 )
@@ -30,6 +31,18 @@ class Case:
 
 
 _CASES = [
+    Case("telnyx", "meta-llama/llama-3.1-70b-instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",
+         datetime(2026, 11, 2, tzinfo=UTC), "meta-llama/llama-3.3-70b-instruct"),
+    Case("telnyx", "meta-llama/llama-3.1-8b-instruct", "meta-llama/Meta-Llama-3.1-8B-Instruct",
+         datetime(2026, 11, 2, tzinfo=UTC), "meta-llama/llama-3.3-70b-instruct"),
+    Case("telnyx", "google/gemma-2b-it", "google/gemma-2b-it",
+         datetime(2026, 11, 2, tzinfo=UTC), "meta-llama/llama-3.3-70b-instruct"),
+    Case("telnyx", "minimax/minimax-m2.7", "MiniMaxAI/MiniMax-M2.7",
+         datetime(2026, 11, 2, tzinfo=UTC), "minimax/minimax-m3"),
+    Case("telnyx", "moonshotai/kimi-k2.5", "moonshotai/Kimi-K2.5",
+         datetime(2026, 11, 2, tzinfo=UTC), "moonshotai/kimi-k2.6"),
+    Case("telnyx", "z-ai/glm-5.1", "zai-org/GLM-5.1-FP8",
+         datetime(2026, 11, 2, tzinfo=UTC), "z-ai/glm-5.3-flash"),
     Case("together", "minimax/minimax-m3", "MiniMaxAI/MiniMax-M3",
          datetime(2026, 11, 6, tzinfo=UTC), "minimax/minimax-m3.1-flash"),
     Case("together", "thinkingmachines/inkling", "thinkingmachines/Inkling",
@@ -78,6 +91,7 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "telnyx": telnyx.MANIFEST_PATH,
     "together": together.MANIFEST_PATH,
     "crusoe": crusoe.MANIFEST_PATH,
     "arcee": arcee.MANIFEST_PATH,

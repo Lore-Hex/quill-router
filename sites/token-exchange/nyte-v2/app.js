@@ -4,7 +4,7 @@ const nav=document.getElementById('nav'), menu=document.getElementById('menuBtn'
 menu.addEventListener('click',()=>{const open=nav.classList.toggle('open');menu.setAttribute('aria-expanded',String(open));});
 document.addEventListener('keydown',e=>{if(e.key==='Escape' && nav.classList.contains('open')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');menu.focus();}});
 document.addEventListener('click',e=>{if(!e.target.closest('header')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');}});
-const active={home:'/',api:'/confidential',cowork:'/trusted-cowork',sup:'/suppliers',providers:'/providers',index:'/index'}[document.body.dataset.nytePage];
+const active={home:'/',api:'/confidential',cowork:'/trusted-cowork',sup:'/suppliers',providers:'/providers',index:'/index',buy:'/buy'}[document.body.dataset.nytePage];
 document.querySelectorAll('nav a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');}});
 const dialog=document.getElementById('m-deck');
 document.querySelectorAll('[data-open="deck"]').forEach(b=>b.addEventListener('click',()=>dialog.showModal()));
@@ -139,6 +139,23 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   update();
 });
 
+/* Shared anonymous catalogue transport. Model IDs come from NYTE's CORS-enabled API;
+   the homepage count and provider catalogue retain their existing public origin. */
+window.NYTECatalog = {
+  async read(endpoint) {
+    const origin = endpoint === 'models' ? 'https://api.nytokenexchange.com' : 'https://trustedrouter.com';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${origin}/v1/${endpoint}`, {
+        mode:'cors', credentials:'omit', cache:'no-store', signal:controller.signal,
+      });
+      if (!response.ok) throw new Error('Catalogue unavailable');
+      return await response.json();
+    } finally { clearTimeout(timeout); }
+  },
+};
+
 /* Read the public catalogue at runtime; never substitute a build-time snapshot. */
 (() => {
   'use strict';
@@ -149,20 +166,12 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   const count = value => Number.isSafeInteger(value) && value >= 0;
   const clear = element => { element.textContent = '—'; };
   const read = async (endpoint, element, select) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch(`https://trustedrouter.com/v1/${endpoint}`, {
-        mode: 'cors', credentials: 'omit', cache: 'no-store', signal: controller.signal,
-      });
-      if (!response.ok) throw new Error('Catalogue unavailable');
-      const value = select(await response.json());
+      const value = select(await window.NYTECatalog.read(endpoint));
       if (!count(value)) throw new Error('Invalid catalogue count');
       element.textContent = value.toLocaleString('en-US');
     } catch {
       clear(element);
-    } finally {
-      clearTimeout(timeout);
     }
   };
   let busy = false;
