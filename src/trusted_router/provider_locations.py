@@ -32,6 +32,18 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "hixtube": InferenceLocations(
+        locations=("Finland (EU)",),
+        scope="Current DeepSeek inference runs on a single Verda Finland GPU node rented through Spheron.",
+        routing="No provider-side geographic failover is configured. Future capacity changes require a new location review.",
+        provider_pinning="The current endpoint has one serving location; no per-request region selector.",
+        trustedrouter_pinning="Select provider.only=[hixtube] with allow_fallbacks=false; this does not pin TrustedRouter gateway geography.",
+        declaration="Finland inference, operator-declared and checked against the hosting allocation; not hardware-attested location.",
+        evidence="Operator hosting allocation and live catalog reviewed October 27, 2026; inference location only.",
+        reviewed_on="2026-10-27",
+        sources=(("Serving location and security scope", "https://hixtube.com/#security"),
+                 ("Live provider catalog", "https://api.hixtube.com/v1/models")),
+    ),
     "abliteration": InferenceLocations(
         locations=("United States",),
         scope="Provider-declared default inference location; EU residency is separately arranged.",
