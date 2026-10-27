@@ -83,7 +83,7 @@ resource "google_compute_url_map" "control" {
       service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-public-backend"
     }
     path_rule {
-      paths   = ["/support/inquiry", "/trustedos/inquiry", "/token-exchange/brief"]
+      paths   = ["/support/inquiry", "/trustedos/inquiry", "/token-exchange/brief", "/token-exchange/events"]
       service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
     }
     path_rule {
