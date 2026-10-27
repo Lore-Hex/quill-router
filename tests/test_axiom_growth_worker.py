@@ -1,6 +1,7 @@
 """Continuity, replay, failure and privacy contracts for the off-path worker."""
 import copy
 import datetime as dt
+import re
 
 import httpx
 import pytest
@@ -309,6 +310,42 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     for name in m.BROWSER_EVENTS | m.CONVERSION_EVENTS:
         assert f'jsonPayload.event="{name}"' in value
     assert 'resource.type="cloud_run_revision"' in value
+
+
+def test_control_plane_nyte_event_reaches_the_sanitized_worker_projection(monkeypatch):
+    from scripts.axiom_growth.provision import source_filter
+
+    sources = object.__new__(Sources)
+    sources.project = 'quill-cloud-proxy'
+    monkeypatch.setattr(Sources, 'query', lambda self, apl, start, end:
+                        [{'n': 0}] if '| summarize n=count()' in apl else [])
+    entry = {'timestamp': (NOW - dt.timedelta(minutes=1)).isoformat(), 'jsonPayload': {
+        'event': 'acquisition.nyte.buy_completed', 'anonymous_fingerprint': 'a' * 64,
+        'site_domain': 'nytokenexchange.com', 'page_path': '/buy',
+        'unit': 'blocks', 'underlying_kind': 'facility', 'grade': 'none',
+        'email': 'private@example.com', 'prompt': 'private', 'body': {'private': 'data'},
+    }}
+
+    def google(self, method, url, **kwargs):
+        body = kwargs['json']
+        services = set(re.findall(r'resource.labels.service_name="([^"]+)"', body['filter']))
+        assert services == {'trusted-router', 'trusted-router-public', 'trusted-router-control'}
+        assert services == set(re.findall(r'resource.labels.service_name="([^"]+)"', source_filter()))
+        assert set(re.findall(r'jsonPayload.event="([^"]+)"', body['filter'])) == m.BROWSER_EVENTS
+        assert body['resourceNames'] == [
+            'projects/quill-cloud-proxy/locations/global/buckets/tr-growth-source/views/_AllLogs',
+        ]
+        assert 'timestamp>=' in body['filter'] and 'timestamp<' in body['filter']
+        return httpx.Response(200, json={'entries': [entry]})
+
+    monkeypatch.setattr(Sources, 'google', google)
+    rows = sources.events(NOW - dt.timedelta(minutes=5), NOW)
+    assert len(rows) == 1
+    assert rows[0]['event'] == 'acquisition.nyte.buy_completed'
+    assert rows[0]['page_path'] == '/buy'
+    assert rows[0]['source'] == 'cloud_logging'
+    assert rows[0]['underlying_kind'] == 'facility'
+    assert not {'email', 'prompt', 'body'} & rows[0].keys()
 
 
 def onboarding(name='succeeded', **kwargs):

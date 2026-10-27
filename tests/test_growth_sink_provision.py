@@ -1,8 +1,22 @@
 import json
+import re
 
 import pytest
 
+from scripts.axiom_growth import model as growth_model
 from scripts.axiom_growth import provision
+
+
+def test_sink_includes_control_plane_without_broadening_event_allowlist():
+    value = provision.source_filter()
+    assert set(re.findall(r'resource.labels.service_name="([^"]+)"', value)) == {
+        "trusted-router-public", "trusted-router-control", "trusted-router",
+    }
+    assert set(re.findall(r'jsonPayload.event="([^"]+)"', value)) == (
+        growth_model.BROWSER_EVENTS | growth_model.CONVERSION_EVENTS
+    )
+    assert 'jsonPayload.event="acquisition.nyte.buy_completed"' in value
+    assert '=~' not in value
 
 
 def test_matching_sink_does_not_require_update_permission(monkeypatch, capsys):
