@@ -62,6 +62,13 @@ def test_published_catalog_has_one_qwen_listing_with_all_existing_routes() -> No
         for endpoint in endpoints_for_model(alias):
             assert (endpoint.provider, endpoint.usage_type, endpoint.upstream_id) in routes
             assert MODEL_ENDPOINTS[endpoint.id] == endpoint
+            # A copied route carries what the alias's route is reviewed to
+            # accept: a tools request naming the canonical id must route.
+            suffix = "byok" if endpoint.is_byok else "prepaid"
+            copy = MODEL_ENDPOINTS[f"{canonical}@{endpoint.provider}/{suffix}"]
+            if copy.upstream_id == endpoint.upstream_id:
+                assert copy.supported_parameters == endpoint.supported_parameters
+                assert copy.input_modalities == endpoint.input_modalities
 
 
 def test_published_catalog_lists_no_ids_differing_only_in_case() -> None:
@@ -79,3 +86,20 @@ def test_published_cache_read_never_exceeds_the_headline_prompt() -> None:
         pricing = row["pricing"]
         if "input_cache_read" in pricing and "prompt" in pricing:
             assert float(pricing["input_cache_read"]) <= float(pricing["prompt"]), row["id"]
+
+
+def test_headline_cache_read_is_the_headline_routes_own() -> None:
+    from trusted_router.catalog import MODELS, endpoints_for_model, model_to_openrouter_shape
+    from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
+
+    # Nscale is the cheapest prompt and states no cache rate; Telnyx's cache
+    # rate (above Nscale's prompt) must not be paired with Nscale's prompt.
+    model = MODELS["qwen/qwen3-235b-a22b"]
+    pricing = model_to_openrouter_shape(model)["pricing"]
+    assert "input_cache_read" not in pricing
+    # Where the headline route states one, it is published.
+    claude = model_to_openrouter_shape(MODELS["anthropic/claude-sonnet-4.5"])["pricing"]
+    cheapest = min(endpoints_for_model("anthropic/claude-sonnet-4.5"),
+                   key=lambda e: e.prompt_price_microdollars_per_million_tokens)
+    cached = cheapest.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+    assert claude["input_cache_read"] == microdollars_per_million_tokens_to_token_decimal(cached)
