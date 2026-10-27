@@ -23,10 +23,6 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from trusted_router.billing_snapshot import Eligibility, exclusion
-from trusted_router.schemas import GatewayAuthorizeRequest
-from trusted_router.services.async_settle import ORDINARY_PARAMETERS
-
 SESSION_TTL_SECONDS = 600
 
 # The 200's members written from the first candidate
@@ -41,107 +37,40 @@ ESTIMATE_MEMBERS = frozenset({"estimated_cost", "estimated_cost_microdollars"})
 # §2.2): built from the candidates kept, sorted by endpoint id, so a re-rank
 # that keeps the same set leaves them as they were, and one that changes the
 # set (fallbacks off, a remembered endpoint) can change them in kind (§4.4).
-# Admission is off in the goldens, so an answer carries shape A or B only.
+# Admission is off in the goldens, so an answer carries no ticket.
 ASYNC_MEMBERS = frozenset({
     "async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket", "settlement_status_url",
 })
-SHAPE_A, SHAPE_B = ("async_eligible",), ("async_eligible", "billing_snapshot", "billing_snapshot_hash")
 _MISSING = object()
 
-# The billing snapshot build_snapshot freezes from these candidates (its
-# model_dump, mode json), or None where it refuses one of them.
-SnapshotOf = Callable[[Sequence[str]], "dict[str, Any] | None"]
-# The facts async_settle.authorize_additions reads besides the body and the
-# candidates, as the case's world and its authorization row hold them:
-# replay, typed, federated, ticket_authority, admission_enabled, and the
-# authorization's usage_type, settlement, app_markup_basis_points,
-# custom_model_markup_basis_points, receipt_fee_basis_points, custom_model,
-# user_model, tool_cost and native_batch.
-AsyncFacts = dict[str, Any]
 
-
-def canonical(snapshot: Any) -> bytes:
-    """billing_snapshot.canonical_bytes over a snapshot's JSON form: sorted
+def canonical(value: Any) -> bytes:
+    """billing_snapshot.canonical_bytes's encoding of a JSON value: sorted
     keys, compact, ASCII, so true, 1.0 and 1 are three different values."""
-    return json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
                       allow_nan=False).encode("ascii")
 
 
-def request_exclusion(body: dict[str, Any], facts: AsyncFacts) -> str | None:
-    """Why authorize_additions answers shape A whatever the candidates, or
-    None: its checks before any snapshot (replay, an undeclared member, the
-    route type, input_modalities present, a requested parameter outside the
-    ordinary set), billing_snapshot.exclusion over the Eligibility it builds,
-    and the runtime's ticket authority. Admission must be off (shape C is
-    not compared)."""
-    if facts["admission_enabled"]:
-        raise AssertionError("admission on: the async members carry a ticket")
-    request = GatewayAuthorizeRequest.model_validate(body)
-    if facts["replay"]:
-        return "replay"
-    if request.model_extra:
-        return "undeclared_member"
-    if request.route_type not in {"chat.completions", "responses"}:
-        return "unsupported_route"
-    if "input_modalities" in request.model_fields_set:
-        return "input_modalities"
-    if set(request.requested_parameters or ()) - ORDINARY_PARAMETERS:
-        return "requested_parameters"
-    reason = exclusion(Eligibility(
-        typed=facts["typed"], usage_type=facts["usage_type"],
-        authority="federated" if facts["federated"] else facts["settlement"],
-        route_type=request.route_type, streamed=request.stream is True, service_tier=request.service_tier,
-        app_markup=facts["app_markup_basis_points"], custom_markup=facts["custom_model_markup_basis_points"],
-        receipt_fee=max(int(request.inference_receipt), facts["receipt_fee_basis_points"]),
-        custom_model=facts["custom_model"], user_model=facts["user_model"], tool_cost=facts["tool_cost"],
-        native_batch=facts["native_batch"], partner=not request.model.startswith(("openai/", "anthropic/")),
-    ))
-    if reason is not None:
-        return reason
-    return None if facts["ticket_authority"] else "ticket_authority"
+def async_members(data: dict[str, Any]) -> dict[str, Any]:
+    """An answer's async-v1 members, in their order."""
+    return {k: v for k, v in data.items() if k in ASYNC_MEMBERS}
 
 
-def _async_shape(data: dict[str, Any]) -> tuple[str, ...]:
-    return tuple(k for k in data if k in ASYNC_MEMBERS)
-
-
-def check_async(name: str, label: str, data: dict[str, Any], ids: Sequence[str], eligible: bool,
-                snapshot_of: SnapshotOf) -> None:
-    """One answer's async members against its own candidates: shape B with
-    exactly the snapshot they freeze (compared as canonical bytes) and the
-    hash of the snapshot it carries, when the request is eligible and they
-    freeze one; shape A otherwise; async_eligible false either way."""
-    shape = _async_shape(data)
-    if shape not in (SHAPE_A, SHAPE_B) or data["async_eligible"] is not False:
-        raise AssertionError(f"{name}: the {label} answer's async members are not shape A or B")
-    expected = snapshot_of(ids) if eligible else None
-    if expected is None:
-        if shape != SHAPE_A:
-            raise AssertionError(f"{name}: the {label} answer is shape B, where Python answers shape A")
-        return
-    if shape != SHAPE_B:
-        raise AssertionError(f"{name}: the {label} answer is shape A, where its candidates freeze a snapshot")
-    supplied = canonical(data["billing_snapshot"])
-    if supplied != canonical(expected):
-        raise AssertionError(f"{name}: the {label} billing_snapshot is not its candidates' snapshot")
-    if data["billing_snapshot_hash"] != hashlib.sha256(supplied).hexdigest():
+def check_async(name: str, label: str, data: dict[str, Any], expected: dict[str, Any]) -> None:
+    """An answer's async members are exactly ``expected``, Python's own
+    additions for it (async_settle.authorize_additions over the authorization
+    it wrote and its own candidates): the same members in the same order and
+    the same canonical bytes, with any billing_snapshot_hash the sha256 of
+    the canonical bytes of the snapshot beside it. Admission is off in the
+    goldens: a ticket is never compared."""
+    if "settlement_ticket" in expected:
+        raise AssertionError(f"{name}: Python's {label} additions carry a ticket (admission on)")
+    supplied = async_members(data)
+    if "billing_snapshot" in supplied and supplied.get("billing_snapshot_hash") != hashlib.sha256(
+            canonical(supplied["billing_snapshot"])).hexdigest():
         raise AssertionError(f"{name}: the {label} billing_snapshot_hash is not its snapshot's")
-
-
-def check_warm_async(name: str, body: dict[str, Any], cold: dict[str, Any], warm: dict[str, Any],
-                     cold_ids: Sequence[str], warm_ids: Sequence[str], snapshot_of: SnapshotOf | None,
-                     facts: AsyncFacts | None) -> None:
-    """A warm answer whose candidate set differs from the cold one: each
-    answer's async members must be Python's for its own candidates, the
-    request's eligibility decided from the request and the case's facts
-    (request_exclusion), never from either answer."""
-    if not _async_shape(cold) and not _async_shape(warm):
-        return
-    if snapshot_of is None or facts is None:
-        raise AssertionError(f"{name}: async members, and no way to rebuild them")
-    eligible = request_exclusion(body, facts) is None
-    check_async(name, "cold", cold, cold_ids, eligible, snapshot_of)
-    check_async(name, "warm", warm, warm_ids, eligible, snapshot_of)
+    if list(supplied) != list(expected) or canonical(supplied) != canonical(expected):
+        raise AssertionError(f"{name}: the {label} answer's async members are not Python's for its candidates")
 
 
 def provider_orders(body: dict[str, Any]) -> bool:
@@ -192,18 +121,24 @@ def expected_candidates(body: dict[str, Any], cold: Sequence[str], sessions: Seq
 
 def affinity_class(name: str, body: dict[str, Any], cold_response: str, warm_response: str,
                    sessions: Sequence[tuple[str, float]], model_of: Callable[[str], str],
-                   snapshot_of: SnapshotOf | None = None, async_facts: AsyncFacts | None = None) -> str:
+                   expected_async: tuple[dict[str, Any], dict[str, Any]] | None = None) -> str:
     """The class Python's warm answer compares as against its cold one, or
     an AssertionError for an answer that is not rank's re-rank of the cold
     order with nothing else changed. An async-v1 answer's members may change
-    only with the candidate set, and only to the warm candidates' own
-    (check_warm_async, which needs snapshot_of and async_facts)."""
+    only with the candidate set; both answers' members are checked against
+    Python's own additions for each (expected_async, cold then warm), always."""
     cold, warm = json.loads(cold_response)["data"], json.loads(warm_response)["data"]
     cold_ids = [c["endpoint_id"] for c in cold["route_candidates"]]
     warm_ids = [c["endpoint_id"] for c in warm["route_candidates"]]
     expected = expected_candidates(body, cold_ids, sessions, model_of)
     if warm_ids != expected:
         raise AssertionError(f"{name}: Python's candidates {warm_ids} are not rank's order {expected} over {cold_ids}")
+    if expected_async is None:
+        if async_members(cold) or async_members(warm):
+            raise AssertionError(f"{name}: async members, and no way to rebuild them")
+    else:
+        check_async(name, "cold", cold, expected_async[0])
+        check_async(name, "warm", warm, expected_async[1])
     if warm_ids == cold_ids:
         if warm_response != cold_response:
             raise AssertionError(f"{name}: the same order, other bytes")
@@ -214,6 +149,4 @@ def affinity_class(name: str, body: dict[str, Any], cold_response: str, warm_res
     changed = {k for k in set(cold) | set(warm) if cold.get(k, _MISSING) != warm.get(k, _MISSING)}
     if not changed <= allowed:
         raise AssertionError(f"{name}: the session changed {sorted(changed - allowed)}")
-    if set_changed:
-        check_warm_async(name, body, cold, warm, cold_ids, warm_ids, snapshot_of, async_facts)
     return "affinity_warm"

@@ -9,6 +9,7 @@ refused."""
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -35,12 +36,11 @@ def _model_of(endpoint_id: str) -> str:
 
 
 def _classify(case: dict[str, Any], warm_response: str, sessions: list[list[Any]] | None = None,
-              snapshot_of: affinity_rule.SnapshotOf | None = None) -> str:
+              expected_async: tuple[dict[str, Any], dict[str, Any]] | None = None) -> str:
     a = case["expect"]["affinity"]
     return affinity_rule.affinity_class(
         case["name"], json.loads(case["request"]["body"]), a["cold_response"], warm_response,
-        [tuple(s) for s in (a["sessions"] if sessions is None else sessions)], _model_of, snapshot_of,
-        a.get("async_facts"))
+        [tuple(s) for s in (a["sessions"] if sessions is None else sessions)], _model_of, expected_async)
 
 
 def _reordered(case: dict[str, Any], order: list[str]) -> str:
@@ -117,132 +117,161 @@ def test_anything_but_the_first_candidates_members_is_refused() -> None:
         _classify(case, json.dumps(warm, separators=(",", ":")))
 
 
-def _async_affinity() -> tuple[dict[str, Any], affinity_rule.SnapshotOf]:
-    """The async golden's affinity case, and a snapshot rebuild for it: None
-    where the embedded routing snapshot shows build_snapshot refusing a
-    candidate (a provider Candidate refuses, or billing_valid false at the
-    case's instant), the cold answer's own snapshot for the cold set."""
+def _async_affinity(shapes: str) -> tuple[dict[str, Any], tuple[dict[str, Any], dict[str, Any]]]:
+    """An async golden affinity case by its shapes (warm_A.cold_B, say),
+    and Python's additions for its cold and warm answers: the generator
+    held each answer to authorize_additions over the authorization Python
+    wrote and that answer's candidates, so the recorded members are them."""
     vectors = json.loads(ASYNC_CASES.read_text(encoding="utf-8"))
-    (case,) = [c for c in vectors["cases"] if "affinity" in c["expect"]]
-    endpoints = {e["id"]: e for e in json.loads(vectors["snapshot_body"])["endpoints"]}
-    cold = json.loads(case["expect"]["affinity"]["cold_response"])["data"]
-
-    def billing_valid(endpoint_id: str) -> bool:
-        epochs = [e for e in endpoints[endpoint_id]["epochs"] if e["starts_at"] * 1_000_000 <= case["at_us"]]
-        return bool(epochs[-1]["billing_valid"])
-
-    def snapshot_of(ids: Any) -> dict[str, Any] | None:
-        if any(endpoints[i]["provider"] not in ("openai", "anthropic") or not billing_valid(i) for i in ids):
-            return None
-        assert sorted(ids) == sorted(c["endpoint_id"] for c in cold["route_candidates"]), ids
-        return dict(cold["billing_snapshot"])
-
-    return case, snapshot_of
+    (case,) = [c for c in vectors["cases"] if "affinity" in c["expect"] and f":async.{shapes}:" in c["name"]]
+    a = case["expect"]["affinity"]
+    return case, (affinity_rule.async_members(json.loads(a["cold_response"])["data"]),
+                  affinity_rule.async_members(json.loads(a["response"])["data"]))
 
 
 def _with_async(response: str, members: dict[str, Any]) -> str:
     """The answer with its async members replaced, in their place before tags."""
-    data = {k: v for k, v in json.loads(response)["data"].items() if k not in affinity_rule.ASYNC_MEMBERS}
+    return json.dumps({"data": _data_with(json.loads(response)["data"], members)}, separators=(",", ":"))
+
+
+def _data_with(data: dict[str, Any], members: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in data.items():
         if key == "tags":
             out.update(members)
-        out[key] = value
-    return json.dumps({"data": out}, separators=(",", ":"))
+        if key not in affinity_rule.ASYNC_MEMBERS:
+            out[key] = value
+    return out
+
+
+def _hashed(snapshot: dict[str, Any]) -> str:
+    return hashlib.sha256(affinity_rule.canonical(snapshot)).hexdigest()
 
 
 def test_async_members_change_only_with_the_candidate_set() -> None:
     """The async members are built from the candidates kept, sorted: the
     async golden's warm answer keeps another endpoint (fallbacks off) and
     changes them in kind (the G15 design's §4.4); a re-rank of the same set
-    may not change them."""
-    case, snapshot_of = _async_affinity()
+    keeps them."""
+    case, expected = _async_affinity("warm_A.cold_B")
     a = case["expect"]["affinity"]
     assert set(a["candidates"]) != set(a["cold_candidates"])
-    assert _classify(case, a["response"], snapshot_of=snapshot_of) == "affinity_warm"
+    assert _classify(case, a["response"], expected_async=expected) == "affinity_warm"
     with pytest.raises(AssertionError, match="no way to rebuild"):
         _classify(case, a["response"])
-    same_set = _affinity_cases()["pass:body.cache_affinity:warm:fallback_models"]
-    warm = json.loads(same_set["expect"]["affinity"]["response"])
+    same, same_expected = _async_affinity("warm_B.cold_B")
+    b = same["expect"]["affinity"]
+    assert set(b["candidates"]) == set(b["cold_candidates"]) and b["candidates"] != b["cold_candidates"]
+    assert _classify(same, b["response"], expected_async=same_expected) == "affinity_warm"
+    plain = _affinity_cases()["pass:body.cache_affinity:warm:fallback_models"]
+    warm = json.loads(plain["expect"]["affinity"]["response"])
     warm["data"]["async_eligible"] = False
-    with pytest.raises(AssertionError, match="changed \\['async_eligible'\\]"):
-        _classify(same_set, json.dumps(warm, separators=(",", ":")))
+    with pytest.raises(AssertionError, match="async members, and no way to rebuild them"):
+        _classify(plain, json.dumps(warm, separators=(",", ":")))
+    with pytest.raises(AssertionError, match="warm answer's async members are not Python's"):
+        _classify(plain, json.dumps(warm, separators=(",", ":")), expected_async=({}, {}))
 
 
-def test_a_warm_answers_async_members_are_its_own_candidates() -> None:
-    """With the set changed, the warm members must be Python's for the warm
-    candidates: async_eligible false, and here shape A (the remembered azure
-    endpoint is one Candidate refuses), so neither the cold snapshot nor any
-    hash may ride along."""
-    case, snapshot_of = _async_affinity()
+def test_a_warm_answers_async_members_are_pythons_for_its_candidates() -> None:
+    """The warm answer over the remembered azure endpoint, which Candidate
+    refuses: Python's additions are shape A, so neither async_eligible true,
+    nor a stray hash, nor the cold snapshot riding along passes."""
+    case, expected = _async_affinity("warm_A.cold_B")
     a = case["expect"]["affinity"]
     cold = json.loads(a["cold_response"])["data"]
     snapshot, digest = cold["billing_snapshot"], cold["billing_snapshot_hash"]
-    for members, message in (
-        ({"async_eligible": True}, "not shape A or B"),
-        ({"async_eligible": False, "billing_snapshot_hash": "0" * 64}, "not shape A or B"),
-        ({"async_eligible": False, "billing_snapshot": snapshot, "billing_snapshot_hash": digest},
-         "warm answer is shape B, where Python answers shape A"),
-    ):
-        with pytest.raises(AssertionError, match=message):
-            _classify(case, _with_async(a["response"], members), snapshot_of=snapshot_of)
-    # The warm answer itself, rebuilt by _with_async, is accepted.
-    assert _classify(case, _with_async(a["response"], {"async_eligible": False}), snapshot_of=snapshot_of) == (
-        "affinity_warm")
+    for members in ({"async_eligible": True}, {"async_eligible": False, "billing_snapshot_hash": "0" * 64},
+                    {"async_eligible": False, "billing_snapshot": snapshot, "billing_snapshot_hash": digest}):
+        with pytest.raises(AssertionError, match="warm answer's async members are not Python's"):
+            _classify(case, _with_async(a["response"], members), expected_async=expected)
 
 
-def _swapped(case: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str]]:
-    """The golden's answers the other way round: cold over the azure
-    endpoint (shape A), warm over the openai one (shape B), as a request
-    whose cheaper cold choice were azure would have them."""
+@pytest.mark.parametrize("version", [True, 1.0])
+def test_a_snapshot_is_compared_as_canonical_bytes_even_when_the_set_is_kept(version: Any) -> None:
+    """v true or 1.0 equals v 1 as a Python value, so a same-set re-rank sees
+    nothing changed; the canonical bytes differ, and the hash is recomputed
+    from them, so the retained hash fails and a recomputed one is still not
+    Python's snapshot."""
+    for shapes in ("warm_B.cold_B", "warm_A.cold_B"):
+        case, expected = _async_affinity(shapes)
+        a = case["expect"]["affinity"]
+        cold = json.loads(a["cold_response"])["data"]
+        # Over the set-keeping case, the warm answer; over the other, Python's
+        # B answer swapped in as the cold one checked against its expectation.
+        target = json.loads(a["response"])["data"] if shapes == "warm_B.cold_B" else cold
+        retyped = {**target["billing_snapshot"], "v": version}
+        assert retyped == target["billing_snapshot"]
+        label, want = ("warm", expected[1]) if shapes == "warm_B.cold_B" else ("cold", expected[0])
+        with pytest.raises(AssertionError, match=f"the {label} billing_snapshot_hash is not its snapshot's"):
+            affinity_rule.check_async(case["name"], label, {**target, "billing_snapshot": retyped}, want)
+        with pytest.raises(AssertionError, match=f"the {label} answer's async members are not Python's"):
+            affinity_rule.check_async(case["name"], label, {**target, "billing_snapshot": retyped,
+                                                            "billing_snapshot_hash": _hashed(retyped)}, want)
+    case, expected = _async_affinity("warm_B.cold_B")
+    a = case["expect"]["affinity"]
+    warm = json.loads(a["response"])["data"]
+    with pytest.raises(AssertionError, match="warm billing_snapshot_hash is not its snapshot's"):
+        _classify(case, _with_async(a["response"], {
+            "async_eligible": False, "billing_snapshot": {**warm["billing_snapshot"], "v": True},
+            "billing_snapshot_hash": warm["billing_snapshot_hash"]}), expected_async=expected)
+    with pytest.raises(AssertionError, match="warm billing_snapshot_hash is not its snapshot's"):
+        _classify(case, _with_async(a["response"], {**affinity_rule.async_members(warm),
+                                                     "billing_snapshot_hash": "0" * 64}), expected_async=expected)
+
+
+def _python_additions(*, tools: bool = False, **authorization_changes: Any) -> dict[str, Any]:
+    """Python's own authorize_additions (admission off) over the async-settle
+    tests' authorization, body and endpoint, with these changes."""
+    from tests.test_async_settle_admission import body, request
+    from tests.test_async_settle_ticket import authorization, endpoint, runtime, settings
+    from trusted_router.services.async_settle import authorize_additions
+
+    auth = authorization()
+    for name, value in authorization_changes.items():
+        setattr(auth, name, value)
+    additions: dict[str, Any] = authorize_additions(
+        request=request(runtime()), body=body(requested_parameters=["tools"]) if tools else body(),
+        authorization=auth, endpoints=[endpoint()],
+        settings=settings(async_settle_enabled=False, async_settle_protection=False),
+        typed=True, federated=False, replay=False, effective_at=None)
+    return additions
+
+
+def _answer(members: dict[str, Any]) -> dict[str, Any]:
+    return {"stage_d": {}, **members, "tags": {}}
+
+
+def test_the_check_follows_pythons_additions_not_a_reimplementation() -> None:
+    """Whatever Python's own code answers is what an answer must carry:
+    tools requested make both answers shape A (the genuine A accepted, a
+    forged B with a correct hash refused); a markup of -1, which Eligibility
+    refuses to validate, is caught by Python and answers false only; a
+    markup of false is whatever Python makes of it."""
+    eligible = _python_additions()
+    assert list(eligible) == ["async_eligible", "billing_snapshot", "billing_snapshot_hash"]
+    forged_b, false_only = _answer(eligible), _answer({"async_eligible": False})
+    for label, expected in (("tools", _python_additions(tools=True)),
+                            ("markup -1", _python_additions(app_markup_basis_points=-1))):
+        assert expected == {"async_eligible": False}, label
+        affinity_rule.check_async(label, "warm", false_only, expected)
+        with pytest.raises(AssertionError, match="warm answer's async members are not Python's"):
+            affinity_rule.check_async(label, "warm", forged_b, expected)
+    as_false = _python_additions(app_markup_basis_points=False)
+    affinity_rule.check_async("markup false", "warm", _answer(as_false), as_false)
+    other = false_only if "billing_snapshot" in as_false else forged_b
+    with pytest.raises(AssertionError, match="warm answer's async members are not Python's"):
+        affinity_rule.check_async("markup false", "warm", other, as_false)
+    # The genuine A/A pair over the golden's candidates, swapped round (cold
+    # over azure, warm over openai), with tools requested: accepted; the
+    # warm answer forged to B, refused.
+    case, _ = _async_affinity("warm_A.cold_B")
     a = case["expect"]["affinity"]
     azure, openai = json.loads(a["response"])["data"], json.loads(a["cold_response"])["data"]
-    return azure, openai, a["candidates"], a["cold_candidates"]
-
-
-def test_a_warm_snapshot_is_compared_as_canonical_bytes_under_its_own_hash() -> None:
-    """Cold A over azure, warm B over openai: the warm snapshot is accepted
-    under the hash of its own canonical bytes, and refused when any value
-    differs in its JSON (true or 1.0 for the version 1, which compare equal
-    as Python values) or when its hash is another's."""
-    case, snapshot_of = _async_affinity()
-    body, facts = json.loads(case["request"]["body"]), case["expect"]["affinity"]["async_facts"]
-    azure, openai, azure_ids, openai_ids = _swapped(case)
-    affinity_rule.check_warm_async("b", body, azure, openai, azure_ids, openai_ids, snapshot_of, facts)
-    for version in (True, 1.0):
-        retyped = {**openai, "billing_snapshot": {**openai["billing_snapshot"], "v": version}}
-        assert retyped["billing_snapshot"] == openai["billing_snapshot"]  # equal as Python values
-        with pytest.raises(AssertionError, match="warm billing_snapshot is not its candidates' snapshot"):
-            affinity_rule.check_warm_async("b", body, azure, retyped, azure_ids, openai_ids, snapshot_of, facts)
-    with pytest.raises(AssertionError, match="hash is not its snapshot's"):
-        affinity_rule.check_warm_async("b", body, azure, {**openai, "billing_snapshot_hash": "0" * 64}, azure_ids,
-                                       openai_ids, snapshot_of, facts)
-
-
-def test_request_eligibility_comes_from_the_request_not_the_cold_answer() -> None:
-    """Cold azure (no snapshot), warm openai, fallbacks off, and tools
-    requested: Python answers shape A to both, whatever the candidates, so
-    the genuine warm A is accepted and a warm B with a rebuilt snapshot and
-    its correct hash is refused. The cold answer alone (shape A over
-    candidates that freeze nothing) cannot tell the two apart."""
-    case, snapshot_of = _async_affinity()
-    facts = case["expect"]["affinity"]["async_facts"]
-    body = {**json.loads(case["request"]["body"]), "requested_parameters": ["tools"]}
-    assert affinity_rule.request_exclusion(body, facts) == "requested_parameters"
-    azure, openai, azure_ids, openai_ids = _swapped(case)
-    genuine = {k: v for k, v in openai.items() if k not in ("billing_snapshot", "billing_snapshot_hash")}
-    affinity_rule.check_warm_async("tools", body, azure, genuine, azure_ids, openai_ids, snapshot_of, facts)
-    with pytest.raises(AssertionError, match="warm answer is shape B, where Python answers shape A"):
-        affinity_rule.check_warm_async("tools", body, azure, openai, azure_ids, openai_ids, snapshot_of, facts)
-    # The golden request is eligible; each other fact can make it not.
-    assert affinity_rule.request_exclusion(json.loads(case["request"]["body"]), facts) is None
-    for fact, value, reason in (("replay", True, "replay"), ("typed", False, "untyped"),
-                                ("federated", True, "settlement_authority"), ("receipt_fee_basis_points", 100,
-                                                                             "receipt_fee"),
-                                ("ticket_authority", False, "ticket_authority")):
-        assert affinity_rule.request_exclusion(json.loads(case["request"]["body"]), {**facts, fact: value}) == reason
-    with pytest.raises(AssertionError, match="admission on"):
-        affinity_rule.request_exclusion(json.loads(case["request"]["body"]), {**facts, "admission_enabled": True})
+    tools = _python_additions(tools=True)
+    affinity_rule.check_async("tools", "cold", azure, tools)
+    affinity_rule.check_async("tools", "warm", _data_with(openai, {"async_eligible": False}), tools)
+    with pytest.raises(AssertionError, match="warm answer's async members are not Python's"):
+        affinity_rule.check_async("tools", "warm", openai, tools)
 
 
 def test_the_rules_inputs() -> None:

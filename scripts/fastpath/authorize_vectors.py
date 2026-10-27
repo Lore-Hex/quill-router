@@ -98,8 +98,6 @@ from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
 from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS  # noqa: E402
-from trusted_router.billing_snapshot import Eligibility, build_snapshot  # noqa: E402
-from trusted_router.catalog import effective_endpoint  # noqa: E402
 from trusted_router.catalog_data import MONITOR_MODEL_ID, PROVIDERS, Model, ModelEndpoint  # noqa: E402
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
@@ -118,6 +116,7 @@ from trusted_router.routing_snapshot import (  # noqa: E402
 from trusted_router.routing_state import RoutingState  # noqa: E402
 from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 from trusted_router.scopes import SCOPE_INFERENCE  # noqa: E402
+from trusted_router.services import async_settle as async_settle_service  # noqa: E402
 from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
 from trusted_router.services.async_settle import ORDINARY_PARAMETERS  # noqa: E402
 from trusted_router.services.edge_policy_publisher import ticket_authority, typed_records  # noqa: E402
@@ -293,6 +292,7 @@ class _JsonTap:
 
 _REAL_FINGERPRINT = gateway._gateway_authorize_fingerprint
 _REAL_TRANSACTION = storage_gcp.run_in_transaction_with_retry
+_REAL_ADDITIONS = async_settle_service.authorize_additions
 gateway_timing.perf_counter = lambda: 100.0  # data.timing's milliseconds are 0
 
 
@@ -766,7 +766,7 @@ def _seeded_routing_state(case: dict[str, Any], sessions: tuple[tuple[str, float
 
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
     if case["_affinity"] is None:
-        return {k: v for k, v in _run_case(case, ()).items() if k not in ("_models", "_effective")}
+        return {k: v for k, v in _run_case(case, ()).items() if k not in ("_models", "_async")}
     # A cache affinity key: Python's order with no session (the cold order,
     # which Go composes) and then with the case's sessions remembered.
     cold = _run_case(case, ())
@@ -783,10 +783,9 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     # re-rank of the cold order (provider.order and the sort partition
     # respected, the session's age too), with nothing but the first
     # candidate's members (and, with fallbacks off, the estimate) changed.
-    facts = async_facts(case, json.loads(cold["expect"]["authorization_row"]["payload"]), data)
     affinity_class = affinity_rule.affinity_class(
         case["name"], json.loads(case["request"]["body"]), cold["expect"]["response"], warm["expect"]["response"],
-        case["_affinity"], cold["_models"].__getitem__, snapshot_of(cold["_effective"]), facts)
+        case["_affinity"], cold["_models"].__getitem__, (cold["_async"], warm["_async"]))
     for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
         if cold["expect"][field] != warm["expect"][field]:
             raise AssertionError(f"{case['name']}: the session changed {field}")
@@ -803,42 +802,20 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                            # The lease's hold (§5, "The two figures") in each run.
                            "reservation_microdollars": warm["expect"]["reservation_microdollars"],
                            "cold_reservation_microdollars": cold["expect"]["reservation_microdollars"]}}
-    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models", "_effective")},
-            "_async_facts": facts, "expect": expect}
+    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models", "_async")}, "expect": expect}
 
 
-def async_facts(case: dict[str, Any], payload: dict[str, Any], data: dict[str, Any]) -> affinity_rule.AsyncFacts:
-    """The facts authorize_additions reads besides the body and the
-    candidates (affinity_rule.request_exclusion), from the case's world and
-    policy and the cold answer's authorization row."""
-    world, facts = case["_world"], async_settle_of(case["_policy"])
-    return {
-        "replay": data["idempotent_replay"], "typed": facts["typed_records"],
-        "federated": bool(world["key"]["federated_home"] or world["workspace"]["federated_home"]),
-        "ticket_authority": facts["ticket_authority"], "admission_enabled": facts["admission_enabled"],
-        "usage_type": payload["usage_type"], "settlement": payload["settlement"],
-        "app_markup_basis_points": payload.get("app_markup_basis_points") or 0,
-        "custom_model_markup_basis_points": payload.get("custom_model_markup_basis_points") or 0,
-        "receipt_fee_basis_points": payload.get("receipt_fee_basis_points") or 0,
-        "custom_model": bool(payload.get("custom_model_id")),
-        "user_model": bool(payload.get("user_provided_model_id")),
-        "tool_cost": bool(payload.get("additional_cost_reservation_microdollars")),
-        "native_batch": bool(payload.get("native_batch_eligible")),
-    }
-
-
-def snapshot_of(effective: dict[str, ModelEndpoint]) -> affinity_rule.SnapshotOf:
-    """The affinity rule's rebuild: build_snapshot over these candidates as
-    priced at the case's instant, for an eligible request (the request's own
-    eligibility is the cold answer's, which the rule reads), or None where
-    it refuses one (async_settle.projection answers shape A there)."""
-
-    def of(ids: Any) -> dict[str, Any] | None:
-        try:
-            return build_snapshot([effective[i] for i in ids], Eligibility()).model_dump(mode="json")
-        except ValueError:
-            return None
-    return of
+def python_async_additions(store: Any, call: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """Python's own async additions for an answer: authorize_additions with
+    the arguments the route passed it (the request, the body, typed,
+    federated, replay, the price instant, the settings), the authorization
+    Python wrote, read back from the store, and the answer's own candidates."""
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    if authorization is None:
+        raise AssertionError(f"no authorization {data['authorization_id']} to read back")
+    endpoints = [MODEL_ENDPOINTS[c["endpoint_id"]] for c in data["route_candidates"]]
+    additions: dict[str, Any] = _REAL_ADDITIONS(**{**call, "authorization": authorization, "endpoints": endpoints})
+    return additions
 
 
 def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
@@ -890,11 +867,19 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         # The fixture catalog's endpoint models (installed by pinned), for
         # the affinity rule, which run_case applies outside it.
         models = {endpoint_id: endpoint.model_id for endpoint_id, endpoint in MODEL_ENDPOINTS.items()}
-        # And each endpoint as priced at the instant (the authorization's
-        # price instant), from which the rule rebuilds a billing snapshot.
-        effective = {endpoint_id: effective_endpoint(endpoint, at=at)
-                     for endpoint_id, endpoint in MODEL_ENDPOINTS.items()} if case["_affinity"] is not None else {}
+        # The arguments the route passes authorize_additions, for the
+        # affinity rule's expected async members (python_async_additions).
+        calls: list[dict[str, Any]] = []
+
+        def spy(**kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            additions: dict[str, Any] = _REAL_ADDITIONS(**kwargs)
+            return additions
+
+        stack.enter_context(patched(async_settle_service, "authorize_additions", spy))
         response = send(client, case["request"])
+        expected_async = (python_async_additions(store, calls[-1], json.loads(response.content)["data"])
+                          if case["_affinity"] is not None and calls and response.status_code == 200 else {})
         authorizations = [row for k, row in database.gateway_authorizations.items() if k not in authorizations_before]
         reservations = [row for k, row in database.reservations.items() if k not in reservations_before]
     if response.headers.get("content-encoding"):
@@ -939,7 +924,7 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         raise AssertionError(f"{case['name']}: the route minted other ids")
     data = json.loads(body)["data"]
     fingerprint, material = recorder.seen[-1]
-    return {**world_rows, "_models": models, "_effective": effective, "expect": {
+    return {**world_rows, "_models": models, "_async": expected_async, "expect": {
         "outcome": "answer", "status": 200, "response": body,
         "generation_id": data["generation_id"],
         "estimate_microdollars": data["estimated_cost_microdollars"],
@@ -1623,6 +1608,12 @@ def async_cases() -> list[dict[str, Any]]:
     add(f"pass:body.cache_affinity:async.warm_A.cold_B:{GPT5_MINI}", "body.cache_affinity",
         body={"model": GPT5_MINI, "cache_affinity_key": "c" * 64, "provider": {"allow_fallbacks": False}},
         affinity=((f"{GPT5_MINI}@azure/prepaid", 1.0),))
+    # A re-rank that keeps the set (fallbacks on, partition none moves the
+    # remembered gpt-4.1-mini first): shape B both ways, the same snapshot.
+    add(f"pass:body.cache_affinity:async.warm_B.cold_B:{GPT41}+{GPT41_MINI}", "body.cache_affinity",
+        body={"models": [GPT41_MINI], "cache_affinity_key": "c" * 64,
+              "provider": {"sort": {"sort": "latency", "partition": "none"}}},
+        affinity=((f"{GPT41_MINI}@openai/prepaid", 1.0),))
     # The edge passes these on its policy: admission on (Python tickets the
     # request: recorded as shape C, never the ticket; the ticket's claims
     # need the body's invocation_nonce, without which Python answers shape
@@ -1666,8 +1657,6 @@ def run_async_case(case: dict[str, Any]) -> dict[str, Any]:
     elif "affinity" in expect:
         expect["affinity"]["async_shape"] = async_shape(expect["affinity"]["response"])
         expect["affinity"]["cold_async_shape"] = async_shape(expect["affinity"]["cold_response"])
-        # What the affinity rule decided the request's eligibility from.
-        expect["affinity"]["async_facts"] = result["_async_facts"]
     elif expect["outcome"] == "pass":
         response, python = result["_response"], expect["python"]
         if python["status"] != 200:
