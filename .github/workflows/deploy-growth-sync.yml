@@ -85,13 +85,15 @@ jobs:
             --project "$PROJECT" --format='value(image_summary.digest)')
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           echo "GROWTH_IMAGE=$image@$digest" >> "$GITHUB_ENV"
-      - name: Update only image and feature flags, execute, rollback on failure
+      - name: Update image and export memory, preserve flags, rollback on failure
         run: |
           set -euo pipefail
           old_image=$(jq -r '.spec.template.spec.template.spec.containers[0].image' "$RUNNER_TEMP/growth-before.json")
+          old_memory=$(jq -r '.spec.template.spec.template.spec.containers[0].resources.limits.memory' "$RUNNER_TEMP/growth-before.json")
           old_gateway=$(jq -r '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="GROWTH_GATEWAY_ATTEMPTS_ENABLED") | .value][0] // "false"' "$RUNNER_TEMP/growth-before.json")
           old_owners=$(jq -r '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="GROWTH_BILLING_OWNERS_ENABLED") | .value][0] // "false"' "$RUNNER_TEMP/growth-before.json")
           test -n "$old_image" && test "$old_image" != null
+          test -n "$old_memory" && test "$old_memory" != null
           # A redeploy keeps the gateway and billing-owner collectors exactly as they
           # are unless the operator chose true or false for this run.
           new_gateway="$old_gateway"
@@ -99,13 +101,13 @@ jobs:
           case "$GATEWAY_ENABLED" in true|false) new_gateway="$GATEWAY_ENABLED" ;; keep) ;; *) exit 1 ;; esac
           case "$OWNERS_ENABLED" in true|false) new_owners="$OWNERS_ENABLED" ;; keep) ;; *) exit 1 ;; esac
           gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" \
-            --image "$GROWTH_IMAGE" \
+            --image "$GROWTH_IMAGE" --memory 1Gi \
             --update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$new_gateway,GROWTH_BILLING_OWNERS_ENABLED=$new_owners"
           if ! gcloud run jobs execute "$JOB" --project "$PROJECT" --region "$REGION" --wait; then
             gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" \
-              --image "$old_image" \
+              --image "$old_image" --memory "$old_memory" \
               --update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$old_gateway,GROWTH_BILLING_OWNERS_ENABLED=$old_owners"
             exit 1
           fi
-          printf 'Deployed %s\nGateway collector: %s (was %s). Billing-owner view: %s (was %s).\nVerify live Axiom feed statuses and two scheduled cycles before declaring completion.\n' \
-            "$GROWTH_IMAGE" "$new_gateway" "$old_gateway" "$new_owners" "$old_owners" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Deployed %s\nExport job memory: 1Gi (was %s).\nGateway collector: %s (was %s). Billing-owner view: %s (was %s).\nVerify live Axiom feed statuses and two scheduled cycles before declaring completion.\n' \
+            "$GROWTH_IMAGE" "$old_memory" "$new_gateway" "$old_gateway" "$new_owners" "$old_owners" >> "$GITHUB_STEP_SUMMARY"

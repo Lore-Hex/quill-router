@@ -51,7 +51,7 @@ Manager with dedicated worker access and authorized operator access. No personal
 image. Operator provisioning uses the existing local login; it is never scheduled.
 The Axiom token expires in one year and must be rotated before expiry.
 
-The job uses 1 CPU and 512 MiB only while running. ClickHouse queries use at most
+The job uses 1 CPU and 1 GiB only while running. ClickHouse queries use at most
 two threads, 512 MiB and 45 seconds. Incremental export avoids reingesting every
 historical journey each run. No data goes to Google Ads or another ad platform.
 
@@ -72,6 +72,12 @@ Keep source transport and timestamps unchanged when replaying historical data.
 The `deploy-growth-sync` workflow keeps the gateway-attempt and billing-owner
 collector flags exactly as the running job has them unless the operator picks
 `true` or `false` for that run; its summary records the before and after values.
+The isolated export job has 1 GiB of memory because 512 MiB runs exhausted
+memory while serializing the retained checkpoint after ingest. Its existing
+row limits, timeout, CPU, network and identity remain unchanged. A failed
+release execution restores the previous image, memory limit and collector
+flags. Verify completed Cloud Run executions, not just pre-checkpoint Axiom
+heartbeats, when checking the two scheduled cycles.
 
 ### Gateway Attempt Recovery
 
