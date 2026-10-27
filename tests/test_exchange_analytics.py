@@ -123,6 +123,9 @@ def test_collector_memory_and_rate_caps_reset() -> None:
 @pytest.mark.parametrize(('name', 'properties'), [
     ('nyte.cta_clicked', {'cta': 'api_quick_start', 'position': 'hero'}),
     ('nyte.video_played', {}),
+    *[('nyte.cta_clicked', {'cta': cta, 'position': position})
+      for cta in ('download_apple_silicon', 'download_intel_mac')
+      for position in ('hero', 'close')],
     ('nyte.buy_step_1_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_2_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_3_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
@@ -186,14 +189,18 @@ def test_capacity_metadata_rejects_private_or_inconsistent_fields(client: TestCl
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("pathname", ["/neocloud-accelerator", "/neocloud-accelerator.html"])
-def test_accelerator_browser_payloads_survive_collector_logging_and_export(
+@pytest.mark.parametrize("pathname", [
+    route + suffix for route in ("/neocloud-accelerator", "/trusted-cowork", "/buy")
+    for suffix in ("", ".html")
+])
+def test_nyte_browser_payloads_survive_collector_logging_and_export(
     client: TestClient, caplog: pytest.LogCaptureFixture, pathname: str,
 ) -> None:
     from scripts.axiom_growth.model import project_event
     from scripts.axiom_growth.provision import source_filter
     from trusted_router.main import _ApplicationConsoleFormatter
 
+    canonical = pathname.removesuffix(".html")
     harness = Path(__file__).parent / "js" / "exchange_analytics_harness.cjs"
     result = subprocess.run(  # noqa: S603
         ["node", str(harness), pathname],  # noqa: S607
@@ -205,19 +212,19 @@ def test_accelerator_browser_payloads_survive_collector_logging_and_export(
     ]
     caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
     for payload in payloads:
-        assert payload["page"] == "/neocloud-accelerator"
-        assert collector.ExchangeEvent.model_validate(payload).page == "/neocloud-accelerator"
+        assert payload["page"] == canonical
+        assert collector.ExchangeEvent.model_validate(payload).page == canonical
         response = client.post("/token-exchange/events", headers=HEADERS, json=payload)
         assert response.status_code == 204
         event = "acquisition." + payload["event"]
         record = next(r for r in caplog.records if getattr(r, "event", "") == event)
-        assert record.__dict__["page_path"] == "/neocloud-accelerator"
+        assert record.__dict__["page_path"] == canonical
         serialized = json.loads(_ApplicationConsoleFormatter().format(record))
-        assert serialized["page_path"] == "/neocloud-accelerator"
+        assert serialized["page_path"] == canonical
         assert f'jsonPayload.event="{event}"' in source_filter()
         exported = project_event(
             {**serialized, "_time": "2026-10-26T17:00:00Z"}, source="cloud_logging",
         )
         assert exported["event"] == event
         assert exported["site_domain"] == "nytokenexchange.com"
-        assert exported["page_path"] == "/neocloud-accelerator"
+        assert exported["page_path"] == canonical

@@ -25,6 +25,19 @@ const assert = require('node:assert/strict');
     });
     return page;
   }
+  // The New York-only cowork page uses the shared v2 shell.
+  const cowork = await browser.newPage();
+  for (const width of [320,390,1440]) {
+    await cowork.setViewportSize({width,height:900});
+    await cowork.goto('http://127.0.0.1:8089/trusted-cowork.html');
+    await cowork.evaluate(()=>document.fonts.ready);
+    assert.equal(await cowork.locator('body').getAttribute('data-nyte-page'),'cowork');
+    assert(await cowork.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    if(width<=1280)await cowork.locator('#menuBtn').click();
+    assert.equal(await cowork.locator('#nav a').count(),6);
+    assert(await cowork.locator('#nav [data-nav="cowork"]').isVisible());
+  }
+  await cowork.close();
   const page = await newPage({reducedMotion: 'reduce'});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

@@ -195,6 +195,7 @@ def build(output: Path) -> None:
             '<url><loc>https://nytokenexchange.com/badge</loc></url>'
             '<url><loc>https://nytokenexchange.com/media-kit</loc></url>'
             '<url><loc>https://nytokenexchange.com/index</loc></url>'
+            '<url><loc>https://nytokenexchange.com/trusted-cowork</loc></url>'
             '<url><loc>https://nytokenexchange.com/buy</loc></url>'
             '<url><loc>https://nytokenexchange.com/neocloud-accelerator</loc></url>'
             if market["slug"] == "new-york" else ""

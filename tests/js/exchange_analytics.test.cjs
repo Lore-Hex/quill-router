@@ -48,16 +48,16 @@ test('facility metadata reaches the collector without facility or contact detail
  }
 });
 
-for(const pathname of ['/neocloud-accelerator','/neocloud-accelerator.html']) {
- test('accelerator visits retain their canonical page: '+pathname,()=>{
+for(const pathname of ['/neocloud-accelerator','/neocloud-accelerator.html','/trusted-cowork','/trusted-cowork.html','/buy','/buy.html']) {
+ test('NYTE visits retain their canonical page: '+pathname,()=>{
   const s=setup({pathname});
   [...s.timers.values()][0]();
   assert.deepEqual(s.requests.map(request=>{
    const {event,page}=JSON.parse(request.body);
    return {event,page};
   }),[
-   {event:'exchange.landing_viewed',page:'/neocloud-accelerator'},
-   {event:'exchange.landing_engaged',page:'/neocloud-accelerator'},
+   {event:'exchange.landing_viewed',page:pathname.replace(/\.html$/, '')},
+   {event:'exchange.landing_engaged',page:pathname.replace(/\.html$/, '')},
   ]);
  });
 }

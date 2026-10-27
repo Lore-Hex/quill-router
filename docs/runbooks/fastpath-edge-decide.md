@@ -29,7 +29,7 @@ answered request is the decide path's alone.
 Throughout, `DB` is
 `projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`
 and `fastpathctl` is `/opt/fastpath/fastpathctl` on a node (`gcloud compute
-ssh tr-fastpath-7 --zone=us-central1-a --project=quill-cloud-proxy
+ssh tr-fastpath-9 --zone=us-central1-a --project=quill-cloud-proxy
 --tunnel-through-iap`, as `fastpath-alerts.md` reaches one).
 
 ## Before anything

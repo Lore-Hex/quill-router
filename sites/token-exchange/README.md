@@ -68,7 +68,8 @@ NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publis
 DNS records to bypass qualification.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
-New York's homepage, `/confidential`, `/suppliers`, `/providers`, `/index`, `/buy`, and `/neocloud-accelerator`; its shared
+New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,
+`/index`, `/buy`, and `/neocloud-accelerator`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 
@@ -103,6 +104,19 @@ the collector and the separately dispatched marketing-worker/source-filter
 update in `.github/workflows/deploy-growth-sync.yml`. Local preview success
 does not verify an authenticated confidential inference request or its attestation.
 
+### Trusted Cowork and shared navigation
+
+`/trusted-cowork` and `/trusted-cowork.html` use the shared NYTE shell and
+`assets/nyte-v2/cowork.css`. Keep Trusted Cowork, Reserved tokens and Neocloud
+accelerator in the navigation on every NYTE page. The shared navigation collapses
+at 1280 px and below, including its no-JavaScript fallback.
+
+The Apple silicon and Intel Mac download links emit `nyte.cta_clicked` with
+`download_apple_silicon` or `download_intel_mac`, plus `nyte.outbound_clicked`
+for GitHub. The closing download section uses `position=close`; both landing
+and download events retain `/trusted-cowork` through the collector and growth
+export. These events share the existing privacy controls and bounded metadata.
+
 ### Reserved tokens flow (local implementation; publish separately)
 
 `/buy` and `/buy.html` use the NYTE shell and four steps: reservation unit,
@@ -124,7 +138,7 @@ Only step, unit, grade and the allowlisted facility ID are written to page histo
 request summary go directly to Calendly's iframe/link prefill, without its widget
 script. Without JavaScript, the offer, editable model/provider text fields and
 direct booking link remain available; the start month is optional. With JavaScript,
-it defaults to next month in local time and remains editable. Below 1000 px, CSS
+it defaults to next month in local time and remains editable. At 1000 px and below, CSS
 places the wizard before the brand panel; the DOM retains the introduction and
 its h1 before the wizard headings for screen readers. Inactive underlying
 fieldsets are both hidden and disabled.
@@ -140,7 +154,7 @@ local build (set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use system Chrome). It
 fallback, and writes screenshots to `/private/tmp/nyte-buy-shots/`. Calendly in
 those captures is an explicitly labelled fixture, not a real booking.
 
-The only new analytics are `nyte.buy_step_1_viewed` through
+The reservation analytics are `nyte.buy_step_1_viewed` through
 `nyte.buy_step_4_viewed` and `nyte.buy_completed`, with bounded unit,
 underlying-kind (`index`, `model`, `facility`) and grade values. Facility events
 use `unit=blocks` and `grade=none`, without facility names. Completion means reaching scheduling, not a
@@ -152,7 +166,8 @@ A narrow content release needs `buy`, `buy.html`, `assets/nyte-v2/buy.css`,
 `assets/nyte-v2/buy.js`, `assets/nyte-v2/app.js`, `assets/analytics.js`,
 `assets/index-page.css`,
 `new-york/index.html`, `index`, `confidential`, `confidential.html`, `suppliers`,
-`suppliers.html`, `providers`, `providers.html`, and `new-york/sitemap.xml`.
+`suppliers.html`, `providers`, `providers.html`, `trusted-cowork`, `trusted-cowork.html`,
+`neocloud-accelerator`, `neocloud-accelerator.html`, and `new-york/sitemap.xml`.
 The existing NYTE shell pages need the new nav link and updated shared-asset
 versions; the homepage also needs its primary CTA, and `/index` its four grade
 CTAs. `/index.html` is still the homepage route, never the index-page object.

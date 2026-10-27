@@ -70,7 +70,8 @@ async function localHtml(context) {
         assert.equal(await page.locator('#buy-rate').inputValue(), '300');
         assert.equal(await page.locator('#buy-term').inputValue(), '1');
         assert(await page.locator('[name="underlying"][value="index"]').isChecked());
-        if (width < 1000) {
+        // The wizard stacks at 1000px; the shared navigation collapses at 1280px.
+        if (width <= 1000) {
           const wizard = await page.locator('.buy-workspace').boundingBox();
           const brand = await page.locator('.buy-brand').boundingBox();
           assert(wizard.y + wizard.height <= brand.y, 'wizard precedes brand on mobile');

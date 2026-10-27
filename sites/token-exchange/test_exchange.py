@@ -346,6 +346,18 @@ class ExchangeTests(unittest.TestCase):
                     self.assertEqual(navigation.links, expected)
                     self.assertEqual(navigation.current, [f'https://{market["domain"]}/'])
 
+    def test_nyte_navigation_preserves_all_routes(self) -> None:
+        from nyte_v2 import render_nyte
+        from token_index_page import render_token_index
+
+        expected = ["/confidential", "/trusted-cowork", "/index", "/buy",
+                    "/neocloud-accelerator", "/suppliers", "/providers"]
+        for page in ("home", "api", "cowork", "index", "buy", "accelerator", "sup", "providers"):
+            with self.subTest(page=page):
+                navigation = MarketLinkParser("Main")
+                navigation.feed(render_token_index() if page == "index" else render_nyte(page))
+                self.assertEqual(navigation.links, expected)
+
     def test_attribution(self) -> None:
         market = load_markets()[0]
         query = parse_qs(urlparse(tracked_url("https://trustedrouter.com/providers/marketplace", market, "seller")).query)
@@ -585,7 +597,7 @@ class ExchangeTests(unittest.TestCase):
                 namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
                 paths = ["/"]
                 if market["slug"] == "new-york":
-                    paths += ["/confidential", "/suppliers", "/providers", "/badge", "/media-kit", "/index", "/buy", "/neocloud-accelerator"]
+                    paths += ["/confidential", "/suppliers", "/providers", "/badge", "/media-kit", "/index", "/trusted-cowork", "/buy", "/neocloud-accelerator"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market["domain"]}{path}' for path in paths],
