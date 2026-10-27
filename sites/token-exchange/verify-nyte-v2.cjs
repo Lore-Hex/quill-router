@@ -202,7 +202,7 @@ for (const [selector,cta] of [['.btn-primary','download_apple_silicon'],['.btn-s
 }
 // Date behavior uses independent sample links and a fixed clock, not the page roster.
 await page.clock.install({time:new Date('2026-10-27T12:00:00')});
-let sampleDates=['2026-10-14','2026-10-15','2026-10-13','2026-10-28'];
+let sampleDates=['2026-10-14','2026-10-15','2026-10-13','2026-10-28',null];
 await page.route(base+'/',async route=>{
  const response=await route.fetch();
  const items=sampleDates.map((date,i)=>`<a href="/sample-${i}" ${date?`data-added="${date}"`:''}>Sample ${i}${date?'<span class="tag cc" hidden>NEW</span>':''}</a>`).join('');
@@ -216,9 +216,17 @@ await page.clock.fastForward(24*60*60*1000);
 assert.deepEqual(await visibleChips(),['/sample-1','/sample-3']);
 await page.clock.fastForward(24*60*60*1000);
 assert.deepEqual(await visibleChips(),['/sample-3']);
-sampleDates=['2026-10-26','2026-10-27','2026-10-28','2026-10-29'];
+sampleDates=['2026-10-28','2026-10-26','2026-10-29','2026-10-27'];
 await page.reload();
-assert.deepEqual(await visibleChips(),['/sample-1','/sample-2','/sample-3']);
+assert.deepEqual(await visibleChips(),['/sample-0','/sample-2','/sample-3']);
+// Same-day additions have a stable cap, independent of the real page roster.
+sampleDates=Array(4).fill('2026-10-29');
+await page.reload();
+assert.deepEqual(await visibleChips(),['/sample-0','/sample-1','/sample-2']);
+// A tab returning after sleep must expire chips without waiting for a timer.
+await page.clock.setSystemTime(new Date('2026-11-12T12:00:00'));
+await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+assert.deepEqual(await visibleChips(),[]);
 await page.clock.resume();await page.unroute(base+'/');
 // Both direct and same-page deck links open the existing dialog.
 await page.goto(base+'/#deck');await page.locator('#m-deck').waitFor({state:'visible'});

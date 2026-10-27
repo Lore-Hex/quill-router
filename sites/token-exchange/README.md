@@ -83,8 +83,8 @@ file's first Git commit, capped at the three newest pages. The browser handles
 expiration without another deployment. There are no manual dates or overrides.
 Site builds require full Git history (`fetch-depth: 0` in CI); shallow builds
 stop with an instruction to fetch history rather than mark old pages as new.
-If Git history is unavailable (for example, a source archive), the build uses
-today. New standard pages use `nyte-v2/<key>.html`; separately rendered pages
+Git and repository history are required; source archives cannot supply creation
+dates. A new, uncommitted body uses today for local previews. New standard pages use `nyte-v2/<key>.html`; separately rendered pages
 can specify their body file with `body`.
 Adding a registered page does not require updating navigation test lists or counts.
 The terms utility page remains outside the menu; Media kit stays in the footer

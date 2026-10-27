@@ -133,14 +133,12 @@ def page_added(source: str) -> str:
     """Read a body file's creation date; reject incomplete history instead of inventing it."""
     git = shutil.which("git")
     if git is None:
-        return date.today().isoformat()
+        raise ValueError("NYTE NEW chips require Git and full repository history.")
     # The executable is resolved locally; arguments are fixed and paths follow --.
     shallow = subprocess.run(  # noqa: S603
         [git, "rev-parse", "--is-shallow-repository"], cwd=HERE,
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=True,
     )
-    if shallow.returncode != 0:
-        return date.today().isoformat()
     if shallow.stdout.strip() == "true":
         raise ValueError("NYTE NEW chips require full Git history; run git fetch --unshallow before building.")
     history = subprocess.run(  # noqa: S603

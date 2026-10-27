@@ -205,24 +205,66 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertIn('data-added="2026-10-20"', item)
             self.assertIn('class="tag cc" hidden>NEW', item)
 
-    def test_creation_date_and_shallow_history_guard(self):
-        from subprocess import CompletedProcess
+    def test_creation_date_uses_real_history(self):
+        import os
+        import subprocess
+        import tempfile
+        from datetime import date
+        from pathlib import Path
         from unittest.mock import patch
 
         from nyte_v2 import page_added
 
         self.addCleanup(page_added.cache_clear)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args, day="2026-09-01"):
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True, text=True,
+                    env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+                         "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
+                         "GIT_AUTHOR_DATE": day + "T12:00:00Z", "GIT_COMMITTER_DATE": day + "T12:00:00Z"},
+                )
+
+            git("init")
+            body = root / "sample.html"
+            body.write_text("First version")
+            git("add", "sample.html")
+            git("commit", "-m", "Add page")
+            body.write_text("Updated version")
+            git("commit", "-am", "Edit page", day="2026-10-01")
+            # Reintroducing the same body must not restart its NEW window either.
+            git("rm", "sample.html")
+            git("commit", "-m", "Remove page", day="2026-10-02")
+            body.write_text("Restored version")
+            git("add", "sample.html")
+            git("commit", "-m", "Restore page", day="2026-10-03")
+            with patch("nyte_v2.HERE", root):
+                page_added.cache_clear()
+                self.assertEqual(page_added("sample.html"), "2026-09-01")
+                (root / "new.html").write_text("Uncommitted preview")
+                self.assertEqual(page_added("new.html"), date.today().isoformat())
+
+            shallow = root / "shallow"
+            git("clone", "--depth=1", root.as_uri(), str(shallow))
+            with patch("nyte_v2.HERE", shallow):
+                page_added.cache_clear()
+                with self.assertRaisesRegex(ValueError, "full Git history"):
+                    page_added("sample.html")
+
+            with tempfile.TemporaryDirectory() as archive, patch("nyte_v2.HERE", Path(archive)):
+                page_added.cache_clear()
+                with self.assertRaises(subprocess.CalledProcessError):
+                    page_added("sample.html")
+
+    def test_missing_git_cannot_mark_old_pages_new(self):
+        from unittest.mock import patch
+
+        from nyte_v2 import page_added
+
         page_added.cache_clear()
-        with patch('nyte_v2.shutil.which', return_value='/usr/bin/git'), patch(
-            'nyte_v2.subprocess.run', side_effect=[
-                CompletedProcess([], 0, 'false\n'),
-                CompletedProcess([], 0, '2026-09-01\n'),
-            ],
-        ):
-            self.assertEqual(page_added('sample.html'), '2026-09-01')
-        page_added.cache_clear()
-        with patch('nyte_v2.shutil.which', return_value='/usr/bin/git'), patch(
-            'nyte_v2.subprocess.run', return_value=CompletedProcess([], 0, 'true\n'),
-        ):
-            with self.assertRaisesRegex(ValueError, 'full Git history'):
-                page_added('sample.html')
+        self.addCleanup(page_added.cache_clear)
+        with patch("nyte_v2.shutil.which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "require Git"):
+                page_added("sample.html")
