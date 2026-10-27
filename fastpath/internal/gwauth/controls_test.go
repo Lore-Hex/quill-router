@@ -37,7 +37,7 @@ func dataOf(t *testing.T, in ComposeInput, c goldenCase) pyjson.Object {
 	if c.Insert == "unknown_landed" {
 		slices.SortFunc(tags, func(a, b ComposeTag) int { return strings.Compare(a.Key, b.Key) })
 	}
-	data, err := responseData(in, GenerationID(in.AuthorizationID), tags)
+	data, err := responseData(in, GenerationID(in.AuthorizationID), tags, Async{Shape: AsyncNone})
 	if err != nil {
 		t.Fatal(err)
 	}
