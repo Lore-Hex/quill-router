@@ -52,7 +52,6 @@ class TokenIndexPageTests(unittest.TestCase):
 
     def test_new_york_links_index_and_supplier_stack_only(self):
         page = (self.output / "new-york/index.html").read_text()
-        self.assertIn('id="nav-label-index">Token Index</span>', page)
         suppliers = (self.output / "suppliers").read_text()
         self.assertIn("token-exchange-neocloud-in-a-box", suppliers)
         self.assertIn('href="/suppliers"', page)

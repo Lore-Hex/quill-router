@@ -161,17 +161,8 @@ for (const path of shellRoutes) {
    for(const item of await page.locator('#nav a').all())assert(await item.isVisible());
   }else{
    for(const group of ['buy','sell','exchange']){
-    const button=page.locator(`[data-group=${group}] button`);
-    await button.focus();await page.keyboard.press('Enter');
-    assert.equal(await button.getAttribute('aria-expanded'),'true');
-    assert(await page.locator(`#nav-${group}`).isVisible());
-    assert.equal(await page.locator('.nav-group.open').count(),1);
-    await page.keyboard.press('Escape');
-    assert(!(await page.locator(`#nav-${group}`).isVisible()));
     await page.locator(`[data-group=${group}]`).hover();
-    assert(await page.locator(`#nav-${group}`).isVisible());
-    await page.locator('main').click({position:{x:4,y:4}});
-    assert(!(await page.locator(`#nav-${group}`).isVisible()));
+    for(const item of await page.locator(`#nav-${group} a`).all())assert(await item.isVisible());
    }
   }
   assert.deepEqual(await page.locator('#nav a').evaluateAll(items=>items.map(item=>({
@@ -179,6 +170,25 @@ for (const path of shellRoutes) {
    label:item.querySelector('.nav-label').textContent
   }))),expectedNavigation);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ }
+}
+// Shared interaction behavior is exercised once per desktop width, not on every route.
+await page.goto(base+'/');
+for(const width of [801,1024,1440]){
+ await page.setViewportSize({width,height:900});
+ for(const group of ['buy','sell','exchange']){
+  const button=page.locator(`[data-group=${group}] button`);
+  await button.focus();await page.keyboard.press('Enter');
+  assert.equal(await button.getAttribute('aria-expanded'),'true');
+  assert(await page.locator(`#nav-${group}`).isVisible());
+  assert.equal(await page.locator('.nav-group.open').count(),1);
+  await page.keyboard.press('Escape');
+  assert(!(await page.locator(`#nav-${group}`).isVisible()));
+  assert.equal(await button.getAttribute('aria-expanded'),'false');
+  await page.locator(`[data-group=${group}]`).hover();
+  assert(await page.locator(`#nav-${group}`).isVisible());
+  await page.locator('main').click({position:{x:4,y:4}});
+  assert(!(await page.locator(`#nav-${group}`).isVisible()));
  }
 }
 await page.goto(base+'/trusted-cowork');
@@ -205,7 +215,7 @@ await page.clock.install({time:new Date('2026-10-27T12:00:00')});
 let sampleDates=['2026-10-14','2026-10-15','2026-10-13','2026-10-28',null];
 await page.route(base+'/',async route=>{
  const response=await route.fetch();
- const items=sampleDates.map((date,i)=>`<a href="/sample-${i}" ${date?`data-added="${date}"`:''}>Sample ${i}${date?'<span class="tag cc" hidden>NEW</span>':''}</a>`).join('');
+ const items=sampleDates.map((date,i)=>`<a href="/sample-${i}" ${date?`data-added="${date}"`:''}>Sample ${i}<span class="tag cc" hidden>NEW</span></a>`).join('');
  const body=(await response.text()).replace(/(<nav class="nav"[^>]*>)[\s\S]*?<\/nav>/,`$1${items}</nav>`);
  await route.fulfill({response,body});
 });
@@ -239,6 +249,11 @@ await page.setViewportSize({width:1440,height:900});
 const exchange=page.locator('[data-group=exchange] button');
 await exchange.click();await page.locator('#nav a[href="/#deck"]').click();
 await page.locator('#m-deck').waitFor({state:'visible'});await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
+// Closing the dialog leaves #deck in place; clicking again must still reopen it.
+assert.equal(new URL(page.url()).hash,'#deck');
+await exchange.click();await page.locator('#nav a[href="/#deck"]').click();
+await page.locator('#m-deck').waitFor({state:'visible'});
+await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
 // Escape from a panel item returns focus without reopening the panel.
 await page.locator('[data-group=buy]').hover();await page.locator('#nav a[href="/confidential"]').focus();
 await page.keyboard.press('Escape');assert(!(await page.locator('#nav-buy').isVisible()));

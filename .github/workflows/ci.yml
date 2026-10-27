@@ -325,8 +325,6 @@ jobs:
           - 5434:5432
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # The media-kit test builds NYTE using page creation history.
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
@@ -505,8 +503,6 @@ jobs:
       TEST_SHARDS: "8"
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # The media-kit test builds NYTE using page creation history.
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"

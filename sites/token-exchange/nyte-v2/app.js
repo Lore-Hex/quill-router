@@ -2,9 +2,9 @@
 'use strict';
 const nav=document.getElementById('nav'), menu=document.getElementById('menuBtn');
 const groups=[...nav.querySelectorAll('.nav-group')];
-const closeGroups=()=>groups.forEach(group=>{group.classList.remove('open','pinned');group.classList.add('dismissed');group.querySelector('button').setAttribute('aria-expanded','false');});
+const closeGroups=()=>groups.forEach(group=>{group.classList.remove('open','pinned');group.querySelector('button').setAttribute('aria-expanded','false');});
 const closeMenu=()=>{nav.classList.remove('open');menu.setAttribute('aria-expanded','false');closeGroups();};
-const openGroup=group=>{closeGroups();group.classList.remove('dismissed');group.classList.add('open');group.querySelector('button').setAttribute('aria-expanded','true');};
+const openGroup=group=>{closeGroups();group.classList.add('open');group.querySelector('button').setAttribute('aria-expanded','true');};
 groups.forEach(group=>{
  const button=group.querySelector('button');
  button.addEventListener('click',()=>{if(group.classList.contains('pinned'))closeGroups();else{openGroup(group);group.classList.add('pinned');}});

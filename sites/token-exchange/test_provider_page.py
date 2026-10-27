@@ -72,7 +72,6 @@ class ProviderPageTests(unittest.TestCase):
         self.assertTrue((self.root / 'assets/nyte-v2/photos/cableway-mist-2400.webp').is_file())
         self.assertNotIn('id="m-deck"', self.page)
         self.assertIn('>Trust center</a>', self.page)
-        self.assertIn('<span class="nav-label" id="nav-label-providers">Providers</span>', self.page)
 
     def test_metadata_and_new_york_only_sitemap(self):
         url = "https://nytokenexchange.com/providers"

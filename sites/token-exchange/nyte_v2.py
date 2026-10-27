@@ -109,17 +109,12 @@ PAGES = {
     "media-kit": {
         "route": "/media-kit",
         "label": None,
-        "title": "Media kit | New York Token Exchange",
-        "description": "Official New York Token Exchange press kit: logos, company facts, founder bio, screenshots, a product demo and media contact. Free public downloads.",
         "group": "exchange",
-        "menu_description": "Logos and press releases",
         "builder": "press",
     },
     "deck": {
         "route": "/#deck",
         "label": "Buyer deck",
-        "title": "Buyer deck",
-        "description": "The October buyer deck",
         "group": "exchange",
         "menu_description": "The October buyer deck",
         "builder": "anchor",
