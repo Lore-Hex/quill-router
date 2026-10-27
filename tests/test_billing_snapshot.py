@@ -325,6 +325,20 @@ def _raw_counterexamples() -> list[tuple[str, ModelEndpoint, bool]]:
     ]
 
 
+def test_raw_prices_valid_is_total() -> None:
+    """A shape the raw checks cannot walk is a refusal, not an exception:
+    build_snapshot keeps raising what it raised, raw_prices_valid answers
+    false (tests/test_async_settle_ticket.py's fixture with no tier tuple)."""
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    for name, endpoint, error in (
+        ("no tier tuple", replace(base, price_tiers=None), TypeError),
+        ("a tier without rates", replace(base, price_tiers=(object(),)), AttributeError),
+    ):
+        assert billing.raw_prices_valid(endpoint) is False, name
+        with pytest.raises(error):
+            billing.build_snapshot([endpoint], billing.Eligibility())
+
+
 @pytest.mark.parametrize(("name", "endpoint", "valid"), _raw_counterexamples(),
                          ids=[c[0] for c in _raw_counterexamples()])
 def test_raw_prices_valid_is_build_snapshots_raw_check(name: str, endpoint: ModelEndpoint, valid: bool) -> None:

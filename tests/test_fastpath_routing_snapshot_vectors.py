@@ -473,3 +473,26 @@ def test_billing_valid_starts_an_epoch_when_only_it_changes(monkeypatch: pytest.
     assert [(epoch.starts_at, epoch.billing_valid) for epoch in entry.epochs] == [
         (start, True), (start + 2 * HOUR, False), (start + 3 * HOUR, True)]
     assert len({(epoch.headline, epoch.price) for epoch in entry.epochs}) == 1
+
+
+def test_one_malformed_endpoint_cannot_stop_publication() -> None:
+    """An endpoint whose raw checks raise (no tier tuple: TypeError) compiles
+    as before, as empty tiers, and publishes billing_valid false; every other
+    endpoint is unaffected."""
+    from trusted_router.catalog import effective_endpoint
+
+    inputs = GENERATOR.fixture_inputs()
+    # An unscheduled price, so the effective endpoint is the catalog's own.
+    target = next(e for e in inputs.endpoints if e.provider == "wafer")
+    broken = replace(target, price_tiers=None)
+    at = datetime.fromtimestamp(GENERATOR.COMPILED_AT, tz=UTC)
+    assert effective_endpoint(broken, at=at).price_tiers is None
+    endpoints = tuple(broken if e.id == target.id else e for e in inputs.endpoints)
+    snapshot = _compile_fixture(replace(inputs, endpoints=endpoints))
+    baseline = {entry.id: entry for entry in _compile_fixture(inputs).endpoints}
+    for entry in snapshot.endpoints:
+        if entry.id == target.id:
+            assert [epoch.billing_valid for epoch in entry.epochs] == [False] * len(entry.epochs)
+            assert all(epoch.price.tiers == () for epoch in entry.epochs)
+        else:
+            assert entry == baseline[entry.id]

@@ -28,7 +28,6 @@ from pydantic import (
     Field,
     ModelWrapValidatorHandler,
     TypeAdapter,
-    ValidationError,
     ValidationInfo,
     model_validator,
 )
@@ -462,10 +461,14 @@ def raw_prices_valid(endpoint: ModelEndpoint) -> bool:
     ``endpoint_pricing_candidate``'s, which coerces a malformed value (a
     request price of ``0.5`` publishes as ``0``), so without this fact the edge
     could not see that ``build_snapshot`` refuses the endpoint.
+
+    Total: any exception from the checks (``price_tiers=None`` raises
+    TypeError) is a refusal, so one malformed endpoint publishes false rather
+    than stopping the snapshot's compilation.
     """
     try:
         _require_raw_prices(endpoint)
-    except ValidationError:
+    except Exception:
         return False
     return True
 

@@ -100,14 +100,18 @@ def fixture_settings() -> Settings:
         synthetic_monitor_api_key=MONITOR_KEY,
         async_settle_shadow_policy="shadow-v2",
         async_settle_shadow_workspaces="ws-synthetic-async-shadow",
+        # async_settle: admission and the edge's async switch off, as deployed.
+        async_settle_enabled=False,
+        async_settle_protection=False,
+        fastpath_edge_decide_async=False,
     )
 
 
 def policy() -> EdgePolicyV1:
     settings = fixture_settings()
-    # async_settle: admission and the edge's async switch off, as deployed
-    # (rollout.sh), a ticket authority and typed records, so the body carries
-    # both values.
+    # async_settle: admission and the edge's async switch off (pinned in
+    # fixture_settings, as rollout.sh deploys them), a ticket authority and
+    # typed records, so the body carries both values.
     facts = settings_facts(
         settings, accepted=RESOLVER_DIGESTS | settings.stage_d_accepted_gcp_digests, durable=True,
         internal=INTERNAL_MODELS, ticket_authority=True, typed_records=True,

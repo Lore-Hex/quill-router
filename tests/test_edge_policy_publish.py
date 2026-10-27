@@ -1207,6 +1207,18 @@ def test_the_golden_files_are_what_the_python_publisher_writes_now() -> None:
     assert VECTORS.render_manifest() == VECTORS.render_manifest()
 
 
+def test_the_golden_files_ignore_the_async_settle_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The generator pins every setting async_settle reads, so a developer's
+    environment cannot move the files."""
+    for name in ("TR_FASTPATH_EDGE_DECIDE_ASYNC", "TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION"):
+        monkeypatch.setenv(name, "true")
+    # Positive control: the environment does reach an unpinned Settings.
+    unpinned = Settings(environment="test", sentry_dsn=None)
+    assert unpinned.fastpath_edge_decide_async and unpinned.async_settle_admission_enabled
+    assert VECTORS.render_body() == VECTORS.OUTPUT_BODY.read_bytes()
+    assert VECTORS.render_manifest() == VECTORS.OUTPUT_MANIFEST.read_text()
+
+
 def test_the_golden_body_is_canonical_and_covers_every_field() -> None:
     body = _golden_body()
     assert body.isascii() and not body.endswith(b"\n")
