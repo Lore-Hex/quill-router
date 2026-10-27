@@ -86,7 +86,8 @@ def render_nyte(
     if page == "accelerator":
         content = content.replace("{{facilities}}", facility_cards()).replace("{{facility_rate}}", FACILITY_RATE)
     result = (SOURCE / "shell.html").read_text()
-    for key, value in dict(buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/live-evidence.js?v=' + version + '" defer></script>' if page == "api" else "").items():
+    evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
+    for key, value in dict(buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
     if page == "providers":
         result = result.replace('<div class="legal">', '<div class="legal"><a href="https://trustedrouter.com/trust">Trust center</a>')
@@ -107,6 +108,8 @@ def build_nyte(output: Path) -> None:
     assets = output / "assets/nyte-v2"
     # HTML asset paths omit the CSS-relative assets/ segment.
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
+    # NYTE can publish its approved evidence renderer without changing other markets.
+    shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
     for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "accelerator.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, route in (("api", "confidential"), ("sup", "suppliers"), ("providers", "providers"), ("cowork", "trusted-cowork"), ("buy", "buy"), ("accelerator", "neocloud-accelerator")):

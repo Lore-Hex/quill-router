@@ -18,6 +18,7 @@ request's other filters exclude is not a case the goldens hold.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -32,7 +33,44 @@ FIRST_CANDIDATE_MEMBERS = frozenset({
     "wafer_zdr_required", "route_candidates",
 })
 ESTIMATE_MEMBERS = frozenset({"estimated_cost", "estimated_cost_microdollars"})
+# An async-v1 answer's members (docs/design/fast-admission-e2-g15-async.md
+# §2.2): built from the candidates kept, sorted by endpoint id, so a re-rank
+# that keeps the same set leaves them as they were, and one that changes the
+# set (fallbacks off, a remembered endpoint) can change them in kind (§4.4).
+# Admission is off in the goldens, so an answer carries no ticket.
+ASYNC_MEMBERS = frozenset({
+    "async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket", "settlement_status_url",
+})
 _MISSING = object()
+
+
+def canonical(value: Any) -> bytes:
+    """billing_snapshot.canonical_bytes's encoding of a JSON value: sorted
+    keys, compact, ASCII, so true, 1.0 and 1 are three different values."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                      allow_nan=False).encode("ascii")
+
+
+def async_members(data: dict[str, Any]) -> dict[str, Any]:
+    """An answer's async-v1 members, in their order."""
+    return {k: v for k, v in data.items() if k in ASYNC_MEMBERS}
+
+
+def check_async(name: str, label: str, data: dict[str, Any], expected: dict[str, Any]) -> None:
+    """An answer's async members are exactly ``expected``, Python's own
+    additions for it (async_settle.authorize_additions over the authorization
+    it wrote and its own candidates): the same members in the same order and
+    the same canonical bytes, with any billing_snapshot_hash the sha256 of
+    the canonical bytes of the snapshot beside it. Admission is off in the
+    goldens: a ticket is never compared."""
+    if "settlement_ticket" in expected:
+        raise AssertionError(f"{name}: Python's {label} additions carry a ticket (admission on)")
+    supplied = async_members(data)
+    if "billing_snapshot" in supplied and supplied.get("billing_snapshot_hash") != hashlib.sha256(
+            canonical(supplied["billing_snapshot"])).hexdigest():
+        raise AssertionError(f"{name}: the {label} billing_snapshot_hash is not its snapshot's")
+    if list(supplied) != list(expected) or canonical(supplied) != canonical(expected):
+        raise AssertionError(f"{name}: the {label} answer's async members are not Python's for its candidates")
 
 
 def provider_orders(body: dict[str, Any]) -> bool:
@@ -82,21 +120,32 @@ def expected_candidates(body: dict[str, Any], cold: Sequence[str], sessions: Seq
 
 
 def affinity_class(name: str, body: dict[str, Any], cold_response: str, warm_response: str,
-                   sessions: Sequence[tuple[str, float]], model_of: Callable[[str], str]) -> str:
+                   sessions: Sequence[tuple[str, float]], model_of: Callable[[str], str],
+                   expected_async: tuple[dict[str, Any], dict[str, Any]] | None = None) -> str:
     """The class Python's warm answer compares as against its cold one, or
     an AssertionError for an answer that is not rank's re-rank of the cold
-    order with nothing else changed."""
+    order with nothing else changed. An async-v1 answer's members may change
+    only with the candidate set; both answers' members are checked against
+    Python's own additions for each (expected_async, cold then warm), always."""
     cold, warm = json.loads(cold_response)["data"], json.loads(warm_response)["data"]
     cold_ids = [c["endpoint_id"] for c in cold["route_candidates"]]
     warm_ids = [c["endpoint_id"] for c in warm["route_candidates"]]
     expected = expected_candidates(body, cold_ids, sessions, model_of)
     if warm_ids != expected:
         raise AssertionError(f"{name}: Python's candidates {warm_ids} are not rank's order {expected} over {cold_ids}")
+    if expected_async is None:
+        if async_members(cold) or async_members(warm):
+            raise AssertionError(f"{name}: async members, and no way to rebuild them")
+    else:
+        check_async(name, "cold", cold, expected_async[0])
+        check_async(name, "warm", warm, expected_async[1])
     if warm_ids == cold_ids:
         if warm_response != cold_response:
             raise AssertionError(f"{name}: the same order, other bytes")
         return "affinity_cold"
-    allowed = FIRST_CANDIDATE_MEMBERS | (ESTIMATE_MEMBERS if len(cold_ids) == 1 else frozenset())
+    set_changed = set(warm_ids) != set(cold_ids)
+    allowed = (FIRST_CANDIDATE_MEMBERS | (ESTIMATE_MEMBERS if len(cold_ids) == 1 else frozenset())
+               | (ASYNC_MEMBERS if set_changed else frozenset()))
     changed = {k for k in set(cold) | set(warm) if cold.get(k, _MISSING) != warm.get(k, _MISSING)}
     if not changed <= allowed:
         raise AssertionError(f"{name}: the session changed {sorted(changed - allowed)}")
