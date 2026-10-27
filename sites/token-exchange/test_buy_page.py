@@ -30,7 +30,7 @@ def assert_facility_cards(test: unittest.TestCase, markup: str) -> None:
     ], strict=True):
         test.assertIn(name, card)
         test.assertIn('<span class="facility-badge">Planned</span>', card)
-        test.assertIn(f'A planned {description} data center operated by {operator}.', card)
+        test.assertIn(f'A planned {description} data center operated by {operator.rstrip('.')}.', card)
         test.assertIn(f'{power} · Planned on NVIDIA B200/B300-class GPUs.', card)
         test.assertIn(f'Targeted launch: {launch}.', card)
         test.assertIn(f'First offering: {lots} lots.', card)
