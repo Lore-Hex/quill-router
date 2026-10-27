@@ -68,7 +68,8 @@ NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publis
 DNS records to bypass qualification.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
-New York's homepage, `/confidential`, `/suppliers`, `/providers`, `/index`, and `/buy`; its shared
+New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,
+`/index`, `/buy`, and `/neocloud-accelerator`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 
@@ -103,20 +104,41 @@ the collector and the separately dispatched marketing-worker/source-filter
 update in `.github/workflows/deploy-growth-sync.yml`. Local preview success
 does not verify an authenticated confidential inference request or its attestation.
 
+### Trusted Cowork and shared navigation
+
+`/trusted-cowork` and `/trusted-cowork.html` use the shared NYTE shell and
+`assets/nyte-v2/cowork.css`. Keep Trusted Cowork, Reserved tokens and Neocloud
+accelerator in the navigation on every NYTE page. The shared navigation collapses
+at 1280 px and below, including its no-JavaScript fallback.
+
+The Apple silicon and Intel Mac download links emit `nyte.cta_clicked` with
+`download_apple_silicon` or `download_intel_mac`, plus `nyte.outbound_clicked`
+for GitHub. The closing download section uses `position=close`; both landing
+and download events retain `/trusted-cowork` through the collector and growth
+export. These events share the existing privacy controls and bounded metadata.
+
 ### Reserved tokens flow (local implementation; publish separately)
 
 `/buy` and `/buy.html` use the NYTE shell and four steps: reservation unit,
-underlying and timing, contact, then a 15-minute Calendly call. Sellers leave
-for `/suppliers` or `/providers`. Index-grade token blocks show blocks × the
+underlying and timing, optional contact prefill, then a 15-minute Calendly call.
+Step 1 is a plain radio list: “1 billion tokens (a block to draw on over a term)”,
+“300 tokens per second (a reserved rate)”, and “Not sure yet”. A short seller
+line links to `/suppliers`, `/providers` and `/neocloud-accelerator`; keep these repository links intact
+when reconciling live-link rewrites. Defaults are one block, 300 tok/s, a
+one-month term, next month in local time, and NYTE Index grade A. Allowlisted
+`grade` and `unit` query parameters override their defaults. Allowlisted
+`facility=solar|underwater` opens step 2 with that planned facility selected. Three Continue
+clicks reach scheduling without editing a field; contact details can be entered
+in Calendly, and a supplied email is validated before handoff. Index-grade token blocks show blocks × the
 published dated grade price; throughput, named models and undecided requests
 show no price. This is a request to discuss a reservation, not an order or executable quote. Capacity derivatives remain roadmap offerings.
 
 The wizard never submits a form or writes request data to browser storage.
-Only step, unit and grade are written to page history. Contact details and the
+Only step, unit, grade and the allowlisted facility ID are written to page history. Contact details and the
 request summary go directly to Calendly's iframe/link prefill, without its widget
 script. Without JavaScript, the offer, editable model/provider text fields and
 direct booking link remain available; the start month is optional. With JavaScript,
-it defaults to next month in local time and remains editable. Below 1000 px, CSS
+it defaults to next month in local time and remains editable. At 1000 px and below, CSS
 places the wizard before the brand panel; the DOM retains the introduction and
 its h1 before the wizard headings for screen readers. Inactive underlying
 fieldsets are both hidden and disabled.
@@ -132,9 +154,10 @@ local build (set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use system Chrome). It
 fallback, and writes screenshots to `/private/tmp/nyte-buy-shots/`. Calendly in
 those captures is an explicitly labelled fixture, not a real booking.
 
-The only new analytics are `nyte.buy_step_1_viewed` through
+The reservation analytics are `nyte.buy_step_1_viewed` through
 `nyte.buy_step_4_viewed` and `nyte.buy_completed`, with bounded unit,
-underlying-kind and grade values. Completion means reaching scheduling, not a
+underlying-kind (`index`, `model`, `facility`) and grade values. Facility events
+use `unit=blocks` and `grade=none`, without facility names. Completion means reaching scheduling, not a
 confirmed booking. Release the collector/log-field changes and dispatch the
 existing `deploy-growth-sync.yml` workflow (which derives the exact source
 filter from `scripts/axiom_growth/model.py`) before publishing the static assets.
@@ -143,7 +166,8 @@ A narrow content release needs `buy`, `buy.html`, `assets/nyte-v2/buy.css`,
 `assets/nyte-v2/buy.js`, `assets/nyte-v2/app.js`, `assets/analytics.js`,
 `assets/index-page.css`,
 `new-york/index.html`, `index`, `confidential`, `confidential.html`, `suppliers`,
-`suppliers.html`, `providers`, `providers.html`, and `new-york/sitemap.xml`.
+`suppliers.html`, `providers`, `providers.html`, `trusted-cowork`, `trusted-cowork.html`,
+`neocloud-accelerator`, `neocloud-accelerator.html`, and `new-york/sitemap.xml`.
 The existing NYTE shell pages need the new nav link and updated shared-asset
 versions; the homepage also needs its primary CTA, and `/index` its four grade
 CTAs. `/index.html` is still the homepage route, never the index-page object.
@@ -163,6 +187,43 @@ conflict requires a fresh download and reconciliation, never an unconditional
 retry. Preserve DNS, certificates, URL maps and other bucket objects. Verify the
 public routes, aliases, navigation, catalogue CORS, Calendly handoff, and privacy
 signals after the separately authorized publish.
+
+### Neocloud accelerator (local implementation; publish separately)
+
+`/neocloud-accelerator` and `/neocloud-accelerator.html` render the NYTE shell
+with page key `accelerator`. The navigation follows Reserved tokens; `/buy`’s
+seller line and `/suppliers#open-stack` link here. Only New York’s sitemap lists
+it. The page describes capacity reservations for inference service from planned
+facilities: 1B-token lots of Grade B · Professional (DeepSeek-class models),
+with delivery over the facility’s first twelve months of operation, not per month.
+The sustained-rate equivalent is stated once per page. `facilities.py` contains
+Joseph’s approved facts and renders the same cards on `/buy` and the accelerator.
+Solar Powered Datacenter is planned with a targeted February 2027 launch;
+Underwater Datacenter is planned with a targeted August 2027 launch. Power is a descriptor only, never a unit for sale.
+Facility selection in `/buy` disables throughput and undecided units, hides editable
+timing, caps quantity at the first offering, and hides all prices, totals and as-of
+captions. Pricing is discussed on the call. Operator names are shared on the call.
+Calendly receives the planned facility, targeted launch and lot count with the
+twelve-month definition, without a price.
+
+The linked Neocloud-in-a-box repository is the same Apache-2.0 stack referenced
+by suppliers. It is pre-alpha. Operators handle power, permits, the building,
+cooling and physical security. Self-run software and a discussion of remote
+management are offered; remote management is not a live product. Hardware and
+operating responsibilities are scoped together. Confidential serving still needs
+independent hardware and software qualification.
+
+All content and the plain Joseph Calendly link work without JavaScript. There
+is no form, embedded booking widget or contact prefill on this page. The provider
+deck remains request-only through `/providers`. Preserve the verbatim planned
+offerings and not-a-securities language; use only Joseph’s approved facility facts in `facilities.py`; do not add funding
+amounts, additional facilities or dates, service commitments, prices or assured outcomes.
+
+A separately authorized narrow release needs both accelerator page objects and
+`assets/nyte-v2/accelerator.css`, the shared stylesheet and `app.js`, every NYTE shell page
+for the navigation update, `/buy` and `/suppliers` with their aliases for the
+entry links, and New York’s sitemap. Use the backup, reconciliation and generation
+preconditions above. These local changes do not authorize publishing.
 
 ### Public New York media kit
 

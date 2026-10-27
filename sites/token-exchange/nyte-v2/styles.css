@@ -54,10 +54,10 @@ header{position:sticky;top:0;z-index:30;height:var(--header);background:rgba(5,7
 .hdr{height:100%;display:flex;align-items:center;gap:32px}
 .brand{display:flex;align-items:center;gap:12px;color:var(--t1);font-size:18px;font-weight:600;letter-spacing:-.03em;margin-right:auto}
 .brand svg{width:30px;height:30px;flex:none}
-.nav{display:flex;align-items:center;gap:30px;order:1}
+.nav{display:flex;align-items:center;gap:16px;order:1}
 .hdr>.btn-sm{order:2}
 .menu-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
-.nav a{color:var(--t2);font-size:15px;font-weight:500;padding:6px 0}
+.nav a{color:var(--t2);font-size:14px;font-weight:500;padding:6px 0;white-space:nowrap}
 .nav a:hover{color:var(--t1)}
 .nav a.on{color:var(--t1);box-shadow:0 1px 0 var(--mint)}
 .menu-btn{display:none;min-height:40px;padding:8px 14px;border:1px solid var(--control);border-radius:6px;background:none;color:var(--link);font-weight:500}
@@ -456,3 +456,12 @@ html{scroll-padding-top:96px} body>.skip{position:absolute;top:-80px;z-index:100
 .site-footer .legal{margin-top:24px}
 .site-footer .legal a{min-height:40px}
 }
+
+/* Shared planned facility cards on the reservation and accelerator pages. */
+.facility-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:24px 0}
+.facility-card{min-width:0;padding:20px;border:1px solid var(--control);border-radius:6px;background:var(--bg-alt)}
+.facility-card h3,.facility-select{font-size:20px;line-height:1.4;margin:0}.facility-select{display:flex;align-items:baseline;gap:10px;cursor:pointer}
+.facility-card p{font-size:14px;line-height:1.6;color:var(--t2);margin:14px 0}.facility-card a{color:var(--link)}
+.facility-badge{display:inline-block;font:12px var(--mono);color:var(--mint);border:1px solid var(--rule);border-radius:4px;padding:4px 8px;margin-top:12px}
+.facility-card input{accent-color:var(--mint)}.facility-card:has(input:checked){border-color:var(--mint);background:var(--selected)}.facility-card:has(input:focus-visible){outline:2px solid var(--link);outline-offset:3px}
+@media(max-width:700px){.facility-grid{grid-template-columns:1fr}}
