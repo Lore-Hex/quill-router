@@ -93,6 +93,8 @@ EXPECTED_ACTIVITY_KEYS = frozenset(
         "workspace_id",
         "key_id",
         "model",
+        # Authorize-frozen catalog/route identifier, never request content.
+        "requested_model",
         "provider",
         "provider_name",
         "app",
@@ -148,6 +150,7 @@ EXPECTED_EVENT_KEYS = frozenset(
         "created_at",
         "date",
         "model",
+        "requested_model",
         "provider_name",
         "app",
         "app_id",
@@ -191,6 +194,7 @@ def generations(draw: Any) -> Generation:
         workspace_id=_marked("workspace_id"),
         key_hash=_marked("key_hash"),
         model=_marked("model"),
+        requested_model=_marked("requested_model"),
         provider_name=_marked("provider_name"),
         app=_marked("app"),
         app_id=_marked("app_id"),
@@ -281,6 +285,7 @@ def test_every_generation_field_is_classified() -> None:
         "workspace_id",
         "key_hash",
         "model",
+        "requested_model",
         "provider",
         "provider_name",
         "app",
@@ -385,6 +390,7 @@ def test_activity_payload_carries_no_content_and_no_raw_tenant_ids(
     # must be detected. If this line fails, the leak detector has gone blind
     # again and every assertion above it is decorative.
     assert "workspace_id" in leaked
+    assert "requested_model" in leaked
 
 
 @given(generation=generations())
@@ -410,6 +416,7 @@ def test_generation_events_key_set_is_frozen_and_content_free(
     leaked = _leaked_markers(events[0])
     forbidden = leaked & (CONTENT_OR_INTERNAL_FIELDS | EVENTS_RAW_TENANT_FIELDS)
     assert not forbidden, f"generation_events leaked {sorted(forbidden)}"
+    assert "requested_model" in leaked
 
 
 @given(generation=generations())
