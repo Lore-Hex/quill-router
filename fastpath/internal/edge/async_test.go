@@ -166,12 +166,8 @@ func TestTheWarmAffinityAnswersAsyncMembersAreTheWarmCandidates(t *testing.T) {
 		r.async.shape != gwauth.AsyncSnapshot {
 		t.Fatalf("Python's warm bytes: %+v, async %+v", r, r.async)
 	}
-	tree, err := pyjson.Decode([]byte(a.Response))
-	if err != nil {
-		t.Fatal(err)
-	}
-	data := memberOf(tree.(pyjson.Object), "data").(pyjson.Object)
-	if cold := compareAsync(d.ForShadow().Staged.Async(), data); cold.compared != "differ" ||
+	py := pythonAsyncMembers([]byte(a.Response))
+	if cold := compareAsync(d.ForShadow().Staged.Async(), py); cold.compared != "differ" ||
 		!slices.Equal(cold.fields, []string{FieldAsyncShape}) {
 		t.Fatalf("against the cold candidates: %+v", cold)
 	}
@@ -335,12 +331,14 @@ func TestTheShadowComparesTheAsyncMembers(t *testing.T) {
 			return slices.DeleteFunc(d, func(m pyjson.Member) bool { return slices.Contains(keys, m.Key) })
 		}
 	}
-	ticket := func(d pyjson.Object) pyjson.Object {
-		at := slices.IndexFunc(d, func(m pyjson.Member) bool { return m.Key == "billing_snapshot_hash" }) + 1
-		return slices.Insert(d, at, pyjson.Member{Key: "settlement_ticket", Value: "header.claims.signature"},
-			pyjson.Member{Key: "settlement_status_url", Value: "/v1/settlements/x.settle"})
-	}
 	plain := func(k string) map[string]int { return map[string]int{AsyncPlain + "." + k: 1} }
+	// One character of the snapshot escaped: the same decoded value, other
+	// bytes (§4.4 compares the snapshot's bytes).
+	// The underscore as JSON's six-character escape (backslash, u, 005f).
+	const kind, escaped = `"kind":"credits_endpoint"`, `"kind":"credits` + "\\" + `u005fendpoint"`
+	if strings.Count(raw, kind) != 1 || len(escaped) != len(kind)+5 {
+		t.Fatalf("the snapshot's kind is not once in Python's 200, or the escape is not one")
+	}
 	seen, shape := map[string]int{AsyncPlain: 1}, plain(gwauth.AsyncSnapshot)
 	py := newFakePython(t)
 	for _, v := range []struct {
@@ -354,6 +352,8 @@ func TestTheShadowComparesTheAsyncMembers(t *testing.T) {
 		{"Python's", []byte(raw), ClassAgreeFull, nil, plain("agree"), nil},
 		{"snapshot", snapshot(func(s pyjson.Object) pyjson.Object { return setMember(s, "minimum_charge", "none") }),
 			ClassDifferAny, []string{FieldBillingSnapshot}, plain("differ"), nil},
+		{"snapshot escaped", []byte(strings.Replace(raw, kind, escaped, 1)), ClassDifferAny,
+			[]string{FieldBillingSnapshot}, plain("differ"), nil},
 		{"hash", mutated(t, raw, func(d pyjson.Object) pyjson.Object {
 			return setMember(d, "billing_snapshot_hash", strings.Repeat("0", 64))
 		}), ClassDifferAny, []string{FieldBillingSnapshotHash}, plain("differ"), nil},
@@ -363,7 +363,7 @@ func TestTheShadowComparesTheAsyncMembers(t *testing.T) {
 			[]string{FieldAsyncShape}, plain("differ"), nil},
 		{"elsewhere", mutated(t, raw, func(d pyjson.Object) pyjson.Object { return setMember(d, "provider_name", "X") }),
 			ClassDifferAny, []string{"differ.provider_name"}, plain("agree"), nil},
-		{"shape C", mutated(t, raw, ticket), ClassDifferAny, []string{FieldAsyncShape}, nil,
+		{"shape C", ticketed(t, raw), ClassDifferAny, []string{FieldAsyncShape}, nil,
 			map[string]int{AsyncPlain: 1}},
 	} {
 		h := newFullEdge(t, f, withEdgeDecide(t, f, c, false), py, nil)
@@ -425,7 +425,8 @@ func TestTheShadowCountsTheAsyncPopulations(t *testing.T) {
 	noBoot.Request.Headers = slices.DeleteFunc(slices.Clone(noBoot.Request.Headers),
 		func(h [2]string) bool { return strings.EqualFold(h[0], BootHeader) })
 	warm := asyncCaseNamed(t, "answer:cache_affinity:async.warm_A.cold_B:openai/gpt-5-mini")
-	unread := []byte(`{"data":{"idempotent_replay":false}}`)
+	service := asyncCaseNamed(t, "pass:body.service_tier:async.B:default")
+	sync := asyncCaseNamed(t, "pass:header.settlement_async:async.none:sync")
 	for _, v := range []struct {
 		name  string
 		c     authorizeCase
@@ -433,15 +434,12 @@ func TestTheShadowCountsTheAsyncPopulations(t *testing.T) {
 		class string
 		want  map[string]map[string]int
 	}{
-		{"no boot", noBoot, unread, ClassPythonAnsweredGoPassed + "." + PassBootSignature,
+		{"no boot", noBoot, []byte(noBoot.Expect.Python.Response), ClassPythonAnsweredGoPassed + "." + PassBootSignature,
 			asyncCountsOf(map[string]int{AsyncUnparsed: 1}, nil, nil, nil, nil)},
-		{"service tier", asyncCaseNamed(t, "pass:body.service_tier:async.B:default"), unread,
+		{"service tier", service, []byte(service.Expect.Python.Response),
 			ClassPythonAnsweredGoPassed + "." + gwauth.ReasonServiceTier,
 			asyncCountsOf(map[string]int{AsyncPlain: 1}, nil, nil, nil, nil)},
-		{"admission on", asyncCaseNamed(t, "pass:policy.async_admission:async.C"), unread,
-			ClassPythonAnsweredGoPassed + "." + PassAsyncAdmission,
-			asyncCountsOf(map[string]int{AsyncPlain: 1}, nil, nil, nil, nil)},
-		{"sync", asyncCaseNamed(t, "pass:header.settlement_async:async.none:sync"), unread,
+		{"sync", sync, []byte(sync.Expect.Python.Response),
 			ClassPythonAnsweredGoPassed + "." + gwauth.ReasonSettlementAsync, asyncCountsOf(nil, nil, nil, nil, nil)},
 		{"affinity warm", withEdgeDecide(t, f, warm, false), []byte(warm.Expect.Affinity.Response), ClassDifferAny,
 			asyncCountsOf(map[string]int{AsyncAffinity: 1}, map[string]int{AsyncAffinity + ".agree": 1}, nil,
@@ -453,6 +451,68 @@ func TestTheShadowCountsTheAsyncPopulations(t *testing.T) {
 		got := h.edge.DecideShadowCounts()
 		if !maps.Equal(got.Classes, map[string]int{v.class: 1}) || !asyncCountsEqual(got.Async, v.want) {
 			t.Errorf("%s: classes %v (fields %v), async %v\nwant %v", v.name, got.Classes, got.Fields, got.Async, v.want)
+		}
+	}
+}
+
+// ticketed is a whole Python 200 of shape B made shape C, as Python
+// answers with its admission on (§2.2): the ticket and the status URL after
+// the snapshot's hash, async_eligible kept (Python signs a ticket for a
+// false answer too).
+func ticketed(t *testing.T, raw string) []byte {
+	t.Helper()
+	return mutated(t, raw, func(d pyjson.Object) pyjson.Object {
+		at := slices.IndexFunc(d, func(m pyjson.Member) bool { return m.Key == "billing_snapshot_hash" })
+		id, _ := memberOf(d, "authorization_id").(string)
+		if at < 0 || id == "" {
+			t.Fatal("not a shape B 200")
+		}
+		return slices.Insert(d, at+1,
+			pyjson.Member{Key: "settlement_ticket", Value: "eyJhbGciOiJFZERTQSJ9.eyJpc3MiOiJ0ZXN0In0.c2lnbmF0dXJl"},
+			pyjson.Member{Key: "settlement_status_url", Value: "/v1/settlements/" + id + ".settle"})
+	})
+}
+
+// TestATicketIsCountedWhateverGoDid (§3.6, §4.4): Python's shape C to a
+// followed async-v1 request is async_python_admitted whatever Go did with
+// it, also when Go passed it before the compose (Python's admission on; a
+// cohort reason after the parse; a body the parse refuses, unparsed), and
+// never compared. The control: Python's shape B to the same request counts
+// no ticket.
+func TestATicketIsCountedWhateverGoDid(t *testing.T) {
+	f, p1 := asyncAuthorizeGoldens(t), authorizeGoldens(t)
+	py := newFakePython(t)
+	shapeB := asyncCaseNamed(t, "answer:async.B:invocation_nonce").Expect.Response
+	service := asyncCaseNamed(t, "pass:body.service_tier:async.B:default")
+	lax := authorizeCaseNamed(t, "pass:body.lax_type")
+	lax.Request.Headers = append(slices.Clone(lax.Request.Headers), [2]string{"X-TR-Settlement-Mode", "async-v1"})
+	for _, v := range []struct {
+		name  string
+		f     authorizeFile
+		c     authorizeCase
+		body  string // Python's shape B 200 to the request
+		class string
+		pop   string
+	}{
+		{"admission on", f, asyncCaseNamed(t, "pass:policy.async_admission:async.C"), shapeB, PassAsyncAdmission,
+			AsyncPlain},
+		{"service tier", f, service, service.Expect.Python.Response, gwauth.ReasonServiceTier, AsyncPlain},
+		{"lax type", p1, lax, shapeB, gwauth.ReasonLaxType, AsyncUnparsed},
+	} {
+		for _, ticket := range []bool{false, true} {
+			body, admitted := []byte(v.body), map[string]int(nil)
+			if ticket {
+				body, admitted = ticketed(t, v.body), map[string]int{v.pop: 1}
+			}
+			h := newFullEdge(t, v.f, v.c, py, nil)
+			h.answer(answerWith(200, body))
+			h.send(t, v.c)
+			got := h.edge.DecideShadowCounts()
+			want := asyncCountsOf(map[string]int{v.pop: 1}, nil, nil, nil, admitted)
+			if !maps.Equal(got.Classes, map[string]int{ClassPythonAnsweredGoPassed + "." + v.class: 1}) ||
+				!asyncCountsEqual(got.Async, want) {
+				t.Errorf("%s, ticket %v: classes %v, async %v\nwant %v", v.name, ticket, got.Classes, got.Async, want)
+			}
 		}
 	}
 }

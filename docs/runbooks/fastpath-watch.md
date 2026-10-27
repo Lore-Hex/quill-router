@@ -195,13 +195,15 @@ lines, summed, are its counts. It prints JSON:
   `unparsed`, a body the edge did not parse): `async_seen` (every such
   request followed, whatever it passed with), `async_compared`
   (`<pop>.agree` or `<pop>.differ`: Go composed it and Python's 200 was
-  read, by whether the async members alone matched, an affinity request's
-  against the candidates its comparison used), `async_fields`
+  read, by whether the async members alone matched byte for byte, an
+  affinity request's against the candidates its comparison used), `async_fields`
   (`<pop>.differ.async_eligible`, `.differ.billing_snapshot`,
   `.differ.billing_snapshot_hash`, `.differ.async_shape`), `async_shape`
   (Go's composed shape, `snapshot` or `false_only.<reason>`) and
-  `async_python_admitted` (Python answered with a ticket: its admission
-  was on, so the members are not compared and the sample restarts). The
+  `async_python_admitted` (Python answered with a ticket, whatever the
+  edge did with the request, passed before the compose or composed: its
+  admission was on, so the members are not compared and the sample
+  restarts). The
   report prints `async_seen` and `async_seen_share` (over `followed`),
   `async_compared` with `async_compared_per_day`, `async_compared_plain`
   with `async_compared_plain_per_day` (the two daily rates, over the span
