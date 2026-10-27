@@ -20,7 +20,7 @@ class CoworkTests(unittest.TestCase):
                 self.assertIn(f"v0.4.0-alpha.3/Trusted-Cowork-0.4.0-alpha.3-mac-{arch}.dmg", page)
             self.assertIn("v0.4.0-alpha.3", page)
             self.assertNotIn("v0.4.0-alpha.2/", page)
-            for text in ("nyte/confidential", "fails closed", "Data collection", "deny", "asks before each tool runs"):
+            for text in ("nyte/confidential", "fails closed", "Data collection", "deny", "asks before exposing any data to tool use"):
                 self.assertIn(text, page)
             self.assertNotIn("nyte/auto", page)
             self.assertTrue((root / "assets/nyte-v2/cowork.css").is_file())
