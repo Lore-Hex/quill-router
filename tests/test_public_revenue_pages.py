@@ -90,9 +90,17 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         assert marker in response.text, f"{path} missing marker {marker!r}"
         assert "Approved short copy only" not in response.text
-        # Blog pages intentionally drop the marketing hero (and its
-        # "OpenAI compatible API" eyebrow); every other public page keeps it.
-        if not path.startswith("/blog"):
+        # Editorial pages intentionally omit the marketing hero eyebrow.
+        # Keep checking the approved article identity instead of restoring
+        # decorative copy just to satisfy a shared landing-page assertion.
+        if path == "/openrouter-alternative":
+            article = BeautifulSoup(response.text, "html.parser")
+            assert "openrouter-article" in article.body.get("class", [])
+            assert article.select_one("main h1").get_text(strip=True) == (
+                "OpenRouter Alternatives: TrustedRouter vs 9 AI Gateways (2026)"
+            )
+            assert "OpenAI compatible API" not in response.text
+        elif not path.startswith("/blog"):
             assert "OpenAI compatible API" in response.text
         assert "Invalid API key" not in response.text
         assert "Continue with MetaMask" in response.text
@@ -355,7 +363,7 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert migration_page.status_code == 200
     assert "Switch from OpenRouter in one base URL." in migration_page.text
     assert "import os" in migration_page.text
-    assert migration_page.text.count("Create my API key") == 2
+    assert migration_page.text.count("Create my API key") == 3
     assert "No card required." in migration_page.text
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 

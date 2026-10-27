@@ -440,15 +440,15 @@ class BlogIndexPost:
     image: str
 
 
-OPENROUTER_ALTERNATIVES_VERIFIED_ON = "2026-08-17"
+OPENROUTER_ALTERNATIVES_UPDATED_ON = "2026-10-26"
 OPENROUTER_ALTERNATIVE_ITEMS: tuple[tuple[str, str], ...] = (
     ("TrustedRouter", "/compare/openrouter"),
-    ("LiteLLM", "/compare/litellm"),
-    ("Portkey", "/compare/portkey"),
+    ("Requesty", "/compare/requesty"),
     ("Vercel AI Gateway", "/compare/vercel-ai-gateway"),
     ("Cloudflare AI Gateway", "/compare/cloudflare-ai-gateway"),
-    ("Helicone", "/compare/helicone"),
-    ("Requesty", "/compare/requesty"),
+    ("LiteLLM", "/compare/litellm"),
+    ("Portkey (Palo Alto Networks)", "/compare/portkey"),
+    ("Helicone (Mintlify)", "/compare/helicone"),
     ("Amazon Bedrock", "/compare/aws-bedrock"),
     ("Google Vertex AI", "/compare/google-vertex-ai"),
     ("Direct provider APIs", "/providers"),
@@ -1694,31 +1694,55 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "openrouter-alternative": PublicPage(
         template="public/seo_openrouter_alternative.html",
         og_card="openrouter-alternative.png",
-        title="OpenRouter Alternatives: 10 AI Gateways Compared (2026)",
+        title="OpenRouter Alternatives 2026: 10 Gateways by Price & Privacy",
         description=(
-            "Compare ten OpenRouter alternatives by model access, self-hosting, privacy, "
-            "fallback, observability, and price. Keep your SDK and choose the right gateway."
+            "Compare 10 OpenRouter alternatives on price and privacy. TrustedRouter: "
+            "attested gateway, no prompt logs, EU gateway on every account, 5.5% fee."
         ),
         faq_items=(
             (
                 "What is the best OpenRouter alternative in 2026?",
-                "There is no single best choice. TrustedRouter fits teams that want hosted multi-provider access with a hardware-attested prompt path. LiteLLM fits teams that want to self-host. Portkey fits governance-heavy gateway deployments. Vercel AI Gateway fits Vercel and AI SDK applications. Bedrock and Vertex AI fit cloud-native procurement and IAM.",
+                "For most teams leaving OpenRouter, TrustedRouter. It keeps the same OpenAI-compatible, one-endpoint access to 600+ models from 100+ providers, and adds a hardware-attested gateway that never logs prompts, an EU gateway on every account, and a 5.5% fee that falls as low as 0.1% at enterprise scale.",
+            ),
+            (
+                "Which OpenRouter alternative works most like OpenRouter?",
+                "TrustedRouter. Like OpenRouter, it's a hosted marketplace: one wallet of prepaid credits, one API key and one OpenAI-compatible endpoint for 600+ models from 100+ providers, with automatic failover and OpenRouter-style routing fields. Most other alternatives are gateways that sit in front of provider accounts you open and pay for separately.",
+            ),
+            (
+                "Is TrustedRouter cheaper than OpenRouter?",
+                "TrustedRouter charges provider prices plus 5.5% on text and embedding models, with no subscription. OpenRouter charges 5.5% on credit purchases on its Standard plan and 8% on Business, the plan that includes EU in-region routing. TrustedRouter's fee falls with volume, to as low as 0.1% at enterprise scale.",
             ),
             (
                 "What is the easiest OpenRouter alternative to migrate to?",
-                "An OpenAI-compatible hosted gateway is usually the easiest migration because the SDK can stay in place. With TrustedRouter, change the base URL to https://api.trustedrouter.com/v1, replace the API key, and test the model IDs and provider controls used by your application.",
-            ),
-            (
-                "Which OpenRouter alternative can I self-host?",
-                "LiteLLM is designed for teams that want to operate their own OpenAI-compatible proxy. Portkey and Helicone also publish self-hosting options. TrustedRouter publishes its gateway and control-plane source for teams that want the same routing and attestation architecture under their own control.",
+                "TrustedRouter. Change the base URL to https://api.trustedrouter.com/v1 and swap the API key. The OpenAI SDK stays, and OpenRouter-style routing fields such as provider.order, provider.only and provider.ignore are accepted. Teams spending more than $100 a month can request migration credits, granted by approval.",
             ),
             (
                 "Which OpenRouter alternative is best for privacy?",
-                "Compare the entire request path, not only the gateway policy. TrustedRouter's attested gateway never stores prompt or output content. Every downstream route separately identifies zero-data-retention status and independently verified end-to-end confidential compute so sensitive workloads can fail closed on the required privacy tier.",
+                "TrustedRouter publishes a hardware attestation of the exact build handling your requests, which none of the other hosted gateways here offers, and that build never logs prompts or outputs. Each route is labeled for zero retention and confidential compute, and a privacy floor makes a request fail rather than fall back to a weaker route.",
+            ),
+            (
+                "Is there a European alternative to OpenRouter?",
+                "TrustedRouter runs an EU gateway that every account can use: authentication, policy checks, provider selection and streaming start in Europe. The trustedrouter/eu model routes to an EU-focused provider set led by Mistral, and you can restrict requests to providers you've approved so nothing routes outside your list. OpenRouter offers in-region routing only on its Business and Enterprise plans.",
+            ),
+            (
+                "Is there a free OpenRouter alternative?",
+                "TrustedRouter gives new accounts 1 million free tokens with no card required, and there's no subscription after that: you pay provider prices plus a 5.5% fee on text and embedding models. Teams spending more than $100 a month on LLMs can request migration credits, granted by approval.",
+            ),
+            (
+                "What is the best OpenRouter alternative for Cursor, Claude Code or Codex?",
+                "TrustedRouter. Its agent setup guide covers Codex, Claude Code, Cursor and eval runners, so your coding agent gets one key for 600+ models with automatic failover, including open models that cost far less than frontier list prices. Requests run through the same attested gateway, which never logs your code or prompts.",
+            ),
+            (
+                "Which OpenRouter alternative can I self-host?",
+                "TrustedRouter offers an Apache-2.0 on-prem gateway that runs inside your network, and publishes the source of its hosted gateway and control plane under BUSL-1.1 for review. LiteLLM's open-source proxy is self-hosted, so you operate and secure it yourself.",
             ),
             (
                 "Can I keep using the OpenAI SDK?",
-                "Yes. TrustedRouter, LiteLLM, Portkey, Vercel AI Gateway, Cloudflare AI Gateway, Helicone, and Requesty all offer OpenAI-compatible paths. Compatibility varies for advanced fields, Responses API features, tools, images, streaming events, and provider-specific controls, so test the exact surface your application uses.",
+                "Yes. Change the base URL and API key and your existing OpenAI SDK code runs through TrustedRouter. Test any advanced fields your app depends on, such as tool calls or streaming events.",
+            ),
+            (
+                "What is happening to OpenRouter?",
+                "Stripe agreed to acquire OpenRouter, announced August 19, 2026. OpenRouter said it would keep operating under the same name, product and roadmap.",
             ),
         ),
     ),
@@ -3132,7 +3156,7 @@ def _render_public_page(
     verified_on_label: str | None = None
     page_specific_json_ld: tuple[dict[str, object], ...] = ()
     if page_key == "openrouter-alternative":
-        verified_on_label = datetime.fromisoformat(OPENROUTER_ALTERNATIVES_VERIFIED_ON).strftime(
+        verified_on_label = datetime.fromisoformat(OPENROUTER_ALTERNATIVES_UPDATED_ON).strftime(
             "%B %-d, %Y"
         )
         page_specific_json_ld = (
@@ -3141,7 +3165,7 @@ def _render_public_page(
                 "name": page.title,
                 "url": canonical_url,
                 "description": page.description,
-                "dateModified": OPENROUTER_ALTERNATIVES_VERIFIED_ON,
+                "dateModified": OPENROUTER_ALTERNATIVES_UPDATED_ON,
             },
             _item_list_node(
                 name="OpenRouter alternatives compared by TrustedRouter",
@@ -4617,7 +4641,7 @@ def _sitemap_urlset(domain: str, paths: Sequence[tuple[str, str, str]]) -> str:
     urls = "\n".join(
         "  <url>"
         f"<loc>{xml_escape(f'https://{domain}{path}')}</loc>"
-        f"<lastmod>{lastmod}</lastmod>"
+        f"<lastmod>{OPENROUTER_ALTERNATIVES_UPDATED_ON if path == '/openrouter-alternative' else lastmod}</lastmod>"
         f"<changefreq>{changefreq}</changefreq>"
         f"<priority>{priority}</priority>"
         "</url>"
