@@ -25,7 +25,7 @@ class NyteV2Tests(unittest.TestCase):
     def test_navigation_and_ctas(self):
         for name in ('home', 'api', 'sup', 'providers', 'cowork'):
             page = render_nyte(name)
-            self.assertEqual(page.count('>Confidential API</a>'), 1)
+            self.assertEqual(page.count('>Confidential API</span>'), 1)
             self.assertNotIn('Plan a pilot', page)
             self.assertNotIn('data-go=', page)
             self.assertNotIn('/confidential-api', page)
@@ -149,3 +149,65 @@ class NyteV2Tests(unittest.TestCase):
         for quote in data['quotes'].values():
             self.assertIn(f"${quote['value']:,}", page)
         self.assertNotIn('{{', page)
+
+
+class NavigationRegistryTests(unittest.TestCase):
+    def test_build_rejects_missing_or_unknown_group(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from nyte_v2 import GROUP_GUIDANCE, PAGES, build_nyte
+
+        for group in (None, "buyers"):
+            with self.subTest(group=group), tempfile.TemporaryDirectory() as directory:
+                with patch.dict(PAGES, {"example": {"route": "/example", "group": group}}):
+                    with self.assertRaises(ValueError) as error:
+                        build_nyte(Path(directory))
+                    self.assertEqual(str(error.exception), GROUP_GUIDANCE + "\nexample")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(PAGES, {"example": {"route": "/example"}}):
+            with self.assertRaises(ValueError):
+                build_nyte(Path(directory))
+
+    def test_registry_navigation_on_every_shell_page(self):
+        import re
+        from nyte_v2 import GROUPS, PAGES
+        from token_index_page import render_token_index
+
+        for key, entry in PAGES.items():
+            if entry.get("builder") in {"press", "anchor"}:
+                continue
+            page = render_token_index() if key == "index" else render_nyte(key)
+            nav = re.search(r'<nav class="nav".*?</nav>', page, re.S).group()
+            for group in GROUPS:
+                panel = re.search(r'id="nav-' + group + r'">(.*?)</div>', nav, re.S).group(1)
+                expected = [p["route"] for p in PAGES.values() if p.get("group") == group and p["label"]]
+                self.assertEqual(re.findall(r'<a href="([^"]+)"', panel), expected)
+            self.assertNotIn('data-nav=', nav)
+            self.assertEqual(nav.count('aria-expanded="false"'), 3)
+
+    def test_chip_dates_and_explicit_override(self):
+        from unittest.mock import patch
+        from nyte_v2 import PAGES, render_nav
+
+        with patch('nyte_v2.page_added', return_value='2026-10-20'):
+            nav = render_nav()
+            self.assertEqual(nav.count('data-added="2026-10-20"'), 9)
+            self.assertEqual(nav.count('class="tag cc" hidden>NEW'), 9)
+            with patch.dict(PAGES['api'], new_until='2026-11-01'):
+                nav = render_nav()
+                self.assertIn('href="/confidential" data-new-until="2026-11-01"', nav)
+                self.assertEqual(nav.count('data-added='), 8)
+
+    def test_added_date_comes_from_source_history_or_today(self):
+        from datetime import date
+        from unittest.mock import Mock, patch
+        from nyte_v2 import page_added
+
+        page_added.cache_clear()
+        with patch('nyte_v2.subprocess.run', return_value=Mock(stdout='2026-10-19\n')) as git:
+            self.assertEqual(page_added('nyte-v2/example.html'), '2026-10-19')
+            self.assertEqual(git.call_args.args[0][-1], 'nyte-v2/example.html')
+        page_added.cache_clear()
+        with patch('nyte_v2.subprocess.run', side_effect=FileNotFoundError):
+            self.assertEqual(page_added('nyte-v2/example.html'), date.today().isoformat())
+        page_added.cache_clear()

@@ -33,9 +33,10 @@ const assert = require('node:assert/strict');
     await cowork.evaluate(()=>document.fonts.ready);
     assert.equal(await cowork.locator('body').getAttribute('data-nyte-page'),'cowork');
     assert(await cowork.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-    if(width<=1280)await cowork.locator('#menuBtn').click();
-    assert.equal(await cowork.locator('#nav a').count(),7);
-    assert(await cowork.locator('#nav [data-nav="cowork"]').isVisible());
+    if(width<=800)await cowork.locator('#menuBtn').click();
+    assert.equal(await cowork.locator('#nav a').count(),9);
+    if(width>800)await cowork.locator('[data-group=buy]').hover();
+    assert(await cowork.locator('#nav a[href="/trusted-cowork"]').isVisible());
   }
   await cowork.close();
   const page = await newPage({reducedMotion: 'reduce'});

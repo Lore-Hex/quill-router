@@ -39,6 +39,6 @@ class CoworkTests(unittest.TestCase):
     def test_shared_navigation(self):
         for name in ("home", "api", "sup", "providers", "cowork"):
             page = render_nyte(name)
-            self.assertEqual(page.count('>Trusted Cowork</a>'), 1)
-            self.assertLess(page.index('>Confidential API</a>'), page.index('>Trusted Cowork</a>'))
-            self.assertLess(page.index('>Trusted Cowork</a>'), page.index('>Index</a>'))
+            self.assertEqual(page.count('>Trusted Cowork</span>'), 1)
+            self.assertLess(page.index('>Confidential API</span>'), page.index('>Trusted Cowork</span>'))
+            self.assertLess(page.index('>Trusted Cowork</span>'), page.index('>Token Index</span>'))

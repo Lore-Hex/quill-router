@@ -350,8 +350,8 @@ class ExchangeTests(unittest.TestCase):
         from nyte_v2 import render_nyte
         from token_index_page import render_token_index
 
-        expected = ["/confidential", "/trusted-cowork", "/index", "/buy",
-                    "/neocloud-accelerator", "/suppliers", "/providers"]
+        expected = ["/confidential", "/trusted-cowork", "/buy", "/suppliers",
+                    "/providers", "/neocloud-accelerator", "/index", "/media-kit", "/#deck"]
         for page in ("home", "api", "cowork", "index", "buy", "accelerator", "sup", "providers"):
             with self.subTest(page=page):
                 navigation = MarketLinkParser("Main")
@@ -597,7 +597,9 @@ class ExchangeTests(unittest.TestCase):
                 namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
                 paths = ["/"]
                 if market["slug"] == "new-york":
-                    paths += ["/confidential", "/suppliers", "/providers", "/badge", "/media-kit", "/index", "/trusted-cowork", "/buy", "/reserved-tokens-terms", "/neocloud-accelerator"]
+                    from nyte_v2 import PAGES
+                    paths += [entry["route"] for key, entry in PAGES.items()
+                              if key != "home" and entry.get("builder") != "anchor"] + ["/badge"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market["domain"]}{path}' for path in paths],

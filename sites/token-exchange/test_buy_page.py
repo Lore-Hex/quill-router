@@ -76,7 +76,7 @@ class BuyPageTests(unittest.TestCase):
         home = (self.root / 'new-york/index.html').read_text()
         self.assertIn('<a class="btn btn-primary" href="/buy">Reserved tokens</a>', home)
         for name in ['new-york/index.html', 'index', 'confidential', 'suppliers', 'providers', 'buy']:
-            self.assertIn('<a href="/buy">Reserved tokens</a>', (self.root / name).read_text())
+            self.assertIn('<span class="nav-label" id="nav-label-buy">Reserved tokens</span>', (self.root / name).read_text())
         for market in load_markets():
             page = (self.root / market['slug'] / 'index.html').read_text()
             parser = PageLinks()

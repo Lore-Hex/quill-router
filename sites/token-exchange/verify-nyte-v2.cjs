@@ -143,20 +143,37 @@ for (const [width,height] of [[320,568],[390,667],[390,844]]) {
  await page.evaluate(()=>scrollTo(0,120));
  assert.equal(await page.locator('.cw-hero h1').evaluate(el=>el.getBoundingClientRect().top+scrollY),top);
 }
-// Every v2 route carries Cowork, Reserved tokens and accelerator navigation.
-for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy', '/neocloud-accelerator']) {
- for (const width of [320,390,1001,1100,1280,1281,1440]) {
+// Every shell page uses the same three groups across the collapse boundary.
+for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy', '/neocloud-accelerator', '/index', '/reserved-tokens-terms']) {
+ for (const width of [390,768,800,801,1024,1440]) {
   await page.setViewportSize({width,height:900});await page.goto(base+path);await page.evaluate(()=>document.fonts.ready);
-  assert.equal(await page.locator('#menuBtn').isVisible(),width<=1280);
-  if(width>1280)assert(await page.locator('#nav a').evaluateAll(links=>links.every(link=>{const range=document.createRange();range.selectNodeContents(link);return range.getClientRects().length===1;})),'desktop nav labels must not wrap');
-  if(width<=1280)await page.locator('#menuBtn').click();
-  assert.deepEqual(await page.locator('#nav a').allTextContents(),['Confidential API','Trusted Cowork','Index','Reserved tokens','Neocloud accelerator','Suppliers','Providers']);
-  await page.locator('#nav [data-nav="cowork"]').click();await page.waitForURL('**/trusted-cowork');
-  const current=page.locator('#nav [data-nav="cowork"]');assert.equal(await current.getAttribute('aria-current'),'page');assert.match(await current.getAttribute('class'),/on/);
+  assert.equal(await page.locator('#menuBtn').isVisible(),width<=800);
+  if(width<=800){
+   await page.locator('#menuBtn').click();
+   assert.deepEqual(await page.locator('.nav-heading').allTextContents(),['Buy','Supply','Exchange']);
+   for(const item of await page.locator('#nav a').all())assert(await item.isVisible());
+  }else{
+   for(const group of ['buy','supply','exchange']){
+    const button=page.locator(`[data-group=${group}] button`);
+    await button.focus();await page.keyboard.press('Enter');
+    assert.equal(await button.getAttribute('aria-expanded'),'true');
+    assert(await page.locator(`#nav-${group}`).isVisible());
+    assert.equal(await page.locator('.nav-group.open').count(),1);
+    await page.keyboard.press('Escape');
+    assert(!(await page.locator(`#nav-${group}`).isVisible()));
+    await page.locator(`[data-group=${group}]`).hover();
+    assert(await page.locator(`#nav-${group}`).isVisible());
+    await page.locator('main').click({position:{x:4,y:4}});
+    assert(!(await page.locator(`#nav-${group}`).isVisible()));
+   }
+  }
+  assert.deepEqual(await page.locator('#nav .nav-label').allTextContents(),['Confidential API','Trusted Cowork','Reserved tokens','Suppliers','Providers','Neocloud accelerator','Token Index','Media kit','Buyer deck']);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  assert.equal(await current.evaluate(el=>getComputedStyle(el).boxShadow==='none'),width<=1280);
  }
 }
+await page.goto(base+'/trusted-cowork');
+assert.equal(await page.locator('#nav a[href="/trusted-cowork"]').getAttribute('aria-current'),'page');
+assert.match(await page.locator('[data-group=buy] button').getAttribute('class'),/on/);
 await page.setViewportSize({width:390,height:844});
 assert(await page.locator('.cw-screenshot img').evaluate(el=>el.complete&&el.naturalWidth===1600));
 await page.keyboard.press('Tab');
@@ -173,11 +190,59 @@ for (const [selector,cta] of [['.btn-primary','download_apple_silicon'],['.btn-s
  await page.waitForTimeout(100);
  assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta===cta&&e.page==='/trusted-cowork'&&e.position==='close'));
 }
+// NEW chips expire in the browser, including inclusive overrides and the three-item cap.
+await page.clock.install({time:new Date('2026-10-27T12:00:00')});
+await page.route(base+'/',async route=>{
+ const response=await route.fetch();
+ let index=0;
+ const dates=['2026-10-27','2026-10-26','2026-10-25','2026-10-24','2026-10-13','2026-10-28','2020-01-01','2020-01-01','2020-01-01'];
+ const body=(await response.text()).replace(/data-added="[^"]+"/g,()=>`data-added="${dates[index++]}"`);
+ await route.fulfill({response,body});
+});
+await page.goto(base+'/');
+assert.deepEqual(await page.locator('#nav a:has(.tag:not([hidden])) .nav-label').allTextContents(),['Confidential API','Trusted Cowork','Reserved tokens']);
+await page.evaluate(()=>{
+ const items=[...document.querySelectorAll('#nav a')];
+ items.forEach(item=>{item.dataset.added='2020-01-01';});
+ delete items[0].dataset.added;items[0].dataset.newUntil='2026-10-27';
+ items[1].dataset.added='2026-10-13';items[2].dataset.added='2026-10-14';
+ document.dispatchEvent(new Event('visibilitychange'));
+});
+assert.deepEqual(await page.locator('#nav a:has(.tag:not([hidden])) .nav-label').allTextContents(),['Confidential API','Reserved tokens']);
+await page.clock.fastForward(24*60*60*1000);
+assert.equal(await page.locator('#nav .tag:not([hidden])').count(),0);
+await page.clock.resume();await page.unroute(base+'/');
+// Both direct and same-page deck links open the existing dialog.
+await page.goto(base+'/#deck');await page.locator('#m-deck').waitFor({state:'visible'});
+await page.keyboard.press('Escape');await page.goto(base+'/');
+await page.setViewportSize({width:1440,height:900});
+const exchange=page.locator('[data-group=exchange] button');
+await exchange.click();await page.locator('#nav a[href="/#deck"]').click();
+await page.locator('#m-deck').waitFor({state:'visible'});await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
+// Escape from a panel item returns focus without reopening the panel.
+await page.locator('[data-group=buy]').hover();await page.locator('#nav a[href="/confidential"]').focus();
+await page.keyboard.press('Escape');assert(!(await page.locator('#nav-buy').isVisible()));
+const buyToggle=page.locator('[data-group=buy] button');
+await buyToggle.click();assert(await page.locator('#nav-buy').isVisible());
+await buyToggle.click();assert(!(await page.locator('#nav-buy').isVisible()));
+if(process.env.NYTE_NAV_SHOTS){
+ const fs=require('node:fs');fs.mkdirSync(process.env.NYTE_NAV_SHOTS,{recursive:true});
+ for(const width of [390,768,1024,1440]){
+  await page.setViewportSize({width,height:1000});await page.goto(base+'/');await page.evaluate(()=>document.fonts.ready);
+  if(width<=800)await page.locator('#menuBtn').click();else await page.locator('[data-group=buy]').hover();
+  await page.screenshot({path:`${process.env.NYTE_NAV_SHOTS}/nav-${width}.png`});
+ }
+}
 const noJs=await browser.newContext({javaScriptEnabled:false,viewport:{width:1100,height:900}});
 const noJsPage=await noJs.newPage();
 await noJsPage.goto(base+'/trusted-cowork');
 assert.equal(await noJsPage.locator('#menuBtn').isVisible(),false);
-for(const link of await noJsPage.locator('#nav a').all())assert(await link.isVisible(),'no-JS navigation stays available');
+for(const group of ['buy','supply','exchange']){
+ await noJsPage.locator(`[data-group=${group}] button`).focus();
+ assert(await noJsPage.locator(`#nav-${group}`).isVisible());
+}
+await noJsPage.setViewportSize({width:390,height:844});
+for(const link of await noJsPage.locator('#nav a').all())assert(await link.isVisible(),'no-JS phone navigation stays available');
 await noJs.close();
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
 })().catch(error=>{console.error(error);process.exit(1);});
