@@ -356,12 +356,16 @@
   .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
 }
 
-/* A quiet action below the comparison, aligned with its outer edge. */
+/* Return from the wide comparison to the article’s shared reading column. */
 .openrouter-article .v2-table-cta {
   display: flex;
   justify-content: flex-start;
-  margin: 20px 0 0;
+  max-width: 720px;
+  margin: 28px auto 0;
   padding: 0;
+}
+.openrouter-article main > [aria-labelledby="alternatives-table-heading"] + .v2-head {
+  margin-top: 48px;
 }
 .openrouter-article .v2-table-cta .btn {
   min-height: 48px;
