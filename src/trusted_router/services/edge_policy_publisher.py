@@ -9,10 +9,11 @@ edge gates on before it would answer an authorize itself: the accepted image
 digests (the verified Stage D policy plus the break-glass override, the set
 authorize checks a boot against), the Stage D settings, whether the settle
 records are durable, the pilot's gate, the per-key in-flight limit, the
-monitor key's lookup hash, the async-settle shadow cohort, the regions and
-the internal-only models. The manifest (routing_snapshot_signing.py,
-``EDGE_POLICY_TYP``) is signed with the routing snapshot's key under its own
-``typ``.
+monitor key's lookup hash, the async-settle shadow cohort, the regions, the
+internal-only models and the async-settle facts (admission, the edge's async
+switch, this process's ticket authority and typed records). The manifest
+(routing_snapshot_signing.py, ``EDGE_POLICY_TYP``) is signed with the routing
+snapshot's key under its own ``typ``.
 
 A body is issued at the publisher's clock and signed in the background, by
 one worker at a time, never on a poll: the first poll at or after the cached
@@ -86,6 +87,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from trusted_router.config import Settings
+    from trusted_router.services.async_settle import Runtime
     from trusted_router.stage_d_policy import StageDPolicyResolver
 
 log = logging.getLogger(__name__)
@@ -138,11 +140,27 @@ class Publication:
         return self.issued_at <= now < self.refresh_at
 
 
+def ticket_authority(runtime: Runtime | None) -> bool:
+    """Whether this process's async-settle runtime can issue a ticket: the
+    authority facts ``async_settle.snapshot_projection`` answers
+    ``async_eligible: false`` without (a signer, an epoch of at least 1, a
+    journal region)."""
+    return (runtime is not None and runtime.signer is not None and runtime.epoch >= 1
+            and runtime.effective_journal_region != "")
+
+
+def typed_records(typed_store: Any) -> bool:
+    """The ``typed`` the gateway's async-v1 authorize branch passes to
+    ``authorize_additions``: a typed billing store writing typed records."""
+    return typed_store is not None and getattr(typed_store, "request_record_write_mode", "legacy") == "typed"
+
+
 def settings_facts(
     settings: Settings, *, accepted: frozenset[str], durable: bool, internal: frozenset[str],
+    ticket_authority: bool, typed_records: bool,
 ) -> dict[str, Any]:
     """Every body field but the version, kind, plane and window, from these
-    settings and the three live facts that are not settings."""
+    settings and the five live facts that are not settings."""
     return {
         "accepted_image_digests": sorted(accepted),
         "stage_d": {
@@ -163,6 +181,12 @@ def settings_facts(
         "primary_region": settings.primary_region,
         "multi_region_enabled": settings.multi_region_enabled,
         "internal_models": sorted(internal),
+        "async_settle": {
+            "admission_enabled": settings.async_settle_admission_enabled,
+            "edge_decide": settings.fastpath_edge_decide_async,
+            "ticket_authority": ticket_authority,
+            "typed_records": typed_records,
+        },
     }
 
 
@@ -201,16 +225,22 @@ class LiveFacts:
         self, settings: Settings, *,
         resolver: Callable[[], StageDPolicyResolver | None],
         typed_store: Callable[[], Any],
+        runtime: Callable[[], Runtime | None],
     ) -> None:
         self._settings, self._resolver, self._typed_store = settings, resolver, typed_store
+        self._runtime = runtime
 
     def __call__(self) -> dict[str, Any]:
         settings = self._settings
+        accepted = refreshed_accepted_image_digests(self._resolver(), settings)
+        store = self._typed_store()
         return settings_facts(
             settings,
-            accepted=refreshed_accepted_image_digests(self._resolver(), settings),
-            durable=records_durable(settings.settle_outbox_enabled, self._typed_store()),
+            accepted=accepted,
+            durable=records_durable(settings.settle_outbox_enabled, store),
             internal=internal_model_ids(),
+            ticket_authority=ticket_authority(self._runtime()),
+            typed_records=typed_records(store),
         )
 
 
@@ -362,6 +392,7 @@ def build_publisher(
     settings: Settings, *,
     resolver: Callable[[], StageDPolicyResolver | None] = lambda: None,
     typed_store: Callable[[], Any] = _typed_store,
+    runtime: Callable[[], Runtime | None] = lambda: None,
     facts: Callable[[], dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.time,
     spawn: Callable[[Callable[[], None]], Any] = _spawn_thread,
@@ -374,7 +405,7 @@ def build_publisher(
     signer = EdgePolicySigner(load_signer(settings))
     return EdgePolicyPublisher(
         signer=signer, plane=plane_of(settings),
-        facts=facts or LiveFacts(settings, resolver=resolver, typed_store=typed_store),
+        facts=facts or LiveFacts(settings, resolver=resolver, typed_store=typed_store, runtime=runtime),
         clock=clock, spawn=spawn, monotonic=monotonic,
     )
 
@@ -382,13 +413,14 @@ def build_publisher(
 def install(app: FastAPI, settings: Settings) -> None:
     """Put the publisher, or why there is none, on ``app.state``.
 
-    The Stage D policy resolver is read from ``app.state`` at each poll: it is
-    installed after this runs.
+    The Stage D policy resolver and the async-settle runtime are read from
+    ``app.state`` at each signing: both are installed after this runs.
     """
     state = app.state
     try:
         state.edge_policy_publisher = build_publisher(
             settings, resolver=lambda: getattr(state, "stage_d_policy_resolver", None),
+            runtime=lambda: getattr(state, "async_settle", None),
         )
         state.edge_policy_status = "serving"
     except ValueError as exc:

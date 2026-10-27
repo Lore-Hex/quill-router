@@ -762,6 +762,11 @@ ENV_VARS=(
   "TR_ROUTING_SNAPSHOT_PUBLIC_KEY=${ROUTING_SNAPSHOT_PUBLIC_KEY}"
   # E2 edge policy publication: the literal of the block above.
   "TR_EDGE_POLICY_PUBLISH_ENABLED=${EDGE_POLICY_PUBLISH_ENABLED}"
+  # The edge policy's async_settle.edge_decide: the edge does not decide
+  # async-v1 authorizes until the I4 step of
+  # docs/design/fast-admission-e2-g15-async.md section 6.2. A literal, so no
+  # revision inherits it.
+  "TR_FASTPATH_EDGE_DECIDE_ASYNC=false"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

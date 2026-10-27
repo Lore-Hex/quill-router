@@ -105,9 +105,12 @@ def fixture_settings() -> Settings:
 
 def policy() -> EdgePolicyV1:
     settings = fixture_settings()
+    # async_settle: admission and the edge's async switch off, as deployed
+    # (rollout.sh), a ticket authority and typed records, so the body carries
+    # both values.
     facts = settings_facts(
         settings, accepted=RESOLVER_DIGESTS | settings.stage_d_accepted_gcp_digests, durable=True,
-        internal=INTERNAL_MODELS,
+        internal=INTERNAL_MODELS, ticket_authority=True, typed_records=True,
     )
     return build_policy(plane_of(settings), ISSUED_AT, facts)
 

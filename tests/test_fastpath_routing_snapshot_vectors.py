@@ -12,6 +12,8 @@ import base64
 import hashlib
 import importlib.util
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -391,3 +393,83 @@ def test_a_provider_other_than_the_catalogs_refuses() -> None:
     providers["wafer"] = replace(providers["wafer"], provider_zero_data_retention=False)
     with pytest.raises(SnapshotRefused, match="provider wafer"):
         compile_routing_snapshot(inputs=replace(inputs, providers=providers), **arguments)
+
+
+def _compile_fixture(inputs):  # type: ignore[no-untyped-def]
+    return compile_routing_snapshot(
+        at=GENERATOR.COMPILED_AT, horizon=GENERATOR.HORIZON_SECONDS,
+        settings=GENERATOR.fixture_settings(), source_revision="golden-fixture",
+        plane=Plane(cloud="gcp", region="us-central1"), inputs=inputs,
+    )
+
+
+def test_billing_valid_is_published_per_epoch_false_where_build_snapshot_refuses() -> None:
+    """docs/design/fast-admission-e2-g15-async.md section 3.2: a request
+    price of 0.5 publishes as 0 and a float tier rate as its integer part,
+    which build_snapshot refuses; billing_valid says so on every epoch."""
+    from trusted_router.billing_snapshot import Eligibility, build_snapshot, raw_prices_valid
+    from trusted_router.catalog import effective_endpoint
+    from trusted_router.pricing import PriceTier
+    from trusted_router.stage_d import endpoint_pricing_candidate
+
+    inputs = GENERATOR.fixture_inputs()
+    gemini = next(e for e in inputs.endpoints if e.provider == "google-ai-studio" and e.usage_type == "Credits")
+    tier = gemini.price_tiers[0]
+    half = replace(inputs.endpoints[0], request_price_microdollars=0.5)
+    float_tier = replace(gemini, price_tiers=(
+        replace(tier, prompt_price_microdollars_per_million_tokens=tier.prompt_price_microdollars_per_million_tokens + 0.5),
+        *gemini.price_tiers[1:],
+    ))
+    assert isinstance(float_tier.price_tiers[0], PriceTier)
+    malformed = {half.id: half, float_tier.id: float_tier}
+    endpoints = tuple(malformed.get(e.id, e) for e in inputs.endpoints)
+    snapshot = _compile_fixture(replace(inputs, endpoints=endpoints))
+    valid = 0
+    for entry, endpoint in zip(snapshot.endpoints, endpoints, strict=True):
+        assert entry.id == endpoint.id
+        for epoch in entry.epochs:
+            effective = effective_endpoint(endpoint, at=datetime.fromtimestamp(epoch.starts_at, tz=UTC))
+            assert epoch.billing_valid is raw_prices_valid(effective), entry.id
+            assert epoch.billing_valid is (entry.id not in malformed), entry.id
+            valid += epoch.billing_valid
+    assert valid >= len(snapshot.endpoints) - len(malformed)
+    # The published price is the coerced one, so only billing_valid shows the refusal.
+    by_id = {entry.id: entry for entry in snapshot.endpoints}
+    assert by_id[half.id].epochs[0].price.request_fee_micro == 0
+    assert by_id[float_tier.id].epochs[0].price.tiers[0].rates.input_micro_per_million == (
+        tier.prompt_price_microdollars_per_million_tokens)
+    assert endpoint_pricing_candidate(half)["request_fee_micro"] == 0
+    for endpoint in (half, float_tier):
+        with pytest.raises(ValueError):
+            build_snapshot([endpoint], Eligibility())
+    # The body says so: false on each epoch of the two, true on every other.
+    body = json.loads(canonical_snapshot_bytes(snapshot))
+    for entry in body["endpoints"]:
+        assert {epoch["billing_valid"] for epoch in entry["epochs"]} == {entry["id"] not in malformed}
+
+
+def test_billing_valid_starts_an_epoch_when_only_it_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A raw value that turns malformed on the hour, with the published price
+    unchanged (a request price of 0.5 publishes as the fixture's 0), starts an
+    epoch of its own, and one ends it."""
+    from trusted_router import routing_snapshot
+
+    inputs = GENERATOR.fixture_inputs()
+    target = next(e for e in inputs.endpoints if e.provider == "wafer")
+    assert target.request_price_microdollars == 0
+    real = routing_snapshot.effective_endpoint
+    start = GENERATOR.COMPILED_AT
+    bad = range(start + 2 * HOUR, start + 3 * HOUR)
+
+    def malformed_for_an_hour(endpoint, *, at=None):  # type: ignore[no-untyped-def]
+        effective = real(endpoint, at=at)
+        if endpoint.id == target.id and at is not None and int(at.timestamp()) in bad:
+            return replace(effective, request_price_microdollars=0.5)
+        return effective
+
+    monkeypatch.setattr(routing_snapshot, "effective_endpoint", malformed_for_an_hour)
+    snapshot = _compile_fixture(inputs)
+    entry = next(e for e in snapshot.endpoints if e.id == target.id)
+    assert [(epoch.starts_at, epoch.billing_valid) for epoch in entry.epochs] == [
+        (start, True), (start + 2 * HOUR, False), (start + 3 * HOUR, True)]
+    assert len({(epoch.headline, epoch.price) for epoch in entry.epochs}) == 1

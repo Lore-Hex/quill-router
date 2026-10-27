@@ -28,6 +28,7 @@ from pydantic import (
     Field,
     ModelWrapValidatorHandler,
     TypeAdapter,
+    ValidationError,
     ValidationInfo,
     model_validator,
 )
@@ -433,6 +434,42 @@ def parse_eligibility(raw: bytes | str) -> Eligibility:
     return Eligibility.model_validate_json(raw)
 
 
+def _require_raw_prices(endpoint: ModelEndpoint) -> None:
+    """Every raw price value as a strict non-negative int64, before
+    ``endpoint_pricing_candidate`` coerces them with ``int(...)``: the prompt,
+    completion and request prices, and each tier's bound, prompt, completion
+    and cached prompt prices (a tier's ``None`` is skipped). Raises
+    ValidationError on the first that is not."""
+    integer = TypeAdapter(UInt)
+    for rate in (endpoint.prompt_price_microdollars_per_million_tokens,
+                 endpoint.completion_price_microdollars_per_million_tokens,
+                 endpoint.request_price_microdollars):
+        integer.validate_python(rate)
+    for tier in endpoint.price_tiers:
+        for value in (tier.max_prompt_tokens,
+                      tier.prompt_price_microdollars_per_million_tokens,
+                      tier.completion_price_microdollars_per_million_tokens,
+                      tier.prompt_cached_price_microdollars_per_million_tokens):
+            if value is not None:
+                integer.validate_python(value)
+
+
+def raw_prices_valid(endpoint: ModelEndpoint) -> bool:
+    """Whether ``build_snapshot`` accepts this effective endpoint's raw prices.
+
+    The routing snapshot publishes it per epoch as ``billing_valid``
+    (docs/design/fast-admission-e2-g15-async.md section 3.2): its ``price`` is
+    ``endpoint_pricing_candidate``'s, which coerces a malformed value (a
+    request price of ``0.5`` publishes as ``0``), so without this fact the edge
+    could not see that ``build_snapshot`` refuses the endpoint.
+    """
+    try:
+        _require_raw_prices(endpoint)
+    except ValidationError:
+        return False
+    return True
+
+
 def build_snapshot(endpoints: Iterable[ModelEndpoint], requested: Eligibility) -> BillingSnapshot:
     """Freeze effective endpoints, resolving missing cache rates NOW, once.
 
@@ -443,18 +480,7 @@ def build_snapshot(endpoints: Iterable[ModelEndpoint], requested: Eligibility) -
     require_eligible(requested)
     candidates = []
     for endpoint in endpoints:
-        integer = TypeAdapter(UInt)
-        for rate in (endpoint.prompt_price_microdollars_per_million_tokens,
-                     endpoint.completion_price_microdollars_per_million_tokens,
-                     endpoint.request_price_microdollars):
-            integer.validate_python(rate)
-        for tier in endpoint.price_tiers:
-            for value in (tier.max_prompt_tokens,
-                          tier.prompt_price_microdollars_per_million_tokens,
-                          tier.completion_price_microdollars_per_million_tokens,
-                          tier.prompt_cached_price_microdollars_per_million_tokens):
-                if value is not None:
-                    integer.validate_python(value)
+        _require_raw_prices(endpoint)
         price = endpoint_pricing_candidate(endpoint)
         candidates.append(Candidate.model_validate({
             **price,

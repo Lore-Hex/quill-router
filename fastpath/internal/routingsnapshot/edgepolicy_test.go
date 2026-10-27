@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -125,6 +126,7 @@ func TestTheGoldenPolicyVerifies(t *testing.T) {
 		AsyncSettleShadowPolicy: "shadow-v2", AsyncSettleShadowWorkspaces: []string{"ws-synthetic-async-shadow"},
 		ConfiguredRegions: []string{"us-central1", "europe-west4", "us-east4"}, PrimaryRegion: "us-central1",
 		MultiRegionEnabled: true, InternalModels: []string{"trustedrouter/fortanix-test", "trustedrouter/monitor"},
+		AsyncSettle: &AsyncSettle{TicketAuthority: true, TypedRecords: true},
 	}
 	got, _ := json.Marshal(p)
 	wanted, _ := json.Marshal(wantPolicy)
@@ -329,6 +331,17 @@ func TestParseEdgePolicyRefusals(t *testing.T) {
 	}
 }
 
+// withoutAsyncSettle is the golden body as a publisher before P5 wrote it:
+// the async_settle member removed.
+func withoutAsyncSettle(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	member := regexp.MustCompile(`"async_settle":\{[^{}]*\},`)
+	if len(member.FindAll(raw, -1)) != 1 {
+		t.Fatal("the golden body has no single async_settle object")
+	}
+	return member.ReplaceAll(raw, nil)
+}
+
 // withAsyncSettle is the golden body with an async_settle object in its
 // canonical place (just before async_settle_shadow_policy, keys sorted).
 func withAsyncSettle(t *testing.T, raw []byte, object string) []byte {
@@ -341,15 +354,17 @@ func withAsyncSettle(t *testing.T, raw []byte, object string) []byte {
 }
 
 // TestTheAsyncSettleObjectIsOptional: G15a (docs/design/
-// fast-admission-e2-g15-async.md section 6.1). The golden body, which has no
-// async_settle, parses with it nil (unknown); a body with the object parses
-// and exposes each of the four booleans as published, in every combination,
-// and verifies under a manifest signed for it; null, a missing, unknown or
-// non-boolean member, and an object out of canonical order are refused.
+// fast-admission-e2-g15-async.md section 6.1). The golden body without its
+// async_settle (P5 publishes it) parses with it nil (unknown); a body with
+// the object parses and exposes each of the four booleans as published, in
+// every combination, and verifies under a manifest signed for it; null, a
+// missing, unknown or non-boolean member, and an object out of canonical
+// order are refused.
 func TestTheAsyncSettleObjectIsOptional(t *testing.T) {
-	m, raw := policyGolden(t)
+	m, published := policyGolden(t)
+	raw := withoutAsyncSettle(t, published)
 	if bytes.Contains(raw, []byte(`"async_settle":`)) {
-		t.Fatal("the golden body must stay without async_settle")
+		t.Fatal("the stripped body must have no async_settle")
 	}
 	p, err := ParseEdgePolicy(raw)
 	if err != nil || p.AsyncSettle != nil {

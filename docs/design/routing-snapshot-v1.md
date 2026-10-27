@@ -166,9 +166,16 @@ reason that does not depend on time, at every instant of the window.
   effective headline rates, which `sort=price` and `max_price` compare), and
   `price`, exactly `stage_d.endpoint_pricing_candidate(effective_endpoint(e,
   at=t))`: the frozen Stage D candidate, which is also what the estimate and
-  `candidate_prices` are computed from. The price at `t` is the last epoch
-  with `starts_at <= t`. Epochs start at `compiled_at` and at whole UTC hours;
-  an epoch is listed only where the price changes, so most endpoints have one.
+  `candidate_prices` are computed from; and `billing_valid` (bool),
+  `billing_snapshot.raw_prices_valid` of the same effective endpoint: whether
+  every raw price value is a strict non-negative int64, as `build_snapshot`
+  checks before it builds the async billing snapshot. `price` coerces a
+  malformed value (a request price of `0.5` publishes as `0`), so this is the
+  only place the edge can see that `build_snapshot` would refuse the endpoint
+  (docs/design/fast-admission-e2-g15-async.md section 3.2). The price at `t`
+  is the last epoch with `starts_at <= t`. Epochs start at `compiled_at` and
+  at whole UTC hours; an epoch is listed only where the price or
+  `billing_valid` changes, so most endpoints have one.
 - `response`: `inference_location` (exactly
   `provider_locations.inference_location_metadata(provider, model_id)`) and
   `wafer_zdr_required` (`_gateway_provider_route_payload`).
@@ -512,8 +519,14 @@ check reads); `stage_d` (the four settings `_stage_d_eligibility_reason` reads);
 `configured_regions` (configured order), `primary_region`,
 `multi_region_enabled`; `internal_models` (the monitor model and every
 `internal_only` catalog model, the set `require_internal_model_key`
-protects, read from the serving process's catalog when signing). Sets are
-sorted and unique.
+protects, read from the serving process's catalog when signing);
+`async_settle`, four booleans read when signing
+(docs/design/fast-admission-e2-g15-async.md section 3.4):
+`admission_enabled` (`async_settle_admission_enabled`), `edge_decide`
+(`TR_FASTPATH_EDGE_DECIDE_ASYNC`, a literal `false` in `rollout.sh`),
+`ticket_authority` (this process's async-settle runtime has a signer, an
+epoch of at least 1 and a journal region) and `typed_records` (its store
+writes typed records). Sets are sorted and unique.
 
 **Cache and refresh.** Signing runs in one background worker at a time,
 never on a poll. The first poll at or after the cached copy's `refresh_at`
