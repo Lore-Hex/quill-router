@@ -24,6 +24,12 @@ uv run python -m clickhouse.routing_traffic --cloud gcp \
   --start 2026-10-27T00:00:00Z --end 2026-10-28T00:00:00Z
 ```
 
+Use the existing `tr_control_read` profile: read-only mode 1, at most 30 seconds
+and 1 GiB per query, and overflow modes set to throw. The query verifies these
+limits without changing settings (read-only profiles forbid overrides). A
+window is limited to 31 days; over 100,000 result groups fails rather than
+returning partial totals. Narrow the time window if either limit is exceeded.
+
 The report includes UTC day, requested route and stored aliases, served model,
 provider, billing mode, settled generations, input/output/cached tokens,
 customer charges in integer microdollars, latency/TTFT sums and sample counts,

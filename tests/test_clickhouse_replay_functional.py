@@ -536,6 +536,13 @@ def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
             for field in ("app_id", "app_markup_microdollars", "custom_model_markup_microdollars", "requested_model"):
                 assert public[field] == event[field] == activity[field]
 
+            _docker(
+                docker, "exec", name, "clickhouse-client", "--multiquery", "--query",
+                "CREATE USER traffic_reader SETTINGS readonly=1, max_execution_time=30, "
+                "max_memory_usage=1073741824; "
+                f"GRANT SELECT ON {database}.activity_generations TO traffic_reader",
+            )
+
             def traffic_query(request: httpx.Request) -> httpx.Response:
                 args = [
                     f"--{key}={value}" for key, value in request.url.params.items()
@@ -543,6 +550,7 @@ def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
                 ]
                 result = _docker(
                     docker, "exec", "-i", name, "clickhouse-client", "--database", database,
+                    "--user", "traffic_reader",
                     *args, "--query", request.content.decode(), check=False,
                 )
                 assert result.returncode == 0, result.stderr.decode()
@@ -563,6 +571,22 @@ def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
             assert traffic["served_model"] == activity["model"]
             assert int(traffic["generations"]) == 1  # replay is not another request
             assert int(traffic["customer_charge_microdollars"]) == activity["total_cost_microdollars"]
+            for excluded in (
+                {**activity, "generation_id": "synthetic-activity", "synthetic": 1},
+                {**activity, "generation_id": "failed-activity", "status": "failed"},
+            ):
+                _docker(
+                    docker, "exec", "-i", name, "clickhouse-client", "--database", database,
+                    "--query", "INSERT INTO activity_generations FORMAT JSONEachRow",
+                    input_bytes=(json.dumps(excluded) + "\n").encode(),
+                )
+            assert client.routing_traffic(start_at=instant, end_at=instant + dt.timedelta(days=1)) == [traffic]
+            _docker(
+                docker, "exec", name, "clickhouse-client", "--query",
+                "ALTER USER traffic_reader SETTINGS max_execution_time=0",
+            )
+            with pytest.raises(AssertionError, match="requires a bounded read-only profile"):
+                client.routing_traffic(start_at=instant, end_at=instant + dt.timedelta(days=1))
             sampled_activity = _docker(
                 docker,
                 "exec",

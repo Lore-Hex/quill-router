@@ -315,8 +315,18 @@ FORMAT JSON
             raise ValueError("routing traffic requires timezone-aware bounds")
         if not dt.timedelta(0) < end_at - start_at <= dt.timedelta(days=31):
             raise ValueError("routing traffic window must be positive and at most 31 days")
-        return self._query(
+        rows = self._query(
             """
+WITH throwIf(
+  getSetting('readonly') != 1
+  OR getSetting('max_execution_time') <= 0 OR getSetting('max_execution_time') > 30
+  OR getSetting('max_memory_usage') <= 0 OR getSetting('max_memory_usage') > 1073741824
+  OR getSetting('read_overflow_mode') != 'throw'
+  OR getSetting('group_by_overflow_mode') != 'throw'
+  OR getSetting('timeout_overflow_mode') != 'throw'
+  OR getSetting('result_overflow_mode') != 'throw',
+  'routing traffic requires a bounded read-only profile (30s, 1GiB, throw on overflow)'
+) AS profile_check
 SELECT
   toString(toDate(created_at, 'UTC')) AS day,
   requested_model, model AS served_model, provider, usage_type,
@@ -334,12 +344,10 @@ FROM activity_generations FINAL
 WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
   AND created_at < parseDateTime64BestEffort({end_at:String}, 3)
   AND synthetic = 0 AND status = 'success'
+  AND profile_check = 0
 GROUP BY day, requested_model, served_model, provider, usage_type
 ORDER BY day, requested_model, served_model, provider, usage_type
-SETTINGS readonly = 1, max_execution_time = 30, max_threads = 2,
-  max_memory_usage = 536870912, max_rows_to_read = 25000000,
-  max_rows_to_group_by = 100000, read_overflow_mode = 'throw',
-  group_by_overflow_mode = 'throw', timeout_overflow_mode = 'throw'
+LIMIT 100001
 FORMAT JSON
 """,
             params={
@@ -348,6 +356,9 @@ FORMAT JSON
             },
             timeout_seconds=35.0,
         )
+        if len(rows) > 100000:
+            raise RuntimeError("routing traffic exceeded 100000 groups; narrow the window")
+        return rows
 
     def client_reliability_summary(
         self,

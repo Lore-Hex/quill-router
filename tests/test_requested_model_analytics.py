@@ -122,10 +122,13 @@ def test_traffic_query_is_bounded_deduplicated_and_parameterized() -> None:
         assert "synthetic = 0 AND status = 'success'" in sql
         assert "created_at >= parseDateTime64BestEffort({start_at:String}, 3)" in sql
         assert "created_at < parseDateTime64BestEffort({end_at:String}, 3)" in sql
-        assert "LIMIT" not in sql
-        assert "max_rows_to_read = 25000000" in sql
-        assert "group_by_overflow_mode = 'throw'" in sql
-        assert "readonly = 1" in sql
+        assert "LIMIT 100001" in sql
+        assert "SETTINGS" not in sql  # protected readers refuse setting overrides
+        assert "getSetting('group_by_overflow_mode') != 'throw'" in sql
+        assert "getSetting('readonly') != 1" in sql
+        assert "getSetting('max_execution_time') > 30" in sql
+        assert "getSetting('max_memory_usage') > 1073741824" in sql
+        assert "AND profile_check = 0" in sql
         assert request.url.params["param_start_at"] == start.isoformat()
         assert request.url.params["param_end_at"] == end.isoformat()
         return httpx.Response(200, json={"data": [_row("nyte/auto")]})
@@ -149,6 +152,18 @@ def test_traffic_query_errors_are_not_reported_as_zero() -> None:
         transport=httpx.MockTransport(lambda _: httpx.Response(500, text="read limit")),
     )
     with pytest.raises(httpx.HTTPStatusError):
+        client.routing_traffic(
+            start_at=dt.datetime(2026, 10, 26, tzinfo=dt.UTC),
+            end_at=dt.datetime(2026, 10, 27, tzinfo=dt.UTC),
+        )
+
+
+def test_traffic_group_limit_does_not_return_partial_totals(monkeypatch) -> None:
+    monkeypatch.setattr(OperationalAnalyticsClient, "_query", lambda *a, **kw: [{}] * 100001)
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123", user="reader", password="test",  # noqa: S106
+    )
+    with pytest.raises(RuntimeError, match="narrow the window"):
         client.routing_traffic(
             start_at=dt.datetime(2026, 10, 26, tzinfo=dt.UTC),
             end_at=dt.datetime(2026, 10, 27, tzinfo=dt.UTC),
