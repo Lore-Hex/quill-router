@@ -1,0 +1,57 @@
+{
+  "provider": "hixtube",
+  "models": [
+    {
+      "display_name": "DeepSeek V4.1 Flash 1017 UNCENSORED FP8 (selected)",
+      "title": "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8",
+      "upstream_id": "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": "2026-11-02T23:56:20Z",
+      "replacement_model_id": null,
+      "routable": false,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 3540.0,
+        "stream_idle_timeout_seconds": 30.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "hixtube",
+        "status_url": "https://api.hixtube.com/healthz",
+        "regions": [
+          "FI"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 650000,
+      "output_token_price_per_m": 1450000,
+      "cached_input_token_price_per_m": 650000
+    }
+  ],
+  "source": "https://api.hixtube.com/v1/models",
+  "generated_at": "2026-10-27T03:23:39Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1,
+  "pricing_valid_until": "2026-11-02T23:56:20Z"
+}
