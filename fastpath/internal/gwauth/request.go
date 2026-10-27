@@ -98,14 +98,18 @@ var jsonContentType = regexp.MustCompile(`(?i)^application/json(;[ \t]*charset=u
 
 // ParseRequest parses an authorize body strictly and applies the request
 // half of §3's cohort predicate. A Pass names the first §3 reason the
-// request trips; the Request is meaningful only without one.
+// request trips; the Request is meaningful only without one, but for a
+// cohort reason (the body parsed whole and then passed: body.stream,
+// header.settlement_async, ...), whose Request is the parse, so that the
+// shadow can count its CacheAffinity and Async.V1; it is never decided on.
+// Any earlier reason's Request is the zero one.
 func ParseRequest(body []byte, h Headers) (Request, Pass) {
 	r, object, p := parseBody(body, h)
 	if p.Passed() {
 		return Request{}, p
 	}
 	if p := r.cohort(object, h); p.Passed() {
-		return Request{}, p
+		return r, p
 	}
 	return r, Pass{}
 }

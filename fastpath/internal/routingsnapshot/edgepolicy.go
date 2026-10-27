@@ -68,7 +68,7 @@ type EdgePolicy struct {
 // publishing Python process reads from its settings and its async-settle
 // runtime when it signs (docs/design/fast-admission-e2-g15-async.md section
 // 3.4). Each is required inside the object; no other member is allowed.
-// Nothing reads them yet.
+// The edge's decide pipeline reads them (edge/decide.go, G15c).
 type AsyncSettle struct {
 	// AdmissionEnabled is settings.async_settle_admission_enabled.
 	AdmissionEnabled bool `json:"admission_enabled"`

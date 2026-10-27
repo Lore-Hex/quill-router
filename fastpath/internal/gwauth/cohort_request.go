@@ -105,9 +105,10 @@ func (r *Request) cohort(object pyjson.Object, h Headers) Pass {
 	if p := r.idempotencyHeaders(h); p.Passed() {
 		return p
 	}
-	if len(h.SettlementMode) > 0 {
-		// Python takes the async path only for exactly ["async-v1"]; Go
-		// passes any value rather than tell them apart.
+	if len(h.SettlementMode) > 0 && !exactlyAsyncV1(h.SettlementMode) {
+		// Python takes the async path only for exactly ["async-v1"], which
+		// the edge composes (async.go, G15c); any other present value passes
+		// rather than be told apart from it.
 		return passFor(ReasonSettlementAsync)
 	}
 	if h.VideoAllowedProviders {

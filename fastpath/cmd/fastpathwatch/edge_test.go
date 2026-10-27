@@ -115,6 +115,69 @@ func TestTheEdgeReportSumsTheSpansLines(t *testing.T) {
 	}
 }
 
+// TestTheEdgeReportPrintsTheAsyncFigures (docs/design/
+// fast-admission-e2-g15-async.md §5, §6.2): the settlement-header pass
+// share over followed, and each I3 figure as one number summed over the
+// span's lines: async_seen and its share of followed, async_compared in all
+// and by population with each population's agreement and the two daily
+// rates over the span, each async field over both populations, and
+// async_python_admitted.
+func TestTheEdgeReportPrintsTheAsyncFigures(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=300 ` +
+			`differ=4 would_admit_python_refused=0 read_back=0 classes={"agree_full":300,"differ":4,` +
+			`"python_answered_go_passed.header.settlement_async":10,"passed.header.settlement_async":2,` +
+			`"python_answered_go_passed.async.unpublished":6} fields={} rows={} decide={"async.off":300,"decide.off":4} ` +
+			`cohort={} async_seen={"plain":40,"affinity":250,"unparsed":2} async_compared={"plain.agree":30,` +
+			`"plain.differ":1,"affinity.agree":200,"affinity.differ":2} async_fields={"plain.differ.billing_snapshot":1,` +
+			`"affinity.differ.async_shape":2} async_shape={"plain.snapshot":31,"affinity.snapshot":202} ` +
+			`async_python_admitted={"affinity":1}`},
+		{"2", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=9 ` +
+			`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":9,` +
+			`"python_answered_go_passed.async.off":1} fields={} rows={} decide={"async.off":9} cohort={} ` +
+			`async_seen={"plain":10} async_compared={"plain.agree":9} async_fields={} async_shape={"plain.snapshot":9} ` +
+			`async_python_admitted={}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-22T13:00:00Z"}, &out, d)
+	if code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	is := func(p *float64, want float64) bool { return p != nil && *p == want }
+	if g := r.I2; g.Followed != 332 || g.SettlementHeaderPasses != 12 || !is(g.SettlementHeaderPassShare, 12.0/332) {
+		t.Errorf("the settlement header share: %s", out.Bytes())
+	}
+	g := r.I3
+	if g.AsyncSeen != 302 || !is(g.AsyncSeenShare, 302.0/332) || g.AsyncCompared != 242 ||
+		!is(g.AsyncComparedPerDay, 121) || g.AsyncComparedPlain != 40 || !is(g.AsyncComparedPlainPerDay, 20) ||
+		!is(g.AsyncComparedPlainAgreeRatio, 39.0/40) || g.AsyncComparedAffinity != 202 ||
+		!is(g.AsyncComparedAffinityAgreeRatio, 200.0/202) || g.AsyncBillingSnapshot != 1 || g.AsyncShape != 2 ||
+		g.AsyncBillingSnapshotHash != 0 || g.AsyncEligible != 0 || g.AsyncPythonAdmitted != 1 {
+		t.Errorf("the I3 figures: %s", out.Bytes())
+	}
+	// A release's lines before G15c carry no async maps: every I3 count is
+	// zero, and no ratio of nothing is printed.
+	d, _ = edgeDeps(edgeEntries, nil)
+	out.Reset()
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"}, &out,
+		d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	r = edgeReport{}
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatal(err)
+	}
+	if g := r.I3; g.AsyncSeen != 0 || g.AsyncCompared != 0 || g.AsyncComparedPlainAgreeRatio != nil ||
+		g.AsyncComparedAffinityAgreeRatio != nil || !is(g.AsyncSeenShare, 0) {
+		t.Errorf("before G15c: %+v", g)
+	}
+}
+
 // TestTheEdgeReportFailsRatherThanUndercount: a count line that does not
 // read, or a read that fails, is exit 1 with no report: a report short of
 // a line's counts would understate a gate.

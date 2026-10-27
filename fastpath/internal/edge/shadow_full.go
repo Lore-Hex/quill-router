@@ -186,16 +186,52 @@ type fullShadow struct {
 type fullTally struct {
 	classes, fields, rows, decide, cohort map[string]int
 	readBack                              int
+	// async are the async-v1 counts (§4.4 of
+	// docs/design/fast-admission-e2-g15-async.md), by the line's map name
+	// (asyncCounts).
+	async map[string]map[string]int
 }
 
+// The async-v1 count maps, each keyed by population first (plain,
+// affinity, or for async_seen unparsed), in the line's order:
+//
+//   - async_seen: every followed request whose X-TR-Settlement-Mode is
+//     exactly ["async-v1"], whatever it passed with;
+//   - async_compared: <pop>.agree or <pop>.differ, an async-v1 request Go
+//     composed whose Python 200 was read and compared, by whether its async
+//     members alone matched;
+//   - async_fields: <pop>.<field>, each async member that differed;
+//   - async_shape: <pop>.<shape>, Go's composed shape (snapshot, or
+//     false_only.<reason>);
+//   - async_python_admitted: <pop>, Python's shape C (its admission on) to
+//     any followed async-v1 request, whatever Go did with it; not compared.
+const (
+	asyncSeen           = "async_seen"
+	asyncCompared       = "async_compared"
+	asyncFields         = "async_fields"
+	asyncShape          = "async_shape"
+	asyncPythonAdmitted = "async_python_admitted"
+)
+
+var asyncCounts = []string{asyncSeen, asyncCompared, asyncFields, asyncShape, asyncPythonAdmitted}
+
 func newFullTally() *fullTally {
-	return &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{},
-		cohort: map[string]int{}}
+	t := &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{},
+		cohort: map[string]int{}, async: map[string]map[string]int{}}
+	for _, name := range asyncCounts {
+		t.async[name] = map[string]int{}
+	}
+	return t
 }
 
 func (t *fullTally) clone() *fullTally {
-	return &fullTally{classes: clonedCounts(t.classes), fields: clonedCounts(t.fields), rows: clonedCounts(t.rows),
-		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), readBack: t.readBack}
+	c := &fullTally{classes: clonedCounts(t.classes), fields: clonedCounts(t.fields), rows: clonedCounts(t.rows),
+		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), readBack: t.readBack,
+		async: map[string]map[string]int{}}
+	for name, m := range t.async {
+		c.async[name] = clonedCounts(m)
+	}
+	return c
 }
 
 func clonedCounts(m map[string]int) map[string]int {
@@ -466,6 +502,18 @@ type fullResult struct {
 	py       pythonIDs
 	rowsOf   string
 	warm     *Decision
+	async    asyncResult
+}
+
+// asyncResult is one followed request's async-v1 counts (asyncCounts): its
+// population ("" for a request not exactly async-v1), Go's composed shape
+// ("" when Go composed none), whether its async members were compared
+// ("agree" or "differ", "" when not) and the members that differed, and
+// whether Python answered shape C.
+type asyncResult struct {
+	pop, shape, compared string
+	fields               []string
+	pythonAdmitted       bool
 }
 
 // pythonIDs are Python's per-request values from its 200.
@@ -474,10 +522,41 @@ type pythonIDs struct {
 }
 
 // compareFull is the comparison of what Go would have answered with what
-// Python answered. Python's status classifies whenever it came, its body
-// read or not: a refusal whose body was not read is a refusal all the
-// same.
+// Python answered (compareClass), with the request's async-v1 population
+// and, when Go composed it, its shape. Python's async members are read
+// once, from any 200 read through, and feed both the comparison and the
+// ticket count: Python's shape C to an async-v1 request is
+// async_python_admitted whatever Go did with it (passed before the compose
+// or composed), and never compared (G15 §3.6, §4.4).
 func compareFull(d Decided, a pyAnswer) fullResult {
+	var py asyncMembers
+	if a.status == http.StatusOK && a.why == "" {
+		py = pythonAsyncMembers(a.body)
+	}
+	r := compareClass(d, a, py)
+	r.async.pop = d.AsyncPop
+	if dec := d.ForShadow(); dec != nil && d.AsyncPop != "" {
+		r.async.shape = asyncShapeName(dec.Staged.Async())
+	}
+	if d.AsyncPop != "" && py.shape() == asyncShapeTicket {
+		r.async.pythonAdmitted, r.async.compared, r.async.fields = true, "", nil
+	}
+	return r
+}
+
+// asyncShapeName is a composed shape as async_shape counts it: snapshot,
+// or false_only.<reason>.
+func asyncShapeName(a gwauth.Async) string {
+	if a.Shape == gwauth.AsyncFalseOnly {
+		return a.Shape + "." + a.Reason
+	}
+	return a.Shape
+}
+
+// compareClass classes the comparison. Python's status classifies whenever
+// it came, its body read or not: a refusal whose body was not read is a
+// refusal all the same. py are Python's async members (compareFull).
+func compareClass(d Decided, a pyAnswer, py asyncMembers) fullResult {
 	read := a.why == ""
 	if d.ForShadow() == nil {
 		reason := d.Pass
@@ -507,7 +586,7 @@ func compareFull(d Decided, a pyAnswer) fullResult {
 	refusal := errorOf(a)
 	switch {
 	case a.status == http.StatusOK:
-		return compareAnswer(d.ForShadow(), a.body, r)
+		return compareAnswer(d.ForShadow(), a.body, py, r)
 	case a.status == http.StatusConflict && refusal.kind == "conflict":
 		// Another body under the key: Go's insert would have found the
 		// scope taken and passed (insert.scope_taken).
@@ -559,19 +638,25 @@ var timingKeys = []string{"total_ms", "spanner_rpcs", "key_lookup_ms", "routing_
 // under Python's authorization and reservation ids (the generation id
 // follows by rule) and rendered with Python's timing values, byte for byte,
 // as inserted or as after a read-back (sorted tags, §6). An idempotent
-// replay is the scope taken (Go's insert would have passed).
-func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
+// replay is the scope taken (Go's insert would have passed). An async-v1
+// request's async members (G15 §4.4) are compared too, apart from the
+// whole: against Go's additions from the candidates the comparison used,
+// Python's warm ones for a differ.affinity_warm, Go's cold ones otherwise,
+// each member by its bytes; py are Python's (pythonAsyncMembers).
+func compareAnswer(d *Decision, raw []byte, py asyncMembers, r fullResult) fullResult {
 	tree, err := pyjson.Decode(raw)
 	top, ok := tree.(pyjson.Object)
 	data, isData := memberOf(top, "data").(pyjson.Object)
 	if err != nil || !ok || !isData || len(top) != 1 {
 		r.class, r.fields = ClassDifferAny, []string{"differ.shape"}
+		r.async = compareAsync(d.Staged.Async(), py)
 		return r
 	}
 	if replay, _ := memberOf(data, "idempotent_replay").(bool); replay {
 		r.class = ClassPythonAnsweredGoPassed + ".insert.scope_taken"
 		return r
 	}
+	r.async = compareAsync(d.Staged.Async(), py)
 	r.py.authorization, _ = memberOf(data, "authorization_id").(string)
 	r.py.reservation, _ = memberOf(data, "credit_reservation_id").(string)
 	r.rows = r.py.authorization != ""
@@ -593,18 +678,20 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 			r.class, r.readBack = ClassAgreeFull, readBack
 			return r
 		}
-		if warm, ok, readBack := warmBytes(d, staged, data, raw, timing); ok {
+		if warm, warmStaged, ok, readBack := warmBytes(d, staged, data, raw, timing); ok {
 			// Python's bytes are Go's decision with a remembered
 			// endpoint promoted: Go's answer differs, for a session Go
-			// cannot read (§1 item 5).
+			// cannot read (§1 item 5). Its async members are the warm
+			// candidates' (G15 §4.4).
 			r.class, r.fields, r.warm, r.readBack = ClassDifferAny, []string{FieldAffinityWarm}, warm, readBack
+			r.async = compareAsync(warmStaged.Async(), py)
 			return r
 		}
 	}
 	goTree, _ := pyjson.Decode(composed.Render(timing, false))
 	goTop, _ := goTree.(pyjson.Object)
 	goData, _ := memberOf(goTop, "data").(pyjson.Object)
-	r.fields = append(r.fields, differences(goData, data, shaped)...)
+	r.fields = append(r.fields, differences(goData, data, shaped, asyncDifferencesOf(staged.Async(), py))...)
 	if len(r.fields) == 0 {
 		r.fields = []string{"differ.bytes"}
 	}
@@ -627,24 +714,131 @@ func renders(composed gwauth.Composed, timing gwauth.Timing, raw []byte) (ok, re
 // warmBytes: Python's 200 is Go's decision, under Python's ids as staged,
 // rendered with Python's candidates where they are a warm re-rank of Go's
 // cold order (Decision.warmOf), as inserted or, readBack, after a
-// read-back; warm is that decision.
+// read-back; warm is that decision and restaged its staging under
+// Python's ids.
 func warmBytes(d *Decision, staged gwauth.Staged, data pyjson.Object, raw []byte,
-	timing gwauth.Timing) (warm *Decision, ok, readBack bool) {
+	timing gwauth.Timing) (warm *Decision, restaged gwauth.Staged, ok, readBack bool) {
 	warm, ok = d.warmOf(candidateIDs(memberOf(data, "route_candidates")))
 	if !ok {
-		return nil, false, false
+		return nil, gwauth.Staged{}, false, false
 	}
 	in := staged.Input()
 	restaged, err := warm.Restage(in.AuthorizationID, in.ReservationID, in.IdempotencyKey, in.At)
 	if err != nil {
-		return nil, false, false
+		return nil, gwauth.Staged{}, false, false
 	}
 	composed, err := restaged.Finish("shadow", in.At.UTC())
 	if err != nil {
-		return nil, false, false
+		return nil, gwauth.Staged{}, false, false
 	}
 	ok, readBack = renders(composed, timing, raw)
-	return warm, ok, readBack
+	return warm, restaged, ok, readBack
+}
+
+// The async members' differ fields (G15 §4.4).
+const (
+	FieldAsyncEligible       = "differ.async_eligible"
+	FieldBillingSnapshot     = "differ.billing_snapshot"
+	FieldBillingSnapshotHash = "differ.billing_snapshot_hash"
+	FieldAsyncShape          = "differ.async_shape"
+)
+
+// asyncMemberKeys are the members an async-v1 200 can add, in the order
+// Python adds them (G15 §2.2).
+var asyncMemberKeys = []string{"async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket",
+	"settlement_status_url"}
+
+// asyncShapeTicket is Python's shape C, which Go never composes.
+const asyncShapeTicket = "ticket"
+
+// asyncMembers are a 200's async members as sent: each member's bytes, by
+// name (§4.4 compares the members' bytes, not their decoded values).
+type asyncMembers map[string][]byte
+
+// pythonAsyncMembers are the async members of Python's 200 body, each one's
+// bytes exactly as Python sent them: nil when the body is not an object
+// whose data is one.
+func pythonAsyncMembers(raw []byte) asyncMembers {
+	var top struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(raw, &top) != nil || top.Data == nil {
+		return nil
+	}
+	out := asyncMembers{}
+	for _, k := range asyncMemberKeys {
+		if v, ok := top.Data[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// shape is the shape the members are: gwauth's AsyncNone, AsyncFalseOnly
+// (A) or AsyncSnapshot (B), a ticket (C), or "other".
+func (m asyncMembers) shape() string {
+	var present []string
+	for _, k := range asyncMemberKeys {
+		if _, ok := m[k]; ok {
+			present = append(present, k)
+		}
+	}
+	switch {
+	case len(present) == 0:
+		return gwauth.AsyncNone
+	case slices.Equal(present, asyncMemberKeys[:1]):
+		return gwauth.AsyncFalseOnly
+	case slices.Equal(present, asyncMemberKeys[:3]):
+		return gwauth.AsyncSnapshot
+	case slices.Contains(present, "settlement_ticket"):
+		return asyncShapeTicket
+	}
+	return "other"
+}
+
+// asyncDifferencesOf are the fields on which Go's composed async members,
+// each encoded as the 200 renders it, and Python's differ: async_eligible,
+// the shape, and, both being shape B, the snapshot's bytes, or with those
+// equal the hash's (an encoder defect).
+func asyncDifferencesOf(goAsync gwauth.Async, py asyncMembers) []string {
+	g := asyncMembers{}
+	for _, m := range goAsync.Members {
+		b, err := pyjson.DumpsPydantic(m.Value)
+		if err != nil {
+			return []string{FieldAsyncShape} // Stage encoded them already
+		}
+		g[m.Key] = b
+	}
+	var out []string
+	if !bytes.Equal(g["async_eligible"], py["async_eligible"]) {
+		out = append(out, FieldAsyncEligible)
+	}
+	shape := g.shape()
+	switch {
+	case shape != py.shape():
+		out = append(out, FieldAsyncShape)
+	case shape != gwauth.AsyncSnapshot:
+	case !bytes.Equal(g["billing_snapshot"], py["billing_snapshot"]):
+		out = append(out, FieldBillingSnapshot)
+	case !bytes.Equal(g["billing_snapshot_hash"], py["billing_snapshot_hash"]):
+		out = append(out, FieldBillingSnapshotHash)
+	}
+	return out
+}
+
+// compareAsync compares Go's composed async members with Python's (nil
+// when Python's 200 did not read as one): nothing for a request Go composed
+// none for. A Python ticket is compareFull's to count, never compared.
+func compareAsync(goAsync gwauth.Async, py asyncMembers) asyncResult {
+	var out asyncResult
+	if goAsync.Shape == "" || goAsync.Shape == gwauth.AsyncNone {
+		return out
+	}
+	out.compared, out.fields = "agree", asyncDifferencesOf(goAsync, py)
+	if len(out.fields) > 0 {
+		out.compared = "differ"
+	}
+	return out
 }
 
 // candidateIDs are the endpoint ids of a 200's route_candidates, in order.
@@ -685,8 +879,10 @@ func timingOf(v any) (gwauth.Timing, bool) {
 // differences are the fields of data on which Go's and Python's differ
 // (§11): each top-level member by name, the estimate's float twin apart
 // from its microdollars, the candidates' order, each candidate member by
-// name, the timing's shape, and the members' order.
-func differences(goData, pyData pyjson.Object, timingShaped bool) []string {
+// name, the timing's shape, and the members' order. The async members are
+// compared by their bytes (asyncDifferencesOf), and async is what that
+// found.
+func differences(goData, pyData pyjson.Object, timingShaped bool, async []string) []string {
 	var out []string
 	add := func(f string) {
 		if !slices.Contains(out, "differ."+f) {
@@ -702,6 +898,9 @@ func differences(goData, pyData pyjson.Object, timingShaped bool) []string {
 	}
 	goKeys, pyKeys := keys(goData), keys(pyData)
 	for _, k := range union(goKeys, pyKeys) {
+		if slices.Contains(asyncMemberKeys, k) {
+			continue // by their bytes: async
+		}
 		g, p := memberOf(goData, k), memberOf(pyData, k)
 		switch k {
 		case "timing":
@@ -729,6 +928,9 @@ func differences(goData, pyData pyjson.Object, timingShaped bool) []string {
 		if !slices.Contains(goKeys, k) || !slices.Contains(pyKeys, k) || !reflect.DeepEqual(g, p) {
 			add(k)
 		}
+	}
+	for _, f := range async {
+		add(strings.TrimPrefix(f, "differ."))
 	}
 	if len(out) == 0 && !slices.Equal(goKeys, pyKeys) {
 		add("key_order")
@@ -1118,6 +1320,21 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		if r.readBack {
 			tally.readBack++
 		}
+		if a := r.async; a.pop != "" {
+			tally.async[asyncSeen][a.pop]++
+			if a.shape != "" {
+				tally.async[asyncShape][a.pop+"."+a.shape]++
+			}
+			if a.compared != "" {
+				tally.async[asyncCompared][a.pop+"."+a.compared]++
+			}
+			for _, f := range a.fields {
+				tally.async[asyncFields][a.pop+"."+f]++
+			}
+			if a.pythonAdmitted {
+				tally.async[asyncPythonAdmitted][a.pop]++
+			}
+		}
 	}
 	if strings.HasPrefix(r.class, ClassWouldAdmit+".") && sh.critical < maxCriticalLogs {
 		sh.critical++
@@ -1177,10 +1394,15 @@ func (sh *fullShadow) flush() {
 				would += n
 			}
 		}
-		sh.logf("fastpath edge decide shadow: %s agree_full=%d differ=%d would_admit_python_refused=%d read_back=%d "+
-			"classes=%s fields=%s rows=%s decide=%s cohort=%s", d, t.classes[ClassAgreeFull],
-			t.classes[ClassDifferAny], would, t.readBack, jsonOf(t.classes), jsonOf(t.fields), jsonOf(t.rows),
-			jsonOf(t.decide), jsonOf(t.cohort))
+		line := "fastpath edge decide shadow: %s agree_full=%d differ=%d would_admit_python_refused=%d read_back=%d " +
+			"classes=%s fields=%s rows=%s decide=%s cohort=%s"
+		args := []any{d, t.classes[ClassAgreeFull], t.classes[ClassDifferAny], would, t.readBack, jsonOf(t.classes),
+			jsonOf(t.fields), jsonOf(t.rows), jsonOf(t.decide), jsonOf(t.cohort)}
+		for _, name := range asyncCounts {
+			line += " " + name + "=%s"
+			args = append(args, jsonOf(t.async[name]))
+		}
+		sh.logf(line, args...)
 	}
 	// Every count of the line is the period's, the cache's too: its own
 	// are totals, so the line logs what they grew by since the last.
@@ -1200,9 +1422,12 @@ func (sh *fullShadow) flush() {
 // started: by class, by field, by row read-back outcome, by the decide
 // row's gate and, of the requests Go would decide, by class (Cohort), and
 // the answers Python made from a read-back, the requests not followed
-// (dropped) and the cache evictions Python's refusals made.
+// (dropped) and the cache evictions Python's refusals made. Async are the
+// async-v1 counts by the line's map name (async_seen, async_compared,
+// async_fields, async_shape, async_python_admitted).
 type DecideShadowCounts struct {
 	Classes, Fields, Rows, Decide, Cohort map[string]int
+	Async                                 map[string]map[string]int
 	ReadBack                              int
 	Dropped, Evictions                    int64
 }
@@ -1217,7 +1442,7 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	t := sh.totals.clone()
 	sh.mu.Unlock()
 	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
-		ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
+		Async: t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
 }
 
 // DecideShadowOn reports the full-response shadow configured.

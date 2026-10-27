@@ -255,7 +255,7 @@ func newFullEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython,
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap := snapshotFor(t, p)
+	snap := snapshotOver(t, f, p)
 	e.poller.current.Store(hold(snap, routingsnapshot.Claims{CompiledAt: snap.CompiledAt, NotAfter: snap.NotAfter,
 		SHA256: "golden-snapshot"}))
 	e.policy.current.Store(&heldPolicy{policy: p, claims: routingsnapshot.PolicyClaims{IssuedAt: p.IssuedAt,
@@ -852,7 +852,7 @@ func TestAnAffinityRequestThatPassesIsCountedAsAnyOther(t *testing.T) {
 		}
 		for _, status := range []int{200, 403} {
 			c := c
-			c.Request.Headers = append(slices.Clone(c.Request.Headers), [2]string{"X-TR-Settlement-Mode", "async-v1"})
+			c.Request.Headers = append(slices.Clone(c.Request.Headers), [2]string{"X-TR-Settlement-Mode", "sync"})
 			h := newFullEdge(t, f, c, nil, nil)
 			class := ClassPythonAnsweredGoPassed + "." + gwauth.ReasonSettlementAsync
 			if status == 200 {

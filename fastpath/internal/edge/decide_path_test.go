@@ -142,7 +142,7 @@ func newDecideEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePytho
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap := snapshotFor(t, h.policy)
+	snap := snapshotOver(t, f, h.policy)
 	e.poller.current.Store(hold(snap, routingsnapshot.Claims{CompiledAt: snap.CompiledAt, NotAfter: snap.NotAfter,
 		SHA256: "golden-snapshot"}))
 	e.policy.current.Store(&heldPolicy{policy: h.policy, claims: routingsnapshot.PolicyClaims{IssuedAt: h.policy.IssuedAt,

@@ -1303,7 +1303,9 @@ def cases() -> list[dict[str, Any]]:
         body={"idempotency_key": "tr-native-batch:e2-1"})
     add("pass:header.idempotency_key:partner", "header.idempotency_key",
         body={"idempotency_key": "partner:parasail-liberty-2.0:e2-1"})
-    add("pass:header.settlement_async", "header.settlement_async", headers=(("x-tr-settlement-mode", "async-v1"),))
+    # Any present header list but exactly ["async-v1"] passes; that one the
+    # edge composes (G15c), and its cases are the async file's.
+    add("pass:header.settlement_async", "header.settlement_async", headers=(("x-tr-settlement-mode", "sync"),))
     add("pass:header.video_providers", "header.video_providers",
         headers=(("x-quill-video-allowed-providers", "wafer"),))
     # The boot: E1's signature check and decision 8.

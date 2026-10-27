@@ -44,6 +44,9 @@ type authorizeFile struct {
 		} `json:"jwk"`
 	} `json:"boot_test_key"`
 	Cases []authorizeCase `json:"cases"`
+	// SnapshotBody is the routing snapshot the cases compose over when the
+	// file carries its own (P6's async file); empty, the golden v3 body.
+	SnapshotBody string `json:"snapshot_body"`
 }
 
 type creditRowCase struct {
@@ -129,7 +132,14 @@ type authorizeExpect struct {
 		// for a request it answered without a lease (§10.1): nil when it
 		// wrote none.
 		Reservation *int64 `json:"reservation_microdollars"`
+		// Response and AsyncShape are P6's for a passed async-v1 case:
+		// Python's 200 (but for shape C) and its async members' shape.
+		Response   string `json:"response"`
+		AsyncShape string `json:"async_shape"`
 	} `json:"python"`
+	// AsyncShape is P6's shape of an answered case's async members (none,
+	// A or B).
+	AsyncShape string `json:"async_shape"`
 	// Affinity is a cache affinity case's record (§1 item 5, §10.1): the
 	// case's answer is Python's with no session (the cold order, which Go
 	// decides), and this is Python's answer with its sessions remembered,
@@ -255,6 +265,24 @@ func snapshotFor(t *testing.T, p *routingsnapshot.EdgePolicy) *routingsnapshot.S
 	if err != nil {
 		t.Fatal(err)
 	}
+	return regionsFor(s, p)
+}
+
+// snapshotOver is snapshotFor over the file's own snapshot when it carries
+// one (P6's async file), else the golden v3 body.
+func snapshotOver(t *testing.T, f authorizeFile, p *routingsnapshot.EdgePolicy) *routingsnapshot.Snapshot {
+	t.Helper()
+	if f.SnapshotBody == "" {
+		return snapshotFor(t, p)
+	}
+	s, err := routingsnapshot.Parse([]byte(f.SnapshotBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return regionsFor(s, p)
+}
+
+func regionsFor(s *routingsnapshot.Snapshot, p *routingsnapshot.EdgePolicy) *routingsnapshot.Snapshot {
 	if p.MultiRegionEnabled {
 		return s
 	}
@@ -441,7 +469,7 @@ func caseInputs(t *testing.T, f authorizeFile, c authorizeCase) (DecideInputs, *
 	return DecideInputs{
 		Request: DecideRequest{At: c.at(), Method: http.MethodPost, Path: c.Request.Path, EscapedPath: c.Request.Path,
 			Header: c.header(), Body: c.body(), Boot: bootSeenOf(t, f, c)},
-		Snapshot: snapshotFor(t, p),
+		Snapshot: snapshotOver(t, f, p),
 		Policy:   p,
 		Lookup:   cache.Lookup,
 		Decide:   decideAll(p, c.Facts.Key.WorkspaceID, c.at()),
