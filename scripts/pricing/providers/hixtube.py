@@ -65,8 +65,8 @@ def _retirement_time(row: dict[str, Any]) -> datetime:
 def _retirement(row: dict[str, Any]) -> datetime:
     deadline = _retirement_time(row)
     now = datetime.now(UTC)
-    if not now < deadline <= now + timedelta(hours=24):
-        raise RuntimeError("hixtube: retirement must be within the next 24 hours")
+    if not now < deadline <= now + timedelta(days=7):
+        raise RuntimeError("hixtube: retirement must be within the next seven days")
     return deadline.astimezone(UTC)
 
 

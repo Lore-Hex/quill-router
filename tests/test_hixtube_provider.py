@@ -152,6 +152,24 @@ def test_pilot_requires_finite_future_retirement(value):
         p.discover(payload)
 
 
+@pytest.mark.parametrize("seconds,valid", [(0, False), (86400, True), (604800, True), (604801, False)])
+def test_retirement_is_bounded_to_one_week(monkeypatch, seconds, valid):
+    now = datetime(2026, 10, 27, tzinfo=UTC)
+
+    class Fixed(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+    monkeypatch.setattr(p, "datetime", Fixed)
+    row = {"retirement_at": (now + timedelta(seconds=seconds)).isoformat()}
+    if valid:
+        assert p._retirement(row) == now + timedelta(seconds=seconds)
+    else:
+        with pytest.raises(RuntimeError):
+            p._retirement(row)
+
+
 def test_runtime_cutoff_survives_refresh_without_extension(monkeypatch, tmp_path):
     from trusted_router.provider_manifest_policy import provider_manifest_valid_until
 

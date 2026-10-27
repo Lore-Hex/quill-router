@@ -1,4 +1,6 @@
 from copy import deepcopy
+import json
+from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator, ValidationError
@@ -49,3 +51,18 @@ def test_public_schema_is_valid_and_v20_example_is_unchanged():
     before = deepcopy(PROVIDER_CATALOG_V2_EXAMPLE)
     Draft202012Validator(PROVIDER_CATALOG_V2_SCHEMA).validate(before)
     assert before["contract_version"] == "2.0"
+
+
+def test_actual_neocloud_million_catalog_parses_without_invented_discount():
+    # Emitted by nib scripts/fixtures/pilot_catalog, not a reconstructed row.
+    payload = json.loads((Path(__file__).parent / "fixtures/nib_million_catalog_v21.json").read_text())
+    Draft202012Validator(PROVIDER_CATALOG_V2_SCHEMA).validate(payload)
+    prices, rows = discover_provider_contract_catalog(payload, upstream_id_map={})
+    model = "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8"
+    row = rows[model]
+    assert row["context_length"] == 1048576
+    assert row["max_output_tokens"] == 393216
+    assert row["reliability"]["completion_timeout_seconds"] == 3540
+    assert payload["data"][0]["pricing"]["cached_input"] == payload["data"][0]["pricing"]["input"]
+    assert model in prices
+    assert payload["data"][0]["capabilities"]["reasoning"] is False

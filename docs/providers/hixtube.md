@@ -43,6 +43,11 @@ not block unrelated providers' price publication.
    routing after that deadline; it does not provide a replacement or continuous
    availability. Keep provider-local refresh failures visible to operators.
 
+Discovery permits an explicit future retirement no more than seven days away,
+matching the node's opt-in weekly serving lease. It never invents or extends
+that cutoff. The generated manifest expires at the earliest declared retirement;
+catalog refresh is not lease renewal, and a missing cutoff is still rejected.
+
 Ordinary inference through a pinned test certificate has passed; this is not
 trusted public DNS/TLS, 24-hour availability or production-gateway evidence.
 No generated manifest or upstream credential is included in this integration.
