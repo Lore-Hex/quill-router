@@ -7,7 +7,9 @@ import json
 import re
 import runpy
 import shutil
+import subprocess
 from datetime import date
+from functools import cache
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -94,6 +96,7 @@ PAGES = {
         "group": "exchange",
         "menu_description": "Compare inference prices by grade",
         "builder": "index",
+        "body": "index-page.html",
     },
     "reserved-terms": {
         "route": "/reserved-tokens-terms",
@@ -120,8 +123,32 @@ PAGES = {
         "group": "exchange",
         "menu_description": "The October buyer deck",
         "builder": "anchor",
+        "body": "nyte-v2/buyer-deck.html",
     },
 }
+
+
+@cache
+def page_added(source: str) -> str:
+    """Read a body file's creation date; reject incomplete history instead of inventing it."""
+    git = shutil.which("git")
+    if git is None:
+        return date.today().isoformat()
+    # The executable is resolved locally; arguments are fixed and paths follow --.
+    shallow = subprocess.run(  # noqa: S603
+        [git, "rev-parse", "--is-shallow-repository"], cwd=HERE,
+        capture_output=True, text=True,
+    )
+    if shallow.returncode != 0:
+        return date.today().isoformat()
+    if shallow.stdout.strip() == "true":
+        raise ValueError("NYTE NEW chips require full Git history; run git fetch --unshallow before building.")
+    history = subprocess.run(  # noqa: S603
+        [git, "log", "--diff-filter=A", "--format=%cs", "--", source], cwd=HERE,
+        capture_output=True, text=True, check=True,
+    )
+    dates = history.stdout.splitlines()
+    return dates[-1] if dates else date.today().isoformat()
 
 
 def render_nav() -> str:
@@ -131,13 +158,11 @@ def render_nav() -> str:
         for key, entry in PAGES.items():
             if entry.get("group") != group or not entry["label"]:
                 continue
-            until = entry.get("new_until")
-            timing = 'data-new-until="' + html.escape(str(until), quote=True) + '"' if until else ''
-            chip = ' <span class="tag cc" hidden>NEW</span>' if until else ''
+            added = page_added(entry.get("body", f"nyte-v2/{key}.html"))
             items.append(
-                f'<a href="{html.escape(entry["route"], quote=True)}" {timing} '
+                f'<a href="{html.escape(entry["route"], quote=True)}" data-added="{added}" '
                 f'aria-labelledby="nav-label-{key}"><span class="nav-label" id="nav-label-{key}">'
-                f'{html.escape(entry["label"])}</span>{chip}'
+                f'{html.escape(entry["label"])}</span> <span class="tag cc" hidden>NEW</span>'
                 f'<span class="nav-description">{html.escape(entry["menu_description"])}</span></a>'
             )
         groups.append(

@@ -24,10 +24,14 @@ const active=document.body.dataset.nytePage==='home' ? '/' : location.pathname.r
 nav.querySelectorAll('a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');a.closest('.nav-group').querySelector('button').classList.add('on');}});
 const updateNew=()=>{
  const today=new Date();today.setHours(0,0,0,0);
- const dated=[...nav.querySelectorAll('a[data-new-until]')];
+ const dated=[...nav.querySelectorAll('a[data-added]')];
  dated.forEach(item=>{item.querySelector('.tag').hidden=true;});
- dated.filter(item=>today<=new Date(item.dataset.newUntil+'T00:00:00'))
- .sort((a,b)=>b.dataset.newUntil.localeCompare(a.dataset.newUntil))
+ dated.filter(item=>{
+  const added=new Date(item.dataset.added+'T00:00:00');
+  const expires=new Date(added);expires.setDate(expires.getDate()+14);
+  return today>=added && today<expires;
+ })
+ .sort((a,b)=>b.dataset.added.localeCompare(a.dataset.added))
  .slice(0,3).forEach(item=>{item.querySelector('.tag').hidden=false;});
 };
 updateNew();setInterval(updateNew,60000);

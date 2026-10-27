@@ -189,7 +189,7 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertIn('href="/media-kit">Media kit</a>', page)
             self.assertEqual(nav.count('aria-expanded="false"'), 3)
 
-    def test_optional_new_until_and_added_page(self):
+    def test_added_page_gets_automatic_date_without_changing_test_lists(self):
         import re
         from unittest.mock import patch
 
@@ -197,14 +197,32 @@ class NavigationRegistryTests(unittest.TestCase):
 
         sample = {"route": "/sample", "label": "Sample", "group": "sell",
                   "menu_description": "Sample description"}
-        with patch.dict(PAGES, {"sample": sample}):
+        with patch.dict(PAGES, {"sample": sample}), patch('nyte_v2.page_added', return_value='2026-10-20'):
             nav = render_nav()
             panel = re.search(r'id="nav-sell">(.*?)</div>', nav, re.S).group(1)
             self.assertEqual(panel.count('href="/sample"'), 1)
             item = re.search(r'<a href="/sample".*?</a>', panel).group()
-            self.assertNotIn('data-new-until', item)
-            self.assertNotIn('>NEW<', item)
-            with patch.dict(sample, new_until='2026-11-10'):
-                item = re.search(r'<a href="/sample".*?</a>', render_nav()).group()
-                self.assertIn('data-new-until="2026-11-10"', item)
-                self.assertIn('class="tag cc" hidden>NEW', item)
+            self.assertIn('data-added="2026-10-20"', item)
+            self.assertIn('class="tag cc" hidden>NEW', item)
+
+    def test_creation_date_and_shallow_history_guard(self):
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from nyte_v2 import page_added
+
+        self.addCleanup(page_added.cache_clear)
+        page_added.cache_clear()
+        with patch('nyte_v2.shutil.which', return_value='/usr/bin/git'), patch(
+            'nyte_v2.subprocess.run', side_effect=[
+                CompletedProcess([], 0, 'false\n'),
+                CompletedProcess([], 0, '2026-09-01\n'),
+            ],
+        ):
+            self.assertEqual(page_added('sample.html'), '2026-09-01')
+        page_added.cache_clear()
+        with patch('nyte_v2.shutil.which', return_value='/usr/bin/git'), patch(
+            'nyte_v2.subprocess.run', return_value=CompletedProcess([], 0, 'true\n'),
+        ):
+            with self.assertRaisesRegex(ValueError, 'full Git history'):
+                page_added('sample.html')

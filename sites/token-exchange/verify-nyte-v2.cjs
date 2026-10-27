@@ -202,10 +202,10 @@ for (const [selector,cta] of [['.btn-primary','download_apple_silicon'],['.btn-s
 }
 // Date behavior uses independent sample links and a fixed clock, not the page roster.
 await page.clock.install({time:new Date('2026-10-27T12:00:00')});
-let sampleDates=['2026-10-27','2026-10-28','2026-10-26',null];
+let sampleDates=['2026-10-14','2026-10-15','2026-10-13','2026-10-28'];
 await page.route(base+'/',async route=>{
  const response=await route.fetch();
- const items=sampleDates.map((date,i)=>`<a href="/sample-${i}" ${date?`data-new-until="${date}"`:''}>Sample ${i}${date?'<span class="tag cc" hidden>NEW</span>':''}</a>`).join('');
+ const items=sampleDates.map((date,i)=>`<a href="/sample-${i}" ${date?`data-added="${date}"`:''}>Sample ${i}${date?'<span class="tag cc" hidden>NEW</span>':''}</a>`).join('');
  const body=(await response.text()).replace(/(<nav class="nav"[^>]*>)[\s\S]*?<\/nav>/,`$1${items}</nav>`);
  await route.fulfill({response,body});
 });
@@ -213,10 +213,10 @@ const visibleChips=()=>page.locator('#nav a:has(.tag:not([hidden]))').evaluateAl
 await page.goto(base+'/');
 assert.deepEqual(await visibleChips(),['/sample-0','/sample-1']);
 await page.clock.fastForward(24*60*60*1000);
-assert.deepEqual(await visibleChips(),['/sample-1']);
+assert.deepEqual(await visibleChips(),['/sample-1','/sample-3']);
 await page.clock.fastForward(24*60*60*1000);
-assert.deepEqual(await visibleChips(),[]);
-sampleDates=['2026-11-01','2026-11-02','2026-11-03','2026-11-04'];
+assert.deepEqual(await visibleChips(),['/sample-3']);
+sampleDates=['2026-10-26','2026-10-27','2026-10-28','2026-10-29'];
 await page.reload();
 assert.deepEqual(await visibleChips(),['/sample-1','/sample-2','/sample-3']);
 await page.clock.resume();await page.unroute(base+'/');
