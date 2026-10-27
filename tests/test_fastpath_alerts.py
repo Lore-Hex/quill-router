@@ -94,7 +94,7 @@ def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
     for kind in [*kinds, "other"]:
         assert re.search(rf"^\| `{kind}` \| ", runbook, re.M), kind
     # The policies point at the runbook, and the service's comment names it.
-    assert POLICIES.read_text(encoding="utf-8").count("docs/runbooks/fastpath-alerts.md") == 3
+    assert POLICIES.read_text(encoding="utf-8").count("docs/runbooks/fastpath-alerts.md") == 5
     assert "docs/runbooks/fastpath-alerts.md" in _read("fastpath", "internal", "service", "service.go")
 
 
@@ -106,9 +106,11 @@ def test_the_lag_policy_watches_every_subscription_of_the_fast_path() -> None:
     for subscription in subscriptions:
         assert f"google_pubsub_subscription.{subscription}" in tf, subscription
     # The metric's subscription_id label is the short name ("auditor"), not
-    # the resource's full ID (projects/P/subscriptions/auditor).
-    assert "google_pubsub_subscription.fastpath_auditor.name," in tf
+    # the resource's full ID (projects/P/subscriptions/auditor). The auditor's
+    # has its own policies; the ten-minute one watches the rest.
     assert "google_pubsub_subscription.fastpath_stager.name," in tf
+    assert "google_pubsub_subscription.fastpath_auditor.name," not in tf
+    assert tf.count("google_pubsub_subscription.fastpath_auditor.name") == 3
     assert "[for subscription in google_pubsub_subscription.fastpath_archive : subscription.name]" in tf
     assert not re.search(r"(fastpath_auditor|fastpath_stager|subscription)\.id\b", tf)
     # The condition itself: the fast path's subscriptions only, their oldest
@@ -149,4 +151,51 @@ def test_the_channels_are_read_not_managed() -> None:
         "    data.google_monitoring_notification_channel.fastpath_ops_chat.name,\n"
         "  ]"
     ) in tf
-    assert tf.count("notification_channels = local.fastpath_alert_channels") == 2
+    assert tf.count("notification_channels = local.fastpath_alert_channels") == 4
+
+
+def test_the_auditor_has_its_own_tighter_policies() -> None:
+    """A member whose commits are wedged holds its leases' keys shut
+    (2026-10-26): the auditor's subscription is watched at two minutes, held
+    for one, and for messages waiting while none is acked."""
+    fastpath = _read("infra", "fastpath.tf")
+    lag = _policy("fastpath_auditor_lag")
+    assert lag.count("condition_threshold {") == 1
+    assert '"metric.type = \\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\\""' in lag
+    assert '"resource.labels.subscription_id = \\"${google_pubsub_subscription.fastpath_auditor.name}\\""' in lag
+    assert re.search(r'^\s+comparison\s+= "COMPARISON_GT"$', lag, re.M)
+    (threshold,) = re.findall(r"^\s+threshold_value\s+=\s+(\d+)$", lag, re.M)
+    assert re.search(r'^\s+duration\s+= "60s"$', lag, re.M)
+    # Past the commit watchdog's minute (auditor.CommitStall), after which
+    # a wedged member's records go to the others, and well under the
+    # ten minutes the archives need.
+    stall = re.search(r"^const CommitStall = (\d+) \* time.Second$", _read("fastpath", "internal", "auditor", "runtime.go"), re.M)
+    assert stall and int(stall.group(1)) < int(threshold) == 120 < 600
+    assert re.search(r"trigger \{\n\s+count = 1\n\s+\}", lag)
+
+    no_acks = _policy("fastpath_auditor_no_acks")
+    assert no_acks.count("conditions {") == 1 and "condition_prometheus_query_language {" in no_acks
+    query = re.search(r"query\s+= <<-EOT\n(.*?)\n\s+EOT\n", no_acks, re.S)
+    assert query
+    lines = [line.strip() for line in query.group(1).splitlines()]
+    selector = (
+        '{monitored_resource="pubsub_subscription",'
+        'subscription_id="${google_pubsub_subscription.fastpath_auditor.name}"}'
+    )
+    # Messages waiting the whole window, kept unless a nonzero ack rate in
+    # the same window matches them: an absent ack series fires as a zero one.
+    assert lines == [
+        f"min_over_time(pubsub_googleapis_com:subscription_num_undelivered_messages{selector}[5m]) > 0",
+        "unless on (subscription_id)",
+        f"sum by (subscription_id) (rate(pubsub_googleapis_com:subscription_ack_message_count{selector}[5m])) > 0",
+    ]
+    assert 'evaluation_interval = "60s"' in no_acks
+    for policy in (lag, no_acks):
+        assert 'severity     = "ERROR"' in policy
+        assert "notification_channels = local.fastpath_alert_channels" in policy
+        assert "docs/runbooks/fastpath-alerts.md" in policy
+    # The ten-minute policy no longer watches the auditor's subscription.
+    assert 'name                       = "auditor"' in fastpath
+    assert "fastpath_auditor" not in _policy("fastpath_subscription_lag")
+    runbook = _read("docs", "runbooks", "fastpath-alerts.md")
+    assert "TR Fast path: auditor lag" in runbook and "TR Fast path: auditor acknowledges nothing" in runbook

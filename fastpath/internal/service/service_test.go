@@ -1213,6 +1213,10 @@ func TestASubscriptionThatFailsFailsTheProcess(t *testing.T) {
 					})
 				}
 			}
+			// The callback held is a part wedged: the failed process exits
+			// within its bound all the same, though Run has not returned.
+			exited := make(chan int, 1)
+			cfg.Exit, cfg.failStop = func(code int) { exited <- code }, 2*time.Second
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
@@ -1237,6 +1241,19 @@ func TestASubscriptionThatFailsFailsTheProcess(t *testing.T) {
 				_ = conn.Close()
 				return false, nil
 			})
+			select {
+			case code := <-exited:
+				if code != 1 {
+					t.Fatalf("the failed process exited with %d", code)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("the failed process did not exit while its callback held")
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("Run returned %v while its callback held", err)
+			default:
+			}
 			cancel()
 			letGo()
 			select {
@@ -1814,5 +1831,42 @@ func TestAnAlertIsALineOfJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &got); err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("line %d: %q: %v, want %v", i, lines[i], err, want)
 		}
+	}
+}
+
+// TestAFailedProcessExitsThoughAPartIsWedged: a part's failure, the
+// auditor's stalled commits here, exits the process with code 1 within
+// FailStop though another part is wedged in a call that does not heed its
+// context, so that systemd starts the unit again.
+func TestAFailedProcessExitsThoughAPartIsWedged(t *testing.T) {
+	wedge := make(chan struct{})
+	defer close(wedge)
+	exited := make(chan int, 2)
+	done := make(chan error, 1)
+	go func() {
+		done <- lifecycle(context.Background(), func(p *parts) {
+			p.exit, p.failStop = func(code int) { exited <- code }, 100*time.Millisecond
+			p.run("pending work", func(context.Context) error {
+				<-wedge // as a call that does not heed its context
+				return nil
+			})
+			p.run("auditor", func(context.Context) error { return auditor.ErrCommitStalled })
+		})
+	}()
+	select {
+	case code := <-exited:
+		if code != 1 {
+			t.Fatalf("exited with %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the failed process did not exit")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("the parts stopped though one is wedged: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if FailStop != 30*time.Second {
+		t.Fatalf("FailStop is %v", FailStop)
 	}
 }
