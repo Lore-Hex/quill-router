@@ -16,7 +16,7 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
       const heading = style('.quote-feature h3');
       const body = style('.quote-feature p');
       return {
-        ctaInset: parseFloat(style('.cta-band').paddingLeft),
+        ctaInset: parseFloat(style('main > .cta-band').paddingLeft),
         resourceBorder: style('.link-list li').borderTopWidth,
         codeInset: parseFloat(style('.copy-terminal pre').paddingLeft),
         headingSize: parseFloat(heading.fontSize),

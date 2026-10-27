@@ -113,8 +113,7 @@
 }
 
 /* Bordered surfaces need their own inset, independent of section spacing. */
-.openrouter-article main > .cta-band,
-.openrouter-article .v2-table-cta {
+.openrouter-article main > .cta-band {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -170,8 +169,7 @@
   margin-bottom: 0;
 }
 @media (max-width: 720px) {
-  .openrouter-article main > .cta-band,
-  .openrouter-article .v2-table-cta { padding: 24px; }
+  .openrouter-article main > .cta-band { padding: 24px; }
   .openrouter-article .cta-band :is(h2,h3) { font-size: 26px; }
   .openrouter-article .link-list li { padding: 20px; }
   .openrouter-article .copy-terminal pre { padding: 20px; }
@@ -358,7 +356,26 @@
   .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
 }
 
-.openrouter-article .v2-table-cta { margin-top: 24px; }
+/* The comparison closes with an action, not a second full-width card. */
+.openrouter-article .v2-table-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 0;
+  padding: 24px 16px 0;
+  border: 0;
+  background: none;
+}
+.openrouter-article .v2-table-cta h3 {
+  margin: 0;
+  font-size: 23px;
+  line-height: 1.3;
+}
+@media (max-width: 720px) {
+  .openrouter-article .v2-table-cta { padding: 20px 0 0; }
+  .openrouter-article .v2-table-cta h3 { font-size: 22px; }
+}
 
 /* Keep signup actions at the bottom CTA’s line height in every text context. */
 .openrouter-article main .btn[data-action="open-signin"] { line-height: 1.6; }

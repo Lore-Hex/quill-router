@@ -382,7 +382,7 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert migration_page.status_code == 200
     assert "Switch from OpenRouter in one base URL." in migration_page.text
     assert "import os" in migration_page.text
-    assert migration_page.text.count("Create my API key") == 2
+    assert migration_page.text.count("Create my API key") == 3
     assert "No card required." in migration_page.text
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
