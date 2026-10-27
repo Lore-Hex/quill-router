@@ -10,11 +10,12 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
 import pytest
 
 from clickhouse.benchmark_rows import normalise
 from clickhouse.rollup_analytics import RollupPartition, recompute_partition
-from trusted_router.operational_analytics import _generation
+from trusted_router.operational_analytics import OperationalAnalyticsClient, _generation
 from trusted_router.storage_activity import generation_events
 
 pytestmark = pytest.mark.skipif(
@@ -460,6 +461,17 @@ def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
             )
             assert activity_count.stdout.decode().strip() == "1"
 
+            client_migration = (
+                Path(__file__).parents[1] / "clickhouse" / (
+                    "009_client_events_single_node.sql" if standalone
+                    else "008_client_events_replicated.sql"
+                )
+            ).read_bytes()
+            _docker(
+                docker, "exec", "-i", name, "clickhouse-client",
+                "--database", database, "--multiquery", input_bytes=client_migration,
+            )
+
             app_migration = (
                 Path(__file__).parents[1] / "clickhouse" / (
                     "026_activity_generation_app_fields_single_node.sql" if standalone
@@ -473,6 +485,18 @@ def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
                     input_bytes=app_migration.encode(),
                 )
 
+            route_migration = (
+                Path(__file__).parents[1] / "clickhouse" / (
+                    "028_activity_requested_model_single_node.sql" if standalone
+                    else "027_activity_requested_model_replicated.sql"
+                )
+            ).read_text().replace("tr.activity_generations", f"{database}.activity_generations")
+            for _ in range(2):
+                _docker(
+                    docker, "exec", "-i", name, "clickhouse-client",
+                    "--database", database, "--multiquery", input_bytes=route_migration.encode(),
+                )
+
             def read_activity() -> dict:
                 result = _docker(
                     docker, "exec", name, "clickhouse-client", "--database", database,
@@ -482,16 +506,19 @@ def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
                 return row
 
             legacy = read_activity()
+            assert legacy["requested_model"] == ""
             assert legacy["app_id"] is None
             assert int(legacy["app_markup_microdollars"]) == 0
             assert int(legacy["custom_model_markup_microdollars"]) == 0
             public = _generation(legacy, tenant_id=activity["tenant_id"]).to_openrouter_generation()
             assert public["app_id"] is None
+            assert public["requested_model"] is None
             assert public["app_markup_microdollars"] == 0
             assert public["custom_model_markup_microdollars"] == 0
 
             activity.update(
                 app_id="test-app", app_markup_microdollars=2, custom_model_markup_microdollars=3,
+                requested_model="trustedrouter/auto",
                 ingest_version="2026-07-28T12:35:01.000001Z",
             )
             for _ in range(2):
@@ -506,8 +533,36 @@ def test_replayed_batch_collapses_under_final(standalone: bool) -> None:
             generation = _generation(stored, tenant_id=activity["tenant_id"])
             public = generation.to_openrouter_generation()
             [event] = generation_events([generation])
-            for field in ("app_id", "app_markup_microdollars", "custom_model_markup_microdollars"):
+            for field in ("app_id", "app_markup_microdollars", "custom_model_markup_microdollars", "requested_model"):
                 assert public[field] == event[field] == activity[field]
+
+            def traffic_query(request: httpx.Request) -> httpx.Response:
+                args = [
+                    f"--{key}={value}" for key, value in request.url.params.items()
+                    if key.startswith("param_")
+                ]
+                result = _docker(
+                    docker, "exec", "-i", name, "clickhouse-client", "--database", database,
+                    *args, "--query", request.content.decode(), check=False,
+                )
+                assert result.returncode == 0, result.stderr.decode()
+                return httpx.Response(200, content=result.stdout)
+
+            client = OperationalAnalyticsClient(
+                base_url="http://clickhouse.test:8123", user="test", password="test",  # noqa: S106
+                database=database, transport=httpx.MockTransport(traffic_query),
+            )
+            instant = dt.datetime.fromisoformat(activity["created_at"])
+            assert client.routing_traffic(
+                start_at=instant - dt.timedelta(days=1), end_at=instant,
+            ) == []
+            [traffic] = client.routing_traffic(
+                start_at=instant, end_at=instant + dt.timedelta(days=1),
+            )
+            assert traffic["requested_model"] == "trustedrouter/auto"
+            assert traffic["served_model"] == activity["model"]
+            assert int(traffic["generations"]) == 1  # replay is not another request
+            assert int(traffic["customer_charge_microdollars"]) == activity["total_cost_microdollars"]
             sampled_activity = _docker(
                 docker,
                 "exec",
