@@ -126,16 +126,18 @@ for (const width of [320,390,768,1440]) {
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.goto(base+'/');await page.evaluate(()=>document.fonts.ready);
  assert(await page.locator('.stat .v').evaluateAll(elements=>elements.every(el=>el.scrollWidth<=el.clientWidth)),`stats must fit at ${width}px`);
- const fee=page.locator('.stat .v span');assert.equal(await fee.textContent(),'max fee');
+ const fee=page.locator('.stat .v span');assert.equal(await fee.textContent(),'fee');
  assert.equal(await fee.evaluate(el=>el.getClientRects().length),1);
 }
 
 // Keep both downloads in the first screen, including short phones.
 for (const [width,height] of [[320,568],[390,667],[390,844]]) {
  await page.setViewportSize({width,height});await page.goto(base+'/trusted-cowork');await page.evaluate(()=>document.fonts.ready);
- const layout=await page.evaluate(()=>({bottom:document.querySelector('.cw-hero .btn-secondary').getBoundingClientRect().bottom,meta:document.querySelector('.cw-meta').getBoundingClientRect().top}));
- assert(Math.abs(layout.bottom-(height-24))<=2,`downloads must fit ${width}x${height}`);
- assert(layout.meta>=height,'metadata stays below the first screen');
+ const layout=await page.evaluate(()=>({bottom:document.querySelector('.cw-hero .btn-secondary').getBoundingClientRect().bottom,image:document.querySelector('.cw-screenshot').getBoundingClientRect().top}));
+ assert(layout.bottom<=height-24,`downloads must fit ${width}x${height}`);
+ assert(layout.image<=height-80 && layout.image>=height-140,'recognizable screenshot preview fits in the first screen');
+ assert.equal(layout.image-layout.bottom,32,'space separates the screenshot from the CTAs');
+ assert.equal(await page.locator('.cw-meta').count(),0);
  const top=await page.locator('.cw-hero h1').evaluate(el=>el.getBoundingClientRect().top+scrollY);
  await page.setViewportSize({width,height:height+80});
  await page.evaluate(()=>scrollTo(0,120));
