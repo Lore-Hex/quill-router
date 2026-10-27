@@ -356,13 +356,12 @@
   .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
 }
 
-/* Keep the action visually attached to the comparison, outside its scroll area. */
+/* A quiet action below the comparison, aligned with its outer edge. */
 .openrouter-article .v2-table-cta {
   display: flex;
   justify-content: flex-start;
-  margin: 0;
-  padding: 28px 16px;
-  background: #10231b;
+  margin: 20px 0 0;
+  padding: 0;
 }
 .openrouter-article .v2-table-cta .btn {
   min-height: 48px;
@@ -371,7 +370,4 @@
   font-size: 16px;
   font-weight: 600;
   line-height: 1.4;
-}
-@media (max-width: 720px) {
-  .openrouter-article .v2-table-cta { padding: 20px; }
 }
