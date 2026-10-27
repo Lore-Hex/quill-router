@@ -1038,6 +1038,11 @@ class Settings(BaseSettings):
     # gates on, signed with the routing snapshot's key above. Off by default:
     # the route is not registered and no edge-policy module is imported.
     edge_policy_publish_enabled: bool = False
+    # Published in the edge policy as async_settle.edge_decide
+    # (docs/design/fast-admission-e2-g15-async.md section 6.2): whether the
+    # edge may answer an async-v1 authorize itself. Off by default; rollout.sh
+    # renders it as a literal false until the I4 step.
+    fastpath_edge_decide_async: bool = False
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.

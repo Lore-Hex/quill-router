@@ -34,6 +34,7 @@ from trusted_router.billing_snapshot import (
     Tier,
     UInt,
     canonical_bytes,
+    raw_prices_valid,
 )
 from trusted_router.catalog import effective_endpoint
 from trusted_router.catalog_data import (
@@ -211,6 +212,14 @@ class Epoch(Frozen):
     starts_at: UInt
     headline: Headline
     price: Price
+    # billing_snapshot.raw_prices_valid of the effective endpoint ``price`` is
+    # computed from: false where build_snapshot refuses a raw value that
+    # endpoint_pricing_candidate coerced into ``price``.
+    billing_valid: Flag
+
+    def terms(self) -> tuple[Headline, Price, bool]:
+        """Everything but ``starts_at``: an epoch is listed only where these change."""
+        return self.headline, self.price, self.billing_valid
 
 
 class InferenceLocation(Frozen):
@@ -257,8 +266,7 @@ class EndpointEntry(Frozen):
             epoch.price.endpoint_id != self.id for epoch in self.epochs
         ):
             raise ValueError("epochs must increase and price this endpoint")
-        if any(a.headline == b.headline and a.price == b.price
-               for a, b in zip(self.epochs, self.epochs[1:], strict=False)):
+        if any(a.terms() == b.terms() for a, b in zip(self.epochs, self.epochs[1:], strict=False)):
             raise ValueError("adjacent epochs must differ")
         return self
 
@@ -754,9 +762,11 @@ def _epochs(endpoint: ModelEndpoint, starts: list[int]) -> tuple[Epoch, ...]:
             prompt=effective.prompt_price_microdollars_per_million_tokens,
             completion=effective.completion_price_microdollars_per_million_tokens,
         )
-        if epochs and epochs[-1].headline == headline and epochs[-1].price == price:
+        epoch = Epoch(starts_at=start, headline=headline, price=price,
+                      billing_valid=raw_prices_valid(effective))
+        if epochs and epochs[-1].terms() == epoch.terms():
             continue
-        epochs.append(Epoch(starts_at=start, headline=headline, price=price))
+        epochs.append(epoch)
     return tuple(epochs)
 
 

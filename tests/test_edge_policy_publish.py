@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -164,10 +164,11 @@ def _inline(run: Any) -> _Finished:
 
 
 def _publisher(settings: Settings, clock: Clock, resolver: Resolver | None = None,
-               store: Any = None, *, background: bool = False) -> EdgePolicyPublisher:
+               store: Any = None, *, background: bool = False,
+               runtime: Any = lambda: None) -> EdgePolicyPublisher:
     extra: dict[str, Any] = {} if background else {"spawn": _inline}
     return build_publisher(settings, clock=clock, resolver=lambda: resolver,
-                           typed_store=lambda: store, **extra)
+                           typed_store=lambda: store, runtime=runtime, **extra)
 
 
 def _app(settings: Settings, publisher: EdgePolicyPublisher | None = None) -> Any:
@@ -440,6 +441,111 @@ def test_the_digests_and_durability_are_what_authorize_reads(key) -> None:
         assert fastpath_frontdoor.records_durable(outbox, store) is durable
         publication = _publisher(settings, Clock(T0), store=store).current()
         assert json.loads(publication.body)["records_durable"] is durable
+
+
+def _runtime(*, signer: bool = True, epoch: int = 1, journal_region: str | None = "us-central1") -> Any:
+    from trusted_router.services.async_settle import Runtime
+
+    return Runtime(cast(Any, object()) if signer else None, None, "us-central1", epoch,
+                   journal_region=journal_region)
+
+
+class TypedStore:
+    def __init__(self, mode: str) -> None:
+        self.request_record_write_mode = mode
+
+
+def test_async_settle_admission_and_edge_decide_are_the_settings(key) -> None:
+    """admission_enabled is async_settle_admission_enabled (enabled and
+    protection, failing closed even on a mutated Settings); edge_decide is
+    fastpath_edge_decide_async, default false."""
+    assert _settings(key).fastpath_edge_decide_async is False
+    assert json.loads(_publisher(_settings(key), Clock(T0)).current().body)["async_settle"] == {
+        "admission_enabled": False, "edge_decide": False, "ticket_authority": False,
+        "typed_records": False,
+    }
+    seen = set()
+    for enabled in (False, True):
+        for protection in (False, True):
+            for decide in (False, True):
+                settings = _settings(key, async_settle_protection=protection,
+                                     fastpath_edge_decide_async=decide)
+                # Enabled without protection is refused at construction; set it
+                # afterwards, as a caller mutating Settings would.
+                settings.async_settle_enabled = enabled
+                published = json.loads(_publisher(settings, Clock(T0)).current().body)["async_settle"]
+                assert published["admission_enabled"] is (enabled and protection), (enabled, protection)
+                assert published["admission_enabled"] is settings.async_settle_admission_enabled
+                assert published["edge_decide"] is decide
+                seen.add((published["admission_enabled"], published["edge_decide"]))
+    assert seen == {(False, False), (False, True), (True, False), (True, True)}
+
+
+def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TR_FASTPATH_EDGE_DECIDE_ASYNC", "true")
+    assert Settings(environment="test", sentry_dsn=None).fastpath_edge_decide_async is True
+    monkeypatch.setenv("TR_FASTPATH_EDGE_DECIDE_ASYNC", "false")
+    assert Settings(environment="test", sentry_dsn=None).fastpath_edge_decide_async is False
+
+
+def test_rollout_renders_edge_decide_as_a_literal_false() -> None:
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert re.findall(r'"TR_FASTPATH_EDGE_DECIDE_ASYNC=[^"]*"', rollout) == [
+        '"TR_FASTPATH_EDGE_DECIDE_ASYNC=false"']
+
+
+def test_ticket_authority_is_the_runtime_read_at_each_signing(key) -> None:
+    """A signer, an epoch of at least 1 and a journal region, each required,
+    read from the runtime when signing, not when the publisher was built."""
+    clock = Clock(T0)
+    holder: dict[str, Any] = {"runtime": None}
+    publisher = _publisher(_settings(key), clock, runtime=lambda: holder["runtime"])
+    cases = [
+        (None, False),
+        (_runtime(), True),
+        (_runtime(signer=False), False),
+        (_runtime(epoch=0), False),
+        (_runtime(epoch=2), True),
+        (_runtime(journal_region=""), False),
+        # No journal region of its own: the serving region stands for it.
+        (_runtime(journal_region=None), True),
+    ]
+    for runtime, authority in cases:
+        holder["runtime"] = runtime
+        published = json.loads(publisher.current().body)["async_settle"]
+        assert published["ticket_authority"] is authority, runtime
+        clock.now += REFRESH_SECONDS
+
+
+def test_typed_records_is_the_async_authorize_branchs_typed(key) -> None:
+    """gateway.py passes typed = a typed billing store whose
+    request_record_write_mode is "typed"."""
+    for store, typed in ((None, False), (object(), False), (TypedStore("legacy"), False),
+                         (TypedStore("dual"), False), (TypedStore("typed"), True)):
+        published = json.loads(_publisher(_settings(key), Clock(T0), store=store).current().body)
+        assert published["async_settle"]["typed_records"] is typed, store
+
+
+def _signed(publisher: EdgePolicyPublisher) -> Any:
+    try:
+        return publisher.current()
+    except PolicyUnavailable:
+        assert publisher.idle(30)
+        return publisher.current()
+
+
+def test_the_installed_publisher_reads_the_apps_runtime_when_it_signs(key) -> None:
+    """main.py installs the publisher before app.state.async_settle: the
+    publisher must read the runtime when it signs. Without a ticket key the
+    app's own runtime has no authority; one installed afterwards does."""
+    settings = _settings(key)
+    own = _app(settings)
+    assert own.state.async_settle.signer is None
+    assert json.loads(_signed(own.state.edge_policy_publisher).body)["async_settle"]["ticket_authority"] is False
+    replaced = _app(settings)
+    replaced.state.async_settle = _runtime()
+    published = json.loads(_signed(replaced.state.edge_policy_publisher).body)
+    assert published["async_settle"]["ticket_authority"] is True
 
 
 def test_each_signing_refreshes_the_stage_d_policy_first(key) -> None:
@@ -1101,6 +1207,18 @@ def test_the_golden_files_are_what_the_python_publisher_writes_now() -> None:
     assert VECTORS.render_manifest() == VECTORS.render_manifest()
 
 
+def test_the_golden_files_ignore_the_async_settle_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The generator pins every setting async_settle reads, so a developer's
+    environment cannot move the files."""
+    for name in ("TR_FASTPATH_EDGE_DECIDE_ASYNC", "TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION"):
+        monkeypatch.setenv(name, "true")
+    # Positive control: the environment does reach an unpinned Settings.
+    unpinned = Settings(environment="test", sentry_dsn=None)
+    assert unpinned.fastpath_edge_decide_async and unpinned.async_settle_admission_enabled
+    assert VECTORS.render_body() == VECTORS.OUTPUT_BODY.read_bytes()
+    assert VECTORS.render_manifest() == VECTORS.OUTPUT_MANIFEST.read_text()
+
+
 def test_the_golden_body_is_canonical_and_covers_every_field() -> None:
     body = _golden_body()
     assert body.isascii() and not body.endswith(b"\n")
@@ -1113,6 +1231,7 @@ def test_the_golden_body_is_canonical_and_covers_every_field() -> None:
         "fastpath_pilot_regions", "gateway_authorize_max_in_flight_per_key", "monitor_lookup_hash",
         "async_settle_shadow_policy", "async_settle_shadow_workspaces",
         "configured_regions", "primary_region", "multi_region_enabled", "internal_models",
+        "async_settle",
     }
     # The union of the resolver's set and the break-glass override, deduplicated.
     assert len(decoded["accepted_image_digests"]) == 3
@@ -1126,6 +1245,9 @@ def test_the_golden_body_is_canonical_and_covers_every_field() -> None:
     flags += [decoded["stage_d"][n] for n in ("eligibility_enabled", "heartbeat_enabled",
                                               "require_heartbeat_declaration")]
     assert True in flags and False in flags
+    assert set(decoded["async_settle"]) == {
+        "admission_enabled", "edge_decide", "ticket_authority", "typed_records"}
+    assert True in decoded["async_settle"].values() and False in decoded["async_settle"].values()
     # Synthetic workspace ids only.
     for name in ("fastpath_pilot_workspaces", "async_settle_shadow_workspaces"):
         assert all(ws.startswith("ws-synthetic-") for ws in decoded[name])
@@ -1203,6 +1325,12 @@ def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
     ("a zero in-flight limit", lambda d: {**d, "gateway_authorize_max_in_flight_per_key": 0}),
     ("unsorted internal models", lambda d: {**d, "internal_models": d["internal_models"][::-1]}),
     ("no internal models field", lambda d: {k: v for k, v in d.items() if k != "internal_models"}),
+    ("no async_settle", lambda d: {k: v for k, v in d.items() if k != "async_settle"}),
+    ("a null async_settle", lambda d: {**d, "async_settle": None}),
+    ("an integer async_settle member", lambda d: {**d, "async_settle": {**d["async_settle"], "edge_decide": 0}}),
+    ("a missing async_settle member", lambda d: {**d, "async_settle": {
+        k: v for k, v in d["async_settle"].items() if k != "typed_records"}}),
+    ("an extra async_settle member", lambda d: {**d, "async_settle": {**d["async_settle"], "epoch": True}}),
 ])
 def test_the_body_parser_is_strict(name: str, edit: Any) -> None:
     decoded = json.loads(_golden_body())

@@ -25,6 +25,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from trusted_router import catalog_data, catalog_registry, provider_ranking, routing
+from trusted_router.billing_snapshot import raw_prices_valid
 from trusted_router.catalog import effective_endpoint
 from trusted_router.catalog_privacy import (
     endpoint_meets_privacy_requirement,
@@ -146,6 +147,21 @@ def test_every_epoch_price_is_the_effective_endpoint_price_at_that_instant(live)
     # An endpoint lists several epochs exactly when its price moves in the window.
     # (tests/test_fastpath_routing_snapshot_vectors.py holds a window with real peaks.)
     assert scheduled == changing
+
+
+def test_every_epoch_publishes_whether_build_snapshot_accepts_its_raw_prices(live) -> None:
+    """billing_valid is raw_prices_valid of the same effective endpoint the
+    epoch's price is computed from (docs/design/fast-admission-e2-g15-async.md
+    section 3.2)."""
+    snapshot, inputs = live
+    raw = {e.id: e for e in inputs.endpoints}
+    epochs = 0
+    for entry in snapshot.endpoints:
+        for epoch in entry.epochs:
+            effective = effective_endpoint(raw[entry.id], at=_instant(epoch.starts_at))
+            assert epoch.billing_valid is raw_prices_valid(effective), (entry.id, epoch.starts_at)
+            epochs += 1
+    assert epochs >= len(snapshot.endpoints) > 1_000
 
 
 def test_availability_is_the_catalog_deadline_and_the_retirement(live) -> None:
@@ -783,7 +799,7 @@ ALLOWED_FIELDS = frozenset({
     "endpoints.privacy.meets", "endpoints.gateway_regions", "endpoints.gateway_regions.only",
     "endpoints.gateway_regions.deny", "endpoints.gateway_regions.requires_explicit_origin",
     "endpoints.catalog_valid_until", "endpoints.retired_at", "endpoints.epochs",
-    "endpoints.epochs.starts_at", "endpoints.epochs.headline",
+    "endpoints.epochs.starts_at", "endpoints.epochs.headline", "endpoints.epochs.billing_valid",
     "endpoints.epochs.headline.prompt", "endpoints.epochs.headline.completion",
     "endpoints.epochs.price", "endpoints.epochs.price.endpoint_id",
     "endpoints.epochs.price.price_history_version", "endpoints.epochs.price.rates",

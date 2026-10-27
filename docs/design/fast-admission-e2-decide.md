@@ -441,6 +441,7 @@ table says, sets as sorted lists.
 | `primary_region` | string | Settings |
 | `multi_region_enabled` | bool | Settings |
 | `internal_models` | sorted strings | `MONITOR_MODEL_ID` and every `MODELS` entry with `internal_only`, from the serving process's catalog (`internal_model_access.requests_internal_model`'s rule) |
+| `async_settle` | object | `admission_enabled` (`async_settle_admission_enabled`), `edge_decide` (`fastpath_edge_decide_async`), `ticket_authority` (the process's `app.state.async_settle` runtime, read when signing, has a signer, an epoch of at least 1 and a journal region), `typed_records` (the async-v1 authorize branch's `typed`): four bools, docs/design/fast-admission-e2-g15-async.md section 3.4. Optional to Go (G15a); Python publishes it from P5 |
 
 The edge reads Stage D from the policy, not from the snapshot's
 `settings.stage_d`, which is the compile instant's: the kill switch must

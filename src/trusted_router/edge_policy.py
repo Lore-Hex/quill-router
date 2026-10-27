@@ -42,6 +42,15 @@ Fields, all required:
 - ``internal_models``: the model ids only an internal probe key may request
   (``internal_model_access.internal_model_ids``: the monitor model and every
   ``internal_only`` catalog model), read from the catalog when signing.
+- ``async_settle``: ``{"admission_enabled", "edge_decide", "ticket_authority",
+  "typed_records"}``, four booleans the publishing process reads when it signs
+  (docs/design/fast-admission-e2-g15-async.md section 3.4): async-settle
+  admission (``async_settle_admission_enabled``), whether the edge may decide
+  async-v1 authorizes (``fastpath_edge_decide_async``), whether this process's
+  async-settle runtime can issue tickets (a signer, an authority epoch of at
+  least 1 and a journal region), and whether its store writes typed records
+  (the ``typed`` the async-v1 authorize branch passes). Go (G15a) reads it as
+  optional; Python always publishes it.
 """
 
 from __future__ import annotations
@@ -88,6 +97,13 @@ class EdgeStageD(Frozen):
         return self
 
 
+class EdgeAsyncSettle(Frozen):
+    admission_enabled: Flag
+    edge_decide: Flag
+    ticket_authority: Flag
+    typed_records: Flag
+
+
 class EdgePolicyV1(Frozen):
     v: Literal[1]
     kind: Literal["tr-edge-policy"]
@@ -109,6 +125,7 @@ class EdgePolicyV1(Frozen):
     primary_region: Identity
     multi_region_enabled: Flag
     internal_models: tuple[Identity, ...]
+    async_settle: EdgeAsyncSettle
 
     @model_validator(mode="after")
     def consistent(self) -> Self:

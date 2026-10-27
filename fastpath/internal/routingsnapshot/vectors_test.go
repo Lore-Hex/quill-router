@@ -350,16 +350,34 @@ func TestTheCasesNameTheGoldenSnapshot(t *testing.T) {
 }
 
 // TestBillingValidIsOptionalPerEpoch: G15a (docs/design/
-// fast-admission-e2-g15-async.md section 6.1). The golden body, which has no
-// billing_valid, parses with every epoch's nil (unknown); a body that
-// publishes it on some epochs parses and exposes each as published, the
-// others nil; null and a non-boolean are refused; and nothing the evaluator
-// answers changes when every epoch carries it.
+// fast-admission-e2-g15-async.md section 6.1). The golden body publishes
+// billing_valid true on every epoch (P5); without it, as a publisher before
+// P5 wrote it, every epoch's parses nil (unknown); a body that publishes it
+// on some epochs parses and exposes each as published, the others nil; null
+// and a non-boolean are refused; and nothing the evaluator answers changes
+// when every epoch carries it.
 func TestBillingValidIsOptionalPerEpoch(t *testing.T) {
-	_, raw := golden(t)
+	_, body := golden(t)
+	member := []byte(`{"billing_valid":true,"headline":{`)
+	if bytes.Contains(body, []byte(`"billing_valid":false`)) ||
+		bytes.Count(body, []byte(`"billing_valid":`)) != bytes.Count(body, member) {
+		t.Fatal("the golden body must publish billing_valid true on every epoch")
+	}
+	all, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range all.Endpoints {
+		for _, epoch := range e.Epochs {
+			if epoch.BillingValid == nil || !*epoch.BillingValid {
+				t.Fatalf("%s: golden billing_valid %v", e.ID, epoch.BillingValid)
+			}
+		}
+	}
+	raw := bytes.ReplaceAll(body, member, []byte(`{"headline":{`))
 	at := []byte(`"epochs":[{"headline":`)
 	if bytes.Contains(raw, []byte(`"billing_valid"`)) || bytes.Count(raw, at) < 2 {
-		t.Fatal("the golden body must have no billing_valid and several endpoints")
+		t.Fatal("the stripped body must have no billing_valid and several endpoints")
 	}
 	plain, err := Parse(raw)
 	if err != nil {
