@@ -283,6 +283,16 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
     return result
 
 
+# The requested parameters an async-v1 authorize may name; any other makes
+# the answer async_eligible false only. The edge's authorize goldens carry
+# this set (scripts/fastpath/authorize_vectors.py, authorize_async_cases_v1.json).
+ORDINARY_PARAMETERS: frozenset[str] = frozenset({
+    "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
+    "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias",
+    "logprobs", "top_logprobs", "response_format", "reasoning_effort", "stream",
+})
+
+
 def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthorization,
                         endpoints: list[ModelEndpoint], settings: Settings, typed: bool,
                         federated: bool, replay: bool, effective_at: Any) -> dict[str, Any]:
@@ -301,12 +311,7 @@ def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthor
         if "input_modalities" in body.model_fields_set:
             return {"async_eligible": False}
         # Unknown adapter features must not silently acquire an exact total.
-        ordinary_parameters = {
-            "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
-            "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias",
-            "logprobs", "top_logprobs", "response_format", "reasoning_effort", "stream",
-        }
-        if set(body.requested_parameters or ()) - ordinary_parameters:
+        if set(body.requested_parameters or ()) - ORDINARY_PARAMETERS:
             return {"async_eligible": False}
         requested = Eligibility(
             typed=typed, usage_type=authorization.usage_type.value,
