@@ -83,3 +83,18 @@ test('FAQ pricing has no stale as-of date in visible text or structured data', a
   expect(structured.join(' ')).toContain(answer);
   expect(structured.join(' ')).not.toContain('As of October 2026');
 });
+
+ test('API key CTAs open signup, including below the alternatives table', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/openrouter-alternative');
+  const ctas = page.getByRole('button', { name: 'Create my API key', exact: true });
+  await expect(ctas).toHaveCount(3);
+  await expect(page.locator('.v2-table-cta')).toHaveCount(1);
+  await expect(page.locator('main')).not.toContainText('Attested gateways publish hardware proof');
+  for (const cta of await ctas.all()) {
+    await cta.click();
+    await expect(page.locator('#signinModal')).toBeVisible();
+    await expect(page.locator('#signinTitle')).toHaveText('Get your API key');
+    await page.keyboard.press('Escape');
+  }
+ });

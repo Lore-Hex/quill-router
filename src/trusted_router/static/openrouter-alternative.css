@@ -355,3 +355,5 @@
 @media (forced-colors: active) {
   .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
 }
+
+.openrouter-article .v2-table-cta { margin: 24px 0 0; }
