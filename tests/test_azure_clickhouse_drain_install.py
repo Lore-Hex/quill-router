@@ -193,5 +193,5 @@ def test_payload_is_a_checksummed_committed_head_snapshot(
     installed = harness.mirror / "scripts/deploy/azure_clickhouse_drain_install.sh"
     script = installed.read_text()
     assert 'source "${SCRIPT_DIR}/_clickhouse_bundle.sh"' in script
-    assert 'build_clickhouse_bundle "$ROOT" "$archive"' in script
+    assert 'build_clickhouse_bundle "$ROOT" "$archive" public-snapshots' in script
     assert 'tar czf "$WORK/drain.tgz"' not in script

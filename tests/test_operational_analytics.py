@@ -112,6 +112,7 @@ def _generation() -> Generation:
         workspace_id="ws-private-123",
         key_hash="salted-key-hash-private",
         model="anthropic/claude-haiku-4.5",
+        requested_model="nyte/auto-routing",
         provider="anthropic",
         provider_name="Anthropic",
         app="Test app",
@@ -182,6 +183,7 @@ def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> Non
     assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
     assert payload["app_id"] == "test-app"
+    assert payload["requested_model"] == "nyte/auto-routing"
     assert payload["app_markup_microdollars"] == 2
     assert payload["custom_model_markup_microdollars"] == 3
     assert generation.key_hash not in encoded
@@ -746,6 +748,7 @@ def test_operational_normalizer_adds_commit_version_and_rejects_unknown_kind() -
     assert event.event_kind == "activity"
     assert event.row["generation_id"] == _generation().id
     assert event.row["app_id"] == "test-app"
+    assert event.row["requested_model"] == "nyte/auto-routing"
     assert event.row["app_markup_microdollars"] == 2
     assert event.row["custom_model_markup_microdollars"] == 3
     assert event.row["ingest_version"].startswith("2026-07-31T12:35:00")
@@ -962,6 +965,7 @@ def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_id
         assert "{tenant_id:String}" in body
         assert "mapContains(tags, {tag_key:String})" in body
         selected = body.split("FROM", 1)[0]
+        assert "requested_model" in selected
         assert "app_id" in selected
         assert "app_markup_microdollars" in selected
         assert "custom_model_markup_microdollars" in selected

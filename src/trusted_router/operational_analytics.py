@@ -284,7 +284,7 @@ FORMAT JSON
         rows = self._query(
             """
 SELECT
-  generation_id, request_id, key_id, model, provider, provider_name, app, app_id,
+  generation_id, request_id, key_id, model, requested_model, provider, provider_name, app, app_id,
   tokens_prompt, tokens_completion, cached_input_tokens, reasoning_tokens,
   total_cost_microdollars, app_markup_microdollars, custom_model_markup_microdollars,
   usage_type, speed_tokens_per_second,
@@ -302,6 +302,63 @@ FORMAT JSON
             params=params,
         )
         return [_generation(row, tenant_id=tenant_id) for row in rows]
+
+    def routing_traffic(
+        self, *, start_at: dt.datetime, end_at: dt.datetime,
+    ) -> list[dict[str, Any]]:
+        """Settled organic traffic, not attempts or a prediction of eligibility.
+
+        Keep unattributed rows so callers can report coverage. FINAL removes
+        delivery replays. Resource limits throw rather than return partial totals.
+        """
+        if start_at.utcoffset() is None or end_at.utcoffset() is None:
+            raise ValueError("routing traffic requires timezone-aware bounds")
+        if not dt.timedelta(0) < end_at - start_at <= dt.timedelta(days=31):
+            raise ValueError("routing traffic window must be positive and at most 31 days")
+        rows = self._query(
+            """
+WITH throwIf(
+  getSetting('readonly') != 1
+  OR getSetting('max_execution_time') <= 0 OR getSetting('max_execution_time') > 30
+  OR getSetting('max_memory_usage') <= 0 OR getSetting('max_memory_usage') > 1073741824
+  OR getSetting('read_overflow_mode') != 'throw'
+  OR getSetting('group_by_overflow_mode') != 'throw'
+  OR getSetting('timeout_overflow_mode') != 'throw'
+  OR getSetting('result_overflow_mode') != 'throw',
+  'routing traffic requires a bounded read-only profile (30s, 1GiB, throw on overflow)'
+) AS profile_check
+SELECT
+  toString(toDate(created_at, 'UTC')) AS day,
+  requested_model, model AS served_model, provider, usage_type,
+  count() AS generations,
+  sum(tokens_prompt) AS input_tokens,
+  sum(tokens_completion) AS output_tokens,
+  sum(cached_input_tokens) AS cached_input_tokens,
+  sum(total_cost_microdollars) AS customer_charge_microdollars,
+  count(elapsed_milliseconds) AS latency_samples,
+  sum(ifNull(elapsed_milliseconds, 0)) AS latency_total_ms,
+  count(first_token_milliseconds) AS ttft_samples,
+  sum(ifNull(first_token_milliseconds, 0)) AS ttft_total_ms,
+  countIf(usage_estimated) AS estimated_usage_generations
+FROM activity_generations FINAL
+WHERE created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  AND created_at < parseDateTime64BestEffort({end_at:String}, 3)
+  AND synthetic = 0 AND status = 'success'
+  AND profile_check = 0
+GROUP BY day, requested_model, served_model, provider, usage_type
+ORDER BY day, requested_model, served_model, provider, usage_type
+LIMIT 100001
+FORMAT JSON
+""",
+            params={
+                "start_at": start_at.astimezone(dt.UTC).isoformat(),
+                "end_at": end_at.astimezone(dt.UTC).isoformat(),
+            },
+            timeout_seconds=35.0,
+        )
+        if len(rows) > 100000:
+            raise RuntimeError("routing traffic exceeded 100000 groups; narrow the window")
+        return rows
 
     def client_reliability_summary(
         self,
@@ -498,6 +555,7 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         workspace_id=tenant_id,
         key_hash=str(row["key_id"]),
         model=str(row["model"]),
+        requested_model=str(row.get("requested_model") or ""),
         provider_name=str(row["provider_name"]),
         app=str(row["app"]),
         app_id=str(row.get("app_id") or ""),
