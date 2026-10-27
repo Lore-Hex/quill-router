@@ -192,7 +192,7 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
     if "api.arcee.ai" in url:
         return {"data": [{"id": "trinity-large-thinking"}]}
     if "api.inceptionlabs.ai" in url:
-        return {"data": [{"id": "mercury-2"}]}
+        return {"data": [{"id": "mercury-2"}, {"id": "mercury-3"}]}
     if "inference.api.nscale.com" in url:
         return {"data": [{"id": "black-forest-labs/FLUX.1-schnell"}]}
     if "api.intelligence.io.solutions" in url:
