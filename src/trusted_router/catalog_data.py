@@ -2726,10 +2726,11 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         TREV_1_0_BACKING_MODEL_ID,
         ("cerebras", "sambanova", "fireworks", "together"),
     ),
-    # Reasoning off: 275-310 ms median and the cheapest of the fast ones, 28/29
-    # on the eval every run (29/29 at "low" effort, ~600 ms).
+    # Mercury 3 since 2026-10-27: Inception, its only host, retires Mercury 2
+    # on 2026-11-15. Reasoning off: 370 ms median, 8/8 valid and 29/29 on the
+    # eval. At "low" effort it reasons past the budget, so the name stays off.
     NamedDecisionModel(
-        MEV_1_0_MODEL_ID, "TrustedRouter Mev 1.0", "inception/mercury-2", ("inception",)
+        MEV_1_0_MODEL_ID, "TrustedRouter Mev 1.0", "inception/mercury-3", ("inception",)
     ),
     NamedDecisionModel(
         ZEV_1_0_MODEL_ID, "TrustedRouter Zev 1.0", "z-ai/glm-5.2-fast", ("fireworks", "baseten")
@@ -3593,7 +3594,7 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
     *(named.id for named in NAMED_DECISION_MODELS),
     # The chat models behind the names stay callable under their own ids, tuned
     # the same way: a name is a convenience, not a gate.
-    "inception/mercury-2",
+    "inception/mercury-3",
     "z-ai/glm-5.2-fast",
     "meta-llama/llama-3.3-70b-instruct",
     "google/gemini-3.1-flash-lite",
@@ -3612,7 +3613,7 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
 # only OpenAI route is bring-your-own-key, so most customers could not call it.
 NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     **{named.id: named.chain[0] for named in NAMED_DECISION_MODELS},
-    "inception/mercury-2": "inception",
+    "inception/mercury-3": "inception",
     "z-ai/glm-5.2-fast": "fireworks",
     "meta-llama/llama-3.3-70b-instruct": "sambanova",
     "google/gemini-3.1-flash-lite": "google-ai-studio",

@@ -17,6 +17,8 @@
       "status": 1,
       "id": "inception/mercury-2",
       "upstream_id": "mercury-2",
+      "retirement_at": "2026-11-15T00:00:00Z",
+      "replacement_model_id": "inception/mercury-3",
       "context_length": 128000,
       "max_output_tokens": 50000,
       "supported_features": [
@@ -49,6 +51,8 @@
       "status": 1,
       "id": "inception/mercury-2.5",
       "upstream_id": "mercury-2.5",
+      "retirement_at": "2026-11-15T00:00:00Z",
+      "replacement_model_id": "inception/mercury-3",
       "context_length": 260000,
       "max_output_tokens": 65536,
       "supported_features": [

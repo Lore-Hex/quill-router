@@ -14,7 +14,7 @@ URL = f"{BASE_URL}/models"
 PRICING_URL = "https://docs.inceptionlabs.ai/get-started/models.md"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/inception.json"
 MANIFEST_STALE_FALLBACK = True
-EXPLICIT_MODEL_MAP = {"mercury-2": "inception/mercury-2"}
+EXPLICIT_MODEL_MAP = {"mercury-2": "inception/mercury-2", "mercury-3": "inception/mercury-3"}
 
 
 def _chat_row(row: dict[str, Any]) -> bool:
@@ -82,7 +82,7 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="INCEPTION_API_KEY",
         explicit_model_map=EXPLICIT_MODEL_MAP,
         namespace_unqualified=SLUG,
-        expected_models=("inception/mercury-2",),
+        expected_models=("inception/mercury-3",),
         normalize_rows=_normalize_rows,
         pricing_source_url=PRICING_URL,
         canary_max_tokens=256,
