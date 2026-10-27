@@ -84,6 +84,7 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "z-ai/glm-5.2",
     "sakana-ai/fugu-ultra-v1.1",
     "sakana-ai/sakana-namazu-v1.0",
+    "qwen/qwen3-0.6b",
     "decisionmodelsio/s1-fast",
     "decisionmodelsio-eu/s1-fast",
 }
@@ -115,6 +116,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
     if "llm.eu.greenference.com" in url:
         return {"data": [{"id": "greenference/glm-5.3-flash"}]}
+    if "api.hixtube.com" in url:
+        return {"data": [{"id": "qwen/qwen3-0.6b"}]}
     if "inference.muna.ai" in url:
         return {"data": [{"id": "qwen/qwen-3.8-27b"}, {"id": "google/gemma-4-26b-a4b-it"}]}
     if "inference.coralbricks.ai" in url:
@@ -254,6 +257,8 @@ def test_elevenlabs_coverage_requires_the_hourly_speech_refresher(
     import trusted_router.catalog as catalog
 
     monkeypatch.setattr(catalog, "GATEWAY_PREPAID_PROVIDER_SLUGS", {"elevenlabs"})
+    monkeypatch.setattr(check_price_coverage, "_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS", set())
+    monkeypatch.setattr(check_price_coverage, "EXPIRING_PROVIDER_MANIFEST_SLUGS", set())
     if not refresher_present:
         monkeypatch.setattr(
             check_price_coverage, "_DEDICATED_LIVE_SCRAPERS",

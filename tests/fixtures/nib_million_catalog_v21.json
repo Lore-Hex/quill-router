@@ -1,0 +1,68 @@
+{
+  "contract_version": "2.1",
+  "data": [
+    {
+      "capabilities": {
+        "prompt_caching": true,
+        "reasoning": false,
+        "streaming": true,
+        "structured_output": false,
+        "tools": true
+      },
+      "context_length": 1048576,
+      "endpoints": [
+        "chat/completions"
+      ],
+      "id": "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8",
+      "input_modalities": [
+        "text"
+      ],
+      "lifecycle": {
+        "deprecation_at": null,
+        "replacement_model_id": null,
+        "retirement_at": null,
+        "status": "active"
+      },
+      "max_output_tokens": 393216,
+      "name": "DeepSeek V4.1 Flash 1017 UNCENSORED FP8 (selected)",
+      "object": "model",
+      "output_modalities": [
+        "text"
+      ],
+      "owned_by": "dealignai",
+      "pricing": {
+        "cache_write": null,
+        "cached_input": "0.65",
+        "currency": "USD",
+        "input": "0.65",
+        "minimum_request": "0",
+        "output": "1.45",
+        "unit": "per_1m_tokens"
+      },
+      "reliability": {
+        "capacity_scope": "model",
+        "completion_timeout_seconds": 3540,
+        "first_token_timeout_seconds": 30,
+        "stream_idle_timeout_seconds": 30
+      },
+      "type": "chat"
+    }
+  ],
+  "object": "list",
+  "provider": {
+    "error_contract": {
+      "account_quota_error_codes": [],
+      "overload_status": 503,
+      "rate_limit_status": 429,
+      "retry_after_header": "Retry-After"
+    },
+    "id": "pilot",
+    "incident_contact": "mailto:ops@example.invalid",
+    "regions": [
+      "local-test-only"
+    ],
+    "request_id_header": "X-Request-Id",
+    "status_url": "https://example.invalid/healthz",
+    "support_contact": "mailto:support@example.invalid"
+  }
+}

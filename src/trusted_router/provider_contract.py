@@ -312,7 +312,7 @@ PROVIDER_CATALOG_V2_SCHEMA["required"] = [
 ]
 properties = PROVIDER_CATALOG_V2_SCHEMA["properties"]
 assert isinstance(properties, dict)
-properties["contract_version"] = {"const": "2.0"}
+properties["contract_version"] = {"enum": ["2.0", "2.1"]}
 properties["provider"] = {
     "type": "object",
     "additionalProperties": False,
@@ -413,7 +413,7 @@ model_properties["reliability"] = {
         "completion_timeout_seconds": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 900,
+            "maximum": 3600,
         },
         "stream_idle_timeout_seconds": {
             "type": "number",
@@ -425,3 +425,14 @@ model_properties["reliability"] = {
         },
     },
 }
+
+# v2.1 explicitly opts into long completions. Preserve the v2.0 bound, as well
+# as the first-token/idle bounds, so an old declaration cannot change meaning.
+PROVIDER_CATALOG_V2_SCHEMA["allOf"] = [{
+    "if": {"properties": {"contract_version": {"const": "2.0"}}},
+    "then": {"properties": {"data": {"items": {"properties": {
+        "reliability": {"properties": {
+            "completion_timeout_seconds": {"maximum": 900},
+        }},
+    }}}}},
+}]
