@@ -35,7 +35,12 @@ locals {
   # tiers and parameter tables, so the evaluator answers min_privacy and
   # requested_parameters), G15a's optional async_settle and billing_valid,
   # and the auditor's call deadlines and stall watchdog.
-  fastpath_release        = "892bd7593c948b58587ef281dd703cc24a044623"
+  # 620e0ca00: main after #2118, with G15b's async compose (the edge
+  # renders async-v1's additions), option A (the edge decides requests
+  # carrying a cache affinity key in the cold order; Python's warm re-rank
+  # counts as differ.affinity_warm) and G15c's async admission, dark while
+  # edge_decide is false, with the shadow's per-population async counts.
+  fastpath_release        = "620e0ca00f77707f0ad56f656a049adbe4fa84dd"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
