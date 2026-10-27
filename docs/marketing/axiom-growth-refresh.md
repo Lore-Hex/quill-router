@@ -114,6 +114,8 @@ The service allowlist includes `trusted-router-control`, where
 `/token-exchange/events` is routed, alongside the public and legacy combined
 services. Keep the exact event allowlist in place on every service; including
 the control plane does not authorize exporting other control-plane logs.
+The sink and worker read query share `model.ACQUISITION_SERVICE_FILTER` so a
+collected event cannot be excluded by a stale, independently maintained reader.
 An exact match is a read-only no-op, so ordinary worker redeploys need only
 `logging.sinks.get`. A changed filter still requires an authorized operator to
 apply it; the deploy identity is not granted general sink-update access.
