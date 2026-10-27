@@ -305,6 +305,7 @@ class Database:
         self.bound_wait_probability = bound_wait_probability
         self.unknown_claim_slot = None
         self.failed_claim_slots = set()
+        self.publication_history = []
 
     def duration(self, kind):
         median, tail = {"read": (.020, .060), "snapshot": (.020, .030),
@@ -382,6 +383,9 @@ class Database:
                     self.abort(tx)
                     tx.check()
                 self.rows.update(tx.mutations)
+                if (HEALTH_KIND, "local/fleet") in tx.mutations:
+                    self.publication_history.append((self.clock.now,
+                        json.loads(tx.mutations[HEALTH_KIND, "local/fleet"])))
                 if tx.claim and self.unknown_claim_slot is not None and tx.slot == self.unknown_claim_slot:
                     raise TimeoutError("claim landed, reply lost")
                 return result
@@ -600,7 +604,8 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                        injected_ordering_fault=False, n=8, reject_published=False,
                        stall_from=None, patch=None, stale_holder=None,
                        microsecond_reads=False, bound_wait_probability=0.,
-                       fail_observations=None, unknown_claim_at=None, fail_claim_reads=None):
+                       fail_observations=None, unknown_claim_at=None, fail_claim_reads=None,
+                       publication_fault=None, boots=None, fixed_rpc_costs=False):
     """Execute actual owner/worker admission, not a synthesized busy outcome.
 
     Clock offsets are server minus each boot's local wall in milliseconds;
@@ -625,6 +630,11 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     ``bound_wait_probability`` selects reads exactly at the floored bound.
     ``fail_observations=(offset, slots)`` fails scans after the real claim.
     ``unknown_claim_at`` lands the claim but drops its response for that offset.
+    ``publication_fault=(offset, count, kind)`` injects full-RPC failures:
+    order reverses the returned observation before the real publish fence;
+    refused presents a different boot to that fence; post_commit corrupts only
+    the returned value after a successful commit. The last is a worker-result
+    fault, NOT a claim that the real storage fence permits invalid ordering.
     """
     from trusted_router.config import Settings
 
@@ -639,12 +649,13 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     assert len(offsets) == n
     clock.now = START*2. + min(offsets)
     publisher.sleep = clock.sleep
-    db = Database(clock, storage, distributed=True, injected_ordering_fault=injected_ordering_fault,
+    db = Database(clock, storage, distributed=not fixed_rpc_costs, injected_ordering_fault=injected_ordering_fault,
                   microsecond_reads=microsecond_reads, bound_wait_probability=bound_wait_probability)
     db.unknown_claim_slot = START + unknown_claim_at if unknown_claim_at is not None else None
     if fail_claim_reads is not None:
         db.failed_claim_slots = set(range(START+fail_claim_reads[0], START+sum(fail_claim_reads)))
-    boots = [f"boot-{i}" for i in range(n)]
+    boots = boots or [f"boot-{i}" for i in range(n)]
+    assert len(boots) == n
     traces, services, futures, replies, releases = [], [], [], [], []
     stalls = random.Random(seed)  # noqa: S311 - reproducible simulation, not secrets
     held = []
@@ -659,6 +670,22 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         if args[1] in stalled:
             args[0].session_ready = lambda: False
         observe = args[0].observe
+        publish = args[0].publish
+        if publication_fault is not None and \
+                START+publication_fault[0] <= args[4].slot < START+sum(publication_fault[:2]):
+            def faulty_publish(value, budget):
+                kind = publication_fault[2]
+                if kind == "order":
+                    value["observed_at_ns"] = args[0].last_claim["claim_at_ns"]-1000
+                    value["publisher_heartbeat_ns"] = value["observed_at_ns"]
+                landed = publish(dict(value, publisher_boot_id="fence-conflict")
+                                 if kind == "refused" else value, budget)
+                if kind == "post_commit":
+                    assert landed
+                    value["observed_at_ns"] = args[0].last_claim["claim_at_ns"]-1000
+                    value["publisher_heartbeat_ns"] = value["observed_at_ns"]
+                return landed
+            args[0].publish = faulty_publish
         if fail_observations is not None and START+fail_observations[0] <= args[4].slot < START+sum(fail_observations):
             def fail(*args, **kwargs):
                 raise TimeoutError("injected observation failure")
@@ -667,6 +694,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             result = original(*args)
         finally:
             args[0].observe = observe
+            args[0].publish = publish
         if reject_published and result.trace["outcome"] == "published":
             # The owner's contract check fails exactly as in production.
             result.trace["claim_at_ns"] = result.trace["observed_at_ns"]+1000
@@ -873,7 +901,9 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         # Storage-side facts, independent of whether an owner accepted a reply.
         claim_transactions_by_slot=[sum(tx.slot == slot for tx in claim_txs) for slot in sorted(commits)],
         durable_publication_slots=sorted(durable),
-        worker_traces=[r.trace for r in replies] if microsecond_reads or fail_observations or fail_claim_reads or unknown_claim_at is not None else [],
+        worker_traces=[r.trace for r in replies],
+        publication_history=db.publication_history,
+        claim_identities=[(tx.index, tx.slot) for tx in db.transactions if tx.claim],
         durable_publication_rate=len(durable & commits.keys())/(slots-10),
         stalled_boots=sorted(stalled),
         post_ack_stalls=len(held),

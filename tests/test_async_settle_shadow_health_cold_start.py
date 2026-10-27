@@ -78,10 +78,11 @@ def test_installed_fleet_publication_selects_follower_stagger(monkeypatch, gap):
     svc, wall, _, job, waits = timed_owner(monkeypatch)
     svc.observer.health = {'body': {'slot': job.slot-gap}}
     svc.submit_publisher(job.slot, wall[0])
-    outcome(svc, job, 'lost_claim' if gap <= 2 else 'published')
-    assert svc.store.database.commits == (0 if gap <= 2 else 2)
-    # Once health was installed, takeover has an inter-slot rank and retains
-    # the warm follower band even after that publication becomes stale.
+    # A cached health body selects timing, but cannot veto an election when
+    # the authoritative claim row is absent.
+    outcome(svc, job, 'published')
+    assert svc.store.database.commits == 2
+    # Once health was installed, keep the warm follower band.
     assert waits == [shell.follower_stagger(svc.journal.boot, job.slot, True)]
 
 

@@ -396,7 +396,10 @@ def test_simultaneous_restart_comparison(monkeypatch, count, ref):
 
 @pytest.mark.parametrize("count", [26, 40])
 def test_simultaneous_restart_attempt_control(monkeypatch, count):
-    before = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0., ref="baseline")
+    # origin/main now includes #2058; keep its positive control on the parent
+    # that actually had synchronized retries, independently of publisher edits.
+    before = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0.,
+                                  ref="30852641f1fe0dc94fe1b2f63961f95321e46e4c")
     after = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0.)
     # Count every invocation, including aborted transactions, not just commits.
     # These are bounds for this fixed 500 s witness, not a fleet rate limiter.

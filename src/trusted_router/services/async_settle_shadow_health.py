@@ -497,17 +497,22 @@ def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> fl
 # publication is a fast path; otherwise storage must name this boot before it
 # renews. K=3 permits recovery after two failed cycles, but a boot with three
 # consecutive unpublished slots yields. A holder can recover even if failed
-# claim reads left its row three slots old. Followers start at age four, so
-# renewal and takeover windows never overlap, including unknown commits.
-# Takeover uses 64 fixed hash buckets, one bucket per slot, without widening.
-# For 8-20 boots this is 0.125-0.3125 candidates per slot in expectation, not a
-# cardinality guarantee (there is no roster). Even a lone survivor gets a turn
-# within 67 slots of the final claim. S1's transaction fence handles collisions;
-# S5 forbids retry. A continuously failing holder yields after K, so S4 is
-# bounded by K+TAKEOVER_MIN_AGE+TAKEOVER_SPREAD-1 slots after last publication.
+# claim reads left its row three slots old. Followers start at claim age two,
+# the earliest age allowed by the storage fence. Renewal and takeover can
+# overlap; the transaction fence, not a local cache, chooses the single winner.
+# Every follower is eligible each slot after that age. With 1-20 contenders
+# this permits at most 20 claim attempts (19 losers) at a handoff, not per
+# healthy slot. The within-slot stagger reduces overlap but cannot bound it.
+# Keeping 64 buckets costs a lone survivor up to 67 slots of silence, far
+# outside the reader's five-second freshness envelope.
+# Under timely successful RPCs, a gone holder is replaced at publication+2;
+# a holder recovering after two failures publishes at publication+3. A holder
+# exhausting K attempts leaves its last claim at publication+K, so takeover
+# is eligible at publication+K+2. These are eligibility bounds, not promises
+# against arbitrarily many aborted/failed winners. S5 forbids in-slot retries.
 HOLDER_FAILURE_SLOTS = 3
-TAKEOVER_SPREAD = 64
-TAKEOVER_MIN_AGE = HOLDER_FAILURE_SLOTS + 1
+TAKEOVER_SPREAD = 1
+TAKEOVER_MIN_AGE = 2
 
 
 def takeover_rank(boot: str, claim_slot: int) -> int:
@@ -516,12 +521,7 @@ def takeover_rank(boot: str, claim_slot: int) -> int:
 
 
 def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
-    """Warm followers take over a stale claim in hash-ranked waves, one per slot.
-
-    Every follower reads the same stale claim, so ranks are fixed for the whole
-    takeover. Rank r gets age TAKEOVER_MIN_AGE+r, repeating every spread
-    slots. Missed turns never accumulate into a later fleet-wide wave (S4).
-    """
+    """Every stale-claim slot is a recovery turn, including after a lost turn."""
     if claim is None:
         return True
     age = slot - claim["slot"] - TAKEOVER_MIN_AGE
@@ -529,9 +529,9 @@ def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
 
 
 def own_publication(body: dict[str, Any] | None, boot: str, slot: int) -> bool:
-    """The fleet health row is this boot's publication for slot-1 or slot-2."""
+    """This boot published within the K-slot recovery allowance."""
     return bool(body is not None and body.get("publisher_boot_id") == boot
-                and body.get("slot") in (slot-1, slot-2))
+                and body.get("slot") in range(slot-HOLDER_FAILURE_SLOTS, slot))
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
@@ -597,9 +597,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             holder = (not fast_incumbent and previous_attempt is not None
                       and previous_attempt[0] == boot and slot-HOLDER_FAILURE_SLOTS <= previous_attempt[1] < slot)
             if not fast_incumbent and not holder:
-                # A warm takeover is already spread across slots. Keep its
-                # follower delay in the 60-120ms band; the cold 0-210ms spread
-                # can otherwise consume the observation window before claiming.
+                # Keep a warm takeover's follower delay in the 60-120ms band;
+                # the cold 0-210ms spread can otherwise consume the observation
+                # window before claiming.
                 stagger = follower_stagger(boot, slot, incumbent_present or warm)
                 sleep(stagger)
                 # The admitted start and budget include the stagger. Recheck the
@@ -643,7 +643,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                         since = current["slot"]
                     store.unpublished_since = since
                     renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
-                if not renew and (owner or incumbent_present
+                # Cached health selects timing, not ownership. In particular,
+                # slot-2 health must not veto takeover of an age-two claim.
+                if not renew and (owner
                         or current is not None and current["slot"] > slot-2
                         or (warm or current is not None) and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
@@ -913,7 +915,12 @@ class Service:
         # without follower discovery or re-election. S1 and RPC budgets remain
         # unchanged; the storage fence still permits only one winner per slot.
         self.assert_owner()
-        if self.incumbent_slot in (slot-1, slot-2):
+        # The recovery turn after two failures is still inside K. Demoting at
+        # age three adds two reconciliation reads precisely on that turn and
+        # can spend its observation window before the claim even starts.
+        # claim() still checks the durable owner/slot fence; unknown commits
+        # still force reconciliation in the worker.
+        if self.incumbent_slot in range(slot-HOLDER_FAILURE_SLOTS, slot):
             return True
         # Durable incumbency: the installed fleet health is this boot's own
         # publication, which publish() wrote only under this boot's won claim
@@ -1015,7 +1022,7 @@ class Service:
         if any(isinstance(e, lifecycle.Fault) for e in effects):
             return effects
         # One failed cycle does not revoke a recently acknowledged incumbent.
-        # is_incumbent bounds this grace to two slots; stale callbacks never get
+        # is_incumbent bounds this grace to K slots; stale callbacks never get
         # here, and followers cannot promote themselves from a claim alone.
         if trace["outcome"] == "published":
             self.incumbent_slot = slot
