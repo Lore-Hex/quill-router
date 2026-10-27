@@ -1,0 +1,6 @@
+/* The accelerator uses the shared NYTE typography, palette and controls. */
+.accelerator-hero h1{margin:20px 0 28px}.accelerator-hero .body,.accelerator-hero .fine{max-width:52em;margin-top:24px}
+.accelerator-roles h2,.accelerator-process h2{margin-bottom:40px}.accelerator-roles .split{align-items:start}.accelerator-roles .body{margin-top:18px}
+.accelerator-roles ul{padding-left:22px;color:var(--t2)}.accelerator-roles li{padding:8px 0}
+.accelerator-process ol{padding-left:28px;margin:0;max-width:52em}.accelerator-process li{padding:24px 0 24px 12px;border-top:1px solid var(--rule)}.accelerator-process li::marker{color:var(--mint);font-family:var(--mono)}.accelerator-process .body{margin-top:10px}
+.accelerator-call .lede{margin:24px 0 32px}.accelerator-call .btn{white-space:normal;text-align:center}

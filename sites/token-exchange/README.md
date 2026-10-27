@@ -68,7 +68,7 @@ NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publis
 DNS records to bypass qualification.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
-New York's homepage, `/confidential`, `/suppliers`, `/providers`, `/index`, and `/buy`; its shared
+New York's homepage, `/confidential`, `/suppliers`, `/providers`, `/index`, `/buy`, and `/neocloud-accelerator`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 
@@ -109,7 +109,7 @@ does not verify an authenticated confidential inference request or its attestati
 underlying and timing, optional contact prefill, then a 15-minute Calendly call.
 Step 1 is a plain radio list: “1 billion tokens (a block to draw on over a term)”,
 “300 tokens per second (a reserved rate)”, and “Not sure yet”. A short seller
-line links to `/suppliers` and `/providers`; keep these repository links intact
+line links to `/suppliers`, `/providers` and `/neocloud-accelerator`; keep these repository links intact
 when reconciling live-link rewrites. Defaults are one block, 300 tok/s, a
 one-month term, next month in local time, and NYTE Index grade A. Allowlisted
 `grade` and `unit` query parameters override their defaults. Three Continue
@@ -170,6 +170,35 @@ conflict requires a fresh download and reconciliation, never an unconditional
 retry. Preserve DNS, certificates, URL maps and other bucket objects. Verify the
 public routes, aliases, navigation, catalogue CORS, Calendly handoff, and privacy
 signals after the separately authorized publish.
+
+### Neocloud accelerator (local implementation; publish separately)
+
+`/neocloud-accelerator` and `/neocloud-accelerator.html` render the NYTE shell
+with page key `accelerator`. The navigation follows Reserved tokens; `/buy`’s
+seller line and `/suppliers#open-stack` link here. Only New York’s sitemap lists
+it. The page describes capacity reservations for inference service from planned
+facilities: monthly 1B-token lots, with the sustained-rate equivalent stated once.
+This monthly lot is distinct from `/buy`’s block to draw on over a chosen term;
+accounting and delivery terms are agreed on the call.
+
+The linked Neocloud-in-a-box repository is the same Apache-2.0 stack referenced
+by suppliers. It is pre-alpha. Operators handle power, permits, the building,
+cooling and physical security. Self-run software and a discussion of remote
+management are offered; remote management is not a live product. Hardware and
+operating responsibilities are scoped together. Confidential serving still needs
+independent hardware and software qualification.
+
+All content and the plain Joseph Calendly link work without JavaScript. There
+is no form, embedded booking widget or contact prefill on this page. The provider
+deck remains request-only through `/providers`. Preserve the verbatim planned
+offerings and not-a-securities language; do not add funding amounts, facilities,
+dates, service commitments, prices or assured outcomes.
+
+A separately authorized narrow release needs both accelerator page objects and
+`assets/nyte-v2/accelerator.css`, the shared stylesheet and `app.js`, every NYTE shell page
+for the navigation update, `/buy` and `/suppliers` with their aliases for the
+entry links, and New York’s sitemap. Use the backup, reconciliation and generation
+preconditions above. These local changes do not authorize publishing.
 
 ### Public New York media kit
 

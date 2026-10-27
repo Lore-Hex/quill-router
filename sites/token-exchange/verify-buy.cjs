@@ -20,7 +20,7 @@ const paths = [
   {unit:'unsure', underlying:'model'},
 ];
 async function localHtml(context) {
-  for (const path of ['buy**', 'suppliers', 'providers']) {
+  for (const path of ['buy**', 'suppliers', 'providers', 'neocloud-accelerator']) {
     await context.route(`${base}/${path}`, async route => {
       const response = await route.fetch();
       await route.fulfill({response, contentType:'text/html'});
@@ -80,7 +80,7 @@ async function localHtml(context) {
         assert.equal(await page.locator('.buy-seller a').first().getAttribute('href'),'/suppliers');
         assert.equal(await page.locator('.buy-seller a[href="/providers"]').getAttribute('href'),'/providers');
         if (index === 0 && [390,1440].includes(width)) {
-          for (const [destination, kind] of [['suppliers','sup'], ['providers','providers']]) {
+          for (const [destination, kind] of [['suppliers','sup'], ['providers','providers'], ['neocloud-accelerator','accelerator']]) {
             await page.locator(`.buy-seller a[href="/${destination}"]`).click();
             await page.waitForURL(`**/${destination}`);
             assert.equal(await page.locator('body').getAttribute('data-nyte-page'), kind);
