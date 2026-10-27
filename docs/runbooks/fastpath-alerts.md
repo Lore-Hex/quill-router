@@ -166,6 +166,39 @@ A member that restarts again and again, a call stuck each time, points
 at Spanner from that node: compare with the other nodes'
 lines, and take a dump before the next restart.
 
+### A start that stalls
+
+A process's start has two budgets, one after the other. First it warms
+the Spanner client's session: one read with a 2 min deadline
+(`store.WarmSessionWait`), since it waits behind the client's own session
+creations, watched for 2 min 15 s (`service.WarmStall`). Then its parts
+start: the Spanner calls they make before they run (the ring row's join,
+the first read of the members, the first read of the switch) each have a
+15 s deadline (`service.StartDeadline`), and the parts' start as a whole
+has a minute (`service.StartStall`). A process whose start stalls
+anywhere exits within about four minutes (`WarmStall`, `StartStall` and
+`service.FailStop`). Without these bounds a stalled read held the start
+for good: the auditor never started, and the edge, which serves before
+the node's other parts, answered the balancer serving all the while. A
+join or a read of the members that runs out of time fails the process,
+which logs
+
+```
+fastpath: service: joining the ring as the process started: ...
+```
+
+(or `reading the members as the process started`, or `the Spanner
+client's session` for the warming) and exits; systemd starts it again
+five seconds later, with a Spanner client of its own. A call deaf to its
+deadline trips a watchdog instead: a warming still under way past
+`WarmStall` fails with `service: the Spanner client's session was not
+warm within its limit`, a parts' start past `StartStall` with `service:
+the process had not started within its limit`, and either exits within
+`service.FailStop`, as above. A switch read that runs out
+of time is logged and the node starts, admitting for no workspace until a
+later read succeeds. A node that restarts again and again this way points
+at Spanner from that node, as above.
+
 ### The auditor's own lines
 
 On a node, the auditor's lines in its journal:
