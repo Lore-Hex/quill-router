@@ -67,6 +67,22 @@ also requires the enclave's existing TXT-writer role to cover the two delegated
 NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publish
 DNS records to bypass qualification.
 
+The page registry is `PAGES` in `nyte_v2.py`. A new page needs one word: its
+`group`. The build refuses a missing or unknown group.
+
+```text
+# Who is this page for?
+#   buying tokens     -> buy
+#   selling capacity  -> supply
+#   anything else     -> exchange
+```
+
+The header always has Buy, Supply and Exchange. Labels and menu descriptions
+live in the registry. `new_until` optionally overrides the 14-day NEW window;
+otherwise the build reads the body file's added date from git and the browser
+shows at most three newest chips. The terms utility page remains outside the
+menu; Media kit retains its separate layout. Buyer deck opens `/#deck`.
+
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
 New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,
 `/index`, `/buy`, `/reserved-tokens-terms`, and `/neocloud-accelerator`; its shared
@@ -117,7 +133,7 @@ does not verify an authenticated confidential inference request or its attestati
 `/trusted-cowork` and `/trusted-cowork.html` use the shared NYTE shell and
 `assets/nyte-v2/cowork.css`. Keep Trusted Cowork, Reserved tokens and Neocloud
 accelerator in the navigation on every NYTE page. The shared navigation collapses
-at 1280 px and below, including its no-JavaScript fallback.
+at 800 px and below, including its no-JavaScript fallback.
 
 The Apple silicon and Intel Mac download links emit `nyte.cta_clicked` with
 `download_apple_silicon` or `download_intel_mac`, plus `nyte.outbound_clicked`
@@ -300,7 +316,7 @@ webhook establishes the paid reservation.
 ### Neocloud accelerator (local implementation; publish separately)
 
 `/neocloud-accelerator` and `/neocloud-accelerator.html` render the NYTE shell
-with page key `accelerator`. The navigation follows Reserved tokens; `/buy`’s
+with page key `accelerator`. The navigation lists it under Supply; `/buy`’s
 seller line and `/suppliers#open-stack` link here. Only New York’s sitemap lists
 it. The page describes capacity reservations for inference service from planned
 facilities: 1B-token lots of Grade B · Professional (DeepSeek-class models),
@@ -427,7 +443,7 @@ and publish with the observed generation precondition to reject concurrent edits
 (85.95 seconds, H.264/AAC, 1920×1080; SHA-256
 `869f48547224c9524d556aed0cca77d09bd241866a7efaaf0410d24f317907de`).
 `media/nyte-routing-demo-poster.jpg` is a
-1280px still from that video. The build copies both into `assets/`. All market
+800px still from that video. The build copies both into `assets/`. All market
 homepages show native controls with `playsinline` and `preload="none"`, with no
 autoplay. Captions are already burned into the supplied video. Publish the MP4
 as `video/mp4` and the poster as `image/jpeg` before publishing homepage links.
