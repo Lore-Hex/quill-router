@@ -147,7 +147,7 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
     "hixtube": (
         "Checked the operator's Neocloud-in-a-Box repository and pilot runbook. "
         "The Hixtube brand and separate hosting project are defined, but the "
-        "contracting legal entity is not yet declared. A planned US VM location "
+        "contracting legal entity is not yet declared. The Finland GPU location "
         "does not establish headquarters; excluded from corporate jurisdiction filters."
     ),
     "fortanix": (
@@ -2054,17 +2054,20 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "hixtube": Provider(
         slug="hixtube", name="Hixtube", supports_prepaid=True, supports_byok=False,
-        provider_zero_data_retention=False, provider_confidential_compute=False,
+        stores_content=False, provider_zero_data_retention=True, provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "Hixtube is an independently hosted integration pilot using the Apache-2.0 "
-            "Neocloud-in-a-Box toolkit. Its ordinary inference routes use standard "
-            "TLS, not verified confidential computing or provider-side E2EE. "
+            "Hixtube commits to no persistent storage of prompts, outputs or tool content "
+            "and no training on customer content. Content-free operational and billing "
+            "metadata remain. Prefix/KV caches can remain in volatile memory until eviction "
+            "or shutdown; ZDR does not mean immediate per-request memory erasure. "
+            "The current inference node is hosted by Verda in Finland through Spheron. "
+            "Standard TLS, not verified confidential computing or provider-side E2EE; "
+            "the infrastructure operator can access workload memory. "
             "Checkpoint identity, context limits and retirement are declared per route; "
-            "high availability has not been established. "
-            "Routes are published only after authenticated catalog and inference checks."
+            "high availability has not been established."
         ),
-        provider_policy_url="https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box",
+        provider_policy_url="https://hixtube.com/privacy.html",
     ),
     "coralbricks": Provider(
         slug="coralbricks", name="CoralBricks", supports_prepaid=True, supports_byok=False,

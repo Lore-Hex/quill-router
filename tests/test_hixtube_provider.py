@@ -363,7 +363,9 @@ def test_registration_never_claims_confidentiality():
 
     provider = PROVIDERS[p.SLUG]
     assert provider.supports_prepaid and not provider.supports_byok
-    assert not provider.provider_zero_data_retention
+    assert provider.provider_zero_data_retention
+    assert not provider.stores_content
+    assert provider.provider_policy_url == "https://hixtube.com/privacy.html"
     assert not provider.provider_e2ee and not provider.provider_confidential_compute
     assert p.SLUG in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert OPENAI_COMPATIBLE_PROVIDERS[p.SLUG] == (("HIXTUBE_API_KEY",), p.BASE_URL)
@@ -371,6 +373,32 @@ def test_registration_never_claims_confidentiality():
     root = Path(__file__).resolve().parents[1]
     assert "HIXTUBE_API_KEY:trustedrouter-hixtube-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
     assert 'ensure_secret_from_env_file "HIXTUBE_API_KEY" "trustedrouter-hixtube-api-key"' in (root / "scripts/deploy/secrets.sh").read_text()
+
+
+def test_zdr_is_enforced_without_granting_confidential_or_trusted():
+    from trusted_router.catalog_data import (
+        PRIVACY_TIER_CONFIDENTIAL,
+        PRIVACY_TIER_TRUSTED,
+        PRIVACY_TIER_ZERO_RETENTION,
+        ModelEndpoint,
+    )
+    from trusted_router.catalog_privacy import (
+        endpoint_meets_privacy_requirement,
+        endpoint_privacy_tier,
+        endpoint_stores_content,
+        endpoint_zero_data_retention,
+    )
+
+    endpoint = ModelEndpoint(
+        id="hixtube-zdr-fixture", model_id="dealignai/deepseek-v4.1-flash-1017-uncensored-fp8",
+        provider="hixtube", usage_type="Credits",
+    )
+    assert endpoint_zero_data_retention(endpoint) is True
+    assert not endpoint_stores_content(endpoint)
+    assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_ZERO_RETENTION
+    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED)
 
 
 def test_missing_manifest_expires_own_routes_without_blocking_other_providers(monkeypatch, tmp_path):

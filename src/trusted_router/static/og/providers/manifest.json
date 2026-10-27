@@ -370,11 +370,11 @@
   },
   "hixtube": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 1,
     "name": "Hixtube",
-    "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "privacy": "Zero retention",
+    "route_count": 1,
+    "route_mode": "Prepaid",
     "slug": "hixtube"
   },
   "huggingface": {
