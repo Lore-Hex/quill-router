@@ -56,6 +56,10 @@ type Request struct {
 	// names a Python answer that is that order re-ranked for a session
 	// Python remembered (edge/affinity.go).
 	CacheAffinity bool
+	// Async is what authorize_additions reads of the request and its
+	// headers (docs/design/fast-admission-e2-g15-async.md §3.1), recorded
+	// for every parsed request; ComposeInput.Async carries it.
+	Async AsyncRequest
 
 	// attribution is validate_request_attribution's result (§7 step 4).
 	attribution attribution
@@ -134,6 +138,7 @@ func parseBody(body []byte, h Headers) (Request, pyjson.Object, Pass) {
 		return Request{}, nil, passFor(ReasonFloat)
 	}
 	r, p := parseSchema(object)
+	r.Async.V1 = exactlyAsyncV1(h.SettlementMode)
 	return r, object, p
 }
 
@@ -452,7 +457,12 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 	dumped := map[string]any{}
 	for _, m := range object {
 		f, isDeclared := declared[m.Key]
+		if m.Key == "input_modalities" {
+			r.Async.InputModalities = true // model_fields_set: present, null included
+		}
 		if !isDeclared {
+			// body.model_extra holds a null extra too.
+			r.Async.Undeclared = true
 			if m.Value != nil { // exclude_none drops a top-level null extra
 				r.Dump = append(r.Dump, pyjson.Member{Key: m.Key, Value: m.Value})
 			}
@@ -528,6 +538,16 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 	cost, _ := new(big.Int).SetString(string(dumped["additional_cost_reservation_microdollars"].(json.Number)), 10)
 	r.additionalCost = cost.Sign() != 0
 	r.inferenceReceipt = dumped["inference_receipt"].(bool)
+	// The rest of authorize_additions' request facts, as the schema holds
+	// them (stripped).
+	r.Async.Model, r.Async.RouteType, r.Async.ServiceTier = r.Model, str("route_type"), str("service_tier")
+	if params, ok := dumped["requested_parameters"].([]any); ok {
+		r.Async.RequestedParameters = make([]string, len(params))
+		for i, p := range params {
+			r.Async.RequestedParameters[i] = p.(string)
+		}
+	}
+	r.Async.InferenceReceipt, r.Async.AdditionalCost = r.inferenceReceipt, r.additionalCost
 
 	// _gateway_authorize_body: validate_tags(body.tags), when present.
 	if tags, ok := dumped["tags"].(pyjson.Object); ok {
