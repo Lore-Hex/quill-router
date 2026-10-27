@@ -25,7 +25,7 @@ class NyteV2Tests(unittest.TestCase):
     def test_navigation_and_ctas(self):
         for name in ('home', 'api', 'sup', 'providers', 'cowork'):
             page = render_nyte(name)
-            self.assertEqual(page.count('>Confidential API</a>'), 1)
+            self.assertEqual(page.count('>Confidential API</span>'), 1)
             self.assertNotIn('Plan a pilot', page)
             self.assertNotIn('data-go=', page)
             self.assertNotIn('/confidential-api', page)
@@ -149,3 +149,140 @@ class NyteV2Tests(unittest.TestCase):
         for quote in data['quotes'].values():
             self.assertIn(f"${quote['value']:,}", page)
         self.assertNotIn('{{', page)
+
+
+class NavigationRegistryTests(unittest.TestCase):
+    def test_build_rejects_missing_or_unknown_group(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from nyte_v2 import GROUP_GUIDANCE, PAGES, build_nyte
+
+        for group in (None, "buyers"):
+            with self.subTest(group=group), tempfile.TemporaryDirectory() as directory:
+                with patch.dict(PAGES, {"example": {"route": "/example", "group": group}}):
+                    with self.assertRaises(ValueError) as error:
+                        build_nyte(Path(directory))
+                    self.assertEqual(str(error.exception), GROUP_GUIDANCE + "\nexample")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(PAGES, {"example": {"route": "/example"}}):
+            with self.assertRaises(ValueError):
+                build_nyte(Path(directory))
+
+    def test_registry_navigation_on_every_shell_page(self):
+        import re
+
+        from nyte_v2 import GROUPS, PAGES
+        from token_index_page import render_token_index
+
+        for key, entry in PAGES.items():
+            if entry.get("builder") in {"press", "anchor"}:
+                continue
+            page = render_token_index() if key == "index" else render_nyte(key)
+            nav = re.search(r'<nav class="nav".*?</nav>', page, re.S).group()
+            for group in GROUPS:
+                panel = re.search(r'id="nav-' + group + r'">(.*?)</div>', nav, re.S).group(1)
+                expected = [p["route"] for p in PAGES.values() if p.get("group") == group and p["label"]]
+                self.assertEqual(re.findall(r'<a href="([^"]+)"', panel), expected)
+            self.assertNotIn('data-nav=', nav)
+            self.assertNotIn('href="/media-kit"', nav)
+            self.assertIn('href="/media-kit">Media kit</a>', page)
+            self.assertEqual(nav.count('aria-expanded="false"'), 3)
+
+    def test_added_page_gets_automatic_date_without_changing_test_lists(self):
+        import re
+        from unittest.mock import patch
+
+        from nyte_v2 import PAGES, render_nav
+
+        sample = {"route": "/sample", "label": "Sample", "group": "sell",
+                  "menu_description": "Sample description"}
+        with patch.dict(PAGES, {"sample": sample}), patch('nyte_v2.page_added', return_value='2026-10-20'):
+            nav = render_nav()
+            panel = re.search(r'id="nav-sell">(.*?)</div>', nav, re.S).group(1)
+            self.assertEqual(panel.count('href="/sample"'), 1)
+            item = re.search(r'<a href="/sample".*?</a>', panel).group()
+            self.assertIn('data-added="2026-10-20"', item)
+            self.assertIn('class="tag cc" hidden>NEW', item)
+
+    def test_creation_date_uses_real_history(self):
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from nyte_v2 import page_added
+
+        self.addCleanup(page_added.cache_clear)
+        git_executable = shutil.which("git")
+        self.assertIsNotNone(git_executable)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args, day="2026-09-01"):
+                return subprocess.run(  # noqa: S603 — fixed test arguments in an isolated repository
+                    [git_executable, *args], cwd=root, check=True, capture_output=True, text=True,
+                    env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+                         "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
+                         "GIT_AUTHOR_DATE": day + "T12:00:00Z", "GIT_COMMITTER_DATE": day + "T12:00:00Z"},
+                )
+
+            git("init")
+            body = root / "sample.html"
+            body.write_text("First version")
+            git("add", "sample.html")
+            git("commit", "-m", "Add page")
+            body.write_text("Updated version")
+            git("commit", "-am", "Edit page", day="2026-10-01")
+            # Reintroducing the same body must not restart its NEW window either.
+            git("rm", "sample.html")
+            git("commit", "-m", "Remove page", day="2026-10-02")
+            body.write_text("Restored version")
+            git("add", "sample.html")
+            git("commit", "-m", "Restore page", day="2026-10-03")
+            with patch("nyte_v2.HERE", root):
+                page_added.cache_clear()
+                self.assertEqual(page_added("sample.html"), "2026-09-01")
+                (root / "new.html").write_text("Uncommitted preview")
+                self.assertEqual(page_added("new.html"), "")
+                self.assertEqual(page_added("missing.html"), "")
+
+            shallow = root / "shallow"
+            git("clone", "--depth=1", root.as_uri(), str(shallow))
+            with patch("nyte_v2.HERE", shallow):
+                page_added.cache_clear()
+                self.assertEqual(page_added("sample.html"), "")
+
+            with tempfile.TemporaryDirectory() as archive, patch("nyte_v2.HERE", Path(archive)):
+                page_added.cache_clear()
+                self.assertEqual(page_added("sample.html"), "")
+
+    def test_missing_git_builds_without_new_chip_dates(self):
+        from unittest.mock import patch
+
+        from nyte_v2 import page_added, render_nyte
+
+        page_added.cache_clear()
+        self.addCleanup(page_added.cache_clear)
+        with patch("nyte_v2.shutil.which", return_value=None):
+            self.assertEqual(page_added("sample.html"), "")
+            page = render_nyte()
+            self.assertNotIn("data-added=", page)
+            self.assertIn('href="/confidential"', page)
+            self.assertIn('class="tag cc" hidden>NEW', page)
+
+    def test_unreadable_history_has_no_creation_date(self):
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from nyte_v2 import page_added
+
+        page_added.cache_clear()
+        self.addCleanup(page_added.cache_clear)
+        with patch("nyte_v2.shutil.which", return_value="/usr/bin/git"), patch(
+            "nyte_v2.subprocess.run",
+            side_effect=[CompletedProcess([], 0, "false\n"), CompletedProcess([], 1, "")],
+        ):
+            self.assertEqual(page_added("sample.html"), "")

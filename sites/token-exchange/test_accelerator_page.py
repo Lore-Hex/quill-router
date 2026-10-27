@@ -47,12 +47,7 @@ class AcceleratorPageTests(unittest.TestCase):
             sitemap = (self.root / market['slug'] / 'sitemap.xml').read_text()
             self.assertEqual(ROUTE in sitemap, market['slug'] == 'new-york')
 
-    def test_navigation_and_contextual_entry_links(self) -> None:
-        for name in ['new-york/index.html', 'index', 'confidential', 'suppliers',
-                     'providers', 'buy', 'neocloud-accelerator']:
-            page = (self.root / name).read_text()
-            self.assertRegex(page, r'<a href="/buy">Reserved tokens</a>\s*'
-                             r'<a href="/neocloud-accelerator" data-nav="accelerator">Neocloud accelerator</a>')
+    def test_contextual_entry_links(self) -> None:
         buy = (self.root / 'buy').read_text().split('<p class="buy-seller">', 1)[1].split('</p>', 1)[0]
         self.assertIn(f'href="{ROUTE}"', buy)
         suppliers = (self.root / 'suppliers').read_text().split('id="open-stack"', 1)[1].split('</section>', 1)[0]
@@ -61,7 +56,6 @@ class AcceleratorPageTests(unittest.TestCase):
         self.assertIn(STACK, self.parser.links)
         self.assertIn('/buy', self.parser.links)
         self.assertIn('/providers', self.parser.links)
-        self.assertIn("accelerator:'/neocloud-accelerator'", (HERE / 'nyte-v2/app.js').read_text())
 
     def test_plain_booking_and_no_submission_or_embeds(self) -> None:
         self.assertFalse(self.parser.forms)
