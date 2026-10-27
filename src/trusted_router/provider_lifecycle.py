@@ -71,6 +71,7 @@ TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 INCEPTION_MERCURY_2_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
+DEEPINFRA_LLAMA_31_70B_TURBO_RETIREMENT_AT = datetime(2026, 11, 3, 0, 0, tzinfo=UTC)
 # 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
 ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
@@ -1004,6 +1005,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"thinkingmachines/Inkling"}),
         effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
         replacement_model_ids=("meta-models/muse-spark-open",),
+    ),
+    # DeepInfra's October 27 notice deprecates Llama 3.1 70B Instruct Turbo
+    # on 2026-11-03 and redirects later requests to the different Llama 3.3
+    # 70B weights. Retire DeepInfra's route at 00:00 UTC (date only).
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"meta-llama/llama-3.1-70b-instruct"}),
+        upstream_ids=frozenset({"meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"}),
+        effective_at=DEEPINFRA_LLAMA_31_70B_TURBO_RETIREMENT_AT,
+        replacement_model_ids=("meta-llama/llama-3.3-70b-instruct",),
     ),
     # Inception's October 26 notice: Mercury 2 and 2.5 stay available until
     # 2026-11-15 (date only; 00:00 UTC conservatively), after which callers
