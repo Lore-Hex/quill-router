@@ -113,7 +113,7 @@ line links to `/suppliers`, `/providers` and `/neocloud-accelerator`; keep these
 when reconciling live-link rewrites. Defaults are one block, 300 tok/s, a
 one-month term, next month in local time, and NYTE Index grade A. Allowlisted
 `grade` and `unit` query parameters override their defaults. Allowlisted
-`facility=greenference|submerge` opens step 2 with that planned facility selected. Three Continue
+`facility=solar|underwater` opens step 2 with that planned facility selected. Three Continue
 clicks reach scheduling without editing a field; contact details can be entered
 in Calendly, and a supplied email is validated before handoff. Index-grade token blocks show blocks × the
 published dated grade price; throughput, named models and undecided requests
@@ -183,12 +183,13 @@ facilities: 1B-token lots of Grade B · Professional (DeepSeek-class models),
 with delivery over the facility’s first twelve months of operation, not per month.
 The sustained-rate equivalent is stated once per page. `facilities.py` contains
 Joseph’s approved facts and renders the same cards on `/buy` and the accelerator.
-Greenference is planned with a targeted February 2027 launch; Submerge is planned
-with a targeted August 2027 launch. Power is a descriptor only, never a unit for sale.
+Solar Powered Datacenter is planned with a targeted February 2027 launch;
+Underwater Datacenter is planned with a targeted August 2027 launch. Power is a descriptor only, never a unit for sale.
 Facility selection in `/buy` disables throughput and undecided units, hides editable
 timing, caps quantity at the first offering, and hides all prices, totals and as-of
-captions. Pricing is discussed on the call. Calendly receives the planned facility,
-targeted launch and lot count with the twelve-month definition, without a price.
+captions. Pricing is discussed on the call. Operator names are shared on the call.
+Calendly receives the planned facility, targeted launch and lot count with the
+twelve-month definition, without a price.
 
 The linked Neocloud-in-a-box repository is the same Apache-2.0 stack referenced
 by suppliers. It is pre-alpha. Operators handle power, permits, the building,

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 class Facility:
     id: str
     name: str
-    operator: str
     description: str
     power: str
     launch: str
@@ -16,9 +15,9 @@ class Facility:
 
 
 FACILITIES = (
-    Facility("greenference", "Greenference", "Greenference", "solar-powered, air-cooled",
+    Facility("solar", "Solar Powered Datacenter", "solar-powered, air-cooled",
              "20 kW", "February 2027", 1000),
-    Facility("submerge", "Submerge", "Submerge, Inc.", "underwater",
+    Facility("underwater", "Underwater Datacenter", "underwater",
              "1 MW", "August 2027", 50000),
 )
 
@@ -40,7 +39,7 @@ def facility_cards(*, selectable: bool = False) -> str:
         cards.append(f'''<article class="facility-card">
   {heading}
   <span class="facility-badge">Planned</span>
-  <p>A planned {facility.description} data center operated by {facility.operator.rstrip('.')}.</p>
+  <p>A planned {facility.description} data center.</p>
   <p>{facility.power} · Planned on NVIDIA B200/B300-class GPUs.</p>
   <p>Targeted launch: {facility.launch}.</p>
   <p>First offering: {facility.lots:,} lots.</p>

@@ -100,7 +100,7 @@ function setup(search = '') {
   return {get, radio, change, input, click, delta, prices, steps, events, location, buttons};
 }
 
-for (const query of ['', '?facility=unlisted', '?facility=__proto__', '?facility=submerge%22%5D']) {
+for (const query of ['', '?facility=unlisted', '?facility=__proto__', '?facility=underwater%22%5D']) {
   const s = setup(query);
   assert.equal(s.steps[0].hidden, false);
   assert.equal(s.radio('underlying', 'index').checked, true);
@@ -108,8 +108,8 @@ for (const query of ['', '?facility=unlisted', '?facility=__proto__', '?facility
   assert.equal(s.get('facility-fields').disabled, true);
 }
 for (const [id, name, cap, launch] of [
-  ['greenference', 'Greenference', 1000, 'February 2027'],
-  ['submerge', 'Submerge', 50000, 'August 2027'],
+  ['solar', 'Solar Powered Datacenter', 1000, 'February 2027'],
+  ['underwater', 'Underwater Datacenter', 50000, 'August 2027'],
 ]) {
   const s = setup(`?facility=${id}&unit=throughput&grade=AAA&step=4&email=private`);
   assert.equal(s.steps[1].hidden, false, 'facility preselect opens step 2');
@@ -186,8 +186,8 @@ for (const [id, name, cap, launch] of [
 const switched = setup('?unit=throughput');
 switched.change('underlying', 'facility');
 assert.equal(switched.radio('unit', 'blocks').checked, true);
-switched.change('facility', 'submerge');
+switched.change('facility', 'underwater');
 switched.input('50000');
-switched.change('facility', 'greenference');
+switched.change('facility', 'solar');
 assert.equal(switched.get('blocks').value, '1000');
 console.log('Facility wizard: preselection, caps, units, pricing, timing, Calendly and analytics passed.');

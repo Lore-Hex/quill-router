@@ -105,8 +105,9 @@ class AcceleratorPageTests(unittest.TestCase):
     def test_first_facilities_and_reservation_links(self) -> None:
         section = self.page.split('<section class="accelerator-facilities">', 1)[1].split('</section>', 1)[0]
         self.assertIn('<h2>First facilities</h2>', section)
+        self.assertIn('<p class="body">Operator names are shared on the call.</p>', section)
         assert_facility_cards(self, section)
-        for facility in ['greenference', 'submerge']:
+        for facility in ['solar', 'underwater']:
             self.assertIn(f'/buy?facility={facility}', self.parser.links)
         self.assertEqual(section.count(FACILITY_RATE_COPY), 1)
         self.assertIn('Pricing is discussed on the call.', section)

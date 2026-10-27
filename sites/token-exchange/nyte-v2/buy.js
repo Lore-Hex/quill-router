@@ -13,9 +13,9 @@ document.addEventListener('DOMContentLoaded', () => {
   choose('grade', query.get('grade'), ['AAA', 'A', 'B', 'C']);
   choose('unit', query.get('unit'), ['blocks', 'throughput', 'unsure']);
   const initialFacility = query.get('facility');
-  const facilityPreselected = ['greenference', 'submerge'].includes(initialFacility);
+  const facilityPreselected = ['solar', 'underwater'].includes(initialFacility);
   if (facilityPreselected) {
-    choose('facility', initialFacility, ['greenference', 'submerge']);
+    choose('facility', initialFacility, ['solar', 'underwater']);
     choose('underlying', 'facility', ['index', 'model', 'facility']);
   }
   let step = 1;

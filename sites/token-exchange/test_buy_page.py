@@ -24,13 +24,14 @@ def assert_facility_cards(test: unittest.TestCase, markup: str) -> None:
     """Assert the approved facts independently of the shared renderer's data."""
     cards = re.findall(r'<article class="facility-card">(.*?)</article>', markup, flags=re.S)
     test.assertEqual(len(cards), 2)
-    for card, (name, operator, description, power, launch, lots) in zip(cards, [
-        ('Greenference', 'Greenference', 'solar-powered, air-cooled', '20 kW', 'February 2027', '1,000'),
-        ('Submerge', 'Submerge, Inc.', 'underwater', '1 MW', 'August 2027', '50,000'),
+    for card, (name, description, power, launch, lots) in zip(cards, [
+        ('Solar Powered Datacenter', 'solar-powered, air-cooled', '20 kW', 'February 2027', '1,000'),
+        ('Underwater Datacenter', 'underwater', '1 MW', 'August 2027', '50,000'),
     ], strict=True):
         test.assertIn(name, card)
         test.assertIn('<span class="facility-badge">Planned</span>', card)
-        test.assertIn(f'A planned {description} data center operated by {operator.rstrip('.')}.', card)
+        test.assertIn(f'<p>A planned {description} data center.</p>', card)
+        test.assertNotIn('operated by', card)
         test.assertIn(f'{power} · Planned on NVIDIA B200/B300-class GPUs.', card)
         test.assertIn(f'Targeted launch: {launch}.', card)
         test.assertIn(f'First offering: {lots} lots.', card)
