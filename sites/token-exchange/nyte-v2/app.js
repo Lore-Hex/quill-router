@@ -17,7 +17,7 @@ const ctas={'Download for Apple silicon':'download_apple_silicon','Download for 
 document.addEventListener('click',e=>{
  const el=e.target.closest('a,button');if(!el)return;
  const cta=ctas[el.textContent.trim()];
- const position=el.closest('header')?'header':el.closest('.close-photo')?'close':el.closest('[class^="hero"]')?'hero':'section';
+ const position=el.closest('header')?'header':el.closest('.close-photo,.cw-download')?'close':el.closest('[class^="hero"]')?'hero':'section';
  if(cta)window.TokenExchangeAnalytics?.track('nyte.cta_clicked',{cta,position});
  if(el.tagName==='A'){const url=new URL(el.href,location.href);if(['trustedrouter.com','github.com'].includes(url.hostname))window.TokenExchangeAnalytics?.track('nyte.outbound_clicked',{destination_host:url.hostname,cta:cta||'source'});}
 });

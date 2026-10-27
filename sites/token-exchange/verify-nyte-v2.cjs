@@ -145,14 +145,16 @@ for (const [width,height] of [[320,568],[390,667],[390,844]]) {
 }
 // Every v2 route carries both Cowork and Reserved tokens navigation.
 for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy']) {
- for (const width of [320,390,1440]) {
+ for (const width of [320,390,1001,1100,1280,1281,1440]) {
   await page.setViewportSize({width,height:900});await page.goto(base+path);await page.evaluate(()=>document.fonts.ready);
-  if(width<=1000)await page.locator('#menuBtn').click();
+  assert.equal(await page.locator('#menuBtn').isVisible(),width<=1280);
+  if(width>1280)assert(await page.locator('#nav a').evaluateAll(links=>links.every(link=>{const range=document.createRange();range.selectNodeContents(link);return range.getClientRects().length===1;})),'desktop nav labels must not wrap');
+  if(width<=1280)await page.locator('#menuBtn').click();
   assert.deepEqual(await page.locator('#nav a').allTextContents(),['Confidential API','Trusted Cowork','Index','Reserved tokens','Suppliers','Providers']);
   await page.locator('#nav [data-nav="cowork"]').click();await page.waitForURL('**/trusted-cowork');
   const current=page.locator('#nav [data-nav="cowork"]');assert.equal(await current.getAttribute('aria-current'),'page');assert.match(await current.getAttribute('class'),/on/);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  assert.equal(await current.evaluate(el=>getComputedStyle(el).boxShadow==='none'),width<=1000);
+  assert.equal(await current.evaluate(el=>getComputedStyle(el).boxShadow==='none'),width<=1280);
  }
 }
 await page.setViewportSize({width:390,height:844});
@@ -164,5 +166,18 @@ await page.locator('.cw-hero a').first().evaluate(el=>el.addEventListener('click
 await page.locator('.cw-hero a').first().click();
 await page.waitForTimeout(100);
 assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta==='download_apple_silicon'&&e.page==='/trusted-cowork'&&e.position==='hero'));
+for (const [selector,cta] of [['.btn-primary','download_apple_silicon'],['.btn-secondary','download_intel_mac']]) {
+ const button=page.locator('.cw-download '+selector);
+ await button.evaluate(el=>el.addEventListener('click',e=>e.preventDefault()));
+ await button.click();
+ await page.waitForTimeout(100);
+ assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta===cta&&e.page==='/trusted-cowork'&&e.position==='close'));
+}
+const noJs=await browser.newContext({javaScriptEnabled:false,viewport:{width:1100,height:900}});
+const noJsPage=await noJs.newPage();
+await noJsPage.goto(base+'/trusted-cowork');
+assert.equal(await noJsPage.locator('#menuBtn').isVisible(),false);
+for(const link of await noJsPage.locator('#nav a').all())assert(await link.isVisible(),'no-JS navigation stays available');
+await noJs.close();
 assert.deepEqual(failures,[]);console.log('PASS: mobile navigation, quick start, valid live evidence, stale fallback, PDF success/error, analytics, no PII');await browser.close();if(server)await new Promise(resolve=>server.close(resolve));
 })().catch(error=>{console.error(error);process.exit(1);});

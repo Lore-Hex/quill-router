@@ -304,7 +304,7 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
   .hero-api .ph{background-position:30% center}
   .hero-api::before{background:linear-gradient(180deg,rgba(5,7,6,.82) 0%,rgba(5,7,6,.7) 45%,rgba(5,7,6,.25) 62%,rgba(5,7,6,.2) 82%,#050706 100%)}
 }
-@media (max-width:1000px){
+@media (max-width:1280px){
   .nav{display:none;position:absolute;top:var(--header);left:0;right:0;background:var(--bg);border-bottom:1px solid var(--rule);flex-direction:column;align-items:stretch;gap:0;padding:8px var(--gutter) 16px}
   .nav.open{display:flex}
   .nav a{padding:14px 0;border-bottom:1px solid var(--rule-soft)}

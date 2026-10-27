@@ -64,7 +64,7 @@ async function localHtml(context) {
         };
         await check(1);
         assert.equal(await page.title(), 'Reserved tokens | New York Token Exchange');
-        if (width < 1000) {
+        if (width <= 1280) {
           const wizard = await page.locator('.buy-workspace').boundingBox();
           const brand = await page.locator('.buy-brand').boundingBox();
           assert(wizard.y + wizard.height <= brand.y, 'wizard precedes brand on mobile');
