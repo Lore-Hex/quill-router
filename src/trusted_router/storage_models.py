@@ -1151,6 +1151,10 @@ class Generation:
     video_aspect_ratio: str | None = None
     video_generate_audio: bool | None = None
 
+    # Frozen request alias, distinct from the model that served the generation.
+    # Empty means unknown (legacy/local records), never infer it from `model`.
+    requested_model: str = ""
+
     def __post_init__(self) -> None:
         if not isinstance(self.usage_type, UsageType):
             self.usage_type = UsageType.coerce(self.usage_type)
@@ -1290,6 +1294,7 @@ class Generation:
             workspace_id=authorization.workspace_id,
             key_hash=authorization.key_hash,
             model=model_id or authorization.model_id,
+            requested_model=authorization.requested_model_id or "",
             provider_name=provider_name,
             app=app,
             app_id=authorization.app_id,
@@ -1400,6 +1405,7 @@ class Generation:
             "request_id": self.request_id,
             "created_at": self.created_at,
             "model": self.model,
+            "requested_model": self.requested_model or None,
             "provider_name": self.provider_name,
             # OpenRouter's app ids are integers; TrustedRouter deliberately
             # uses immutable registry slugs and emits None for legacy traffic.

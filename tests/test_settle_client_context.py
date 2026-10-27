@@ -146,6 +146,17 @@ def _generation_from_body(
     )
 
 
+def test_auto_route_is_frozen_before_model_selection(client: TestClient) -> None:
+    key = _create_key(client)
+    authorization = _authorize(client, key, extra={"model": "nyte/auto-routing"})
+    _response, generation = _settle(client, authorization)
+    # Authorize normalizes equivalent router aliases before storing the request.
+    assert generation.requested_model == "trustedrouter/auto"
+    assert generation.model == authorization["model"]
+    assert generation.model != generation.requested_model
+    assert activity_payload(generation)["requested_model"] == "trustedrouter/auto"
+
+
 def test_valid_client_context_is_stored_and_emitted_to_activity(client: TestClient) -> None:
     key = _create_key(client)
     authorization = _authorize(client, key)

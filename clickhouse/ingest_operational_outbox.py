@@ -59,6 +59,7 @@ ACTIVITY_COLUMNS = (
     "workspace_id",
     "key_id",
     "model",
+    "requested_model",
     "provider",
     "provider_name",
     "app",
@@ -106,6 +107,7 @@ ACTIVITY_COLUMNS = (
     "client_failover_used",
 )
 ACTIVITY_OPTIONAL_DEFAULTS: dict[str, Any] = {
+    "requested_model": "",
     "app_id": None,
     "app_markup_microdollars": 0,
     "custom_model_markup_microdollars": 0,

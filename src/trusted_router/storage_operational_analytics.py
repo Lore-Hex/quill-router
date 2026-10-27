@@ -195,6 +195,7 @@ def activity_payload(generation: Generation) -> dict[str, Any]:
         "workspace_id": generation.workspace_id,
         "key_id": analytics_surrogate("api-key", generation.key_hash),
         "model": generation.model,
+        "requested_model": generation.requested_model,
         "provider": generation.provider or "",
         "provider_name": generation.provider_name,
         "app": generation.app,

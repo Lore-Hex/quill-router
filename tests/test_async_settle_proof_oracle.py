@@ -29,6 +29,7 @@ from tests.fakes.frozen_package import (
     fake_store,
     module,
 )
+from tests.fakes.requested_model_extension import compare_with_requested_model
 from tests.fakes.spanner import _FakeBatch, _FakeSnapshot, _FakeTransaction
 from tests.test_async_settle_handler import SUPPORTED, env, prepare
 from tests.test_async_settle_proof import catalog, legacy_body, restore, save
@@ -275,16 +276,11 @@ def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_p
                 if kind == 'settle':
                     assert ('trusted_router.storage_models', 'Generation.from_settle_body') in calls
                     assert ('trusted_router.storage_models', 'ProviderBenchmarkSample.from_generation') in calls
-    def compare(left, right, path=()):
-        if isinstance(left, dict) and isinstance(right, dict) and left.keys() == right.keys():
-            for key in left:
-                compare(left[key], right[key], (*path, key))
-        elif isinstance(left, (list, tuple)) and isinstance(right, type(left)) and len(left) == len(right):
-            for i, (a, b) in enumerate(zip(left, right, strict=True)):
-                compare(a, b, (*path, i))
-        else:
-            assert left == right, (path, left, right)
-    compare(outputs[0], outputs[1])
+    from trusted_router.storage_models import generation_id_for_authorization
+    compare_with_requested_model(
+        outputs[0], outputs[1], generation_id=generation_id_for_authorization(auth.id),
+        requested_model=auth.requested_model_id or "",
+    )
     row = db.settle_outbox[(auth.id, kind)]
     assert row['status'] == 'done' and row['settle_body'] is None and row['terminal_at'] is not None
     assert db.reservations[auth.credit_reservation_id]['settled']
