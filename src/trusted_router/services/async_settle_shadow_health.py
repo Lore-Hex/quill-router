@@ -902,8 +902,13 @@ class Service:
         mono = self.store.clock()
         stamp = int(self.store.wall()*1_000_000)
         self.tick(stamp, mono=mono, publisher=True)
+        job = self.state.job
+        if job is not None and job.slot != slot:
+            # The offline caller cannot dispatch this sampled slot. Resolve its
+            # reservation normally instead of leaving it to block the next tick.
+            self.accept(lifecycle.SlotOutcome(stamp, job.slot, "missed", generation=job.generation))
         if any(slot in d.publishers for d in self.state.days):
-            self.publishing.add(day_at(claim_us))
+            self.publishing.add(day_at(slot*SLOT_US))
 
     def publish_cycle(self, slot: int, claim_us: int) -> None:
         """Offline owner driver; executors call the module-level worker."""
