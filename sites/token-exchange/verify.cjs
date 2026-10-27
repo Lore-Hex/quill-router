@@ -34,7 +34,7 @@ const assert = require('node:assert/strict');
     assert.equal(await cowork.locator('body').getAttribute('data-nyte-page'),'cowork');
     assert(await cowork.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     if(width<=1280)await cowork.locator('#menuBtn').click();
-    assert.equal(await cowork.locator('#nav a').count(),0);
+    assert.equal(await cowork.locator('#nav a').count(),7);
     assert(await cowork.locator('#nav [data-nav="cowork"]').isVisible());
   }
   await cowork.close();
