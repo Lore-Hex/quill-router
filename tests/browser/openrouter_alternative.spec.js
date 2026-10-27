@@ -29,6 +29,21 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
     expect(layout.codeInset).toBeGreaterThanOrEqual(20);
     expect(layout.headingSize).toBeGreaterThan(layout.bodySize);
     expect(layout.headingWeight).toBeGreaterThanOrEqual(600);
+    const ctaStyles = await page.getByRole('button', { name: 'Create my API key', exact: true }).evaluateAll(buttons => buttons.map(button => {
+      const css = getComputedStyle(button);
+      return Object.fromEntries(['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'height', 'padding', 'borderRadius', 'backgroundColor', 'color', 'border', 'boxShadow', 'transition'].map(key => [key, css[key]]));
+    }));
+    expect(ctaStyles).toHaveLength(3);
+    for (const style of ctaStyles) expect(style).toEqual(ctaStyles[2]);
+    for (const button of await page.getByRole('button', { name: 'Create my API key', exact: true }).all()) {
+      expect(await button.evaluate(el => {
+        const container = el.closest('.cta-band, .marketing-copy');
+        return Math.abs(el.getBoundingClientRect().left - container.getBoundingClientRect().left
+          - parseFloat(getComputedStyle(container).paddingLeft) - parseFloat(getComputedStyle(container).borderLeftWidth));
+      })).toBeLessThan(1);
+    }
+    await expect(page.locator('.v2-table-cta')).toHaveCSS('align-items', 'flex-start');
+    await expect(page.locator('.v2-table-cta')).toHaveCSS('flex-direction', 'column');
     if (width <= 720) {
       await expect(page.locator(".v2-stack thead").first()).toBeVisible();
       expect(await page.locator(".v2-saving-table").evaluate(el => el.getBoundingClientRect().width)).toBeLessThanOrEqual(width - 40);
@@ -98,3 +113,31 @@ test('FAQ pricing has no stale as-of date in visible text or structured data', a
     await page.keyboard.press('Escape');
   }
  });
+
+test('API key CTAs share hover and keyboard-focus styling', async ({ page }) => {
+  await page.goto('/openrouter-alternative');
+  const buttons = page.getByRole('button', { name: 'Create my API key', exact: true });
+  const readStyle = button => button.evaluate(el => {
+    const css = getComputedStyle(el);
+    return Object.fromEntries(['backgroundColor', 'color', 'border', 'boxShadow', 'outline', 'outlineOffset', 'transform'].map(key => [key, css[key]]));
+  });
+  for (const state of ['hover', 'focus']) {
+    const styles = [];
+    for (const button of await buttons.all()) {
+      await page.mouse.move(0, 0);
+      await button.evaluate(el => el.blur());
+      if (state === 'hover') await button.hover();
+      else {
+        await button.focus();
+        await page.keyboard.press('ArrowRight');
+        expect(await button.evaluate(el => el.matches(':focus-visible'))).toBe(true);
+      }
+      await button.evaluate(async el => {
+        await Promise.all(el.getAnimations().map(animation => animation.finished));
+      });
+      styles.push(await readStyle(button));
+      await button.evaluate(el => el.blur());
+    }
+    for (const style of styles) expect(style).toEqual(styles[2]);
+  }
+});

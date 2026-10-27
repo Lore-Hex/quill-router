@@ -113,7 +113,8 @@
 }
 
 /* Bordered surfaces need their own inset, independent of section spacing. */
-.openrouter-article main > .cta-band {
+.openrouter-article main > .cta-band,
+.openrouter-article .v2-table-cta {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -122,7 +123,7 @@
   border: 1px solid var(--border-hairline);
   background: var(--surface-card);
 }
-.openrouter-article .cta-band h2 {
+.openrouter-article .cta-band :is(h2,h3) {
   font-size: 28px;
   line-height: 1.3;
   margin: 0 0 12px;
@@ -169,8 +170,9 @@
   margin-bottom: 0;
 }
 @media (max-width: 720px) {
-  .openrouter-article main > .cta-band { padding: 24px; }
-  .openrouter-article .cta-band h2 { font-size: 26px; }
+  .openrouter-article main > .cta-band,
+  .openrouter-article .v2-table-cta { padding: 24px; }
+  .openrouter-article .cta-band :is(h2,h3) { font-size: 26px; }
   .openrouter-article .link-list li { padding: 20px; }
   .openrouter-article .copy-terminal pre { padding: 20px; }
 }
@@ -356,36 +358,7 @@
   .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
 }
 
-/* Close the comparison with the existing migration message and its action. */
-.openrouter-article .v2-table-cta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 28px 24px;
-  background: #10231b;
-}
-.openrouter-article .v2-table-cta h3 {
-  margin: 0;
-  color: var(--text-display);
-  font-size: 24px;
-  line-height: 1.3;
-}
-.openrouter-article .v2-table-cta .btn {
-  flex-shrink: 0;
-  min-height: 48px;
-  padding: 12px 24px;
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-@media (max-width: 720px) {
-  .openrouter-article .v2-table-cta {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 20px;
-    padding: 24px 20px;
-  }
-  .openrouter-article .v2-table-cta h3 { font-size: 22px; }
-}
+.openrouter-article .v2-table-cta { margin-top: 24px; }
+
+/* Keep signup actions at the bottom CTA’s line height in every text context. */
+.openrouter-article main .btn[data-action="open-signin"] { line-height: 1.6; }
