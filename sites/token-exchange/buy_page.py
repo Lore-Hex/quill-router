@@ -5,6 +5,8 @@ import html
 import runpy
 from pathlib import Path
 
+from facilities import FACILITY_RATE, facility_cards
+
 HERE = Path(__file__).resolve().parent
 
 
@@ -23,5 +25,7 @@ def buy_content() -> str:
         )
     return ((HERE / "nyte-v2/buy.html").read_text()
             .replace("{{grades}}", "".join(cards))
+            .replace("{{facilities}}", facility_cards(selectable=True))
+            .replace("{{facility_rate}}", FACILITY_RATE)
             .replace("{{as_of}}", html.escape(data["AS_OF"]))
             .replace("{{as_of_iso}}", data["AS_OF_ISO"]))

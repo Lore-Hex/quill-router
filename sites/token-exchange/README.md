@@ -112,14 +112,15 @@ Step 1 is a plain radio list: “1 billion tokens (a block to draw on over a ter
 line links to `/suppliers`, `/providers` and `/neocloud-accelerator`; keep these repository links intact
 when reconciling live-link rewrites. Defaults are one block, 300 tok/s, a
 one-month term, next month in local time, and NYTE Index grade A. Allowlisted
-`grade` and `unit` query parameters override their defaults. Three Continue
+`grade` and `unit` query parameters override their defaults. Allowlisted
+`facility=greenference|submerge` opens step 2 with that planned facility selected. Three Continue
 clicks reach scheduling without editing a field; contact details can be entered
 in Calendly, and a supplied email is validated before handoff. Index-grade token blocks show blocks × the
 published dated grade price; throughput, named models and undecided requests
 show no price. This is a request to discuss a reservation, not an order or executable quote. Capacity derivatives remain roadmap offerings.
 
 The wizard never submits a form or writes request data to browser storage.
-Only step, unit and grade are written to page history. Contact details and the
+Only step, unit, grade and the allowlisted facility ID are written to page history. Contact details and the
 request summary go directly to Calendly's iframe/link prefill, without its widget
 script. Without JavaScript, the offer, editable model/provider text fields and
 direct booking link remain available; the start month is optional. With JavaScript,
@@ -141,7 +142,8 @@ those captures is an explicitly labelled fixture, not a real booking.
 
 The only new analytics are `nyte.buy_step_1_viewed` through
 `nyte.buy_step_4_viewed` and `nyte.buy_completed`, with bounded unit,
-underlying-kind and grade values. Completion means reaching scheduling, not a
+underlying-kind (`index`, `model`, `facility`) and grade values. Facility events
+use `unit=blocks` and `grade=none`, without facility names. Completion means reaching scheduling, not a
 confirmed booking. Release the collector/log-field changes and dispatch the
 existing `deploy-growth-sync.yml` workflow (which derives the exact source
 filter from `scripts/axiom_growth/model.py`) before publishing the static assets.
@@ -177,9 +179,16 @@ signals after the separately authorized publish.
 with page key `accelerator`. The navigation follows Reserved tokens; `/buy`’s
 seller line and `/suppliers#open-stack` link here. Only New York’s sitemap lists
 it. The page describes capacity reservations for inference service from planned
-facilities: monthly 1B-token lots, with the sustained-rate equivalent stated once.
-This monthly lot is distinct from `/buy`’s block to draw on over a chosen term;
-accounting and delivery terms are agreed on the call.
+facilities: 1B-token lots of Grade B · Professional (DeepSeek-class models),
+with delivery over the facility’s first twelve months of operation, not per month.
+The sustained-rate equivalent is stated once per page. `facilities.py` contains
+Joseph’s approved facts and renders the same cards on `/buy` and the accelerator.
+Greenference is planned with a targeted February 2027 launch; Submerge is planned
+with a targeted August 2027 launch. Power is a descriptor only, never a unit for sale.
+Facility selection in `/buy` disables throughput and undecided units, hides editable
+timing, caps quantity at the first offering, and hides all prices, totals and as-of
+captions. Pricing is discussed on the call. Calendly receives the planned facility,
+targeted launch and lot count with the twelve-month definition, without a price.
 
 The linked Neocloud-in-a-box repository is the same Apache-2.0 stack referenced
 by suppliers. It is pre-alpha. Operators handle power, permits, the building,
@@ -191,8 +200,8 @@ independent hardware and software qualification.
 All content and the plain Joseph Calendly link work without JavaScript. There
 is no form, embedded booking widget or contact prefill on this page. The provider
 deck remains request-only through `/providers`. Preserve the verbatim planned
-offerings and not-a-securities language; do not add funding amounts, facilities,
-dates, service commitments, prices or assured outcomes.
+offerings and not-a-securities language; use only Joseph’s approved facility facts in `facilities.py`; do not add funding
+amounts, additional facilities or dates, service commitments, prices or assured outcomes.
 
 A separately authorized narrow release needs both accelerator page objects and
 `assets/nyte-v2/accelerator.css`, the shared stylesheet and `app.js`, every NYTE shell page

@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from build import build, load_markets
 from nyte_v2 import render_nyte
+from test_buy_page import FACILITY_RATE_COPY, assert_facility_cards
 from test_provider_page import PageLinks
 
 HERE = Path(__file__).resolve().parent
@@ -79,7 +80,7 @@ class AcceleratorPageTests(unittest.TestCase):
         text = re.sub(r'\s+', ' ', text)
         for claim in [
             'pre-sell reserved tokens from a planned facility to help finance the build',
-            'Lots are 1 billion tokens per month.',
+            'Both facilities are planned with targeted launches; NYTE lists them as reservation requests, not live products.',
             'Pre-selling means capacity reservations for inference service.',
             'This is a request to discuss a reservation, not an order.',
             'Capacity futures and derivatives are planned offerings, not live products.',
@@ -92,12 +93,29 @@ class AcceleratorPageTests(unittest.TestCase):
             'metering and billing through TrustedRouter',
         ]:
             self.assertIn(claim, text)
-        rate = '1B tokens / 30 days ≈ 385 tok/s'
+        rate = FACILITY_RATE_COPY
         self.assertEqual(text.count(rate), 1)
         self.assertNotIn('tok/s', text.replace(rate, ''))
         for forbidden in ['guarantee', 'invest', '%', '$', 'SLA']:
             self.assertNotIn(forbidden.lower(), text.lower())
-        self.assertNotRegex(text, r'\b20\d{2}\b|\b(?:Jan(?:uary)?|Feb(?:ruary)?|March|April|June|July|August|Sept(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b')
+        self.assertNotIn('per month', text.replace('not per month', ''))
+        self.assertNotIn('monthly lots', text)
+        self.assertNotIn('385', text)
+
+    def test_first_facilities_and_reservation_links(self) -> None:
+        section = self.page.split('<section class="accelerator-facilities">', 1)[1].split('</section>', 1)[0]
+        self.assertIn('<h2>First facilities</h2>', section)
+        assert_facility_cards(self, section)
+        for facility in ['greenference', 'submerge']:
+            self.assertIn(f'/buy?facility={facility}', self.parser.links)
+        self.assertEqual(section.count(FACILITY_RATE_COPY), 1)
+        self.assertIn('Pricing is discussed on the call.', section)
+        self.assertNotRegex(section.lower(), r'raise|price=|data-price|usd|guarantee|loan|deposit|\bloi\b|fundrais')
+        buy = (self.root / 'buy').read_text()
+        # Shared card prose must remain byte-for-byte identical on both pages.
+        for card in re.findall(r'<article class="facility-card">(.*?)</article>', section, flags=re.S):
+            for paragraph in re.findall(r'<p>.*?</p>', card):
+                self.assertIn(paragraph, buy)
 
     def test_responsibilities_and_four_steps(self) -> None:
         content = (HERE / 'nyte-v2/accelerator.html').read_text()

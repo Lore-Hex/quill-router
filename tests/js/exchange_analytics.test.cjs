@@ -49,3 +49,17 @@ test('blocked storage and failed transport leave the page usable',async()=>{
  assert.ok(s.window.TokenExchangeAnalytics.context().visitor_id);
  assert.equal(s.requests.length,1);
 });
+
+test('facility metadata reaches the collector without facility or contact details',()=>{
+ const s=setup();
+ s.context.location.pathname='/buy';
+ for(const event of ['nyte.buy_step_2_viewed','nyte.buy_completed']) {
+  s.window.TokenExchangeAnalytics.track(event,{unit:'blocks',underlying_kind:'facility',grade:'none'});
+  const payload=JSON.parse(s.requests.at(-1).body);
+  assert.equal(payload.event,event);
+  assert.equal(payload.page,'/buy');
+  assert.equal(payload.underlying_kind,'facility');
+  assert.equal(payload.grade,'none');
+  assert.deepEqual(Object.keys(payload).sort(),['event','visitor_id','campaign','unit','underlying_kind','grade','page'].sort());
+ }
+});

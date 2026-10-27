@@ -5,6 +5,7 @@ import runpy
 import subprocess
 import tempfile
 import unittest
+from html import unescape
 from pathlib import Path
 from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
@@ -13,6 +14,29 @@ from build import build, load_markets
 from test_provider_page import PageLinks
 
 HERE = Path(__file__).resolve().parent
+
+
+FACILITY_RATE_COPY = ('1B tokens over 12 months ≈ 32 tok/s sustained; '
+                      '1,000 lots ≈ 32,000 tok/s; 50,000 lots ≈ 1.6 million tok/s.')
+
+
+def assert_facility_cards(test: unittest.TestCase, markup: str) -> None:
+    """Assert the approved facts independently of the shared renderer's data."""
+    cards = re.findall(r'<article class="facility-card">(.*?)</article>', markup, flags=re.S)
+    test.assertEqual(len(cards), 2)
+    for card, (name, operator, description, power, launch, lots) in zip(cards, [
+        ('Greenference', 'Greenference', 'solar-powered, air-cooled', '20 kW', 'February 2027', '1,000'),
+        ('Submerge', 'Submerge, Inc.', 'underwater', '1 MW', 'August 2027', '50,000'),
+    ], strict=True):
+        test.assertIn(name, card)
+        test.assertIn('<span class="facility-badge">Planned</span>', card)
+        test.assertIn(f'A planned {description} data center operated by {operator}.', card)
+        test.assertIn(f'{power} · Planned on NVIDIA B200/B300-class GPUs.', card)
+        test.assertIn(f'Targeted launch: {launch}.', card)
+        test.assertIn(f'First offering: {lots} lots.', card)
+        test.assertIn('<a href="/index">Grade B · Professional (DeepSeek-class models)</a>', card)
+        test.assertIn('Each lot is 1 billion tokens delivered over the facility’s first twelve months of operation, not per month.', card)
+        test.assertNotIn('$', card)
 
 
 class BuyPageTests(unittest.TestCase):
@@ -161,7 +185,8 @@ for (unit of ['blocks', 'throughput']) {
         harness += r'''
 const assert = require('node:assert/strict');
 const fields = Object.fromEntries(['grades','model-fields','model','block-fields','rate-field',
-  'total','price-caption','as-of'].map(id => [id, {hidden:false, disabled:false, textContent:''}]));
+  'total','price-caption','as-of','facility-unit-note','facility-fields','quantity-label',
+  'lot-cap','term-field','start-field','start','term','rate'].map(id => [id, {hidden:false, disabled:false, textContent:''}]));
 fields.blocks = {valueAsNumber:3, validity:{valid:true}};
 fields['as-of'].textContent = 'October 19, 2026';
 let unit = 'blocks', underlying = 'index', grade = 'AAA';
@@ -173,7 +198,8 @@ const priceLines = selector => {
   return prices;
 };
 fields.grades.querySelectorAll = priceLines;
-const flow = {querySelector: () => ({})};
+const flow = {querySelector: () => ({setAttribute() {}})};
+const choose = () => {};
 const money = new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0});
 const catalogue = () => {};
 '''
@@ -207,6 +233,29 @@ assert.equal(fields.grades.hidden, true);
 assert.equal(fields.total.hidden, true);
 '''
         result = subprocess.run(['node', '-e', harness], check=False, capture_output=True, text=True)  # noqa: S603,S607 — fixed local test harness
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_facility_cards_and_claims(self) -> None:
+        fieldset = self.page.split('<fieldset id="buy-facility-fields">', 1)[1].split('</fieldset>', 1)[0]
+        self.assertIn('name="underlying" value="facility"> A planned facility', self.page)
+        assert_facility_cards(self, fieldset)
+        self.assertNotIn('$', fieldset)
+        self.assertNotRegex(fieldset.lower(), r'raise|price=|data-price|usd')
+        self.assertEqual(fieldset.count(FACILITY_RATE_COPY), 1)
+        self.assertIn('Pricing is discussed on the call.', fieldset)
+        self.assertIn('Facility lots are 1B tokens each', self.page)
+        visible = re.sub(r'<(?:style|script)\b[^>]*>.*?</(?:style|script)>', '', self.page, flags=re.S)
+        text = unescape(re.sub(r'<[^>]+>', ' ', visible)).lower()
+        self.assertNotRegex(text, r'guarantee|financ|loan|deposit|\bloi\b|fundrais')
+        self.assertNotIn('per month', text.replace('not per month', ''))
+        self.assertIn('Capacity futures and derivatives are planned offerings, not live products.', self.page)
+        self.assertIn('This is an inference service, not a securities or cryptocurrency exchange.', self.page)
+
+    def test_facility_wizard_executes_production_script(self) -> None:
+        result = subprocess.run(  # noqa: S603 — fixed local test harness
+            ['node', str(HERE / 'test-buy-facilities.cjs'), str(self.root / 'buy')],  # noqa: S607
+            check=False, capture_output=True, text=True,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_start_month_defaults_in_local_time_and_is_optional_without_js(self) -> None:

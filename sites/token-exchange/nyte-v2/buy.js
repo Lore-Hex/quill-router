@@ -12,6 +12,12 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   choose('grade', query.get('grade'), ['AAA', 'A', 'B', 'C']);
   choose('unit', query.get('unit'), ['blocks', 'throughput', 'unsure']);
+  const initialFacility = query.get('facility');
+  const facilityPreselected = ['greenference', 'submerge'].includes(initialFacility);
+  if (facilityPreselected) {
+    choose('facility', initialFacility, ['greenference', 'submerge']);
+    choose('underlying', 'facility', ['index', 'model', 'facility']);
+  }
   let step = 1;
   let completed = false;
   let catalogueLoaded = false;
@@ -52,33 +58,60 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function update() {
+    const facility = selected('underlying').value === 'facility';
+    if (facility) choose('unit', 'blocks', ['blocks']);
     const unit = selected('unit').value;
     const index = selected('underlying').value === 'index';
+    const model = selected('underlying').value === 'model';
+    for (const value of ['throughput', 'unsure']) {
+      flow.querySelector(`input[name="unit"][value="${value}"]`).disabled = facility;
+    }
+    get('facility-unit-note').hidden = !facility;
+    get('facility-fields').hidden = !facility;
+    get('facility-fields').disabled = !facility;
+    get('quantity-label').textContent = facility ? 'Number of 1B-token lots' : '1 billion tokens per block';
+    get('blocks').max = facility ? selected('facility').dataset.lots : '1000000';
+    if (get('blocks').valueAsNumber > Number(get('blocks').max)) get('blocks').value = get('blocks').max;
+    get('lot-cap').hidden = !facility;
+    get('lot-cap').textContent = facility
+      ? `Maximum ${Number(get('blocks').max).toLocaleString('en-US')} lots in the first offering.` : '';
+    for (const field of ['term', 'start']) {
+      get(`${field}-field`).hidden = facility;
+      get(field).disabled = facility;
+    }
+    get('start').required = !facility;
+    get('rate').disabled = unit !== 'throughput';
     const showPrices = index && unit === 'blocks';
     get('grades').querySelectorAll('.buy-price').forEach(price => { price.hidden = !showPrices; });
     get('price-caption').hidden = !showPrices;
     get('grades').hidden = !index;
-    get('model-fields').hidden = index;
+    get('model-fields').hidden = !model;
     get('grades').disabled = !index;
-    get('model-fields').disabled = index;
-    get('model').required = !index;
+    get('model-fields').disabled = !model;
+    get('model').required = model;
     get('block-fields').hidden = unit !== 'blocks';
     get('rate-field').hidden = unit !== 'throughput';
     const quantity = get('blocks').valueAsNumber;
     flow.querySelector('[data-block-delta="-1"]').disabled = !Number.isFinite(quantity) || quantity <= 1;
+    flow.querySelector('[data-block-delta="1"]').disabled = !Number.isFinite(quantity) || quantity >= Number(get('blocks').max);
+    for (const delta of [-1, 1]) {
+      flow.querySelector(`[data-block-delta="${delta}"]`).setAttribute('aria-label',
+        `${delta < 0 ? 'Remove' : 'Add'} one ${facility ? 'lot' : 'block'}`);
+    }
     get('total').hidden = !showPrices || !get('blocks').validity.valid;
     if (!get('total').hidden) {
       get('total').textContent = `Indicative total: ${money.format(quantity * Number(selected('grade').dataset.price))} USD · ${quantity.toLocaleString('en-US')} × 1B-token blocks over the selected term. As of ${get('as-of').textContent}. Indicative, not an executable quote.`;
     } else {
       get('total').textContent = 'Pricing is discussed on the call. No indicative total is shown for throughput, a specific model, or an undecided request.';
     }
-    if (!index) void catalogue();
+    if (model) void catalogue();
   }
 
   function fieldsValid(number, report = false) {
     const unit = selected('unit').value;
     const fields = number === 2
-      ? [get('start'), ...(selected('underlying').value === 'model' ? [get('model')] : []),
+      ? [...(selected('underlying').value === 'facility' ? [] : [get('start')]),
+        ...(selected('underlying').value === 'model' ? [get('model')] : []),
         ...(unit === 'blocks' ? [get('blocks')] : unit === 'throughput' ? [get('rate')] : [])]
       : [get('name'), get('email')];
     for (const field of fields) {
@@ -97,13 +130,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function scheduling() {
     const unit = selected('unit').value;
+    const facility = selected('underlying').value === 'facility';
     const underlying = selected('underlying').value === 'index'
       ? `NYTE Index ${selected('grade').value}`
+      : facility ? `Planned ${selected('facility').dataset.name}; targeted launch: ${selected('facility').dataset.launch}; Grade B · Professional (DeepSeek-class models)`
       : `Model ${clean(get('model').value)}; provider ${clean(get('provider').value) || 'any'}`;
-    const quantity = unit === 'blocks' ? `${get('blocks').value} x 1B tokens`
+    const quantity = facility ? `${get('blocks').value} x 1B-token lots`
+      : unit === 'blocks' ? `${get('blocks').value} x 1B tokens`
       : unit === 'throughput' ? `${get('rate').value} tokens per second` : 'to discuss';
     const term = `${get('term').value} ${get('term').value === '1' ? 'month' : 'months'}`;
-    const summary = `Unit: ${unit}; quantity: ${quantity}; underlying: ${underlying}; term: ${term}; start: ${get('start').value}; company: ${clean(get('company').value) || 'not specified'}`;
+    const timing = facility ? 'delivery: over the facility’s first twelve months of operation, not per month'
+      : `term: ${term}; start: ${get('start').value}`;
+    const summary = `Unit: ${facility ? '1B-token lots' : unit}; quantity: ${quantity}; underlying: ${underlying}; ${timing}; company: ${clean(get('company').value) || 'not specified'}`;
     const url = new URL('https://calendly.com/joseph-perla/15min');
     url.search = new URLSearchParams({embed_domain:'nytokenexchange.com', embed_type:'Inline', hide_gdpr_banner:'1',
       name:clean(get('name').value), email:get('email').value.trim(), a1:summary}).toString();
@@ -118,11 +156,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function show(number, push = false) {
+    update();
     // A copied step URL cannot skip required request fields or an invalid contact prefill.
     if (number >= 3 && !fieldsValid(2)) number = 2;
     else if (number === 4 && !fieldsValid(3)) number = 3;
     step = number;
-    update();
     steps.forEach(section => { section.hidden = Number(section.dataset.step) !== step; });
     flow.querySelectorAll('.buy-steps li').forEach((item, index) => {
       if (index + 1 === step) item.setAttribute('aria-current', 'step');
@@ -131,6 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Reconstruct from allowlisted values; no free text or contact details in history.
     const url = new URL(location.pathname, location.origin);
     url.search = new URLSearchParams({step:String(step), unit:selected('unit').value, grade:selected('grade').value}).toString();
+    if (selected('underlying').value === 'facility') url.searchParams.set('facility', selected('facility').value);
     history[push ? 'pushState' : 'replaceState'](null, '', url);
     if (step === 4) scheduling();
     else {
@@ -160,7 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (button.hasAttribute('data-next') && (step === 1 || fieldsValid(step, true))) show(step + 1, true);
     if (button.hasAttribute('data-back')) show(step - 1, true);
     if (button.hasAttribute('data-block-delta')) {
-      get('blocks').value = String(Math.max(1, Math.min(1000000, (get('blocks').valueAsNumber || 1) + Number(button.dataset.blockDelta))));
+      get('blocks').value = String(Math.max(1, Math.min(Number(get('blocks').max), (get('blocks').valueAsNumber || 1) + Number(button.dataset.blockDelta))));
       get('blocks').setCustomValidity('');
       update();
     }
@@ -170,5 +209,5 @@ document.addEventListener('DOMContentLoaded', () => {
     show(['1', '2', '3', '4'].includes(value) ? Number(value) : 1);
   });
   const initial = query.get('step');
-  show(['1', '2', '3', '4'].includes(initial) ? Number(initial) : 1);
+  show(facilityPreselected ? 2 : ['1', '2', '3', '4'].includes(initial) ? Number(initial) : 1);
 });

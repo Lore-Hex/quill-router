@@ -195,7 +195,7 @@ async function localHtml(context) {
         for (const event of buyEvents) {
           assert.equal(event.page,'/buy');
           assert(['blocks','throughput','unsure'].includes(event.unit));
-          assert(['index','model'].includes(event.underlying_kind));
+          assert(['index','model','facility'].includes(event.underlying_kind));
           assert(['AAA','A','B','C','none'].includes(event.grade));
         }
         const storage = await page.evaluate(() => JSON.stringify([Object.entries(localStorage),Object.entries(sessionStorage)]));

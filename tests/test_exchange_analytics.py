@@ -52,9 +52,9 @@ def test_visits_and_downloads_share_only_a_site_scoped_fingerprint(
     }).status_code == 200
     events = [r for r in caplog.records if getattr(r, "site_domain", "") == "nytokenexchange.com"]
     assert len(events) == 3
-    assert len({r.anonymous_fingerprint for r in events}) == 1
-    assert events[0].anonymous_fingerprint != visitor
-    assert all(r.creative_id == "homepage-banner" for r in events)
+    assert len({r.__dict__["anonymous_fingerprint"] for r in events}) == 1
+    assert events[0].__dict__["anonymous_fingerprint"] != visitor
+    assert all(r.__dict__["creative_id"] == "homepage-banner" for r in events)
     assert all(not hasattr(r, "email") and not hasattr(r, "visitor_id") for r in events)
     from scripts.axiom_growth.model import project_event
     from trusted_router.main import _ApplicationConsoleFormatter
@@ -69,7 +69,7 @@ def test_visits_and_downloads_share_only_a_site_scoped_fingerprint(
     client.post("/token-exchange/events", headers={**HEADERS, "Origin": other}, json={
         "event": "exchange.landing_viewed", "visitor_id": visitor,
     })
-    assert caplog.records[-1].anonymous_fingerprint != events[0].anonymous_fingerprint
+    assert caplog.records[-1].__dict__["anonymous_fingerprint"] != events[0].__dict__["anonymous_fingerprint"]
 
 
 @pytest.mark.parametrize("signal", [{"DNT": "1"}, {"Sec-GPC": "1"}])
@@ -127,6 +127,9 @@ def test_collector_memory_and_rate_caps_reset() -> None:
     ('nyte.buy_step_4_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_completed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_completed', {'unit': 'throughput', 'underlying_kind': 'model', 'grade': 'none'}),
+    *[(name, {'unit': 'blocks', 'underlying_kind': 'facility', 'grade': 'none'})
+      for name in ['nyte.buy_step_1_viewed', 'nyte.buy_step_2_viewed', 'nyte.buy_step_3_viewed',
+                   'nyte.buy_step_4_viewed', 'nyte.buy_completed']],
     ('nyte.form_submitted', {'form': 'buyer_deck'}),
     ('nyte.outbound_clicked', {'destination_host': 'trustedrouter.com', 'cta': 'api_key'}),
 ])
@@ -165,6 +168,10 @@ def test_nyte_event_properties_are_bounded(client: TestClient, properties: dict[
 
 
 @pytest.mark.parametrize('extra', [
+    {'underlying_kind': 'facility'}, {'underlying_kind': 'greenference'},
+    {'underlying_kind': 'facility', 'grade': 'none', 'unit': 'throughput'},
+    {'underlying_kind': 'facility', 'grade': 'none', 'unit': 'unsure'},
+    {'facility': 'greenference'}, {'facility_name': 'Submerge'},
     {'unit': 'someone@example.com'}, {'underlying_kind': 'free text'},
     {'grade': 'private model'}, {'name': 'Private Name'}, {'email': 'person@example.com'},
     {'company': 'Private Company'}, {'model': 'private model'}, {'grade': 'none'},
