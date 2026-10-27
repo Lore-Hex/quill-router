@@ -5,6 +5,7 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
     await page.setViewportSize({ width, height });
     await page.goto("/openrouter-alternative");
     await expect(page.locator("main h1")).toHaveCount(1);
+    await page.evaluate(() => document.fonts.ready);
     await expect(page.locator('[aria-labelledby="quick-answer-heading"] .panel-body > p:first-child strong')).toHaveCSS("color", "rgb(183, 228, 202)");
     await expect(page.locator(".faq-panel details")).toHaveCount(11);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -99,7 +100,7 @@ test('FAQ pricing has no stale as-of date in visible text or structured data', a
   expect(structured.join(' ')).not.toContain('As of October 2026');
 });
 
- test('API key CTAs open signup, including below the alternatives table', async ({ page }) => {
+test('API key CTAs open signup, including below the alternatives table', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/openrouter-alternative');
   const ctas = page.getByRole('button', { name: 'Create my API key', exact: true });
@@ -112,11 +113,12 @@ test('FAQ pricing has no stale as-of date in visible text or structured data', a
     await expect(page.locator('#signinTitle')).toHaveText('Get your API key');
     await page.keyboard.press('Escape');
   }
- });
+});
 
 test('API key CTAs share hover and keyboard-focus styling', async ({ page }) => {
   await page.goto('/openrouter-alternative');
   const buttons = page.getByRole('button', { name: 'Create my API key', exact: true });
+  await expect(buttons).toHaveCount(3);
   const readStyle = button => button.evaluate(el => {
     const css = getComputedStyle(el);
     return Object.fromEntries(['backgroundColor', 'color', 'border', 'boxShadow', 'outline', 'outlineOffset', 'transform'].map(key => [key, css[key]]));

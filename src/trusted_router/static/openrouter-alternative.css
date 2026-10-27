@@ -1,29 +1,30 @@
 /* /openrouter-alternative v2.1 page CSS (OA-18). Uses existing design-system tokens only.
    Load after the existing stylesheets on this page only. */
-.v2-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.v2-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .v2-head{margin:56px 0 16px}
 .v2-head h2{margin:0}
 .v2-table-note{margin:0;padding:12px 16px 16px;color:var(--text-muted);font-size:13px;line-height:1.5}
 .v2-price-body{padding-top:16px;padding-bottom:4px}
 .v2-price-body h3{margin:20px 0 6px;font-size:17px}
 .v2-price-body .v2-table-note{padding:0 0 12px}
-.openrouter-alternatives-table th[scope=row],.v2-saving-table th[scope=row]{font-weight:550;text-align:left;text-transform:none;letter-spacing:normal;font-size:14px;font-family:inherit}
+.openrouter-alternatives-table th[scope="row"],.v2-saving-table th[scope="row"]{font-weight:550;text-align:left;text-transform:none;letter-spacing:normal;font-size:14px;font-family:inherit}
 .v2-row-tr th,.v2-row-tr td{background:var(--surface-raised);color:var(--text-display)}
 .v2-row-ref th,.v2-row-ref td{color:var(--text-muted)}
 .v2-price-table,.v2-saving-table{width:100%}
-.v2-price-table th[scope=row],.v2-saving-table th[scope=row]{text-align:left;font-weight:550}
+.v2-price-table th[scope="row"],.v2-saving-table th[scope="row"]{text-align:left;font-weight:550}
 .v2-saving-table td{font-variant-numeric:tabular-nums}
 .v2-dates{margin:6px 0 0;color:var(--text-muted);font-size:13px;letter-spacing:.02em}
 .v2-quote{margin:20px 0 4px;padding:4px 0 4px 18px;border-left:2px solid var(--sage)}
 .v2-quote p{margin:0 0 6px;color:var(--text-display);font-size:17px;line-height:1.5}
 .v2-quote .v2-quote-cite{color:var(--text-muted);font-size:13px}
 .v2-matrix-table{width:100%}
-.v2-matrix-table th[scope=row]{text-align:left;font-weight:550}
+.v2-matrix-table th[scope="row"]{text-align:left;font-weight:550}
+
 @media (max-width:720px){
   .v2-stack{min-width:0 !important;width:100%}
   .v2-stack thead{display:none}
   .v2-stack tr{display:block;padding:12px 16px;border-top:1px solid var(--border-hairline)}
-  .v2-stack th[scope=row]{display:block;padding:0 0 6px;font-size:15px;border:0}
+  .v2-stack th[scope="row"]{display:block;padding:0 0 6px;font-size:15px;border:0}
   .v2-stack td{display:grid;grid-template-columns:minmax(0,42%) minmax(0,1fr);gap:12px;padding:5px 0;border:0}
   .v2-stack td::before{content:attr(data-label);color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;line-height:1.6}
 }
@@ -82,6 +83,7 @@
 .openrouter-article .faq-panel details{padding:18px 0}
 .openrouter-article .faq-panel summary{font-size:18px;line-height:1.5}
 .openrouter-article main p code{overflow-wrap:anywhere}
+
 @media(max-width:720px){
 .openrouter-article main.public-wrap{padding:0 20px 48px}
 .openrouter-article main>section,.openrouter-article main>.v2-head{margin-top:48px;margin-bottom:0}
@@ -168,6 +170,7 @@
 .openrouter-article .panel-body p:last-child {
   margin-bottom: 0;
 }
+
 @media (max-width: 720px) {
   .openrouter-article main > .cta-band { padding: 24px; }
   .openrouter-article .cta-band :is(h2,h3) { font-size: 26px; }
@@ -199,11 +202,12 @@
 .openrouter-article [aria-labelledby="sources-heading"] ul { list-style: none; padding: 0; }
 .openrouter-article [aria-labelledby="sources-heading"] li { margin-bottom: 24px; }
 .openrouter-article [aria-labelledby="sources-heading"] li > strong { display: block; margin-bottom: 6px; color: var(--text-display); }
+
 @media (max-width: 720px) {
   .openrouter-article .model-table-wrap { border: 0; background: none; }
   .openrouter-article .v2-stack tr { padding: 20px 0; }
   .openrouter-article .v2-stack tr:first-child { border-top: 0; }
-  .openrouter-article .v2-stack th[scope=row] { font-size: 18px; padding-bottom: 12px; }
+  .openrouter-article .v2-stack th[scope="row"] { font-size: 18px; padding-bottom: 12px; }
   .openrouter-article .v2-stack td { grid-template-columns: 1fr; gap: 4px; padding: 8px 0; font-size: 16px; line-height: 1.5; }
   .openrouter-article .v2-stack td::before { font-size: 13px; text-transform: none; letter-spacing: 0; }
   .openrouter-article .v2-row-tr :is(th,td) { background: none; }
@@ -214,17 +218,20 @@
 }
 .openrouter-article .seo-evidence-table td:first-child { min-width: 290px; }
 .openrouter-article .seo-evidence-table td:first-child code { overflow-wrap: normal; }
+
 @media (min-width: 721px) {
   .openrouter-article .v2-stack :is(th,td) { padding: 14px 16px; font-size: 16px; line-height: 1.5; }
   .openrouter-article .v2-stack thead th { font-size: 13px; }
-  .openrouter-article .v2-stack th[scope=row] { text-transform: none; }
+  .openrouter-article .v2-stack th[scope="row"] { text-transform: none; }
 }
+
 @media (max-width: 720px) {
   .openrouter-article .v2-stack :is(th,td) { background: none; }
 }
 .openrouter-article .seo-evidence-head { align-items: start; }
 .openrouter-article .seo-evidence-table td { font-size: 14px; line-height: 1.5; }
 .openrouter-article .seo-evidence-table :is(.table-note,code) { font-size: 13px; line-height: 1.5; }
+
 @media (max-width: 720px) {
   .openrouter-article .seo-evidence-table td { font-size: 16px; }
   .openrouter-article .seo-evidence-table :is(.table-note,code) { font-size: 14px; }
@@ -261,7 +268,8 @@
 .openrouter-article .v2-row-ref :is(th,td) { color: var(--text-body); }
 .openrouter-article .v2-stack :is(th,td) { color: var(--text-body); }
 .openrouter-article .v2-stack th { color: var(--text-display); }
-.openrouter-article .v2-stack th[scope=row] { font-weight: 600; }
+.openrouter-article .v2-stack th[scope="row"] { font-weight: 600; }
+
 @media (max-width: 720px) {
   .openrouter-article main h2 { font-size: 28px; }
   .openrouter-article main h3 { font-size: 20px; }
@@ -275,7 +283,7 @@
   .openrouter-article .v2-stack tbody { display: table-row-group; }
   .openrouter-article .v2-stack tr { display: table-row; padding: 0; }
   .openrouter-article .v2-stack :is(th,td),
-  .openrouter-article .v2-stack th[scope=row] {
+  .openrouter-article .v2-stack th[scope="row"] {
     display: table-cell; padding: 14px 12px; font-size: 15px; line-height: 1.5;
     vertical-align: top; border-bottom: 1px solid var(--border-hairline);
     text-transform: none; letter-spacing: 0;
@@ -288,15 +296,16 @@
   }
   .openrouter-article .v2-saving-table { min-width: 0 !important; width: 100%; table-layout: fixed; }
   .openrouter-article .v2-saving-table :is(th,td),
-  .openrouter-article .v2-saving-table th[scope=row] { padding: 12px 6px; font-size: 14px; }
+  .openrouter-article .v2-saving-table th[scope="row"] { padding: 12px 6px; font-size: 14px; }
   .openrouter-article .v2-saving-table thead th { font-size: 13px; overflow-wrap: normal; }
   .openrouter-article .v2-saving-table th:first-child { position: static; width: 34%; min-width: 0; }
   .openrouter-article .v2-saving-table td { white-space: nowrap; }
 }
+
 @media (max-width: 720px) {
   .openrouter-article :is(.v2-matrix-table,.v2-price-table) { min-width: 0 !important; table-layout: fixed; width: 100%; }
   .openrouter-article :is(.v2-matrix-table,.v2-price-table) :is(th,td),
-  .openrouter-article :is(.v2-matrix-table,.v2-price-table) th[scope=row] { padding: 12px 8px; font-size: 14px; }
+  .openrouter-article :is(.v2-matrix-table,.v2-price-table) th[scope="row"] { padding: 12px 8px; font-size: 14px; }
   .openrouter-article :is(.v2-matrix-table,.v2-price-table) th:first-child { width: 26%; min-width: 0; max-width: none; position: static; }
 }
 
@@ -312,6 +321,7 @@
 .openrouter-article main h2 { color: #d9f2e3; }
 .openrouter-article .seo-evidence-stats strong { color: #b7e4ca; }
 .openrouter-article .seo-evidence-stats { grid-template-columns: repeat(5,minmax(0,1fr)); }
+
 @media (max-width: 720px) {
   .openrouter-article .seo-evidence-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .openrouter-article .v2-stack th:first-child { background: #183226; }
@@ -321,6 +331,7 @@
   color: #b7e4ca; font-size: 23px; line-height: 1.5; margin-bottom: 28px;
 }
 .openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child strong { font-weight: 650; color: inherit; }
+
 @media (max-width:720px) {
   .openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child { font-size: 21px; }
 }
@@ -329,10 +340,10 @@
 .openrouter-article .horizontal-overflow {
   --fade-left: 0px;
   --fade-right: 0px;
+
   overflow-x: auto;
   scrollbar-width: thin;
   scrollbar-color: #7caa90 #10231b;
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fade-left), #000 calc(100% - var(--fade-right)), transparent);
   mask-image: linear-gradient(to right, transparent, #000 var(--fade-left), #000 calc(100% - var(--fade-right)), transparent);
 }
 .openrouter-article .horizontal-overflow.can-scroll-left { --fade-left: 16px; }
@@ -352,6 +363,7 @@
   pointer-events: none;
   z-index: 2;
 }
+
 @media (forced-colors: active) {
   .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
 }
@@ -372,6 +384,7 @@
   font-size: 23px;
   line-height: 1.3;
 }
+
 @media (max-width: 720px) {
   .openrouter-article .v2-table-cta { padding: 20px 0 0; }
   .openrouter-article .v2-table-cta h3 { font-size: 22px; }
