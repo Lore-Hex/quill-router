@@ -90,7 +90,7 @@ for (const width of [1440,390]) {
  assert(focused.last && focused.visible,`footer market focus must be visible at ${width}px`);
 }
 // Narrow-phone buttons keep their approved labels inside their touch targets.
-for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy']) {
+for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy', '/neocloud-accelerator']) {
  await page.setViewportSize({width:320,height:844});
  await page.goto(base+path);await page.evaluate(()=>document.fonts.ready);
  const overflowing=await page.locator('.btns .btn').evaluateAll(elements=>elements
@@ -143,14 +143,14 @@ for (const [width,height] of [[320,568],[390,667],[390,844]]) {
  await page.evaluate(()=>scrollTo(0,120));
  assert.equal(await page.locator('.cw-hero h1').evaluate(el=>el.getBoundingClientRect().top+scrollY),top);
 }
-// Every v2 route carries both Cowork and Reserved tokens navigation.
-for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy']) {
+// Every v2 route carries Cowork, Reserved tokens and accelerator navigation.
+for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy', '/neocloud-accelerator']) {
  for (const width of [320,390,1001,1100,1280,1281,1440]) {
   await page.setViewportSize({width,height:900});await page.goto(base+path);await page.evaluate(()=>document.fonts.ready);
   assert.equal(await page.locator('#menuBtn').isVisible(),width<=1280);
   if(width>1280)assert(await page.locator('#nav a').evaluateAll(links=>links.every(link=>{const range=document.createRange();range.selectNodeContents(link);return range.getClientRects().length===1;})),'desktop nav labels must not wrap');
   if(width<=1280)await page.locator('#menuBtn').click();
-  assert.deepEqual(await page.locator('#nav a').allTextContents(),['Confidential API','Trusted Cowork','Index','Reserved tokens','Suppliers','Providers']);
+  assert.deepEqual(await page.locator('#nav a').allTextContents(),['Confidential API','Trusted Cowork','Index','Reserved tokens','Neocloud accelerator','Suppliers','Providers']);
   await page.locator('#nav [data-nav="cowork"]').click();await page.waitForURL('**/trusted-cowork');
   const current=page.locator('#nav [data-nav="cowork"]');assert.equal(await current.getAttribute('aria-current'),'page');assert.match(await current.getAttribute('class'),/on/);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
