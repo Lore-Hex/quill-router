@@ -10,7 +10,9 @@ the refusals (status, body and headers), the stored authorization and the
 log lines must be identical, except for the explicitly checked reservation
 guidance and diagnostic added in #1926, and the idempotency-key-source
 observation line added in E4 R1 (exactly once, with its exact text, on every
-request that resolved its idempotency key; never otherwise). The frozen leg's
+request that resolved its idempotency key; never otherwise), and the
+authorize affinity measurement line (exactly once, with its exact text, on
+every 200; never otherwise). The frozen leg's
 chat candidate hook applies an independent specification of the subsequently approved model
 and host context limits. Its provider hook independently requires an explicit upgraded origin
 for the new native adapters, without changing the frozen file. Reservation
@@ -319,6 +321,16 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
         if reached_idempotency_key:
             outcome["logs"].remove(observation)
         assert not any("idempotency_key_source" in message for _level, message in outcome["logs"])
+        # The affinity measurement: one line per fresh 200, never otherwise.
+        # The matrix names no cache_affinity_key, so affinity is never consulted.
+        affinity = [entry for entry in outcome["logs"] if "authorize_affinity" in entry[1]]
+        if outcome["status"] == 200:
+            region = outcome["data"]["data"]["region"]
+            assert affinity == [
+                ("INFO", f"gateway.authorize_affinity affinity=none region={region}")
+            ], outcome["logs"]
+            outcome["logs"].remove(affinity[0])
+        assert outcome["status"] == 200 or not affinity, outcome["logs"]
     error = outcome.get("detail", {}).get("error", {})
     if module is gateway and error.get("type") == "insufficient_credits":
         assert outcome["status"] == 402 and len(quotes) == 1
