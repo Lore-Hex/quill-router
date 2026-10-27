@@ -347,11 +347,6 @@ func pythonOfCase(t *testing.T, f authorizeFile, c authorizeCase) (func(http.Res
 		}
 		return answerWith(503, []byte(e.Response), "Retry-After", "1"), ClassPythonUnavailable
 	}
-	if e.Affinity != nil {
-		// G13: Python's bytes with its sessions remembered, which Go
-		// composed the cold order to measure against.
-		return answerWith(200, []byte(e.Affinity.Response)), e.Affinity.Class
-	}
 	kind := ""
 	if e.Python.Type != nil {
 		kind = *e.Python.Type
@@ -404,7 +399,7 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
 	classes := map[string]int{}
-	rowsAgree, readBack := 0, 0
+	rowsAgree, readBack, affinityAgree := 0, 0, 0
 	for _, c := range f.Cases {
 		respond, want := pythonOfCase(t, f, c)
 		h := newFullEdge(t, f, c, py, nil)
@@ -419,20 +414,8 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 			t.Errorf("%s: the enclave got %d %q, not Python's %d", c.Name, rec.Code, rec.Body.Bytes(), probe.Code)
 		}
 		got := h.edge.DecideShadowCounts()
-		if c.Expect.Affinity != nil {
-			// An affinity decision is measured apart: in no count of the
-			// cohort's (classes, fields, rows, decide, cohort).
-			if got.Affinity[want] != 1 || len(got.Affinity) != 1 || len(got.Classes) != 0 || len(got.Fields) != 0 ||
-				len(got.Rows) != 0 || len(got.Decide) != 0 || len(got.Cohort) != 0 {
-				t.Errorf("%s: affinity %v classes %v fields %v rows %v decide %v, want affinity %s alone", c.Name,
-					got.Affinity, got.Classes, got.Fields, got.Rows, got.Decide, want)
-				continue
-			}
-			classes[want]++
-			continue
-		}
-		if got.Classes[want] != 1 || len(got.Classes) != 1 || len(got.Affinity) != 0 {
-			t.Errorf("%s: classes %v affinity %v, want %s (fields %v)", c.Name, got.Classes, got.Affinity, want, got.Fields)
+		if got.Classes[want] != 1 || len(got.Classes) != 1 {
+			t.Errorf("%s: classes %v, want %s (fields %v)", c.Name, got.Classes, want, got.Fields)
 			continue
 		}
 		classes[want]++
@@ -440,10 +423,13 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 			t.Errorf("%s: agree_full with fields %v", c.Name, got.Fields)
 		}
 		if c.Expect.Outcome == "answer" && want == ClassAgreeFull {
-			if got.Rows["agree"] != 1 {
-				t.Errorf("%s: rows %v, fields %v", c.Name, got.Rows, got.Fields)
+			if got.Rows["agree"] != 1 || got.Cohort[ClassAgreeFull] != 1 {
+				t.Errorf("%s: rows %v, fields %v, cohort %v", c.Name, got.Rows, got.Fields, got.Cohort)
 			} else {
 				rowsAgree++
+				if c.Expect.Affinity != nil {
+					affinityAgree++
+				}
 			}
 			// Only sorted tags tell a read-back's bytes from an insert's.
 			if hasLabel(c.Labels, "read_back.sorted_tags") != (got.ReadBack == 1) {
@@ -466,47 +452,63 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("classes over the goldens: %v; %d row pairs agree; %d answers after a read-back", classes, rowsAgree, readBack)
-	if classes[ClassAgreeFull] != 174+5 || rowsAgree != 174 || readBack != 1 || classes[ClassPythonUnavailable] != 2 ||
-		classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 {
-		t.Fatalf("agree_full %d, rows %d, read back %d, unavailable %d: not the goldens' counts",
-			classes[ClassAgreeFull], rowsAgree, readBack, classes[ClassPythonUnavailable])
+	t.Logf("classes over the goldens: %v; %d row pairs agree (%d naming a cache_affinity_key); %d answers after a "+
+		"read-back", classes, rowsAgree, affinityAgree, readBack)
+	// A request naming a cache_affinity_key is the cohort's (§1 item 5):
+	// its cold answer is agree_full with its rows read back, like any.
+	if classes[ClassAgreeFull] != 192+5 || rowsAgree != 192 || affinityAgree != 18 || readBack != 1 ||
+		classes[ClassPythonUnavailable] != 2 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 {
+		t.Fatalf("agree_full %d, rows %d (%d with a cache affinity key), read back %d, unavailable %d: not the goldens' "+
+			"counts", classes[ClassAgreeFull], rowsAgree, affinityAgree, readBack, classes[ClassPythonUnavailable])
 	}
 }
 
-// TestAffinityIsMeasuredNeverAdmitted (G13): a request naming a
-// cache_affinity_key is composed in the cold order and never admittable;
-// Python's bytes classify as affinity_cold (the same bytes), affinity_warm
-// (Go's decision with Python's remembered endpoint promoted within its
-// model, or the one warm endpoint with fallbacks off, at its own
-// estimate), and otherwise differ with the fields that differ: an order
-// that is no promotion, a promotion across models, or a warm endpoint's
-// bytes with anything else changed.
-func TestAffinityIsMeasuredNeverAdmitted(t *testing.T) {
+// warmDiffer reports r a differ whose one field is differ.affinity_warm,
+// its rows read against Go's decision in Python's order.
+func warmDiffer(r fullResult) bool {
+	return r.class == ClassDifferAny && slices.Equal(r.fields, []string{FieldAffinityWarm}) && r.warm != nil &&
+		r.decided && r.rows
+}
+
+// TestAffinityIsDecidedInTheColdOrder (§1 item 5): a request naming a
+// cache_affinity_key is admittable with Go's cold order, as the control
+// without a key is; Python's answer with no session is agree_full, rows
+// read back; Python's answer re-ranked for a remembered endpoint (within
+// its model, or the one warm endpoint with fallbacks off, at its own
+// estimate) is a differ named differ.affinity_warm; and anything else is
+// differ with the fields that differ, never named warm: an order that is
+// no promotion, or a warm endpoint's bytes with anything else changed.
+func TestAffinityIsDecidedInTheColdOrder(t *testing.T) {
 	f := authorizeGoldens(t)
-	for _, name := range []string{"pass:body.cache_affinity:warm", "pass:body.cache_affinity:warm:fallback_models",
-		"pass:body.cache_affinity:warm:no_fallbacks"} {
+	for _, name := range []string{"answer:app_categories_empty", "answer:cache_affinity:warm",
+		"answer:cache_affinity:warm:fallback_models", "answer:cache_affinity:warm:no_fallbacks"} {
 		c := authorizeCaseNamed(t, name)
-		a := c.Expect.Affinity
 		in, _ := caseInputs(t, f, c)
 		in.Mint = Mint{} // Go's own ids: Python's are substituted
 		d := Decide(in)
-		if d.Pass != gwauth.ReasonCacheAffinity || d.ForShadow() == nil {
-			t.Fatalf("%s: pass %q", name, d.Pass)
-		}
-		if _, ok := d.Admit(); ok {
-			t.Fatalf("%s: admittable", name)
+		dec, ok := d.Admit()
+		if d.Pass != "" || !ok || dec.Affinity != (c.Expect.Affinity != nil) {
+			t.Fatalf("%s: pass %q, admittable %v", name, d.Pass, ok)
 		}
 		classOf := func(body string) fullResult { return compareFull(d, pyAnswer{status: 200, body: []byte(body)}) }
-		if r := classOf(a.ColdResponse); r.class != ClassAffinityCold || !r.affinity || r.decided || r.rows {
+		if r := classOf(c.Expect.Response); r.class != ClassAgreeFull || len(r.fields) != 0 || !r.decided || !r.rows ||
+			r.warm != nil {
 			t.Errorf("%s: the cold bytes: %+v", name, r)
 		}
-		if r := classOf(a.Response); r.class != ClassAffinityWarm || len(r.fields) != 0 || !r.affinity || r.decided || r.rows {
+		a := c.Expect.Affinity
+		if a == nil {
+			continue
+		}
+		if !slices.Equal(dec.Candidates, a.ColdCandidates) {
+			t.Errorf("%s: candidates %v, want the cold %v", name, dec.Candidates, a.ColdCandidates)
+		}
+		if r := classOf(a.Response); !warmDiffer(r) || !slices.Equal(r.warm.Candidates, a.Candidates) ||
+			r.warm.Estimate != a.Estimate {
 			t.Errorf("%s: the warm bytes: %+v", name, r)
 		}
 		// Controls: the warm bytes with the estimate off by one, or a tag
-		// changed, are differ, counted by field; so is an order that is
-		// not one endpoint promoted.
+		// changed, are differ, counted by field and not named warm; so is
+		// an order that is not one endpoint promoted.
 		for _, v := range []struct {
 			name   string
 			change func(pyjson.Object) pyjson.Object
@@ -529,7 +531,8 @@ func TestAffinityIsMeasuredNeverAdmitted(t *testing.T) {
 			if len(a.Candidates) < 3 && v.name == "the order reversed" {
 				continue
 			}
-			if r.class != ClassDifferAny || !slices.Contains(r.fields, v.field) || !r.affinity || r.decided {
+			if r.class != ClassDifferAny || !slices.Contains(r.fields, v.field) || slices.Contains(r.fields, FieldAffinityWarm) ||
+				r.warm != nil || !r.decided {
 				t.Errorf("%s: %s: %+v, want differ with %s", name, v.name, r, v.field)
 			}
 		}
@@ -558,8 +561,9 @@ func rendered(t *testing.T, d Decided, c authorizeCase, ids []string, estimate i
 		}
 		candidates = append(candidates, cand)
 	}
-	staged, err := dec.RestageWith(candidates, estimate, c.IDs.AuthorizationID, c.IDs.ReservationID,
-		dec.Input.IdempotencyKey, dec.Input.At)
+	warm := *dec
+	warm.Input.Candidates, warm.Input.Estimate = candidates, estimate
+	staged, err := warm.Restage(c.IDs.AuthorizationID, c.IDs.ReservationID, dec.Input.IdempotencyKey, dec.Input.At)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,12 +571,12 @@ func rendered(t *testing.T, d Decided, c authorizeCase, ids []string, estimate i
 	if err != nil {
 		t.Fatal(err)
 	}
-	return composed.Render(timingOfMap(c.Expect.Affinity.ColdTiming), false)
+	return composed.Render(timingOfMap(c.Expect.Timing), false)
 }
 
-// TestAffinityWarmIsPythonsRerank (G13): affinity_warm is exactly the
-// order routing_state.rank gives, every first-candidate member rendered
-// consistently. Under a provider.order naming a provider Python keeps the
+// TestAffinityWarmIsPythonsRerank (§1 item 5): differ.affinity_warm names
+// exactly the order routing_state.rank gives, every first-candidate member
+// rendered consistently. Under a provider.order naming a provider Python keeps the
 // cold order, so a promotion is differ; under the default partition a
 // second model's endpoint moved ahead of the primary model is differ;
 // under partition none it is warm (the golden); an empty provider.order
@@ -583,62 +587,62 @@ func TestAffinityWarmIsPythonsRerank(t *testing.T) {
 		c := authorizeCaseNamed(t, name)
 		in, _ := caseInputs(t, f, c)
 		d := Decide(in)
-		if d.Pass != gwauth.ReasonCacheAffinity || d.ForShadow() == nil {
+		if d.Pass != "" || d.ForShadow() == nil {
 			t.Fatalf("%s: pass %q", name, d.Pass)
 		}
 		return d, c
 	}
 	classify := func(d Decided, body []byte) fullResult { return compareFull(d, pyAnswer{status: 200, body: body}) }
 	// The control: the rendering reproduces Python's warm bytes.
-	d, c := decide("pass:body.cache_affinity:warm")
+	d, c := decide("answer:cache_affinity:warm")
 	a := c.Expect.Affinity
 	if got := rendered(t, d, c, a.Candidates, a.Estimate); !bytes.Equal(got, []byte(a.Response)) {
 		t.Fatalf("the rendering is not Python's warm bytes:\n got %s\nwant %s", got, a.Response)
 	}
 	// A provider.order: [together, fireworks, wafer] is a promotion Python
 	// would not make.
-	d, c = decide("pass:body.cache_affinity:cold:order")
+	d, c = decide("answer:cache_affinity:cold:order")
 	a = c.Expect.Affinity
 	promoted := []string{a.ColdCandidates[1], a.ColdCandidates[0], a.ColdCandidates[2]}
 	if r := classify(d, rendered(t, d, c, promoted, a.ColdEstimate)); r.class != ClassDifferAny ||
-		!slices.Contains(r.fields, "differ.candidates") || r.rows {
+		!slices.Contains(r.fields, "differ.candidates") || r.warm != nil {
 		t.Errorf("under a provider.order: %+v, want differ", r)
 	}
 	// The default partition: the second model's endpoint ahead of the
 	// primary model's, every member consistent, is differ; its own golden
 	// (within its model's run) is warm.
-	d, c = decide("pass:body.cache_affinity:warm:fallback_models")
+	d, c = decide("answer:cache_affinity:warm:fallback_models")
 	a = c.Expect.Affinity
 	across := slices.Concat([]string{a.ColdCandidates[3]}, a.ColdCandidates[:3], a.ColdCandidates[4:])
 	if r := classify(d, rendered(t, d, c, across, a.ColdEstimate)); r.class != ClassDifferAny ||
-		!slices.Contains(r.fields, "differ.candidates") || r.rows {
+		!slices.Contains(r.fields, "differ.candidates") || r.warm != nil {
 		t.Errorf("across models under the default partition: %+v, want differ", r)
 	}
-	if r := classify(d, []byte(a.Response)); r.class != ClassAffinityWarm {
-		t.Errorf("within the model's run: %+v, want affinity_warm", r)
+	if r := classify(d, []byte(a.Response)); !warmDiffer(r) {
+		t.Errorf("within the model's run: %+v, want differ.affinity_warm", r)
 	}
 	// Partition none: the same move is Python's order (the golden); the
 	// within-run order is then not.
-	d, c = decide("pass:body.cache_affinity:warm:partition_none:fallback_models")
+	d, c = decide("answer:cache_affinity:warm:partition_none:fallback_models")
 	a = c.Expect.Affinity
 	if a.Candidates[0] == a.ColdCandidates[0] {
 		t.Fatalf("the partition none golden did not move across models: %v", a.Candidates)
 	}
-	if r := classify(d, []byte(a.Response)); r.class != ClassAffinityWarm || len(r.fields) != 0 {
-		t.Errorf("partition none: %+v, want affinity_warm", r)
+	if r := classify(d, []byte(a.Response)); !warmDiffer(r) {
+		t.Errorf("partition none: %+v, want differ.affinity_warm", r)
 	}
 	withinRun := slices.Concat(a.ColdCandidates[:1], []string{a.ColdCandidates[2]}, a.ColdCandidates[1:2],
 		a.ColdCandidates[3:])
-	if r := classify(d, rendered(t, d, c, withinRun, a.ColdEstimate)); r.class != ClassDifferAny {
+	if r := classify(d, rendered(t, d, c, withinRun, a.ColdEstimate)); r.class != ClassDifferAny || r.warm != nil {
 		t.Errorf("partition none, within the run: %+v, want differ", r)
 	}
 	// An empty provider.order names no provider.
-	for _, name := range []string{"pass:body.cache_affinity:warm:empty_order",
-		"pass:body.cache_affinity:warm:no_fallbacks:empty_order",
-		"pass:body.cache_affinity:warm:top_level_no_fallbacks:empty_order"} {
+	for _, name := range []string{"answer:cache_affinity:warm:empty_order",
+		"answer:cache_affinity:warm:no_fallbacks:empty_order",
+		"answer:cache_affinity:warm:top_level_no_fallbacks:empty_order"} {
 		d, c := decide(name)
-		if r := classify(d, []byte(c.Expect.Affinity.Response)); r.class != ClassAffinityWarm || len(r.fields) != 0 {
-			t.Errorf("%s: %+v, want affinity_warm", name, r)
+		if r := classify(d, []byte(c.Expect.Affinity.Response)); !warmDiffer(r) {
+			t.Errorf("%s: %+v, want differ.affinity_warm", name, r)
 		}
 	}
 }
@@ -649,7 +653,7 @@ func TestAffinityWarmIsPythonsRerank(t *testing.T) {
 // provider.sort.partition is none.
 func TestRerankReadsTheOrderAndThePartition(t *testing.T) {
 	f := authorizeGoldens(t)
-	in, _ := caseInputs(t, f, authorizeCaseNamed(t, "pass:body.cache_affinity:warm"))
+	in, _ := caseInputs(t, f, authorizeCaseNamed(t, "answer:cache_affinity:warm"))
 	for _, v := range []struct {
 		provider         string
 		ordered, byModel bool
@@ -677,49 +681,162 @@ func TestRerankReadsTheOrderAndThePartition(t *testing.T) {
 	}
 }
 
-// TestAffinityIsCountedApart (G13, §11): an affinity result, whatever its
-// class, is in no count the I2 gates read (classes, fields, rows, decide,
-// cohort, read_back): a warm answer with a tag changed is affinity's
-// differ, with no row read back; the count line carries it under
-// affinity= alone.
-func TestAffinityIsCountedApart(t *testing.T) {
-	f := authorizeGoldens(t)
-	c := authorizeCaseNamed(t, "pass:body.cache_affinity:warm")
-	drifted := mutated(t, c.Expect.Affinity.Response, func(o pyjson.Object) pyjson.Object {
-		return setMember(o, "tags", pyjson.Object{{Key: "x", Value: "y"}})
-	})
-	h := newFullEdge(t, f, c, nil, nil)
-	h.answer(answerWith(200, drifted))
-	h.rows.by[c.IDs.AuthorizationID] = store.AuthorizationForCompare{}
-	h.send(t, c)
-	got := h.edge.DecideShadowCounts()
-	if got.Affinity[ClassDifferAny] != 1 || len(got.Classes) != 0 || len(got.Fields) != 0 || len(got.Rows) != 0 ||
-		len(got.Decide) != 0 || len(got.Cohort) != 0 || got.ReadBack != 0 || h.rows.reads.Load() != 0 {
-		t.Fatalf("counts %+v, rows read %d", got, h.rows.reads.Load())
+// warmRows are Python's rows for a warm answer: the cold golden rows with
+// the authorization's first candidate and candidate lists those of
+// Python's warm order (an order within the same model, at the same
+// estimate).
+func warmRows(t *testing.T, c authorizeCase) store.AuthorizationForCompare {
+	t.Helper()
+	a := c.Expect.Affinity
+	rows := storedRows(t, c)
+	tree, err := pyjson.Decode([]byte(rows.Authorization.Payload.StringVal))
+	if err != nil {
+		t.Fatal(err)
 	}
-	h.edge.full.flush()
-	logs := h.logs.all()
-	if !strings.Contains(logs, "agree_full=0 differ=0 would_admit_python_refused=0 read_back=0 classes={} fields={} "+
-		"rows={} decide={} cohort={} affinity={\"differ\":1}") {
-		t.Fatalf("the summary: %s", logs)
+	payload := tree.(pyjson.Object)
+	first := strings.SplitN(strings.TrimPrefix(a.Candidates[0], memberOf(payload, "model_id").(string)+"@"), "/", 2)[0]
+	ids := make([]any, len(a.Candidates))
+	for i, id := range a.Candidates {
+		ids[i] = id
+	}
+	payload = setMember(setMember(setMember(payload, "candidate_endpoint_ids", ids), "endpoint_id", a.Candidates[0]),
+		"provider", first)
+	raw, err := pyjson.Dumps(payload, pyjson.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows.Authorization.Payload.StringVal, rows.Authorization.Provider = string(raw), first
+	return rows
+}
+
+// TestAWarmRerankIsADifferWithItsRowsRead (§1 item 5, §11): Python's warm
+// answer to a request naming a cache_affinity_key is counted as any
+// cohort answer is: a differ with the one field differ.affinity_warm, in
+// classes, cohort and decide, and its rows read back against Go's decision
+// in Python's order (they agree). The control: the same answer over rows
+// in Go's cold order reads them as differing, so the read compared Python's
+// order. The count line names the warm differ among the fields, with no
+// count kept apart.
+func TestAWarmRerankIsADifferWithItsRowsRead(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:cache_affinity:warm")
+	for _, v := range []struct {
+		name string
+		rows store.AuthorizationForCompare
+		want map[string]int
+	}{
+		{"rows in Python's order", warmRows(t, c), map[string]int{"agree": 1}},
+		{"rows in Go's cold order", storedRows(t, c), map[string]int{"differ": 1}},
+	} {
+		h := newFullEdge(t, f, c, nil, nil)
+		h.answer(answerWith(200, []byte(c.Expect.Affinity.Response)))
+		h.rows.by[c.IDs.AuthorizationID] = v.rows
+		h.send(t, c)
+		got := h.edge.DecideShadowCounts()
+		if !maps.Equal(got.Classes, map[string]int{ClassDifferAny: 1}) || !maps.Equal(got.Cohort, got.Classes) ||
+			!maps.Equal(got.Decide, map[string]int{"on": 1}) || !maps.Equal(got.Rows, v.want) ||
+			got.Fields[FieldAffinityWarm] != 1 || h.rows.reads.Load() != 1 {
+			t.Fatalf("%s: counts %+v, rows read %d", v.name, got, h.rows.reads.Load())
+		}
+		if v.want["agree"] == 1 && len(got.Fields) != 1 {
+			t.Errorf("%s: fields %v, want %s alone", v.name, got.Fields, FieldAffinityWarm)
+		}
+		if v.want["differ"] == 1 && got.Fields["row.provider"] != 1 {
+			t.Errorf("%s: fields %v, want the provider's row difference", v.name, got.Fields)
+		}
+		h.edge.full.flush()
+		logs := h.logs.all()
+		if v.want["agree"] == 1 && !strings.Contains(logs, "agree_full=0 differ=1 would_admit_python_refused=0 "+
+			`read_back=0 classes={"differ":1} fields={"differ.affinity_warm":1} rows={"agree":1} decide={"on":1} `+
+			`cohort={"differ":1}`) || strings.Contains(logs, "affinity=") {
+			t.Fatalf("%s: the summary: %s", v.name, logs)
+		}
 	}
 }
 
-// TestAnAffinityRequestPassedBeforeTheComposeIsAffinitys (§11): a request
-// naming a cache_affinity_key that passes before the compose, here on a
-// cold key cache, is counted affinity.stale.key, in no class the cohort's
-// stale and followed figures read; the same pass on a request without the
-// key is stale.key.
-func TestAnAffinityRequestPassedBeforeTheComposeIsAffinitys(t *testing.T) {
+// TestAWarmRerankAfterARereadIsCountedReadBack (§6, §11): with the key's
+// stored tags out of order, Python's warm 200 answered from a read-back
+// (tags sorted) is Go's decision in Python's order rendered after a
+// read-back: a differ named differ.affinity_warm, counted read_back as a
+// cold answer from a read-back is, its rows read back and agreeing.
+func TestAWarmRerankAfterARereadIsCountedReadBack(t *testing.T) {
 	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:cache_affinity:warm")
+	keyBody := strings.Replace(*c.Key.KeyBody, `"usage_microdollars":`, `"tags":{"zeta":"1","alpha":"2"},"usage_microdollars":`, 1)
+	if keyBody == *c.Key.KeyBody || strings.Count(keyBody, `"tags":`) != 1 {
+		t.Fatal("the key body is not the one this test stores tags in")
+	}
+	c.Key.KeyBody = &keyBody
+	in, _ := caseInputs(t, f, c)
+	d := Decide(in)
+	dec, ok := d.Admit()
+	if !ok {
+		t.Fatalf("pass %q", d.Pass)
+	}
+	a := c.Expect.Affinity
+	byID := map[string]gwauth.Candidate{}
+	for _, cand := range dec.Input.Candidates {
+		byID[cand.EndpointID] = cand
+	}
+	warm := *dec
+	warm.Input.Candidates, warm.Input.Estimate = nil, a.Estimate
+	for _, id := range a.Candidates {
+		warm.Input.Candidates = append(warm.Input.Candidates, byID[id])
+	}
+	staged, err := warm.Restage(c.IDs.AuthorizationID, c.IDs.ReservationID, dec.Input.IdempotencyKey, dec.Input.At)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composed, err := staged.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inserted, reread := composed.Render(c.Expect.timing(), false), composed.Render(c.Expect.timing(), true)
+	if bytes.Equal(inserted, reread) {
+		t.Fatal("the read-back rendering is the inserted one: the tags did not sort")
+	}
+	rows := warmRows(t, c)
+	tree, err := pyjson.Decode([]byte(rows.Authorization.Payload.StringVal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := append(tree.(pyjson.Object), pyjson.Member{Key: "tags",
+		Value: pyjson.Object{{Key: "alpha", Value: "2"}, {Key: "zeta", Value: "1"}}})
+	raw, err := pyjson.Dumps(payload, pyjson.Options{SortKeys: true, EnsureASCII: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows.Authorization.Payload.StringVal = string(raw)
 	for _, v := range []struct {
 		name     string
-		affinity bool
+		body     []byte
+		readBack int
 	}{
-		{"pass:body.cache_affinity:warm", true},
-		{"answer:app_categories_empty", false},
+		{"as inserted", inserted, 0},
+		{"after a read-back", reread, 1},
 	} {
-		c := authorizeCaseNamed(t, v.name)
+		h := newFullEdge(t, f, c, nil, nil)
+		h.answer(answerWith(200, v.body))
+		h.rows.by[c.IDs.AuthorizationID] = rows
+		h.send(t, c)
+		got := h.edge.DecideShadowCounts()
+		if !maps.Equal(got.Classes, map[string]int{ClassDifferAny: 1}) ||
+			!maps.Equal(got.Fields, map[string]int{FieldAffinityWarm: 1}) ||
+			!maps.Equal(got.Rows, map[string]int{"agree": 1}) || got.ReadBack != v.readBack {
+			t.Errorf("%s: counts %+v", v.name, got)
+		}
+	}
+}
+
+// TestAnAffinityRequestThatPassesIsCountedAsAnyOther (§11): a request
+// naming a cache_affinity_key that passes, on a cold key cache or on a
+// header after the parse, is counted in classes as the same pass of a
+// request without the key is (the stale and followed figures, and the
+// settlement header pass share, read them), whatever Python answered.
+func TestAnAffinityRequestThatPassesIsCountedAsAnyOther(t *testing.T) {
+	f := authorizeGoldens(t)
+	for _, name := range []string{"answer:cache_affinity:warm", "answer:app_categories_empty"} {
+		c := authorizeCaseNamed(t, name)
 		h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) {
 			cold, err := gwstate.NewCache(gwstate.CacheConfig{Reader: &fakeWorld{c: c, slow: time.Second}})
 			if err != nil {
@@ -730,121 +847,23 @@ func TestAnAffinityRequestPassedBeforeTheComposeIsAffinitys(t *testing.T) {
 		})
 		h.answer(answerWith(200, []byte(`{"data":{"idempotent_replay":false}}`)))
 		h.send(t, c)
-		got := h.edge.DecideShadowCounts()
-		want := map[string]int{ClassStale + ".key": 1}
-		if v.affinity && (!maps.Equal(got.Affinity, want) || len(got.Classes) != 0) ||
-			!v.affinity && (!maps.Equal(got.Classes, want) || len(got.Affinity) != 0) {
-			t.Errorf("%s: classes %v affinity %v, want %v under %s", v.name, got.Classes, got.Affinity, want,
-				map[bool]string{true: "affinity", false: "classes"}[v.affinity])
+		if got := h.edge.DecideShadowCounts(); !maps.Equal(got.Classes, map[string]int{ClassStale + ".key": 1}) {
+			t.Errorf("%s on a cold cache: classes %v", name, got.Classes)
 		}
-	}
-}
-
-// TestAnAffinityRequestPassedOnAHeaderIsAffinitys (§11): a request naming
-// a cache_affinity_key that the request half passes on a header after
-// the parse read the key (X-TR-Settlement-Mode, X-Quill-Video-Allowed-
-// Providers) is affinity's, whatever Python answered: never in classes,
-// so never in followed. The same headers on a request without the key
-// are the cohort's passes.
-func TestAnAffinityRequestPassedOnAHeaderIsAffinitys(t *testing.T) {
-	f := authorizeGoldens(t)
-	for _, v := range []struct {
-		name, header, value, reason string
-		affinity                    bool
-		status                      int
-	}{
-		{"pass:body.cache_affinity:warm", "X-TR-Settlement-Mode", "async-v1", "header.settlement_async", true, 200},
-		{"pass:body.cache_affinity:warm", "X-TR-Settlement-Mode", "async-v1", "header.settlement_async", true, 403},
-		{"pass:body.cache_affinity:warm", "X-Quill-Video-Allowed-Providers", "wafer", "header.video_providers", true, 200},
-		{"answer:app_categories_empty", "X-TR-Settlement-Mode", "async-v1", "header.settlement_async", false, 200},
-	} {
-		c := authorizeCaseNamed(t, v.name)
-		c.Request.Headers = append(slices.Clone(c.Request.Headers), [2]string{v.header, v.value})
-		h := newFullEdge(t, f, c, nil, nil)
-		class := ClassPythonAnsweredGoPassed + "." + v.reason
-		if v.status == 200 {
-			h.answer(answerWith(200, []byte(`{"data":{"idempotent_replay":false}}`)))
-		} else {
-			h.answer(answerWith(v.status, errorBody(v.status, "forbidden", "refused")))
-			class = ClassGoPassed + "." + v.reason
-		}
-		h.send(t, c)
-		got := h.edge.DecideShadowCounts()
-		want := map[string]int{class: 1}
-		if v.affinity && (!maps.Equal(got.Affinity, want) || len(got.Classes) != 0) ||
-			!v.affinity && (!maps.Equal(got.Classes, want) || len(got.Affinity) != 0) {
-			t.Errorf("%s with %s on Python's %d: classes %v affinity %v, want %v under %s", v.name, v.header, v.status,
-				got.Classes, got.Affinity, want, map[bool]string{true: "affinity", false: "classes"}[v.affinity])
-		}
-	}
-}
-
-// TestAffinityNeverSpendsTheRowReadBudget (§11): five cold affinity 200s
-// within the read-back limiter's burst, then an ordinary answer whose
-// stored row carries another fingerprint: the ordinary row is still read
-// and its fingerprint difference counted; the affinity answers read
-// nothing.
-func TestAffinityNeverSpendsTheRowReadBudget(t *testing.T) {
-	f := authorizeGoldens(t)
-	cold, ordinary := authorizeCaseNamed(t, "pass:body.cache_affinity"), authorizeCaseNamed(t, "answer:app_categories_empty")
-	h := newFullEdge(t, f, cold, nil, func(cfg *DecideShadowConfig) { cfg.ReadsPerSecond = 5 })
-	h.answer(answerWith(200, []byte(cold.Expect.Affinity.ColdResponse)))
-	for range 5 {
-		h.send(t, cold)
-	}
-	rows := storedRows(t, ordinary)
-	rows.Authorization.IdempotencyFingerprint = spanner.NullString{StringVal: strings.Repeat("0", 64), Valid: true}
-	h.rows.by[ordinary.IDs.AuthorizationID] = rows
-	h.answer(answerWith(200, []byte(ordinary.Expect.Response)))
-	h.send(t, ordinary)
-	got := h.edge.DecideShadowCounts()
-	if got.Affinity[ClassAffinityCold] != 5 || !maps.Equal(got.Classes, map[string]int{ClassAgreeFull: 1}) ||
-		got.Fields["row.idempotency_fingerprint"] != 1 || h.rows.reads.Load() != 1 ||
-		!maps.Equal(got.Rows, map[string]int{"differ": 1}) {
-		t.Fatalf("affinity %v classes %v fields %v rows %v, %d reads", got.Affinity, got.Classes, got.Fields, got.Rows,
-			h.rows.reads.Load())
-	}
-}
-
-// TestAnAffinityRequestPassedByTheParseIsAffinitys (§11): a body naming a
-// cache_affinity_key that the parse passes after reading the key (a tag
-// outside ASCII, an attribution, a routing input) is affinity's under
-// Decide and the comparison, whatever Python answered; the same body
-// without the key is the cohort's.
-func TestAnAffinityRequestPassedByTheParseIsAffinitys(t *testing.T) {
-	f := authorizeGoldens(t)
-	c := authorizeCaseNamed(t, "pass:body.cache_affinity:warm")
-	key := strings.Repeat("a", 64)
-	for _, v := range []struct {
-		name, body, reason string
-		affinity           bool
-	}{
-		{"a tag outside ASCII", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","cache_affinity_key":"` + key +
-			`","tags":{"x":"é"}}`, gwauth.ReasonTags, true},
-		{"a referer", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","cache_affinity_key":"` + key +
-			`","http_referer":"https://user@example.com"}`, gwauth.ReasonReferer, true},
-		{"a routing input", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","cache_affinity_key":"` + key +
-			`","estimated_input_tokens":9223372036854775808}`, gwauth.ReasonEvaluatorInput, true},
-		{"the tag without the key", `{"model":"z-ai/glm-5.3","api_key_lookup_hash":"LOOKUP","tags":{"x":"é"}}`,
-			gwauth.ReasonTags, false},
-	} {
-		in, _ := caseInputs(t, f, c)
-		in.Request.Body = []byte(strings.Replace(v.body, "LOOKUP", c.Facts.Key.LookupHash, 1))
-		// E1 verified the boot over this body (the verdict is E1's, not
-		// Decide's to recompute).
-		in.Request.Boot = BootSeen{Verdict: Verified, Kid: in.Request.Boot.Kid, Found: true, Boot: in.Request.Boot.Boot}
-		d := Decide(in)
-		if d.Pass != v.reason || d.Affinity != v.affinity || d.ForShadow() != nil {
-			t.Errorf("%s: pass %q affinity %v, want %q %v", v.name, d.Pass, d.Affinity, v.reason, v.affinity)
-			continue
-		}
-		for _, a := range []pyAnswer{
-			{status: 200, body: []byte(`{"data":{"idempotent_replay":false}}`)},
-			{status: 403, body: errorBody(403, "forbidden", "refused")},
-			{why: "wait"},
-		} {
-			if r := compareFull(d, a); r.affinity != v.affinity || r.decided || r.rows {
-				t.Errorf("%s on Python's %d: %+v, want affinity %v", v.name, a.status, r, v.affinity)
+		for _, status := range []int{200, 403} {
+			c := c
+			c.Request.Headers = append(slices.Clone(c.Request.Headers), [2]string{"X-TR-Settlement-Mode", "async-v1"})
+			h := newFullEdge(t, f, c, nil, nil)
+			class := ClassPythonAnsweredGoPassed + "." + gwauth.ReasonSettlementAsync
+			if status == 200 {
+				h.answer(answerWith(200, []byte(`{"data":{"idempotent_replay":false}}`)))
+			} else {
+				h.answer(answerWith(status, errorBody(status, "forbidden", "refused")))
+				class = ClassGoPassed + "." + gwauth.ReasonSettlementAsync
+			}
+			h.send(t, c)
+			if got := h.edge.DecideShadowCounts(); !maps.Equal(got.Classes, map[string]int{class: 1}) {
+				t.Errorf("%s with the settlement header on Python's %d: classes %v", name, status, got.Classes)
 			}
 		}
 	}
@@ -1336,7 +1355,7 @@ func TestTheDecideShadowLogsCountsAlone(t *testing.T) {
 	}
 	if !strings.Contains(logs, "fastpath edge decide shadow: snapshot=golden-snapshot policy=golden-policy agree_full=1 "+
 		"differ=0 would_admit_python_refused=0 read_back=0") || !strings.Contains(logs, `decide={"on":1}`) ||
-		!strings.Contains(logs, `rows={"agree":1}`) || !strings.Contains(logs, ` affinity={}`) {
+		!strings.Contains(logs, `rows={"agree":1}`) || !strings.Contains(logs, `cohort={"agree_full":1}`) {
 		t.Fatalf("the summary: %s", logs)
 	}
 	for _, secret := range []string{c.Facts.Key.LookupHash, c.Facts.Key.Hash, c.IDs.AuthorizationID, "z-ai/glm-5.3"} {

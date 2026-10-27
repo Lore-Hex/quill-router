@@ -51,9 +51,10 @@ type Request struct {
 	EstimatedInputTokens int64 // 1 when omitted
 	OutputEstimate       int64 // max_tokens, max_completion_tokens, max_output_tokens, else 512
 	RequestedRegion      *string
-	// CacheAffinity is whether the body names a cache_affinity_key
-	// (body.cache_affinity, the decide pipeline's gate after the compose:
-	// Python's order may be a remembered session's, which Go cannot read).
+	// CacheAffinity is whether the body names a cache_affinity_key. Go
+	// decides such a request in the cold order (§1 item 5); the shadow
+	// names a Python answer that is that order re-ranked for a session
+	// Python remembered (edge/affinity.go).
 	CacheAffinity bool
 	// Async is what authorize_additions reads of the request and its
 	// headers (docs/design/fast-admission-e2-g15-async.md §3.1), recorded
@@ -68,15 +69,9 @@ type Request struct {
 	inferenceReceipt bool
 }
 
-// Pass is why a request goes to Python; "" is none. Affinity is whether
-// the body, as the strict parse read it, names a cache_affinity_key: set
-// on a pass the request half makes after the parse (a cohort or header
-// reason), so the shadow counts the request as an affinity one wherever
-// it passed (§11, G13); a body the parse refuses before it reads the key
-// is nobody's.
+// Pass is why a request goes to Python; "" is none.
 type Pass struct {
-	Reason   string
-	Affinity bool
+	Reason string
 }
 
 // Passed reports whether the request goes to Python.
@@ -110,18 +105,10 @@ func ParseRequest(body []byte, h Headers) (Request, Pass) {
 		return Request{}, p
 	}
 	if p := r.cohort(object, h); p.Passed() {
-		p.Affinity = r.CacheAffinity
 		return Request{}, p
 	}
 	return r, Pass{}
 }
-
-// Which passes carry the affinity fact: build's own, once the key is read
-// (the declared fields dumped; the key identifier, tags, attribution and
-// routing inputs are checked after), and the cohort's and headers' above.
-// A body the parse refuses before that (the content type, the decode, a
-// duplicate key, a float, a lax type, an ambiguous strip, a dict key, a
-// field the schema refuses) is nobody's.
 
 // parseBody is ParseRequest up to body.refused: the content type, the
 // decode and the schema.
@@ -464,17 +451,9 @@ var literalModalities = map[string]bool{"text": true, "image": true, "audio": tr
 
 // build checks the schema's constraints and _gateway_authorize_body's
 // validators on values of the exact types, and holds the result.
-func build(object pyjson.Object, values map[string]any) (r Request, p Pass) {
+func build(object pyjson.Object, values map[string]any) (Request, Pass) {
+	var r Request
 	refuse := func() (Request, Pass) { return Request{}, passFor(ReasonRefused) }
-	// From the moment the key is read (below, once the declared fields are
-	// dumped), every pass build returns carries it (Pass.Affinity), so the
-	// shadow counts the request as an affinity one wherever it passed.
-	affinity := false
-	defer func() {
-		if p.Passed() {
-			p.Affinity = affinity
-		}
-	}()
 	dumped := map[string]any{}
 	for _, m := range object {
 		f, isDeclared := declared[m.Key]
@@ -537,8 +516,6 @@ func build(object pyjson.Object, values map[string]any) (r Request, p Pass) {
 		}
 		return nil
 	}
-	// The key is read: the schema's pattern (hex64) admits no empty one.
-	affinity = str("cache_affinity_key") != nil
 	// The model validator: a key identifier is required.
 	keyHash, lookup := str("api_key_hash"), str("api_key_lookup_hash")
 	if (keyHash == nil || *keyHash == "") && (lookup == nil || *lookup == "") {
@@ -556,7 +533,8 @@ func build(object pyjson.Object, values map[string]any) (r Request, p Pass) {
 	}
 	r.BodyIdempotencyKey, r.InvocationNonce, r.RequestedRegion = str("idempotency_key"), str("invocation_nonce"),
 		str("region")
-	r.CacheAffinity = affinity
+	// The schema's pattern (hex64) admits no empty key.
+	r.CacheAffinity = str("cache_affinity_key") != nil
 	cost, _ := new(big.Int).SetString(string(dumped["additional_cost_reservation_microdollars"].(json.Number)), 10)
 	r.additionalCost = cost.Sign() != 0
 	r.inferenceReceipt = dumped["inference_receipt"].(bool)

@@ -240,7 +240,8 @@ func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 // TestEveryGoldenCaseThroughTheDecidePath: with the decide path on, every
 // answered case is answered by the edge with Python's 200 byte for byte
 // (timing values aside), Python never reached, its rows inserted as Python
-// wrote them, and nothing refunded; the unavailable case is Python's 503
+// wrote them, and nothing refunded (a request naming a cache_affinity_key
+// among them, in Python's cold order, §1 item 5); the unavailable case is Python's 503
 // exactly, Retry-After 1, the hold kept, counted by its insert's code; every
 // pass case reaches Python
 // with its §3 reason counted, the owner asked only for a reason after the
@@ -249,7 +250,7 @@ func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
-	answered, unavailable, passed, refunded := 0, 0, 0, 0
+	answered, unavailable, passed, refunded, affinity := 0, 0, 0, 0, 0
 	unavailableCodes := map[string]int{}
 	for _, c := range f.Cases {
 		h := newDecideEdge(t, f, c, py)
@@ -296,6 +297,9 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 			}
 			if len(refunds) != 0 || counts.Answered != 1 || (counts.ReadBack == 1) != (outcome == store.Landed) {
 				t.Errorf("%s: refunds %d, counts %+v", c.Name, len(refunds), counts)
+			}
+			if c.Expect.Affinity != nil {
+				affinity++
 			}
 			answered++
 		case c.Expect.Outcome == "unavailable":
@@ -345,9 +349,11 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 			t.Errorf("%s: %d still in flight", c.Name, n)
 		}
 	}
-	t.Logf("%d answered, %d unavailable, %d passed (%d refunded)", answered, unavailable, passed, refunded)
-	if answered != 174 || unavailable != 3 || refunded != 7 {
-		t.Fatalf("answered %d, unavailable %d, refunded %d: not the goldens' counts", answered, unavailable, refunded)
+	t.Logf("%d answered (%d naming a cache_affinity_key), %d unavailable, %d passed (%d refunded)", answered, affinity,
+		unavailable, passed, refunded)
+	if answered != 192 || affinity != 18 || unavailable != 3 || refunded != 7 {
+		t.Fatalf("answered %d (%d with a cache affinity key), unavailable %d, refunded %d: not the goldens' counts",
+			answered, affinity, unavailable, refunded)
 	}
 	// The goldens' three unavailable answers, a code each: the clock ahead
 	// of Spanner's among them (§8.4).

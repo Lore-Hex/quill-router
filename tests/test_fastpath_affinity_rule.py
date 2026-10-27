@@ -67,7 +67,7 @@ def test_every_golden_affinity_answer_is_ranks_order() -> None:
 
 
 def test_a_promotion_under_a_provider_order_is_refused() -> None:
-    case = _affinity_cases()["pass:body.cache_affinity:cold:order"]
+    case = _affinity_cases()["answer:cache_affinity:cold:order"]
     cold = case["expect"]["affinity"]["cold_candidates"]
     forbidden = _reordered(case, [cold[1], cold[0], cold[2]])
     with pytest.raises(AssertionError, match="not rank's order"):
@@ -77,14 +77,14 @@ def test_a_promotion_under_a_provider_order_is_refused() -> None:
 
 def test_a_move_across_models_under_the_default_partition_is_refused() -> None:
     cases = _affinity_cases()
-    case = cases["pass:body.cache_affinity:warm:fallback_models"]
+    case = cases["answer:cache_affinity:warm:fallback_models"]
     cold = case["expect"]["affinity"]["cold_candidates"]
     across = _reordered(case, [cold[3], *cold[:3], *cold[4:]])
     with pytest.raises(AssertionError, match="not rank's order"):
         _classify(case, across)
     # Under partition none the same move is rank's order (the golden), and
     # the within-run order is then refused.
-    none = cases["pass:body.cache_affinity:warm:partition_none:fallback_models"]
+    none = cases["answer:cache_affinity:warm:partition_none:fallback_models"]
     assert _classify(none, none["expect"]["affinity"]["response"]) == "affinity_warm"
     cold = none["expect"]["affinity"]["cold_candidates"]
     within = _reordered(none, [cold[0], cold[3], cold[1], cold[2], cold[4]])
@@ -93,7 +93,7 @@ def test_a_move_across_models_under_the_default_partition_is_refused() -> None:
 
 
 def test_an_expired_or_overwritten_session_keeps_the_cold_order() -> None:
-    case = _affinity_cases()["pass:body.cache_affinity:warm"]
+    case = _affinity_cases()["answer:cache_affinity:warm"]
     a = case["expect"]["affinity"]
     with pytest.raises(AssertionError, match="not rank's order"):
         _classify(case, a["response"], sessions=[[a["sessions"][0][0], 600.0]])
@@ -105,7 +105,7 @@ def test_an_expired_or_overwritten_session_keeps_the_cold_order() -> None:
 
 
 def test_anything_but_the_first_candidates_members_is_refused() -> None:
-    case = _affinity_cases()["pass:body.cache_affinity:warm"]
+    case = _affinity_cases()["answer:cache_affinity:warm"]
     warm = json.loads(case["expect"]["affinity"]["response"])
     warm["data"]["tags"] = {"x": "y"}
     with pytest.raises(AssertionError, match="changed \\['tags'\\]"):
@@ -163,7 +163,7 @@ def test_async_members_change_only_with_the_candidate_set() -> None:
     b = same["expect"]["affinity"]
     assert set(b["candidates"]) == set(b["cold_candidates"]) and b["candidates"] != b["cold_candidates"]
     assert _classify(same, b["response"], expected_async=same_expected) == "affinity_warm"
-    plain = _affinity_cases()["pass:body.cache_affinity:warm:fallback_models"]
+    plain = _affinity_cases()["answer:cache_affinity:warm:fallback_models"]
     warm = json.loads(plain["expect"]["affinity"]["response"])
     warm["data"]["async_eligible"] = False
     with pytest.raises(AssertionError, match="async members, and no way to rebuild them"):
