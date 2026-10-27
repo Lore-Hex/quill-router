@@ -74,6 +74,34 @@ def test_affinity_is_bounded_isolated_and_never_reintroduces_filtered_routes():
     assert state.session_count == 2
 
 
+def test_rank_reports_affinity_outcome_without_changing_the_order():
+    from trusted_router.routing_state import RoutingState
+
+    state = RoutingState()
+    routes = candidates()  # cold order: slow, fast
+    prefs = provider_route_preferences({})
+    key = ("tenant", "requested-model", "us", "opaque-session")
+
+    def outcome(session, now, preferences=prefs):
+        ranked, affinity = state.rank_with_affinity(
+            routes, preferences, region="us", session=session, now=now
+        )
+        assert ranked == state.rank(routes, preferences, region="us", session=session, now=now)
+        return [endpoint.id for _, endpoint in ranked], affinity
+
+    assert outcome(None, 101) == (["slow", "fast"], "none")
+    assert outcome(key, 101) == (["slow", "fast"], "cold")
+    state.remember(key, "slow", now=100)
+    assert outcome(key, 101) == (["slow", "fast"], "warm_same")
+    state.remember(key, "fast", now=100)
+    assert outcome(key, 101) == (["fast", "slow"], "warm_promoted")
+    # An explicit order bypasses affinity, so it is not consulted.
+    assert outcome(key, 101, replace(prefs, order=("anthropic",))) == (["slow", "fast"], "none")
+    # 601 s after the last success the session is expired: cold.
+    assert outcome(key, 701) == (["slow", "fast"], "cold")
+    assert state.session_count == 0
+
+
 def test_throughput_percentiles_use_lower_tail_and_require_all_thresholds():
     from trusted_router.routing_state import RoutingState
 

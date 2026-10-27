@@ -11,8 +11,18 @@ from trusted_router.async_settle_shadow_journal import CONTROL_KIND, Row
 from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
 
 CADENCE = 4.
-WINDOW = 120.
-THRESHOLD = 2
+# The breaker uses the window of the alert it pre-empts, "TR Spanner: API
+# failures" (ALIGN_RATE over 300 s, summed over the instance, more than 1/min,
+# for 300 s). Four qualifying outcomes in 300 s (0.8/min) trip while this one
+# process is still strictly below that threshold, leaving room for the rest of
+# the fleet. The healthy pattern seen in canary 4 (2026-10-26: three such
+# failures fleet-wide in 40 minutes, two of them in one minute) does not trip;
+# the former two-in-120-seconds rule stopped that canary at a rate thirteen
+# times below the alert's. A per-process breaker cannot see failures spread
+# thinly across many processes: that case is the alert's own, and the operator
+# stop CLI (and an alert-driven stop, separately) is its path.
+WINDOW = 300.
+THRESHOLD = 4
 logger = logging.getLogger(__name__)
 
 
