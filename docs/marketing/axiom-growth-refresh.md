@@ -51,7 +51,7 @@ Manager with dedicated worker access and authorized operator access. No personal
 image. Operator provisioning uses the existing local login; it is never scheduled.
 The Axiom token expires in one year and must be rotated before expiry.
 
-The job uses 1 CPU and 512 MiB only while running. ClickHouse queries use at most
+The job uses 1 CPU and 1 GiB only while running. ClickHouse queries use at most
 two threads, 512 MiB and 45 seconds. Incremental export avoids reingesting every
 historical journey each run. No data goes to Google Ads or another ad platform.
 
@@ -72,6 +72,12 @@ Keep source transport and timestamps unchanged when replaying historical data.
 The `deploy-growth-sync` workflow keeps the gateway-attempt and billing-owner
 collector flags exactly as the running job has them unless the operator picks
 `true` or `false` for that run; its summary records the before and after values.
+The isolated export job has 1 GiB of memory because 512 MiB runs exhausted
+memory while serializing the retained checkpoint after ingest. Its existing
+row limits, timeout, CPU, network and identity remain unchanged. A failed
+release execution restores the previous image, memory limit and collector
+flags. Verify completed Cloud Run executions, not just pre-checkpoint Axiom
+heartbeats, when checking the two scheduled cycles.
 
 ### Gateway Attempt Recovery
 
@@ -110,6 +116,12 @@ feed live. Dashboard stale state and missing-data notices remain visible.
 
 The acquisition sink uses exact event-name comparisons, not a regex. Reapply
 its allowlist with `python -m scripts.axiom_growth.provision source-filter`.
+The service allowlist includes `trusted-router-control`, where
+`/token-exchange/events` is routed, alongside the public and legacy combined
+services. Keep the exact event allowlist in place on every service; including
+the control plane does not authorize exporting other control-plane logs.
+The sink and worker read query share `model.ACQUISITION_SERVICE_FILTER` so a
+collected event cannot be excluded by a stale, independently maintained reader.
 An exact match is a read-only no-op, so ordinary worker redeploys need only
 `logging.sinks.get`. A changed filter still requires an authorized operator to
 apply it; the deploy identity is not granted general sink-update access.

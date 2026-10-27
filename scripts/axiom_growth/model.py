@@ -34,6 +34,11 @@ def domain(value: object) -> str:
 DATASET = "trustedrouter-marketing"
 SOURCE_DATASET = "trusted-router-logs"
 EDGE_REGION = "eu-central-1.aws.edge.axiom.co"
+ACQUISITION_SERVICE_FILTER = (
+    '(resource.labels.service_name="trusted-router-public" OR '
+    'resource.labels.service_name="trusted-router-control" OR '
+    'resource.labels.service_name="trusted-router")'
+)
 BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
         "landing_viewed", "landing_engaged", "sign_in_opened",

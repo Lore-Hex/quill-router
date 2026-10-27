@@ -222,7 +222,7 @@ class Sources:
             rows.extend(project(row, 'axiom') for row in batch)
         browser = ' OR '.join(f'jsonPayload.event="{e}"' for e in sorted(m.BROWSER_EVENTS))
         log_filter = ('resource.type="cloud_run_revision" '
-            '(resource.labels.service_name="trusted-router-public" OR resource.labels.service_name="trusted-router") '
+            f'{m.ACQUISITION_SERVICE_FILTER} '
             f'({browser}) timestamp>="{start.isoformat()}" timestamp<"{end.isoformat()}"')
         view = f'projects/{self.project}/locations/global/buckets/tr-growth-source/views/_AllLogs'
         body = {'resourceNames': [view], 'filter': log_filter,

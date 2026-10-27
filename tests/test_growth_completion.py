@@ -292,6 +292,9 @@ def test_worker_release_preserves_main_ci_gate_and_existing_configuration():
         assert spec['default'] == 'keep' and spec['options'] == ['keep', 'true', 'false']
     assert 'new_gateway="$old_gateway"' in run and 'new_owners="$old_owners"' in run and 'keep) ;;' in run
     assert '--update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$new_gateway,GROWTH_BILLING_OWNERS_ENABLED=$new_owners"' in run
+    assert '--memory 1Gi' in run
+    assert '.resources.limits.memory' in run and '--memory "$old_memory"' in run
+    assert 'test -n "$old_memory"' in run and 'test "$old_memory" != null' in run
 
 
 @pytest.mark.parametrize('cell,label', [('run_request', 'Run my first API request'),
