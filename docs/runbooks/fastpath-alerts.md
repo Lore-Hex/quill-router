@@ -39,7 +39,7 @@ gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" 
   --format='table(timestamp,labels.fastpath_alert,labels."compute.googleapis.com/resource_name",jsonPayload.subject)'
 ```
 
-Then, on a node (`gcloud compute ssh tr-fastpath-7 --zone=us-central1-a
+Then, on a node (`gcloud compute ssh tr-fastpath-9 --zone=us-central1-a
 --project=quill-cloud-proxy --tunnel-through-iap`, with
 `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`),
 the workspace's state and its audit, as `fastpath-p1.md` runs them:
