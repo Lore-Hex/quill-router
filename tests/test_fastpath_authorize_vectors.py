@@ -5,7 +5,9 @@ fastpath/testdata/authorize_cases_v1.json maps authorize requests, each in
 its own world, to Go's answer (Python's exact bytes and rows), Python's 503,
 or a pass with its §3 reason and what Python answered;
 authorize_fingerprint_v1.json maps requests to the fingerprint and scope
-Python wrote, or to Python's refusal. The generator sends every request
+Python wrote, or to Python's refusal; authorize_async_cases_v1.json holds authorizes sent
+with X-TR-Settlement-Mode, each naming the shape of the async members
+Python answered (the G15 design's §2.2). The generator sends every request
 through the ASGI app in its own process (it installs the snapshot fixture
 catalog and pins clocks), so this test runs it in a subprocess and compares
 the files; the rest checks that each answer is consistent with itself, which
@@ -38,6 +40,7 @@ from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "fastpath" / "testdata" / "authorize_cases_v1.json"
 FINGERPRINTS = ROOT / "fastpath" / "testdata" / "authorize_fingerprint_v1.json"
+ASYNC_CASES = ROOT / "fastpath" / "testdata" / "authorize_async_cases_v1.json"
 SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v3.body.json"
 GENERATOR = ROOT / "scripts" / "fastpath" / "authorize_vectors.py"
 CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
@@ -508,3 +511,156 @@ def test_a_streams_reservation_is_its_estimate_for_now() -> None:
     assert streamed["reservation_microdollars"] == answered["estimate_microdollars"] > answered["reservation_microdollars"]
     at_the_bound = by_name["pass:body.stream:hold_cap:deepseek/deepseek-v4-flash:1000+16384"]["python"]
     assert at_the_bound["reservation_microdollars"] == answered["reservation_microdollars"]
+
+
+# ------------------------------------------------------------------ async --
+# fastpath/testdata/authorize_async_cases_v1.json (docs/design/
+# fast-admission-e2-g15-async.md §6.1, P6): authorizes carrying
+# X-TR-Settlement-Mode, with Python's async members.
+
+ASYNC_MEMBERS = ("async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket",
+                 "settlement_status_url")
+# §2.2's shapes by the members present, in order.
+ASYNC_SHAPES = {(): "none", ASYNC_MEMBERS[:1]: "A", ASYNC_MEMBERS[:3]: "B", ASYNC_MEMBERS: "C"}
+PRICE_FIELDS = ("endpoint_id", "price_history_version", "rates", "tiers", "request_fee_micro", "rounding")
+
+
+def _shape(response: str) -> str:
+    """The shape of a 200's async members, which sit, in order, between
+    stage_d and tags (§2.1); async_eligible is false in shapes A and B."""
+    data = json.loads(response)["data"]
+    keys = list(data)
+    present = tuple(k for k in keys if k in ASYNC_MEMBERS)
+    assert present in ASYNC_SHAPES, present
+    if present:
+        start = keys.index("stage_d") + 1
+        assert tuple(keys[start:start + len(present)]) == present and keys[start + len(present)] == "tags"
+    shape = ASYNC_SHAPES[present]
+    if shape in ("A", "B"):
+        assert data["async_eligible"] is False
+    return shape
+
+
+def _named_shape(name: str) -> str:
+    (shape,) = re.findall(r":async\.(none|A|B|C)(?::|$)", name)
+    return shape
+
+
+def _async_snapshot(vectors: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    snapshot = json.loads(vectors["snapshot_body"])
+    return {endpoint["id"]: endpoint for endpoint in snapshot["endpoints"]}
+
+
+def _epoch(endpoint: dict[str, Any], at_us: int) -> dict[str, Any]:
+    """The price epoch at an instant: the last starting at or before it."""
+    return [e for e in endpoint["epochs"] if e["starts_at"] * 1_000_000 <= at_us][-1]
+
+
+def test_the_async_vectors_are_what_the_app_answers_now() -> None:
+    result = subprocess.run(  # noqa: S603 - fixed repository generator, no shell or caller input
+        [sys.executable, str(GENERATOR), "--print", "async"],
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")}, cwd=ROOT,
+        capture_output=True, timeout=900, check=False,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert ASYNC_CASES.read_bytes() == result.stdout, (
+        f"{ASYNC_CASES.relative_to(ROOT)} is stale: run `uv run python scripts/fastpath/authorize_vectors.py`")
+
+
+def test_every_async_case_has_the_shape_its_name_claims() -> None:
+    cases = _load(ASYNC_CASES)["cases"]
+    seen = Counter()
+    for case in cases:
+        name, expect = case["name"], case["expect"]
+        if "affinity" in expect:
+            # §4.4: Python's warm answer in one shape, its cold one in another.
+            warm, cold = re.fullmatch(r".*:async\.warm_(A|B)\.cold_(A|B):.*", name).groups()
+            affinity = expect["affinity"]
+            assert (_shape(affinity["response"]), _shape(affinity["cold_response"])) == (warm, cold), name
+            assert (affinity["async_shape"], affinity["cold_async_shape"]) == (warm, cold), name
+            seen[f"affinity.warm_{warm}.cold_{cold}"] += 1
+            continue
+        claimed = _named_shape(name)
+        seen[claimed] += 1
+        if expect["outcome"] == "answer":
+            assert _shape(expect["response"]) == expect["async_shape"] == claimed, name
+            continue
+        assert expect["outcome"] == "pass", name
+        python = expect["python"]
+        assert python["status"] == 200 and python["async_shape"] == claimed, name
+        if claimed == "C":
+            # Admission on: only that Python ticketed it, never the ticket.
+            assert "response" not in python and expect["reason"] == "policy.async_admission", name
+        else:
+            assert _shape(python["response"]) == claimed, name
+    assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8 and seen["C"] == 1, seen
+    assert seen["affinity.warm_A.cold_B"] == 1, seen
+
+
+def test_the_async_cases_send_exactly_async_v1_unless_they_add_nothing() -> None:
+    """§2.1: only the header list exactly ["async-v1"] (one value, that case,
+    no surrounding whitespace; the name case-insensitive) adds members."""
+    for case in _load(ASYNC_CASES)["cases"]:
+        modes = [v for k, v in case["request"]["headers"] if k.lower() == "x-tr-settlement-mode"]
+        if ":async.none:" in case["name"]:
+            assert modes != ["async-v1"], case["name"]
+        else:
+            assert modes == ["async-v1"], case["name"]
+
+
+def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
+    from trusted_router.services.async_settle import ORDINARY_PARAMETERS
+
+    vectors = _load(ASYNC_CASES)
+    assert vectors["ordinary_parameters"] == sorted(ORDINARY_PARAMETERS)
+    assert vectors["async_members"] == list(ASYNC_MEMBERS)
+    assert vectors["snapshot_sha256"] == hashlib.sha256(vectors["snapshot_body"].encode()).hexdigest()
+    # Admission off in every case but the admission-on ones.
+    assert vectors["policy"]["async_settle"] == {
+        "admission_enabled": False, "edge_decide": True, "ticket_authority": True, "typed_records": True}
+    names = [case["name"] for case in vectors["cases"]]
+    assert names == sorted(names) and len(set(names)) == len(names)
+    for case in vectors["cases"]:
+        effective = {**vectors["policy"], **case["policy_patch"]}["async_settle"]
+        assert effective["admission_enabled"] is (case["name"].startswith("pass:policy.async_admission:")), case["name"]
+        assert "settlement_ticket" not in json.dumps(case), case["name"]
+    # The edge's async switch off is a pass with Python's admission-off answer.
+    (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"]
+    assert off["policy_patch"]["async_settle"]["edge_decide"] is False
+
+
+def test_a_shape_b_snapshot_is_the_composed_candidates_epoch_prices() -> None:
+    """What G15b rebuilds: the candidates kept, sorted by endpoint_id, each
+    the snapshot's epoch price at the case's instant with billing_valid
+    true, and the hash over the sorted-key encoding (§2.2, §3.2)."""
+    vectors = _load(ASYNC_CASES)
+    endpoints = _async_snapshot(vectors)
+    answers = [case for case in vectors["cases"] if case["expect"].get("async_shape") == "B"]
+    assert answers
+    for case in answers:
+        data = json.loads(case["expect"]["response"])["data"]
+        snapshot = data["billing_snapshot"]
+        canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+        assert data["billing_snapshot_hash"] == hashlib.sha256(canonical.encode()).hexdigest(), case["name"]
+        ids = [candidate["endpoint_id"] for candidate in snapshot["candidates"]]
+        assert ids == sorted(ids) == sorted(c["endpoint_id"] for c in data["route_candidates"]), case["name"]
+        for candidate in snapshot["candidates"]:
+            endpoint = endpoints[candidate["endpoint_id"]]
+            epoch = _epoch(endpoint, case["at_us"])
+            assert epoch["billing_valid"] is True, case["name"]
+            assert {k: candidate[k] for k in PRICE_FIELDS} == epoch["price"], case["name"]
+            assert (candidate["provider"], candidate["model_id"], candidate["usage_type"]) == (
+                endpoint["provider"], endpoint["model_id"], endpoint["usage_type"]), case["name"]
+    mixed = [case for case in answers if ":mixed_provider:" in case["name"]]
+    assert mixed and {c["provider"] for c in json.loads(mixed[0]["expect"]["response"])["data"]["billing_snapshot"][
+        "candidates"]} == {"anthropic", "openai"}
+
+
+def test_a_billing_valid_false_case_names_a_candidate_the_snapshot_refuses() -> None:
+    vectors = _load(ASYNC_CASES)
+    endpoints = _async_snapshot(vectors)
+    cases = [case for case in vectors["cases"] if ":async.A:billing_valid_false:" in case["name"]]
+    assert cases
+    for case in cases:
+        ids = [c["endpoint_id"] for c in json.loads(case["expect"]["response"])["data"]["route_candidates"]]
+        assert [_epoch(endpoints[i], case["at_us"])["billing_valid"] for i in ids].count(False) == 1, case["name"]

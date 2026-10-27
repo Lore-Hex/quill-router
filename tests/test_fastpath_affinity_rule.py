@@ -19,6 +19,7 @@ from scripts.fastpath import affinity_rule
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "fastpath" / "testdata" / "authorize_cases_v1.json"
+ASYNC_CASES = ROOT / "fastpath" / "testdata" / "authorize_async_cases_v1.json"
 
 
 def _affinity_cases() -> dict[str, dict[str, Any]]:
@@ -112,6 +113,23 @@ def test_anything_but_the_first_candidates_members_is_refused() -> None:
     warm["data"]["estimated_cost_microdollars"] += 1
     with pytest.raises(AssertionError, match="estimated_cost_microdollars"):
         _classify(case, json.dumps(warm, separators=(",", ":")))
+
+
+def test_async_members_change_only_with_the_candidate_set() -> None:
+    """The async members are built from the candidates kept, sorted: the
+    async golden's warm answer keeps another endpoint (fallbacks off) and
+    changes them in kind (the G15 design's §4.4); a re-rank of the same set
+    may not change them."""
+    vectors = json.loads(ASYNC_CASES.read_text(encoding="utf-8"))
+    (case,) = [c for c in vectors["cases"] if "affinity" in c["expect"]]
+    a = case["expect"]["affinity"]
+    assert set(a["candidates"]) != set(a["cold_candidates"])
+    assert _classify(case, a["response"]) == "affinity_warm"
+    same_set = _affinity_cases()["pass:body.cache_affinity:warm:fallback_models"]
+    warm = json.loads(same_set["expect"]["affinity"]["response"])
+    warm["data"]["async_eligible"] = False
+    with pytest.raises(AssertionError, match="changed \\['async_eligible'\\]"):
+        _classify(same_set, json.dumps(warm, separators=(",", ":")))
 
 
 def test_the_rules_inputs() -> None:

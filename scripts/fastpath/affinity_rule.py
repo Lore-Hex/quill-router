@@ -32,6 +32,13 @@ FIRST_CANDIDATE_MEMBERS = frozenset({
     "wafer_zdr_required", "route_candidates",
 })
 ESTIMATE_MEMBERS = frozenset({"estimated_cost", "estimated_cost_microdollars"})
+# An async-v1 answer's members (docs/design/fast-admission-e2-g15-async.md
+# §2.2): built from the candidates kept, sorted by endpoint id, so a re-rank
+# that keeps the same set leaves them as they were, and one that changes the
+# set (fallbacks off, a remembered endpoint) can change them in kind (§4.4).
+ASYNC_MEMBERS = frozenset({
+    "async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket", "settlement_status_url",
+})
 _MISSING = object()
 
 
@@ -96,7 +103,8 @@ def affinity_class(name: str, body: dict[str, Any], cold_response: str, warm_res
         if warm_response != cold_response:
             raise AssertionError(f"{name}: the same order, other bytes")
         return "affinity_cold"
-    allowed = FIRST_CANDIDATE_MEMBERS | (ESTIMATE_MEMBERS if len(cold_ids) == 1 else frozenset())
+    allowed = (FIRST_CANDIDATE_MEMBERS | (ESTIMATE_MEMBERS if len(cold_ids) == 1 else frozenset())
+               | (ASYNC_MEMBERS if set(warm_ids) != set(cold_ids) else frozenset()))
     changed = {k for k in set(cold) | set(warm) if cold.get(k, _MISSING) != warm.get(k, _MISSING)}
     if not changed <= allowed:
         raise AssertionError(f"{name}: the session changed {sorted(changed - allowed)}")

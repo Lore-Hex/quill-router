@@ -17,6 +17,18 @@ use, and the request's exact headers and body. A case expects Go's
 `unavailable` 503, or a `pass` with the §3 reason the case trips and what
 Python then answered.
 
+fastpath/testdata/authorize_async_cases_v1.json, cases as the first file's,
+each sent with `X-TR-Settlement-Mode` (docs/design/fast-admission-e2-g15-async.md
+§6.1, P6): over the snapshot fixture's catalog plus a few openai and anthropic
+routes (the header carries the snapshot compiled over both), with a TEST
+async-settle runtime (a ticket key from a fixed seed, epoch 1, the primary
+region as the journal region) and admission off, every async-settle setting
+pinned. Each records Python's 200 with its async members (§2.2's shape A, B,
+or none) and which shape that is; the one admission-on case records only
+that it passes and that Python's answer carried a ticket (shape C), never the
+ticket, whose iat, exp and signature are not reproducible. No Go code reads
+it before G15b.
+
 fastpath/testdata/authorize_fingerprint_v1.json, one request a line (its
 headers and body), each sent through the app in a fresh world on the
 cohort path (a pilot workspace, a signed boot, the owner admitting): the
@@ -32,14 +44,15 @@ fake's count). Every workspace, key, digest and envelope is synthetic. The
 script installs the fixture catalog and patches clocks in its own process;
 run it as a script, never import it.
 
-    uv run python scripts/fastpath/authorize_vectors.py            # write both files
-    uv run python scripts/fastpath/authorize_vectors.py --print cases|fingerprints
-    uv run python scripts/fastpath/authorize_vectors.py --out DIR  # both, under DIR
+    uv run python scripts/fastpath/authorize_vectors.py            # write the three files
+    uv run python scripts/fastpath/authorize_vectors.py --print cases|fingerprints|async
+    uv run python scripts/fastpath/authorize_vectors.py --out DIR  # all three, under DIR
 """
 
 from __future__ import annotations
 
 import asyncio
+import atexit
 import contextlib
 import dataclasses
 import datetime as real_dt
@@ -49,7 +62,9 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
+import tempfile
 import time
 import types
 import uuid
@@ -67,6 +82,7 @@ os.environ["TR_ENVIRONMENT"] = "test"
 os.environ["TR_STORAGE_BACKEND"] = "memory"
 
 import httpx  # noqa: E402
+from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 from google.api_core.exceptions import (  # noqa: E402
     Aborted,
@@ -82,7 +98,7 @@ from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
 from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS  # noqa: E402
-from trusted_router.catalog_data import MONITOR_MODEL_ID, Model, ModelEndpoint  # noqa: E402
+from trusted_router.catalog_data import MONITOR_MODEL_ID, PROVIDERS, Model, ModelEndpoint  # noqa: E402
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
 from trusted_router.gateway_boot import BOOT_AUTH_DOMAIN, GATEWAY_BOOT_KIND, boot_auth_digest  # noqa: E402
@@ -92,18 +108,26 @@ from trusted_router.pricing import PriceTier  # noqa: E402
 from trusted_router.receipt_keys import b64url_encode, normalize_receipt_jwk, receipt_kid  # noqa: E402
 from trusted_router.regions import configured_regions  # noqa: E402
 from trusted_router.routes.internal import gateway  # noqa: E402
+from trusted_router.routing_snapshot import (  # noqa: E402
+    Plane,
+    canonical_snapshot_bytes,
+    compile_routing_snapshot,
+)
 from trusted_router.routing_state import RoutingState  # noqa: E402
 from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 from trusted_router.scopes import SCOPE_INFERENCE  # noqa: E402
 from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
+from trusted_router.services.async_settle import ORDINARY_PARAMETERS  # noqa: E402
+from trusted_router.services.edge_policy_publisher import ticket_authority, typed_records  # noqa: E402
 from trusted_router.spend_windows import key_window_limits  # noqa: E402
 from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS  # noqa: E402
-from trusted_router.storage import configure_store  # noqa: E402
+from trusted_router.storage import configure_store, typed_billing_store  # noqa: E402
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE  # noqa: E402
 from trusted_router.storage_models import CreditAccount, GatewayBoot, Workspace  # noqa: E402
 
 CASES_OUTPUT = "fastpath/testdata/authorize_cases_v1.json"
 FINGERPRINT_OUTPUT = "fastpath/testdata/authorize_fingerprint_v1.json"
+ASYNC_OUTPUT = "fastpath/testdata/authorize_async_cases_v1.json"
 GENERATOR = "scripts/fastpath/authorize_vectors.py"
 SNAPSHOT = "fastpath/testdata/routing_snapshot_v3.body.json"
 PATH = "/internal/gateway/authorize"
@@ -121,6 +145,7 @@ def _load(name: str) -> Any:
 
 
 ROUTING = _load("routing_cases_vectors")
+SNAPSHOT_VECTORS = _load("routing_snapshot_vectors")
 REGIONS, PRIMARY_REGION, INSTANTS = ROUTING.REGIONS, ROUTING.PRIMARY_REGION, ROUTING.INSTANTS
 FLASH, TENCENT_FLASH, GLM, GEMINI = ROUTING.FLASH, ROUTING.TENCENT_FLASH, ROUTING.GLM, ROUTING.GEMINI
 FUGU, BEDROCK, INKLING = ROUTING.FUGU, ROUTING.BEDROCK, ROUTING.INKLING
@@ -143,6 +168,12 @@ REFUND_WON = {"Status": "won", "Kind": "refund", "Charge": 0}
 SALT = hashlib.sha256(b"e2 p1 synthetic salt").hexdigest()
 FRONT_DOOR = "10.0.0.1:8080"
 INTERNAL_TOKEN = "e2-p1-synthetic-internal-token"  # noqa: S105 - a TEST value; the edge forwards the real one
+# The async-settle runtime's TEST ticket key (P6), public by construction like
+# the boot key; with admission off it signs nothing the files record.
+TICKET_SEED = hashlib.sha256(b"trustedrouter authorize vectors v1 async-settle ticket TEST key; not a secret").digest()
+TICKET_KID, TICKET_ISSUER, TICKET_AUDIENCE = "tr-async-settle-test", "https://trustedrouter.test", "router-settlement-test"
+SETTLEMENT_MODE = "x-tr-settlement-mode"
+ASYNC_V1 = ((SETTLEMENT_MODE, "async-v1"),)
 
 
 def _us(stamp: str | real_dt.datetime | None) -> int | None:
@@ -290,6 +321,18 @@ DEFAULT_POLICY: dict[str, Any] = {
     "primary_region": PRIMARY_REGION,
     "multi_region_enabled": True,
 }
+# The async-settle facts the edge policy publishes (§3.4 of the G15 design).
+# authorize_cases_v1.json's world has none: no ticket authority, admission
+# off, a typed store. The async file's default is a runtime that can issue
+# tickets, admission off and the edge's async switch on.
+NO_ASYNC_AUTHORITY: dict[str, bool] = {
+    "admission_enabled": False, "edge_decide": False, "ticket_authority": False, "typed_records": True,
+}
+ASYNC_POLICY: dict[str, Any] = {
+    **DEFAULT_POLICY,
+    "async_settle": {"admission_enabled": False, "edge_decide": True, "ticket_authority": True,
+                     "typed_records": True},
+}
 DEFAULT_KEY: dict[str, Any] = {
     "hash": "key_e2_cohort", "name": "cohort", "disabled": False, "expires_at": None,
     "scopes": [], "app_id": "", "federated_home": "", "limit_microdollars": None,
@@ -316,9 +359,49 @@ def lookup_hash(key_hash: str) -> str:
     return hashlib.sha256(_raw_key(key_hash).encode()).hexdigest()
 
 
+_TICKET_KEY_FILE: list[str] = []
+
+
+def ticket_key_file() -> str:
+    """The TEST ticket key as the PEM file load_runtime reads, written once
+    per process to a private temporary directory, removed at exit (the path
+    is in no file)."""
+    if not _TICKET_KEY_FILE:
+        pem = Ed25519PrivateKey.from_private_bytes(TICKET_SEED).private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        directory = tempfile.mkdtemp(prefix="authorize-vectors-")
+        atexit.register(shutil.rmtree, directory, True)
+        path = Path(directory) / "async-settle-ticket.pem"
+        path.write_bytes(pem)
+        _TICKET_KEY_FILE.append(str(path))
+    return _TICKET_KEY_FILE[0]
+
+
+def async_settle_of(policy: dict[str, Any]) -> dict[str, bool]:
+    return policy.get("async_settle", NO_ASYNC_AUTHORITY)
+
+
 def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
     stage_d = policy["stage_d"]
+    facts = async_settle_of(policy)
     return Settings(
+        # Every async-settle setting, pinned (the environment and a .env must
+        # not change what an async-v1 authorize answers): admission is the
+        # pair below; ticket authority is a mounted TEST key and epoch 1, or
+        # neither; the journal region is primary_region; the edge's switch.
+        async_settle_enabled=facts["admission_enabled"],
+        async_settle_protection=facts["admission_enabled"],
+        async_settle_pilot_workspaces="",
+        async_settle_pilot_cap_micro=0,
+        async_settle_ticket_ttl_seconds=300,
+        async_settle_ticket_kid=TICKET_KID,
+        async_settle_ticket_issuer=TICKET_ISSUER,
+        async_settle_ticket_audience=TICKET_AUDIENCE,
+        async_settle_ticket_private_key_file=ticket_key_file() if facts["ticket_authority"] else "",
+        async_settle_authority_epoch=1 if facts["ticket_authority"] else 0,
+        speculation_shadow_kid="",
+        speculation_shadow_private_key_file="",
+        fastpath_edge_decide_async=facts["edge_decide"],
         environment="test",
         service_surface="internal",
         internal_gateway_token=INTERNAL_TOKEN,
@@ -353,7 +436,18 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
     """§4's body for this policy, issued ten seconds before the instant."""
     settings = settings_for(policy, key)
     issued_at = int(at.timestamp()) - 10
+    # The async file's body carries §3.4's object: the two settings as the
+    # publisher reads them, the two runtime facts as the case's world has
+    # them (_run_case checks them against the app and store it builds).
+    # authorize_cases_v1.json's body predates it and is left as it is.
+    async_settle = {"async_settle": {
+        "admission_enabled": settings.async_settle_admission_enabled,
+        "edge_decide": settings.fastpath_edge_decide_async,
+        "ticket_authority": policy["async_settle"]["ticket_authority"],
+        "typed_records": policy["async_settle"]["typed_records"],
+    }} if "async_settle" in policy else {}
     return {
+        **async_settle,
         "v": 1, "kind": "tr-edge-policy", "plane": dict(PLANE),
         "issued_at": issued_at, "not_after": issued_at + 60, "refresh_at": issued_at + 15,
         "accepted_image_digests": sorted(settings.stage_d_accepted_gcp_digests),
@@ -380,7 +474,7 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
 
 def build_world(world: dict[str, Any], policy: dict[str, Any]) -> tuple[Any, Any]:
     store, database = make_fake_store(
-        request_record_write_mode="typed",
+        request_record_write_mode="typed" if async_settle_of(policy)["typed_records"] else "legacy",
         operational_analytics_outbox_enabled=policy["activity_outbox_enabled"],
         generation_records_enabled=True,
         analytics_outbox_enabled=True,
@@ -540,6 +634,7 @@ class _App:
 
     def __init__(self, settings: Settings) -> None:
         app = create_app(settings, configure_store_arg=False, init_observability=False)
+        self.app = app
         self._client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://testserver",
         )
@@ -716,6 +811,13 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         for model, endpoint in (_catalog_addition(model_id) for model_id in case["_catalog"]):
             MODELS[model.id] = model
             MODEL_ENDPOINTS[endpoint.id] = endpoint
+        if "async_settle" in policy:
+            # The async file's catalog: the fixture's plus its routes, as the
+            # snapshot in its header is compiled (async_snapshot_inputs).
+            for async_model in ASYNC_MODELS:
+                MODELS[async_model.id] = async_model
+            for async_endpoint in ASYNC_ENDPOINTS:
+                MODEL_ENDPOINTS[async_endpoint.id] = async_endpoint
         # The route's process-local routing state, fresh for every case.
         stack.enter_context(patched(gateway, "ROUTING_STATE", _seeded_routing_state(case, sessions, region)))
         store, database = build_world(world, policy)
@@ -727,6 +829,14 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
             database.rows.pop(("workspace", world["workspace"]["id"]))
         gateway._BROADCAST_EMPTY_CACHE.clear()
         client = _client(settings_for(policy, world["key"]))
+        if "async_settle" in policy:
+            # The two runtime facts the policy body says, as the publisher
+            # reads them from this app's runtime and this world's store.
+            facts = policy["async_settle"]
+            if ticket_authority(getattr(client.app.state, "async_settle", None)) != facts["ticket_authority"]:
+                raise AssertionError(f"{case['name']}: the runtime's ticket authority is not the policy's")
+            if typed_records(typed_billing_store(store)) != facts["typed_records"]:
+                raise AssertionError(f"{case['name']}: the store's typed records are not the policy's")
         for index, (prior, answer) in enumerate(case["_prior"]):
             with front_door(answer), given_ids(case_ids(f"{case['name']}#prior{index}")):
                 response = send(client, prior)
@@ -761,8 +871,8 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
             {"reservation_microdollars": reservations[0]["credit_reserved_micro"]}
             if len(reservations) == 1 and not leased else {}
         )
-        return {**world_rows, "_models": models, "expect": {"outcome": "pass", "reason": reason, "python": {
-            "status": response.status_code, "type": error.get("type"), "leased": leased, **reserved}}}
+        return {**world_rows, "_models": models, "_response": body, "expect": {"outcome": "pass", "reason": reason,
+                "python": {"status": response.status_code, "type": error.get("type"), "leased": leased, **reserved}}}
     if case["insert"] == "failed_precondition" and response.status_code != 503:
         # Python counts this code permanent and fails the request; Go cannot
         # tell it from the refusal of a re-sent commit whose first applied
@@ -908,41 +1018,47 @@ BASE_BODY: dict[str, Any] = {
 }
 
 
+def make_case(name: str, reason: str | None = None, body: dict[str, Any] | str | None = None, *,
+              at: str = "peak", world: dict[str, Any] | None = None, policy: dict[str, Any] | None = None,
+              boot: str = "signed", headers: tuple[tuple[str, str], ...] = (),
+              door: dict[str, Any] | None = ADMIT, insert: str = "inserted",
+              prior: tuple[tuple[dict[str, Any], dict[str, Any]], ...] = (),
+              catalog: tuple[str, ...] = (), content_type: str | None = "application/json",
+              stored_key_tags: Any = None, workspace_row: bool = True,
+              body_expand: dict[str, Any] | None = None,
+              affinity: tuple[tuple[str, float], ...] | None = None,
+              base_policy: dict[str, Any] = DEFAULT_POLICY,
+              base_body: dict[str, Any] = BASE_BODY) -> dict[str, Any]:
+    # affinity: a body with cache_affinity_key, run cold and then with
+    # these (endpoint, age in seconds) sessions remembered; () is cold.
+    if (affinity is not None) != ("cache_affinity_key" in (body if isinstance(body, dict) else {})):
+        raise AssertionError(f"{name}: an affinity case is one with cache_affinity_key, and vice versa")
+    case_world = _merge(DEFAULT_WORLD, world)
+    admitted = door if door is not None and "Envelope" in door else ADMIT
+    request_body = body if isinstance(body, str) else {**base_body, **(body or {})}
+    boot_record = case_world["boot"]
+    return {
+        "name": name, "ids": case_ids(name), "insert": insert,
+        # end_of_life: the owner's text as it answered (Go's JSON for a
+        # time.Time), which Python parses and writes back (§5).
+        "admitted": {"envelope": admitted["Envelope"], "end_of_life_us": _us(_eol(admitted)),
+                     "end_of_life": admitted["EndOfLife"]},
+        "request": _request(case_world, request_body, boot=boot, headers=headers, content_type=content_type,
+                            body_expand=body_expand),
+        "boot": None if boot_record is None else {**boot_record, "signature_ok": boot == "signed"},
+        "_at": INSTANTS[at], "_world": case_world, "_policy": _merge(base_policy, policy),
+        "_front_door": door, "_reason": reason, "_catalog": catalog,
+        "_stored_key_tags": stored_key_tags, "_workspace_row": workspace_row,
+        "_prior": [(_request(case_world, {**base_body, **p}), answer) for p, answer in prior],
+        "_affinity": affinity,
+    }
+
+
 def cases() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
 
-    def add(name: str, reason: str | None = None, body: dict[str, Any] | str | None = None, *,
-            at: str = "peak", world: dict[str, Any] | None = None, policy: dict[str, Any] | None = None,
-            boot: str = "signed", headers: tuple[tuple[str, str], ...] = (),
-            door: dict[str, Any] | None = ADMIT, insert: str = "inserted",
-            prior: tuple[tuple[dict[str, Any], dict[str, Any]], ...] = (),
-            catalog: tuple[str, ...] = (), content_type: str | None = "application/json",
-            stored_key_tags: Any = None, workspace_row: bool = True,
-            body_expand: dict[str, Any] | None = None,
-            affinity: tuple[tuple[str, float], ...] | None = None) -> None:
-        # affinity: a body with cache_affinity_key, run cold and then with
-        # these (endpoint, age in seconds) sessions remembered; () is cold.
-        if (affinity is not None) != ("cache_affinity_key" in (body if isinstance(body, dict) else {})):
-            raise AssertionError(f"{name}: an affinity case is one with cache_affinity_key, and vice versa")
-        case_world = _merge(DEFAULT_WORLD, world)
-        admitted = door if door is not None and "Envelope" in door else ADMIT
-        request_body = body if isinstance(body, str) else {**BASE_BODY, **(body or {})}
-        boot_record = case_world["boot"]
-        out.append({
-            "name": name, "ids": case_ids(name), "insert": insert,
-            # end_of_life: the owner's text as it answered (Go's JSON for a
-            # time.Time), which Python parses and writes back (§5).
-            "admitted": {"envelope": admitted["Envelope"], "end_of_life_us": _us(_eol(admitted)),
-                         "end_of_life": admitted["EndOfLife"]},
-            "request": _request(case_world, request_body, boot=boot, headers=headers, content_type=content_type,
-                                body_expand=body_expand),
-            "boot": None if boot_record is None else {**boot_record, "signature_ok": boot == "signed"},
-            "_at": INSTANTS[at], "_world": case_world, "_policy": _merge(DEFAULT_POLICY, policy),
-            "_front_door": door, "_reason": reason, "_catalog": catalog,
-            "_stored_key_tags": stored_key_tags, "_workspace_row": workspace_row,
-            "_prior": [(_request(case_world, {**BASE_BODY, **p}), answer) for p, answer in prior],
-            "_affinity": affinity,
-        })
+    def add(*args: Any, **kwargs: Any) -> None:
+        out.append(make_case(*args, **kwargs))
 
     # Answers: every fixture model at every instant, as Python leases it.
     for model, region in ((FLASH, None), (TENCENT_FLASH, None), (GLM, None), (GEMINI, None),
@@ -1323,6 +1439,228 @@ def cases() -> list[dict[str, Any]]:
     add("answer:end_of_life_nanoseconds", door={**ADMIT, "EndOfLife": "2026-10-19T05:00:00.123456789Z"})
     add("answer:end_of_life_offset_nanoseconds", door={**ADMIT, "EndOfLife": "2026-10-18T23:30:00.987654321-05:30"})
     return out
+
+
+# ------------------------------------------------------------------ async --
+
+# The async file's routes (G15 design §6.1, P6): billing_snapshot.Candidate
+# accepts only openai and anthropic, and the snapshot fixture has neither, so
+# the file's snapshot is the fixture's catalog plus these. Synthetic prices.
+GPT41, GPT41_MINI, GPT41_NANO = "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/gpt-4.1-nano"
+GPT5_MINI, SONNET = "openai/gpt-5-mini", "anthropic/claude-sonnet-4.5"
+ASYNC_MODELS: tuple[Model, ...] = (
+    SNAPSHOT_VECTORS._model(GPT41, "openai"), SNAPSHOT_VECTORS._model(GPT41_MINI, "openai"),
+    SNAPSHOT_VECTORS._model(GPT41_NANO, "openai"), SNAPSHOT_VECTORS._model(GPT5_MINI, "openai"),
+    SNAPSHOT_VECTORS._model(SONNET, "anthropic", context_length=1_000_000),
+)
+ASYNC_ENDPOINTS: tuple[ModelEndpoint, ...] = (
+    SNAPSHOT_VECTORS._endpoint(GPT41, "openai", "Credits", 2_000_000, 8_000_000),
+    SNAPSHOT_VECTORS._endpoint(GPT41_MINI, "openai", "Credits", 400_000, 1_600_000),
+    # A request price build_snapshot refuses: published as 0 in the price
+    # and billing_valid false (§3.2, "The lost fact").
+    SNAPSHOT_VECTORS._endpoint(GPT41_NANO, "openai", "Credits", 100_000, 400_000, request_price_microdollars=0.5),
+    SNAPSHOT_VECTORS._endpoint(GPT5_MINI, "openai", "Credits", 250_000, 2_000_000),
+    # The same model through azure, a provider Candidate refuses (§4.4).
+    SNAPSHOT_VECTORS._endpoint(GPT5_MINI, "azure", "Credits", 250_000, 2_000_000),
+    # Two tiers, split at 200,000 prompt tokens.
+    SNAPSHOT_VECTORS._endpoint(SONNET, "anthropic", "Credits", 3_000_000, 15_000_000, price_tiers=(
+        PriceTier(200_000, 3_000_000, 15_000_000, 300_000), PriceTier(None, 6_000_000, 22_500_000, 600_000))),
+)
+ASYNC_SNAPSHOT_REVISION = "golden-fixture-async"
+# The members an async-v1 answer can add, in the order they can appear (§2.2).
+ASYNC_MEMBERS = ("async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket",
+                 "settlement_status_url")
+# §2.2's shapes by the members present: none, A (false only), B (admission
+# off: the frozen snapshot and its hash), C (admission on: a ticket).
+ASYNC_SHAPES = {
+    (): "none", ASYNC_MEMBERS[:1]: "A", ASYNC_MEMBERS[:3]: "B", ASYNC_MEMBERS: "C",
+}
+
+
+def async_snapshot_inputs() -> Any:
+    inputs = SNAPSHOT_VECTORS.fixture_inputs()
+    return dataclasses.replace(
+        inputs,
+        providers={**inputs.providers, **{slug: PROVIDERS[slug] for slug in ("anthropic", "azure", "openai")}},
+        models=(*inputs.models, *ASYNC_MODELS), endpoints=(*inputs.endpoints, *ASYNC_ENDPOINTS),
+    )
+
+
+def async_snapshot_body() -> bytes:
+    """The routing snapshot the async cases are composed over: the fixture's
+    compile (routing_snapshot_vectors.py: instant, horizon, settings, plane)
+    over the fixture's catalog plus the async routes."""
+    return canonical_snapshot_bytes(compile_routing_snapshot(
+        at=SNAPSHOT_VECTORS.COMPILED_AT, horizon=SNAPSHOT_VECTORS.HORIZON_SECONDS,
+        settings=SNAPSHOT_VECTORS.fixture_settings(), source_revision=ASYNC_SNAPSHOT_REVISION,
+        plane=Plane(cloud="gcp", region="us-central1"), inputs=async_snapshot_inputs(),
+    ))
+
+
+def async_shape(response: str) -> str:
+    """§2.2's shape of a 200's async members; they sit, in order, between
+    stage_d and tags (§2.1)."""
+    data = json.loads(response)["data"]
+    keys = list(data)
+    present = tuple(key for key in keys if key in ASYNC_MEMBERS)
+    if present not in ASYNC_SHAPES:
+        raise AssertionError(f"async members {present} are none of §2.2's shapes")
+    if present:
+        start = keys.index("stage_d") + 1
+        if tuple(keys[start:start + len(present)]) != present or keys[start + len(present)] != "tags":
+            raise AssertionError("the async members are not between stage_d and tags")
+    return ASYNC_SHAPES[present]
+
+
+ASYNC_BODY: dict[str, Any] = {**BASE_BODY, "model": GPT41}
+
+
+def async_cases() -> list[dict[str, Any]]:
+    """§6.1's P6 cases. A name carries the shape Python answers (async.A,
+    async.B, async.C or async.none; an affinity case async.warm_<shape>.cold_<shape>)
+    and, for shape A, the §2.3 branch."""
+    out: list[dict[str, Any]] = []
+
+    def add(name: str, reason: str | None = None, body: dict[str, Any] | str | None = None, *,
+            headers: tuple[tuple[str, str], ...] = ASYNC_V1, **kwargs: Any) -> None:
+        out.append(make_case(name, reason, body, headers=headers, base_policy=ASYNC_POLICY, base_body=ASYNC_BODY,
+                             **kwargs))
+
+    lookup = lookup_hash(DEFAULT_KEY["hash"])
+    # Shape B: every check passes, admission off.
+    add(f"answer:async.B:single:{GPT41}")
+    add(f"answer:async.B:single:{GPT41}@late", at="late")
+    add(f"answer:async.B:single:{GPT41_MINI}", body={"model": GPT41_MINI})
+    add(f"answer:async.B:tiered:{SONNET}", body={"model": SONNET})
+    add(f"answer:async.B:tiered:{SONNET}:over_first_tier", body={"model": SONNET, "estimated_input_tokens": 250_000})
+    # Several candidates, and the mixed-provider set build_snapshot accepts
+    # (each candidate is validated alone); the snapshot lists them sorted by
+    # endpoint_id, not in route order.
+    add(f"answer:async.B:mixed_provider:{GPT41}+{SONNET}", body={"models": [SONNET]})
+    add(f"answer:async.B:several:{GPT41}+{GPT41_MINI}+{SONNET}", body={"models": [GPT41_MINI, SONNET]})
+    add(f"answer:async.B:out_of_route_order:{SONNET}+{GPT41}", body={"model": SONNET, "models": [GPT41]})
+    add("answer:async.B:invocation_nonce", body={"invocation_nonce": "nonce-e2-async-1"})
+    add("answer:async.B:route_type:responses", body={"route_type": "responses"})
+    add("answer:async.B:ordinary_parameters", body={"requested_parameters": sorted(ORDINARY_PARAMETERS)})
+    add("pass:body.service_tier:async.B:default", "body.service_tier", body={"service_tier": "default"})
+    # Shape A, each §2.3 branch the fixture can express.
+    add("answer:async.A:undeclared_member", body={"x_extra": "v"})
+    add("answer:async.A:route_type:messages", body={"route_type": "messages"})
+    add("answer:async.A:route_type:absent", body={"route_type": None})
+    add("answer:async.A:input_modalities:text", body={"input_modalities": ["text"]})
+    add("answer:async.A:input_modalities:null", None, raw_body(
+        lookup, f'"model":"{GPT41}"', '"estimated_input_tokens":1000', '"input_modalities":null', PLAIN_TAIL))
+    add("answer:async.A:requested_parameter:tools", body={"requested_parameters": ["tools"]})
+    add("answer:async.A:requested_parameter:tools_among_ordinary",
+        body={"requested_parameters": ["temperature", "tools"]})
+    add(f"answer:async.A:partner:{GLM}", body={"model": GLM})
+    add(f"answer:async.A:candidate_refused:{GPT5_MINI}@azure", body={"model": GPT5_MINI})
+    add(f"answer:async.A:candidate_refused:{GPT41}+{GPT5_MINI}@azure", body={"models": [GPT5_MINI]})
+    add(f"answer:async.A:billing_valid_false:{GPT41_NANO}", body={"model": GPT41_NANO})
+    add(f"answer:async.A:billing_valid_false:{GPT41}+{GPT41_NANO}", body={"models": [GPT41_NANO]})
+    add("answer:async.A:ticket_authority_false", policy={"async_settle": {"ticket_authority": False}})
+    # typed_records false has no case: Python leases only with typed request
+    # records (storage_gcp._authorize_gateway_leased raises without them, a
+    # 500), so no leased answer exists for the edge to match.
+    # Shape A where the edge passes: Python's answer is recorded with its
+    # bytes. A replay, and authorization facts Eligibility excludes.
+    add("pass:insert.scope_taken:async.A:replay", "insert.scope_taken", body={"idempotency_key": "async-replayed"},
+        prior=(({"idempotency_key": "async-replayed"}, ADMIT),))
+    add("pass:body.priced_extra:async.A:receipt_fee", "body.priced_extra", body={"inference_receipt": True})
+    add("pass:key.federated:async.A", "key.federated",
+        world={"key": {"federated_home": "https://home.example.invalid"}})
+    # §4.4's affinity case: fallbacks off, the cold choice openai (shape B),
+    # the remembered azure endpoint (refused by Candidate, shape A).
+    add(f"pass:body.cache_affinity:async.warm_A.cold_B:{GPT5_MINI}", "body.cache_affinity",
+        body={"model": GPT5_MINI, "cache_affinity_key": "c" * 64, "provider": {"allow_fallbacks": False}},
+        affinity=((f"{GPT5_MINI}@azure/prepaid", 1.0),))
+    # The edge passes these on its policy: admission on (Python tickets the
+    # request: recorded as shape C, never the ticket; the ticket's claims
+    # need the body's invocation_nonce, without which Python answers shape
+    # A), and its async switch off.
+    add("pass:policy.async_admission:async.C", "policy.async_admission",
+        body={"invocation_nonce": "nonce-e2-async-admission"}, policy={"async_settle": {"admission_enabled": True}})
+    add("pass:policy.async_admission:async.A:no_invocation_nonce", "policy.async_admission",
+        policy={"async_settle": {"admission_enabled": True}})
+    add("pass:async.off:async.B", "async.off", policy={"async_settle": {"edge_decide": False}})
+    # Any header list but exactly ["async-v1"] adds nothing (§2.1).
+    for label, headers in (
+        ("absent", ()),
+        ("sync", ((SETTLEMENT_MODE, "sync"),)),
+        ("repeated", (*ASYNC_V1, *ASYNC_V1)),
+        ("repeated_with_sync", (*ASYNC_V1, (SETTLEMENT_MODE, "sync"))),
+        ("upper_case", ((SETTLEMENT_MODE, "ASYNC-V1"),)),
+        ("mixed_case", ((SETTLEMENT_MODE, "Async-v1"),)),
+        ("leading_space", ((SETTLEMENT_MODE, " async-v1"),)),
+        ("trailing_space", ((SETTLEMENT_MODE, "async-v1 "),)),
+        ("surrounding_tabs", ((SETTLEMENT_MODE, "\tasync-v1\t"),)),
+        ("async-v2", ((SETTLEMENT_MODE, "async-v2"),)),
+        ("empty", ((SETTLEMENT_MODE, ""),)),
+    ):
+        add(f"answer:async.none:header:{label}", headers=headers)
+    # The header's name is case-insensitive; only its value is exact.
+    add("answer:async.B:header_name_case", headers=(("X-TR-Settlement-Mode", "async-v1"),))
+    return out
+
+
+def run_async_case(case: dict[str, Any]) -> dict[str, Any]:
+    """run_case, plus the shape of Python's async members: on an answer,
+    the 200 recorded; on a pass, Python's bytes as well, but for shape C,
+    whose ticket is not reproducible (§6.1: only that the edge passes it)."""
+    result = run_case(case)
+    expect = result["expect"]
+    if expect["outcome"] == "answer":
+        expect["async_shape"] = async_shape(expect["response"])
+    elif "affinity" in expect:
+        expect["affinity"]["async_shape"] = async_shape(expect["affinity"]["response"])
+        expect["affinity"]["cold_async_shape"] = async_shape(expect["affinity"]["cold_response"])
+    elif expect["outcome"] == "pass":
+        response, python = result["_response"], expect["python"]
+        if python["status"] != 200:
+            raise AssertionError(f"{case['name']}: an async pass case Python refused: {response}")
+        python["async_shape"] = async_shape(response)
+        if python["async_shape"] != "C":
+            python["response"] = response
+    return result
+
+
+def render_async() -> str:
+    header_policy = edge_policy_body(ASYNC_POLICY, DEFAULT_KEY, ROUTING._instant(INSTANTS["peak"]))
+    rows = []
+    for case in sorted(async_cases(), key=lambda c: c["name"]):
+        at = ROUTING._instant(case["_at"])
+        policy = edge_policy_body(case["_policy"], case["_world"]["key"], at)
+        result = run_async_case(case)
+        row = {k: v for k, v in case.items() if not k.startswith("_")}
+        row.update({k: v for k, v in result.items() if not k.startswith("_")})
+        row["at_us"] = _us(at)
+        row["policy_patch"] = {k: v for k, v in policy.items() if v != header_policy[k]}
+        row["labels"] = case_labels(case, result["expect"])
+        rows.append(row)
+    names = [row["name"] for row in rows]
+    if len(set(names)) != len(names):
+        raise AssertionError("case names must be unique")
+    snapshot = async_snapshot_body()
+    return _lines({
+        "generator": GENERATOR,
+        # The routing snapshot these cases compose over, as its exact
+        # canonical bytes (unsigned: the fixture's catalog plus the async
+        # routes, compiled as routing_snapshot_vectors.py compiles the fixture).
+        "snapshot_body": snapshot.decode(), "snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
+        "plane": PLANE, "policy": header_policy, "boot_test_key": BOOT_TEST_KEY, "boot_auth": BOOT_AUTH_RULE,
+        "internal_token": INTERNAL_TOKEN,
+        "internal_models": internal_models(),
+        # async_settle.authorize_additions: a requested parameter outside
+        # these makes the answer shape A. Go holds its set equal to this.
+        "ordinary_parameters": sorted(ORDINARY_PARAMETERS),
+        "async_members": list(ASYNC_MEMBERS),
+        # Python's runtime in these cases (the policy's ticket_authority):
+        # a TEST key, epoch 1, the primary region as the journal region.
+        "async_runtime": {"epoch": 1, "journal_region": PRIMARY_REGION, "ticket_kid": TICKET_KID,
+                          "ticket_issuer": TICKET_ISSUER, "ticket_audience": TICKET_AUDIENCE,
+                          "ticket_ttl_seconds": 300},
+        "volatile": ["data.timing"],
+    }, rows)
 
 
 # ---------------------------------------------------------- fingerprints --
@@ -1813,7 +2151,7 @@ def render_cases() -> str:
         policy = edge_policy_body(case["_policy"], case["_world"]["key"], at)
         result = run_case(case)
         row = {k: v for k, v in case.items() if not k.startswith("_")}
-        row.update(result)
+        row.update({k: v for k, v in result.items() if not k.startswith("_")})
         row["at_us"] = _us(at)
         row["policy_patch"] = {k: v for k, v in policy.items() if v != header_policy[k]}
         row["labels"] = case_labels(case, result["expect"])
@@ -1851,7 +2189,8 @@ def render_fingerprints() -> str:
     }, fingerprint_vectors())
 
 
-RENDERS = {"cases": (CASES_OUTPUT, render_cases), "fingerprints": (FINGERPRINT_OUTPUT, render_fingerprints)}
+RENDERS = {"cases": (CASES_OUTPUT, render_cases), "fingerprints": (FINGERPRINT_OUTPUT, render_fingerprints),
+           "async": (ASYNC_OUTPUT, render_async)}
 
 if __name__ == "__main__":
     args = sys.argv[1:]
