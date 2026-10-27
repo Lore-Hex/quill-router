@@ -32,7 +32,7 @@ def canonical_model_id(native_id: str) -> str:
 
 
 def discover(payload: object) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
-    if not isinstance(payload, dict) or payload.get("contract_version") != "2.0":
+    if not isinstance(payload, dict) or payload.get("contract_version") not in ("2.0", "2.1"):
         raise RuntimeError("hixtube: Catalog v2 contract is required")
     provider = payload.get("provider")
     if not isinstance(provider, dict) or provider.get("id") != SLUG:

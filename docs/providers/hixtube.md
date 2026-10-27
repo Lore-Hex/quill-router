@@ -9,9 +9,10 @@ It must run in a separate cloud project, not on TrustedRouter production resourc
   inference and discovery canaries require authentication.
 - Selected checkpoint: `dealignai/deepseek-v4.1-flash-1017-uncensored-fp8`.
   Preserve this identity; it is not the original DeepSeek checkpoint.
-- The tested eager service profile declares 8,192-token context and 256 output
-  tokens. A graph profile needs its own verified limits; never copy the
-  checkpoint's theoretical context or another provider's capabilities.
+- The later finite graph-profile qualification measured 1,048,576-token context
+  and 393,216 output tokens. These require an explicit Catalog v2.1 declaration
+  and the gateway's long-request support; the earlier eager profile remains
+  8,192/256. Never substitute checkpoint limits for tested serving limits.
 - The parser remains model-neutral and also accepts the earlier Qwen CPU pilot.
   Only the live, authenticated catalog and successful canaries establish routes.
 - Credential: `HIXTUBE_API_KEY`, secret name `trustedrouter-hixtube-api-key`.
@@ -44,8 +45,20 @@ not block unrelated providers' price publication.
 
 Ordinary inference through a pinned test certificate has passed; this is not
 trusted public DNS/TLS, 24-hour availability or production-gateway evidence.
-No generated manifest or upstream credential is included in this PR. Keep it
-unmerged until all activation gates above are satisfied.
+No generated manifest or upstream credential is included in this integration.
+The inactive parser and versioned schema may deploy before the endpoint is
+ready; publishing a live manifest still requires every activation gate above.
+
+## Long Completions
+
+Catalog v2.0 retains its 900-second maximum completion deadline. v2.1 explicitly
+permits up to 3,600 seconds, while first-token and stream-idle limits remain
+unchanged. Synthetic probes still have their own bounded policy; a catalog
+declaration does not by itself extend the gateway's request lifetime. Hixtube's
+gateway adapter must be deployed before publishing the 3,540-second profile.
+Pricing, cache discounts, capabilities and retirement remain explicit catalog
+fields and require the same validation and authenticated canaries as before.
+
 The future confidential DeepSeek/GLM deployment needs its own hardware evidence,
 verifier integration and approved measurements; it cannot inherit a badge from
 this standard-TLS pilot.
