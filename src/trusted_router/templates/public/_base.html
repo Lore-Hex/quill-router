@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="js-off">
 <head>
-  {% set meta_title = title|seo_title %}
+  {% set meta_title = title if preserve_title|default(false) else title|seo_title %}
   {% set meta_description = description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">

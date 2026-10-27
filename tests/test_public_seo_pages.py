@@ -1454,6 +1454,30 @@ def test_model_comparison_search_titles_surface_buyer_decision_factors() -> None
     )
 
 
+def test_long_comparison_titles_preserve_model_identity_in_all_metadata(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from trusted_router.routes import public
+
+    _serve_glm_51(monkeypatch)
+    names = {
+        "moonshotai/kimi-k2.6": "MoonshotAI: Kimi K2.6  Long Context Preview 2026 ",
+        "z-ai/glm-5.1": "Z.ai: GLM 5.1 Reasoning Extended Context 2026",
+    }
+    for model_id, name in names.items():
+        monkeypatch.setitem(public.MODELS, model_id, replace(public.MODELS[model_id], name=name))
+    expected = (
+        "Kimi K2.6 Long Context Preview 2026 vs GLM 5.1 Reasoning Extended Context 2026"
+    )
+    response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
+    assert response.status_code == 200
+    assert f"<title>{expected}</title>" in response.text
+    assert f'property="og:title" content="{expected}"' in response.text
+    assert f'name="twitter:title" content="{expected}"' in response.text
+
+
 def test_model_comparison_meta_description_leads_with_generated_verdict(
     client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
