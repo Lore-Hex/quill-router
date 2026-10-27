@@ -73,7 +73,7 @@ def test_controls_resolve_baseline_in_shallow_checkout(monkeypatch, base):
     if base:
         with pytest.raises(pytest.skip.Exception, match="source blobs are byte-identical to the worktree"):
             modules("baseline")
-        assert len(loaded) == 2
+        assert len(loaded) == len(simulation.MODULE_SOURCES) == 3
     else:
         with pytest.raises(pytest.skip.Exception, match="baseline unavailable"):
             modules("baseline")
@@ -395,29 +395,36 @@ def test_simultaneous_restart_comparison(monkeypatch, count, ref):
 
 
 @pytest.mark.parametrize("count", [26, 40])
-def test_simultaneous_restart_attempt_control(monkeypatch, count):
-    before = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0., ref="baseline")
-    after = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0.)
+@pytest.mark.parametrize("ref", ["30852641f1fe0dc94fe1b2f63961f95321e46e4c", None],
+                         ids=["pinned-head", "worktree"])
+def test_simultaneous_restart_attempt_control(monkeypatch, count, ref):
+    # origin/main now includes #2058; keep its positive control on the parent
+    # that actually had synchronized retries, independently of publisher edits.
+    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0., ref=ref)
     # Count every invocation, including aborted transactions, not just commits.
     # These are bounds for this fixed 500 s witness, not a fleet rate limiter.
     limits = dict(attempts_first_minute=5*count, contention_first_minute=4*count,
                   allocation_attempts=7*count, contention_losses=6*count)
-    print(json.dumps(dict(processes=count, attempt_control={metric: dict(
-        baseline=before[metric], worktree=after[metric], bound=limit)
-        for metric, limit in limits.items()}), sort_keys=True))
+    print(json.dumps(dict(processes=count, revision=ref or "worktree",
+        attempt_control={metric: dict(measured=result[metric], bound=limit)
+                         for metric, limit in limits.items()}), sort_keys=True))
     for metric, limit in limits.items():
-        assert after[metric] <= limit, f"{metric}: worktree {after[metric]} > bound {limit}"
-        assert before[metric] > limit, f"{metric}: baseline must violate bound {limit}"
-    for result in (before, after):
-        assert result["granted_processes"] == count
-        assert result["budget_exhaustions"] == 0
-        assert result["max_attempt_ms"] < 2000
-        assert sum(a["started_s"] == 0 for a in result["attempt_log"]) == count
-        for process in range(count):
-            attempts = sorted((a for a in result["attempt_log"] if a["process"] == process),
-                              key=lambda a: a["started_s"])
-            assert attempts[0]["started_s"] == result["first_ticks"][process] == 0
-            assert attempts[-1]["error"] is None
+        if ref:
+            assert result[metric] > limit, f"{metric}: baseline must violate bound {limit}"
+        else:
+            assert result[metric] <= limit, f"{metric}: worktree {result[metric]} > bound {limit}"
+    assert result["granted_processes"] == count
+    assert result["budget_exhaustions"] == 0
+    assert result["max_attempt_ms"] < 2000
+    assert sum(a["started_s"] == 0 for a in result["attempt_log"]) == count
+    for process in range(count):
+        attempts = sorted((a for a in result["attempt_log"] if a["process"] == process),
+                          key=lambda a: a["started_s"])
+        assert attempts[0]["started_s"] == result["first_ticks"][process] == 0
+        assert attempts[-1]["error"] is None
+    if ref:
+        return
+    after = result
     retry_deadlines, retry_ticks = [], []
     for process in range(count):
         attempts = sorted((a for a in after["attempt_log"] if a["process"] == process),

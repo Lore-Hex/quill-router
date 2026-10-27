@@ -99,6 +99,7 @@ class HealthObserver(Observer):
         self.outcome = type("Outcome", (), {"owner": None})()
         self.service: Service | None = None
         self.scheduled_owner: tuple[str, int] | None = None
+        self.scheduled_mono: float | None = None
         observer = self
         class Ticks(dict[str | None, float]):
             def __setitem__(self, key: str | None, value: float) -> None:
@@ -108,7 +109,7 @@ class HealthObserver(Observer):
                 if observer.service is not None:
                     svc = observer.service
                     if not svc.state.days:
-                        svc.tick(owner[1])
+                        svc.tick(owner[1], mono=observer.scheduled_mono)
                     effects = svc.accept(lifecycle.ObserverEnqueued(owner[1], f"{key}:{value}"))
                     if any(isinstance(e, lifecycle.Fault) for e in effects):
                         raise _ObserverQuiesced
@@ -121,6 +122,7 @@ class HealthObserver(Observer):
         owner = getattr(self.outcome, "owner", None)
         scheduled = field in ("health_reads", "workspace_reads")
         if scheduled:
+            self.scheduled_mono = self.service.store.clock() if self.service is not None else self.clock()
             stamp = int(self.evidence_wall()*1_000_000)
             owner = self.scheduled_owner = (day_at(stamp), stamp)
             if self.service is not None:
@@ -497,17 +499,22 @@ def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> fl
 # publication is a fast path; otherwise storage must name this boot before it
 # renews. K=3 permits recovery after two failed cycles, but a boot with three
 # consecutive unpublished slots yields. A holder can recover even if failed
-# claim reads left its row three slots old. Followers start at age four, so
-# renewal and takeover windows never overlap, including unknown commits.
-# Takeover uses 64 fixed hash buckets, one bucket per slot, without widening.
-# For 8-20 boots this is 0.125-0.3125 candidates per slot in expectation, not a
-# cardinality guarantee (there is no roster). Even a lone survivor gets a turn
-# within 67 slots of the final claim. S1's transaction fence handles collisions;
-# S5 forbids retry. A continuously failing holder yields after K, so S4 is
-# bounded by K+TAKEOVER_MIN_AGE+TAKEOVER_SPREAD-1 slots after last publication.
+# claim reads left its row three slots old. Followers start at claim age two,
+# the earliest age allowed by the storage fence. Renewal and takeover can
+# overlap; the transaction fence, not a local cache, chooses the single winner.
+# Every follower is eligible each slot after that age. With 1-20 contenders
+# this permits at most 20 claim attempts (19 losers) at a handoff, not per
+# healthy slot. The within-slot stagger reduces overlap but cannot bound it.
+# Keeping 64 buckets costs a lone survivor up to 67 slots of silence, far
+# outside the reader's five-second freshness envelope.
+# Under timely successful RPCs, a gone holder is replaced at publication+2;
+# a holder recovering after two failures publishes at publication+3. A holder
+# exhausting K attempts leaves its last claim at publication+K, so takeover
+# is eligible at publication+K+2. These are eligibility bounds, not promises
+# against arbitrarily many aborted/failed winners. S5 forbids in-slot retries.
 HOLDER_FAILURE_SLOTS = 3
-TAKEOVER_SPREAD = 64
-TAKEOVER_MIN_AGE = HOLDER_FAILURE_SLOTS + 1
+TAKEOVER_SPREAD = 1
+TAKEOVER_MIN_AGE = 2
 
 
 def takeover_rank(boot: str, claim_slot: int) -> int:
@@ -516,12 +523,7 @@ def takeover_rank(boot: str, claim_slot: int) -> int:
 
 
 def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
-    """Warm followers take over a stale claim in hash-ranked waves, one per slot.
-
-    Every follower reads the same stale claim, so ranks are fixed for the whole
-    takeover. Rank r gets age TAKEOVER_MIN_AGE+r, repeating every spread
-    slots. Missed turns never accumulate into a later fleet-wide wave (S4).
-    """
+    """Every stale-claim slot is a recovery turn, including after a lost turn."""
     if claim is None:
         return True
     age = slot - claim["slot"] - TAKEOVER_MIN_AGE
@@ -529,9 +531,9 @@ def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
 
 
 def own_publication(body: dict[str, Any] | None, boot: str, slot: int) -> bool:
-    """The fleet health row is this boot's publication for slot-1 or slot-2."""
+    """This boot published within the K-slot recovery allowance."""
     return bool(body is not None and body.get("publisher_boot_id") == boot
-                and body.get("slot") in (slot-1, slot-2))
+                and body.get("slot") in range(slot-HOLDER_FAILURE_SLOTS, slot))
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
@@ -567,7 +569,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             reason = "session_unavailable"
             return
         # Establish scopes before the cadence wait: setup time can fit inside
-        # the mandatory two-second cadence instead of shifting every next start.
+        # the scheduled two-second cadence without delaying admission.
         # Admission still follows both setup and waiting, with revocation checks.
         with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
             delay = job.earliest_start_mono - store.clock()
@@ -597,9 +599,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             holder = (not fast_incumbent and previous_attempt is not None
                       and previous_attempt[0] == boot and slot-HOLDER_FAILURE_SLOTS <= previous_attempt[1] < slot)
             if not fast_incumbent and not holder:
-                # A warm takeover is already spread across slots. Keep its
-                # follower delay in the 60-120ms band; the cold 0-210ms spread
-                # can otherwise consume the observation window before claiming.
+                # Keep a warm takeover's follower delay in the 60-120ms band;
+                # the cold 0-210ms spread can otherwise consume the observation
+                # window before claiming.
                 stagger = follower_stagger(boot, slot, incumbent_present or warm)
                 sleep(stagger)
                 # The admitted start and budget include the stagger. Recheck the
@@ -643,7 +645,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                         since = current["slot"]
                     store.unpublished_since = since
                     renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
-                if not renew and (owner or incumbent_present
+                # Cached health selects timing, not ownership. In particular,
+                # slot-2 health must not veto takeover of an age-two claim.
+                if not renew and (owner
                         or current is not None and current["slot"] > slot-2
                         or (warm or current is not None) and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
@@ -871,7 +875,9 @@ class Service:
             target = self.counters[day]["publisher"]
             self._counter_cells(day, target, {name: target[name]+count})
 
-    def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
+    def tick(self, stamp: int, *, mono: float | None = None, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
+        # Job-creating callers pair mono BEFORE the wall stamp. Sampling here
+        # after the prelude would let one pause shift every later reservation.
         self.assert_owner()
         self.record_breaker()
         self.enabled()  # Publish any changed admission generation before dispatch.
@@ -887,14 +893,22 @@ class Service:
                 slot = start//SLOT_US
                 days.append(lifecycle.Day(day, slot, slot-1, (start//lifecycle.DAY_US+1)*lifecycle.DAY_US//SLOT_US-1))
             self._state = lifecycle.State(days=tuple(days), publisher_enabled=enabled, generation=self.generation)
-        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock(), self.enabled() and not self.stopped.is_set()
+        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock() if mono is None else mono, self.enabled() and not self.stopped.is_set()
                                                      and (publisher is True or self.contender())))
 
     def schedule_cycle(self, slot: int, claim_us: int) -> None:
         self.assert_owner()
-        self.tick(claim_us, publisher=True)
+        # Refresh the offline driver's caller stamp as a paired sample too.
+        mono = self.store.clock()
+        stamp = int(self.store.wall()*1_000_000)
+        self.tick(stamp, mono=mono, publisher=True)
+        job = self.state.job
+        if job is not None and job.slot != slot:
+            # The offline caller cannot dispatch this sampled slot. Resolve its
+            # reservation normally instead of leaving it to block the next tick.
+            self.accept(lifecycle.SlotOutcome(stamp, job.slot, "missed", generation=job.generation))
         if any(slot in d.publishers for d in self.state.days):
-            self.publishing.add(day_at(claim_us))
+            self.publishing.add(day_at(slot*SLOT_US))
 
     def publish_cycle(self, slot: int, claim_us: int) -> None:
         """Offline owner driver; executors call the module-level worker."""
@@ -913,7 +927,12 @@ class Service:
         # without follower discovery or re-election. S1 and RPC budgets remain
         # unchanged; the storage fence still permits only one winner per slot.
         self.assert_owner()
-        if self.incumbent_slot in (slot-1, slot-2):
+        # The recovery turn after two failures is still inside K. Demoting at
+        # age three adds two reconciliation reads precisely on that turn and
+        # can spend its observation window before the claim even starts.
+        # claim() still checks the durable owner/slot fence; unknown commits
+        # still force reconciliation in the worker.
+        if self.incumbent_slot in range(slot-HOLDER_FAILURE_SLOTS, slot):
             return True
         # Durable incumbency: the installed fleet health is this boot's own
         # publication, which publish() wrote only under this boot's won claim
@@ -1015,7 +1034,7 @@ class Service:
         if any(isinstance(e, lifecycle.Fault) for e in effects):
             return effects
         # One failed cycle does not revoke a recently acknowledged incumbent.
-        # is_incumbent bounds this grace to two slots; stale callbacks never get
+        # is_incumbent bounds this grace to K slots; stale callbacks never get
         # here, and followers cannot promote themselves from a claim alone.
         if trace["outcome"] == "published":
             self.incumbent_slot = slot
@@ -1383,8 +1402,9 @@ class Service:
                 self.tick(self.interval_end_us, publisher=False)
             self.accept(lifecycle.ShutdownRequested(self.interval_end_us or int(self.store.wall()*1_000_000)))
         if not self.state.shutdown:
+            mono = self.store.clock()
             stamp = int(self.store.wall()*1_000_000)
-            effects = self.tick(stamp)
+            effects = self.tick(stamp, mono=mono)
             for effect in effects:
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, stamp)
@@ -1683,7 +1703,7 @@ class Service:
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
             now = self.store.clock()
             now_us = int(self.store.wall()*1_000_000)
-            for effect in self.tick(now_us):
+            for effect in self.tick(now_us, mono=now):
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, now_us)
             if now >= self.next_flush and (self.flush_job is None or self.flush_job.done()):
@@ -1731,8 +1751,9 @@ class Service:
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
+            mono = self.store.clock()
             stamp = int(self.store.wall()*1_000_000)
-            for effect in self.tick(stamp):
+            for effect in self.tick(stamp, mono=mono):
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, stamp)
             self.observer.start()

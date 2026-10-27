@@ -179,9 +179,11 @@ async def test_async_actual_start_spacing(monkeypatch):
         svc.tick(wall[0])
         svc.submit_publisher(wall[0]//m.SLOT_US, wall[0])
         await svc.publisher_job
-    assert claims == [100.2, 104.]
-    assert all(b-a >= 2. for a, b in zip(claims, claims[1:], strict=False))
-    assert [e["outcome"] for e in entries(svc)] == ["published", "missed", "published"]
+    # Admission's 200ms overshoot must not shift the next reservation.
+    assert claims == [100.2, 102., 104.]
+    assert all(b-a >= 1.75 for a, b in zip(claims, claims[1:], strict=False))
+    assert claims[-1]-claims[0] >= 2*(len(claims)-1)-.25
+    assert [e["outcome"] for e in entries(svc)] == ["published"]*3
 
 
 @pytest.mark.asyncio
@@ -287,11 +289,16 @@ def test_exhaustive_lifetime_trace_and_actual_start_grid():
                 for e in effects:
                     if isinstance(e, m.StartPublisherCycle):
                         assert e.job.slot*m.SLOT_US//m.DAY_US == event.stamp//m.DAY_US
-                        assert e.job.earliest_start_mono >= (starts[-1]+2 if starts else 100.)
+                        assert e.job.earliest_start_mono >= (starts[-1]+1.75 if starts else 100.)
+                        if e.job.earliest_start_mono <= e.job.latest_start_mono:
+                            assert after.last_start_boundary >= state.last_start_boundary+2
+                        else:
+                            assert after.last_start_boundary == state.last_start_boundary
                 actual = starts
                 if accepted and isinstance(event, m.SlotOutcome) and event.outcome != "missed":
                     actual += (event.actual_start_mono,)
-                    assert all(b-a >= 2 for a, b in zip(actual, actual[1:], strict=False))
+                    assert all(b-a >= 1.75 for a, b in zip(actual, actual[1:], strict=False))
+                    assert all(value-actual[0] >= 2*i-.25 for i, value in enumerate(actual))
                 following.add((after, trace, expected_latest, actual))
         frontier = following
     assert len(frontier) > 100

@@ -263,7 +263,8 @@ winning**, require the proposed slot=floor(S/2,000,000,000) and
 B≤S≤B+250,000,000. Store exact S as claim_at_ns. A skewed host cannot reserve a
 far-future slot, multiply winning slots or trigger extra unresolved scans. A
 mismatched proposal is a failed attempted opportunity; do not retry with a new
-slot in that invocation. One attempt/2 s monotonic/contender still applies.
+slot in that invocation. The monotonic scheduled cadence below still applies;
+actual starts may differ by 1.75 s at the edges of adjacent start windows.
 Only genuine server-slot winners scan. Increasing slot and same-slot owner
 transactions remain mandatory. Publish only after a won claim and one
 strong unresolved read; increasing observation and slot fences prevent a delayed
@@ -303,10 +304,51 @@ If the inventory is paginated, retain its names and token and fetch the next pag
 in the next retry window; no replacement is allowed until listing completes.
 Each recovery attempt shares one five-second deadline across its RPCs.
 
-A released publisher job does not advance the last actual start to its latest
-permitted start. An early worker waits until the existing monotonic cadence bound
-within the same slot, then rechecks generation, revocation and the original start
-window. Late workers remain missed. With no known incumbent, followers use
+**Cadence amendment (2026-10-27):** reserve a monotonic slot boundary Q for each
+issued job: `Q = max(tick_mono - wall_slot_phase, previous_Q + 2 s)`.
+Sample tick_mono immediately BEFORE its wall stamp, at every job-creating call
+site (including the offline driver), and carry it through the tick prelude.
+With stable clock rates, the estimated boundary is then no later than the true
+monotonic boundary (apart from at most 1 us of stamp truncation). Sampling after
+the wall stamp instead adds a nonnegative delay: the max retains the largest
+such error in every subsequent reservation. Pre-wall sampling makes that error
+nonpositive, so one sampling or prelude delay cannot shift a later slot.
+The earliest start is `max(tick_mono, Q)`; the latest remains the original
+`tick_mono + (250 ms - wall_slot_phase)`. Reserve Q if it lies within that
+window, even for a later missed or released job. If Q exceeds the latest start,
+the job cannot attempt and must not advance the reservation: otherwise a forward
+wall step could starve every subsequent slot. Keep the actual admission timestamp
+separately for evidence; it
+never feeds Q. A release does not invent an actual start. An early worker waits
+for Q, then rechecks generation, revocation and the original start window.
+Late workers remain missed, with no retry or catch-up.
+
+With stable wall/monotonic rate and an aligned reservation, a tick at B+h and
+per-cycle admission/scheduling overhead e starts at B+h+e, independent of every
+previous e. For h in [0,H] and e in [0,E], the band is [B,B+H+E], subject to the
+unchanged B+250 ms admission cutoff (microsecond sampling adds at most 1 us).
+This band also holds in later slots after a sampling/prelude pause: the pause
+costs only its own slot, which may publish late, fail its own S3 observation
+window, or miss without RPCs. A gap between the paired reads may conservatively
+shorten that slot's admission window; it never extends it or delays a later
+reservation.
+There is no finite host-latency guarantee: an unbounded pause causes a miss, not
+an expanded window. The calibrated regression uses h=20 ms and e=0.7 ms:
+20.699–20.702 ms over at least 1,000 slots; it is a model, not a production SLA.
+
+This deliberately replaces strict actual-start spacing of 2 s. Each admitted
+start A is in [Q,Q+250 ms], so adjacent actual attempts are at least 1.75 s
+apart; attempts spanning k reservations are at least 2k-0.25 s apart. Thus any
+monotonic interval of duration T contains at most `1+floor((T+0.25)/2)` attempts:
+no sustained RPC-rate increase, even under forward wall steps. Backward ticks
+and already-accounted slots are rejected; a forward jump accounts skipped slots
+as missed and cannot compress reservations. An early host wake cannot acquire
+a future server slot because the unchanged server-time claim fence rejects it.
+The outstanding-job guard and active-worker guard prevent overlapping cycles,
+including released workers; the admission lock/revocation checks remain in force.
+The 500 ms per-cycle RPC deadline still begins at actual admission. S5 remains
+one attempt per slot, S1–S3 and health_usable are unchanged. This scheduling
+amendment adds no RPC, retry or timestamp correction. With no known incumbent, followers use
 30 ms * (H(boot, slot) mod 8), or 0–210 ms, instead of the three warm buckets.
 A recent accepted local publication or an existing installed fleet health row
 from slot s-1 or s-2 supplies the incumbent timing hint. Followers with that hint

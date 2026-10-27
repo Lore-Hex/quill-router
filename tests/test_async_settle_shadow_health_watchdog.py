@@ -117,7 +117,8 @@ def test_reversed_observation_is_measured_failure_accepted_by_owner(monkeypatch,
     assert svc.state.job is None and entries(svc)[-1] == trace
     assert svc.publisher_faults == 0
     assert svc.incumbent_slot == job.slot-1
-    assert svc.is_incumbent(job.slot+1) and not svc.is_incumbent(job.slot+2)
+    assert svc.is_incumbent(job.slot+1) and svc.is_incumbent(job.slot+2)
+    assert not svc.is_incumbent(job.slot+3)
     assert svc.counters[trace["day"]]["publisher"]["failures"] == 1
     assert svc.counters[trace["day"]]["publisher"]["unknown_outcomes"] == 0
     accounting(svc)

@@ -475,7 +475,7 @@ async def test_recovery_worker_waits_for_first_window_after_unknown_startup(inve
     assert not manager.ready and manager.creation_unknown
     assert state.create_timeouts == [5.]
     installed.next_flush = float('inf')
-    monkeypatch.setattr(installed, 'tick', lambda now: ())
+    monkeypatch.setattr(installed, 'tick', lambda now, *, mono: ())
 
     async def one_turn(seconds):
         if installed.session_job is not None:
@@ -733,7 +733,7 @@ async def test_owned_lanes_recover_lost_creation_on_owner_worker(owned_inventory
     # remain real. Stop polling cannot consume the observation lane first.
     monkeypatch.setattr(svc.runtime_stop, 'poll', lambda: True)
     monkeypatch.setattr(svc.runtime_stop, 'start', lambda *args: None)
-    monkeypatch.setattr(svc, 'tick', lambda now: ())
+    monkeypatch.setattr(svc, 'tick', lambda now, *, mono: ())
     svc.next_flush = float('inf')
     async def one_turn(seconds):
         if svc.session_job is not None:
