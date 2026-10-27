@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -104,11 +105,19 @@ def test_stripe_parameters_and_quote(checkout, settings, monkeypatch):
         "list_price_cents": "18700", "discount_bps": "1234", "index_as_of": token_index.AS_OF_ISO,
         **reserve.WINDOW,
     }
+    assert args["metadata"]["refund_window_days"] == "30"
+    assert "refundable_until" not in args["metadata"]
+    assert args["metadata"]["terms_version"] == "2026-10-27-v2"
+    assert args["metadata"]["transfer_policy"] == "nyte_resale_only"
+    assert args["metadata"]["resale_fee_bps"] == "500"
+    assert args["metadata"]["resale_priority"] == "ahead_of_new_inventory"
+    assert args["metadata"]["resale_payout_method"] == "original_card_refund"
+    assert args["metadata"]["resale_payout_cap"] == "original_lot_purchase_price"
     assert args["payment_intent_data"] == {"metadata": args["metadata"]}
     assert args["line_items"] == [{"quantity": 2, "price_data": {
         "currency": "usd", "unit_amount": quote.json()["per_lot_cents"], "product_data": {
             "name": "Reserved tokens · Grade B · 1B tokens",
-            "description": "Usable January 1, 2027 through December 31, 2027. Unused tokens expire December 31, 2027. Full refund on request before January 1, 2027.",
+            "description": "Usable January 1, 2027 through December 31, 2027. Unused tokens expire December 31, 2027. Full refund on request within 30 days of purchase. After 30 days, exit only through NYTE resale. Transfer only through NYTE resale: list lots; NYTE resells ahead of new inventory. Each sale refunds the resale price minus a 5% fee to the original card, capped at what you paid for those lots.",
         },
     }}]
 
@@ -137,7 +146,7 @@ def test_origin_preflight_rate_limit_and_body_bounds(checkout):
 
 def event():
     return {"id": "evt_reserved", "type": "checkout.session.completed", "data": {"object": {
-        "id": "cs_reserved", "customer": "cus_reserved", "mode": "payment", "currency": "usd",
+        "id": "cs_reserved", "created": 1793102400, "customer": "cus_reserved", "mode": "payment", "currency": "usd",
         "payment_status": "paid", "amount_total": 1600, "customer_details": {"email": "private@example.com"},
         "metadata": {"kind": reserve.KIND, "grade": "A", "lots": "2", "per_lot_cents": "800",
                      "list_price_cents": "1000", "discount_bps": "2000", "index_as_of": "2026-10-26",
@@ -176,13 +185,21 @@ def test_webhook_isolation_dedup_log_and_email(client, reservation_mail, caplog)
     assert "private@example.com" not in message.text_body
     record, = [r for r in caplog.records if r.message == "acquisition.reserved_tokens_recorded"]
     payload = json.loads(_ApplicationConsoleFormatter().format(record))
+    assert payload["position_id"] == "nyte_pos_7367bde47b80a6074439f18379a00da7cfa3a94a3815b130640a90eda935ca22"
+    assert payload["position_id"] in message.subject
+    details = json.loads(message.text_body.split("\n", 1)[1])
+    for key in ("position_id", "refund_deadline_at", *reserve.WINDOW):
+        assert details[key] == payload[key]
+    assert payload["refund_deadline_at"] == "2026-11-26T12:00:00+00:00"
+    assert payload["refund_window_days"] == "30"
+    assert "refundable_until" not in payload
     assert payload["stripe_session_id"] == "cs_reserved"
     assert payload["stripe_customer_id"] == "cus_reserved"
     assert payload["per_lot_cents"] == "800"
     assert "workspace_id" not in payload and "email" not in json.dumps(payload)
 
 
-@pytest.mark.parametrize("patch", [{"amount_total": 1599}, {"currency": "eur"}, {"mode": "setup"}, {"id": None}])
+@pytest.mark.parametrize("patch", [{"amount_total": 1599}, {"currency": "eur"}, {"mode": "setup"}, {"id": None}, {"created": None}, {"created": True}, {"created": "1793102400"}, {"created": -1}, {"created": 10**30}])
 def test_invalid_payment_is_retryable_not_recorded(client, reservation_mail, patch):
     invalid = event()
     invalid["data"]["object"].update(patch)
@@ -210,6 +227,9 @@ def test_unpaid_then_paid_and_mail_failure_retry(client, reservation_mail):
     assert client.post("/v1/internal/stripe/webhook", json=event()).json()["data"]["recorded"]
     assert client.post("/v1/internal/stripe/webhook", json=event()).json()["data"]["duplicate"]
     assert reservation_mail.call_count == 2
+    first, retry = [call.args[0] for call in reservation_mail.call_args_list]
+    assert first.subject == retry.subject
+    assert first.text_body == retry.text_body
 
 
 def test_concurrent_webhooks(client, reservation_mail):
@@ -231,3 +251,53 @@ def test_notification_uses_configured_enterprise_recipient(client, settings, res
     result = reserve.handle_reservation_event(event(), settings)
     assert result["recorded"] is True
     assert reservation_mail.call_args.args[0].to == "sales@example.com"
+
+
+@pytest.mark.parametrize("created,deadline", [
+    ("2026-12-31T23:59:59+00:00", "2027-01-30T23:59:59+00:00"),
+    ("2027-02-01T10:30:00+00:00", "2027-03-03T10:30:00+00:00"),
+])
+def test_refund_deadline_uses_session_creation_not_event_or_processing_time(client, reservation_mail, created, deadline):
+    data = event()
+    data["created"] = 1  # The event timestamp must not determine the window.
+    data["data"]["object"]["created"] = int(datetime.fromisoformat(created).astimezone(UTC).timestamp())
+    assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 200
+    details = json.loads(reservation_mail.call_args.args[0].text_body.split("\n", 1)[1])
+    assert details["refund_deadline_at"] == deadline
+
+
+def test_distinct_purchases_get_distinct_positions(client, reservation_mail):
+    for session_id in ("cs_reserved", "cs_another_purchase"):
+        data = event()
+        data["data"]["object"]["id"] = session_id
+        assert client.post("/v1/internal/stripe/webhook", json=data).json()["data"]["recorded"]
+    positions = [json.loads(call.args[0].text_body.split("\n", 1)[1])["position_id"]
+                 for call in reservation_mail.call_args_list]
+    assert len(set(positions)) == 2
+    assert all(position.startswith("nyte_pos_") and len(position) == 73 for position in positions)
+
+
+@pytest.mark.parametrize("patch", [
+    {"refund_window_days": "31"}, {"terms_version": "2026-10-27"},
+    {"transfer_policy": "unrestricted"}, {"resale_fee_bps": "0"},
+    {"resale_priority": "after_new_inventory"}, {"resale_payout_method": "cash"},
+    {"resale_payout_cap": "unlimited"},
+])
+def test_invalid_locked_terms_do_not_record_position(client, reservation_mail, patch):
+    data = event()
+    data["data"]["object"]["metadata"].update(patch)
+    assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 400
+    reservation_mail.assert_not_called()
+
+
+def test_approved_rollout_discount(settings, monkeypatch):
+    from pathlib import Path
+
+    rollout = (Path(__file__).resolve().parents[1] / "scripts/deploy/rollout.sh").read_text()
+    assert '"TR_RESERVED_TOKENS_CHECKOUT_ENABLED=false"' in rollout
+    assert '"TR_RESERVED_TOKENS_DISCOUNT_BPS=1000"' in rollout
+    settings.reserved_tokens_discount_bps = 1000
+    monkeypatch.setitem(token_index.QUOTES, "B", {"value": 187})
+    quote = reserve.reservation_quote(settings, "B", 2)
+    assert quote["per_lot_cents"] == 16830
+    assert quote["total_cents"] == 33660

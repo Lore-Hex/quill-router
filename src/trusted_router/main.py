@@ -122,7 +122,9 @@ _APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
 _ACQUISITION_CLOUD_FIELDS = (
     "stripe_session_id", "stripe_customer_id", "lots", "per_lot_cents",
     "list_price_cents", "discount_bps", "index_as_of", "usable_from",
-    "usable_until", "refundable_until", "terms_version",
+    "usable_until", "refund_window_days", "refund_deadline_at", "terms_version",
+    "position_id", "transfer_policy", "resale_fee_bps", "resale_priority",
+    "resale_payout_method", "resale_payout_cap",
     "anonymous_fingerprint",
     "account_fingerprint",
     "workspace_fingerprint",

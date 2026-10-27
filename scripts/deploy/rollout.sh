@@ -469,8 +469,7 @@ fi
 ENV_VARS=(
   "TR_RESERVED_TOKENS_CHECKOUT_ENABLED=false"
   "TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT=100"
-  # Add TR_RESERVED_TOKENS_DISCOUNT_BPS with Joseph's approved discount before
-  # enabling sales. No discount is supplied implicitly.
+  "TR_RESERVED_TOKENS_DISCOUNT_BPS=1000"
   # PR3 binary deploys OFF. Migration and reviewed cohort evidence precede enable.
   "TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED=false"
   'TR_SPECULATION_SHADOW_WORKSPACES=[]'

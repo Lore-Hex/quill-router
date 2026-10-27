@@ -204,7 +204,13 @@ Step 2 of `/buy` offers card checkout only for index-grade 1B-token lots, all
 four grades AAA/A/B/C. The existing call path remains available for every
 selection. Specific models, throughput and facilities have no card option.
 The fixed card window is January 1 through December 31, 2027, with unused tokens
-expiring December 31 and a full refund on request before January 1, 2027.
+expiring December 31 and a full refund on request within 30 days of purchase.
+After 30 days, the only exit is NYTE’s resale program. Reservations are transferable
+only through that program: holders list lots, NYTE resells them to new buyers ahead
+of new inventory, and each sale returns the resale price minus a 5% resale fee to
+the original card, capped at what the holder paid for those lots. Until self-service
+resale launches in a separate PR, refund and resale requests go to
+`enterprise@trustedrouter.com`. The terms version is `2026-10-27-v2`.
 Delivery is through a TrustedRouter account via the NYTE API. The terms live at
 `/reserved-tokens-terms` and its `.html` alias, in the shared NYTE shell and New
 York sitemap. These are prepaid inference services, not securities or investments.
@@ -229,21 +235,19 @@ checkout price is the price locked at purchase.
 Configuration, kept dark in `scripts/deploy/rollout.sh`:
 
 - `TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true` enables sales.
-- `TR_RESERVED_TOKENS_DISCOUNT_BPS` must be explicitly approved and set (0–9999;
-  absent refuses sales). Do not invent a default discount.
+- `TR_RESERVED_TOKENS_DISCOUNT_BPS=1000` records Joseph’s approved 10% discount.
+  The checkout flag remains `false`; an absent discount still refuses sales.
 - `TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT` defaults to 100. Larger orders go to
   the call. Stripe amount limits also fail closed.
 - The existing `TR_STRIPE_SECRET_KEY`, signed webhook secret and SES configuration
   are reused. The actions surface may now hold the Stripe key, but still no
   webhook signing secret, credit store or other billing credentials.
 
-Before enabling, Joseph must approve the discount, confirm Stripe's account
-settings for this 2027 pre-sale, customer receipts, statement descriptor and tax
+Before enabling, confirm Stripe's account settings for this 2027 pre-sale, customer receipts, statement descriptor and tax
 handling, and confirm the existing webhook receives `checkout.session.completed`.
 Keep release gates intact; this local implementation does not authorize publish.
-Add the approved discount to config-as-code before switching the flag. Release
-both action paths in the Python/Terraform URL maps, backend, growth worker/source
-filter and static assets/terms/sitemap together in their reviewed workflows.
+The approved discount is already in config-as-code. Release both action paths
+in the Python/Terraform URL maps, backend, growth worker/source filter and static assets/terms/sitemap together in their reviewed workflows.
 
 The signed webhook intercepts `kind=reserved_tokens_2027` before all credit
 handling, even if a session contains workspace/refill metadata. It verifies the
@@ -252,7 +256,25 @@ and emails the existing enterprise inquiry recipient: `TR_PARTNER_INQUIRY_EMAIL`
 (`joseph@jperla.com` in rollout), falling back to `enterprise@trustedrouter.com`
 just like the enterprise brief. No buyer email/name is included. Stripe remains
 the order record; no token allowance, current balance credit or fulfillment is
-created. Refunds are handled manually in Stripe until fulfillment is built.
+created. Full refunds requested within 30 days of purchase are handled manually
+in Stripe.
+Checkout Session and PaymentIntent metadata lock `refund_window_days=30`, the
+NYTE-only transfer policy, resale priority, 500-basis-point fee, original-card
+refund method and original-lot-price cap; there is no fixed `refundable_until`.
+The server computes `refund_deadline_at` from the signed Checkout Session’s
+`created` timestamp plus 30 days, never webhook arrival time.
+
+Every completed purchase is a separate position. Its stable ID is `nyte_pos_`
+followed by the full SHA-256 hex digest of `nyte:reserved-position:v1:` plus the
+Stripe Checkout Session ID. Domain separation avoids reuse across identifier
+schemes; Stripe’s high-entropy session ID prevents guessing without adding a
+rotating secret or a mapping store. The ID is an order reference, not an access
+credential. It and the computed refund deadline appear in the structured log
+and the ops notification email (the ID also appears in the subject). Retries and
+different event IDs for the same session preserve the position ID. Stripe receipts
+remain the buyer’s reference and operations can reconcile them with that email.
+The static success page has no authenticated order lookup, so it stays generic:
+no position/session ID or order details are added to the success URL or analytics.
 
 Notification leases and completion markers are persisted by session ID in the
 isolated `reserved_notification` entity kind, with an existing webhook dedup key

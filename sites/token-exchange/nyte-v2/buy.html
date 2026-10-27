@@ -14,7 +14,7 @@
     <p class="buy-fine">Card checkout purchases a reservation for 2027 delivery. The call path is a request to discuss a reservation, not an order. Capacity futures and derivatives are planned offerings, not live products. This is an inference service, not a securities or cryptocurrency exchange.</p>
   </aside>
   <div class="buy-workspace" id="buy-flow">
-    <p id="buy-reserved-success" class="buy-total" role="status" hidden>Thank you for your reservation. Stripe handles your payment confirmation. Your reserved tokens are for use January 1 through December 31, 2027; unused tokens expire December 31, 2027. Full refund on request before January 1, 2027.</p>
+    <p id="buy-reserved-success" class="buy-total" role="status" hidden>Thank you for your reservation. Stripe handles your payment confirmation. Your reserved tokens are for use January 1 through December 31, 2027; unused tokens expire December 31, 2027. Full refund on request within 30 days of purchase. After 30 days, exit is only through NYTE’s resale program.</p>
     <ol class="buy-steps" aria-label="Request progress">
       <li aria-current="step"><span>1</span> Tokens</li><li><span>2</span> Details</li><li><span>3</span> Contact</li><li><span>4</span> Book a call</li>
     </ol>
@@ -63,7 +63,8 @@
         <h3 id="buy-reserve-title">Reserve now by card</h3>
         <p id="buy-reserve-price" aria-live="polite">Loading the current reservation quote…</p>
         <p>Each lot is 1 billion tokens of your selected NYTE Index grade. This is a reservation for 2027 delivery through a TrustedRouter account via the NYTE API. Your price is locked at purchase.</p>
-        <p><strong>Card reservation window: January 1, 2027 through December 31, 2027.</strong> Unused tokens expire December 31, 2027. Full refund on request any time before January 1, 2027. The desired start and term above apply to the call request only.</p>
+        <p><strong>Card reservation window: January 1, 2027 through December 31, 2027.</strong> Unused tokens expire December 31, 2027. Full refund on request within 30 days of purchase. After 30 days, exit is only through NYTE’s resale program. The desired start and term above apply to the call request only.</p>
+        <p>Reservations are transferable only through NYTE’s resale program. You list lots; NYTE resells them to new buyers ahead of new inventory. Each sale returns the resale price minus a 5% resale fee to your original card, capped at what you paid for those lots. Until self-service resale launches, email <a href="mailto:enterprise@trustedrouter.com">enterprise@trustedrouter.com</a> for resale requests. Every completed purchase is a position with a stable ID.</p>
         <label class="buy-reserve-terms"><input id="buy-reserve-terms" type="checkbox" required> I accept the <a href="/reserved-tokens-terms" target="_blank" rel="noopener">reserved tokens terms</a>.</label>
         <button id="buy-reserve-button" class="btn btn-primary" type="button" disabled>Reserve now by card</button>
         <p id="buy-reserve-error" role="status"></p>

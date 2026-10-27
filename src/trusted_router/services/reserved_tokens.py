@@ -1,10 +1,12 @@
 """NYTE 2027 pre-sale. Stripe owns the order; this never creates credits."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Literal
 
@@ -19,11 +21,16 @@ from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 KIND = "reserved_tokens_2027"
-TERMS_VERSION = "2026-10-27"
+TERMS_VERSION = "2026-10-27-v2"
 WINDOW = {
     "usable_from": "2027-01-01",
     "usable_until": "2027-12-31",
-    "refundable_until": "2026-12-31",
+    "refund_window_days": "30",
+    "transfer_policy": "nyte_resale_only",
+    "resale_fee_bps": "500",
+    "resale_priority": "ahead_of_new_inventory",
+    "resale_payout_method": "original_card_refund",
+    "resale_payout_cap": "original_lot_purchase_price",
     "terms_version": TERMS_VERSION,
 }
 log = logging.getLogger("trusted_router.acquisition")
@@ -73,7 +80,7 @@ def create_reservation_checkout(settings: Settings, body: ReservationRequest) ->
             "currency": "usd", "unit_amount": quote["per_lot_cents"],
             "product_data": {
                 "name": f"Reserved tokens · Grade {body.grade} · 1B tokens",
-                "description": "Usable January 1, 2027 through December 31, 2027. Unused tokens expire December 31, 2027. Full refund on request before January 1, 2027.",
+                "description": "Usable January 1, 2027 through December 31, 2027. Unused tokens expire December 31, 2027. Full refund on request within 30 days of purchase. After 30 days, exit only through NYTE resale. Transfer only through NYTE resale: list lots; NYTE resells ahead of new inventory. Each sale refunds the resale price minus a 5% fee to the original card, capped at what you paid for those lots.",
             },
         }, "quantity": body.lots}],
         metadata=metadata, payment_intent_data={"metadata": metadata},
@@ -81,6 +88,16 @@ def create_reservation_checkout(settings: Settings, body: ReservationRequest) ->
         cancel_url=f"https://nytokenexchange.com/buy?step=2&grade={body.grade}&unit=blocks",
     )
     return {"url": str(session["url"])}
+
+
+def reservation_position_id(session_id: str) -> str:
+    """Stable across retries/releases; Stripe session entropy prevents guessing.
+
+    Domain-separated SHA-256 hides the Stripe identifier without a rotating
+    secret or a new mapping table. This reference is not an access credential.
+    """
+    digest = hashlib.sha256(f"nyte:reserved-position:v1:{session_id}".encode()).hexdigest()
+    return f"nyte_pos_{digest}"
 
 
 def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -101,6 +118,10 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[
     metadata = obj.get("metadata") or {}
     try:
         lots, per_lot = int(metadata["lots"]), int(metadata["per_lot_cents"])
+        created = obj["created"]
+        if type(created) is not int or created <= 0:
+            raise ValueError("Invalid Stripe session creation time")
+        refund_deadline = datetime.fromtimestamp(created, UTC) + timedelta(days=int(WINDOW["refund_window_days"]))
         valid = (
             lots > 0 and per_lot > 0 and obj.get("amount_total") == lots * per_lot
             and obj.get("currency") == "usd" and obj.get("mode") == "payment"
@@ -111,11 +132,12 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[
             and isinstance(metadata["index_as_of"], str)
             and isinstance(obj.get("id"), str) and obj["id"].startswith("cs_")
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
         valid = False
     if not valid:
         raise api_error(400, "Invalid reserved token payment amount or metadata", ErrorType.BAD_REQUEST)
     session_id = obj["id"]
+    position_id = reservation_position_id(session_id)
     owner = uuid.uuid4().hex
     claim = STORE.claim_reserved_notification(session_id, owner, now=int(time.time()))
     if claim == "sent":
@@ -123,13 +145,13 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[
     if claim == "busy":
         raise api_error(503, "Reservation notification is being processed; retry", ErrorType.SERVICE_UNAVAILABLE)
     details = {key: metadata[key] for key in ("grade", "lots", "per_lot_cents", "list_price_cents", "discount_bps", "index_as_of", *WINDOW)}
-    details.update(stripe_session_id=session_id, stripe_customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None)
+    details.update(position_id=position_id, refund_deadline_at=refund_deadline.isoformat(), stripe_session_id=session_id, stripe_customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None)
     try:
         if STORE.record_webhook_event_once(KIND, session_id):
             log.info("acquisition.reserved_tokens_recorded", extra={"event": "acquisition.reserved_tokens_recorded", **details})
         sent = get_email_service(settings).send(EmailMessage(
             to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
-            subject=f"NYTE 2027 reservation · {session_id}",
+            subject=f"NYTE 2027 reservation · {position_id}",
             text_body="Paid reserved tokens (Stripe is the order record):\n" + json.dumps(details, sort_keys=True, indent=2),
             mail_class="reserved_tokens",
         ))
