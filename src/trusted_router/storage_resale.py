@@ -133,9 +133,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             block_position(p)
 
     if op == "reconcile_payment":
-        # Persist even before checkout creates the payment-to-position mapping.
-        # Healthy/stale observations cannot erase previously observed adversity.
-        remember_payment_review(c["payment_intent"], c["payment_state"])
+        # The durable mapping, not a feature flag or metadata, owns event scope.
         owner = get("nyte_payment", c["payment_intent"])
         if not owner:
             return {}
@@ -388,6 +386,9 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
     if op in {"refund_lifecycle", "refund_failed"}:
         refund = c["refund"]
         rid, status = refund.get("id"), refund.get("status")
+        payment = get("nyte_payment", refund.get("payment_intent") or "")
+        if not payment:
+            return {}
         if not rid or status not in {"pending", "requires_action", "succeeded", "failed", "canceled"}:
             return {}
         if op == "refund_failed" and status not in {"failed", "canceled"}:
@@ -396,20 +397,18 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         metadata = refund.get("metadata") or {}
         kind, key = indexed_identity(index)
         if not key and metadata.get("kind") == "full_refund" and metadata.get("position_id"):
-            payment = get("nyte_payment", refund.get("payment_intent", ""))
-            p = get("nyte_position", payment["session_id"]) if payment else {}
+            p = get("nyte_position", payment["session_id"])
             kind, key = ("full_refund", p["session_id"]) if p.get("id") == metadata["position_id"] else ("", "")
         elif not key and (metadata.get("fill_id") or metadata.get("nyte_fill_id")):
             kind, key = "resale_fill", metadata.get("fill_id") or metadata["nyte_fill_id"]
         elif not key:
             # Previously acknowledged full refunds predate the shared index.
-            payment = get("nyte_payment", refund.get("payment_intent", ""))
-            p = get("nyte_position", payment["session_id"]) if payment else {}
+            p = get("nyte_position", payment["session_id"])
             if p.get("stripe_refund_id") == rid:
                 kind, key = "full_refund", p["session_id"]
         row = obligation(kind, key)
         if not row:
-            if (not c.get("existing_only") and status in {"failed", "canceled"} and refund.get("payment_intent")
+            if (status in {"failed", "canceled"}
                     and type(refund.get("amount")) is int and not get("nyte_refund_failure", rid)):
                 put("nyte_refund_failure", rid, {"payment_intent": refund["payment_intent"],
                                                "amount": refund["amount"], "status": status, "observed_at": now,

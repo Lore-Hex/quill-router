@@ -97,10 +97,10 @@ def register(router: APIRouter) -> None:
         event_type = event.get("type")
 
         obj = event.get("data", {}).get("object", {})
-        # Existing refund obligations outlive the sales switch. Checkout and
-        # new-position reconciliation remain entirely gated by that switch.
-        if (event_type in {"charge.refund.updated", "refund.created", "refund.updated", "refund.failed"}
-                or (settings.resale_enabled and (event_type == "charge.refunded" or str(event_type).startswith("charge.dispute.")))):
+        # Card reconciliation is scoped by the durable NYTE payment mapping,
+        # never by the sales flag. Paid checkout retains its separate gate.
+        if (event_type in {"charge.refunded", "charge.refund.updated", "refund.created", "refund.updated", "refund.failed"}
+                or str(event_type).startswith("charge.dispute.")):
             from trusted_router.services.resale import reconcile_payment_event
 
             if await run_in_threadpool(reconcile_payment_event, event, settings):

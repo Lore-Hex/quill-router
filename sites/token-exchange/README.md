@@ -326,8 +326,9 @@ outstanding links. Repeated mutations use stable request IDs.
 `TR_RESALE_ENABLED=false` and `TR_RESALE_FEE_BPS=500` are the defaults and are
 pinned in `scripts/deploy/rollout.sh`. The flag gates every holder API action
 and new checkout position/allocation work. Existing refund obligations still
-reconcile lifecycle webhooks while the flag is off. Unknown refunds do not create
-resale state in that mode. The explicit ops refund CLI remains available for
+reconcile lifecycle webhooks while the flag is off. Both modes retain unbound
+refund failure evidence for payments mapped to NYTE positions; payments without
+that mapping create no NYTE state. The explicit ops refund CLI remains available for
 obligations already owed. Config loading rejects any fee other than 500 with an
 error explaining that a fee change requires a new terms version. v5 is the new checkout terms version;
 already-created v3/v4 sessions remain accepted by the webhook. The v5 terms keep

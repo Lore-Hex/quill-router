@@ -295,25 +295,21 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     if not payment_intent and obj.get("charge"):
         charge = _stripe_dict(stripe.Charge.retrieve(obj["charge"], api_key=settings.stripe_secret_key))
         payment_intent = charge.get("payment_intent")
-    if not payment_intent:
+    if not payment_intent or not command("payment", payment_intent=payment_intent):
         return False
     if event["type"] in {"refund.failed", "refund.updated", "refund.created", "charge.refund.updated"}:
         refund = {**obj, "payment_intent": payment_intent,
                   "status": "failed" if event["type"] == "refund.failed" else obj.get("status")}
-        obligation = command("refund_lifecycle", refund=refund, existing_only=not settings.resale_enabled)
+        obligation = command("refund_lifecycle", refund=refund)
         if obligation:
             if obligation["status"] == "needs_ops":
                 alert_failed_refund(obligation, settings)
             return True
-        if not settings.resale_enabled:
-            # Only already-known obligations are serviced while sales are off.
-            # Do not import purchases or retain evidence for unknown refunds.
-            return False
         if refund["status"] in {"failed", "canceled"}:
-            return bool(command("payment", payment_intent=payment_intent)) or (obj.get("metadata") or {}).get("kind") in {"reserved_tokens_2027", "resale_fill", "full_refund"}
+            return True  # Mapped payment; unbound evidence is durable.
         if refund["status"] not in {"pending", "succeeded", "requires_action"}:
             return False
-        # Use the signed event itself: a successful early refund must survive
+        # Use the signed event itself: a successful mapped refund must survive
         # even if a subsequent charge read is stale or temporarily unavailable.
         state = {"amount_refunded": refund["amount"], "refunds": [refund]}
     elif event["type"].startswith("charge.dispute."):
@@ -323,9 +319,8 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
             charge = obj
         state = payment_state(payment_intent, charge, settings)
     position = command("reconcile_payment", payment_intent=payment_intent, payment_state=state)
-    # Unmapped evidence is still durable. Only intercept generic billing when
-    # this is a known NYTE payment; unrelated payments retain their old handler.
-    return bool(position) or (obj.get("metadata") or {}).get("kind") == "reserved_tokens_2027"
+    # Only mapped NYTE payments are intercepted; other payments stay inert here.
+    return bool(position)
 
 
 def alert_failed_refund(obligation: dict[str, Any], settings: Settings) -> None:

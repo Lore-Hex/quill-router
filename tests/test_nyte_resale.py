@@ -285,26 +285,30 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
         contract.test_nyte_own_refund_before_worker_commit_is_exempt_but_external_excess_blocks(store, "pgownrefund0")
         contract.test_nyte_timestamped_import_still_allocates_after_webhook_claim(store, "pgimportrace")
         contract.test_nyte_completed_legacy_notification_import_is_historical(store, "pglegacy0000")
-        contract.test_nyte_adverse_before_position_is_durable_and_blocks_purchase(store, "pgearlyref00", {"amount_refunded": 100}, monkeypatch)
-        contract.test_nyte_adverse_before_position_is_durable_and_blocks_purchase(store, "pgearlydisp0", {"disputed": True}, monkeypatch)
         contract.test_nyte_old_purchase_checks_current_stripe_before_held(store, "pgoldstripe0", monkeypatch, "webhook_replay")
         contract.test_nyte_old_purchase_checks_current_stripe_before_held(store, "pgoldimport0", monkeypatch, "historical_import")
-        contract.test_nyte_successful_refund_later_fails_without_reissuance(store, "pgfailedref0", monkeypatch, "failed")
-        contract.test_nyte_successful_refund_later_fails_without_reissuance(store, "pgcancelref0", monkeypatch, "canceled")
-        for failure_first in (True, False):
+        for enabled in (True, False):
+            def unique(label, enabled=enabled):
+                return contract.reference(f"pg{enabled}{label}")[:20]
+            for state in ({"amount_refunded": 100}, {"disputed": True}):
+                contract.test_nyte_adverse_events_require_a_mapped_position(store, unique(str(state)), state, monkeypatch, enabled)
             for failure in ("failed", "canceled"):
-                contract.test_nyte_refund_failure_and_success_commit_are_order_independent(
-                    store, f"pgrace{failure_first}{failure}", monkeypatch, failure_first, failure)
-        for kind in ("resale_fill", "full_refund"):
-            contract.test_nyte_existing_metadata_obligation_reconciles_with_sales_disabled(
-                store, contract.reference("pgtoggle" + kind)[:20], monkeypatch, kind)
-            contract.test_nyte_unbound_refund_failure_survives_acknowledgement(store, "pgunbound" + kind, kind)
-            for failure_first in (True, False):
-                for by_metadata in (True, False):
-                    for failure in ("failed", "canceled"):
-                        contract.test_nyte_shared_refund_obligations_are_monotonic(
-                            store, contract.reference(f"pgshared{kind}{failure_first}{by_metadata}{failure}")[:20], monkeypatch,
-                            kind, failure_first, by_metadata, failure)
+                contract.test_nyte_successful_refund_later_fails_without_reissuance(store, unique("late" + failure), monkeypatch, failure, enabled)
+                contract.test_nyte_unmapped_refund_evidence_is_inert(store, unique("unmapped" + failure), monkeypatch, enabled, failure)
+                for failure_first in (True, False):
+                    contract.test_nyte_refund_failure_and_success_commit_are_order_independent(
+                        store, unique(f"race{failure_first}{failure}"), monkeypatch, failure_first, failure, enabled)
+            for kind in ("resale_fill", "full_refund"):
+                contract.test_nyte_existing_metadata_obligation_reconciles_in_both_modes(
+                    store, unique("metadata" + kind), monkeypatch, kind, enabled)
+                for failure in ("failed", "canceled"):
+                    contract.test_nyte_unbound_refund_failure_survives_acknowledgement(
+                        store, unique("unbound" + kind + failure), kind, monkeypatch, enabled, failure)
+                    for failure_first in (True, False):
+                        for by_metadata in (True, False):
+                            contract.test_nyte_shared_refund_obligations_are_monotonic(
+                                store, unique(f"shared{kind}{failure_first}{by_metadata}{failure}"), monkeypatch,
+                                kind, failure_first, by_metadata, failure, enabled)
 
     finally:
         conn._raw.close()
@@ -494,7 +498,7 @@ def test_reimport_existing_refunded_position_is_blocked(settings, monkeypatch):
 
 @pytest.mark.usefixtures("reservation_mail")
 @pytest.mark.parametrize("kind", ["charge.refunded", "charge.dispute.created", "refund.created"])
-def test_adverse_webhook_before_checkout_is_not_lost(client, test_settings, monkeypatch, kind):
+def test_checkout_checks_current_stripe_after_ignoring_unmapped_adverse_event(client, test_settings, monkeypatch, kind):
     from tests.test_reserved_tokens import event
     from trusted_router.storage import STORE
     test_settings.resale_enabled = True
@@ -505,6 +509,10 @@ def test_adverse_webhook_before_checkout_is_not_lost(client, test_settings, monk
     }}})
     assert response.status_code == 200
     assert call(STORE, "payment", payment_intent="pi_early") == {}
+    assert not any(key[0] in {"nyte_payment_review", "nyte_refund_failure"} for key in STORE.target.resale_entities)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {
+        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 1600, "disputed": kind == "charge.dispute.created"},
+    })
     data = event()
     data["data"]["object"]["payment_intent"] = "pi_early"
     assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 200
@@ -685,11 +693,13 @@ def test_refund_calls_refuse_console_diagnostics(settings, monkeypatch, setting,
     assert not captured.out and not captured.err
 
 
+@pytest.mark.parametrize("resale_enabled", [True, False])
+@pytest.mark.parametrize("failure", ["failed", "canceled"])
 @pytest.mark.parametrize("event_type", ["refund.created", "refund.updated", "refund.failed", "charge.refund.updated"])
 @pytest.mark.parametrize("failure_first", [True, False])
-def test_full_refund_acknowledgement_and_failure_share_monotonic_rule(client, test_settings, monkeypatch, event_type, failure_first):
+def test_full_refund_acknowledgement_and_failure_share_monotonic_rule(client, test_settings, monkeypatch, event_type, failure_first, resale_enabled, failure):
     from trusted_router.storage import STORE
-    test_settings.resale_enabled = True
+    test_settings.resale_enabled = resale_enabled
     purchase(STORE, "holder")
     call(STORE, "request_refund", position="holder", holder="holder", now=101, request_id="full")
     refund = {"id": "re_full_lifecycle", "amount": 300, "payment_intent": "pi_holder", "status": "succeeded"}
@@ -699,7 +709,7 @@ def test_full_refund_acknowledgement_and_failure_share_monotonic_rule(client, te
     monkeypatch.setattr(resale.stripe.Refund, "create", create)
 
     def failure_event():
-        failed = {**refund, "status": "failed", "description": "private-full@example.com"}
+        failed = {**refund, "status": failure, "description": "private-full@example.com"}
         result = client.post("/v1/internal/stripe/webhook", json={"id": "evt_full_failed", "type": event_type, "data": {"object": failed}})
         assert result.status_code == 200
 
@@ -743,13 +753,14 @@ def test_legacy_completed_full_refund_is_reopened_by_exact_payment_mapping(setti
     alert.assert_called_once()
 
 
-@pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
+@pytest.mark.parametrize("resale_enabled", [True, False])
+@pytest.mark.parametrize("kind", ["resale_fill", "full_refund", "reserved_tokens_2027"])
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
-def test_disabled_unknown_nyte_refunds_do_not_change_ledger_or_credits(client, test_settings, monkeypatch, kind, status):
+def test_unmapped_refunds_do_not_change_ledger_or_credits(client, test_settings, monkeypatch, kind, status, resale_enabled):
     from copy import deepcopy
 
     from trusted_router.storage import STORE
-    test_settings.resale_enabled = False
+    test_settings.resale_enabled = resale_enabled
     purchase(STORE, "holder")
     before = deepcopy(STORE.target.resale_entities)
     def forbidden(*args, **kwargs):
@@ -758,7 +769,7 @@ def test_disabled_unknown_nyte_refunds_do_not_change_ledger_or_credits(client, t
     alert = Mock()
     monkeypatch.setattr(resale, "alert_ops", alert)
     response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_disabled_refund", "type": "refund.updated", "data": {"object": {
-        "id": "re_unknown", "payment_intent": "pi_holder", "amount": 100, "status": status, "metadata": {"kind": kind},
+        "id": "re_unknown", "payment_intent": "pi_unmapped", "amount": 100, "status": status, "metadata": {"kind": kind},
     }}})
     assert response.status_code == 200 and response.json()["data"]["credited"] is False
     assert STORE.target.resale_entities == before

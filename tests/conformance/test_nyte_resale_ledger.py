@@ -10,6 +10,23 @@ from trusted_router.storage_resale import REFUND_WINDOW, reference
 from trusted_router.store_protocol import Store
 
 
+@pytest.fixture(params=[True, False], ids=["sales-on", "sales-off"])
+def resale_enabled(request) -> bool:
+    return request.param
+
+
+def refund_queue_ids(store: Store, queue: str) -> list[str]:
+    cursor, ids, seen = None, [], set()
+    while True:
+        page = call(store, "pending", queue=queue, cursor=cursor)
+        ids.extend(row.get("id", row.get("position")) for row in page["rows"])
+        cursor = page["cursor"]
+        if not cursor:
+            return ids
+        assert cursor not in seen
+        seen.add(cursor)
+
+
 def test_nyte_fifo_partial_fill_and_session_event_idempotency(store: Store, unique: str) -> None:
     first, second, buyer = (unique + s for s in ("1", "2", "buyer"))
     purchase(store, first, price=80)
@@ -207,7 +224,7 @@ def test_nyte_completed_legacy_notification_import_is_historical(store: Store, u
 
 
 @pytest.mark.parametrize("state", [{"amount_refunded": 100}, {"disputed": True}])
-def test_nyte_adverse_before_position_is_durable_and_blocks_purchase(store: Store, unique: str, state: dict, monkeypatch) -> None:
+def test_nyte_adverse_events_require_a_mapped_position(store: Store, unique: str, state: dict, monkeypatch, resale_enabled: bool) -> None:
     from trusted_router.config import Settings
     from trusted_router.services import resale
 
@@ -218,11 +235,15 @@ def test_nyte_adverse_before_position_is_durable_and_blocks_purchase(store: Stor
     early = {"id": "evt_early_" + unique, "type": "charge.dispute.created" if state.get("disputed") else "refund.created",
              "data": {"object": {"id": "re_" + unique, "payment_intent": "pi_" + buyer, "amount": 100,
                                  "status": "succeeded", "metadata": {"kind": "reserved_tokens_2027"}}}}
-    assert resale.reconcile_payment_event(early, Settings(environment="test", resale_enabled=True))
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    assert not resale.reconcile_payment_event(early, settings)
     assert call(store, "payment", payment_intent="pi_" + buyer) == {}
-    # Out-of-order healthy evidence cannot erase the earlier adverse event.
-    call(store, "reconcile_payment", payment_intent="pi_" + buyer, payment_state={"amount_refunded": 0})
-    result = purchase(store, buyer, lots=1, allocate=True)
+    assert call(store, "reconcile_payment", payment_intent="pi_" + buyer, payment_state=state) == {}
+    result = purchase(store, buyer, lots=1)
+    assert result["status"] == "held" and not result.get("payment_review")
+    # Once the mapping exists, the same signed event is actionable in either mode.
+    assert resale.reconcile_payment_event(early, settings)
+    result = call(store, "position", position=buyer)
     assert result["status"] == "needs_review" and result["payment_review"]
     assert result["fills"] == [] and result["new_lots"] == 1
     with pytest.raises(ValueError, match="review"):
@@ -263,11 +284,16 @@ def test_nyte_old_purchase_checks_current_stripe_before_held(store: Store, uniqu
 
 
 @pytest.mark.parametrize("failure", ["failed", "canceled"])
-def test_nyte_successful_refund_later_fails_without_reissuance(store: Store, unique: str, monkeypatch, failure: str) -> None:
+def test_nyte_successful_refund_later_fails_without_reissuance(store: Store, unique: str, monkeypatch, failure: str, resale_enabled: bool) -> None:
     from unittest.mock import Mock
 
     from trusted_router.config import Settings
     from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
 
     def queued_ids(queue: str = "refunds") -> list[str]:
         ids: list[str] = []
@@ -294,7 +320,8 @@ def test_nyte_successful_refund_later_fails_without_reissuance(store: Store, uni
     for altered in ({"id": "re_unknown_" + unique}, {"payment_intent": "pi_other"}, {"amount": 94}, {"status": "succeeded"}):
         assert call(store, "refund_failed", refund={**refund, **altered}) == {}
     for _ in range(2):
-        reopened = call(store, "refund_failed", refund=refund)
+        assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": refund}}, settings)
+        reopened = call(store, "refund_obligation", kind="resale_fill", id=fid)
         assert reopened["status"] == "needs_ops" and reopened["stripe_refund_id"] == refund["id"]
     assert queued_ids("refunds_needs_ops") == [*before_ops, fid]
     assert queued_ids() == before_refunds
@@ -304,17 +331,22 @@ def test_nyte_successful_refund_later_fails_without_reissuance(store: Store, uni
     monkeypatch.setattr(resale, "STORE", store)
     create = Mock(side_effect=AssertionError("Needs-ops fill issued another refund"))
     monkeypatch.setattr(resale.stripe.Refund, "create", create)
-    resale.process_fill(fid, Settings(environment="test"))
+    resale.process_fill(fid, settings)
     create.assert_not_called()
 
 
 @pytest.mark.parametrize("failure_first", [True, False])
 @pytest.mark.parametrize("failure", ["failed", "canceled"])
-def test_nyte_refund_failure_and_success_commit_are_order_independent(store: Store, unique: str, monkeypatch, failure_first: bool, failure: str) -> None:
+def test_nyte_refund_failure_and_success_commit_are_order_independent(store: Store, unique: str, monkeypatch, failure_first: bool, failure: str, resale_enabled: bool) -> None:
     from unittest.mock import Mock
 
     from trusted_router.config import Settings
     from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
 
     seller, buyer = unique + "seller", unique + "buyer"
     purchase(store, seller)
@@ -333,17 +365,19 @@ def test_nyte_refund_failure_and_success_commit_are_order_independent(store: Sto
 
     if not failure_first:
         assert success()["status"] == "refunded"
-    blocked = call(store, "refund_failed", refund=refund)
+    assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": refund}}, settings)
+    blocked = call(store, "refund_obligation", kind="resale_fill", id=fid)
     assert blocked["status"] == "needs_ops" and blocked["stripe_refund_id"] == refund["id"]
     assert success() == {}  # Includes a late duplicate success in the reverse ordering.
-    repeated = call(store, "refund_failed", refund=refund)
+    assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": refund}}, settings)
+    repeated = call(store, "refund_obligation", kind="resale_fill", id=fid)
     assert repeated["history"][-1] == {"at": REFUND_WINDOW + 101, "action": "stale_write", "from": "needs_ops", "to": "refunded"}
     assert sum(row["to"] == "needs_ops" for row in repeated["history"]) == 1
     assert not call(store, "fill_claim", fill=fid, owner="later", now=REFUND_WINDOW * 3)
     monkeypatch.setattr(resale, "STORE", store)
     create = Mock(side_effect=AssertionError("Terminal fill created another refund"))
     monkeypatch.setattr(resale.stripe.Refund, "create", create)
-    resale.process_fill(fid, Settings(environment="test"))
+    resale.process_fill(fid, settings)
     create.assert_not_called()
 
 
@@ -351,11 +385,16 @@ def test_nyte_refund_failure_and_success_commit_are_order_independent(store: Sto
 @pytest.mark.parametrize("failure_first", [True, False])
 @pytest.mark.parametrize("by_metadata", [True, False])
 @pytest.mark.parametrize("failure", ["failed", "canceled"])
-def test_nyte_shared_refund_obligations_are_monotonic(store: Store, unique: str, monkeypatch, kind: str, failure_first: bool, by_metadata: bool, failure: str) -> None:
+def test_nyte_shared_refund_obligations_are_monotonic(store: Store, unique: str, monkeypatch, kind: str, failure_first: bool, by_metadata: bool, failure: str, resale_enabled: bool) -> None:
     from unittest.mock import Mock
 
     from trusted_router.config import Settings
     from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
 
     seller = unique + "seller"
     purchase(store, seller)
@@ -387,11 +426,13 @@ def test_nyte_shared_refund_obligations_are_monotonic(store: Store, unique: str,
     for altered in ({"payment_intent": "pi_wrong"}, {"amount": amount + 1}):
         assert call(store, "refund_lifecycle", refund={**event, **altered}) == {}
     for _ in range(2):
-        blocked = call(store, "refund_lifecycle", refund=event)
+        assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": event}}, settings)
+        blocked = call(store, "refund_obligation", kind=kind, id=key)
         assert blocked["status"] == "needs_ops" and blocked["stripe_refund_id"] == refund["id"]
+    assert alert.call_count == 2
     success()
     # Every lifecycle event, including stale success, uses the same rule.
-    call(store, "refund_lifecycle", refund={**event, "status": "succeeded"})
+    assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": {**event, "status": "succeeded"}}}, settings)
     row = call(store, "refund_obligation", kind=kind, id=key)
     assert row["status"] == "needs_ops" and row["history"][-1]["action"] == "stale_write"
     assert sum(h["to"] == "needs_ops" for h in row["history"]) == 1
@@ -410,10 +451,8 @@ def test_nyte_shared_refund_obligations_are_monotonic(store: Store, unique: str,
     assert key not in queue_ids(queue)
     assert queue_ids(queue + "_needs_ops").count(key) == 1
     monkeypatch.setattr(resale, "STORE", store)
-    monkeypatch.setattr(resale, "alert_ops", Mock())
     create = Mock(side_effect=AssertionError("Terminal obligation reissued"))
     monkeypatch.setattr(resale.stripe.Refund, "create", create)
-    settings = Settings(environment="test")
     if kind == "resale_fill":
         resale.process_fill(key, settings)
     else:
@@ -425,36 +464,64 @@ def test_nyte_shared_refund_obligations_are_monotonic(store: Store, unique: str,
 
 
 @pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
-def test_nyte_unbound_refund_failure_survives_acknowledgement(store: Store, unique: str, kind: str) -> None:
+@pytest.mark.parametrize("failure", ["failed", "canceled"])
+def test_nyte_unbound_refund_failure_survives_acknowledgement(store: Store, unique: str, kind: str, monkeypatch, resale_enabled: bool, failure: str) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled, stripe_secret_key="sk_test_contract")  # noqa: S106
+    monkeypatch.setattr(resale, "STORE", store)
+    alert, create = Mock(), Mock(side_effect=AssertionError("Unbound failure was reissued"))
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
     seller = unique + "seller"
     purchase(store, seller)
     if kind == "resale_fill":
         listing(store, seller)
         key = purchase(store, unique + "buyer", lots=1, allocate=True)["fills"][0]
-        call(store, "fill_claim", fill=key, owner="worker")
         amount = 95
     else:
         call(store, "request_refund", position=seller, holder=seller, request_id="full", now=101)
         key, amount = seller, 300
-    refund = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": amount, "status": "failed"}
-    assert call(store, "refund_lifecycle", refund=refund) == {}
-    # An out-of-order successful event must not erase the retained failure.
-    assert call(store, "refund_lifecycle", refund={**refund, "status": "succeeded"}) == {}
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": amount, "status": failure}
+    # No metadata and no binding, only the existing payment-to-position mapping.
+    assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": refund}}, settings)
+    assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": {**refund, "status": "succeeded"}}}, settings)
+    stale = {**refund, "status": "succeeded"}
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: stale)
     if kind == "resale_fill":
-        call(store, "fill_finish", fill=key, owner="worker", status="refunded", stripe_refund_id=refund["id"])
+        # The next worker finds the issued refund with a stale success status.
+        metadata_row = {**stale, "metadata": {"kind": kind, "fill_id": key}}
+        monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([metadata_row])))
+        resale.process_fill(key, settings)
+        resale.process_fill(key, settings)
     else:
-        call(store, "refund_acknowledge", position=key, owner="worker", refund={**refund, "status": "succeeded"})
+        assert resale.acknowledge_full_refund(key, refund["id"], settings)["status"] == "needs_ops"
+        assert resale.acknowledge_full_refund(key, refund["id"], settings)["status"] == "needs_ops"
     row = call(store, "refund_obligation", kind=kind, id=key)
     assert row["status"] == "needs_ops" and row["stripe_refund_id"] == refund["id"]
     assert row["history"][-1]["action"] == "stale_write"
+    queue = "refunds" if kind == "resale_fill" else "full_refunds"
+    assert key not in refund_queue_ids(store, queue)
+    assert refund_queue_ids(store, queue + "_needs_ops").count(key) == 1
+    assert alert.called and refund["id"] in alert.call_args.args[2]
+    create.assert_not_called()
 
 
 @pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
-def test_nyte_existing_metadata_obligation_reconciles_with_sales_disabled(store: Store, unique: str, monkeypatch, kind: str) -> None:
+def test_nyte_existing_metadata_obligation_reconciles_in_both_modes(store: Store, unique: str, monkeypatch, kind: str, resale_enabled: bool) -> None:
     from unittest.mock import Mock
 
     from trusted_router.config import Settings
     from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
 
     seller = unique + "seller"
     purchase(store, seller)
@@ -467,7 +534,6 @@ def test_nyte_existing_metadata_obligation_reconciles_with_sales_disabled(store:
         key = seller
         call(store, "request_refund", position=key, holder=key, now=101, request_id="full")
         amount, metadata = 300, {"kind": kind, "position_id": key}
-    settings = Settings(environment="test", resale_enabled=False)
     monkeypatch.setattr(resale, "STORE", store)
     alert = Mock()
     monkeypatch.setattr(resale, "alert_ops", alert)
@@ -486,3 +552,27 @@ def test_nyte_existing_metadata_obligation_reconciles_with_sales_disabled(store:
         monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: {**refund, "status": "succeeded"})
         assert resale.acknowledge_full_refund(key, refund["id"], settings)["status"] == "needs_ops"
     create.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["failed", "canceled"])
+def test_nyte_unmapped_refund_evidence_is_inert(store: Store, unique: str, monkeypatch, resale_enabled: bool, failure: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + unique, "amount": 300, "status": failure,
+              "metadata": {"kind": "full_refund", "position_id": unique}}
+    assert not resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": refund}}, settings)
+    assert call(store, "refund_lifecycle", refund=refund) == {}
+    # The unrelated event did not leave evidence that could poison a later binding.
+    purchase(store, unique)
+    call(store, "request_refund", position=unique, holder=unique, now=101, request_id="full")
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: {**refund, "status": "succeeded"})
+    assert resale.acknowledge_full_refund(unique, refund["id"], settings)["status"] == "refunded"
+    assert unique not in refund_queue_ids(store, "full_refunds_needs_ops")
+    alert.assert_not_called()
