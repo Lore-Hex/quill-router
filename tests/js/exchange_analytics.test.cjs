@@ -78,3 +78,23 @@ test('reservation events are bounded, omit PII, and success has no URL order det
  analytics.track('nyte.reserve_unknown');
  assert.equal(s.requests.length,count);
 });
+
+test('resale events contain only bounded grade and never holder capability or email',()=>{
+ const s=setup({pathname:'/manage-reservation'});
+ for(const event of ['nyte.resale_listed','nyte.resale_withdrawn']) {
+  s.window.TokenExchangeAnalytics.track(event,{grade:'A',email:'private@example.com',token:'secret',position:'cs_private',lots:7});
+  const payload=JSON.parse(s.requests.at(-1).body);
+  assert.equal(payload.event,event);
+  assert.equal(payload.page,'/manage-reservation');
+  assert.deepEqual(Object.keys(payload).sort(),['event','visitor_id','campaign','grade','page'].sort());
+ }
+ const count=s.requests.length;
+ s.window.TokenExchangeAnalytics.track('nyte.resale_listed',{grade:'none'});
+ s.window.TokenExchangeAnalytics.track('nyte.resale_unknown',{grade:'A'});
+ assert.equal(s.requests.length,count);
+ for(const navigator of [{globalPrivacyControl:true},{doNotTrack:'1'}]) {
+  const disabled=setup({navigator});
+  disabled.window.TokenExchangeAnalytics.track('nyte.resale_listed',{grade:'A'});
+  assert.equal(disabled.requests.length,0);
+ }
+});

@@ -18,7 +18,6 @@ domain never depends on the canonical domain to complete login.
 from __future__ import annotations
 
 import base64
-import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
@@ -509,12 +508,9 @@ def _state_signature(
         # Callers already reject disabled providers. Keeping this fail-closed
         # guard makes the helper safe if it is reused independently.
         raise RuntimeError(f"{provider.slug} OAuth client secret is unavailable")
-    digest = hmac.new(
-        secret.encode("utf-8"),
-        f"{provider.slug}:{unsigned_state}".encode(),
-        hashlib.sha256,
-    ).digest()
-    return _b64encode(digest)
+    from trusted_router.security import signed_token_signature
+
+    return signed_token_signature(secret, provider.slug, unsigned_state)
 
 
 def _b64encode(value: bytes) -> str:

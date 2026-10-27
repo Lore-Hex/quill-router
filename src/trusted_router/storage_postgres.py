@@ -3114,6 +3114,20 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(txn)
 
+    def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
+        from trusted_router.storage_resale import execute
+
+        def txn(tx: Any) -> dict[str, Any]:
+            self._insert_entity_once_tx(tx, "nyte_mutex", "v1", {})
+            self._read_entity_tx(tx, "nyte_mutex", "v1", dict, for_update=True)
+            return execute(
+                lambda kind, key: self._read_entity_tx(tx, kind, key, dict) or {},
+                lambda kind, key, row: self._write_entity_tx(tx, kind, key, row),
+                command,
+            )
+
+        return self._run_transaction(txn)
+
     def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
         def txn(tx: Any) -> tuple[str, int]:
             self._insert_entity_once_tx(tx, "reserved_notification", session_id, {"sent": False})

@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import stripe
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.acquisition import (
@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 
 def register(router: APIRouter) -> None:
     @router.post("/internal/stripe/webhook")
-    async def stripe_webhook(request: Request, settings: SettingsDep) -> dict[str, Any]:
+    async def stripe_webhook(request: Request, settings: SettingsDep, background: BackgroundTasks) -> dict[str, Any]:
         raw = await request.body()
         sig = request.headers.get("stripe-signature")
         if settings.stripe_webhook_secret:
@@ -98,7 +98,18 @@ def register(router: APIRouter) -> None:
 
         obj = event.get("data", {}).get("object", {})
         if (obj.get("metadata") or {}).get("kind") == KIND:
-            return {"data": await run_in_threadpool(handle_reservation_event, event, settings)}
+            return {"data": await run_in_threadpool(handle_reservation_event, event, settings, background)}
+
+        # Dashboard refunds need not inherit PaymentIntent metadata. Keep
+        # refunds of NYTE payments out of balance/adverse-credit handling too.
+        if event_type in {"charge.refunded", "charge.refund.updated", "refund.created", "refund.updated", "refund.failed"}:
+            payment_intent = _object_id(obj.get("payment_intent"))
+            if payment_intent:
+                reserved_payment = await run_in_threadpool(STORE.reserved_resale, {
+                    "op": "payment", "now": 0, "payment_intent": payment_intent,
+                })
+                if reserved_payment:
+                    return {"data": {"reserved_tokens": True, "credited": False, "ignored": True}}
 
         adverse_events = _stripe_adverse_events(event, event_id=event_id)
         if adverse_events:

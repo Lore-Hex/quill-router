@@ -115,7 +115,7 @@ def test_stripe_parameters_and_quote(checkout: tuple[TestClient, Mock], settings
     }
     assert args["metadata"]["refund_window_days"] == "30"
     assert "refundable_until" not in args["metadata"]
-    assert args["metadata"]["terms_version"] == "2026-10-27-v3"
+    assert args["metadata"]["terms_version"] == "2026-10-27-v4"
     assert args["metadata"]["transfer_policy"] == "nyte_resale_only"
     assert args["metadata"]["resale_fee_bps"] == "500"
     assert args["metadata"]["resale_priority"] == "ahead_of_new_inventory"
@@ -300,6 +300,7 @@ def test_distinct_purchases_get_distinct_positions(client: TestClient, reservati
     for session_id in ("cs_reserved", "cs_another_purchase"):
         data = event()
         data["data"]["object"]["id"] = session_id
+        data["id"] = "evt_" + session_id
         assert client.post("/v1/internal/stripe/webhook", json=data).json()["data"]["recorded"]
     positions = [json.loads(call.args[0].text_body.split("\n", 1)[1])["position_id"]
                  for call in reservation_mail.call_args_list]
@@ -309,7 +310,7 @@ def test_distinct_purchases_get_distinct_positions(client: TestClient, reservati
 
 @pytest.mark.parametrize("patch", [
     {"refund_window_days": "31"}, {"terms_version": "2026-10-27"},
-    {"transfer_policy": "unrestricted"}, {"resale_fee_bps": "0"},
+    {"transfer_policy": "unrestricted"}, {"resale_fee_bps": "10000"},
     {"resale_priority": "after_new_inventory"}, {"resale_payout_method": "cash"},
     {"resale_payout_cap": "unlimited"},
 ])

@@ -874,6 +874,8 @@ class Settings(BaseSettings):
     retirement_notices_mode: Literal["off", "preview", "send"] = "off"
     retirement_notices_preview_email: str | None = None
 
+    resale_enabled: bool = False
+    resale_fee_bps: int = Field(default=500, ge=0, lt=10_000)
     reserved_tokens_checkout_enabled: bool = False
     reserved_tokens_discount_bps: int | None = Field(default=None, ge=0, lt=10_000)
     reserved_tokens_max_lots_per_checkout: int = Field(default=100, ge=1)

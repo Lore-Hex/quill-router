@@ -11,9 +11,9 @@ from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
 
 class ExchangeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    event: Literal["exchange.landing_viewed", "exchange.landing_engaged", "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked", "nyte.buy_step_1_viewed", "nyte.buy_step_2_viewed", "nyte.buy_step_3_viewed", "nyte.buy_step_4_viewed", "nyte.buy_completed", "nyte.reserve_checkout_started", "nyte.reserve_checkout_succeeded"]
+    event: Literal["exchange.landing_viewed", "exchange.landing_engaged", "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked", "nyte.buy_step_1_viewed", "nyte.buy_step_2_viewed", "nyte.buy_step_3_viewed", "nyte.buy_step_4_viewed", "nyte.buy_completed", "nyte.reserve_checkout_started", "nyte.reserve_checkout_succeeded", "nyte.resale_listed", "nyte.resale_withdrawn"]
     visitor_id: UUID4
-    page: Literal["/", "/providers", "/badge", "/confidential", "/trusted-cowork", "/suppliers", "/index", "/buy", "/neocloud-accelerator", "/reserved-tokens-terms"] = "/"
+    page: Literal["/", "/providers", "/badge", "/confidential", "/trusted-cowork", "/suppliers", "/index", "/buy", "/neocloud-accelerator", "/reserved-tokens-terms", "/manage-reservation"] = "/"
     campaign: dict[str, str] = Field(default_factory=dict, max_length=5)
 
     cta: Literal["download_apple_silicon", "download_intel_mac", "api_quick_start", "buyer_deck", "provider_deck", "api_key", "documentation", "apply_provider", "spare_capacity", "open_source_stack", "operator_guide", "index", "source"] | None = None
@@ -38,6 +38,8 @@ class ExchangeEvent(BaseModel):
             "nyte.buy_step_4_viewed": {"unit", "underlying_kind", "grade"},
             "nyte.reserve_checkout_started": {"unit", "underlying_kind", "grade"},
             "nyte.reserve_checkout_succeeded": set(),
+            "nyte.resale_listed": {"grade"},
+            "nyte.resale_withdrawn": {"grade"},
             "nyte.buy_completed": {"unit", "underlying_kind", "grade"},
         }.get(self.event, set())
         fields = (("cta", self.cta), ("position", self.position), ("form", self.form),
@@ -46,6 +48,8 @@ class ExchangeEvent(BaseModel):
         supplied = {name for name, value in fields if value is not None}
         if supplied != required:
             raise ValueError("Invalid event properties")
+        if self.event.startswith("nyte.resale_") and (self.page != "/manage-reservation" or self.grade not in {"AAA", "A", "B", "C"}):
+            raise ValueError("Invalid resale event")
         if self.event.startswith("nyte.reserve_"):
             if self.page != "/buy":
                 raise ValueError("Reservation events belong to /buy")

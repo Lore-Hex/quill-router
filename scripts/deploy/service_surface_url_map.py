@@ -52,6 +52,7 @@ ACTIONS_PATH_PATTERNS = (
 )
 
 CONTROL_PATH_PATTERNS = (
+    "/token-exchange/reservations",
     "/v1",
     "/v1/*",
     "/models/user",

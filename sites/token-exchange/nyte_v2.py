@@ -57,6 +57,7 @@ def render_nyte(
         "api": ("/confidential", "Confidential API · New York Token Exchange", "Frontier AI for sensitive work. Confidential compute, end-to-end encryption and live evidence."),
         "sup": ("/suppliers", "Suppliers · New York Token Exchange", "Sell your inference to enterprise buyers. List your models and prices once."),
         "accelerator": ("/neocloud-accelerator", "Neocloud accelerator | New York Token Exchange", "Pre-sell reserved tokens from a planned facility to help finance the build. Explore the open-source neocloud stack and demand through NYTE."),
+        "manage": ("/manage-reservation", "Manage my reservation | New York Token Exchange", "Manage your NYTE reservations with a private email link."),
         "reserved-terms": ("/reserved-tokens-terms", "Reserved tokens terms | New York Token Exchange", "Terms for prepaid NYTE Index-grade tokens usable during 2027."),
         "buy": ("/buy", "Reserved tokens | New York Token Exchange", "Reserve NYTE Index-grade tokens by card for January–December 2027, or discuss models, throughput and facilities on a 15-minute call."),
         "providers": ("/providers", "For inference providers | New York Token Exchange", "Bring your available inference capacity to the New York Token Exchange. Request the updated private seven-page provider deck and explore joining the exchange."),
@@ -70,6 +71,9 @@ def render_nyte(
     if page == "accelerator":
         accelerator_version = hashlib.sha256((SOURCE / "accelerator.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/accelerator.css?v={accelerator_version}">'
+    if page == "manage":
+        manage_version = hashlib.sha256((SOURCE / "manage.js").read_bytes()).hexdigest()[:12]
+        extra_head += f'<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex"><script src="/assets/nyte-v2/manage.js?v={manage_version}" defer></script>'
     if page == "buy":
         from buy_page import buy_content
 
@@ -111,9 +115,9 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "accelerator.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css"):
         shutil.copyfile(SOURCE / name, assets / name)
-    for page, route in (("reserved-terms", "reserved-tokens-terms"), ("api", "confidential"), ("sup", "suppliers"), ("providers", "providers"), ("cowork", "trusted-cowork"), ("buy", "buy"), ("accelerator", "neocloud-accelerator")):
+    for page, route in (("manage", "manage-reservation"), ("reserved-terms", "reserved-tokens-terms"), ("api", "confidential"), ("sup", "suppliers"), ("providers", "providers"), ("cowork", "trusted-cowork"), ("buy", "buy"), ("accelerator", "neocloud-accelerator")):
         content = render_nyte(page)
         for name in (route, route + ".html"):
             (output / name).write_text(content)

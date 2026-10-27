@@ -88,6 +88,7 @@ resource "google_compute_url_map" "control" {
     }
     path_rule {
       paths = [
+        "/token-exchange/reservations",
         "/v1", "/v1/*", "/models/user", "/v1/models/user", "/bedrock-group-buy", "/bedrock-group-buy/*",
         "/google_oauth_callback", "/github_oauth_callback", "/console", "/console/*", "/provider", "/provider/*",
         "/mcp", "/chat-proxy", "/chat-proxy/*", "/auth", "/auth/*", "/byok", "/byok/*", "/credits", "/credits/*",
