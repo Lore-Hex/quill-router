@@ -11,15 +11,19 @@ from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
 
 class ExchangeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    event: Literal["exchange.landing_viewed", "exchange.landing_engaged", "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked"]
+    event: Literal["exchange.landing_viewed", "exchange.landing_engaged", "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked", "nyte.buy_step_1_viewed", "nyte.buy_step_2_viewed", "nyte.buy_step_3_viewed", "nyte.buy_step_4_viewed", "nyte.buy_completed"]
     visitor_id: UUID4
-    page: Literal["/", "/providers", "/badge", "/confidential", "/suppliers", "/index"] = "/"
+    page: Literal["/", "/providers", "/badge", "/confidential", "/suppliers", "/index", "/buy"] = "/"
     campaign: dict[str, str] = Field(default_factory=dict, max_length=5)
 
     cta: Literal["api_quick_start", "buyer_deck", "provider_deck", "api_key", "documentation", "apply_provider", "spare_capacity", "open_source_stack", "operator_guide", "index", "source"] | None = None
     position: Literal["header", "hero", "section", "close"] | None = None
     form: Literal["buyer_deck"] | None = None
     destination_host: Literal["trustedrouter.com", "github.com"] | None = None
+
+    unit: Literal["blocks", "throughput", "unsure"] | None = None
+    underlying_kind: Literal["index", "model"] | None = None
+    grade: Literal["AAA", "A", "B", "C", "none"] | None = None
 
     @model_validator(mode="after")
     def event_properties(self) -> ExchangeEvent:
@@ -28,12 +32,21 @@ class ExchangeEvent(BaseModel):
             "nyte.video_played": set(),
             "nyte.form_submitted": {"form"},
             "nyte.outbound_clicked": {"destination_host", "cta"},
+            "nyte.buy_step_1_viewed": {"unit", "underlying_kind", "grade"},
+            "nyte.buy_step_2_viewed": {"unit", "underlying_kind", "grade"},
+            "nyte.buy_step_3_viewed": {"unit", "underlying_kind", "grade"},
+            "nyte.buy_step_4_viewed": {"unit", "underlying_kind", "grade"},
+            "nyte.buy_completed": {"unit", "underlying_kind", "grade"},
         }.get(self.event, set())
         fields = (("cta", self.cta), ("position", self.position), ("form", self.form),
-                  ("destination_host", self.destination_host))
+                  ("destination_host", self.destination_host), ("unit", self.unit),
+                  ("underlying_kind", self.underlying_kind), ("grade", self.grade))
         supplied = {name for name, value in fields if value is not None}
         if supplied != required:
             raise ValueError("Invalid event properties")
+        if self.event.startswith("nyte.buy_"):
+            if self.page != "/buy" or (self.underlying_kind == "model") != (self.grade == "none"):
+                raise ValueError("Invalid capacity request metadata")
         return self
 
 

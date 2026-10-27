@@ -121,6 +121,12 @@ def test_collector_memory_and_rate_caps_reset() -> None:
 @pytest.mark.parametrize(('name', 'properties'), [
     ('nyte.cta_clicked', {'cta': 'api_quick_start', 'position': 'hero'}),
     ('nyte.video_played', {}),
+    ('nyte.buy_step_1_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
+    ('nyte.buy_step_2_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
+    ('nyte.buy_step_3_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
+    ('nyte.buy_step_4_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
+    ('nyte.buy_completed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
+    ('nyte.buy_completed', {'unit': 'throughput', 'underlying_kind': 'model', 'grade': 'none'}),
     ('nyte.form_submitted', {'form': 'buyer_deck'}),
     ('nyte.outbound_clicked', {'destination_host': 'trustedrouter.com', 'cta': 'api_key'}),
 ])
@@ -132,14 +138,14 @@ def test_nyte_events_survive_logging_and_export(
 
     caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
     response = client.post('/token-exchange/events', headers=HEADERS, json={
-        'event': name, 'visitor_id': str(uuid4()), 'page': '/confidential', **properties,
+        'event': name, 'visitor_id': str(uuid4()), 'page': '/buy' if name.startswith('nyte.buy_') else '/confidential', **properties,
     })
     assert response.status_code == 204
     record = next(r for r in caplog.records if getattr(r, 'event', '') == 'acquisition.' + name)
     serialized = json.loads(_ApplicationConsoleFormatter().format(record))
     exported = project_event({**serialized, '_time': '2026-10-21T17:00:00Z'}, source='cloud_logging')
     assert exported['site_domain'] == 'nytokenexchange.com'
-    assert exported['page_path'] == '/confidential'
+    assert exported['page_path'] == ('/buy' if name.startswith('nyte.buy_') else '/confidential')
     for key, value in properties.items():
         assert exported[key] == value
 
@@ -156,3 +162,16 @@ def test_nyte_event_properties_are_bounded(client: TestClient, properties: dict[
     })
     assert response.status_code == 422
     assert not response.content
+
+
+@pytest.mark.parametrize('extra', [
+    {'unit': 'someone@example.com'}, {'underlying_kind': 'free text'},
+    {'grade': 'private model'}, {'name': 'Private Name'}, {'email': 'person@example.com'},
+    {'company': 'Private Company'}, {'model': 'private model'}, {'grade': 'none'},
+])
+def test_capacity_metadata_rejects_private_or_inconsistent_fields(client: TestClient, extra: dict[str, str]) -> None:
+    response = client.post('/token-exchange/events', headers=HEADERS, json={
+        'event': 'nyte.buy_completed', 'visitor_id': str(uuid4()), 'page': '/buy',
+        'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A', **extra,
+    })
+    assert response.status_code == 422

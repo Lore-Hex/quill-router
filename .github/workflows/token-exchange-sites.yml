@@ -71,6 +71,7 @@ jobs:
           node sites/token-exchange/verify-badge.cjs http://127.0.0.1:8089
           node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089
           node sites/token-exchange/verify-index.cjs http://127.0.0.1:8089
+          NYTE_BUY_SHOTS=/tmp/nyte-buy-shots node sites/token-exchange/verify-buy.cjs http://127.0.0.1:8089
       - name: Stale data and every component-state combination
         env:
           NODE_PATH: /tmp/exchange-browser/node_modules
