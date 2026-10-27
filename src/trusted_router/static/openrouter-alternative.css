@@ -359,9 +359,9 @@
 /* Keep the action visually attached to the comparison, outside its scroll area. */
 .openrouter-article .v2-table-cta {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   margin: 0;
-  padding: 28px 24px;
+  padding: 28px 16px;
   background: #10231b;
 }
 .openrouter-article .v2-table-cta .btn {
@@ -374,5 +374,4 @@
 }
 @media (max-width: 720px) {
   .openrouter-article .v2-table-cta { padding: 20px; }
-  .openrouter-article .v2-table-cta .btn { width: 100%; }
 }
