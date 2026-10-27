@@ -1578,7 +1578,7 @@ letter: disjoint files, built in parallel.
 | G11 | 4 | Decide path (`edge/decide_path.go`): admit, insert, answer; per-lookup-hash in-flight limit (`edge/inflight.go`); `-edge-decide` (false); the store's one read-back and drain (§8.4); emulator end-to-end test | G10 |
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
-| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, the I2 gates |
+| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place; with G15c pinned, together with I4 after the I3 gate ("With G15c pinned, I3's gate is I2's") | G12, the I2 gates |
 | G15a to G15c, P5, P6, I3, I4 | 6 | The edge decides async-v1 requests with Python's admission-off answer: [`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6 | G13 |
 
 **The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
@@ -1752,3 +1752,24 @@ does not cover
 ([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §5, §6.2).
 `decide on` for an operator-owned workspace first, then the pilot
 workspace.
+
+**With G15c pinned, I3's gate is I2's** (decided 2026-10-27). The
+comparable requests above are sync requests, and on the 892bd7593 soak
+none of the shadow's followed requests was one: they passed with
+`header.settlement_async`, `boot.signature` (the AWS and Azure planes,
+E5), `body.stream` or `evaluate.pass`. The I2 sample could not reach
+3,000 on that traffic at any edge weight. So the I3 gate of
+[`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6.2,
+read over the same span and digest rules, gates I2 and I4 together, and
+the 3,000-comparable minimum above no longer applies. Every other I2 bar
+still holds, over all the span's comparable requests: on G15c the shadow
+counts sync and async-v1 comparisons alike in `agree_full` and `differ`,
+so these are not sync-only figures. `agree_full` at least 99.5%, every
+difference explained (so a sync difference fails the gate on its own and
+cannot hide in the ratio), zero `differ.estimate*`, zero
+`row.idempotency_fingerprint`, no field counted `other`, zero
+`would_admit_python_refused` beyond key-revocation lag, `cohort_by_class`
+accounted for and the stale-pass rate recorded.
+Once the gate is green the switches go in §6.2's step 4 order: the async
+setting first (it changes nothing while no decide row is on), then
+`decide on` for an operator-owned workspace, then the pilot workspace.
