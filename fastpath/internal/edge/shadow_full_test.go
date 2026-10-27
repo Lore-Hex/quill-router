@@ -754,6 +754,80 @@ func TestAWarmRerankIsADifferWithItsRowsRead(t *testing.T) {
 	}
 }
 
+// TestAWarmRerankAfterARereadIsCountedReadBack (§6, §11): with the key's
+// stored tags out of order, Python's warm 200 answered from a read-back
+// (tags sorted) is Go's decision in Python's order rendered after a
+// read-back: a differ named differ.affinity_warm, counted read_back as a
+// cold answer from a read-back is, its rows read back and agreeing.
+func TestAWarmRerankAfterARereadIsCountedReadBack(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:cache_affinity:warm")
+	keyBody := strings.Replace(*c.Key.KeyBody, `"usage_microdollars":`, `"tags":{"zeta":"1","alpha":"2"},"usage_microdollars":`, 1)
+	if keyBody == *c.Key.KeyBody || strings.Count(keyBody, `"tags":`) != 1 {
+		t.Fatal("the key body is not the one this test stores tags in")
+	}
+	c.Key.KeyBody = &keyBody
+	in, _ := caseInputs(t, f, c)
+	d := Decide(in)
+	dec, ok := d.Admit()
+	if !ok {
+		t.Fatalf("pass %q", d.Pass)
+	}
+	a := c.Expect.Affinity
+	byID := map[string]gwauth.Candidate{}
+	for _, cand := range dec.Input.Candidates {
+		byID[cand.EndpointID] = cand
+	}
+	warm := *dec
+	warm.Input.Candidates, warm.Input.Estimate = nil, a.Estimate
+	for _, id := range a.Candidates {
+		warm.Input.Candidates = append(warm.Input.Candidates, byID[id])
+	}
+	staged, err := warm.Restage(c.IDs.AuthorizationID, c.IDs.ReservationID, dec.Input.IdempotencyKey, dec.Input.At)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composed, err := staged.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inserted, reread := composed.Render(c.Expect.timing(), false), composed.Render(c.Expect.timing(), true)
+	if bytes.Equal(inserted, reread) {
+		t.Fatal("the read-back rendering is the inserted one: the tags did not sort")
+	}
+	rows := warmRows(t, c)
+	tree, err := pyjson.Decode([]byte(rows.Authorization.Payload.StringVal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := append(tree.(pyjson.Object), pyjson.Member{Key: "tags",
+		Value: pyjson.Object{{Key: "alpha", Value: "2"}, {Key: "zeta", Value: "1"}}})
+	raw, err := pyjson.Dumps(payload, pyjson.Options{SortKeys: true, EnsureASCII: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows.Authorization.Payload.StringVal = string(raw)
+	for _, v := range []struct {
+		name     string
+		body     []byte
+		readBack int
+	}{
+		{"as inserted", inserted, 0},
+		{"after a read-back", reread, 1},
+	} {
+		h := newFullEdge(t, f, c, nil, nil)
+		h.answer(answerWith(200, v.body))
+		h.rows.by[c.IDs.AuthorizationID] = rows
+		h.send(t, c)
+		got := h.edge.DecideShadowCounts()
+		if !maps.Equal(got.Classes, map[string]int{ClassDifferAny: 1}) ||
+			!maps.Equal(got.Fields, map[string]int{FieldAffinityWarm: 1}) ||
+			!maps.Equal(got.Rows, map[string]int{"agree": 1}) || got.ReadBack != v.readBack {
+			t.Errorf("%s: counts %+v", v.name, got)
+		}
+	}
+}
+
 // TestAnAffinityRequestThatPassesIsCountedAsAnyOther (§11): a request
 // naming a cache_affinity_key that passes, on a cold key cache or on a
 // header after the parse, is counted in classes as the same pass of a

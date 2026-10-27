@@ -548,8 +548,11 @@ used: it counted an affinity request that carried the header as
 is that accounting change; the fleet's async-v1 volume, the enclave's
 async log events per hour, was flat).
 
-Two settlement-header pass shares, each over one denominator, as G15c's
-watch will print them:
+Two settlement-header pass shares over that release's two maps, each over
+one denominator. The second is of that release only: since the edge
+decides affinity requests in the cold order (the contract's §1 item 5),
+the shadow counts them in `classes`, so the first share alone covers
+every request, and it is the one G15c's watch prints:
 
 | Figure | Numerator | Denominator | Value |
 |---|---|---|---|

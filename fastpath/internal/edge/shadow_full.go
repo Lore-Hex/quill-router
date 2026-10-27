@@ -588,25 +588,20 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 		r.class, r.fields = ClassDifferAny, append(r.fields, "differ.compose")
 		return r
 	}
-	inserted, readBack := composed.Render(timing, false), composed.Render(timing, true)
-	switch {
-	case len(r.fields) == 0 && shaped && bytes.Equal(inserted, raw):
-		r.class = ClassAgreeFull
-		return r
-	case len(r.fields) == 0 && shaped && bytes.Equal(readBack, raw):
-		r.class, r.readBack = ClassAgreeFull, true
-		return r
-	}
 	if len(r.fields) == 0 && shaped {
-		if warm, ok := warmBytes(d, staged, data, raw, timing); ok {
+		if ok, readBack := renders(composed, timing, raw); ok {
+			r.class, r.readBack = ClassAgreeFull, readBack
+			return r
+		}
+		if warm, ok, readBack := warmBytes(d, staged, data, raw, timing); ok {
 			// Python's bytes are Go's decision with a remembered
 			// endpoint promoted: Go's answer differs, for a session Go
 			// cannot read (§1 item 5).
-			r.class, r.fields, r.warm = ClassDifferAny, []string{FieldAffinityWarm}, warm
+			r.class, r.fields, r.warm, r.readBack = ClassDifferAny, []string{FieldAffinityWarm}, warm, readBack
 			return r
 		}
 	}
-	goTree, _ := pyjson.Decode(inserted)
+	goTree, _ := pyjson.Decode(composed.Render(timing, false))
 	goTop, _ := goTree.(pyjson.Object)
 	goData, _ := memberOf(goTop, "data").(pyjson.Object)
 	r.fields = append(r.fields, differences(goData, data, shaped)...)
@@ -617,26 +612,39 @@ func compareAnswer(d *Decision, raw []byte, r fullResult) fullResult {
 	return r
 }
 
+// renders: raw is composed's 200 with Python's timing, as inserted, or,
+// readBack, as after a read-back (tags sorted, §6).
+func renders(composed gwauth.Composed, timing gwauth.Timing, raw []byte) (ok, readBack bool) {
+	switch {
+	case bytes.Equal(composed.Render(timing, false), raw):
+		return true, false
+	case bytes.Equal(composed.Render(timing, true), raw):
+		return true, true
+	}
+	return false, false
+}
+
 // warmBytes: Python's 200 is Go's decision, under Python's ids as staged,
 // rendered with Python's candidates where they are a warm re-rank of Go's
-// cold order (Decision.warmOf), as inserted or after a read-back; warm is
-// that decision.
+// cold order (Decision.warmOf), as inserted or, readBack, after a
+// read-back; warm is that decision.
 func warmBytes(d *Decision, staged gwauth.Staged, data pyjson.Object, raw []byte,
-	timing gwauth.Timing) (warm *Decision, ok bool) {
+	timing gwauth.Timing) (warm *Decision, ok, readBack bool) {
 	warm, ok = d.warmOf(candidateIDs(memberOf(data, "route_candidates")))
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 	in := staged.Input()
 	restaged, err := warm.Restage(in.AuthorizationID, in.ReservationID, in.IdempotencyKey, in.At)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	composed, err := restaged.Finish("shadow", in.At.UTC())
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
-	return warm, bytes.Equal(composed.Render(timing, false), raw) || bytes.Equal(composed.Render(timing, true), raw)
+	ok, readBack = renders(composed, timing, raw)
+	return warm, ok, readBack
 }
 
 // candidateIDs are the endpoint ids of a 200's route_candidates, in order.

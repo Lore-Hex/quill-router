@@ -1621,9 +1621,10 @@ counts, per snapshot and policy digest:
   or, with fallbacks off, one endpoint of the primary model that Go admits
   with fallbacks on, at the estimate Go names pinned to its provider
   (`Decision.warmOf`, `fastpath/internal/edge/affinity.go`). The bytes
-  must match whole, so nothing but the first candidate's members (and
-  that estimate) differs; any other difference is `differ` with its own
-  fields. It is a differ like any other, in `classes`, `cohort` and the
+  must match whole, as inserted or as after a read-back (then counted
+  `read_back`, as for `agree_full`), so nothing but the first candidate's
+  members (and that estimate) differs; any other difference is `differ`
+  with its own fields. It is a differ like any other, in `classes`, `cohort` and the
   I2 agree bar, never folded into agreement: the field only says how many
   differs are a warm session Go does not reproduce. Its rows are read
   back (sampled as any comparable request's) and compared with Go's
